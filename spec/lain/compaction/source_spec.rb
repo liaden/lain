@@ -2678,6 +2678,50 @@ RSpec.describe Lain::Compaction::Source do
       expect(oracle.asks.last[:held]).to include("an earlier summary")
     end
 
+    # The document is the only account of the history it replaced, so the
+    # next handoff is shown it whole and not as one more cut-down line.
+    it "shows a second handoff the first document whole, once" do
+      line = timeline
+      built = handing_off
+      refused_render(built, line)
+      first = session.compaction_cuts.first.collapses.first.fetch("content").first.fetch("text")
+      grown = (7..10).inject(line) { |chain, index| chain.commit(role: role_at(index), content: [block(index)]) }
+
+      refused_render(built, grown)
+
+      expect(first).to include("finish the parser")
+      expect(oracle.asks.last[:document]).to include(first)
+      expect(oracle.asks.last[:held]).not_to include("finish the parser")
+    end
+
+    # A document written by an older Lain, or by anything else, is still the
+    # only account of what it replaced.
+    it "carries a recorded document whole even when it is not in today's shape" do
+      line = timeline
+      built = handing_off(keep_last: 2)
+      recorded = "an older document\r\n## Goal\r\nkeep going"
+      session.record_compaction_cut(
+        Lain::Telemetry::CompactionCut.new(
+          digest: line.to_a[1].digest, head: Lain::Event.stands_on(line.to_a.last), strategy: built.collapse_strategy,
+          kind: "handoff", parent: nil, supersedes: [], plan_step_completions: 0,
+          collapses: [{ "span" => [line.to_a[0].digest, line.to_a[1].digest],
+                        "content" => [{ "type" => "text", "text" => recorded }] }]
+        )
+      )
+      grown = (7..10).inject(line) { |chain, index| chain.commit(role: role_at(index), content: [block(index)]) }
+
+      refused_render(built, grown)
+
+      expect(oracle.asks.last[:document]).to include(recorded)
+      expect(oracle.asks.last[:held]).not_to include("an older document")
+    end
+
+    it "shows the first handoff no document" do
+      refused_render(handing_off, timeline)
+
+      expect(oracle.asks.last[:document]).to eq("")
+    end
+
     # A refusal with something still droppable is a refusal an ADVANCE can
     # answer, and the refusal's own words say so. Spending a model call on a
     # handoff there would replace a history compaction had not tried on.

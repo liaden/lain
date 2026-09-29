@@ -88,7 +88,8 @@ module Lain
       # than written into the template, so a slot the budget left empty -- or
       # one a chain simply has nothing for, a session with no pins -- prints no
       # heading over nothing.
-      SECTIONS = { held: "Earlier summaries of this conversation, oldest first:",
+      SECTIONS = { document: "The previous state document, whole:",
+                   held: "Earlier summaries of this conversation, oldest first:",
                    span: "The conversation since, one line per turn:",
                    pins: "Turns the human pinned, which stay verbatim and need no restating:" }.freeze
 
@@ -114,6 +115,7 @@ module Lain
         A long conversation no longer fits its context window. Everything below will be
         REPLACED by your answer, and the work continues from it alone.
 
+        <%= render("document") %>
         <%= render("held") %>
         <%= render("span") %>
         <%= render("pins") %>
@@ -136,17 +138,18 @@ module Lain
       #
       # @param answer [Tool::Input] a validated answer to {.definition}
       # @return [String]
-      def document(answer)
-        fields = answer.to_h
-        [PREAMBLE, *HEADINGS.map { |field, heading| "## #{heading}\n\n#{fields.fetch(field)}" }].join("\n\n")
-      end
+      def document(answer) = Document.from_answer(answer.to_h).to_s
 
-      # The three slots, cut to ONE byte budget in the order they can best
-      # afford it: the held replacements first, because they are already
+      # The slots, cut to ONE byte budget in the order they can best afford
+      # it: the previous state document first and never cut, because it is the
+      # one account of everything before it and a line of it would be a guess
+      # at the rest; the held replacements next, because they are already
       # compressed and are the only account of history nothing else carries;
       # then the uncollapsed span; then the pins, which the render keeps
       # verbatim anyway, so naming them is a courtesy rather than the content.
       #
+      # @param document [String, nil] the state the last handoff wrote, if any,
+      #   exactly as its cut recorded it
       # @param held [Array<Hash>] the replacements the cuts that hold rendered
       # @param span [Array<Hash>] the turns no held cut has collapsed
       # @param pins [Array<Hash>] the pinned turns, which stay verbatim
@@ -155,9 +158,13 @@ module Lain
       #   by default, which is the one a caller that cannot resolve the tier's
       #   model would be asked in anyway.
       # @return [Hash{Symbol=>String}] the slots {TEMPLATE} names
-      def question(held:, span:, pins:, budget: budget_for(ContextWindow::CONSERVATIVE_FALLBACK))
+      def question(held:, span:, pins:, document: nil, budget: budget_for(ContextWindow::CONSERVATIVE_FALLBACK))
         left = Budget.new(budget)
-        SECTIONS.zip([held, span, pins]).to_h { |(slot, heading), messages| [slot, left.take(messages, heading:)] }
+        whole = left.keep(document, heading: SECTIONS.fetch(:document))
+        taken = SECTIONS.except(:document).zip([held, span, pins])
+                        .to_h { |(slot, heading), messages| [slot, left.take(messages, heading:)] }
+        taken[:span] = left.widen(taken.fetch(:span))
+        { document: whole }.merge(taken.transform_values(&:to_s))
       end
 
       # One line for one message: the role, then every block reduced to at most
@@ -169,6 +176,15 @@ module Lain
       # @return [String]
       def line(message)
         "#{message.fetch("role")}: #{blocks(message).map { |block| cut(stub(block)) }.join(" ")}"
+      end
+
+      # The same line with no block cut: what a turn costs when the budget can
+      # afford all of it. Tool results are still stubs, as in {.line}.
+      #
+      # @param message [Hash] a canonical-normalized projection
+      # @return [String]
+      def whole(message)
+        "#{message.fetch("role")}: #{blocks(message).map { |block| flatten(stub(block)) }.join(" ")}"
       end
 
       # {Context::Conversation#blocks}' reading and its reasoning: a bare String
@@ -193,11 +209,14 @@ module Lain
       end
       private_class_method :stub
 
+      def flatten(text) = text.gsub(/\s+/, " ")
+      private_class_method :flatten
+
       # One line, and the cut says what it cost -- a bound that silently
       # shortened a block would leave the model reading a truncated sentence as
       # a whole one.
       def cut(text)
-        flat = text.gsub(/\s+/, " ")
+        flat = flatten(text)
         return flat if flat.length <= LINE_CHARS
 
         "#{flat[0, LINE_CHARS]}... [#{text.bytesize} bytes in full]"
@@ -215,6 +234,21 @@ module Lain
       # part being worked on. What survives is rendered oldest first even so,
       # because that is how a conversation reads.
       class Budget
+        # One slot as {Budget#take} afforded it: lines and messages are newest
+        # first, and the notice is already paid for.
+        Section = Data.define(:heading, :notice, :lines, :messages) do
+          # The heading, then the lines oldest first under the notice; "" when
+          # nothing fits or there was nothing to say, because a heading over
+          # nothing is worse than silence.
+          #
+          # @return [String]
+          def to_s
+            return "" if lines.empty?
+
+            "#{heading}\n\n#{[notice, *lines.reverse].compact.join("\n")}\n"
+          end
+        end
+
         ELIDED = "[%<count>d earlier turn(s) elided: they did not fit this question]"
 
         def initialize(bytes)
@@ -223,20 +257,54 @@ module Lain
 
         # @param messages [Array<Hash>] canonical-normalized projections
         # @param heading [String] what this section is called
-        # @return [String] the heading, then the lines that fit oldest first
-        #   under one line saying how many did not -- and "" when nothing fits
-        #   or there was nothing to say, because a heading over nothing is
-        #   worse than silence
+        # @return [Section] the lines that fit, newest first, with the notice
+        #   for those that did not
         def take(messages, heading:)
-          lines = messages.reverse.map { |message| Handoff.line(message) }
+          newest = messages.reverse
+          lines = newest.map { |message| Handoff.line(message) }
           afforded = affordable(lines, heading)
-          return "" if afforded.empty?
+          return Section.new(heading:, notice: nil, lines: [], messages: []) if afforded.empty?
 
           charge(afforded.last.last + heading.bytesize + 2)
-          "#{heading}\n\n#{elided(lines.size - afforded.size, afforded.map(&:first).reverse)}\n"
+          Section.new(heading:, notice: notice(lines.size - afforded.size), lines: afforded.map(&:first),
+                      messages: newest.first(afforded.size))
+        end
+
+        # The turns of a section, newest first, bought back whole out of what
+        # every slot left AFTER it was afforded at cut length. A second pass
+        # and never part of {#take}, so it cannot spend room another slot or
+        # the elided notice was owed.
+        #
+        # @param section [Section]
+        # @return [Section]
+        def widen(section)
+          wholes = section.messages.map { |message| Handoff.whole(message) }
+          extra = upgrade_costs(section.lines, wholes)
+          count = extra.take_while { |sum| sum <= @left }.size
+          charge(extra.fetch(count - 1)) if count.positive?
+          section.with(lines: wholes.first(count) + section.lines.drop(count))
+        end
+
+        # A section that is never cut, for the one thing the question must not
+        # summarize. It is charged even when it overruns, so what follows sees
+        # no room rather than a budget the document already spent.
+        #
+        # @param text [#to_s, nil] nil is no section at all
+        # @param heading [String]
+        # @return [String]
+        def keep(text, heading:)
+          return "" if text.nil?
+
+          "#{heading}\n\n#{text}\n".tap { |section| charge(section.bytesize) }
         end
 
         private
+
+        # Cumulative, like {#running}, for the same `take_while`.
+        def upgrade_costs(shorts, wholes)
+          shorts.zip(wholes).map { |short, whole| whole.bytesize - short.bytesize }
+                .inject([]) { |sums, cost| sums + [(sums.last || 0) + cost] }
+        end
 
         # The heading and its blank line are reserved with the notice, for the
         # notice's reason: a section's own furniture is part of what the budget
@@ -248,10 +316,11 @@ module Lain
 
         # What could not be said, said once -- and charged, when there is room
         # for the sentence itself.
-        def elided(count, kept)
-          told = count.positive? && @left >= reserve(count)
-          charge(reserve(count)) if told
-          [(format(ELIDED, count:) if told), *kept].compact.join("\n")
+        def notice(count)
+          return unless count.positive? && @left >= reserve(count)
+
+          charge(reserve(count))
+          format(ELIDED, count:)
         end
 
         def charge(bytes) = @left -= bytes

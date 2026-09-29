@@ -151,9 +151,17 @@ module Lain
         def handoff(pins:, budget: Oracle::Handoff.budget_for(ContextWindow::CONSERVATIVE_FALLBACK))
           ranges = handoff_ranges(pins)
           Handoff.new(ranges:,
-                      question: Oracle::Handoff.question(held: replacements, span: uncollapsed(ranges), budget:,
+                      question: Oracle::Handoff.question(document: previous_document, held: replacements,
+                                                         span: uncollapsed(ranges), budget:,
                                                          pins: at_indices(pins.indices_in(@walk.messages))))
         end
+
+        # The state the newest held handoff cut wrote, exactly as it recorded
+        # it: the next handoff must carry it whole, and reading it back into
+        # fields would lose whatever an older writer put there.
+        #
+        # @return [String, nil]
+        def previous_document = document_collapse&.fetch("content")&.filter_map { |block| block["text"] }&.join
 
         # Record the handoff: one cut superseding every cut that holds, whose
         # first range carries the state document and whose others collapse to
@@ -291,9 +299,23 @@ module Lain
         # summarizer's input is earlier replacements, which is the whole reason
         # a handoff's own input fits.
         def replacements
-          @seam.collapses.reject { |collapse| collapse.fetch("content").empty? }
+          document_cut = document_of_cut
+          shown = @held.flat_map do |cut|
+            cut.address == document_cut&.address ? without_document(cut.collapses) : cut.collapses
+          end
+          shown.reject { |collapse| collapse.fetch("content").empty? }
                .map { |collapse| { "role" => Derivation::REPLACEMENT_ROLE, "content" => collapse.fetch("content") } }
         end
+
+        # The first collapse with content is where {#hand_off} put the document.
+        def document_collapse = document_of_cut&.collapses&.find { |collapse| collapse.fetch("content").any? }
+
+        def without_document(collapses)
+          at = collapses.index { |collapse| collapse.fetch("content").any? }
+          collapses.reject.with_index { |_, index| index == at }
+        end
+
+        def document_of_cut = @held.reverse.find { |cut| cut.kind == HANDOFF }
 
         # The turns a handoff would collapse that no held cut has already: what
         # the question has to be shown in full, stubs and all.

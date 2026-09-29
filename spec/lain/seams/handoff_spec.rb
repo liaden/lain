@@ -191,6 +191,23 @@ RSpec.describe "a handoff when no cut can make room", :seam do
     end
   end
 
+  describe "a second handoff" do
+    def summarizer_requests
+      provider.requests.select { |request| rendered_text(request).include?("no longer fits its context window") }
+    end
+
+    it "shows the summarizer the first document byte for byte" do
+      chat = agent(handing_off)
+      fill(chat)
+      chat.ask("so what is left to do?")
+      first = of_type("compaction_cut").first.fetch("collapses").first.fetch("content").first.fetch("text")
+      2.times { |index| chat.ask("follow-up #{index}: #{"the lazy dog slept. " * 20}") }
+
+      expect(of_type("compaction_cut").size).to eq(2)
+      expect(Lain::Canonical.dump(summarizer_requests.last.messages)).to include(Lain::Canonical.dump(first)[1..-2])
+    end
+  end
+
   describe "a resume renders the handoff" do
     # The live render's chain and the record it left, so an example can
     # re-render it under any `--compact-keep` a resume might be given.

@@ -12,8 +12,8 @@ RSpec.describe Lain::Oracle::Handoff do
       "open_todos" => "the parser", "next_step" => "write parser.rb" }
   end
 
-  def inputs(held: "", span: "", pins: "")
-    { held:, span:, pins: }
+  def inputs(document: "", held: "", span: "", pins: "")
+    { document:, held:, span:, pins: }
   end
 
   it "fills the three slots the fallback supplies" do
@@ -125,8 +125,9 @@ RSpec.describe Lain::Oracle::Handoff do
         "content" => [{ "type" => "text", "text" => body }] }
     end
 
-    def slots(held: [], span: [], pins: [], window: nil)
-      described_class.question(held:, span:, pins:, budget: described_class.budget_for(window || fallback_window))
+    def slots(held: [], span: [], pins: [], document: nil, window: nil)
+      described_class.question(held:, span:, pins:, document:,
+                               budget: described_class.budget_for(window || fallback_window))
     end
 
     def total(question) = question.values.sum(&:bytesize)
@@ -144,11 +145,11 @@ RSpec.describe Lain::Oracle::Handoff do
       (bytes / described_class::BYTES_PER_TOKEN).ceil + Lain::Oracle::Model::DEFAULT_MAX_TOKENS
     end
 
-    it "fills the three slots the template names" do
+    it "fills the four slots the template names" do
       question = slots(held: [text_turn(1, "an earlier summary")], span: [text_turn(1, "hello")],
                        pins: [text_turn(1, "a pinned turn")])
 
-      expect(question.keys).to contain_exactly(:held, :span, :pins)
+      expect(question.keys).to contain_exactly(:document, :held, :span, :pins)
       expect(question[:held]).to include("an earlier summary")
       expect(question[:span]).to include("hello")
       expect(question[:pins]).to include("a pinned turn")
@@ -169,6 +170,105 @@ RSpec.describe Lain::Oracle::Handoff do
       expect(question[:pins]).to eq("")
       expect(described_class.definition.render(**question))
         .not_to include(described_class::SECTIONS.fetch(:pins))
+    end
+
+    describe "the previous state document" do
+      def document(text = "a" * 980)
+        Lain::Oracle::Handoff::Document.from_answer(
+          "goal" => text, "progress" => "p", "files_and_decisions" => "f", "open_todos" => "o", "next_step" => "n"
+        )
+      end
+
+      it "is carried byte for byte, under its own heading" do
+        previous = document
+
+        question = slots(document: previous, span: prose(400))
+
+        expect(question[:document]).to include(previous.to_s)
+        expect(question[:document]).to start_with(described_class::SECTIONS.fetch(:document))
+      end
+
+      it "prints no heading when there is no previous document" do
+        expect(slots(span: prose(3))[:document]).to eq("")
+      end
+
+      it "stays whole however little budget is left for the turns" do
+        previous = document("a" * 20_000)
+
+        question = slots(document: previous, span: prose(400))
+
+        expect(question[:document]).to include(previous.to_s)
+      end
+
+      it "is spent before the turns are" do
+        question = slots(document:, span: prose(400))
+
+        expect(total(question)).to be <= described_class.budget_for(fallback_window)
+        expect(question[:span]).to include("turn 400:")
+      end
+    end
+
+    describe "turns since the last handoff" do
+      def turns(count, size) = (1..count).map { |index| text_turn(index, "turn #{index}: #{"w" * size}") }
+
+      it "appear whole while the budget holds" do
+        span = turns(3, 900)
+
+        expect(slots(span:, window: served_window)[:span].scan("w" * 900).size).to eq(3)
+      end
+
+      it "stub the oldest and keep the newest whole once the budget binds, the document whole throughout" do
+        budget = described_class.budget_for(fallback_window)
+        span = turns((2 * budget / 900) + 1, 900)
+        previous = "previous document #{"d" * 980}"
+
+        question = slots(span:, document: previous)
+
+        expect(question[:document]).to include(previous)
+        expect(question[:span]).to include("turn #{span.size}: #{"w" * 900}")
+        expect(question[:span].lines.grep(/turn 1: /).first).to include("bytes in full")
+        expect(total(question)).to be <= budget + previous.bytesize
+      end
+
+      # Exact to the byte: the budget that just buys the newest turn whole
+      # does, and one byte less leaves it a stub.
+      it "widens the newest turn at exactly the budget that pays for it, and not a byte sooner" do
+        span = turns(2, 900)
+        heading = described_class::SECTIONS.fetch(:span)
+        stubs = span.sum { |turn| described_class.line(turn).bytesize + 1 }
+        upgrade = described_class.whole(span.last).bytesize - described_class.line(span.last).bytesize
+        exact = heading.bytesize + 2 + stubs + upgrade
+
+        at = described_class.question(held: [], span:, pins: [], budget: exact)
+        under = described_class.question(held: [], span:, pins: [], budget: exact - 1)
+
+        expect(at[:span]).to include("turn 2: #{"w" * 900}")
+        expect(total(at)).to eq(exact)
+        expect(under[:span]).not_to include("turn 2: #{"w" * 900}")
+      end
+
+      # Widening spends only what every slot has left after it was afforded at
+      # cut length, so it can never take the room the notice was reserved.
+      it "never lose turns without saying so, however the leftover falls" do
+        rng = Random.new(1)
+        silent = Array.new(300) do
+          span = Array.new(rng.rand(1..80)) { |index| text_turn(index, "t#{index} #{"x" * rng.rand(1..900)}") }
+          rendered = slots(span:)[:span]
+          shown = rendered.lines.count { |line| line.start_with?("user: t", "assistant: t") }
+          span.size if shown < span.size && !rendered.include?("elided")
+        end.compact
+
+        expect(silent).to be_empty
+      end
+
+      it "keeps the newest turn when earlier summaries are large" do
+        held = [text_turn(1, "s" * 3_400), text_turn(2, "s" * 4_100)]
+
+        question = slots(held:, span: turns(13, 900))
+
+        expect(question[:span]).to include("turn 13: ")
+        expect(question[:held]).not_to include("s" * 3_400)
+      end
     end
 
     describe ".budget_for" do
