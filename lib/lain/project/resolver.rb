@@ -1,20 +1,19 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "tomlrb"
 
 module Lain
   class Project
     # Turns a working directory into a {Project} by walking its own ancestry.
     #
-    # Six rungs, tried in order, each landing on an ancestor-or-self of cwd: an
-    # explicit flag, a `root =` in `.lain/config.toml`, a `.lain/` marker
-    # directory, a `.git` entry, a deliberately empty rung 5, and finally cwd
-    # itself with `detected_by: :none`.
+    # Five rungs, tried in order, each landing on an ancestor-or-self of cwd: an
+    # explicit flag, a `.lain/` marker directory, a `.git` entry, a deliberately
+    # empty rung, and finally cwd itself with `detected_by: :none`. No config
+    # file is read during the walk.
     #
-    # **Rung 5 is reserved and stays empty.** Non-VCS markers (`package.json`,
+    # **The empty rung is reserved and stays empty.** Non-VCS markers (`package.json`,
     # `Cargo.toml`, `Gemfile`) are not planned: in a monorepo the nearest
-    # `package.json` names a PACKAGE, not the project, so it would fight rung 4
+    # `package.json` names a PACKAGE, not the project, so it would fight the git rung
     # and usually lose the case the monorepo user wanted.
     #
     # **The rungs are searched rung-major, not directory-major.** Each rung scans
@@ -28,7 +27,7 @@ module Lain
     # `$HOME`, not because the git detector was taught to skip home. That
     # ordering is also what lets {Report#refusal} name which rung was rejected.
     # Rung 1 is exempt -- an explicit `--root $HOME` is intent, not inference --
-    # and so is rung 6, which never walks anywhere.
+    # and so is rung 5, which never walks anywhere.
     #
     # **The walk is our own; it never shells to `git rev-parse --show-toplevel`,**
     # because git answers that from `GIT_DIR`/`GIT_WORK_TREE` before it looks at
@@ -53,10 +52,10 @@ module Lain
                         "GIT_CEILING_DIRECTORIES" => nil }.freeze
 
       # The rungs the walk itself can produce, strongest evidence first. Rung 1
-      # (`:flag`) is absent because it never walks and rung 6 (`:none`) because
+      # (`:flag`) is absent because it never walks and rung 5 (`:none`) because
       # it is the fallthrough; a spec pins this against {Project::DETECTED_BY}
       # so the two orderings cannot drift.
-      WALKED_RUNGS = %i[config lain_dir git].freeze
+      WALKED_RUNGS = %i[lain_dir git].freeze
 
       # `.git` is a DIRECTORY in a primary checkout and a one-line `gitdir:`
       # pointer FILE in a linked worktree, so this is only ever tested with
@@ -95,15 +94,6 @@ module Lain
         def initialize(cause)
           super("cannot tell which project this is -- #{cause.message}; set HOME to the user's home " \
                 "directory, which is where the project walk stops")
-        end
-      end
-
-      # `.lain/config.toml` declared a `root` this walk cannot use as one -- a
-      # shape failure, unlike a root that is merely refused or out of ancestry,
-      # which falls through to the next rung instead.
-      class UnusableConfiguredRoot < Error
-        def initialize(path, value, why)
-          super("#{path} declares root = #{value.inspect}, which #{why}")
         end
       end
 
@@ -276,94 +266,6 @@ module Lain
         def each(&block) = @candidates.each(&block)
       end
 
-      # Rung 2's scan of the walk: the nearest `root =` the walk can reach.
-      #
-      # **LAZY, and that is a correctness property, not an optimisation.** "First
-      # match wins" has to mean the scan STOPS -- an eager scan opens every
-      # `.lain/config.toml` in the ancestry after the nearest one has answered, so
-      # one stale or hostile file high in a tree makes `lain` refuse to start in
-      # every project beneath it. These files are untrusted input, so the fewer
-      # the walk touches the better.
-      #
-      # Only the files ABOVE an answer go unopened. A broken config the walk
-      # reaches BEFORE any answer still raises, deliberately: rung 2 scans the
-      # whole reachable ancestry before rung 3 is tried, so a config a user can
-      # see and the parser cannot read is a real error.
-      class Declarations
-        # The `paths:` is threaded rather than left to {ProjectDir}'s default,
-        # which would build one over the live environment: nothing about a
-        # walk's config lookup should depend on `$HOME` being set, and a
-        # locator handed a defaulted {Paths} is one reader away from doing so.
-        def initialize(walk:, filesystem:, paths:)
-          @walk = walk
-          @filesystem = filesystem
-          @paths = paths
-          @declined = []
-        end
-
-        # Asked at most once per resolution -- {Resolver#walked} is lazy over
-        # {WALKED_RUNGS} -- which is why there is deliberately no memo: one would
-        # defend nothing, and no spec could tell a live memo from a dead one.
-        #
-        # @return [String, nil] the nearest declared root the walk can reach
-        # @raise [UnusableConfiguredRoot] on a declaration of the wrong shape
-        # @raise [Config::Malformed] on a config.toml that will not parse
-        def root = @walk.lazy.filter_map { |dir| declared_in(dir) }.first
-
-        # Whether a declaration this scan REACHED named this directory and was
-        # turned down for it -- how {Report#refusal} can say a rung-2 declaration,
-        # not merely a bare marker, is what the stop rule rejected. Empty until
-        # {#root} has run: an explicit `--root` never scans.
-        #
-        # @param directory [String]
-        # @return [Boolean]
-        def declined?(directory) = @declined.include?(directory)
-
-        private
-
-        def declared_in(dir)
-          path = ProjectDir.new(root: dir, paths: @paths).config
-          return nil unless @filesystem.exist?(path)
-
-          declared = declared_root(path)
-          declared && reachable(path, declared, dir)
-        end
-
-        # Through the SAME parse the six table readers use, which is the
-        # difference between this scan and what it replaced. It used to be
-        # {Config}'s private reader copied out verbatim -- its three-class
-        # rescue and its {Config::Malformed} rename included -- so a fourth way
-        # of failing to read a config file, added there, would never have
-        # reached the one caller that opens these files first.
-        #
-        # And it is first: this walk runs during root resolution, before any
-        # table is asked for, so ordinarily it is this call that does the
-        # process's one parse and the six readers that find it already done.
-        def declared_root(path) = Config::Resolved.for(path).declared_root
-
-        # A `~` is refused LEXICALLY and never handed to `File.expand_path`,
-        # which would resolve it through getpwnam -- on an SSSD or LDAP-backed
-        # host that is a network call, made on behalf of a file a cloned
-        # repository may well have written (`approval/risk.rb` refuses it for the
-        # same reason).
-        #
-        # Out-of-ancestry is NOT a shape failure: the refusal set makes rungs fall
-        # through rather than raise, and a declared root the walk cannot reach is
-        # the same situation. It is recorded rather than discarded so the report
-        # can still name it.
-        def reachable(path, declared, dir)
-          raise UnusableConfiguredRoot.new(path, declared, "is not a string") unless declared.is_a?(String)
-          raise UnusableConfiguredRoot.new(path, declared, "is empty") if declared.empty?
-          raise UnusableConfiguredRoot.new(path, declared, "is home-relative") if declared.start_with?("~")
-
-          target = File.expand_path(declared, dir)
-          return target if @walk.include?(target)
-
-          @declined << target
-          nil
-        end
-      end
-
       # THE ONE PLACE A RUN RESOLVES ITS OWN PROJECT. `lain chat` reaches it
       # through {CLI::ChatLaunch}'s default `project_factory:`; a
       # directly-constructed {CLI::Wiring} takes it as a keyword default; and
@@ -409,37 +311,29 @@ module Lain
       # @param root [String, nil] an explicit root (rung 1), exempt from the refusal set
       # @return [Report]
       # @raise [Project::Unresolvable] when cwd or an explicit root names no readable path
-      # @raise [UnusableConfiguredRoot] when a `.lain/config.toml` declares an unusable root
-      # @raise [Config::Malformed] when a `.lain/config.toml` on the walk will not parse
       def call(cwd: Dir.pwd, root: nil)
         here = resolve!(:cwd, cwd)
         walk = Walk.new(cwd: here, refusals: Refusals.new(cwd: here, home: @home, paths: @paths,
                                                           filesystem: @filesystem))
-        declarations = Declarations.new(walk:, filesystem: @filesystem, paths: @paths)
-        # Ordered, not incidental: {Declarations#declined?} can only answer for
-        # what the scan actually read, so detection has to run before the report.
-        rung, found = detect(root, walk, declarations, here)
+        rung, found = detect(root, walk, here)
         Report.new(project: Project.new(root: found, cwd: here, kind: kind_for(found), detected_by: rung),
-                   refusal: refusal_for(walk, declarations))
+                   refusal: refusal_for(walk))
       end
 
       private
 
-      def detect(root, walk, declarations, cwd)
+      def detect(root, walk, cwd)
         return [:flag, resolve!(:root, root)] if root
 
-        walked(walk, declarations) || [:none, cwd]
+        walked(walk) || [:none, cwd]
       end
 
-      def walked(walk, declarations)
-        WALKED_RUNGS.lazy
-                    .filter_map { |rung| root_at(rung, walk, declarations)&.then { |dir| [rung, dir] } }
-                    .first
+      def walked(walk)
+        WALKED_RUNGS.lazy.filter_map { |rung| root_at(rung, walk)&.then { |dir| [rung, dir] } }.first
       end
 
-      def root_at(rung, walk, declarations)
+      def root_at(rung, walk)
         case rung
-        when :config then declarations.root
         when :lain_dir then walk.find { |dir| @filesystem.directory?(ProjectDir.new(root: dir, paths: @paths).dir) }
         when :git then walk.find { |dir| @filesystem.exist?(marker(dir, GIT_ENTRY)) }
         end
@@ -447,21 +341,15 @@ module Lain
 
       def marker(dir, *names) = File.join(dir, *names)
 
-      # A declined rung-2 declaration outranks the boundary's bare markers: where
-      # a user wrote an explicit `root =` and the stop rule turned it down, a
-      # report saying `rung none` would be a lie about what happened.
-      def refusal_for(walk, declarations)
-        rung = declarations.declined?(walk.boundary) ? :config : marker_rung(walk.boundary)
-        Refusal.new(directory: walk.boundary, reason: walk.reason, rung:)
+      def refusal_for(walk)
+        Refusal.new(directory: walk.boundary, reason: walk.reason, rung: marker_rung(walk.boundary))
       end
 
       # MARKERS only, never file CONTENT: the boundary is a directory this walk
-      # has already refused, so naming what sat there must not mean parsing a
-      # config it declined to trust -- nor raising on one that will not parse.
+      # has already refused, so naming what sat there must not mean parsing
+      # anything it declined to trust.
       def marker_rung(dir)
-        project = ProjectDir.new(root: dir, paths: @paths)
-        return :config if @filesystem.exist?(project.config)
-        return :lain_dir if @filesystem.directory?(project.dir)
+        return :lain_dir if @filesystem.directory?(ProjectDir.new(root: dir, paths: @paths).dir)
         return :git if @filesystem.exist?(marker(dir, GIT_ENTRY))
 
         :none

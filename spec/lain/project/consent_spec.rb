@@ -680,21 +680,13 @@ RSpec.describe Lain::Project::Consent do
       end
     end
 
-    # WHICH layer refuses depends on the rung, and driving the REAL resolver is
-    # what surfaced it -- a hand-built Project hid this entirely.
-    #
-    # `--root` short-circuits rung 1, so nothing opens the file until this class
-    # does, and this class swallows it. A WALKED project reads the same file at
-    # rung 2 first ({Resolver::Declarations#declared_root}, looking for `root =`),
-    # so an unparseable config refuses THERE -- upstream of consent, rendered by
-    # `exe/lain` as one line. Consent is total either way; it is simply not the
-    # only thing that opens that file, and the "does not prevent launch" claim
-    # holds for a malformed `[approval]` TABLE rather than for unparseable TOML.
-    it "is refused by the resolver, not by consent, when a WALKED project's config will not parse" do
+    # The resolver walk never opens a config file, so an unparseable one cannot
+    # refuse a WALKED project before consent is asked.
+    it "is not refused by the resolver when a WALKED project's config will not parse" do
       with_root do |root, paths|
         write_config(root, "this is not toml <<<")
 
-        expect { walked_project(root, paths:) }.to raise_error(Lain::Config::Malformed)
+        expect { walked_project(root, paths:) }.not_to raise_error
       end
     end
   end

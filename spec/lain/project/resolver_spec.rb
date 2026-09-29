@@ -120,7 +120,7 @@ RSpec.describe Lain::Project::Resolver do
     fs
   end
 
-  describe "rung 4, a .git entry" do
+  describe "rung 3, a .git entry" do
     it "resolves a monorepo subtree to the repository top" do
       repo = init_repo(File.join(tmp, "work", "repo"))
       cwd = mkdir("work", "repo", "services", "ingest")
@@ -147,7 +147,7 @@ RSpec.describe Lain::Project::Resolver do
     end
   end
 
-  describe "rung 3, a .lain directory" do
+  describe "rung 2, a .lain directory" do
     it "beats the repository top below it" do
       init_repo(File.join(tmp, "work", "repo"))
       marked = mkdir("work", "repo", "services", "ingest", ".lain")
@@ -171,167 +171,21 @@ RSpec.describe Lain::Project::Resolver do
     end
   end
 
-  describe "rung 2, a root= in .lain/config.toml" do
-    it "takes the declared root over the .lain directory holding the declaration" do
-      write(File.join(tmp, "work", "repo", "services", ".lain", "config.toml"), %(root = ".."\n))
-      cwd = mkdir("work", "repo", "services", "ingest")
-
-      project = resolver.call(cwd:).project
-
-      expect(project).to have_attributes(root: File.join(tmp, "work", "repo"), detected_by: :config)
-    end
-
-    it "reads a self-naming root as the declaring directory" do
-      write(File.join(tmp, "work", "repo", ".lain", "config.toml"), %(root = "."\n))
+  describe "an ancestor's .lain/config.toml" do
+    it "is never read: a declared root is ignored in favour of the .lain marker" do
+      write(File.join(tmp, "work", "repo", ".lain", "config.toml"), %(root = ".."\n))
       cwd = mkdir("work", "repo", "src")
-
-      expect(resolver.call(cwd:).project).to have_attributes(root: File.join(tmp, "work", "repo"),
-                                                             detected_by: :config)
-    end
-
-    # The scan comes through {Lain::Config::Resolved}, the same shared parse the
-    # six table readers use, rather than reimplementing {Config}'s private
-    # reader as it did. So the walk's own read is the process's ONE read of that
-    # file, and every reader that follows finds it already done -- which is what
-    # makes "parsed once per startup" true rather than "parsed twice".
-    it "reads the declaring file once, and leaves it read for the table readers" do
-      root = File.join(tmp, "work", "repo")
-      path = write(File.join(root, ".lain", "config.toml"), %(root = "."\n[epics]\nhome = "repo"\n))
-      cwd = mkdir("work", "repo", "src")
-      allow(Tomlrb).to receive(:load_file).and_call_original
-
-      project = resolver.call(cwd:).project
-
-      expect(project.root).to eq(root)
-      expect(Lain::Config.load(root: project.root).epics_home).to eq(:repo)
-      expect(Tomlrb).to have_received(:load_file).with(path).once
-    end
-
-    it "declines a declared root that is not an ancestor-or-self of cwd, falling to the next rung" do
-      init_repo(File.join(tmp, "work", "repo"))
-      elsewhere = mkdir("work", "elsewhere")
-      write(File.join(tmp, "work", "repo", "services", ".lain", "config.toml"), %(root = "#{elsewhere}"\n))
-      cwd = mkdir("work", "repo", "services", "ingest")
-
-      report = resolver.call(cwd:)
-
-      # Rung 3 then matches on the very directory that declared the root, which
-      # is the nearest rung below rung 2 -- never `elsewhere`, and never a raise.
-      expect(report.project)
-        .to have_attributes(root: File.join(tmp, "work", "repo", "services"), detected_by: :lain_dir)
-      # A decline that names somewhere OTHER than the boundary must not rename
-      # the boundary's own rung.
-      expect(report.refusal.rung).to eq(:none)
-    end
-
-    it "declines a declared root above the refusal boundary, and the report names that rung" do
-      write(File.join(home, "code", ".lain", "config.toml"), %(root = ".."\n))
-      cwd = mkdir("home", "code", "app")
-
-      report = resolver.call(cwd:)
-
-      # `..` is `$HOME`, which the walk never admits as a candidate, so the
-      # config cannot reach past the stop rule that governs every other rung.
-      expect(report.project).to have_attributes(root: File.join(home, "code"), detected_by: :lain_dir)
-      # The walk genuinely evaluated a rung-2 declaration and turned it down.
-      # `rung: :none` here would report a bare unmarked $HOME, which is not what
-      # happened -- a user wrote an explicit `root =` and it was declined.
-      expect(report.refusal).to have_attributes(directory: home, reason: :home, rung: :config)
-    end
-
-    it "does not carry a declined declaration from one resolution into the next" do
-      write(File.join(home, "code", ".lain", "config.toml"), %(root = ".."\n))
-      declining = mkdir("home", "code", "app")
-      innocent = mkdir("home", "notes")
-
-      expect(resolver.call(cwd: declining).refusal).to have_attributes(directory: home, rung: :config)
-
-      # The SAME resolver, a second call, and deliberately the same boundary:
-      # nothing was declined this time, so a report still naming the first
-      # call's config is the scan's own state leaking across resolutions.
-      expect(resolver.call(cwd: innocent).refusal).to have_attributes(directory: home, rung: :none)
-    end
-
-    it "names rung 2 in the refusal even when $HOME carries no marker of its own" do
-      write(File.join(home, "code", "app", ".lain", "config.toml"), %(root = "#{home}"\n))
-      cwd = mkdir("home", "code", "app")
-
-      report = resolver.call(cwd:)
-
-      expect(report.project).to have_attributes(root: cwd, detected_by: :lain_dir)
-      expect(report.refusal).to have_attributes(directory: home, reason: :home, rung: :config)
-    end
-
-    it "refuses a home-relative declared root lexically, naming the file and the value" do
-      path = write(File.join(tmp, "work", "repo", ".lain", "config.toml"), %(root = "~/elsewhere"\n))
-      cwd = mkdir("work", "repo", "src")
-
-      expect { resolver.call(cwd:) }
-        .to raise_error(Lain::Project::Resolver::UnusableConfiguredRoot, %r{#{Regexp.escape(path)}.*"~/elsewhere"})
-    end
-
-    it "refuses a declared root that is not a string" do
-      write(File.join(tmp, "work", "repo", ".lain", "config.toml"), %(root = 7\n))
-      cwd = mkdir("work", "repo", "src")
-
-      expect { resolver.call(cwd:) }.to raise_error(Lain::Project::Resolver::UnusableConfiguredRoot, /7/)
-    end
-
-    it "raises Config::Malformed on a config.toml that will not parse, naming the path" do
-      path = write(File.join(tmp, "work", "repo", ".lain", "config.toml"), %(root = "unterminated\n))
-      cwd = mkdir("work", "repo", "src")
-
-      expect { resolver.call(cwd:) }.to raise_error(Lain::Config::Malformed, /#{Regexp.escape(path)}/)
-    end
-
-    it "leaves a broken config.toml above the one that answered unopened" do
-      write(File.join(tmp, "work", ".lain", "config.toml"), %(root = "unterminated\n))
-      write(File.join(tmp, "work", "repo", ".lain", "config.toml"), %(root = "."\n))
-      cwd = mkdir("work", "repo", "src")
-
-      # "First match wins" has to mean the scan STOPS. One stale
-      # `~/work/.lain/config.toml` must not refuse to start every project below it.
-      expect(resolver.call(cwd:).project)
-        .to have_attributes(root: File.join(tmp, "work", "repo"), detected_by: :config)
-    end
-
-    it "leaves an unusable declared root above the one that answered unopened" do
-      write(File.join(tmp, "work", ".lain", "config.toml"), %(root = 7\n))
-      write(File.join(tmp, "work", "repo", ".lain", "config.toml"), %(root = "."\n))
-      cwd = mkdir("work", "repo", "src")
-
-      expect(resolver.call(cwd:).project).to have_attributes(detected_by: :config)
-    end
-
-    it "opens exactly one config.toml however many sit above the one that answered" do
-      write(File.join(tmp, "work", ".lain", "config.toml"), %(root = "."\n))
-      write(File.join(tmp, "work", "repo", ".lain", "config.toml"), %(root = "."\n))
-      write(File.join(tmp, "work", "repo", "src", ".lain", "config.toml"), %(root = "."\n))
-      cwd = mkdir("work", "repo", "src")
-
-      expect(Tomlrb).to receive(:load_file).once.and_call_original
-
-      resolver.call(cwd:)
-    end
-
-    it "still raises on a broken config above when no nearer one answers" do
-      path = write(File.join(tmp, "work", ".lain", "config.toml"), %(root = "unterminated\n))
-      mkdir("work", "repo", ".lain")
-      cwd = mkdir("work", "repo", "src")
-
-      # Inherent to rung-major, and deliberate: rung 2 scans the whole REACHABLE
-      # ancestry before rung 3 is tried, so a config.toml the walk can reach and
-      # cannot parse is a real error a user has to see. Only the files ABOVE an
-      # answer go unopened.
-      expect { resolver.call(cwd:) }.to raise_error(Lain::Config::Malformed, /#{Regexp.escape(path)}/)
-    end
-
-    it "ignores a config.toml that declares no root at all" do
-      write(File.join(tmp, "work", "repo", "services", ".lain", "config.toml"), %([epics]\nhome = "repo"\n))
-      cwd = mkdir("work", "repo", "services", "ingest")
 
       expect(resolver.call(cwd:).project)
-        .to have_attributes(root: File.join(tmp, "work", "repo", "services"), detected_by: :lain_dir)
+        .to have_attributes(root: File.join(tmp, "work", "repo"), detected_by: :lain_dir)
+    end
+
+    it "cannot block the walk when it would not parse" do
+      write(File.join(tmp, "work", "repo", ".lain", "config.toml"), %(root = "unterminated\n))
+      cwd = mkdir("work", "repo", "src")
+
+      expect(resolver.call(cwd:).project)
+        .to have_attributes(root: File.join(tmp, "work", "repo"), detected_by: :lain_dir)
     end
   end
 
@@ -389,7 +243,7 @@ RSpec.describe Lain::Project::Resolver do
       report = resolver.call(cwd:)
 
       expect(report.project.detected_by).to eq(:none)
-      expect(report.refusal).to have_attributes(directory: home, reason: :home, rung: :config)
+      expect(report.refusal).to have_attributes(directory: home, reason: :home, rung: :lain_dir)
     end
 
     it "still finds a project root BELOW $HOME" do

@@ -67,10 +67,10 @@ RSpec.describe Lain::Project do
 
   # Scenario: detected_by is a closed set
   describe "when detected_by is outside the closed set" do
-    it "raises and names the five known rungs" do
+    it "raises and names the four known rungs" do
       Dir.mktmpdir do |dir|
         expect { described_class.new(root: dir, cwd: dir, kind: :project, detected_by: :guess) }
-          .to raise_error(ArgumentError, /:flag.*:config.*:lain_dir.*:git.*:none/)
+          .to raise_error(ArgumentError, /:flag.*:lain_dir.*:git.*:none/)
       end
     end
   end

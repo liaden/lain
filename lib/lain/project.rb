@@ -58,9 +58,9 @@ module Lain
     KINDS = %i[project home].freeze
 
     # The rungs root/cwd detection climbs, weakest to strongest evidence: an
-    # explicit flag, a config file, a `.lain/` marker directory, `git`'s own
+    # explicit flag, a `.lain/` marker directory, `git`'s own
     # notion of a repo root, or none of the above.
-    DETECTED_BY = %i[flag config lain_dir git none].freeze
+    DETECTED_BY = %i[flag lain_dir git none].freeze
 
     # `root`/`cwd` failed to resolve to a real path -- missing, or present but
     # unreadable. Names which of the two roles failed and the path given.
