@@ -243,6 +243,36 @@ RSpec.describe Lain::CLI::Review, :seam do
     end
   end
 
+  # The run's ONE ledger has to reach the source a note's evidence is read
+  # from, or a region the human released journals as masked forever.
+  describe "the region ledger a resolved target reads its evidence through" do
+    let(:secret_line) { "API_KEY=sk-live-0000000000000000" }
+    let(:ledger) { Lain::Sensitivity::Ledger.new }
+    let(:targets) { described_class::Target.new(repo_root: @repo, shell_out_factory: factory, ledger:) }
+
+    before do
+      File.write(File.join(@repo, "app.env"), "#{secret_line}\n")
+      run_git("add", "-A")
+      run_git("commit", "-q", "-m", "add the env file")
+    end
+
+    def evidence = anchor_text_for(targets.resolve("feature", base: nil).source)
+
+    def anchor_text_for(source)
+      Lain::Review::Changeset.new(source:).anchor(path: "app.env", side: :new, line: 1).anchor_text
+    end
+
+    it "masks the line while nothing is released" do
+      expect(evidence).to eq("API_KEY=<redacted:1>")
+    end
+
+    it "journals the released text once the run's ledger holds the release" do
+      ledger.release(File.join(File.realpath(@repo), "app.env"), Lain::Sensitivity::Regions.detect("#{secret_line}\n"))
+
+      expect(evidence).to eq(secret_line)
+    end
+  end
+
   # WHERE a review of this target can be posted, decided by the two methods
   # that already know which of the two they resolved. Recorded on the resolution
   # rather than asked of the source afterwards, so nothing downstream type-tests

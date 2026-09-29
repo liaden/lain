@@ -160,9 +160,12 @@ module Lain
         #   its own could not be driven past one.
         # @param shell_out_factory [#call] builds the subprocess runner, injected
         #   as {Lain::CLI::Review} and both sources do
-        def initialize(outbox:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
+        # @param ledger [Lain::Sensitivity::Ledger] the run's ONE region ledger, so
+        #   a note's anchor text journals a released region as released
+        def initialize(outbox:, ledger:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
                        shell_out_factory: Mixlib::ShellOut.public_method(:new))
           @outbox = outbox
+          @ledger = ledger
           @root = root
           @bounds = bounds
           @shell_out_factory = shell_out_factory
@@ -403,7 +406,10 @@ module Lain
         # Unchanged from {Lain::CLI::Review}: PR-vs-branch, the ambiguity refusal
         # and `--base`'s two rules are already that object's and already tested,
         # and a second resolver here would be a second set of answers.
-        def targets = Lain::CLI::Review::Target.new(repo_root: @root, shell_out_factory: @shell_out_factory)
+        def targets
+          Lain::CLI::Review::Target.new(repo_root: @root, shell_out_factory: @shell_out_factory,
+                                        ledger: @ledger)
+        end
       end
     end
   end

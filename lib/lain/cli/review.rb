@@ -190,9 +190,12 @@ module Lain
 
         # @param repo_root [String] the repository every git call reads
         # @param shell_out_factory [#call] builds the subprocess runner
-        def initialize(repo_root:, shell_out_factory:)
+        # @param ledger [Lain::Sensitivity::Ledger] the region ledger a resolved
+        #   source masks a note's evidence against; a fresh one masks everything
+        def initialize(repo_root:, shell_out_factory:, ledger: Lain::Sensitivity::Ledger.new)
           @repo_root = File.expand_path(repo_root)
           @shell_out_factory = shell_out_factory
+          @projection = Lain::Survey::Projection.new(ledger:)
         end
 
         # @param target [String]
@@ -219,6 +222,7 @@ module Lain
         def pull_request(target)
           source = Lain::Review::Source::GithubPr.new(pull_request: target, repo_root: @repo_root,
                                                       shell_out_factory: @shell_out_factory)
+          source.projection = @projection
           Resolved.new(source:, label: "pull request #{source.number}", number: source.number)
         end
 
@@ -226,6 +230,7 @@ module Lain
           source = Lain::Review::Source::LocalBranch.new(base: base || default_base, head: target,
                                                          repo_root: @repo_root,
                                                          shell_out_factory: @shell_out_factory)
+          source.projection = @projection
           Resolved.new(source:, label: "branch #{target}", number: nil)
         end
 

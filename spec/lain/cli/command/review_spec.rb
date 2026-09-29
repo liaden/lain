@@ -95,7 +95,8 @@ end
 
 RSpec.describe Lain::CLI::Command::Review do
   let(:command) do
-    described_class.new(root: @repo, outbox:, shell_out_factory: Mixlib::ShellOut.public_method(:new))
+    described_class.new(root: @repo, outbox:, shell_out_factory: Mixlib::ShellOut.public_method(:new),
+                        ledger: Lain::Sensitivity::Ledger.new)
   end
 
   # The REAL outbox `/review-submit` reads, never a spy: what has to be true is
@@ -770,7 +771,7 @@ RSpec.describe Lain::CLI::Command::Review do
     # whose header names that file.
     def resumed(dir, earlier: "feature")
       prior = StringIO.new
-      described_class.new(root: @repo, outbox: Lain::Review::Submit::Outbox.new)
+      described_class.new(root: @repo, outbox: Lain::Review::Submit::Outbox.new, ledger: Lain::Sensitivity::Ledger.new)
                      .call(earlier, build_command_env(replies:,
                                                       chronicle: chronicle_on(Lain::Journal.new(io: prior), nil)))
       File.write(File.join(dir, "earlier.ndjson"), prior.string)
@@ -890,7 +891,7 @@ RSpec.describe Lain::CLI::Command::Review do
     # leaves it holding NOTHING (asserted below), which a spy could not say
     # honestly.
     def bounded(**ceilings)
-      described_class.new(root: @repo, outbox:, bounds: Lain::Review::Bounds.new(**ceilings),
+      described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new, bounds: Lain::Review::Bounds.new(**ceilings),
                           shell_out_factory: Mixlib::ShellOut.public_method(:new))
     end
 

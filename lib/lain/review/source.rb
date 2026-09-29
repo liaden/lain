@@ -280,8 +280,19 @@ module Lain
         # @return [Identity]
         def identity = @identity ||= Identity.new(scheme: DIGEST_SCHEME, parts: identity_parts)
 
-        # One line of {#file_at}'s answer, cut by {Anchor.lines}' rule -- what a
-        # note's evidence is read from. {Corpus#line_at} answers the same
+        # What may be SEEN of a line before a note journals it. Unwired, a fresh
+        # ledger masks every detected region; the run's own ledger is injected
+        # through {#projection=} so a released region journals as released.
+        #
+        # @return [Survey::Projection]
+        def projection = @projection ||= Survey::Projection.new(ledger: Sensitivity::Ledger.new)
+
+        # @param value [Survey::Projection]
+        attr_writer :projection
+
+        # One line of {#file_at}'s answer, cut by {Anchor.lines}' rule and masked
+        # as {Survey::Projection#line} masks it -- what a note's evidence is read
+        # from, and a note is journaled. {Corpus#line_at} answers the same
         # question, and cannot be this: its whole-file answer is projected, and a
         # projection's line numbers are not the file's.
         #
@@ -292,10 +303,14 @@ module Lain
         #   no such path or no such line
         def line_at(revision, path, number)
           bytes = file_at(revision, path)
-          Anchor.lines(bytes)[number - 1] unless bytes.nil?
+          projection.line(ledger_path(path), bytes, number) unless bytes.nil?
         end
 
         private
+
+        # The ledger keys releases by ABSOLUTE path. A host with no checkout (a
+        # stub over held bytes) roots at "/", which still keys consistently.
+        def ledger_path(path) = File.join(@repo_root.to_s, path)
 
         # `group_by(&:path)` then `Hunk.keys` over one file's hunks at a time --
         # the batch is a precondition of the key scheme rather than a
