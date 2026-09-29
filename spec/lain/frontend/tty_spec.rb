@@ -596,6 +596,41 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  # The prompt's read is still unwinding when the call's closing line prints,
+  # so the row it drew is open: the verdict must start its own row and end it
+  # before whatever the chat streams next.
+  describe "#close_prompt on a drawn prompt" do
+    let(:closing) do
+      Class.new(String) do
+        def closed = yield("! agent asks to run bash(\"ls\")  -- decided by timeout: denied")
+      end.new("[y/N] ")
+    end
+    let(:plain) { described_class.new(channel:, output:, pastel: Pastel.new(enabled: false)) }
+
+    def close_then_stream
+      Sync do |task|
+        released = Async::Notification.new
+        drawn = task.async { plain.drawing(-> { false }) { output.print("[y/N] ").then { released.wait } } }
+        plain.close_prompt(closing)
+        output.print("I apologize")
+        released.signal
+        drawn.wait
+      end
+    end
+
+    it "puts the verdict on its own row, ended before the next output" do
+      close_then_stream
+
+      expect(output.string).to include("-- decided by timeout: denied\r\nI apologize")
+    end
+
+    it "leaves the drawn row in the scrollback" do
+      close_then_stream
+
+      expect(output.string).to start_with("[y/N] \r\n! agent asks")
+    end
+  end
+
   # The countdown waits for the line editor to leave the terminal before it
   # draws and reads keys, so it asks whether a prompt is drawn right now.
   describe "#prompt_drawn?" do

@@ -532,8 +532,9 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         terminal.type("y\r")
         sleep(0.5)
 
-        prompt_line = terminal.screen.lines.grep(PlainChatPromptGuards::APPROVAL).last
-        expect(prompt_line).to include("-- decided by timeout: denied")
+        rows = terminal.screen.lines
+        verdict_row = rows[rows.rindex { |row| row.match?(PlainChatPromptGuards::APPROVAL) } + 1]
+        expect(verdict_row).to include("-- decided by timeout: denied")
         expect(terminal.verdicts).to eq([%w[timeout deny]])
         expect(terminal.dispatched).to eq(["run the tests", "y"])
       end

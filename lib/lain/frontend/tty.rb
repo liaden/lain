@@ -219,7 +219,7 @@ module Lain
       # It runs as a read is being stopped, where a raise -- the terminal gone --
       # would replace the stop that is climbing.
       def close_prompt(text)
-        text.closed { |note| render_warning(note) } if text.respond_to?(:closed)
+        text.closed { |note| @notes.close_row(@theme.paint(:warning, note)) } if text.respond_to?(:closed)
       rescue StandardError
         nil
       end
@@ -883,10 +883,9 @@ module Lain
       #
       # Two notes print at once rather than wait. One from inside the read
       # itself -- a sweep in the pre-input hook, a key action -- is the editor's
-      # own. One for a prompt already withdrawn is its closing line, printed by a
-      # reader that is unwinding. Both land while the line editor holds the
-      # terminal raw, where a newline does not return the carriage, so it is
-      # returned by hand.
+      # own, returned by hand because a newline in raw mode does not return the
+      # carriage. One for a prompt already withdrawn is its closing line
+      # ({#close_row}), printed by a reader that is unwinding.
       class Notes
         # A prompt being drawn: whether it is still published, and the fiber
         # whose read draws it.
@@ -928,6 +927,20 @@ module Lain
         end
 
         def drawn? = @guard.synchronize { !@drawn.equal?(UNDRAWN) }
+
+        # The closing line of a prompt whose read is still unwinding: the row
+        # the prompt drew is ended first, so it stays in the scrollback, and
+        # the line ends its own row, so the chat's next output does not join it.
+        # Written raw rather than through {#note}, whose newline leaves the
+        # cursor a row down but not yet returned. It never waits behind a held
+        # prompt: it is the unwinding reader's own line.
+        def close_row(line)
+          open = @guard.synchronize { @row_open.tap { @row_open = false } }
+          @writer.writing do
+            @output.print("#{"\r\n" if open}#{line}\r\n")
+            @output.flush
+          end
+        end
 
         # @return [void]
         def note(&print)
