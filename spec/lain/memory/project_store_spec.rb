@@ -369,6 +369,37 @@ RSpec.describe Lain::Memory::ProjectStore do
     end
   end
 
+  describe "ownership" do
+    let(:clerk) { Lain::Memory::Author.clerk(spawn: "sha256:abc") }
+    let(:sibling) { described_class.new(project_dir:) }
+
+    def by(author, id, body) = Lain::Memory::Item.new(id:, description: "d", body:, author:)
+
+    it "refuses a clerk write over an id a second store instance saw the chat take after the view loaded" do
+      view = store.view
+      sibling.append(by(Lain::Memory::Author.chat, "suite", "the human's body"))
+
+      expect { view.write(by(clerk, "suite", "clerk body")) }.to raise_error(Lain::Memory::Ownership::Refused, /human/)
+      expect(store.load.items.first.body).to eq("the human's body")
+    end
+
+    it "judges against the store's head, not the first row an id ever had" do
+      store.append(by(clerk, "lineage-a", "v1"))
+      view = store.view
+      sibling.append(by(Lain::Memory::Author.chat, "lineage-a", "human fix"))
+
+      expect { view.write(by(clerk, "lineage-a", "v2")) }.to raise_error(Lain::Memory::Ownership::Refused)
+      expect(store.load.items.first.body).to eq("human fix")
+    end
+
+    it "lets a clerk rewrite an id only a clerk holds" do
+      store.append(by(clerk, "lineage-a", "v1"))
+      store.append(by(clerk, "lineage-a", "v2"))
+
+      expect(store.load.items.first.body).to eq("v2")
+    end
+  end
+
   describe "authorship" do
     it "writes the chat's rows with author kind chat" do
       store.append(item("suite"))

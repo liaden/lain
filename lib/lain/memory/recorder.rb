@@ -53,6 +53,7 @@ module Lain
       # the view where it was, rather than rendering an item nothing durable
       # holds.
       def write(item)
+        Ownership.permit!(item, index.key?(item.id) ? fetch(item.id) : nil)
         @store.append(item)
         @index = folded(index.to_a + [item])
         root

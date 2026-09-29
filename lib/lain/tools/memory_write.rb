@@ -46,7 +46,7 @@ module Lain
       # manifest, and the body itself. Mirrors {Memory::Item}'s fields.
       class Input < Tool::Input
         field :id, :string, description: "Id under which to store the item, at most #{ID_BOUND.limit} bytes. " \
-                                         "Overwrites any prior item at this id.",
+                                         "Replaces an earlier item at this id unless another author owns it.",
                             required: true
         field :description, :string,
               description: "One-line summary shown in the memory manifest, at most #{DESCRIPTION_BOUND.limit} bytes.",
@@ -69,7 +69,8 @@ module Lain
 
       def description
         "Writes the memory item with the given id, description, and body. " \
-          "Overwrites any existing item at that id; the prior version stays " \
+          "Replaces an existing item at that id, unless another author owns it " \
+          "and the write is refused; the prior version stays " \
           "reachable by its old root, only no longer the one resolved by " \
           "memory_read. A body over #{BOUND.limit} bytes is refused rather " \
           "than stored, because memory_read could not hand it back. Returns " \
@@ -89,7 +90,7 @@ module Lain
         item = Memory::Item.new(id: input.id, description: input.description, body: input.body, author:)
         root = recorder.write(item)
         Tool::Result.ok("wrote memory item #{item.id.inspect}; index root is now #{root}")
-      rescue ArgumentError => e
+      rescue ArgumentError, Memory::Ownership::Refused => e
         Tool::Result.error(e.message)
       end
 

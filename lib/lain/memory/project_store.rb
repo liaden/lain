@@ -188,10 +188,12 @@ module Lain
       #
       # @param item [Item]
       # @return [Loaded] the store as this write left it
+      # @raise [Ownership::Refused] when the head is the chat's and the writer is not
       def append(item)
         locked(File::LOCK_EX) do
           log = held
           current = Loaded.of(log)
+          Ownership.permit!(item, current.items.find { |held| held.id == item.id })
           current.heads[item.id] == item.digest ? current : Loaded.of(written(log, item))
         end
       end

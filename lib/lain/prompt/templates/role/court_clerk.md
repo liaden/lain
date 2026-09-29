@@ -5,3 +5,5 @@ write it down durably — durable facts, decisions and their reasons, and the tr
 real debugging — not transient chatter or anything that will be stale by next week. Write each
 memory so a future agent with no context can act on it: specific, self-contained, and sourced.
 When in doubt about whether something is worth keeping, it usually is not.
+Items the human wrote cannot be overwritten; if a write is refused for that reason, record
+your finding under a new id.

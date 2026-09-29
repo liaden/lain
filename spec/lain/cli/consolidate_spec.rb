@@ -242,6 +242,23 @@ RSpec.describe Lain::CLI::Consolidate do
       expect(row["author"]).to eq("kind" => "clerk", "spawn" => spawn_a)
     end
 
+    it "refuses a clerk write over a chat-authored id and counts no write" do
+      Lain::Memory::ProjectStore.new(project_dir:).append(
+        Lain::Memory::Item.new(id: "login-ttl", description: "human", body: "the human's body",
+                               author: Lain::Memory::Author.chat)
+      )
+      provider = Lain::Provider::Mock.new(responses: [
+                                            tool_response(memory_write("login-ttl", "the clerk's body")),
+                                            text_response("clerked A"), text_response("nothing for B")
+                                          ])
+
+      report = from_options(provider:).report
+
+      fresh = Lain::Memory::ProjectStore.new(project_dir:).view
+      expect(fresh.fetch("login-ttl").body).to eq("the human's body")
+      expect(report).to include("2 lineage", "stored nothing")
+    end
+
     it "writes those items to the store file itself, not only to the view the pass held" do
       provider = Lain::Provider::Mock.new(responses: [
                                             tool_response(memory_write("login-ttl", "the token TTL was zero")),

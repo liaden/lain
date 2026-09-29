@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 RSpec.describe Lain::Tools::MemoryWrite do
   subject(:tool) { described_class.new(recorder:, author: Lain::Memory::Author.chat) }
 
@@ -31,6 +33,76 @@ RSpec.describe Lain::Tools::MemoryWrite do
 
     it "offers the model no author field" do
       expect(tool.input_schema["properties"].keys).to eq(%w[id description body])
+    end
+  end
+
+  describe "a clerk write over the human's item" do
+    let(:clerk) { Lain::Memory::Author.clerk(spawn: "sha256:abc") }
+    let(:clerk_tool) { described_class.new(recorder:, author: clerk) }
+
+    before { tool.call(id: "suite", description: "human", body: "the human's body") }
+
+    it "refuses, says the id belongs to the human, and asks for a new id" do
+      result = clerk_tool.call(id: "suite", description: "d", body: "clerk body")
+
+      expect(result.is_error).to be(true)
+      expect(result.content).to include("suite").and include("human").and include("new id")
+    end
+
+    it "leaves the human's body and the root untouched" do
+      root = recorder.root
+      clerk_tool.call(id: "suite", description: "d", body: "clerk body")
+
+      expect(recorder.fetch("suite").body).to eq("the human's body")
+      expect(recorder.root).to eq(root)
+    end
+
+    it "refuses a clerk rewrite once the chat has overwritten the clerk's item" do
+      clerk_tool.call(id: "lineage-a", description: "d", body: "v1")
+      tool.call(id: "lineage-a", description: "d", body: "human fix")
+      result = clerk_tool.call(id: "lineage-a", description: "d", body: "v2")
+
+      expect(result.is_error).to be(true)
+      expect(recorder.fetch("lineage-a").body).to eq("human fix")
+    end
+
+    it "lets the chat overwrite its own item" do
+      tool.call(id: "suite", description: "d", body: "the human's second body")
+
+      expect(recorder.fetch("suite").body).to eq("the human's second body")
+    end
+
+    it "refuses when the store's head is the chat's though this view never saw it" do
+      Dir.mktmpdir do |dir|
+        project = Lain::ProjectDir.new(root: dir,
+                                       paths: Lain::Paths.new(env: {
+                                                                "XDG_STATE_HOME" => dir, "HOME" => dir
+                                                              }))
+        stale = Lain::Memory::ProjectStore.new(project_dir: project).view
+        Lain::Memory::ProjectStore.new(project_dir: project).append(
+          Lain::Memory::Item.new(id: "suite", description: "d", body: "human", author: Lain::Memory::Author.chat)
+        )
+
+        result = described_class.new(recorder: stale, author: clerk).call(id: "suite", description: "d", body: "x")
+
+        expect(result.is_error).to be(true)
+        expect(result.content).to include("human")
+      end
+    end
+
+    it "lets the clerk refine an item it wrote itself" do
+      clerk_tool.call(id: "lineage-a", description: "d", body: "v1")
+      result = clerk_tool.call(id: "lineage-a", description: "d", body: "v2")
+
+      expect(result.is_error).to be(false)
+      expect(recorder.fetch("lineage-a").body).to eq("v2")
+    end
+
+    it "lets the chat correct a clerk item, stamped chat" do
+      clerk_tool.call(id: "lineage-a", description: "d", body: "v1")
+      tool.call(id: "lineage-a", description: "d", body: "corrected")
+
+      expect(recorder.fetch("lineage-a").author).to eq(Lain::Memory::Author.chat)
     end
   end
 

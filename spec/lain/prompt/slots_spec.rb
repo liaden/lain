@@ -216,7 +216,7 @@ RSpec.describe Lain::Prompt::Slots do
     let(:shipped_system_digest) { "blake3:b8f7c81556a743daf8049a1a5290bc50c485f2f04edac5a8e810a3b0b5c9d41f" }
     let(:shipped_role_digests) do
       {
-        "court_clerk" => "blake3:499fc742e000f14b49882c3c860b89717be9ed2e2f96d08bdab25dc953316de5",
+        "court_clerk" => "blake3:4879b45773658d7cac5285a0bffc53ee79e7249d461df494fb8a579d3e00ed50",
         "dev" => "blake3:d07a3b13c813c36c6ce8ecd5034893c8b39ca6b2df6c2004a1125f8039a6b9ed",
         "researcher" => "blake3:8bd27883cf2819e0a9612e776034556b6cd9064d5a1f9be9fa53f22c0ee36a0c",
         "reviewer_dba" => "blake3:fc9c90ceceeab6c7d82c2bea4fd828155dedd03eccbd5c23acf591ec2026f56e",
