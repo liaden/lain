@@ -1,7 +1,7 @@
 # Scenario: the shell subsystem — arm selection, deterministic approval, and the egress floor
 
 **What it exercises:** `Shell::Verdict` and the three-valued `Decision` it returns
-(`shell/verdict.rb:162-165,198-229`); the `[shell] exclude` table that finally makes its
+(`shell/verdict.rb:162-165,198-229`); the `shell exclude:` verb of `.lain/config.rb` that finally makes its
 `deny` arm reachable (`shell/exclusions.rb:34-177`, wired at
 `cli/wiring/board_build.rb:128-134`); `Tools::Bash#arm_for` and `#on_arm`, which choose
 between reconstructed argv and `sh -c` (`tools/bash.rb:268,274`); the
@@ -131,7 +131,7 @@ needs the model to emit a `bash` call inside a `--non-interactive --prompt` run 
 completion, outside this section's free budget. It is worth an optional five minutes if the round
 has one: ask for `cat README.md` and expect the `escalation` record to read
 `"rung": "unattended", "verdict": "deny"` with the sentence above. The unattended arm builds **no
-triage rung at all**, so a session's verdict and its `[shell]` table reach nothing there
+triage rung at all**, so a session's verdict and its `shell` exclusions reach nothing there
 (`switchboard.rb:295-297`) — refusing everything is already stricter than any table could be, and
 an exclusion appearing to "work" there would be a false pass.
 
@@ -244,33 +244,36 @@ Four properties to drive, all free:
 - **A qualified name does not evade it.** `/usr/bin/curl http://example.com` denies with the
   same reason naming `"curl"` — `Exclusions#permits?` basenames (`exclusions.rb:171`), which
   is sound for a denylist and is deliberately *not* how §4's allowlist matches.
-- **`exclude = ["*"]` is honoured, not refused.** `cat README.md | head -20` under it denies
+- **`shell exclude: %w[*]` is honoured, not refused.** `cat README.md | head -20` under it denies
   with `the session's capability set excludes: "cat", "head"` — both programs named. The
   table can only ever subtract capability, so a wildcard is legal here where
   `Sensitivity`'s `exempt` refuses one (`exclusions.rb:30-33`).
-- **A malformed table refuses by name, and the file is named in every message.** These four
-  are the whole vocabulary, driven by editing the config and relaunching:
+- **A malformed `shell` verb refuses by name, and the file and line are named in every
+  message.** Drive each by editing `.lain/config.rb`, running `lain trust --yes`, and
+  relaunching. Every row was evaluated with `Lain::Config::Builder.evaluate` on 2026-09-30;
+  `<path>:N` is the file and the line of the verb:
 
-  | config | refusal |
+  | `.lain/config.rb` | refusal |
   |---|---|
-  | `exclude = "curl"` | `<path>: [shell] exclude is a list of program names, got String` |
-  | `excluded = ["curl"]` | `<path>: [shell] has no keys "excluded"; known keys: exclude` |
-  | `shell = "off"` | `<path>: [shell] must be a table, got String: "off"` |
-  | `exclude = ["bin/curl"]` | `<path>: [shell] exclude must be a program name, not a path: "bin/curl"` |
-  | `exclude = ["cu rl"]` | `<path>: [shell] exclude can never match an unquoted command: "cu rl"` — *driven 2026-09-14*; it used to load silently and never fire |
-  | `exclude = ["cu rl"]` **and** `excluded = ["curl"]` | `<path>: [shell] has no keys "excluded"; known keys: exclude; exclude can never match an unquoted command: "cu rl"` — *driven 2026-09-14*; **both** problems in one pass, where round 17 got only the unknown key |
+  | `shell exclude: "curl"` | `<path>:N: `shell` exclude is a list of program names, got String` |
+  | `shell excluded: %w[curl]` | `<path>:N: `shell` has no keys "excluded"; known keys: exclude` |
+  | `shell "off"` | `<path>:N: wrong number of arguments (given 1, expected 0)` (Ruby's own error, at the line) |
+  | `shell exclude: %w[bin/curl]` | `<path>:N: `shell` exclude must be a program name, not a path: "bin/curl"` |
+  | `shell exclude: ["cu rl"]` | `<path>:N: `shell` exclude can never match an unquoted command: "cu rl"` |
+  | `shell exclude: ["cu rl"], excluded: %w[curl]` | `<path>:N: `shell` has no keys "excluded"; known keys: exclude; exclude can never match an unquoted command: "cu rl"`: **both** problems in one pass |
+  | two `shell` lines | `<path>:2: `shell` declares shell twice` |
+  | `shel exclude: %w[curl]` | `<path>:N: has no verb :shel; known verbs: epics, approval, isolation, sensitivity, shell, tests` |
 
-  A malformed `[shell]` table **raises** rather than being dropped, because the table
-  restricts and dropping it fails open (`board_build.rb:118-123`).
-
-  **Corrected, round 17: a file that will not PARSE refuses the launch too — it does not reach
-  the startup notice.** This bullet used to say an unparseable file is rescued and said through
-  the notice `this project's [shell] exclusions are not in force (no program is refused by
-  name): …`. The notice still exists in `board_build.rb`, but the whole config is parsed first
-  and refuses, so the notice is unreachable from a broken file. *Driven 2026-09-14* with
-  `shell exclude: %w[curl` (an unclosed array), then `lain trust --yes`: exit 1, a refusal naming
-  `<path>/.lain/config.rb` and the line. Before `lain trust` the same launch is refused as untrusted,
-  naming `lain trust`. If a round ever sees the notice instead, the load order moved — say which.
+  A malformed `shell` verb **raises** rather than being dropped, because the exclusion
+  restricts and dropping it fails open. **A file that will not load refuses the launch, before
+  a session file is written**, so there is no startup notice to look for: launch with
+  `shell exclude: %w[curl` (an unclosed array), then `lain trust --yes`, and expect exit 1, a
+  refusal naming `<path>/.lain/config.rb` and the line, and **no session file** under
+  `$QA/xdg/state/lain`. Before `lain trust` the same launch is refused as untrusted, naming
+  `lain trust <root>`. *This is the check that catches H-3 (round 20) coming back*: a launch
+  that starts with the exclusions "not in force" and says so only in a notice is the defect.
+  Also drive `raise "boom"` on line 2 (`<path>:2: boom`, exit 1) and `lain up -- --epic demo`
+  over the same broken file (exit 1, the same file named).
 - **Attended, a denied command settles at the triage rung and never reaches a human** — and
   this is drivable **without a model**, by asking the rung directly instead of waiting for
   the model to emit `curl`. Building the rung the way wiring does costs nothing:
@@ -300,7 +303,7 @@ Four properties to drive, all free:
   The **live** form of the same claim — a real `escalation` record with
   `"rung": "triage", "verdict": "deny"` and no `approval_pending` beside it — needs the model
   to emit `curl` and so costs one local completion. **Optional, and outside this section's
-  budget**: take it if the round has a session up with this `[shell]` table in force, and say
+  budget**: take it if the round has a session up with this `shell` verb in force, and say
   in the findings whether you did. What the live form adds is that the gate really consulted
   it, **and what the model is told.** Since 2026-09-14 a triage or exclusion deny names its
   reason to the model instead of the generic `approval denied for tool "bash"` (round 17's T4
@@ -364,19 +367,22 @@ neither is auto-approved. A round that predicts "`ls -la` runs without a prompt"
 predicting from the verdict rather than from the rule.
 
 Build the rule the way wiring does and ask it directly. The classifier is a **factory**
-(`cwd -> #classify`), because a bash call names its own working directory — and **since
-2026-09-14 it also takes the project `root:` an approved word must stay under**
-(`BoardBuild.classifiers`). **Pass it.** A factory built without one confines to
-`Risk::Root::NOWHERE`, which contains nothing, so every line abstains: *driven 2026-09-14*, the
-no-root factory answered `nil` for `cat README.md | head -20`. A probe that forgets `root:` passes
-every negative control and fails every positive one, for a reason that is not the rule.
+(`cwd -> #classify`), because a bash call names its own working directory, and it takes
+**two** project-root arguments that are easy to confuse: `root:` anchors the `Sensitivity` rules
+(what a rooted pattern means), and `confinement:` is the `Risk::Root` an approved word must stay
+under (`BoardBuild.classifiers`). **Pass both.** A factory built without `confinement:` confines to
+`Risk::Root::NOWHERE`, which contains nothing, so every line abstains. And the old shape,
+`root: Lain::Approval::Risk::Root.new(cwd)`, hands a confinement to the wrong keyword and abstains
+every row too (round 20 found this stale). A probe that forgets it passes every negative control
+and fails every positive one, for a reason that is not the rule, so keep
+`cat README.md | head -20` as the positive control and read it first.
 
 ```bash
 cat > "$QA/approve.rb" <<'EOF'
 cwd = session.worker_env.cwd        # launch from the project root, or spell the root literally
 factory = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
-  home: ENV["HOME"], cwd: cwd, rules: Lain::Sensitivity::Rules.empty,
-  root: Lain::Approval::Risk::Root.new(cwd))
+  home: ENV["HOME"], cwd: cwd, rules: Lain::Sensitivity::Rules.empty, root: cwd,
+  confinement: Lain::Approval::Risk::Root.new(cwd))
 rule = Lain::Approval::ComposedTerm.new(sensitivity: factory)
 tool = Lain::Tools::Bash.new
 ask = lambda do |c|
@@ -392,7 +398,8 @@ puts(["cat README.md | head -20", "grep -n foo lib | wc -l", "wc -l README.md",
  "grep -rn foo lib | wc -l", "/tmp/evil/cat README.md",
  "gzip important.log", "sort -o out in", "tail -f README.md",
  "cat config/master.key", "cat config/credentials.yml.enc", "cat .pgpass", "cat id_rsa",
- "cat id_ed25519.pub", "cat .bash_history", "cat ../outside/notes.txt", "cat /etc/hostname"].map(&ask))
+ "cat id_ed25519.pub", "cat .bash_history", "cat ../outside/notes.txt", "cat /etc/hostname",
+ "cat _netrc", "cat .authinfo", "cat passwords.txt", "cat notes.cfg", "cat plain.txt"].map(&ask))
 nil
 EOF
 $QA/drive.sh "/ruby $QA/approve.rb" 6 45 >/dev/null; $QA/peek.sh 30
@@ -423,6 +430,9 @@ what a round should check rather than the outcome:
 | `gzip important.log`, `sort -o out in` | `gzip` is not on the allowlist at all; `sort -o` writes |
 | `tail -f README.md` | `-f` never returns |
 | `cat config/master.key`, `cat config/credentials.yml.enc`, `cat .pgpass`, `cat id_rsa`, `cat .bash_history` | classify **gated** since 2026-09-14 — round 17's F91 approved every one of these with nobody asked. The widened `Sensitivity` table names `config/master.key`, `*.key`, `credentials.yml.enc`, `.pgpass`, `*_history`, `.gem/credentials`, `.ssh/config`, `rclone.conf`, `*.keyring`/`keyrings/**` and a bare `id_rsa`/`id_ed25519`/`id_ecdsa` anywhere except `*.pub`; *driven 2026-09-14*, `Sensitivity#classify` read `gated credential` for each, and `ordinary` for `id_ed25519.pub` |
+| `cat _netrc`, `cat .netrc.bak`, `cat .authinfo`, `cat .msmtprc`, `cat .htpasswd`, `cat .vault_pass`, `cat passwords.txt`, `cat .pgpass.bak` | **credential variants by name** (round 20's H-1, whose live repro was `cat _netrc` releasing `password hunter2hunter2`). `_netrc` and `.netrc.bak` classify **denied**; the others **gated**. Create each in the scratch tree with mode 0644 and one line `machine h login u password hunter2hunter2`, and expect every row to abstain. **The check that catches H-1 returning is `cat _netrc` answering the `every stage is a bare allowlisted reader` reason** |
+| `cat notes.cfg`, a 0644 file under an unlisted name holding `machine h login u password hunter2hunter2` | **the content predicate over netrc, pgpass, htpasswd and msmtprc shapes.** Nothing in the name says credential, so only `Regions` can refuse it. Also try a `db.example:5432:app:alice:s3cretpass` line and `alice:$apr1$abc$0123456789abcdefghijk` |
+| `cat plain.txt`, where `plain.txt` is a symlink to `.netrc` (`ln -s .netrc plain.txt`) | **the landing.** The rule judges where the link points, so a link with an ordinary name to a denied file abstains; `cat readme2.txt` over `readme2.txt -> .env.local` abstains too. The same holds when the link is a directory (`keys -> ~/.ssh`, `cat keys/id_qa`) |
 | `cat ../outside/notes.txt`, `cat /etc/hostname` | **the root predicate.** Every path-like word, and the call's own cwd, must resolve under the project root — lexically and again through the real path, so a symlink out of the root does not count as in it. A call whose cwd is `/` abstains even for `cat README.md` (*driven 2026-09-14*) |
 | `cat secrets.txt`, where `secrets.txt` is an ordinary-classified file holding an `API_KEY=…` line | **the content predicate**, new in round 18 and the last one checked, because it is the only one that opens a file. Every word that resolves to a real regular file must be world-readable, at most 64 KiB, and carry **no region** `Sensitivity::Regions` can find. Classification said this file was ordinary and it is; the bytes are what disqualify it. Not-a-file words (a nonexistent path, a directory) pass trivially; a FIFO, socket or device does not, and the open is `O_NOFOLLOW` |
 | `cat <an exempted `.env`>` | **also the content predicate's neighbour, the ordinary-words one.** An `exempt` entry lifts the human read prompt and nothing else, so an ordinary-**by-exemption** verdict still fails here. One basename exemption for a fixture `.env` used to approve `cat` of every `.env` in the tree with nobody asked |
@@ -514,8 +524,8 @@ destroys by existing. **Drive both.** A round that drives only the path-like for
 tested the downgrade, which is the arm an approving rung could quietly consume.
 
 Note the split: `.netrc`, `.env` and `/proc/self/environ` are refused by the **built-in**
-`Sensitivity` table, with no `[sensitivity]` config needed. The plan's own integration checks
-say "with `.netrc` denied in `[sensitivity]`"; that is not required, and adding a config
+`Sensitivity` table, with no `sensitivity` verb needed. The plan's own integration checks
+say "with `.netrc` denied in `sensitivity`"; that is not required, and adding a config
 entry for it would test the config rather than the floor.
 
 ## 6 — the shell-arm record, under `ask` **and** under `/mode auto` *(cheap — local model)*

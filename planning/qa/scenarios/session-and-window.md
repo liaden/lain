@@ -185,32 +185,39 @@ renders it, so a driver watching the display will otherwise file a false defect.
 
 ## 6 — The `options` asymmetry on the wire
 
-**The contract used to be "lain sends only what was asked for" — since the round-19 chunk that is
-true of the SAMPLER knobs only.** `num_batch`/`temperature`/`seed`/`num_ctx` are still opt-in, and
-`extra={}` still means none of them were asked for:
+**The contract used to be "lain sends only what was asked for", that is now true of the SAMPLER knobs
+only, and, since commit `e39dda35`, `num_batch` is no longer one of them.** `temperature`, `seed` and
+`num_ctx` are opt-in. An ollama chat sends `num_batch` **2048 by default** (a different `num_batch` re-keys
+the shared runner and costs a 26-70 s reload, so the default is the safe one), and a chat on another provider
+still sends none of them:
 
 ```bash
-# with the knob set
-LAIN_NUM_BATCH=2048 lain chat ... --prompt hi      # -> extra={"num_batch" => 2048}
-# with neither knob
-env -u LAIN_NUM_BATCH lain chat ... --prompt hi    # -> extra={}   (NO options key at all)
+# ollama, knob unset: the default is on the wire and in the journal
+env -u LAIN_NUM_BATCH lain chat --provider ollama ... --prompt hi   # -> extra={"num_batch" => 2048}
+# ollama, knob set: the typed value wins
+LAIN_NUM_BATCH=1024 lain chat --provider ollama ... --prompt hi      # -> extra={"num_batch" => 1024}
+# another provider, neither knob
+env -u LAIN_NUM_BATCH lain chat --provider anthropic ... --prompt hi # -> extra={}
 ```
 
-Read it off both the `session` record and every `request_sent`. The `env -u` is required — the
-flag's default is `EnvDefaults.numeric("LAIN_NUM_BATCH")`, which `bench.md` exports.
+Read it off both the `session` record and every `request_sent`. **`extra={}` on an ollama chat is now the
+defect** (the default lost), and `{"num_batch" => 2048}` there is the expected value; round 20 found this
+section still asserting `extra={}`. The `env -u` is still required, the flag's default is
+`EnvDefaults.numeric("LAIN_NUM_BATCH")`, which `bench.md` exports.
 
-**But `(NO options key at all)` is now a claim about `extra`, not about the wire.** The generation
-cap is a different claim from a sampler knob, and it is unconditional:
-`Ollama::Encoding#encode_options` seeds the ollama `options` object with `num_predict`, sourced
-from `request.max_tokens` rather than from `extra`, on **every** request — so the `env -u
-LAIN_NUM_BATCH` run above still shows `extra={}` while its encoded body carries `options={"num_predict"
-=> <max_tokens>}`. Read the two separately, since neither implies the other any more:
+**`extra` and the wire are two different claims.** The generation cap is not a sampler knob, and it is
+unconditional: `Ollama::Encoding#encode_options` seeds the ollama `options` object with `num_predict`,
+sourced from `request.max_tokens` rather than from `extra`, on **every** request. Read the two separately,
+since neither implies the other:
 
 ```bash
-env -u LAIN_NUM_BATCH lain chat ... --prompt hi
-# -> session / request_sent's extra:    {}
-# -> the encoded wire body's options:  {"num_predict" => <max_tokens>}
+env -u LAIN_NUM_BATCH lain chat --provider ollama ... --prompt hi
+# -> session / request_sent's extra:    {"num_batch" => 2048}
+# -> the encoded wire body's options:  {"num_predict" => <max_tokens>, "num_batch" => 2048}, truncate=false
 ```
+
+Round 20 confirmed this on the wire from four forks (`num_predict` 4096, `num_batch` 2048,
+`truncate=false`).
 
 `max_tokens` is never the source of a silent zero here: a non-positive `--max_tokens` /
 `$LAIN_MAX_TOKENS` is refused at construction (`max_tokens must be positive, got 0`) before any
@@ -275,11 +282,18 @@ Two launch-level checks, both free:
 - **The unknown arm refuses at construction**, naming `handoff, none`, before stdin is read. A
   `--compact-fallback` that silently resolved to `none` would show up only as an ask that died
   where it should have been kept, which is exactly the failure this refusal exists to prevent.
-- **The session header records the arm.** Read `compact_fallback` back out of the header, the way
-  §9 reads `context_pipeline`, and confirm an unflagged launch records the default rather than
-  nothing — an unrecorded arm cannot be told apart from an older file.
+- **The session header records only the compaction flags that were TYPED.** (Round 20's RB-2 changed
+  this: the Thor defaults are gone so that an unset flag and a default can be told apart, and a resume
+  inherits whatever the header recorded.) Launch once with no compaction flags and read the header: it has
+  **no** `compact_fallback`, `compact_keep`, `compact_bytes`, `compact_cap` or `compact_strategy` key, and
+  `Backend` behaves as it always did (`handoff`, keep 20). An older reading of this bullet, "an unflagged
+  launch records the default rather than nothing", is stale, so a header carrying `compact_keep: 20` from
+  an unflagged launch is the regression (the default is being recorded as if typed, and a resume can no
+  longer tell it from a choice). Then launch with `--compact-fallback none --compact-keep 4` and confirm
+  exactly those two keys appear, and that `--resume` with **no** flags renders under them
+  (`rails-blog.md` 1b drives it with a real handoff).
 - **The header also records which STRATEGY ran, as `compact_strategy` — present only when
-  `--compact-strategy` was typed.** Unlike `compact_fallback`, an unflagged launch writes no key at
+  `--compact-strategy` was typed.** Like every other compaction key now, an unflagged launch writes no key at
   all rather than a default value; a reader normalizes that absence to the eager control arm
   (`Telemetry::Compaction::EAGER_CONTROL_ARM`, `"eager"`) rather than confusing it with a stated
   `"summarizing"` or similar — the same absent-versus-default distinction §9 draws for

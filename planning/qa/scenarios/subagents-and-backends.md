@@ -17,13 +17,18 @@ launch-level and needs no model.
 **Needs:** `git` (§3), `docker` on PATH (§4 only — skip it by name if absent, do not silently pass).
 `bench.md` up. tmux for §6.
 
-**The precondition this section used to state is corrected by round 17.** It said
-`--isolation worktree` keys checkouts on the worker id, that ids restart per process, and that a
-second run's reap would force-remove the first's live checkout. Round 17 measured otherwise:
-**leases land at random-id paths** (`…/worktrees/<repo hash>/<random id>`), so two runs do not
-target one path and there is no reap-before-add. Keep one isolated run per project anyway — it is
-what keeps `git worktree list` readable — but do not drive a collision this section no longer
-predicts.
+**The precondition this section used to state was corrected twice, and the second correction is round 20's.**
+It said `--isolation worktree` keys checkouts on the worker id and that a second run's reap would
+force-remove the first's live checkout. Round 17 "corrected" that to **random-id paths**
+(`…/worktrees/<repo hash>/<random id>`), and round 20 found that false too: the same worker key lands at
+the **same path** (`Isolation::Worktree` builds one per-worker path), so two runs of one worker key DO
+target one path. What keeps that safe is `Worktree::Leftover`: a checkout already there is either a
+crash's or one retained, and it is moved aside into `retained/` (never destroyed; the basename plus a random
+suffix, which is where the random ids a driver sees come from), while one whose lock names a **live**
+process is somebody else's lease and is refused. Keep one isolated run per project anyway (it keeps
+`git worktree list` readable), and **do** drive the collision: start a second run with the same worker key
+while the first is alive and expect the refusal naming the path and the holder; then kill the first hard
+and expect the second to take the path after moving the leftover aside.
 
 **And the chat's `subagent` tool is ONE-SHOT only** (round 17): actor mode is wired for the epic
 orchestrator alone, so every check below that needs a model-dispatched actor — §3's adoption,
@@ -209,7 +214,8 @@ lain worktrees gc                      # what happens to it
 ```
 
 **Corrected by round 17: nothing reaps a crashed lease before the next add, and gc KEEPS a dirty
-one.** Leases are random-id paths, so the next run adds beside the leftover rather than over it, and
+one.** The leftover sits at the worker's path until the next acquire of that key moves it aside into `retained/`
+(the random suffix is on the moved copy, not on the lease), and
 `lain worktrees gc` reports `kept worktree <path>: uncommitted changes; retained until <date>` — a
 dirty crashed checkout is retained for 7 days (`[isolation] retain_days`), never discarded. That is
 the design: nothing a worker made is thrown away unasked.

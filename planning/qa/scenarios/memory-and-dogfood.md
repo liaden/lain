@@ -70,7 +70,10 @@ recording even though it is not a lain defect.
 
 ## 2 — The ceiling, on the write, and why
 
-Both tools bound at **256 KiB**, and they are asserted equal rather than remembered. The ceiling is
+Both tools bound at **16 KiB (16,384 bytes)**, and they are asserted equal rather than remembered. (This
+section said 256 KiB until round 20: the shared ceiling is `Tool::Bounds::RESULT_BYTES`, `16 * 1024`, for the
+write and the read alike, so a 300 KiB body proves nothing about where the line is. Drive 16,384 bytes
+(admitted) and 16,385 (refused).) The ceiling is
 on the **write**, and that placement is the design:
 
 - a ceiling on the read alone would be an asymmetry with no way out — the write would accept a body
@@ -80,7 +83,7 @@ on the **write**, and that placement is the design:
   because it still holds the bytes.
 
 ```
-you> memory_write id `big`, description `too big`, body: <a 300 KiB body>
+you> memory_write id `big`, description `too big`, body: <a 20 KiB body>
 ```
 
 Expected refusal, naming the subject, the size and the ceiling, and offering **the two narrower
@@ -208,11 +211,30 @@ that clerked every lineage and wrote none — the two used to render identically
 made "the pass ran" indistinguishable from "the pass persisted anything" from the report alone.
 Drive both readings rather than trusting exit 0.
 
+**`lain improve` says the same** (round 20's E-5: it printed the model's last text only, so a pass that
+stored nothing read like one that stored notes): its first line ends `stored 2 notes` (or `stored 1 note`)
+when it stored, and `stored nothing` when it did not, with the model's text after it. Drive a pass of each
+and compare the count against `wc -l` of `improvements.ndjson` before and after; a count that disagrees
+with the file is the defect.
+
 Then the outcome: new memory items, written through the recorder, with a new root. **Read them
 back with `memory_read` in a fresh `lain chat` on the same project.** That round trip is the whole
 point of the pass, it is the only check that distinguishes "the pass ran" from "the pass persisted
 anything", and since round 18 it is an **expectation**: the clerk appends to the same
 `Memory::ProjectStore` a chat opens on, so a new chat sees its items immediately.
+
+**The clerk cannot overwrite the human's memory** (round 20's E-1: `lain consolidate` wrote items under the
+human's own ids and replaced their bodies, so a fresh chat's `memory_read` returned the clerk's paraphrase,
+after the parent had pasted the `<workspace>` manifest into the subagent prompt). Before the pass, have a
+chat write `suite` (author chat). Run `lain consolidate` over a lineage whose clerk will name `suite`. Then:
+
+- the clerk's `memory_write` to `suite` returns a refusal saying the item belongs to the human and to write
+  its finding under a new id: `memory item "suite" belongs to the human and is not yours to overwrite; write
+  your finding under a new id instead`;
+- **a fresh chat's `memory_read suite` returns the human's body, unchanged, with `author: chat`**. That is
+  the check that catches E-1 returning: the clerk's paraphrase under the human's id;
+- the clerk **may** rewrite an id it authored (a second `lain consolidate` refining `lineage-a`), and the chat
+  may correct a clerk item, which is then stored with `author: chat` (the human has taken it over).
 
 Read the store directly beside the read-back, so a failure says which half broke:
 
@@ -232,6 +254,28 @@ Three properties on the fresh chat:
 3. **`memory_loaded`'s `version` and a turn's `memory_root` are different quantities** and must
    not be conflated: the first is the *store* fold this session read, the second is the live
    index's content address at one turn. A round that expects them to be equal has misread both.
+
+**Every item names its author, and lain sets it, not the model** (round 20's E-2: memory rows recorded no
+provenance, so the clerk's paraphrase read as the human's word). `memory_read` puts an `author:` line above
+the body:
+
+```
+you> memory_read id `suite`
+```
+
+A body the chat wrote reads `author: chat`; one `lain consolidate` wrote reads `author: clerk (spawn
+<spawn digest>)`, citing the lineage spawn it distilled. Then read the rows:
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; puts [r["id"], r["author"].inspect].join("\t")}' "$STORE"/*/store.ndjson
+```
+
+Chat rows carry `{"kind":"chat"}`; clerk rows `{"kind":"clerk","spawn":"<digest>"}`. **A row from an older
+store with only `id`, `description`, `body` and `digest` still loads, with no corruption error, and reads as
+authored by the chat.** And the model cannot choose: `memory_write`'s schema has properties `id`,
+`description` and `body` only, so an `author` a call supplies never reaches the row (read it back: the
+author is the one lain stamped). **Catches E-2 returning:** a row with no author after a chat write, or an `author:` line the model
+could set.
 
 Two more, cheap and worth taking:
 

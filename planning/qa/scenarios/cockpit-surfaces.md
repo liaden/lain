@@ -100,6 +100,14 @@ Checks:
    prompt all have to fit, with a countdown still needing somewhere to draw.
    [`lain://status`](#1--every-view-is-alive-and-says-what-it-awaits) is where the whole tree is
    read, and §1 drives it.
+
+   **Which two rows: running first, then the newest ended, and a child never shows without its
+   parent** (round 20's B-4: the header took the first two rows of an arrival-ordered tree, so the
+   newest failure sat under `+1 more`). Drive both shapes and read the header, not the tree:
+   with **3 ended children, the newest failed, none running**, the two rows are the newest two and the
+   last line is `  +1 more`, so the failure is on screen. With **1 running parent that has 1 running
+   child, plus 2 ended siblings**, the rows are the parent and its child. **Catches B-4 returning:** an
+   old success on screen with the newest `failed` row hidden under `+N more`.
 5. **The header carries NO age, and that is the check.** Leave the pane untouched with a child
    running and watch it for a minute: the header must not change, and the pane must not redraw.
    An age column here would make the frame differ from itself once a second — measured at seven
@@ -167,10 +175,20 @@ the prompt it parks on, or s at a countdown"* and changes nothing.
 adopted actor is a sibling of every ask, not a captive of one, so it keeps running with nothing
 parked at `you>` to answer for it: `/stop` typed there now reads the fleet and, if it finds any
 running, stops each by hand and answers `no ask was running, but stopped <role> (<worker_id>)`
-(joined by commas for more than one). Only that route is reached — a **one-shot** child, a docent
-above all, is not: it runs under `Lineage::OneShot`, never `Supervisor#adopt`, so `/stop` at `you>`
-beside a running docent still answers plain `"no ask is running"` and leaves it running. That is a
-known open finding, not a regression to file again.
+(joined by commas for more than one). A **one-shot** child, a docent above all, is now reached too (round 20's G-3, which found `/stop`
+answering `no ask is running` beside a running docent): the `Supervisor` tracks one-shot children, so
+`/stop` at `you>` beside a docent answering a thread answers `no ask was running, but stopped <role>
+(<worker_id>)`, the docent's task stops, and its completion record is journaled. **Catches G-3
+returning:** the plain `"no ask is running"` sentence while `lain://status` shows the docent running.
+`survey.md` drives the docent half; check here only that a **closing** session (`/quit` with a docent
+running) journals the docent's completion **before** `session_closed`.
+
+**A line typed while an ask is in flight reaches the chat at once** (round 20's C-2 and A-1: the input
+pane stopped drawing while nothing was published, so a typed `/stop` sat as terminal typeahead and only
+arrived at the next `you>`). Start an ask that will run for 20 seconds or more, type `/stop` and Enter in the
+**input pane** while it runs, and read the journal: `run_interrupted` with `reason: stopped` lands before
+the ask would have finished. Then type `hello` and Enter mid-ask: it is not lost and not doubled, and is
+the next prompt exactly once. **Catches C-2 returning:** `/stop` acting only after the ask ended.
 
 **What wrong looks like:** a `session_closed` record beside the stop; the prompt coming back as a
 fresh session; `/stop` answered by the model as prose (the rail did not intercept it, which is
@@ -419,6 +437,12 @@ Prefer driving it this way round when you can: it is the only end-to-end demonst
 right `kind`. Answering it with a note on the same line resolves it and the approve then lands, so
 the pair is one check, not two. Mark every row reviewed **as well** if you want the partial-refusal
 wording itself — both refusals exist and they are different sentences.
+- **`:LainReviewVerdict approve` over a blocker drawn but not handed back refuses, naming it** (round 20's
+  B-2: approve settled over an un-handed-back blocker, because the verdict policy reads only journaled
+  `annotation_placed`). Place a blocker with `<leader>Lb` and do **not** press `<leader>LN`, then run
+  `:LainReviewVerdict approve`. **PASS:** `lain: blocker not handed back -- :LainNoteDone first: <file>:<line>`
+  and **no `review_verdict` journaled**; after `<leader>LN` the same approve is sent. **Catches B-2
+  returning:** a `review_verdict` record for a review whose blocker exists only in the buffer.
 - `:LainReviewVerdict approve` over a fully reviewed one acknowledges — `lain: this review is
   settled: approve` — **and** journals `review_verdict` with its `changeset_digest`. Check both;
   a version of this shipped that journalled correctly and said nothing.
@@ -617,6 +641,18 @@ back — not just that something came back:
   is what `nvim_buf_get_extmarks` answers natively; it is tidy, plausible and wrong, and no
   assertion about a note's *content* would catch it. **This is the check this section exists for.**
 - A second `<leader>LN` sends **nothing** rather than filing the notes twice, and says so.
+- **A settled review leaves no notes behind** (round 20's B-1: the markers survived `approve`, so the
+  next survey of the file redrew them and `\LN` journaled them again, 4 notes placed and 7 journaled).
+  Place 3 notes, hand them back, `:LainReviewVerdict approve`, then survey the same file again and place
+  **one** note and hand it back. **PASS:** the second review's `\LN` sends exactly one, no note mark from
+  the first review is drawn (`nvim_buf_get_extmarks` over the note namespace answers 1), and
+
+  ```bash
+  ruby -rjson -e 'n=0; ARGF.each_line{|l| r=JSON.parse(l) rescue next; n+=1 if r["type"]=="annotation_placed"}; puts n' "$JOURNAL"
+  ```
+
+  prints **4** for the whole session (3, then 1), never 7 or 8. **Catches B-1 returning:** a count above
+  the number of notes the human actually placed.
 
 ### The thread, and the question that reaches the model
 
@@ -805,7 +841,14 @@ read is guarded three ways, and each guard is a check:
    and the journal read `approval_decision surface=timeout verdict=deny timed_out=true
    latency=300.0…`. A `n` typed after that line is not an approval decision — round 17's F106 turned
    it into a chat prompt under a prompt that still looked live.
-3. **A question answered elsewhere retires.** A subagent question settled by another surface is
+3. **The closing line ends the drawn prompt row first** (round 20's B-3: `-- decided by timeout: denied`
+   was printed on the chat fiber while Reline still owned the `[y/N]` row, so the next streamed text
+   glued onto it, `deniedI apologize`). Leave a `[y/N]` parked until the timeout decides it while the model
+   goes on to stream text, then read the raw pane: the output holds `-- decided by timeout: denied`
+   **followed by a line break** before the model's next words, and the `[y/N]` row itself is still in the
+   scrollback (`tmux capture-pane -p -S -50`). **Catches B-3 returning:** the verdict and the model's first
+   word on one line, or a `[y/N]` row that was overwritten.
+4. **A question answered elsewhere retires.** A subagent question settled by another surface is
    retired rather than re-queued, so no `human>` is drawn on the next dispatched lines. *(Prediction,
    not yet driven: round 17's F101 ghost was three `human>` prompts drawn mid-dispatch after an nvim
    answer.)*
@@ -890,6 +933,16 @@ Two things to know before matching on the result:
 **What a real finding looks like here**, as opposed to an elided or wrapped row: `b:lain_approval_calls`
 absent or empty while `b:lain_approval_rows` is positive; an entry that does not carry the command
 in full; or a `b:lain_approval_call_index` whose length disagrees with `b:lain_approval_rows`.
+
+### A stopped ask takes its question with it
+
+Round 20's C-1: an ask parked on `ask_human` that the human stopped left its row in `lain://inbox` and
+`inbox:N` in the HUD for good, because a stop commits no turn and nothing retired the question. Drive it in
+a cockpit: ask the model something it can only answer by calling `ask_human`, wait for the row, then `/stop`
+(or Ctrl-C). **PASS**, all four: the journal holds a `questions_consumed` record naming that question's
+digest, the HUD reads `inbox:0`, `lain://inbox` has no row, and `/inbox` offers nothing. An **answered**
+question retires exactly **once**, so count `questions_consumed` records naming it: 1, not 2. **Catches C-1
+returning:** any of the four surfaces still showing the question after the ask ended.
 
 ### The second queue consumer is gone, and the notifier with it
 

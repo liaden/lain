@@ -92,14 +92,40 @@ said 262,144. Enumerate `CLOUD_WINDOWS.keys`; do **not** sample one tag per mode
 dated and `preview` tags are genuinely different builds. That assumption is exactly what hid the
 third row.
 
-**A row can also go stale the other way: the tag is retired.** Round 17 enumerated 23 rows, found
-none over-claiming its `context_length` (21 checked), and found two — `deepseek-v4-flash:preview-cloud`
-and `deepseek-v4-pro:preview-cloud` — whose `/api/show` answers "was retired at …" (F126). Both rows
-were removed on 2026-09-14. *Driven 2026-09-14* through `/ruby`: `CLOUD_WINDOWS.size` is **21**, and
-the remaining `deepseek` keys are `deepseek-v4-flash:cloud`, `deepseek-v4-flash:0731-cloud`,
-`deepseek-v4-pro:cloud` and `deepseek-v4-pro:0813-cloud`. So a refresh reads `/api/show` for retirement
-as well as for the bound; a retired tag must resolve as not published rather than as its old window.
+**A row can also go stale the other way: the tag is retired.** Round 17 found two (`deepseek-v4-flash:preview-cloud`
+and `deepseek-v4-pro:preview-cloud`) whose `/api/show` answers "was retired at …" (F126), and removed them on
+2026-09-14. **Round 20 found five more** (I-1): `glm-5.1:cloud`, `qwen3.5:cloud`, `qwen3.5:397b-cloud`,
+`deepseek-v4-flash:cloud` and `deepseek-v4-flash:0731-cloud` still claimed a `published` window. They are
+gone, so:
+
+- **Do not trust a row count written in this document.** It said **21** until round 20 counted **24** in
+  the table. Read it: `/ruby Lain::ContextWindow::CLOUD_WINDOWS.size` (19 on 2026-09-30) and enumerate
+  `.keys`. A stale count here is a scenario defect.
+- **Every shipped key must be live.** With `LAIN_OLLAMA_CLOUD=1` and `OLLAMA_API_KEY`, send each key to
+  `/api/show` (the opt-in `spec/integration/provider/ollama_cloud_spec.rb` tier does exactly this); **none
+  may answer 410**. A 410 for a key in the table is I-1 back, and the check is the enumeration, not one
+  sampled tag per family.
+- **A retired tag is not a published window.** `ContextWindow` resolving `glm-5.1:cloud` reads
+  `guessed`, not `198,000 published`, and `serves?` answers not served.
+- **A 410 is a retirement, not a generic error.** Send a chat to a retired tag (or point the arm at a
+  stub answering 410 with `glm-5.1 was retired at 2026-09-25`): the error reads `Model retired: <the
+  host's message>`, is **not retried** (no 4 empty aborted frames as in §5's 500 case), and the session is
+  not left half-written. A 410 that is retried 4 times or shown as a bare HTTP error is the regression.
+
 §3's 128,000-token published window was confirmed by round 17.
+
+**And the wire, since the same round-20 forks read it:** the captured request body carries
+`options={"num_predict"=>4096,"num_batch"=>2048}` and `truncate=false` (a `--max-tokens 40` chat stopped at 40 on
+ollama.com), and `--max-tokens 0` refuses at construction. A body without `num_predict` is the round-19 defect
+(no generation cap on the ollama wire) back.
+
+**A prose tool call, or a stop on `max_tokens` before any text, is shown as an error** (round 20's A-2 and
+I-2: on the main-chat path a model that wrote `<function=write_file>...` as prose, or hit `max_tokens`
+before saying anything, was shown as an ordinary answer or as nothing). Drive `--max-tokens 40` on a prompt
+that needs more: the pane must read `error: model hit max_tokens before finishing`, and with some text
+first the text prints and then the same error line. **Catches A-2 returning:** an empty answer with no error
+line. A `<function=` reply reads `error: ` plus the malformed reason, never the raw envelope as the answer
+(`malformed_response kind=prose_tool_call` is journaled), and a `--non-interactive` ask ends unfinished.
 
 ## 5. One real turn, and the WAL behind it *(costs ~2 completions)*
 

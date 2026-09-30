@@ -1,11 +1,13 @@
 # Scenario: every command at the `you>` prompt
 
-**What it exercises:** `Command::Registry` and the twelve commands nothing else drives — `/help`,
+**What it exercises:** `Command::Registry` and the fourteen commands nothing else drives, `/help`,
 `/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/undo`, `/fork`, `/goal`, `/meta`, `/review-submit`,
-`/introspect` — alongside the eleven that other scenarios touch only in passing (`/status`,
+`/introspect`, `/stop` and `/qa`, alongside the eleven that other scenarios touch only in passing (`/status`,
 `/sessions`, `/mode`, `/model`, `/approve`, `/quit`, `/ruby`, `/inbox`, `/review`, `/survey`,
-`/implement-epic`). Twelve plus eleven is the whole registry — twenty-three commands, pinned as a
-literal roster at `spec/lain/cli/command/surface_spec.rb:143-147`. `/implement-epic` is driven end
+`/implement-epic`). Fourteen plus eleven is the whole registry, twenty-five commands (round 20 found this line
+saying twenty-three: `/qa` and `/stop` were added), pinned as a literal roster in
+`spec/lain/cli/command/surface_spec.rb` ("registers the whole shipped command set"). Count `/help`'s
+rows against 25 rather than trusting this number. `/implement-epic` is driven end
 to end by `epic-tier.md` §10; here it only has to appear in `/help` and refuse by name outside an
 epic.
 
@@ -560,25 +562,50 @@ expensive.
 off`. The third terminating condition was unreachable from the TTY.
 
 **Fixed since the discharging chunk's last cards: `/goal off` typed mid-drive stops the goal before
-its next iteration.** Between iterations the chat asks the terminal for what was typed, holds each
-whole line, and dispatches held lines before the driver's next prompt; a line typed while an
-iteration waits on a drawn `[y/N]` is held too, and never read as a decision (`method.md`). The
-reply changed with it: `goal off -- the driver stopped before its next iteration; type your next
-line at you>`, and with nothing driving, `goal off -- no standing goal was driving` (both driven
-2026-09-14). *Driven 2026-09-14* in a `--no-nvim` chat inside tmux, with an objective the model
-cannot finish (`/goal list every prime number, one per reply, and never say you are finished`):
-`/mode` and `/goal off` typed during iteration 2 rendered
+its next iteration, and (round 20's A-1) the same in a cockpit.** Between iterations the chat asks the
+terminal for what was typed, holds each whole line, and dispatches held lines before the driver's next
+prompt; a line typed while an iteration waits on a drawn `[y/N]` is held too, and never read as a
+decision (`method.md`). The reply changed with it: `goal off -- the driver stopped before its next
+iteration; type your next line at you>`, and with nothing driving, `goal off -- no standing goal was
+driving` (both driven 2026-09-14). *Driven 2026-09-14* in a `--no-nvim` chat inside tmux, with an
+objective the model cannot finish (`/goal list every prime number, one per reply, and never say you are
+finished`): `/mode` and `/goal off` typed during iteration 2 rendered
 
     held as your next prompt: /mode
     held as your next prompt: /goal off
     accept_edits: goal (GOAL)
     goal off -- the driver stopped before its next iteration; type your next line at you>
 
-when iteration 2 ended, and the journal holds **two** `goal_iteration` records, not five. (Iteration 2
-itself ended on `error: loop ran 25 iterations, ceiling is 25` — the per-ask ceiling, which is the
-model looping inside one ask and not the goal's cap.) A third `goal_iteration` after the held
-`/goal off` is F105 back. **A partial line typed mid-drive is not lost**: it is typed back into the
-next prompt's editor for the human to finish *(prediction, not yet driven)*.
+when iteration 2 ended. **Count the iterations as `goal_iteration` records MINUS
+`goal_iteration_dropped` records**, not the first alone: an iteration already driven when a late control
+line arrives is withdrawn and journaled as `goal_iteration_dropped`, so a raw `goal_iteration` count reads
+one high for that goal. That run's journal holds two `goal_iteration` records and no dropped one, not
+five. (Iteration 2 itself ended on `error: loop ran 25 iterations, ceiling is 25`, the per-ask
+ceiling, which is the model looping inside one ask and not the goal's cap.) A third `goal_iteration`
+after the held `/goal off` with no matching drop is F105 back. **A partial line typed mid-drive is not
+lost**: it is typed back into the next prompt's editor for the human to finish *(prediction, not yet
+driven)*.
+
+**The cockpit: a control line typed in the input pane acts when it arrives, not at the next `you>`.**
+Round 20's A-1: in a `lain up` cockpit a typed `/goal off` mid-drive only ran after the goal hit its cap
+(the input pane stopped drawing on `unpublished` and the line never left the pane process), while
+`:LainGoalOff` stopped it after 1 iteration. Drive both from a cockpit with a cap of 5 and an objective
+the model cannot finish, typing `/goal off` **in the input pane** during iteration 1:
+
+- **PASS:** no iteration 2 starts, the chat pane prints the `goal off` reply, and `goal_iteration` minus
+  `goal_iteration_dropped` is **1**.
+- **Catches A-1 returning:** iterations 2 to 5 run and `goal off` prints only after the cap.
+- `/stop` typed in the pane mid-ask stops the ask before it would have finished: `run_interrupted` with
+  `reason: stopped` is journaled while the model is still generating. An ordinary line typed mid-ask
+  (`hello`) is NOT dispatched then: it becomes the next prompt, **once** (not lost, not doubled).
+
+**Two accepted limits, recorded so a round does not file them:**
+
+- **On the TTY (`--no-nvim`), `/goal off` acts at the next iteration boundary**, not mid-iteration: the
+  chat can only ask the terminal for what was typed between iterations, so the iteration already running
+  finishes first. Expect exactly one more iteration's worth of wait, and no further iteration after it.
+- **A half-typed line waits for Enter.** A control line whose Enter has not been pressed is not a line
+  yet: `/goal off` typed without Enter does nothing until the human presses it, on both surfaces.
 
 **The cockpit can stop it too: `:LainGoalOff` in nvim.** With a goal driving it stops the driver before
 its next iteration and the chat pane says `goal off from the editor -- the driver stopped before its

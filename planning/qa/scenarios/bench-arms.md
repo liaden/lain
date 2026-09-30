@@ -56,6 +56,14 @@ refusals below are pre-spend, and both were *driven 2026-09-14* against the buil
   Equal to `--model`, exit 1:
   `the adaptive-router arm would send both branches to "qwen3:4b", running the control twice under two names. Name a --cheap-model different from --model`.
 
+**Both refusals are pre-spend, and round 20 found one that was not** (BA-1's second half: a refused run left
+a 159-byte journal file holding one `capability_degraded` record, written before the refusal ran). Drive
+each of the three refusals (no `--isolation worktree`, no `--cheap-model`, `--cheap-model` equal to
+`--model`) with a fresh `--journal "$QA/records/x1.ndjson"` and confirm, after each, that the process
+exited 1 naming the problem **and `test ! -e "$QA/records/x1.ndjson"`**. **Catches BA-1's second half
+returning:** the file exists. Also check nothing else was left: the state home holds no new session file
+for the refused launch.
+
 Note the second model on one GPU: `--cheap-model qwen3:4b` beside `qwen3-coder:30b` evicts the
 resident model whenever the router switches (`bench.md`'s 84.0 s against 7.5 s), so read the
 wall-time table with that cost in mind. *(The full run was not driven on 2026-09-14.)*
@@ -87,6 +95,50 @@ Round 4's reading, for comparison — three arms then, before adaptive-router jo
 
 All three checks passed: the orchestrator-worker arm's 0.812 is backed by 441.6 real tokens, so it
 is not a collapsed arm faking a grade on its own timeline.
+
+## A task that hits the iteration ceiling is a failed cell, and the report still renders
+
+Round 19's Fp-3 and round 20's BA-1: one task hitting the iteration ceiling (`loop ran 25 iterations,
+ceiling is 25`, from `Agent::Budget::Exceeded`) aborted the **whole** run after 16 grades: exit 1 after
+6m58s, no header, no grade table, no token table, no cost column, and the adaptive-router arm did it on
+both runs even on a two-task subset. A run **cannot** be trusted to report until one is driven that
+contains an over-ceiling task, so drive one deliberately: two tasks and every arm, with a provider (or
+an arm) that loops past the ceiling on one task for one arm. The adaptive-router arm did so on real
+models in round 20, so a real run is likely to supply one; if it does not, the ceiling arm of
+`spec/lain/arm/driver_spec.rb` is the fixture to copy.
+
+**PASS**, all of:
+
+1. the process **exits 0** and prints the header, the grade table, the token table and the cost column
+   (the round-20 run printed none of the four);
+2. the over-ceiling arm's cell reads `failed: ceiling (task N)` (or `failed: ceiling (tasks 1, 2)` and
+   `2 of 2`), in **every** metric table, and the other arms print their distributions as usual;
+3. the journal holds a `grade_record` with `pass: false` and a `why` reading
+   `task N failed at the ceiling: loop ran 25 iterations, ceiling is 25`:
+
+   ```bash
+   ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+     puts "#{r["pass"]}\t#{r["why"]}" if r["type"]=="grade_record" && r["pass"]==false}' "$QA/records/arms.ndjson"
+   ```
+
+**Catches BA-1 returning:** exit 1 with `loop ran 25 iterations` as the last line and no report, or a
+`grade_record` count short of tasks times arms (the grades were the only thing recoverable last round, from
+the journal, which is a mitigation and not a report).
+
+**No worktree is left behind** (BA-1's leak, and round 19 counted 11 and round 20 28). After the run, passed
+or failed, `lain worktrees gc` lists **0** retained checkouts for it, and the arms' worktree directory holds
+none:
+
+```bash
+git worktree list | wc -l          # 1: the repository itself
+lain worktrees gc                   # nothing retained for this run
+```
+
+An arm's tasks write files and never commit, so every checkout was dirty at release and was kept for 7
+days. A bench arm's handoff now releases with discard, because the grade is already journaled. **The
+control is the other direction:** a chat subagent's dirty checkout is still retained
+(`subagents-and-backends.md` §3), and a round that finds gc discarding a *chat* worker's uncommitted work
+has found the fix over-reaching.
 
 ## The header must say what produced the report
 

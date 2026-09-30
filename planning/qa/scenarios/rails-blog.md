@@ -219,9 +219,19 @@ driven — this is integration check 7 of the discharging chunk)*:
   `plan_step_completion` fires on ONE decision per rising `todo_write`, not on every render after it.
 - **`/rewind` below the cut retreats it.** The next request carries no replacement for the abandoned
   range and the next `context_derived` names no cut (or an earlier recorded one still on the chain).
-- **`--resume` renders the recorded replacement without re-summarizing.** The first resumed request
-  carries the same replacement bytes as the recording's last derived render, and no summarizer
-  request precedes it.
+- **`--resume` renders the recorded replacement without re-summarizing, under the arm the session
+  recorded, with NO compaction flags typed.** Round 20's RB-2: a resume without `--compact-*` ran
+  the control arm because the flags were not inherited, so the resumed chat rendered the whole history
+  again (183,169 tokens) and was refused. Launch the first run with `--compact-strategy
+  elide-tools+summarize-conversation --compact-keep 4`, reach a handoff cut, then `--resume` with none of
+  them. The first resumed request carries the same replacement bytes as the recording's last derived
+  render, holds the handoff document **and not the full history**, and no summarizer request precedes
+  it. Read the header of the resumed file: it records only the compaction flags that were typed, so an
+  untyped run has no `compact_keep` key at all (Backend applies its own default of 20 for an unset
+  field). **Catches RB-2 returning:** the resumed `request_sent` input tokens stay near the recording's
+  last one instead of jumping to the full history, and no over-window refusal follows. Then resume with
+  `--compact-keep 8`: the typed flag wins, and the notice reads
+  `recorded with --compact-keep 4; continuing with 8 (the current flags win)`.
 - **An over-window prompt is refused, not truncated.** Lain now asks ollama not to truncate, so a
   prompt past the loaded context comes back refused with the server's own count. *Driven
   2026-09-14* against the built binary (a 160 KB prompt, 32,768-token context):
@@ -230,9 +240,11 @@ driven — this is integration check 7 of the discharging chunk)*:
   room with /rewind past the turn that grew it, /unpin a pinned turn, or a narrower read.` — with one
   `window_pressure` record (`kind: over_window`, `source: ollama`, `prompt_tokens`,
   `window_tokens`) and `run_interrupted` carrying `reason: over_window`. When the refused render
-  left something droppable, the tail reads `. Make room with compaction (that count is now the
-  reading it measures), /rewind, /unpin a pinned turn, or a narrower read` instead *(prediction,
-  not yet driven)*, and the refused count becomes the reading compaction fires on. Round 17's F90
+  left something droppable **and compaction can shrink it**, the tail reads `. Make room with
+  compaction (that count is now the reading it measures), /rewind, /unpin a pinned turn, or a narrower
+  read` instead *(prediction, not yet driven)*, and the refused count becomes the reading compaction fires
+  on. When the derivation reported `would_not_shrink` the refusal must **not** advise compaction (round 20's
+  RB-3, below). Round 17's F90
   was the opposite: a 330 KB request silently truncated to 16,386 tokens, read as 50% then 16%
   occupancy, and a model that had lost its tools.
 
@@ -260,6 +272,32 @@ driven — this is integration check 7 of the discharging chunk)*:
      collapsing to empty content rather than to a second summary;
   4. what survives beside it is exactly the current ask, an unanswered `tool_use`/`tool_result`
      pair if there was one, and the pins — nothing else.
+
+  **The handoff also fires when the only droppable content is ONE lone conversational turn** (round 20's
+  RB-3). `summarize-conversation` proposes nothing for a run of 1, so the source used to read as stuck
+  without a handoff and every over-window ask was refused (13 in a row). Launch with `--compact-keep 4
+  --no-nvim --compact-strategy elide-tools+summarize-conversation --num-ctx 32768`, then send 2 asks that
+  each carry a 45 KB filler prompt. **PASS:** the second is answered, with one `compaction_cut` of
+  `"kind": "handoff"`. **Catches RB-3 returning:** an ask refused with `Make room with compaction` and no
+  `compaction_cut` after it.
+
+  **The handoff document keeps its state across generations** (round 20's RB-1: the summarizer was fed the
+  previous document cut to ~200 characters, so generation 3 read "No progress made"). Drive 3 handoffs in
+  one session, with a directive in the first prompt that the document must keep (`build a Rails blog with
+  tags`) and a `todo_write` with progress. For each handoff, find the summarizer's `request_sent` and count
+  hits of the directive and of the previous document's `## Goal` text:
+
+  ```bash
+  ruby -rjson -e 'n=0; ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="request_sent"
+    b=r.to_json; puts "#{r["ts"]} bytes=#{b.bytesize} goal_hits=#{b.scan("Rails blog").size}"}' "$JOURNAL"
+  ```
+
+  **PASS:** the second handoff's summarizer request contains the first document byte for byte (grep a
+  full paragraph of it, not a phrase) and the `bytes in full` stub does not appear on it, and generation 3's
+  `Progress` is not `No progress made` while the todo list shows progress. **Catches RB-1 returning:** the
+  previous document as one truncated line ending `[980 bytes in full]`, or a `Goal` that has decayed to a
+  generic sentence by generation 3. Turns *since* the last handoff are whole until the byte budget binds
+  (39,907 at a 32,768 window); over budget the **oldest turns** are stubbed and never the document.
 
   Then `--resume` and confirm the first resumed request is **byte-identical** to the live one: a
   handoff is recorded like any other cut and replayed like one, with no second summarizer call.

@@ -409,8 +409,10 @@ tr  = Lain::Approval::Escalation::Triage.new(sensitivity: fac)
 tr.call(Lain::Effect::ToolCall.new(name: "bash", input: { "command" => C, "cwd" => CWD }, tool_use_id: "p"), nil)
 ```
 
-(The triage rung needs no `root:`; that keyword confines `ComposedTerm` at the rules rung, and
-`shell-terms.md` §4 is where omitting it silently abstains everything.) Measured 2026-08-27 with a
+(The triage rung needs no `confinement:`; that keyword confines `ComposedTerm` at the rules rung, and
+`shell-terms.md` §4 is where omitting it silently abstains everything. Round 20 found that `root:` is not
+the confinement's keyword either: it anchors the `Sensitivity` rules, and `confinement:` takes the
+`Risk::Root`.) Measured 2026-08-27 with a
 real `Sensitivity` anchored on a scratch `HOME` holding `.ssh/id_qa` and `.netrc`:
 
 | command | rung verdict | the note in the reason |
@@ -510,7 +512,7 @@ triaged as a missing allowlist entry rather than as the design gap it is.
 ## 6 — The excluded-programs config table
 
 **⚠️ CORRECTED — T4 and T6 are landed.** `Shell::Exclusions` exists (`shell/exclusions.rb`), a
-project's `[shell] exclude` table is read, and `Config.shell_exclusions` wires it into the same
+project's `shell exclude:` verb in `.lain/config.rb` is read, and `Config.shell_exclusions` wires it into the same
 `Shell::Verdict` that `Tools::Bash` and `Triage` both consult (`board_build.rb:129`, per §2b
 above). The
 "BLOCKED ON" framing and the pre-state paragraph this section used to open with are stale; what
@@ -528,14 +530,15 @@ pass. Claim 5 has no counterpart there and is this section's real contribution:
 2. **Qualifying the name does not evade it.** `/usr/bin/curl`, `./curl` and `../bin/curl` must all
    deny. This already holds at the `Verdict` layer and was measured there; what T6 adds is that it
    holds through the wiring.
-3. **`exclude = ["*"]` must be HONOURED, not refused.** That is not an arbitrary call: it follows
+3. **`shell exclude: %w[*]` must be HONOURED, not refused.** That is not an arbitrary call: it follows
    `Sensitivity::Rules.unbounded?`, which refuses a wildcard on the *granting* key (`exempt`) and
    permits it under `denied`/`gated` because those can only ever add. An exclusion table only
    restricts, so the precedent puts it on the legal side. A refusal here is a finding **against the
    precedent**, and should be filed with that citation rather than as a preference.
 4. **A typo is loud.** `Config.sensitivity`'s posture is the model — an unknown key refuses at load,
    naming the file, rather than being silently dropped. A silently ignored exclusion reads as a rule
-   in force that is not, which is the same failure mode `[sensitivity]`'s unknown-key refusal prevents.
+   in force that is not, which is the same failure mode the `sensitivity` verb's unknown-key refusal prevents. Since round 20 a config that
+   will not load refuses the launch outright, before a session file is written (`shell-terms.md` §2 drives it).
 5. **One verdict, not two — the one claim only this file makes.** T6's whole point was ending a
    double parse: `escalation.rb:482` and `bash.rb:162` each **used to** default-construct their own
    `Shell::Verdict.new`. Both are landed now — `toolset_build.rb:276` threads one `@verdict` to
@@ -603,6 +606,7 @@ capability every rule has, since no rule *but* `ComposedTerm` reads a term.
   | `cat README.md \| tee out.txt` | allowed by the verdict, refused by the runner (§3a) — an approval rule that says yes to a command the runner then refuses is a UX finding at minimum |
   | `cat <a world-readable, ordinary-classified file that holds an `API_KEY=…` line>` | **the content predicate**, new in round 18: the rule opens every word that resolves to a real file (≤ 64 KiB, world-readable, `O_NOFOLLOW`) and refuses to vouch for one `Sensitivity::Regions` finds a region in. Classification alone said this file was ordinary, and it is; the bytes are the thing that disqualifies it |
   | `cat <an `exempt`ed `.env`>` | an exemption lifts the **human read prompt** and nothing else, so an ordinary-by-exemption verdict still fails the rule. Before this, one basename exemption for a fixture `.env` approved `cat` of every `.env` in the tree with nobody asked |
+  | `cat _netrc`, `cat .authinfo`, `cat .msmtprc`, `cat .htpasswd`, `cat .vault_pass`, `cat passwords.txt`, `cat .pgpass.bak` (0644, holding `machine h login u password hunter2hunter2`) | round 20's H-1: credential variants by name are classified denied or gated, and a netrc, pgpass, htpasswd or msmtprc line is a `Regions` region, so neither predicate vouches. **Catches H-1 returning:** `cat _netrc` releasing `password hunter2hunter2` |
   | `cat <ordinary-named in-root link to .env.local or id_rsa>` | the rule classifies the LANDING, not the word — an ordinary-classified name that resolves to a gated or denied target must still reach a human (`secret-boundary.md` §5b) |
 
   **Two things must still auto-approve**, and they are the controls that keep the content

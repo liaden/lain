@@ -2,9 +2,9 @@
 
 **What it exercises:** `lain epic status / queue / approve / deny / submit / add / split / merge /
 land / finish`, `/implement-epic` and the `lain://status` buffer, `lain worktrees gc`, `Epic::Home`
-(both `[epics] home` values), `Epic::Stage`'s boundary rule, `Epic::Scribe` as the one write path,
+(both `epics home:` values), `Epic::Stage`'s boundary rule, `Epic::Scribe` as the one write path,
 `Approval::Gate::Policies` and all four policies, `Approval::SignoffQueue` as a **fold** rather than
-a file, and the `[epics]` / `[epics.gates]` / `[isolation]` / `[tests]` config refusals.
+a file, and the `epics` / `gate` / `isolation` / `tests` verbs of `.lain/config.rb` and their refusals.
 
 **The question it answers:** does a four-stage pipeline stay honest when nothing but a journal
 remembers where it is — and does the driver that works it to a branch stay honest about which issue
@@ -79,6 +79,11 @@ write into the path it names rather than reconstructing `<state_home>/epics/<pro
 hand. That path is a hash; a driver that guesses it writes a second epic nobody reads and then files
 "status shows nothing" as a defect.
 
+**Write `Blocks:`, never `Blocked by:`.** `Blocked by:` is derived from the `blocks` edges of the issues
+that block an issue, so writing it by hand is refused by name (`Epic::Document::DERIVED_LINKS`); a
+driver who follows an older version of this scenario and writes it gets that refusal, which is not a
+finding. The writable link fields are `Blocks`, `Related` and `Discovered from`.
+
 **Corrected by round 17: part of an issue's status IS in that tree.** `done` and `abandoned` are the
 heading marks `[x]` and `[!]` in `epic.md` — §2 and §8 set them by editing the mark. What is
 deliberately absent is **runtime** state: `pending -> in_flight` and every gate decision are
@@ -86,7 +91,7 @@ journal folds, never a file, so a status or queue file appearing beside `epic.md
 
 ## 1 — Where the home is, and the trap in `repo` mode
 
-`[epics] home` takes exactly `"xdg"` or `"repo"` and nothing else.
+`epics home:` takes exactly `:xdg` or `:repo` and nothing else.
 
 ```bash
 # each of these must refuse at load, naming the config path, exit 1, no backtrace
@@ -118,6 +123,39 @@ lain epic status
 
 **Expect a warning naming the ignored path.** Silence here is the defect — and it is the failure
 mode that reads as success, because everything else works perfectly right up until the PR is empty.
+
+### 1c: `lain trust`: Ruby that runs only once its bytes are trusted
+
+Round 20 replaced the TOML config file with `.lain/config.rb` and gated **every** top-level `.lain/*.rb`
+(`config.rb`, `services.rb`, `summarizers.rb`) on one trust decision, because a cloned repository's Ruby
+was already being `instance_eval`ed with no consent. Drive it in the subject repository:
+
+1. **Untrusted refuses before anything runs.** With a `.lain/config.rb` and no mark, `lain chat`, `lain
+   epic status` and `lain up -- --epic demo` (chat flags go after `--`; `lain up --epic` alone dies with `Unknown switches`, the wrong reason) each refuse with `<abs>/.lain/config.rb is Ruby this project runs
+   on launch, and these bytes have not been trusted. Read it, then run: lain trust <root>` (measured
+   2026-09-30), from the project root **and from a subdirectory** of it. Put a `puts "RAN"` (or `File.write`
+   a marker) at the top of the file: the marker must **not** appear.
+2. **`lain trust` shows and records.** `lain trust` prints each file (control characters escaped) and asks
+   `[y/N]`; a `n` or end of input records nothing and exits non-zero, so `lain trust && lain chat` stops.
+   `lain trust --yes` records without asking (`trusted: <path>`), and the next launch evaluates the file.
+3. **A changed file is a new decision.** Change one byte of `.lain/config.rb` (or add a `.lain/services.rb`,
+   or rename one): the next launch refuses as untrusted again.
+4. **A worktree of a trusted project is trusted**: a worker checkout with byte-identical `.lain/*.rb` loads
+   its files with no second consent (trust is keyed on the digest of the `*.rb` set, not on the root).
+5. **A project with no `.lain/*.rb` needs no trust**: `lain chat` starts with no mark, and `lain trust`
+   says there is nothing to trust.
+6. **The agent cannot grant it.** Ask the model to `write_file .lain/config.rb`: an `approval_pending` parks
+   for a human (`secret-boundary.md` §2), and even an approved write leaves the file untrusted until a human
+   runs `lain trust`.
+
+7. **Finding the root reads no config** (there is no `root =` rung any more; `--root` and the nearest `.lain/`
+   marker are the two ways). Nest `a/.lain/config.rb` (containing `raise "outer evaluated"`, trusted or not),
+   `a/b/.lain/` (empty) and `a/b/c/` (no `.lain/`), and launch from `a/b/c`. The root is `a/b`, the
+   launch succeeds, and the outer file is never evaluated: an `outer evaluated` refusal means the walk read a
+   config it did not need, and a file that will not parse cannot block resolving the root either.
+
+**Catches the round-20 gap returning:** a launch that evaluates a `.lain/*.rb` no human trusted, or that
+starts with a broken `config.rb` and says so only in a notice (H-3, in `shell-terms.md` §2).
 
 ## 2 — `status`, and the remaining-work rule
 
@@ -158,30 +196,43 @@ token must not collide into one node), and labels **escape** `&`, `<`, `>`, `"` 
 output into any mermaid renderer and confirm it draws; a diagram that fails to parse is a finding
 even though the command exited 0.
 
-## 3 — `[epics.gates]`, refused at load and for every stage
+## 3: `gate` lines, refused at load and for every stage
 
 Both sides of the mapping are closed sets. A typo in a stage name is the dangerous one: silently
-dropping `reserch = "deferred"` leaves that stage `interactive`, and an unattended run then wedges
-on a gate nobody is there to answer.
+dropping `reserch` leaves that stage `interactive`, and an unattended run then wedges on a gate
+nobody is there to answer.
 
 ```bash
-printf '[epics.gates]\nreserch = "deferred"\n'        # "has no stages", naming the pipeline
-printf '[epics.gates]\nresearch = "defered"\n'        # "unknown gate policies", naming the known set
-printf '[epics]\ngates = "deferred"\n'                # "must be a table", naming [epics.gates]
+# write .lain/config.rb, run `lain trust --yes`, then `lain epic status`; each exits 1
+printf 'epics do
+  gate :reserch, :deferred
+end
+'     # "has no stages", naming the pipeline
+printf 'epics do
+  gate :research, :defered
+end
+'     # "names unknown gate policies", the known set
+printf 'epics gates: "deferred"
+'                       # "must be a table"
 ```
 
-*Driven 2026-09-14*, the third: `<path>: [epics.gates] must be a table, got String: "deferred"` —
-round 17 corrected this comment, which used to say the refusal names `[epics]`.
+*Evaluated 2026-09-30*, each prefixed with `<path>:N:` (the file and the line of the verb):
 
-Expected for the first two: `[epics.gates] has no stages "reserch"; the pipeline is research ->
-epic_plan -> issue_plan -> implementation`, and a policy refusal naming `interactive, hands_off,
-deferred, adjudicated`. **Every unknown key is reported in one pass**, not just the first — put two typos in
-and check both are named.
+```
+`gate` has no stages "reserch"; the pipeline is research -> epic_plan -> issue_plan -> implementation
+`gate` names unknown gate policies "defered"; known policies: interactive, hands_off, deferred, adjudicated
+`gate` must be a table, got String: "deferred"
+```
+
+**Every unknown key is reported in one pass**, not just the first: put two typos in and check both are
+named (`has no stages "reserch", "epic_pln"`). **A bare `epics gate: :deferred` is refused too**
+(`` `epics` has no keys "gate"; known keys: home, gates, width ``): `gate` is a line inside the `epics`
+block, not a keyword.
 
 **Then the property that makes this worth doing at launch at all:** `Policies.for_all` resolves
 EVERY stage's policy, not only the stage being submitted. `lain epic submit` builds the
 adjudication pair whenever ANY stage is configured `adjudicated`, and builds no provider at all
-otherwise. So configure `implementation = "adjudicated"`, unset the provider's API key, and submit
+otherwise. So configure `gate :implementation, :adjudicated` in the `epics` block (then `lain trust --yes`), unset the provider's API key **and leave `LAIN_PROVIDER` unset** (`LAIN_PROVIDER` is the default provider, so a shell exporting `LAIN_PROVIDER=ollama` supplies a provider that needs no key and the check passes while asserting nothing), and submit
 **`research`** — an entirely different stage. It must still refuse at wiring, before anything is
 journaled, naming the missing key. Then set every stage `interactive` and submit again with the key
 still unset, **from a terminal**: that must succeed, because a session with nothing to adjudicate
@@ -229,7 +280,7 @@ screen because both rows show the same changeset.
 
 ## 5 — The four policies
 
-One epic, one stage, re-run under each `[epics.gates]` value. Read the journaled `gate_decision`
+One epic, one stage, re-run under each gate policy (`gate :research, <policy>` in the `epics` block, then `lain trust --yes`). Read the journaled `gate_decision`
 after each and check **both** `answered_by` (who decided) and `policy` (how) — they are independent
 axes and a surface that collapses them cannot tell a human's approval from a 4B model's.
 
@@ -256,12 +307,12 @@ the jargon `… but this session is missing asker` (round 17). *Driven 2026-09-1
 `lain epic submit research < /dev/null` and `printf 'y\n' | lain epic submit research`, exit 1:
 
 ```
-epic stage "research" is configured for the "interactive" gate policy, but stdin is not a terminal, so nobody can answer it; set research = "hands_off" or "deferred" in [epics.gates] to decide it unattended
+epic stage "research" is configured for the "interactive" gate policy, but stdin is not a terminal, so nobody can answer it; add `gate :research, :hands_off` (or :deferred, whichever policies can run unattended) to the `epics` block of .lain/config.rb to decide it unattended
 ```
 
 **And an unattended submit of a stage that is NOT interactive proceeds**, even when another stage
-still is. Round 17 found `research = "hands_off"` refused because `implementation` was left
-interactive (fork E2). *Driven 2026-09-14*, `[epics.gates] research = "hands_off"` and nothing
+still is. Round 17 found `research` as `:hands_off` refused because `implementation` was left
+interactive (fork E2). *Driven 2026-09-14*, `gate :research, :hands_off` and nothing
 else, `< /dev/null`, exit 0:
 
 ```
@@ -320,9 +371,15 @@ sign-offs parked (approve or deny them before the boundary opens)`.
 Then the half that proves the key is a **pair** and not a global:
 
 ```bash
-# a SECOND epic in the same home, its research untouched
+# a SECOND epic in the same home whose research was APPROVED
 lain epic submit epic_plan other-epic     # MUST proceed -- partitions are (epic_slug, stage)
 ```
+
+**Give the second epic an approved research first** (submit `research` for it and approve it). Since round 18
+a stage opens only on positive approval evidence, so a second epic whose research is merely *untouched*
+refuses `epic_plan` too, and "MUST proceed" over an untouched one is a stale claim, not a defect. The check
+that the key is a **pair** is that the first epic's parked research does not block the second epic's
+`epic_plan`: the second proceeds while the first still refuses.
 
 A global drain would let one epic's unreviewed research block every other epic's planning, and
 concurrent epics are the normal case. **Both halves, or this section tests nothing.**
@@ -431,7 +488,15 @@ What to check, because the edge rewrite is the whole point:
 - after a **merge**, the result carries both sides' edge sets minus the self-references the rewrite
   would otherwise create, **and a `Discovered from:` both sides share** — round 17 found merge
   dropping it (fork E7) *(prediction, not yet driven)*;
-- after each, `lain epic status` shows a graph with **no dangling `Blocks:` edge**.
+- after each, `lain epic status` shows a graph with **no dangling `Blocks:` edge**;
+- **an id the tier cannot use is refused where the issue is built** (round 20's G-1: `lain epic add`
+  accepted `late_discovery` and `a.b`, and the epic was then refused by every other command). Drive
+  `lain epic add late_discovery "x"` and `lain epic add a.b "x"`, and `lain epic split greet
+  --into=x_y,zz`. **PASS**, each exits 1 with (measured 2026-09-30) `issue "late_discovery": issue id
+  "late_discovery" is not a filesystem name: it must match /\A[a-z0-9][a-z0-9-]*\z/ (lowercase letters,
+  digits and dashes, opening with a letter or a digit) -- the filesystem grammar`, and `epic.md` is
+  **byte-identical** afterwards (`sha256sum` it before and after). **Catches G-1 returning:** the command
+  succeeding, or `epic.md` changed by a refused command, or a later `lain epic status` refusing the epic.
 
 Then the trap that fails silently: **abandoning a blocker does not unblock what it blocked.** Mark a
 blocker `[!]` and confirm its dependents are still not `ready`. Unblocking is an edge edit.
@@ -484,14 +549,14 @@ subject broken cannot tell a fix from a corpse next round.
 ## 10 — The driver: `/implement-epic`
 
 This is the new half, and it has never been driven. It needs the epic's issues **approved**, a
-`[tests]` table (§13), and a `Subject:` line in each issue's plan.
+`tests` verb (§13), and a `Subject:` line in each issue's plan.
 
 **Two things round 17 had to learn before §10 worked, both preconditions rather than findings.** The
 subject repository needs a git identity the red step can commit under (§0), and the `tests` verb
 may live in a **gitignored** `.lain/config.rb` — the conventional place — since 2026-09-14: the
 driver reads the layout once from the project root, where round 17's driver read it from each
 issue's worktree and blocked every issue for want of a file git never checked out (F115). A
-`[tests]`-missing refusal naming the worktree rather than the project is that defect back.
+`tests`-missing refusal naming the worktree rather than the project is that defect back.
 
 ### 10a — what an issue needs before it can start
 
@@ -510,7 +575,7 @@ Drive each refusal — every one names the plan path:
 - **a non-canonical subject** (`/abs/path`, `../escape`, `a//b`, `trailing/`) — refused, and this one
   matters because a subject that escaped would write the generated test outside the checkout;
 - **a subject under no declared source root** — refused, naming the roots;
-- **an unknown `Level:`** — refused, naming the levels `[tests]` declares.
+- **an unknown `Level:`**, refused, naming the levels `tests` declares.
 
 A subject that does not exist yet is **fine** — a test written before its class is the normal case.
 
@@ -589,6 +654,15 @@ not be checked out … already used by worktree at …/retained/…`, `lain work
 **detaches**, keeping its files and letting go of the branch. Drive a per-issue refusal, then the
 retry: it must launch, and `git -C <retained path> status` must still show the uncommitted work.
 *(Prediction, not yet driven.)*
+
+**A retry is a new running row, not an invisible one** (round 20's G-4: `lain://status` and `state.json`
+froze during `/implement-epic` because a failed attempt wrote no anchor, so the retry was handed attempt 1
+again and its `:spawn` digest repeated, which `Fleet` ignores as one it has seen). Fail an issue's first
+attempt before it writes an anchor (a per-issue refusal, or Ctrl-C), then retry it. **PASS:** the retry's
+`:spawn` digest **differs** from the first attempt's (`grep '"kind":"spawn"'` the two records), and
+`lain://status` and `.lain/state.json` list the retry as **running**. The lane and the worktree key are the
+first attempt's, unchanged. **Catches G-4 returning:** the status feed stuck on the first attempt's
+`failed` row while the run visibly works.
 
 ## 11 — The `lain://status` buffer
 
@@ -671,24 +745,26 @@ yet driven)*; the run's end releases the lock, Ctrl-C included.
 
 ## 13 — Test layout, and worktree GC
 
-### 13a — `[tests]` is opt-in
+### 13a: `tests` is opt-in
 
-**Deferred by the human, and not a finding: `lain chat` WARNS where `lain epic` and `lain worktrees gc`
-REFUSE.** Round 17 (fork E16) found a `[tests]` or `[isolation]` typo launching a chat with a warning
-while the epic commands refuse the same file, against `TestLayout`'s docstring that a typo "is
-refused". Which way to settle it is Open decision 1 of the discharging chunk, not taken. Drive the
-refusals below through `lain epic status` or `lain worktrees gc`, and record what `lain chat` does
-with the same file as the known asymmetry.
+**The whole file is evaluated once, so every reader refuses the same file. This replaces round 17's
+"chat WARNS where epic REFUSES" asymmetry, and round 20's finding that `lain epic status` and `lain
+worktrees gc` never loaded the `tests` verb.** A `tests` or `isolation` typo now refuses `lain chat`,
+`lain epic status`, `lain worktrees gc` and `lain up -- --epic demo` alike, at `<path>:N`, before a session file
+is written. Drive one bad line through all four and read the same message from each; a launch that starts
+with the typo in silence is the defect (H-3's shape, in another verb). Evaluated 2026-09-30 on a real
+binary with `tests preset: :nose`: `lain epic status` and `lain worktrees gc` both exit 1 with
+`<path>:1: `tests` preset: "nose" is not one of cargo, minitest, pytest, rspec`.
 
-**With no `[tests]` table, nothing is refused.** Confirm that first, because it is the default every
+**With no `tests` verb, nothing is refused.** Confirm that first, because it is the default every
 target project starts in: drive a write to a badly-placed test file and check it goes through, with
 one `test_layout_absent` record journaled to say the guard ran with nothing to enforce.
 
-Then declare a layout and re-drive:
+Then declare a layout (`lain trust --yes` after writing it) and re-drive:
 
-```toml
-[tests]
-preset = "rspec"
+```ruby
+# .lain/config.rb
+tests preset: :rspec
 ```
 
 - a child's write to a **split sibling** of the mirrored path is refused, and the refusal **names the
@@ -701,8 +777,10 @@ preset = "rspec"
   note, and **refused at land time**. Drive both halves;
 - an `edit_file` that changes a test's subject passes at write time and is caught at land time.
 
-Also drive the refusals: an unknown key in `[tests]`, a `[tests]` table with no `preset`, and a
-preset that is not one of `rspec`, `minitest`, `pytest`, `cargo`.
+Also drive the refusals (each `<path>:N:` first): an unknown key (`tests preset: :rspec, bogus: 1` →
+`` `tests` has no keys "bogus"; known keys: preset, source_roots, level_roots, exempt, default_level ``),
+a `tests` verb with no `preset` (`` `tests` names no preset; set preset to one of cargo, minitest, pytest, rspec ``),
+and a preset that is not one of them (`preset: :nose`).
 
 ### 13b — `lain worktrees gc`
 
@@ -728,9 +806,12 @@ exactly **one** detached gc run and renew the stamp. Start two chats in quick su
 stale stamp and confirm only one run starts (round 17 saw the loser print `another lain worktrees gc
 is running for <project>; this run did nothing`).
 
-### 13c — `[isolation]`
+### 13c: `isolation`
 
-Drive the refusals, each naming the key and what would have been legal: `retain_days = 0`,
-`rebase_retries = -1`, `diff_algorithm = "histogram "`, `conflict_style = "zdiff"`, and an unknown
-key — through `lain epic` or `lain worktrees gc`, since `lain chat` only warns (the deferred
-asymmetry in §13a). Then set `rebase_retries = 0` and confirm worker self-sync is genuinely off.
+Drive the refusals, each naming the key and what would have been legal: `isolation retain_days: 0`
+(`` `isolation` retain_days: 0 is not a whole number of days, at least 1 ``), `rebase_retries: -1`
+(`... is not a whole number of retries, at least 0`), `diff_algorithm: :foo` (`... is not one of
+histogram, patience, minimal, myers`), `conflict_style: :zdiff`, and an unknown key (`` has no keys
+"bogus"; known keys: retain_days, rebase_retries, diff_algorithm, conflict_style ``). Every reader
+refuses the same file (§13a), so drive them through `lain epic` or `lain worktrees gc` and `lain chat`
+and read the same line. Then set `rebase_retries: 0` and confirm worker self-sync is genuinely off.

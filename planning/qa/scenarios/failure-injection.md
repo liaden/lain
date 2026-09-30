@@ -352,9 +352,27 @@ human a verb**, so there is something to drive:
   `you>`.
 - The stopped ask's prompt is **kept**, not withdrawn (§1b): the next ask folds it.
 
+- **The stopped ask's question retires with it** (round 20's C-1: the `ask_human` row stayed in
+  `lain://inbox` and `inbox:N` stayed in the HUD for good after a stop). After `s` or `/stop` at a parked
+  `ask_human`: the journal holds a `questions_consumed` record naming the question, the HUD reads
+  `inbox:0`, `lain://inbox` is empty and `/inbox` offers nothing. Any of the four still showing the
+  question is C-1 back.
+
 Still check that the journal parses afterwards — that was the old check and it is still the
 cheapest one. A `session_closed` beside the stop, or a session that has to be `--resume`d to
 continue, is the finding.
+
+### 6b: a hangup mid-spawn ends like a terminate
+
+Round 20's E-3: SIGHUP (a closed terminal, a dropped ssh session) mid-spawn left no completion record, no
+`ending_not_recorded` and a lease never released, while SIGTERM was correct, because `Signals::MAP` trapped
+INT, TERM and QUIT and HUP took Ruby's default. HUP is now routed exactly as TERM. Drive both against one
+recipe: start `lain chat` with a subagent spawn parked on a hanging provider (`inject_e.rb`'s hang mode, or
+a blackhole endpoint for the child), then `kill -HUP <pid>` in one run and `kill -TERM <pid>` in another.
+**PASS, identically for both:** the journal holds the spawn's completion (or an `ending_not_recorded`) and
+then `session_closed`, and the spawn's lease is released (`git worktree list --porcelain` shows no `locked` entry for its checkout).
+**Catches E-3 returning:** the HUP run with a `:spawn` record and no completion, or a lease still held
+after the process is gone.
 
 ## 7 — The iteration ceiling
 
@@ -417,7 +435,8 @@ a whole read, a windowed read and command output are now bounded alike. Row caps
 axis and are unchanged: 500 rows for a listing and for `glob`, 200 for `file_symbols`
 definitions and `test_pattern`, 500 for `file_symbols` references, 20 for `web_search`. The old
 figures — 256 KiB whole, 1 MiB windowed, 128 KiB of output — are what a driver will remember;
-finding them is a stale binary.
+finding them is a stale binary, and a scenario line that still asserts them (§8 and §10 did until round
+20) is a stale scenario.
 
 Two consequences worth driving, because they are what the drop from 256 KiB to 16 KiB buys and
 costs:
@@ -497,30 +516,35 @@ Five more things to check, because each is a way the shape can be right and the 
 - **The decision precedes the read.** An oversized file must be refused from its size, not read and
   then measured. Watch for a multi-second pause or a memory spike before the refusal — either means
   the file was materialised first, which is the memory half of the claim failing quietly.
-- **One enormous line is its own case, and worth TWO extra seeds — the probe and its control.** The
-  boundary is `WINDOW_BOUND` (1 MiB), not `WHOLE_BOUND`, and getting it wrong in either direction is
-  a real defect, so seed both sides:
+- **One enormous line is its own case, and worth TWO extra seeds, the probe and its control.** There is
+  ONE ceiling now (16 KiB, `Tool::Bounds::RESULT_BYTES`), so the boundary a single line hits is
+  `Tools::ReadFile::LINE_LIMIT` (16,128 bytes, the ceiling less the notice's room), and `WHOLE_BOUND` and
+  `WINDOW_BOUND` (256 KiB and 1 MiB) no longer exist. Round 20 found this section still naming them and
+  seeding 1.2 MB and 300 KB files whose expectations were for the old pair. Seed both shapes:
 
-      ruby -e 'File.write("one.json", "[" + "0,"*600_000 + "0]")'   # 1,200,003 bytes -- OVER 1 MiB
-      ruby -e 'File.write("mid.json", "[" + "0,"*150_000 + "0]")'   #   300,003 bytes -- under 1 MiB
+      ruby -e 'File.write("one.json", "[" + "0,"*20_000 + "0]")'            # 40,003 bytes, ONE line
+      ruby -e 'File.write("lines.json", "[\n" + "0,\n"*8_000 + "0]\n")'    # 24,005 bytes, 8,002 short lines
 
-  **`one.json` is the probe.** A newline-free file over 1 MiB cannot be narrowed by `offset`/`limit`
-  at all, since both count lines, so every window is refused in turn. Its refusal must say so and
-  point at a byte range — the distinctive fragment is `one line alone is over the ceiling`, and it
-  names a `head -c 100000` sized to sit under `bash`'s own 128 KiB ceiling, so following the advice
-  steps the model *down* a ceiling rather than into another refusal.
+  Both are over the 16 KiB ceiling, so an unwindowed `read_file` refuses both, and what is checked is the
+  **advice**, which was measured 2026-09-30 through `Tools::ReadFile.narrower_for`.
 
-  **`mid.json` is the control, and it is the guard against over-reach.** It is over `WHOLE_BOUND`
-  and newline-free, but *under* `WINDOW_BOUND` — so a window covering it would itself be admitted,
-  and the correct advice is still the full-cover one:
+  **`one.json` is the probe.** A newline-free file over the line limit cannot be narrowed by `offset`/`limit`
+  at all, since both count lines, so every window is refused in turn. Its refusal must say so and point at a
+  byte range: the distinctive fragment is `one line alone is over the 16128-byte line limit`, and it names a
+  ``head -c 16384 PATH`` sized to `bash`'s own ceiling, so following the advice steps the model *down* a
+  ceiling rather than into another refusal. It also offers the in-place `sed -i` route through `bash`, which
+  is approval-gated.
 
-      read it with read_file's offset and limit (a window covering the whole file counts as a
-      complete read, so edit_file still accepts it)
+  **`lines.json` is the control, and it is the guard against over-reach.** Its lines are short, so a window
+  IS followable and the correct advice is the windowed one, with a limit sized to the file
+  (`this file's first lines average about 3 bytes, so a limit of about 4096 lines fits one window`):
 
-  If `mid.json` gets the byte-range advice too, the fix over-reached and every newline-free file
-  between 256 KiB and 1 MiB has quietly lost its route back to being editable. **Both files offered
-  the same advice is the finding, whichever way round** — the same rule as `big.txt`/`mid.rb` above,
-  one ceiling up.
+      read it in pieces with read_file's offset and limit, each under 16384 bytes (windows that together
+      cover every line count as a complete read, so edit_file still accepts it)
+
+  If `lines.json` gets the byte-range advice too, the fix over-reached and every many-line file over 16 KiB
+  has lost its route back to being editable. **Both files offered the same advice is the finding, whichever
+  way round**: the same rule as `big.txt`/`mid.rb` above.
 
 ### The disclosing shape
 
@@ -644,7 +668,7 @@ and check:
   as a summary that landed, and `summary_hits`/`summary_misses` on `compaction_decision` is the only
   read on whether the fires work at all;
 - **that same `compaction_decision` must also read `misses_all_size_declined: true`.** A miss below
-  `MODEL_THRESHOLD_BYTES` and a miss over the 256 KiB input ceiling both land in `summary_misses`,
+  `MODEL_THRESHOLD_BYTES` and a miss over the summarizer's input ceiling both land in `summary_misses`,
   and the two are not the same failure — one never reaches a model call at all. This field is what
   tells a size decline from a dead summarizer: it is true only when every miss this decision counted
   was a size decline, so a `summary_misses` count with the flag `false` means something else is

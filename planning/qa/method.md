@@ -1370,6 +1370,7 @@ fallback rather than redesigning mid-run.
 
 ## Round 20 (2026-09-29): what running nine forks in parallel taught the process
 
+- **The scenarios were updated for the fixes that followed this round**, so a stale claim listed below is corrected in the scenario text now.
 - **Cap concurrent contexts at about five, not nine.** Nine forks on this 15 GB box got the shared
   `llama-server` OOM-killed at load average 33, and in-flight requests got 500s. A fork that sees a
   500 burst should check `dmesg`/the serve log for a kill before filing anything.

@@ -232,6 +232,11 @@ you> /survey ./lib/lain/survey     -- must REFUSE, naming the branch already ope
 you> /review-submit                -- over the survey, once one is open
 ```
 
+**Between the two legs, close the changeset review with `/review close`** (round 20 found the section
+skipping it): the survey-over-survey and after-refusal steps assume no changeset round is left open, and
+a round still open makes `/survey` refuse for the wrong reason. `/review close` lets the open round go
+without a verdict.
+
 - **survey over a changeset review** → refuses, **naming the target already open**, and points at
   `lain survey <path>` for a text rendering outside the chat.
 - **survey over a survey** → **rebinds**, does not refuse. That is how a human takes a second look
@@ -295,12 +300,34 @@ $QA/nv.sh expr "string(get(b:,'lain_thread_anchors','<unset>'))"   # <unset> => 
      puts "#{r["payload"]["lifecycle"]} #{r["payload"]["error"]}"}' "$LAIN_QA_JOURNAL"
    ```
 
+   **A docent that ANSWERS journals `lifecycle: stopped` with a `result`**, not `settled`: a one-shot
+   child is done for good once it answers, and `Lineage` records that as `stopped` on purpose (round 20's
+   G-5 filed the mismatch with this text; it is a scenario correction). Expect `stopped` for an answered
+   thread, `failed` with the error class for one that raised, and `settled` only for a child that finished
+   as a running actor.
+
    Every `:spawn` must have a completion beside it. A failed one carries no `result` key at all,
    which is what keeps it out of every finished-work reader; a `:spawn` with no completion is the
    finding, and a lease refused **before** the spawn must leave neither.
 5. **the answerer names itself on the record** — the journalled role is what the answerer reports,
    never the `ROLE` constant. Journaling the constant made two genuinely different arms produce
    byte-identical records; an arm that cannot name itself must record as `anonymous_arm`.
+
+6. **`/stop` reaches a running docent** (round 20's G-3: `/stop` said `no ask is running` beside a
+   docent that was answering). Type a question, and while `(thinking …)` is showing type `/stop` at
+   `you>`. **PASS:** the reply names what it stopped (`no ask was running, but stopped <role>
+   (<worker_id>)`), the docent's completion `:message` is journaled (`lifecycle: stopped`, no `result`),
+   and the pane stops waiting. Then quit with a docent running: its completion record precedes
+   `session_closed` in the journal. **Catches G-3 returning:** `no ask is running` while `lain://status`
+   lists the docent as running.
+7. **A thread on a line below a masked region anchors on the right line** (round 20's G-2: hunks numbered
+   the masked projection while the buffer numbered raw lines, so only line 1 of a file with a multi-line
+   secret worked, and every line below a region was shifted). Survey a file whose lines 1 to 6 are a PEM
+   private key and line 8 is code. Open a thread on raw line **4** (inside the key): it anchors on the
+   projected line holding `<redacted:1>`. Open one on raw line **8**: it anchors on projected line **3**
+   (the six key lines collapse to 1) and its answer discusses the code on line 8, never `no hunk`. On a
+   git changeset the anchor line is the raw line, unchanged. **Catches G-2 returning:** a thread on any
+   line below the key that the docent cannot find, or that answers about the wrong line.
 
 **F31 is FIXED as of round 11** — the first re-drive since it was filed. The second `:w` refuses in
 words (`lain: nothing has been typed under the conversation, so there is no question to ask -- write
