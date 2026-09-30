@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Runs a command in the repo under a chosen Ruby build, with one fixed, minimal
+# environment, so a comparison between two builds differs only in the Ruby binary.
+#
+#   bin/with-ruby <ruby-bin-dir> <command...>
+#   bin/with-ruby ~/.local/share/mise/installs/ruby/4.0.6/bin bundle exec rspec spec/lain/canonical_spec.rb
+#
+# Why not .envrc: it evals `mise env`, which puts mise's Ruby first on PATH and
+# would silently undo the choice. Everything .envrc sets that the suite needs is
+# set here instead (OpenSSL's library path, TMPDIR on the repo's filesystem, the
+# worker count). AB_PAD passes through, so an A/B harness can vary the size of the
+# environment between runs (Mytkowicz et al., ASPLOS 09).
+#
+# One consequence to remember: mise's shims are not on PATH, so `nvim` resolves to
+# the system binary, which starts about 10 times faster than the shim. Compare runs
+# made through this script with each other, not with a plain `rake pspec`.
+#
+# A Ruby built from source for comparison, isolated from the project's own:
+#   MISE_DATA_DIR=~/tmp/lain/rubies/mise-jemalloc MISE_RUBY_COMPILE=true \
+#     RUBY_CONFIGURE_OPTS="--enable-yjit --enable-load-relative --without-gmp --with-jemalloc" \
+#     mise install ruby@4.0.6
+# then, under this script, `gem install bundler -v <lockfile's> --force` and
+# `BUNDLE_FROZEN=true bundle install`.
+set -euo pipefail
+
+if [ $# -lt 2 ]; then
+  sed -n '2,9p' "$0" >&2
+  exit 2
+fi
+ruby_bin=$1
+shift
+[ -x "$ruby_bin/ruby" ] || { echo "no ruby in $ruby_bin" >&2; exit 2; }
+
+repo=$(cd "$(dirname "$0")/.." && pwd)
+cd "$repo"
+exec env -i \
+  HOME="$HOME" USER="${USER:-$(id -un)}" LANG="${LANG:-en_US.UTF-8}" TERM="${TERM:-xterm-256color}" \
+  PATH="$ruby_bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+  LD_LIBRARY_PATH="${LAIN_LD_LIBRARY_PATH:-/home/linuxbrew/.linuxbrew/lib}" \
+  TMPDIR="${LAIN_TMPDIR:-$HOME/tmp/lain}" \
+  LAIN_SPEC_WORKERS="${LAIN_SPEC_WORKERS:-12}" \
+  AB_PAD="${AB_PAD:-}" \
+  "$@"

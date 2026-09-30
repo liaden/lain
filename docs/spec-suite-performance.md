@@ -185,3 +185,23 @@ content-hashed caches (`sccache`, cargo fingerprints, swc) have no such failure 
 The failure is easy to misread: `parallel_tests` reports only the examples that SURVIVED, so a
 dead worker looks like "fewer examples, 0 failures, non-zero exit" — the same shape an OOM kill
 produces. Check the example COUNT against a serial run before blaming memory.
+
+## Tools for measuring it
+
+The figures above are from 2026-08-05. A fuller, later set -- per-file probes, kernel traces,
+allocator A/Bs, and a long-session bench -- is in `planning/spec-suite-profiling-research-2026-09.md`.
+These commands reproduce its system-level measurements. Each prints its usage and the traps it
+avoids at the top of the file.
+
+| command | root | what it answers |
+|---|---|---|
+| `bin/setup-profiling <tool...>` | to install | whether bpftrace, the libbpf bcc tools, strace and perf are present; the install command for Arch, Debian or Ubuntu, run for you with `PROFILING_INSTALL=1` |
+| `bin/trace-pspec` | yes | one `pspec` under bpftrace: every exec, each program's life, the parent's time in `clone` against `vfork`, off-CPU stacks, run-queue latency, syscalls; summarized by `bin/trace-summary` |
+| `bin/trace-memleak <spec files...>` | yes | every libc allocation still held at the end of one rspec process, by caller and library; summarized by `bin/memleak-summary` |
+| `bin/strace-children <command...>` | no | per child process, how long creating it took (fork or vfork, then exec) against how long the program ran |
+| `bin/with-ruby <ruby-bin-dir> <command...>` | no | the same command under a different Ruby build (a jemalloc one, say) with an identical environment |
+
+A result from any of them is one sample. Before calling a change faster, repeat both sides,
+interleaved, with the environment size varied between runs (Mytkowicz et al., "Producing Wrong
+Data Without Doing Anything Obviously Wrong!", ASPLOS 09): the size of the environment alone moves
+stack alignment enough to reverse a small difference.

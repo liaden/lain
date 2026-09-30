@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# One `parallel_rspec` run with kernel tracers attached, then a summary. Needs root
+# for the tracers; the suite itself runs as the user who invoked sudo.
+#
+#   sudo bin/trace-pspec [output-dir]      (default tmp/profiling/trace-pspec-<time>)
+#   sudo PROFILING_INSTALL=1 bin/trace-pspec   installs bpftrace and the libbpf tools first
+#
+# What it records, all counted in the kernel for that user's processes:
+#   procs.txt              every exec by program, each program's life from exec to
+#                          exit, and the parent's time inside clone/clone3/vfork --
+#                          the fork-versus-command split for the whole suite
+#   offcpu.txt             where threads block off-CPU for 1ms or more, by kernel stack
+#   runqlat.txt            run-queue latency: do workers wait for a CPU?
+#   bpftrace_syscalls.txt  syscall time and counts, files opened, bytes written
+#
+# The tracer's run is not a timing baseline (it adds about 5s); read its counts.
+#
+# Traps this script already avoids, each found the hard way:
+#   - bpftrace's default maps hold 4,096 keys. A run creates tens of thousands of
+#     short-lived processes, and per-thread entries that are never cleaned up fill
+#     the maps, after which updates are dropped with only a stderr warning. Maps are
+#     sized up and cleaned on sched_process_exit.
+#   - the libbpf `offcputime` crashes ("stack smashing detected") on this kernel;
+#     off-CPU time is traced with bpftrace instead.
+#   - `execsnoop` drops events under this load; execs are counted in the kernel.
+#   - `rake pspec` needs cargo on PATH just to load the Rakefile, and root's login
+#     shell has none; parallel_rspec is called directly, which also leaves the
+#     runtime log alone.
+#   - the uid filter also sees the user's desktop apps; summarize by process name.
+set -euo pipefail
+
+user=${SUDO_USER:?run this with sudo, from the user who owns the checkout}
+uid=$(id -u "$user")
+repo=$(cd "$(dirname "$0")/.." && pwd)
+out=${1:-$repo/tmp/profiling/trace-pspec-$(date +%Y%m%d-%H%M%S)}
+mkdir -p "$out"
+
+"$repo/bin/setup-profiling" bpftrace runqlat
+
+if [ "$(pgrep -cf 'bin/(parallel_)?rspec')" != 0 ]; then
+  echo "an rspec run is already going; wait for it" >&2
+  exit 1
+fi
+
+cfg="config = { max_map_keys = 262144 }"
+window=${TRACE_SECONDS:-240}
+pids=()
+
+bpftrace -e "$cfg
+tracepoint:sched:sched_process_exec /uid == $uid/ { @execs[comm] = count(); @exec_ts[pid] = nsecs; }
+tracepoint:sched:sched_process_exit /uid == $uid && tid == pid && has_key(@exec_ts, pid)/ {
+  @life_ms[comm] = hist((nsecs - @exec_ts[pid]) / 1000000); @life_us_sum[comm] = sum((nsecs - @exec_ts[pid]) / 1000); @life_n[comm] = count();
+  delete(@exec_ts[pid]); }
+tracepoint:syscalls:sys_enter_clone,tracepoint:syscalls:sys_enter_clone3,tracepoint:syscalls:sys_enter_vfork /uid == $uid/ { @cl[tid] = nsecs; }
+tracepoint:syscalls:sys_exit_clone,tracepoint:syscalls:sys_exit_clone3,tracepoint:syscalls:sys_exit_vfork /uid == $uid && args->ret > 0 && has_key(@cl, tid)/ {
+  @clone_us_sum[comm, probe] = sum((nsecs - @cl[tid]) / 1000); @clone_n[comm, probe] = count(); delete(@cl[tid]); }
+tracepoint:sched:sched_process_exit { delete(@cl[tid]); }
+interval:s:$window { clear(@exec_ts); clear(@cl); exit(); }
+" > "$out/procs.txt" 2>&1 & pids+=($!)
+
+bpftrace -e "$cfg
+tracepoint:sched:sched_switch {
+  if (uid == $uid) { @start[args->prev_pid] = nsecs; @stk[args->prev_pid] = kstack(10); @cm[args->prev_pid] = args->prev_comm; }
+  if (has_key(@start, args->next_pid)) {
+    \$d = (nsecs - @start[args->next_pid]) / 1000;
+    if (\$d >= 1000) { @off_us[@cm[args->next_pid], @stk[args->next_pid]] = sum(\$d); }
+    delete(@start[args->next_pid]); delete(@stk[args->next_pid]); delete(@cm[args->next_pid]);
+  }
+}
+tracepoint:sched:sched_process_exit { delete(@start[tid]); delete(@stk[tid]); delete(@cm[tid]); }
+interval:s:$window { clear(@start); clear(@stk); clear(@cm); exit(); }
+" > "$out/offcpu.txt" 2>&1 & pids+=($!)
+
+runqlat -m "$window" 1 > "$out/runqlat.txt" 2>&1 & pids+=($!)
+
+bpftrace -e "$cfg
+tracepoint:raw_syscalls:sys_enter /uid == $uid/ { @start[tid] = nsecs; @sysid[tid] = args->id; }
+tracepoint:raw_syscalls:sys_exit /uid == $uid && has_key(@start, tid)/ {
+  @sys_ns[comm, @sysid[tid]] = sum(nsecs - @start[tid]); @sys_n[comm, @sysid[tid]] = count();
+  delete(@start[tid]); delete(@sysid[tid]); }
+tracepoint:sched:sched_process_exit { delete(@start[tid]); delete(@sysid[tid]); }
+tracepoint:syscalls:sys_enter_openat /uid == $uid/ { @opens[comm] = count(); }
+tracepoint:syscalls:sys_exit_write /uid == $uid && args->ret > 0/ { @write_bytes[comm] = sum(args->ret); }
+interval:s:$window { clear(@start); clear(@sysid); exit(); }
+" > "$out/bpftrace_syscalls.txt" 2>&1 & pids+=($!)
+
+sleep 3
+start=$(date +%s)
+# shellcheck disable=SC2024 # root writes the log; the directory is chowned back below
+sudo -u "$user" -H bash -lc "cd $repo && direnv exec . bundle exec parallel_rspec spec -n \${LAIN_SPEC_WORKERS:-12} \
+  --group-by runtime --runtime-log tmp/parallel_runtime_rspec.log --test-options '--format progress --no-profile'" \
+  > "$out/pspec.txt" 2>&1 || true
+echo "pspec wall: $(( $(date +%s) - start ))s" | tee -a "$out/pspec.txt"
+
+for p in "${pids[@]}"; do kill -INT "$p" 2>/dev/null || true; done
+wait || true
+chown -R "$user": "$out"
+grep -E '^[0-9]+ examples' "$out/pspec.txt" | tail -1 || true
+sudo -u "$user" -H ruby "$repo/bin/trace-summary" "$out" | tee "$out/summary.txt"
+chown "$user": "$out/summary.txt"

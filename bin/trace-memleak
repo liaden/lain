@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Every libc allocation still outstanding at the end of one rspec process, by the
+# code that asked for it. Needs root for memleak; rspec runs as the invoking user.
+#
+#   sudo bin/trace-memleak <spec files...>
+#   sudo bin/trace-memleak $(cat tmp/some-worker-file-list.txt)
+#   sudo PROFILING_INSTALL=1 bin/trace-memleak ...      installs memleak first
+#
+# Output in tmp/profiling/memleak-<time>/ (or MEMLEAK_OUT): memleak.txt, the
+# process's own view at exit (ruby_view.txt: RSS, ObjectSpace.memsize_of_all, heap
+# pages), and summary.txt from bin/memleak-summary, which splits the outstanding
+# bytes by library -- Ruby's own xmalloc against lain.so and the C extensions.
+#
+# Three traps this script avoids, each found the hard way:
+#   - `bundle exec` exec's rspec on the same pid, and memleak stops seeing the new
+#     program image. rspec runs as `ruby -S rspec` with bundler/setup in RUBYOPT
+#     (children still inherit it), all in one process.
+#   - Ruby is built without frame pointers, so every frame past the caller of malloc
+#     is garbage, every stack looks unique, and memleak's stack table overflows
+#     (730K stacks dropped in one run). Only the one reliable frame is recorded.
+#   - stacks are symbolized while the process is alive, so the probe holds rspec at
+#     exit until the final snapshot is taken.
+# Tracking every malloc slows allocation-heavy examples about 6 times; a spec
+# watchdog budget can trip. That is the tracer, not the spec.
+set -euo pipefail
+
+user=${SUDO_USER:?run this with sudo, from the user who owns the checkout}
+[ $# -gt 0 ] || { sed -n '2,8p' "$0" >&2; exit 2; }
+repo=$(cd "$(dirname "$0")/.." && pwd)
+out=${MEMLEAK_OUT:-$repo/tmp/profiling/memleak-$(date +%Y%m%d-%H%M%S)}
+"$repo/bin/setup-profiling" memleak
+
+if [ "$(pgrep -cf 'bin/(parallel_)?rspec')" != 0 ]; then
+  echo "an rspec run is already going; wait for it" >&2
+  exit 1
+fi
+
+mkdir -p "$out"
+chown "$user": "$out"
+cat > "$out/probe.rb" <<'RUBY'
+# frozen_string_literal: true
+
+# Publishes the pid and waits for the tracer to attach, then holds the process at
+# exit for the final snapshot. The variable is dropped at once so the Ruby children
+# specs spawn neither wait nor hold.
+if (dir = ENV.delete("MEMLEAK_DIR"))
+  File.write(File.join(dir, "pid"), Process.pid.to_s)
+  sleep 0.1 until File.exist?(File.join(dir, "go"))
+  at_exit do
+    GC.start(full_mark: true, immediate_sweep: true)
+    require "objspace"
+    File.write(File.join(dir, "ruby_view.txt"), <<~TXT)
+      rss_kb #{File.read('/proc/self/status')[/VmRSS:\s+(\d+)/, 1]}
+      memsize_of_all #{ObjectSpace.memsize_of_all}
+      heap_allocated_pages #{GC.stat(:heap_allocated_pages)}
+      heap_live_slots #{GC.stat(:heap_live_slots)}
+    TXT
+    File.write(File.join(dir, "at_end"), "")
+    sleep 0.2 until File.exist?(File.join(dir, "release"))
+  end
+end
+RUBY
+
+# shellcheck disable=SC2024 # root writes the log; the directory is chowned back below
+sudo -u "$user" -H bash -lc "cd $repo && direnv exec . env MEMLEAK_DIR=$out RUBYOPT=-rbundler/setup \
+  ruby -r$out/probe.rb -S rspec $* --format progress --no-profile" > "$out/rspec.txt" 2>&1 &
+runner=$!
+
+until [ -s "$out/pid" ]; do sleep 0.1; done
+pid=$(cat "$out/pid")
+echo "tracing pid $pid"
+memleak -p "$pid" -T 200 --perf-max-stack-depth=1 --stack-storage-size=262144 15 > "$out/memleak.txt" 2>&1 &
+tracer=$!
+sleep 3
+touch "$out/go"
+
+until [ -f "$out/at_end" ]; do sleep 1; done
+echo "suite finished; taking the final snapshot"
+sleep 18
+kill -INT "$tracer" 2> /dev/null || true
+touch "$out/release"
+wait "$runner" || true
+chown -R "$user": "$out"
+grep -E '^[0-9]+ examples' "$out/rspec.txt" | tail -1 || true
+grep -h 'could not be displayed' "$out/memleak.txt" | tail -1 || true
+sudo -u "$user" -H ruby "$repo/bin/memleak-summary" "$out" | tee "$out/summary.txt"
+chown "$user": "$out/summary.txt"

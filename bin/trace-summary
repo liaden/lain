@@ -1,0 +1,131 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Summarizes the output directory of `bin/trace-pspec`:
+#
+#   bin/trace-summary tmp/profiling/trace-pspec-<time>
+#
+# procs.txt answers the question the suite most needs answered about process
+# creation: how long the programs it runs take, against how long the parent spends
+# creating them. offcpu.txt is folded by the first kernel frames below the
+# scheduler, which name WHAT a thread waited on (epoll, futex, wait4). Totals are
+# summed over threads, so they are not wall time.
+#
+# Pure stdlib, and it reads the files as bytes: arguments bpftrace captured can
+# carry any encoding.
+module TraceSummary
+  SCHEDULER = /schedule|switch_to|finish_task_switch|preempt|__traceiter/
+  RUBY_NAMES = %w[ruby rspec parallel].freeze
+
+  module_function
+
+  def read(dir, name)
+    path = File.join(dir, name)
+    File.exist?(path) ? File.binread(path).force_encoding(Encoding::UTF_8).scrub : ""
+  end
+
+  def num(value, places = 1) = format("%<v>.#{places}f", v: value)
+  def seconds(micros) = "#{num(micros / 1e6)}s"
+  def per_call(micros, count) = "#{num(micros / 1e3 / count, 2)}ms"
+  def ruby?(name) = RUBY_NAMES.any? { |prefix| name.start_with?(prefix) }
+  def top(pairs, count) = pairs.max_by(count) { |*, value| value }
+
+  def row(*cells, widths:)
+    padded = cells.zip(widths).map { |cell, w| w.negative? ? cell.to_s.ljust(-w) : cell.to_s.rjust(w) }
+    puts "  #{padded.join(" ")}".rstrip
+  end
+
+  # One bpftrace map as a Hash; a map keyed by two fields gets an Array key.
+  def keyed(text, map, fields: 1)
+    key = Array.new(fields, "(.+?)").join(", ")
+    text.scan(/^@#{map}\[#{key}\]: (\d+)/).to_h do |*parts, value|
+      [fields == 1 ? parts.first : parts, value.to_i]
+    end
+  end
+
+  def processes(dir)
+    text = read(dir, "procs.txt")
+    execs = keyed(text, "execs")
+    puts "== processes exec'd: #{execs.values.sum}"
+    top(execs, 12).each { |name, n| row(n, name, widths: [7, -30]) }
+    lifetimes(text)
+    creations(text)
+  end
+
+  def lifetimes(text)
+    counts = keyed(text, "life_n")
+    puts "program life, exec to exit (count, total, mean):"
+    top(keyed(text, "life_us_sum"), 12).each do |name, us|
+      n = counts.fetch(name, 1)
+      row(name, n, seconds(us), per_call(us, n), widths: [-18, 7, 10, 11])
+    end
+  end
+
+  def creations(text)
+    counts = keyed(text, "clone_n", fields: 2)
+    puts "parent time creating processes and threads (count, total, mean):"
+    top(keyed(text, "clone_us_sum", fields: 2), 12).each do |(name, probe), us|
+      n = counts.fetch([name, probe], 1)
+      row(name, probe.sub("tracepoint:syscalls:sys_exit_", ""), n, seconds(us), per_call(us, n),
+          widths: [-18, -8, 7, 9, 10])
+    end
+  end
+
+  def off_cpu_stacks(dir)
+    read(dir, "offcpu.txt").scan(/^@off_us\[(.+?),\s*\n(.*?)\]: (\d+)/m).map do |comm, frames, us|
+      { comm: comm.strip, us: us.to_i, frames: frames.lines.map { |f| f.strip.sub(/\+\d+$/, "") }.reject(&:empty?) }
+    end
+  end
+
+  def off_cpu(dir)
+    stacks = off_cpu_stacks(dir)
+    puts "\n== off-CPU, blocks of 1ms or more: #{seconds(stacks.sum { |s| s[:us] })} summed over threads"
+    by_name = stacks.group_by { |s| s[:comm] }.transform_values { |ss| ss.sum { |s| s[:us] } }
+    top(by_name, 12).each { |name, us| row(seconds(us), name, widths: [10, -30]) }
+    puts "what Ruby threads waited on (first kernel frames below the scheduler):"
+    wait_points(stacks.select { |s| ruby?(s[:comm]) })
+  end
+
+  def wait_points(stacks)
+    points = Hash.new(0)
+    stacks.each { |s| points[s[:frames].grep_v(SCHEDULER).first(3).join(" <- ")] += s[:us] }
+    top(points, 12).each { |where, us| row(seconds(us), where[0, 120], widths: [10, -120]) }
+  end
+
+  def syscalls(dir)
+    text = read(dir, "bpftrace_syscalls.txt")
+    names = syscall_names
+    counts = keyed(text, "sys_n", fields: 2)
+    puts "\n== syscalls by time, Ruby processes (process, call, seconds, count):"
+    top(keyed(text, "sys_ns", fields: 2).select { |(name, _), _| ruby?(name) }, 15).each do |(name, id), ns|
+      row(name, names.fetch(id.to_i, id), seconds(ns / 1000), counts.fetch([name, id], 0), widths: [-18, -16, 10, 9])
+    end
+    %w[opens write_bytes].each { |map| per_name(text, map) }
+  end
+
+  def per_name(text, map)
+    puts "#{map}:"
+    top(keyed(text, map), 8).each { |name, v| row(name, v, widths: [-18, 14]) }
+  end
+
+  def syscall_names
+    header = "/usr/include/asm/unistd_64.h"
+    return {} unless File.exist?(header)
+
+    File.foreach(header).filter_map do |line|
+      match = line.match(/#define __NR_(\w+)\s+(\d+)/)
+      [match[2].to_i, match[1]] if match
+    end.to_h
+  end
+
+  def run(dir)
+    abort "usage: bin/trace-summary <trace-pspec output dir>" unless dir && Dir.exist?(dir)
+    processes(dir)
+    off_cpu(dir)
+    puts "\n== run-queue latency"
+    puts read(dir, "runqlat.txt")
+    syscalls(dir)
+  end
+end
+
+TraceSummary.run(ARGV[0])

@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Checks that the profiling tools a script needs are installed, and installs them on
+# Arch, Debian or Ubuntu when asked to.
+#
+#   bin/setup-profiling [--install] <tool...>
+#   bin/setup-profiling bpftrace runqlat memleak strace perf
+#
+# Without --install (or PROFILING_INSTALL=1) it prints the exact command and exits 1
+# when anything is missing; a profiling script should not install packages behind
+# its caller's back. With it, and as root, it runs that command.
+#
+# The bcc tools matter by BUILD, not by name: the libbpf builds (Arch's
+# bcc-libbpf-tools, Debian's and Ubuntu's libbpf-tools) take the options these
+# scripts pass, and the Python ones (Debian's `*-bpfcc`) do not -- memleak's
+# --perf-max-stack-depth, for one, exists only in the libbpf build.
+#
+# PROFILING_DISTRO=arch|debian|ubuntu overrides the detection, for a derivative
+# whose os-release does not say what it is derived from.
+set -euo pipefail
+
+install=${PROFILING_INSTALL:-}
+if [ "${1:-}" = "--install" ]; then
+  install=1
+  shift
+fi
+[ $# -gt 0 ] || { sed -n '2,6p' "$0" >&2; exit 2; }
+
+distro=${PROFILING_DISTRO:-unknown}
+if [ "$distro" = unknown ] && [ -r /etc/os-release ]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  case " ${ID:-} ${ID_LIKE:-} " in
+    *" arch "*) distro=arch ;;
+    *" ubuntu "*) distro=ubuntu ;;
+    *" debian "*) distro=debian ;;
+  esac
+fi
+
+package_for() {
+  case "$distro:$1" in
+    *:bpftrace) echo bpftrace ;;
+    *:strace) echo strace ;;
+    *:hyperfine) echo hyperfine ;;
+    arch:runqlat | arch:memleak | arch:offcputime | arch:execsnoop) echo bcc-libbpf-tools ;;
+    debian:runqlat | debian:memleak | debian:offcputime | debian:execsnoop) echo libbpf-tools ;;
+    ubuntu:runqlat | ubuntu:memleak | ubuntu:offcputime | ubuntu:execsnoop) echo libbpf-tools ;;
+    arch:perf) echo perf ;;
+    debian:perf) echo linux-perf ;;
+    ubuntu:perf) echo "linux-tools-common linux-tools-$(uname -r)" ;;
+    *) echo "" ;;
+  esac
+}
+
+missing=()
+packages=()
+for tool in "$@"; do
+  command -v "$tool" > /dev/null 2>&1 && continue
+  missing+=("$tool")
+  pkg=$(package_for "$tool")
+  read -ra split <<< "$pkg"
+  packages+=("${split[@]}")
+done
+
+[ ${#missing[@]} -eq 0 ] && exit 0
+mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
+
+case $distro in
+  arch) cmd="pacman -S --needed --noconfirm ${packages[*]}" ;;
+  debian | ubuntu) cmd="apt-get install -y ${packages[*]}" ;;
+  *) cmd="" ;;
+esac
+
+echo "missing: ${missing[*]}" >&2
+if [ -z "$cmd" ] || [ ${#packages[@]} -eq 0 ]; then
+  echo "no package mapping for this system (ID=${ID:-?}); install them by hand" >&2
+  exit 1
+fi
+if [ -z "$install" ]; then
+  echo "install with:  sudo $cmd" >&2
+  echo "or rerun with PROFILING_INSTALL=1 to have it done for you" >&2
+  exit 1
+fi
+[ "$(id -u)" = 0 ] || { echo "installing needs root: sudo $cmd" >&2; exit 1; }
+[ "$distro" = arch ] || apt-get update
+eval "$cmd"

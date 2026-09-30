@@ -1,0 +1,73 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Summarizes the output directory of `bin/trace-memleak`:
+#
+#   bin/memleak-summary tmp/profiling/memleak-<time>
+#
+# Reads memleak's LAST snapshot, taken while the process was held at exit, and
+# attributes each outstanding stack to its first frame outside libc: the code that
+# asked for the memory. Sizes are what was requested, not what is resident, so
+# thread and fiber stacks reserved with mmap count in full though mostly untouched.
+# The process's own view at the same moment (ruby_view.txt) is printed alongside,
+# because the question this answers is which allocations Ruby's accounting misses.
+module MemleakSummary
+  SNAPSHOT = /^\[[\d:]+\] Top \d+ stacks with outstanding allocations:\n/
+  STACK = /^(\d+) bytes in (\d+) allocations from stack\n((?:\t.*\n?)*)/
+  LIBC = %r{\[/usr/lib(?:64)?/(?:x86_64-linux-gnu/)?libc\.so\.6\]\z}
+  MB = 1_048_576.0
+
+  module_function
+
+  def num(value, places = 2) = format("%<v>.#{places}f", v: value)
+
+  def owner(frames)
+    named = frames.lines.map { |f| f.strip[/\]\s+(.*)\z/, 1].to_s }
+    named.find { |f| f !~ LIBC && f != "<null sym>" } || named.first.to_s
+  end
+
+  def stacks(text)
+    text.split(SNAPSHOT).last.to_s.scan(STACK).map do |bytes, n, frames|
+      caller = owner(frames)
+      lib = File.basename(caller[/\[([^\]]+)\]\z/, 1].to_s)
+      { bytes: bytes.to_i, n: n.to_i, lib: lib.empty? ? "?" : lib,
+        func: caller[/\A(\S+?)\+0x\h+/, 1] || caller[/\A(\S+)/, 1] || "?" }
+    end
+  end
+
+  def grouped(stacks, &key)
+    sums = stacks.group_by(&key).transform_values { |ss| [ss.sum { |s| s[:bytes] }, ss.sum { |s| s[:n] }] }
+    sums.sort_by { |_, (bytes, _)| -bytes }
+  end
+
+  def print_group(rows, total)
+    rows.each do |name, (bytes, n)|
+      share = "#{num(100.0 * bytes / [total, 1].max, 1)}%"
+      puts "  #{num(bytes / MB).rjust(9)} #{n.to_s.rjust(9)} #{share.rjust(6)}  #{name[0, 110]}"
+    end
+  end
+
+  def ruby_view(dir)
+    view = File.join(dir, "ruby_view.txt")
+    puts "Ruby's own view at exit:\n#{File.read(view).gsub(/^/, "  ")}" if File.exist?(view)
+  end
+
+  def load(dir)
+    leak = dir && File.join(dir, "memleak.txt")
+    abort "usage: bin/memleak-summary <trace-memleak output dir>" unless leak && File.exist?(leak)
+    stacks(File.binread(leak).force_encoding(Encoding::UTF_8).scrub)
+  end
+
+  def run(dir)
+    all = load(dir)
+    total = all.sum { |s| s[:bytes] }
+    ruby_view(dir)
+    puts "outstanding in the last snapshot: #{num(total / MB, 1)}MB in #{all.sum { |s| s[:n] }} allocations"
+    puts "\nby library (MB, allocations, share):"
+    print_group(grouped(all) { |s| s[:lib] }, total)
+    puts "\nby calling function (MB, allocations, share):"
+    print_group(grouped(all) { |s| "#{s[:lib]}: #{s[:func]}" }.first(40), total)
+  end
+end
+
+MemleakSummary.run(ARGV[0])

@@ -1,0 +1,115 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+
+# Splits the life of every child process a command starts, to answer one question:
+# how much of a subprocess call is the program running, and how much is creating it.
+#
+#   bin/strace-children bundle exec rspec spec/lain/review/source/local_branch_spec.rb
+#
+# No root needed. Per program and per way of creating it (fork against vfork), the
+# mean of four phases:
+#   create    the parent's clone/vfork syscall
+#   preexec   from clone returning to the child's execve (Ruby work in a forked child;
+#             folded into create for vfork, whose parent waits for the exec)
+#   exec      the execve syscall itself, which includes tearing down the address
+#             space a fork copied -- the cost that grows with the parent's RSS
+#   run       from execve returning to exit_group: the program
+#
+# strace slows every traced syscall, so the phases are inflated evenly; compare rows,
+# not absolutes. The trace file is kept in tmp/profiling/ for a second look.
+module StraceChildren
+  REPO = File.expand_path("..", __dir__)
+  EVENTS = "clone,clone3,vfork,execve,exit_group"
+
+  module_function
+
+  def trace(command)
+    abort "strace is not installed; see bin/setup-profiling strace" unless system("command -v strace > /dev/null")
+    dir = File.join(REPO, "tmp", "profiling")
+    FileUtils.mkdir_p(dir)
+    out = File.join(dir, "strace-children-#{Time.now.strftime("%Y%m%d-%H%M%S")}.txt")
+    ok = system("strace", "-f", "--seccomp-bpf", "-qq", "-ttt", "-T", "-e", "trace=#{EVENTS}", "-o", out, *command)
+    warn "command exited non-zero" unless ok
+    out
+  end
+
+  # A syscall strace saw interrupted is printed as two lines, "<unfinished ...>" and
+  # "<... name resumed>"; rejoining them keeps the entry timestamp and the result.
+  def joined(path)
+    pending = {}
+    File.foreach(path).filter_map do |line|
+      pid, ts, rest = line.split(" ", 3)
+      next unless rest
+
+      if rest.include?("<unfinished ...>")
+        pending[[pid, rest[/\A(\w+)\(/, 1]]] = [ts, rest.sub(" <unfinished ...>", "").chomp]
+        next
+      end
+      resumed = rest.match(/\A<\.\.\. (\w+) resumed>(.*)/)
+      next [pid.to_i, ts.to_f, rest] unless resumed
+
+      start, head = pending.delete([pid, resumed[1]])
+      [pid.to_i, start.to_f, "#{head}#{resumed[2]}"] if start
+    end
+  end
+
+  CREATE = /\A(clone3?|vfork)\(.*\) = (\d+)/
+  EXEC = /\Aexecve\("([^"]+)".*\) = 0/
+
+  def children(lines)
+    seen = { created: {}, execs: {}, exits: {} }
+    lines.each { |pid, ts, rest| note(seen, pid, ts, rest) }
+    phases(seen[:created], seen[:execs], seen[:exits])
+  end
+
+  def note(seen, pid, stamp, rest)
+    dur = rest[/<([\d.]+)>\s*$/, 1].to_f
+    if (m = rest.match(CREATE)) && !rest.include?("CLONE_THREAD")
+      seen[:created][m[2].to_i] = [stamp, dur, vfork?(rest, m[1])]
+    elsif (m = rest.match(EXEC))
+      seen[:execs][pid] ||= [stamp, dur, File.basename(m[1])]
+    elsif rest.start_with?("exit_group")
+      seen[:exits][pid] = stamp
+    end
+  end
+
+  def vfork?(rest, call) = call == "vfork" || rest.include?("CLONE_VFORK")
+
+  def phases(created, execs, exits)
+    execs.filter_map do |pid, (ets, edur, prog)|
+      born = created[pid] or next
+      died = exits[pid] or next
+      { prog:, kind: born[2] ? "vfork" : "fork", create: born[1], preexec: [ets - (born[0] + born[1]), 0].max,
+        exec: edur, run: died - (ets + edur) }
+    end
+  end
+
+  PHASES = %i[create preexec exec run].freeze
+  HEADER = %w[how program n create preexec exec run total].freeze
+  WIDTHS = [-6, -18, 6, 10, 10, 10, 10, 10].freeze
+
+  def row(cells)
+    puts(cells.zip(WIDTHS).map { |c, w| w.negative? ? c.to_s.ljust(-w) : c.to_s.rjust(w) }.join(" ").rstrip)
+  end
+
+  def ms(seconds) = "#{format("%<v>.2f", v: 1000 * seconds)}ms"
+
+  def report(rows)
+    row(HEADER)
+    rows.group_by { |r| [r[:kind], r[:prog]] }.max_by(15) { |_, rs| rs.size }.each do |(kind, prog), rs|
+      means = PHASES.map { |phase| rs.sum { |r| r[phase] } / rs.size }
+      row([kind, prog[0, 18], rs.size, *means.map { |m| ms(m) }, ms(means.sum)])
+    end
+  end
+
+  def run(command)
+    abort "usage: bin/strace-children <command...>" if command.empty?
+    path = trace(command)
+    report(children(joined(path)))
+    puts "trace: #{path}"
+  end
+end
+
+StraceChildren.run(ARGV)
