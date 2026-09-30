@@ -14,25 +14,25 @@ RSpec.describe Lain::Config::Refusal do
 
   describe "the message it composes" do
     it "names the file, then the table, then the detail" do
-      expect(described_class.new("must be a table", path:, table: "[sensitivity]").message)
-        .to eq("/project/.lain/config.toml: [sensitivity] must be a table")
+      expect(described_class.new("must be a table", path:, table: "`sensitivity`").message)
+        .to eq("/project/.lain/config.toml: `sensitivity` must be a table")
     end
 
     # A value built in memory rather than loaded has no file to open, so the
     # message must not invent one -- the posture the five families that already
     # had a base wrote five times over.
     it "names no file for a refusal built by hand" do
-      refusal = described_class.new("must be a table", table: "[sensitivity]")
+      refusal = described_class.new("must be a table", table: "`sensitivity`")
 
-      expect(refusal.message).to eq("[sensitivity] must be a table")
+      expect(refusal.message).to eq("`sensitivity` must be a table")
       expect(refusal.path).to be_nil
     end
 
     # `epics_home` is the one detail that names a Ruby reader rather than a TOML
     # table, so the table segment has to be genuinely optional.
     it "omits the table segment when the refusal names no table" do
-      expect(described_class.new("epics_home 3 is not one of xdg, repo", path:).message)
-        .to eq("/project/.lain/config.toml: epics_home 3 is not one of xdg, repo")
+      expect(described_class.new("`epics` home: 3 is not one of xdg, repo", path:).message)
+        .to eq("/project/.lain/config.toml: `epics` home: 3 is not one of xdg, repo")
     end
   end
 
@@ -50,8 +50,8 @@ RSpec.describe Lain::Config::Refusal do
                 -> { Lain::Config::Isolation.from("fast", path:) }].map { |read| refusal_from(&read) }
 
       expect(caught.map(&:message))
-        .to contain_exactly(a_string_including("[epics] must be a table"),
-                            a_string_including("[isolation] must be a table"))
+        .to contain_exactly(a_string_including("`epics` must be a table"),
+                            a_string_including("`isolation` must be a table"))
     end
 
     it "catches every one of the seven tables' refusals" do

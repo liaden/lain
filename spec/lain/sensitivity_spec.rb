@@ -936,7 +936,7 @@ RSpec.describe Lain::Sensitivity do
     it "refuses a string entry as a config refusal, naming the file and the table" do
       expect { described_class.from("strict", path: "/p/.lain/config.toml") }
         .to raise_error(Lain::Config::Refusal,
-                        %r{\A/p/\.lain/config\.toml: \[sensitivity\] must be a table})
+                        %r{\A/p/\.lain/config\.toml: `sensitivity` must be a table})
     end
 
     it "refuses a key it does not have, rather than dropping it silently" do

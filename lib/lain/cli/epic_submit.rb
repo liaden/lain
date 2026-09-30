@@ -363,7 +363,7 @@ module Lain
       #   home both resolve under it
       # @param paths [Paths] injected, so a spec resolves against a throwaway
       #   XDG state home
-      # @param config [Config] `.lain/config.toml`, already read
+      # @param config [Config] `.lain/config.rb`, already read
       # @param input [IO, nil] the stream a human answers an interactive gate on;
       #   a non-TTY or nil means this session has no asker, which {Prompt.on}
       #   states as the fact {Policies::Deps} expects
@@ -545,11 +545,12 @@ module Lain
       # The factory's sentence names a seam, which is the wiring's word for it.
       # A human who ran this from cron needs the reason and the line to change.
       def unattended(refusal, deps)
-        proceeding = Approval::Gate::Policies.runnable(deps).map(&:inspect).join(" or ")
+        first, *others = Approval::Gate::Policies.runnable(deps).map { |policy| ":#{policy}" }
+        alternatives = others.empty? ? "" : " (or #{others.join(" or ")})"
         Approval::Gate::Policies::Refusal.new(
           "epic stage #{refusal.stage.inspect} is configured for the #{refusal.policy.inspect} gate policy, but " \
-          "#{@unheard}, so nobody can answer it; set #{refusal.stage} = #{proceeding} in [epics.gates] to decide " \
-          "it unattended",
+          "#{@unheard}, so nobody can answer it; add `gate :#{refusal.stage}, #{first}`#{alternatives} to the " \
+          "`epics` block of .lain/config.rb to decide it unattended",
           kind: refusal.kind, stage: refusal.stage, policy: refusal.policy, seams: refusal.seams
         )
       end

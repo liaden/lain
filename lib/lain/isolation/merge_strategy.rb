@@ -20,7 +20,7 @@ module Lain
       end
 
       # The table's own rules, so a strategy built by hand refuses exactly what
-      # a bad `config.toml` would.
+      # a bad `config.rb` would.
       def initialize(conflict_style:, diff_algorithm:)
         Config::Isolation.check!({ "conflict_style" => conflict_style, "diff_algorithm" => diff_algorithm })
         super(conflict_style: -conflict_style, diff_algorithm: -diff_algorithm)

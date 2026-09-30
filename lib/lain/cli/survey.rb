@@ -50,7 +50,7 @@ module Lain
     # Two questions, and a bare `cwd:` answered both with one directory: WHOSE
     # rules are in force is the project's ROOT, and what a relative path
     # resolves against is where the human is STANDING -- so `lain survey` run
-    # below the repository top found no `.lain/config.toml` at all and
+    # below the repository top found no `.lain/config.rb` at all and
     # classified with `Rules.empty`. The surveyed tree is neither half: it is
     # {#present}'s argument and may point anywhere. A malformed table RAISES
     # rather than degrading to a notice: this table RESTRICTS, so dropping it
@@ -96,10 +96,8 @@ module Lain
       #   text surface over a buffer this object owns
       # @param ledger [Sensitivity::Ledger, nil] the run's ONE region ledger;
       #   nil builds this process's one and only, per the class doc
-      # @raise [Config::Malformed] when the project's config file cannot be read
-      # @raise [Lain::Sensitivity::Rules::Refusal] when its `[sensitivity]`
-      #   table is malformed -- a wrong table and an unreadable file are
-      #   different failures, and both refuse here
+      # @raise [Config::Refusal] when the project's config file will not run,
+      #   or its `[sensitivity]` table is malformed
       def initialize(project:, paths: Paths.new, bounds: Lain::Review::Bounds.new, surface: nil, ledger: nil)
         @paths = paths
         @bounds = bounds

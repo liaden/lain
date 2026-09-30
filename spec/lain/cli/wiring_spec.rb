@@ -1642,8 +1642,7 @@ RSpec.describe Lain::CLI::Wiring do
           git_out(repo, "switch", "-q", "-c", "feat")
           return if config.nil?
 
-          FileUtils.mkdir_p(File.join(repo, ".lain"))
-          File.write(File.join(repo, ".lain", "config.toml"), config)
+          write_config(repo, config)
         end
 
         def spawn_dev(wiring, notice: ->(_line) {})
@@ -1656,7 +1655,7 @@ RSpec.describe Lain::CLI::Wiring do
 
         it "hands a one-shot child's lease back with the strategy the project's config names" do
           in_throwaway_repo do |repo|
-            on_feat(repo, config: %([isolation]\nconflict_style = "diff3"\n))
+            on_feat(repo, config: %(isolation conflict_style: :diff3\n))
             spawn_dev(wiring_with("worktree"))
           end
 
@@ -1665,7 +1664,7 @@ RSpec.describe Lain::CLI::Wiring do
 
         it "syncs each child with the rebase retries the project's config names" do
           in_throwaway_repo do |repo|
-            on_feat(repo, config: %([isolation]\nrebase_retries = 0\n))
+            on_feat(repo, config: %(isolation rebase_retries: 0\n))
             spawn_dev(wiring_with("worktree"))
           end
 
@@ -1679,17 +1678,6 @@ RSpec.describe Lain::CLI::Wiring do
           # since an optional notice is what would let the first caller decide.
           # Asserting the spelling too reddened this on a rename.
           expect(described_class.instance_method(:handback).parameters.map(&:first)).to eq([:req])
-        end
-
-        it "tells the human a malformed [isolation] table was ignored, and hands back with lain's defaults" do
-          notices = []
-          in_throwaway_repo do |repo|
-            on_feat(repo, config: %([isolation]\nconflict_style = "wavy"\n))
-            spawn_dev(wiring_with("worktree"), notice: ->(line) { notices << line })
-          end
-
-          expect(notices).to include(a_string_matching(/\[isolation\].*lain's defaults.*conflict_style/m))
-          expect(handbacks.map(&:strategy)).to eq(["conflict_style=zdiff3 diff_algorithm=histogram"])
         end
 
         it "anchors a crashed actor's commits when the supervisor stops, instead of keeping nothing" do
@@ -2427,10 +2415,11 @@ RSpec.describe Lain::CLI::Wiring do
 
       def in_project(*slugs)
         Dir.mktmpdir do |dir|
-          FileUtils.mkdir_p(File.join(dir, ".lain"))
-          File.write(File.join(dir, ".lain", "config.toml"), %([epics]\nhome = "repo"\n))
           slugs.each { |slug| create_epic(dir, slug) }
-          with_state_home(File.join(dir, "state")) { Dir.chdir(dir) { yield(dir) } }
+          with_state_home(File.join(dir, "state")) do
+            write_config(dir, "epics home: :repo\n")
+            Dir.chdir(dir) { yield(dir) }
+          end
         end
       end
 
@@ -2558,10 +2547,11 @@ RSpec.describe Lain::CLI::Wiring do
           Dir.mktmpdir do |dir|
             FileUtils.cp_r(File.join(SeedRepo.at("README" => "seed\n"), "."), dir)
             commit(dir)
-            FileUtils.mkdir_p(File.join(dir, ".lain"))
-            File.write(File.join(dir, ".lain", "config.toml"), %([epics]\nhome = "repo"\n))
             create_epic(dir, slug)
-            with_state_home(File.join(dir, "state")) { Dir.chdir(dir) { yield(dir) } }
+            with_state_home(File.join(dir, "state")) do
+              write_config(dir, "epics home: :repo\n")
+              Dir.chdir(dir) { yield(dir) }
+            end
           end
         end
 
@@ -2903,8 +2893,10 @@ RSpec.describe Lain::CLI::Wiring do
         root = File.join(base, "repo")
         home = File.join(base, "home")
         FileUtils.mkdir_p(File.join(root, ".lain"))
-        File.write(File.join(root, ".lain", "config.toml"), config) if config
-        with_env("HOME" => home, "XDG_STATE_HOME" => File.join(base, "state")) { yield(root, home) }
+        with_env("HOME" => home, "XDG_STATE_HOME" => File.join(base, "state")) do
+          write_config(root, config) if config
+          yield(root, home)
+        end
       end
     end
 
@@ -2956,7 +2948,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     it "denies what the project's own [sensitivity] table denies, in the project's own words" do
-      in_tree(config: "[sensitivity]\ndenied = [\"*.secret\"]\n") do |root|
+      in_tree(config: "sensitivity denied: %w[*.secret]\n") do |root|
         denial = board_for(root:).sensitivity.denial(read_of(File.join(root, "prod.secret")), cwd: root)
 
         expect(denial&.reason).to eq(:configured)
@@ -2965,7 +2957,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     it "gates what the project's [sensitivity] table merely gates" do
-      in_tree(config: "[sensitivity]\ngated = [\"*.private\"]\n") do |root|
+      in_tree(config: "sensitivity gated: %w[*.private]\n") do |root|
         board = board_for(root:)
 
         expect(board.sensitivity.gates?(read_of(File.join(root, "notes.private")), cwd: root)).to be(true)
@@ -2973,15 +2965,12 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    # LOUD, and not rescued the way a broken [approval] table is: that one
-    # grants, so dropping it fails closed; this one restricts, so a session that
-    # ran with it silently un-parsed would be running with the project's
-    # denials off.
+    # LOUD: this table restricts, so a session that ran with it silently
+    # un-parsed would be running with the project's denials off.
     it "refuses a malformed [sensitivity] table at construction, naming the file" do
-      in_tree(config: "sensitivity = \"strict\"\n") do |root|
+      in_tree(config: "sensitivity denied: \"*.secret\"\n") do |root|
         expect { wired(root:) }
-          .to raise_error(Lain::Config::Refusal,
-                          /#{Regexp.escape(File.join(root, ".lain", "config.toml"))}.*must be a table/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}.*list of patterns/)
       end
     end
 
@@ -2991,11 +2980,11 @@ RSpec.describe Lain::CLI::Wiring do
     # builds the Scribe, and the Scribe writes the header in its constructor, so
     # "start was never called" IS "no orphan record".
     it "refuses before the session record is opened, leaving no orphan header" do
-      in_tree(config: "sensitivity = \"strict\"\n") do |root|
+      in_tree(config: "sensitivity denied: \"*.secret\"\n") do |root|
         spy = WiringSpecStartSpy.new(Lain::CLI::Chronicle::Null.new)
 
         expect { wired(root:, chronicle: spy) }
-          .to raise_error(Lain::Config::Refusal, /\[sensitivity\] must be a table/)
+          .to raise_error(Lain::Config::Refusal, /`sensitivity` denied is a list/)
         expect(spy.starts).to eq(0)
       end
     end
@@ -3011,25 +3000,15 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    # The ruling at the session: the strict compile is the sensitivity table's
-    # alone. A typo in a table this boundary never reads costs that table's
-    # feature, never the chat -- which is how it was before this card, and how a
-    # user mid-task needs it to stay.
-    it "does not take the session down for a typo in an unrelated table" do
-      in_tree(config: %(epics = "not a table"\n\n[sensitivity]\ndenied = ["*.secret"]\n)) do |root|
+    # Trusting the file is the one decision: an allow entry it carries is
+    # honoured with no second consent asked of anyone.
+    it "pre-approves a call the trusted config allows" do
+      in_tree(config: %(approval do\n  allow "bash", command: "bundle exec rspec"\nend\n)) do |root|
         board = board_for(root:)
+        call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash",
+                                          input: { "command" => "bundle exec rspec" })
 
-        expect(board.sensitivity.denial(read_of(File.join(root, "prod.secret")), cwd: root)&.reason).to eq(:configured)
-      end
-    end
-
-    it "keeps the built-in rules when the config file will not parse at all" do
-      in_tree(config: "this is not [valid toml") do |root, home|
-        board = board_for(root:)
-
-        expect(board.sensitivity.denial(read_of(File.join(home, ".ssh", "id_rsa")),
-                                        cwd: root)&.reason).to eq(:protected)
-        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")), cwd: root)).to be(true)
+        expect(Sync { |task| task.with_timeout(2) { board.policy_switch.call(call, nil) } }).to be(true)
       end
     end
 
@@ -3076,7 +3055,7 @@ RSpec.describe Lain::CLI::Wiring do
       # fresh Parses are not `eq`, two over a SHARED Parse are. So the guard
       # fails open the moment either half turns value-like. Do not simplify it.
       it "gives the triage rung and the bash tool the same instance, not two equal ones" do
-        in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root|
+        in_tree(config: %(shell exclude: %w[curl]\n)) do |root|
           board = board_for(root:)
 
           expect(verdict_of_rung(board)).to equal(verdict_of_tool(board))
@@ -3087,7 +3066,7 @@ RSpec.describe Lain::CLI::Wiring do
       # default -- without this, the example above would still pass over two
       # branches that agreed on restricting nothing.
       it "carries the project's own exclusion table to both of them" do
-        in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root|
+        in_tree(config: %(shell exclude: %w[curl]\n)) do |root|
           board = board_for(root:)
 
           expect(verdict_of_rung(board).call("curl http://example.com")).to be_deny

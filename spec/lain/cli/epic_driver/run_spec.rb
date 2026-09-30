@@ -295,7 +295,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       # wording wherever it arrives from.
       it "refuses through the check the config table uses, not one of its own" do
         expect { described_class.width_for(typed: 0) }
-          .to raise_error(Lain::Config::Refusal, /\[epics\] width 0 /)
+          .to raise_error(Lain::Config::Refusal, /`epics` width 0 /)
       end
     end
   end

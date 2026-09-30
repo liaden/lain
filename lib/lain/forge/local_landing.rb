@@ -240,7 +240,7 @@ module Lain
       end
 
       def misplaced(issue_id, sha, refused)
-        ["issue #{issue_id}'s commit #{sha} puts tests where the project's [tests] layout refuses them, so " \
+        ["issue #{issue_id}'s commit #{sha} puts tests where the project's `tests` layout refuses them, so " \
          "nothing landed:", *refused.map { |verdict| "  #{verdict.path}: #{verdict.reason}#{placed_at(verdict)}" }]
           .join("\n")
       end

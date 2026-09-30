@@ -38,9 +38,9 @@ module Lain
         "conflict_style" => OneOf.new(values: %w[zdiff3 diff3 merge].freeze)
       }.freeze
 
-      # The table as `config.toml` spells it, which is how every refusal here
-      # names it.
-      TABLE = "[isolation]"
+      # The verb of `.lain/config.rb` that declares this table, as every refusal
+      # here names it.
+      TABLE = "`isolation`"
 
       # A hand-built table goes through the same rules as a file's rather than
       # being held as a Hash nothing validated.
@@ -78,7 +78,7 @@ module Lain
       #
       # @return [Config::Refusal]
       def self.invalid_value(key, value, path: nil)
-        Refusal.new("#{key} = #{value.inspect} is not #{RULES.fetch(key)}", path:, table: TABLE, key:, value:)
+        Refusal.new("#{key}: #{value.inspect} is not #{RULES.fetch(key)}", path:, table: TABLE, key:, value:)
       end
 
       private_class_method :invalid_value

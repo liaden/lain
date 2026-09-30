@@ -319,7 +319,7 @@ RSpec.describe Lain::CLI::Command::Surface do
 
   # The same failure the outbox example above is about, one boundary over, and
   # this one narrows a security boundary rather than a report: `/survey` built
-  # its own classifier from its own re-read of `.lain/config.toml`, so a config
+  # its own classifier from its own re-read of `.lain/config.rb`, so a config
   # rewritten mid-session left the listing walking one table while the gate
   # beside it held another. IDENTITY, because two classifiers agreeing at the
   # moment a spec looks is exactly what the defect looked like.

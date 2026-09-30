@@ -159,7 +159,7 @@ RSpec.describe Lain::CLI::EpicMount do
     # the chat outright.
     #
     # It was a NEW regression rather than an old one: no chat path read
-    # `.lain/config.toml` at all before this card, so the feature built to keep
+    # the project config at all before that change, so the feature built to keep
     # a chat starting was what made seven config errors fatal to startup. The
     # population most exposed is the epic tier's own users, since `[epics]` is
     # the table they hand-edit.
@@ -169,8 +169,7 @@ RSpec.describe Lain::CLI::EpicMount do
     describe "a project config the chat cannot read" do
       def in_project_config(bytes)
         said = []
-        FileUtils.mkdir_p(File.join(@dir, ".lain"))
-        File.write(File.join(@dir, ".lain", "config.toml"), bytes)
+        write_config(@dir, bytes)
         mount = Dir.chdir(@dir) do
           described_class.for(chronicle:, options: {}, told: told.method(:<<), notice: ->(m) { said << m })
         end
@@ -178,15 +177,15 @@ RSpec.describe Lain::CLI::EpicMount do
       end
 
       {
-        "TOML that does not parse" => "this is [not valid TOML ===\n",
-        "an epics_home outside the closed set" => %([epics]\nhome = "sideways"\n),
-        "a misspelled key in the [epics] table" => %([epics]\nhomme = "repo"\n)
+        "Ruby that does not parse" => "epics home: [\n",
+        "an epics_home outside the closed set" => "epics home: :sideways\n",
+        "a misspelled key in the epics table" => "epics homme: :repo\n"
       }.each do |what, bytes|
         it "starts the chat with no review tool, and says why, given #{what}" do
           mount, said = in_project_config(bytes)
 
           expect(mount.tools).to be_empty
-          expect(said.join).to include("config.toml")
+          expect(said.join).to include("config.rb")
         end
       end
     end

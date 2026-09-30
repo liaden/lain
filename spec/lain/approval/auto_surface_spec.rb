@@ -419,9 +419,10 @@ RSpec.describe Lain::Approval::AutoSurface do
     def disarmed_board(root, home)
       project = project_at(root)
       table = Lain::CLI::Wiring::BoardBuild.rules(project:)
+      remembered = Lain::Approval::Remembered.from(Lain::Config.load(root: project.root))
       Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m", toolset:,
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-                                 rules: Lain::Project::Consent.for(project:).rules,
+                                 rules: [remembered].reject(&:empty?),
                                  sensitivity: Lain::CLI::Wiring::BoardBuild.policy(project:, paths: paths_at(home),
                                                                                    table:))
     end

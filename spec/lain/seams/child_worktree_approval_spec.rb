@@ -36,8 +36,8 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
       @repo = File.join(base, "repo")
       FileUtils.mkdir_p([@home, @repo])
       FileUtils.cp_r("#{SeedRepo.at({ "README.md" => "a readme\n" })}/.", @repo)
-      FileUtils.mkdir_p([File.join(@repo, ".lain"), File.join(@repo, "vault")])
-      File.write(File.join(@repo, ".lain", "config.toml"), %([sensitivity]\ndenied = ["/vault/"]\n))
+      FileUtils.mkdir_p(File.join(@repo, "vault"))
+      write_config(@repo, "sensitivity denied: %w[/vault/]\n")
       File.write(File.join(@repo, "vault", "token"), "opaque\n")
       File.chmod(0o644, File.join(@repo, "vault", "token"))
       example.run

@@ -115,7 +115,7 @@ module Lain
           return level unless layout.in_force?
           return level if layout.mapping.levels.any? { |declared| declared.name == level }
 
-          raise Refusal, "#{plan.path} names the level #{level.inspect}, which this project's [tests] table " \
+          raise Refusal, "#{plan.path} names the level #{level.inspect}, which this project's `tests` config " \
                          "does not declare (#{layout.mapping.levels.map(&:name).join(", ")})"
         end
 

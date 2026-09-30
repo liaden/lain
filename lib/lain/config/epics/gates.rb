@@ -20,9 +20,9 @@ module Lain
         # Reopened for {Epics}'s reason: constants and nested classes inside a
         # `Data.define do ... end` block are scoped to the enclosing module.
 
-        # The sub-table as `config.toml` spells it, which is how every refusal
+        # The verb inside an `epics` block that declares one gate, as every refusal
         # here names it.
-        TABLE = "[epics.gates]"
+        TABLE = "`gate`"
 
         # @param table [Object] whatever `[epics] gates` parsed to; nil when absent
         # @param path [String, nil] the config file, named in every refusal

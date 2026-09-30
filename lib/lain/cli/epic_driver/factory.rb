@@ -410,7 +410,7 @@ module Lain
         # @param asker [#ask, nil] who answers an interactive implementation
         #   gate; the chat's own asker, so a parked call reaches the human who
         #   is already draining questions
-        # @param config [Config] `.lain/config.toml`, already read
+        # @param config [Config] `.lain/config.rb`, already read
         # @param interrupt [#call] answers whether the run should stop
         # @param actors [#call, nil] `fleet ->` what launches an issue; the
         #   real {IssueActor} when nobody says otherwise
@@ -593,7 +593,7 @@ module Lain
 
         # THE PROJECT'S LAYOUT, from the project root. Every checkout this run
         # works in -- an issue's lease, lain's landing checkout -- is cut by
-        # git, and a `.lain/config.toml` the project keeps out of history is in
+        # git, and a `.lain/config.rb` the project keeps out of history is in
         # none of them: read there, the red step refused every issue and the
         # landing guard checked nothing.
         def layout = Lain::Config.test_layout(root: @root)
@@ -1341,15 +1341,15 @@ module Lain
           return @layout if @layout.in_force?
 
           raise Error, "this project declares no test layout, so the issue's failing tests have nowhere the " \
-                       "layout guard would accept them: add a [tests] table to .lain/config.toml naming " \
-                       "its preset and source roots"
+                       "layout guard would accept them: add a `tests` line to .lain/config.rb naming " \
+                       "its preset and source roots, e.g. `tests preset: :rspec, source_roots: %w[lib]`"
         end
 
         def default_level(layout)
           level = layout.mapping.default_level
           return level.name unless level.nil?
 
-          raise Error, "the [tests] table declares no level whose tests mirror their sources, so there is " \
+          raise Error, "the `tests` config declares no level whose tests mirror their sources, so there is " \
                        "no level to generate the issue's tests at"
         end
 

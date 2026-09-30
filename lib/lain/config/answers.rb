@@ -45,10 +45,10 @@ module Lain
       TOOL_WIDE = "deny_tool"
       KEYS = [*SHAPED, TOOL_WIDE].freeze
 
-      # The table as `config.toml` spells it, which is how a refusal about the
-      # table as a whole names it; a refusal about one ENTRY names the list it
-      # sits in ({.entry_table}), because that is the line a human has to open.
-      TABLE = "[approval]"
+      # The table as a refusal about the table as a whole names it; a refusal
+      # about one ENTRY names the list it sits in ({.entry_table}), because
+      # that is the line a human has to open.
+      TABLE = "`approval`"
 
       # @param table [Object] whatever `raw["approval"]` parsed to; nil when absent
       # @param path [String, nil] the config file, named in every refusal
@@ -82,8 +82,8 @@ module Lain
         table.each { |key, list| check_list!(key, list, path:) }
       end
 
-      # `[[approval.allow]]` -- the list one entry sits in.
-      def self.entry_table(key) = "[[approval.#{key}]]"
+      # `allow` -- the verb one entry is written with, inside an `approval` block.
+      def self.entry_table(key) = "`#{key}`"
 
       def self.check_list!(key, list, path: nil)
         check_list_shape!(key, list, path:)
@@ -100,13 +100,12 @@ module Lain
         raise not_a_list(key, list, path:) unless list.is_a?(Array)
       end
 
-      # `allow = "read_file"` -- the single-table form of a key that is a list
-      # of tables. The fix is a syntax change (`[[approval.allow]]`), not a
-      # value change, so the message spells the shape rather than the value.
+      # One entry where a list of them belongs. The fix is a change of shape,
+      # not of value, so the message spells the shape rather than the value.
       #
       # @return [Config::Refusal]
       def self.not_a_list(key, list, path: nil)
-        Refusal.new("#{key} is a list of tables (#{entry_table(key)}), got #{list.class}",
+        Refusal.new("#{key} is a list of #{entry_table(key)} entries, got #{list.class}",
                     path:, table: TABLE, key:, value: list)
       end
 

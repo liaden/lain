@@ -129,6 +129,8 @@ module Lain
       #
       # @return [String] never printed here (output discipline)
       # @raise [MissingFixture, MalformedTask, Error] before any arm runs
+      # @raise [Project::Trust::Untrusted] before any arm runs, naming the
+      #   committed subject whose config nobody has trusted
       def report = @report ||= render
 
       private
@@ -140,8 +142,28 @@ module Lain
       # warning rather than somewhere inside the run.
       def render
         grouped = by_size
+        layouts_load(grouped.values.flatten)
         warn_of_cost(grouped.values.sum(&:size))
         [header(grouped), *grouped.map { |size, tasks| block(size, tasks) }].join("\n\n")
+      end
+
+      # Asked of the committed subject rather than at grading: a lease's copy is
+      # deleted on release, so a refusal there names a path that is gone, and
+      # comes after the arm has been paid for. Every untrusted subject is named
+      # at once, so one round of `lain trust` clears them all.
+      def layouts_load(tasks)
+        projects = tasks.map(&:project).uniq
+        untrusted = projects.filter_map { |project| untrusted_in(project) }
+        raise Project::Trust::Untrusted, untrusted.join("\n") unless untrusted.empty?
+
+        projects.each { |project| Config.test_layout(root: project) }
+      end
+
+      def untrusted_in(project)
+        Project::Trust.for(project_dir: ProjectDir.new(root: project)).require!
+        nil
+      rescue Project::Trust::Untrusted => e
+        e.message
       end
 
       def warn_of_cost(tasks) = @sink.puts(format(COST_WARNING, arms: @arms.size, tasks:))

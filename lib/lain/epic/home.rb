@@ -9,7 +9,7 @@ module Lain
 
     # Where one epic's human-facing markdown lives, and the only door to it.
     #
-    # Two homes, chosen by `[epics] home` in `.lain/config.toml` and nothing
+    # Two homes, chosen by `epics home:` in `.lain/config.rb` and nothing
     # else: `:xdg` puts the tree under `<state_home>/epics/<project_hash>/`, so
     # an epic never shows up in `git status`; `:repo` puts it under
     # `<root>/.lain/epics/`, so a team can review an epic in a pull request.

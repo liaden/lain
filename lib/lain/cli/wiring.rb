@@ -51,7 +51,7 @@ module Lain
 
       # A file the whole chat reads cannot take the chat down with it, and a
       # worker handed back with lain's defaults is still handed back.
-      UNREAD = "the [isolation] settings in .lain/config.toml were not read, so workers hand back " \
+      UNREAD = "the `isolation` settings in .lain/config.rb were not read, so workers hand back " \
                "with lain's defaults: %<reason>s"
 
       private_constant :UNREAD
@@ -928,8 +928,8 @@ module Lain
       #
       # #wire_agent calls this BEFORE `chronicle.start`, and that ordering is a
       # requirement, not a reading order: everything below can REFUSE
-      # ({Project::Consent} reads this root's `[approval]` table, {BoardBuild}
-      # compiles its `[sensitivity]` one), while `#start` writes the session
+      # ({BoardBuild} reads this root's approval table and compiles its
+      # sensitivity one), while `#start` writes the session
       # header -- so a refusal after it leaves a record on disk for a chat that
       # never ran. {#fleet_isolation} keeps the same ordering for the same reason.
       #

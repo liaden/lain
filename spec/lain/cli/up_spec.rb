@@ -910,7 +910,7 @@ RSpec.describe Lain::CLI::Up do
       elsewhere = "/tmp/the-locator-said-here/state.json"
       allow(Lain::ProjectDir).to receive(:new)
         .and_return(instance_double(Lain::ProjectDir, state_path: elsewhere,
-                                                      config: "/tmp/the-locator-said-here/config.toml",
+                                                      config: "/tmp/the-locator-said-here/config.rb",
                                                       dir: "/tmp/the-locator-said-here/.lain"))
       calls = []
       spy = lambda do |*args|

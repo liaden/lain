@@ -219,7 +219,7 @@ class LainCLI < Thor
     # lambda runs deep inside {Lain::CLI::ChatLaunch}, and only a
     # {Lain::Error} is rendered from there -- so every OTHER way resolution can
     # fail on a path a user TYPED (the `ArgumentError` a cwd outside its root
-    # raises, an unreadable ancestor, a `.lain/config.toml` that will not parse)
+    # raises, an unreadable ancestor, a `.lain/config.rb` that will not run)
     # reached the terminal as a backtrace. Naming both flags and their values is
     # what makes the message actionable, since either one can be the wrong half.
     #

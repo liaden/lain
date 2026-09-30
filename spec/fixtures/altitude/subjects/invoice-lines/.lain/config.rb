@@ -1,5 +1,5 @@
+# frozen_string_literal: true
+
 # The rspec layout over lib/, so the level roots are spec/unit, spec/seam and
 # spec/integration. The lease harness grades one of them per task.
-[tests]
-preset = "rspec"
-source_roots = ["lib"]
+tests preset: :rspec, source_roots: %w[lib]

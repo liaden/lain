@@ -10,7 +10,7 @@ RSpec.describe Lain::Config::Epics do
     expect(described_class.from({}, path: "/irrelevant").home).to eq(:xdg)
   end
 
-  it "treats a nil table (the key absent from the parsed TOML) the same as empty" do
+  it "treats a nil table (the table absent from the file) the same as empty" do
     expect(described_class.from(nil, path: "/irrelevant").home).to eq(:xdg)
   end
 
@@ -48,7 +48,7 @@ RSpec.describe Lain::Config::Epics do
 
   it "refuses a gates value of the wrong shape entirely" do
     expect { described_class.new(home: :xdg, gates: "deferred") }
-      .to raise_error(Lain::Config::Refusal, /\[epics\.gates\] must be a table/)
+      .to raise_error(Lain::Config::Refusal, /`gate` must be a table/)
   end
 
   # Data#with re-runs #initialize, so the guard has to hold on the copy too.
@@ -96,7 +96,7 @@ RSpec.describe Lain::Config::Epics do
   # width of zero must refuse here rather than three frames into a run.
   it "refuses a hand-built width outside the whole numbers above zero" do
     expect { described_class.new(home: :xdg, width: 0) }
-      .to raise_error(Lain::Config::Refusal, "[epics] width 0 is not a whole number of issues above zero")
+      .to raise_error(Lain::Config::Refusal, "`epics` width 0 is not a whole number of issues above zero")
   end
 
   it "re-checks width through #with" do
@@ -111,12 +111,12 @@ RSpec.describe Lain::Config::Epics do
   describe "the message a refusal carries" do
     it "names the offending home and both permitted values" do
       expect { described_class.new(home: :bogus) }
-        .to raise_error(Lain::Config::Refusal, "epics_home :bogus is not one of xdg, repo")
+        .to raise_error(Lain::Config::Refusal, "`epics` home: :bogus is not one of xdg, repo")
     end
 
     it "renders a wrong-typed home as the value it was, not as its attribute" do
       expect { described_class.new(home: 3) }
-        .to raise_error(Lain::Config::Refusal, "epics_home 3 is not one of xdg, repo")
+        .to raise_error(Lain::Config::Refusal, "`epics` home: 3 is not one of xdg, repo")
     end
   end
 end
@@ -128,10 +128,7 @@ RSpec.describe Lain::Config do
   describe "a typo inside [epics] is loud" do
     it "names the unknown key and the known keys" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [epics]
-          hoem = "repo"
-        TOML
+        write_config(root, "epics hoem: :repo\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal, /hoem/)
@@ -140,13 +137,10 @@ RSpec.describe Lain::Config do
 
     it "carries the path and the offending key on the raised error" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [epics]
-          hoem = "repo"
-        TOML
+        write_config(root, "epics hoem: :repo\n")
 
         expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.path).to eq(config_path(root))
+          expect(error.path).to eq("#{config_path(root)}:1")
           expect(error.key).to eq(["hoem"])
         end
       end
@@ -156,11 +150,7 @@ RSpec.describe Lain::Config do
     # (`unknown.first`), forcing a second run to find the second.
     it "names every unknown key in one pass, not just the first" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [epics]
-          zzz = 1
-          aaa = 2
-        TOML
+        write_config(root, "epics zzz: 1, aaa: 2\n")
 
         expect { described_class.load(root:) }.to raise_error do |error|
           expect(error.key).to contain_exactly("zzz", "aaa")
@@ -173,11 +163,7 @@ RSpec.describe Lain::Config do
     # one were wrong.
     it "pluralizes the message noun when it reports more than one key" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [epics]
-          zzz = 1
-          aaa = 2
-        TOML
+        write_config(root, "epics zzz: 1, aaa: 2\n")
 
         expect { described_class.load(root:) }.to raise_error(/no keys/)
       end
@@ -188,18 +174,16 @@ RSpec.describe Lain::Config do
     # than watching the old width and wondering.
     it "refuses widht, naming it and the keys it does know" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nwidht = 2\n")
+        write_config(root, "epics widht: 2\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal, /widht.*known keys: home, gates, width/)
       end
     end
 
-    # Panel probe: `[epics.sub]` parses to a nested Hash under the "sub" key --
-    # still an unrecognized key, not a different code path.
-    it "refuses a nested [epics.sub] table as an unknown key" do
+    it "refuses a nested sub table as an unknown key" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics.sub]\nk = 1\n")
+        write_config(root, "epics sub: { k: 1 }\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal, /sub/)
@@ -210,7 +194,7 @@ RSpec.describe Lain::Config do
   describe "[epics] present but empty" do
     it "still defaults epics_home" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\n")
+        write_config(root, "epics\n")
 
         expect(described_class.load(root:).epics_home).to eq(:xdg)
       end
@@ -220,7 +204,7 @@ RSpec.describe Lain::Config do
   describe "[epics] width" do
     it "reads the width a project declares" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nwidth = 4\n")
+        write_config(root, "epics width: 4\n")
 
         expect(described_class.load(root:).epics.width).to eq(4)
       end
@@ -228,11 +212,11 @@ RSpec.describe Lain::Config do
 
     it "names the file and the offending width" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nwidth = 0\n")
+        write_config(root, "epics width: 0\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal,
-                          "#{config_path(root)}: [epics] width 0 is not a whole number of issues above zero")
+                          "#{config_path(root)}:1: `epics` width 0 is not a whole number of issues above zero")
       end
     end
   end
@@ -240,10 +224,7 @@ RSpec.describe Lain::Config do
   describe "#epics_home" do
     it "reads :repo when the table says repo" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [epics]
-          home = "repo"
-        TOML
+        write_config(root, "epics home: :repo\n")
 
         expect(described_class.load(root:).epics_home).to eq(:repo)
       end
@@ -251,7 +232,7 @@ RSpec.describe Lain::Config do
 
     it "reads :repo across CRLF line endings" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\r\nhome = \"repo\"\r\n")
+        write_config(root, "epics home: :repo\r\n")
 
         expect(described_class.load(root:).epics_home).to eq(:repo)
       end
@@ -259,10 +240,7 @@ RSpec.describe Lain::Config do
 
     it "refuses any value other than xdg or repo, naming both allowed values" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [epics]
-          home = "somewhere_else"
-        TOML
+        write_config(root, "epics home: :somewhere_else\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal, /somewhere_else/) do |error|
@@ -274,10 +252,10 @@ RSpec.describe Lain::Config do
 
     it "refuses an empty string, naming both allowed values" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = \"\"\n")
+        write_config(root, "epics home: \"\"\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Refusal, /epics_home "" is not one of xdg, repo/)
+          .to raise_error(Lain::Config::Refusal, /`epics` home: "" is not one of xdg, repo/)
       end
     end
 
@@ -287,7 +265,7 @@ RSpec.describe Lain::Config do
     %w[3 true].each do |literal|
       it "refuses #{literal} (wrong type) the same way it refuses a bad string" do
         Dir.mktmpdir do |root|
-          write_config(root, "[epics]\nhome = #{literal}\n")
+          write_config(root, "epics home: #{literal}\n")
 
           expect { described_class.load(root:) }
             .to raise_error(Lain::Config::Refusal) do |error|
@@ -300,19 +278,19 @@ RSpec.describe Lain::Config do
 
     it "refuses an array the same way it refuses a bad string" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = [\"repo\"]\n")
+        write_config(root, "epics home: [\"repo\"]\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Refusal, /epics_home \["repo"\] is not one of/)
+          .to raise_error(Lain::Config::Refusal, /`epics` home: \["repo"\] is not one of/)
       end
     end
 
     it "carries the path and the offending value on the raised error" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = 3\n")
+        write_config(root, "epics home: 3\n")
 
         expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.path).to eq(config_path(root))
+          expect(error.path).to eq("#{config_path(root)}:1")
           expect(error.value).to eq(3)
         end
       end
@@ -325,31 +303,21 @@ RSpec.describe Lain::Config do
   describe "the message a loaded refusal carries" do
     it "names the file, the unknown keys, and the keys it does know" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhoem = \"repo\"\n")
+        write_config(root, "epics hoem: :repo\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal,
-                          "#{config_path(root)}: [epics] has no keys \"hoem\"; known keys: home, gates, width")
+                          "#{config_path(root)}:1: `epics` has no keys \"hoem\"; known keys: home, gates, width")
       end
     end
 
     it "names the file, the offending home, and both permitted values" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = \"somewhere_else\"\n")
+        write_config(root, "epics home: :somewhere_else\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal,
-                          "#{config_path(root)}: epics_home \"somewhere_else\" is not one of xdg, repo")
-      end
-    end
-
-    it "names the file and the type it got where [epics] is not a table at all" do
-      Dir.mktmpdir do |root|
-        write_config(root, "epics = \"x\"\n")
-
-        expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Refusal,
-                          "#{config_path(root)}: [epics] must be a table, got String: \"x\"")
+                          "#{config_path(root)}:1: `epics` home: \"somewhere_else\" is not one of xdg, repo")
       end
     end
   end

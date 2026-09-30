@@ -161,10 +161,10 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     expect(first_prompt(provider)).to include(target, "an order totals its lines", "an order can be refunded")
   end
 
-  # A gitignored .lain/config.toml stays in the project root: `worktree add`
+  # A gitignored .lain/config.rb stays in the project root: `worktree add`
   # carries only what git tracks, so the held checkout has no config at all.
   it "writes the tests with the project's layout when the held checkout carries no config" do
-    FileUtils.rm(File.join(held, ".lain", "config.toml"))
+    FileUtils.rm(File.join(held, ".lain", "config.rb"))
 
     result = step(writing(target, red))
 
@@ -181,13 +181,13 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
 
   # Enforcement is opt-in: a framework the files betray is never read as a
   # declared layout, which would impose level roots the project never chose.
-  it "refuses, naming [tests], a project that declares no test layout, and spawns nothing" do
-    FileUtils.rm(File.join(repo, ".lain", "config.toml"))
+  it "refuses, naming the tests verb, a project that declares no test layout, and spawns nothing" do
+    FileUtils.rm(File.join(repo, ".lain", "config.rb"))
     File.write(File.join(held, ".rspec"), "--format progress\n")
     provider = mock(text_response("unused"))
 
     expect { step(provider, harness: unrun) }
-      .to raise_error(Lain::Error, /declares no test layout.*add a \[tests\] table/m)
+      .to raise_error(Lain::Error, %r{declares no test layout.*add a `tests` line to \.lain/config\.rb}m)
     expect(provider.call_count).to eq(0)
   end
 

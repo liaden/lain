@@ -28,7 +28,7 @@ RSpec.describe Lain::Config::Epics::Gates do
 
   it "refuses a non-table at construction" do
     expect { described_class.new(table: "deferred") }
-      .to raise_error(Lain::Config::Refusal, /\[epics\.gates\] must be a table/)
+      .to raise_error(Lain::Config::Refusal, /`gate` must be a table/)
   end
 
   it "is deeply frozen, so it rides inside a Ractor-shareable Config" do
@@ -65,7 +65,7 @@ RSpec.describe Lain::Config::Epics::Gates do
     it "names the unknown stages and the pipeline they were measured against" do
       expect { described_class.new(table: { "reserch" => "deferred" }) }
         .to raise_error(Lain::Config::Refusal,
-                        "[epics.gates] has no stages \"reserch\"; " \
+                        "`gate` has no stages \"reserch\"; " \
                         "the pipeline is research -> epic_plan -> issue_plan -> implementation")
     end
 
@@ -74,14 +74,14 @@ RSpec.describe Lain::Config::Epics::Gates do
     it "names the unknown policies and every policy the factory does build" do
       expect { described_class.new(table: { "research" => "yolo" }) }
         .to raise_error(Lain::Config::Refusal,
-                        "[epics.gates] names unknown gate policies \"yolo\"; " \
+                        "`gate` names unknown gate policies \"yolo\"; " \
                         "known policies: interactive, hands_off, deferred, adjudicated")
     end
 
     it "names the type it got where the sub-table is not a table" do
       expect { described_class.new(table: "deferred") }
         .to raise_error(Lain::Config::Refusal,
-                        "[epics.gates] must be a table, got String: \"deferred\"")
+                        "`gate` must be a table, got String: \"deferred\"")
     end
   end
 
@@ -134,11 +134,12 @@ RSpec.describe Lain::Config do
   describe "[epics.gates]" do
     it "reads a policy per stage" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [epics.gates]
-          research = "hands_off"
-          epic_plan = "deferred"
-        TOML
+        write_config(root, <<~RUBY)
+          epics do
+            gate :research, :hands_off
+            gate :epic_plan, :deferred
+          end
+        RUBY
 
         config = described_class.load(root:)
 
@@ -149,7 +150,7 @@ RSpec.describe Lain::Config do
 
     it "leaves a stage the table does not name interactive" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics.gates]\nresearch = \"hands_off\"\n")
+        write_config(root, "epics gates: { research: :hands_off }\n")
 
         expect(described_class.load(root:).gate_policy_for("issue_plan")).to eq("interactive")
       end
@@ -157,7 +158,7 @@ RSpec.describe Lain::Config do
 
     it "is interactive everywhere when the table is absent" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = \"repo\"\n")
+        write_config(root, "epics home: :repo\n")
 
         policies = Lain::Epic::STAGES.map { |stage| described_class.load(root:).gate_policy_for(stage) }
 
@@ -173,13 +174,11 @@ RSpec.describe Lain::Config do
 
     it "coexists with home in the same [epics] table" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [epics]
-          home = "repo"
-
-          [epics.gates]
-          research = "hands_off"
-        TOML
+        write_config(root, <<~RUBY)
+          epics home: :repo do
+            gate :research, :hands_off
+          end
+        RUBY
 
         config = described_class.load(root:)
 
@@ -190,7 +189,7 @@ RSpec.describe Lain::Config do
 
     it "refuses a typo in a stage name, naming the unknown key" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics.gates]\nreserch = \"deferred\"\n")
+        write_config(root, "epics gates: { reserch: :deferred }\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal, /reserch/)
@@ -199,7 +198,7 @@ RSpec.describe Lain::Config do
 
     it "names the pipeline it expected, so the typo is fixable from the message" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics.gates]\nreserch = \"deferred\"\n")
+        write_config(root, "epics gates: { reserch: :deferred }\n")
 
         expect { described_class.load(root:) }.to raise_error(/research/)
       end
@@ -207,7 +206,7 @@ RSpec.describe Lain::Config do
 
     it "names every unknown stage in one pass, not just the first" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics.gates]\nzzz = \"deferred\"\naaa = \"deferred\"\n")
+        write_config(root, "epics gates: { zzz: :deferred, aaa: :deferred }\n")
 
         expect { described_class.load(root:) }.to raise_error do |error|
           expect(error.key).to contain_exactly("zzz", "aaa")
@@ -217,7 +216,7 @@ RSpec.describe Lain::Config do
 
     it "refuses an unknown policy name, naming it and the known policies" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics.gates]\nresearch = \"yolo\"\n")
+        write_config(root, "epics gates: { research: :yolo }\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal, /yolo/) do |error|
@@ -229,7 +228,7 @@ RSpec.describe Lain::Config do
 
     it "refuses a wrong-typed policy value the same way it refuses a bad string" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics.gates]\nresearch = 3\n")
+        write_config(root, "epics gates: { research: 3 }\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal, /names unknown gate policies 3/)
@@ -238,7 +237,7 @@ RSpec.describe Lain::Config do
 
     it "refuses a gates value that is not a table" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\ngates = \"deferred\"\n")
+        write_config(root, "epics gates: \"deferred\"\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal, /must be a table/)
@@ -247,10 +246,10 @@ RSpec.describe Lain::Config do
 
     it "carries the path and the offending keys on a gates refusal" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics.gates]\nreserch = \"deferred\"\n")
+        write_config(root, "epics gates: { reserch: :deferred }\n")
 
         expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.path).to eq(config_path(root))
+          expect(error.path).to eq("#{config_path(root)}:1")
           expect(error.key).to eq(["reserch"])
         end
       end
@@ -260,11 +259,11 @@ RSpec.describe Lain::Config do
     # carries the same debt: a new stage updates both, or both go red together.
     it "names the file, the unknown stages, and the pipeline" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics.gates]\nreserch = \"deferred\"\n")
+        write_config(root, "epics gates: { reserch: :deferred }\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal,
-                          "#{config_path(root)}: [epics.gates] has no stages \"reserch\"; " \
+                          "#{config_path(root)}:1: `gate` has no stages \"reserch\"; " \
                           "the pipeline is research -> epic_plan -> issue_plan -> implementation")
       end
     end
@@ -275,13 +274,13 @@ RSpec.describe Lain::Config do
     # hand-built value is entitled to is the config path it has no way to know.
     it "refuses a hand-built value as it refuses a loaded one, minus the path prefix" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics.gates]\nreserch = \"deferred\"\n")
+        write_config(root, "epics gates: { reserch: :deferred }\n")
 
         loaded = refusal_from { described_class.load(root:) }
         hand_built = refusal_from { Lain::Config::Epics::Gates.new(table: { "reserch" => "deferred" }) }
 
         expect([loaded.class, loaded.message])
-          .to eq([hand_built.class, "#{config_path(root)}: #{hand_built.message}"])
+          .to eq([hand_built.class, "#{config_path(root)}:1: #{hand_built.message}"])
       end
     end
   end

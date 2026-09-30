@@ -47,8 +47,8 @@ module Lain
   # the recipe itself lives beside its ingredients, one layer down.
   # `spec/lain/project_dir_spec.rb` parses every file in `lib/` and fails on any
   # expression that composes one of those paths again, in any spelling -- they
-  # were composed sixteen ways before that guard grew to cover them,
-  # `config.toml` three independent ways alone.
+  # were composed sixteen ways before that guard grew to cover them, the
+  # config file three independent ways alone.
   #
   # It still stands on both sides of the line it draws -- {#dir} resolves
   # `@root` lexically while {#state_path} uses it only as a hash input. The
@@ -69,10 +69,9 @@ module Lain
     DIR = ".lain"
 
     # Every artifact name under it, in one list because having one place that
-    # spells them is the whole point: `config.toml` was written three
-    # independent ways (two `File.join`s and a bare `".lain/config.toml"`
-    # string), and a fourth was one line of code away.
-    CONFIG_FILE = "config.toml"
+    # spells them is the whole point: the config file's name was once written
+    # three independent ways, and a fourth was one line of code away.
+    CONFIG_FILE = "config.rb"
     PROMPT_FILE = "prompt.toml"
     EPICS_DIR = "epics"
     SLOTS_DIR = "slots"
@@ -150,11 +149,10 @@ module Lain
     # A durable state container for THIS project: {Paths#container} composes the
     # recipe, and what this adds is the key, which is the project.
     #
-    # The key is defaulted rather than fixed because two callers legitimately
-    # key on something else and both are better read at the call: {Project::Consent}
-    # takes the FULL digest of the root where everyone else takes twelve
-    # characters, and {CLI::GcSchedule} names a file in the container rather
-    # than a directory under it.
+    # The key is defaulted rather than fixed because a caller may legitimately
+    # key on something else, and that is better read at the call:
+    # {CLI::GcSchedule} names a file in the container rather than a directory
+    # under it.
     #
     # @param kind [String] the segment under `$XDG_STATE_HOME/lain`
     # @param key [String] what distinguishes this project inside that segment

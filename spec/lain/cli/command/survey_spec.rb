@@ -246,7 +246,7 @@ RSpec.describe Lain::CLI::Command::Survey do
 
     # The same rule for the other collaborator the run has exactly one of, and
     # the failure it keeps out is worse than a duplicate: a survey that built
-    # its own classifier would re-read `.lain/config.toml` LATER than the board
+    # its own classifier would re-read `.lain/config.rb` LATER than the board
     # did, so a config edited mid-session would have the listing enumerating
     # paths the gate beside it still refuses -- both halves working, neither
     # wrong to look at, and the boundary narrowed in silence.

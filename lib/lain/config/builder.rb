@@ -200,12 +200,15 @@ module Lain
         { "tool" => call.args.first }.merge(input_of(call))
       end
 
-      # `allow "x"` with no fields is `input = {}`; `deny_tool` has no input, so
-      # a field beside it is left for {Answers} to refuse.
+      # `allow "x"` with no fields is an empty input; `deny_tool` refuses a
+      # whole tool, so a field beside it is refused here, as the file wrote it.
       def input_of(call)
-        return {} if call.verb == :deny_tool && call.kwargs.empty?
+        return { "input" => shaped(call.kwargs) } unless call.verb == :deny_tool
+        return {} if call.kwargs.empty?
 
-        { "input" => shaped(call.kwargs) }
+        fields = call.kwargs.map { |field, value| "#{field}: #{value.inspect}" }.join(", ")
+        refuse("takes a tool name and no fields, got #{fields}", line: call.line,
+                                                                 table: "`deny_tool`", key: "deny_tool")
       end
 
       # TOML's own shape: string keys, and a symbol is a string.

@@ -598,16 +598,11 @@ RSpec.describe Lain::CLI::Epic do
         project = File.join(base, "repo")
         sub = File.join(project, "services", "ingest")
         FileUtils.mkdir_p(sub)
-        File.write(project_config(project), %([epics]\nhome = "repo"\n))
         with_env("HOME" => base, "XDG_STATE_HOME" => File.join(base, "state")) do
+          write_config(project, "epics home: :repo\n")
           Dir.chdir(sub) { yield(project, sub) }
         end
       end
-    end
-
-    def project_config(project)
-      FileUtils.mkdir_p(File.join(project, ".lain"))
-      File.join(project, ".lain", "config.toml")
     end
 
     def write_repo_epic(project, slug)

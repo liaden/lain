@@ -242,8 +242,7 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
 
     context "with rebase_retries = 0" do
       before do
-        FileUtils.mkdir_p(File.join(repo, ".lain"))
-        File.write(File.join(repo, ".lain", "config.toml"), "[isolation]\nrebase_retries = 0\n")
+        write_config(repo, "isolation rebase_retries: 0\n")
       end
 
       it "asks for no rebase, and the handback merges as before" do

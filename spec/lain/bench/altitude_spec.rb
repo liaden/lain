@@ -309,6 +309,22 @@ RSpec.describe Lain::Bench::Altitude do
 
     def bench_over(path) = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
 
+    # A lease's copy is deleted on release, so a refusal naming it would send
+    # the human to a path that is gone -- and by then an arm has been paid for.
+    it "refuses an untrusted subject before any arm runs, naming the committed project" do
+      Dir.mktmpdir("lain-altitude-untrusted") do |state|
+        with_env("XDG_STATE_HOME" => state) do
+          expect { with_subjects { |path| bench_over(path).report } }
+            .to raise_error(Lain::Project::Trust::Untrusted) { |error|
+              expect(error.message).to include("lain trust #{committed("order-total")}",
+                                               "lain trust #{committed("invoice-lines")}")
+            }
+        end
+      end
+
+      expect([seen, log]).to eq([[], []])
+    end
+
     it "leases each arm a checkout holding that task's own subject project" do
       with_subjects { |path| bench_over(path).report }
 

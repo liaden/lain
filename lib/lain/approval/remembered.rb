@@ -28,7 +28,7 @@ module Lain
     #
     # == Where it is kept, and why there
     #
-    # `.lain/config.toml` -- greppable, diffable, reviewable in a PR, revocable
+    # The `approval` verb of `.lain/config.rb` -- greppable, diffable, reviewable in a PR, revocable
     # where every other setting lives. The approval set is part of the
     # experimental configuration, so on a bench it has to be recorded with
     # everything else rather than in a dotfile nobody diffs.
@@ -44,9 +44,9 @@ module Lain
       WHERE = ProjectDir.config.freeze
       # Interpolation makes these mutable Strings whatever the magic comment
       # says, and a reason travels into the Journal.
-      TOOL_REFUSED = "remembered in #{WHERE}: [[approval.deny_tool]] refuses every %s call".freeze
-      SHAPE_REFUSED = "remembered in #{WHERE}: [[approval.deny]] refuses this %s call".freeze
-      SHAPE_ALLOWED = "remembered in #{WHERE}: [[approval.allow]] permits this %s call".freeze
+      TOOL_REFUSED = "remembered in #{WHERE}: `deny_tool` in its `approval` block refuses every %s call".freeze
+      SHAPE_REFUSED = "remembered in #{WHERE}: `deny` in its `approval` block refuses this %s call".freeze
+      SHAPE_ALLOWED = "remembered in #{WHERE}: `allow` in its `approval` block permits this %s call".freeze
 
       Entry = Data.define(:tool, :input)
 

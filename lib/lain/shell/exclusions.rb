@@ -46,9 +46,9 @@ module Lain
       # match one -- the same failure as an entry nobody wrote.
       WHITESPACE = /\s/
 
-      # The table as `config.toml` spells it, which is how every refusal here
-      # names it.
-      TABLE = "[shell]"
+      # The verb of `.lain/config.rb` that declares this table, as every refusal
+      # here names it.
+      TABLE = "`shell`"
 
       # @param table [Object] whatever `raw["shell"]` parsed to; nil when absent
       # @param path [String, nil] the config file, named in every refusal

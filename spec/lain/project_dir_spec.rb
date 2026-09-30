@@ -8,7 +8,7 @@ require "pathname"
 
 # Mechanical enforcement of ONE locator for every path `.lain/` governs and for
 # the state containers beside it. A second spelling is trivial to write by hand
-# and invisible in review -- `config.toml` had three of them, one a bare string
+# and invisible in review -- the config file had three of them, one a bare string
 # constant -- so it is forbidden here rather than in a paragraph nobody re-reads.
 #
 # The scan began life guarding one file, the published state feed, and grew to
@@ -45,7 +45,7 @@ module ProjectDirDiscipline
   # rebuilding one's path, which is what keeps a sentence with `state.json` in
   # it and nothing else from reading as a composition.
   STATE_NAME = "state.json"
-  ARTIFACT_NAMES = (%w[config.toml prompt.toml epics slots skills meta
+  ARTIFACT_NAMES = (%w[config.rb prompt.toml epics slots skills meta
                        summarizers summarizers.rb services.rb] + [STATE_NAME]).freeze
 
   # The kind segments under `$XDG_STATE_HOME/lain`. They are ingredients in
@@ -53,7 +53,7 @@ module ProjectDirDiscipline
   # caught by its literals alone, while the XDG shape carries one literal plus
   # two method calls -- and hoisting those two calls into their own statements
   # left a final expression naming nothing but the file.
-  KIND_NAMES = %w[status sessions epics worktrees workspace gc consent].freeze
+  KIND_NAMES = %w[status sessions epics worktrees workspace gc trust].freeze
 
   # Every literal a path expression can spell one of these with.
   LITERALS = ([PROJECT_NAME] + ARTIFACT_NAMES + KIND_NAMES).uniq.freeze
@@ -66,7 +66,7 @@ module ProjectDirDiscipline
 
   # {Lain::ProjectDir#dir} hands out the project directory WITHOUT spelling it,
   # so an artifact joined to its answer rebuilds a governed path with no literal
-  # for the other rules to see -- `File.join(project.dir, "config.toml")`. It is
+  # for the other rules to see -- `File.join(project.dir, "config.rb")`. It is
   # public and {Lain::Project::Resolver} calls it, which makes this the most
   # available recomposition in the tree. Watched as a CALL, so an ordinary local
   # named `dir` stays ordinary: a local that was composed in the same file is
@@ -79,7 +79,7 @@ module ProjectDirDiscipline
   # {Lain::ProjectDir}'s own constants, mapped to the name each one spells, so a
   # recomposition through the locator's vocabulary counts as one.
   CONSTANTS = { "DIR" => PROJECT_NAME, "STATE_FILE" => STATE_NAME, "STATE_KIND" => "status",
-                "CONFIG_FILE" => "config.toml", "PROMPT_FILE" => "prompt.toml", "EPICS_DIR" => "epics",
+                "CONFIG_FILE" => "config.rb", "PROMPT_FILE" => "prompt.toml", "EPICS_DIR" => "epics",
                 "SLOTS_DIR" => "slots", "SKILLS_DIR" => "skills", "META_DIR" => "meta",
                 "SUMMARIZERS_FILE" => "summarizers.rb", "SUMMARIZER_DRAFTS_DIR" => "summarizers",
                 "SERVICES_FILE" => "services.rb" }.freeze
@@ -279,7 +279,7 @@ module ProjectDirDiscipline
     # `/`-separated segment of a string with no whitespace in it.
     #
     # What that buys: `lib/` refuses and warns in eleven sentences that name
-    # these files -- "the [isolation] settings in .lain/config.toml were not
+    # these files -- "the [isolation] settings in .lain/config.rb were not
     # read" -- and a substring match reads every one of those as a composition,
     # which would price the guard out of the names it now owns. Segments rather
     # than substrings for the same reason: a message carrying both
@@ -361,8 +361,8 @@ end
 # OUT of it. It owns both sides now: every `.lain/` name -- config, summarizers,
 # services, slots, skills, prompt, `/meta` output and repo-mode epics -- and the
 # `<state_home>/<kind>/<key>` recipe the published state feed shares with the
-# epics, worktrees, workspace, gc and consent containers. Sixteen expressions
-# composed those by hand before this class grew the readers, `config.toml`
+# epics, worktrees, workspace, gc and trust containers. Sixteen expressions
+# composed those by hand before this class grew the readers, the config file
 # alone in three independent spellings.
 RSpec.describe Lain::ProjectDir do
   # A {Lain::Paths} over an injected env: the real `$XDG_STATE_HOME` is neither
@@ -391,14 +391,14 @@ RSpec.describe Lain::ProjectDir do
     it "names the artifacts a class body reaches for, relative to a root" do
       expect([described_class.config, described_class.meta, described_class.summarizers,
               described_class.summarizer_drafts, described_class.services])
-        .to eq([".lain/config.toml", ".lain/meta", ".lain/summarizers.rb",
+        .to eq([".lain/config.rb", ".lain/meta", ".lain/summarizers.rb",
                 ".lain/summarizers", ".lain/services.rb"])
     end
   end
 
   # Every name the project tree holds, through one locator. Before these
   # readers, eleven expressions in `lib/` spelled one of these paths themselves
-  # -- `config.toml` three ways, one of them a bare string constant.
+  # -- the config file three ways, one of them a bare string constant.
   describe "the project's own files, resolved against a root" do
     let(:project) { described_class.new(root: "/srv/app") }
 
@@ -409,7 +409,7 @@ RSpec.describe Lain::ProjectDir do
     end
 
     it "names the config file" do
-      expect(project.config).to eq("/srv/app/.lain/config.toml")
+      expect(project.config).to eq("/srv/app/.lain/config.rb")
     end
 
     it "names the prompt config, which is a project artifact and not machine state" do
@@ -459,15 +459,13 @@ RSpec.describe Lain::ProjectDir do
       expect(project.state_path).to start_with(project.container("status"))
     end
 
-    # {Lain::Project::Consent} keys on the FULL digest where every sibling takes
-    # twelve characters, because a colliding root there would inherit a trust
-    # decision. Passing the key rather than defaulting it is what makes that
-    # choice visible at the call instead of discoverable by reading all eight.
+    # Passing the key rather than defaulting it is what makes a deliberate
+    # exception visible at the call instead of discoverable by reading all eight.
     it "takes an explicit key, so a deliberate exception reads at the call" do
       full = Digest::SHA256.hexdigest("/srv/app")
 
-      expect(described_class.new(root: "/srv/app", paths:).container("consent", key: full))
-        .to eq("/xdg-state/lain/consent/#{full}")
+      expect(described_class.new(root: "/srv/app", paths:).container("trust", key: full))
+        .to eq("/xdg-state/lain/trust/#{full}")
     end
 
     # {Lain::CLI::GcSchedule} and {Lain::CLI::Worktrees} name files in one
@@ -700,8 +698,8 @@ RSpec.describe Lain::ProjectDir do
       # outright, so each of these is caught by naming `.lain` at all -- and the
       # last three, which never spell it, by naming an artifact beside a second
       # ingredient of its location.
-      "the config file rebuilt beside a root" => 'x = File.join(root, ".lain", "config.toml")',
-      "the config file as one pre-joined string" => 'WHERE = ".lain/config.toml"',
+      "the config file rebuilt beside a root" => 'x = File.join(root, ".lain", "config.rb")',
+      "the config file as one pre-joined string" => 'WHERE = ".lain/config.rb"',
       "the prompt config rebuilt" => 'x = File.join(project, ".lain", "prompt.toml")',
       "the slots directory rebuilt" => 'x = File.join(root, ".lain", "slots")',
       "the skills directory rebuilt" => 'x = File.join(root, ".lain", "skills")',
@@ -721,7 +719,7 @@ RSpec.describe Lain::ProjectDir do
       # The shape the locator's own API invites, and the one a `.lain` literal
       # cannot catch: `#dir` answers the project directory without spelling it.
       "an artifact joined to the locator's own directory" =>
-        'x = File.join(ProjectDir.new(root: root).dir, "config.toml")',
+        'x = File.join(ProjectDir.new(root: root).dir, "config.rb")',
       "an artifact interpolated after the locator's directory" =>
         %(x = "\#{project.dir}/skills")
     }.each do |spelling, source|
@@ -751,7 +749,7 @@ RSpec.describe Lain::ProjectDir do
     # artifacts in sentences. Whitespace is what separates the two, which is why
     # a literal only counts when it IS a path.
     it "leaves a refusal that quotes a config file alone" do
-      expect(scan('x = "the [isolation] settings in .lain/config.toml were not read"')).to be_empty
+      expect(scan('x = "the [isolation] settings in .lain/config.rb were not read"')).to be_empty
     end
 
     it "leaves a refusal that quotes the services DSL alone" do
@@ -789,11 +787,11 @@ RSpec.describe Lain::ProjectDir do
     # ordinary. A local that was composed in this file is caught anyway, by the
     # binding table -- the example below it shows that arm.
     it "leaves an ordinary local named dir alone" do
-      expect(scan('x = File.join(dir, "config.toml")')).to be_empty
+      expect(scan('x = File.join(dir, "config.rb")')).to be_empty
     end
 
     it "still catches a local that was composed from the directory here" do
-      expect(scan(%(dir = File.join(root, ".lain")\nx = File.join(dir, "config.toml")\n))).not_to be_empty
+      expect(scan(%(dir = File.join(root, ".lain")\nx = File.join(dir, "config.rb")\n))).not_to be_empty
     end
 
     # And a local bound to nothing interesting stays uninteresting, so the

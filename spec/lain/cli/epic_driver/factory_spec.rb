@@ -243,8 +243,8 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   # The project's config, untracked and ignored the way a project keeping its
   # lain settings out of history would: no checkout git cuts carries it.
   def ignore_config
-    File.write(File.join(repo, ".gitignore"), ".lain/config.toml\n")
-    git(repo, "rm", "-q", "--cached", ".lain/config.toml")
+    File.write(File.join(repo, ".gitignore"), ".lain/config.rb\n")
+    git(repo, "rm", "-q", "--cached", ".lain/config.rb")
     git(repo, "add", ".gitignore")
     git(repo, "commit", "-q", "-m", "keep the lain config out of history")
   end
@@ -503,7 +503,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     end
 
     # THE LAYOUT IS THE PROJECT'S. Lain's landing checkout is cut by git, so a
-    # gitignored .lain/config.toml never reaches it -- and read there, the
+    # gitignored .lain/config.rb never reaches it -- and read there, the
     # layout guard checked nothing and a misplaced test landed.
     it "refuses at landing a misplaced test, under a layout only the gitignored project config declares" do
       ignore_config

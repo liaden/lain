@@ -28,7 +28,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       base = File.realpath(dir)
       root = File.join(base, "repo")
       FileUtils.mkdir_p(File.join(root, ".lain"))
-      File.write(File.join(root, ".lain", "config.toml"), config) if config
+      write_config(root, config) if config
       yield(root, File.join(base, "home"))
     end
   end
@@ -116,7 +116,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
 
     it "compiles the project's own [sensitivity] table into the rules" do
-      in_tree(config: "[sensitivity]\ndenied = [\"*.secret\"]\n") do |root, home|
+      in_tree(config: "sensitivity denied: %w[*.secret]\n") do |root, home|
         classifier = classifier_at(root, home)
 
         expect(classifier.classify(File.join(root, "prod.secret")).reason).to eq(:configured)
@@ -126,39 +126,14 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # Loud, and unrescued: this table RESTRICTS, so a session that ran with it
     # silently un-parsed would be running with the project's denials off.
     it "refuses a malformed table by name, and names the file" do
-      in_tree(config: "sensitivity = \"strict\"\n") do |root, home|
+      in_tree(config: "sensitivity denied: \"*.secret\"\n") do |root, home|
         expect { classifier_at(root, home) }
-          .to raise_error(Lain::Config::Refusal, /config\.toml.*must be a table/)
-      end
-    end
-
-    # The other side of that asymmetry, and the regression it exists to prevent:
-    # a typo in a table this class never reads must cost that table's feature
-    # and NOT the session. `[epics]` is the neighbour with the loudest refusal,
-    # so it is the one worth pinning.
-    it "is unmoved by a typo in a table it does not read" do
-      in_tree(config: %(epics = "not a table"\n\n[sensitivity]\ndenied = ["*.secret"]\n)) do |root, home|
-        classifier = classifier_at(root, home)
-
-        expect(classifier.classify(File.join(root, "prod.secret")).reason).to eq(:configured)
-      end
-    end
-
-    # A file nobody can parse costs the project its ADDITIONS and says so; the
-    # built-in tables are unaffected, because they were never in the file. Told
-    # rather than dropped -- silence here would be a boundary quietly narrowing.
-    it "degrades to the built-in rules when the file will not parse, and reports it" do
-      in_tree(config: "this is not [valid toml") do |root, home|
-        said = []
-        classifier = classifier_at(root, home, notice: ->(message) { said << message })
-
-        expect(classifier.classify(File.join(home, ".ssh", "id_rsa")).reason).to eq(:protected)
-        expect(said.join).to match(/\[sensitivity\].*not in force/)
+          .to raise_error(Lain::Config::Refusal, /config\.rb.*denied/)
       end
     end
 
     it "stays silent about a file that parses" do
-      in_tree(config: %([sensitivity]\ndenied = ["*.secret"]\n)) do |root, home|
+      in_tree(config: %(sensitivity denied: %w[*.secret]\n)) do |root, home|
         said = []
         classifier_at(root, home, notice: ->(message) { said << message })
 
@@ -199,7 +174,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # deterministic rung as one. The term-approval rule is unconditional and is
     # the whole chain here, which is what makes its absence readable.
     it "keeps the sensitivity table out of the approval rung" do
-      in_tree(config: "[sensitivity]\ndenied = [\"*.secret\"]\n") do |root, home|
+      in_tree(config: "sensitivity denied: %w[*.secret]\n") do |root, home|
         board = board_for(root, home)
 
         expect(board.ladder.to_a[1].instance_variable_get(:@rules).map(&:name)).to eq(%w[composed_term])
@@ -222,7 +197,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     def run_at(root, notice: nil) = described_class.test_layout(project: project_at(root), notice:)
 
     it "holds the project to the layout its [tests] table declares" do
-      in_tree(config: "[tests]\npreset = \"rspec\"\nsource_roots = [\"app\"]\n") do |root, _home|
+      in_tree(config: "tests preset: :rspec, source_roots: %w[app]\n") do |root, _home|
         told = []
 
         expect(run_at(root, notice: told.method(:push)).guard.layout.in_force?).to be(true)
@@ -231,7 +206,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
 
     it "holds a project with no [tests] table to nothing, silently" do
-      in_tree(config: "[shell]\ndeny = []\n") do |root, _home|
+      in_tree(config: "isolation retain_days: 3\n") do |root, _home|
         told = []
 
         expect(run_at(root, notice: told.method(:push)).guard.layout).to be(Lain::TestLayout::None)
@@ -240,7 +215,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
 
     it "ignores a malformed [tests] table and tells the human so, rather than refusing the chat" do
-      in_tree(config: "[tests]\nprest = \"rspec\"\n") do |root, _home|
+      in_tree(config: "tests prest: :rspec\n") do |root, _home|
         told = []
 
         expect(run_at(root, notice: told.method(:push)).guard.layout).to be(Lain::TestLayout::None)
@@ -250,28 +225,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
     # `.for` is what a chat reaches, so the run it builds is the board's.
     it "hands the board the project's layout, which every tool guard reads" do
-      in_tree(config: "[tests]\npreset = \"rspec\"\nsource_roots = [\"app\"]\n") do |root, home|
+      in_tree(config: "tests preset: :rspec, source_roots: %w[app]\n") do |root, home|
         expect(board_for(root, home).test_layout.guard.layout.in_force?).to be(true)
-      end
-    end
-
-    it "tells the human through the board's notice seam when the table is malformed" do
-      in_tree(config: "[tests]\nprest = \"rspec\"\n") do |root, home|
-        told = []
-
-        board = board_for(root, home, notice: told.method(:push))
-
-        expect(board.test_layout.layout).to be(Lain::TestLayout::None)
-        expect(told.join).to include("[tests]", "ignored")
-      end
-    end
-
-    it "ignores a file that will not parse, and says so" do
-      in_tree(config: "[tests\n") do |root, _home|
-        told = []
-
-        expect(run_at(root, notice: told.method(:push)).guard.layout).to be(Lain::TestLayout::None)
-        expect(told.join).to include("[tests]")
       end
     end
 
@@ -282,15 +237,13 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # let an `[isolation]` typo degrade the layout and start the chat, which is
     # a restricting table failing open at the one site that could hide it.
     #
-    # The refusal is INJECTED because today's shared parse builds each table on
-    # the reader that asks for it, so `Config.test_layout` cannot raise about a
-    # foreign table at all. This arm is what keeps that safe if it ever stops
-    # being true, and an arm no example drives is an arm nobody maintains.
+    # The refusal is INJECTED so the example names the table it is about
+    # without depending on which table the whole-file evaluation reaches first.
     it "re-raises a refusal about another table rather than degrading the layout" do
-      in_tree(config: "[tests]\npreset = \"rspec\"\n") do |root, _home|
+      in_tree(config: "tests preset: :rspec\n") do |root, _home|
         told = []
-        foreign = Lain::Config::Refusal.new("retain_days = -1 is not a whole number of days",
-                                            path: File.join(root, ".lain", "config.toml"),
+        foreign = Lain::Config::Refusal.new("retain_days: -1 is not a whole number of days",
+                                            path: config_path(root),
                                             table: Lain::Config::Isolation::TABLE)
         allow(Lain::Config).to receive(:test_layout).and_raise(foreign)
 
@@ -304,7 +257,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     def verdict_at(root, notice: nil) = described_class.shell_verdict(project: project_at(root), notice:)
 
     it "compiles the project's own [shell] table into the capability set" do
-      in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root, _home|
+      in_tree(config: %(shell exclude: %w[curl]\n)) do |root, _home|
         expect(verdict_at(root).call("curl http://example.com")).to be_deny
       end
     end
@@ -322,29 +275,14 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # this one RESTRICTS, so a session running with it silently un-parsed would
     # be running with the project's refusals off.
     it "refuses a malformed [shell] table by name, and names the file" do
-      in_tree(config: %([shell]\nexclude = "curl"\n)) do |root, _home|
+      in_tree(config: %(shell exclude: "curl"\n)) do |root, _home|
         expect { verdict_at(root) }
-          .to raise_error(Lain::Config::Refusal, /config\.toml.*list of program names/)
-      end
-    end
-
-    # The other side of that asymmetry, and `.rules`' exact posture: a file
-    # nobody can parse costs the project its ADDITIONS and is SAID, because
-    # taking `lain chat` down over an unrelated syntax error is a regression a
-    # user meets mid-task.
-    it "degrades to restricting nothing when the file will not parse, and reports it" do
-      in_tree(config: "this is not [valid toml") do |root, _home|
-        said = []
-
-        verdict = verdict_at(root, notice: ->(message) { said << message })
-
-        expect(verdict.call("curl http://example.com")).to be_allow
-        expect(said.join).to match(/\[shell\].*not in force/)
+          .to raise_error(Lain::Config::Refusal, /config\.rb.*list of program names/)
       end
     end
 
     it "stays silent about a file that parses" do
-      in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root, _home|
+      in_tree(config: %(shell exclude: %w[curl]\n)) do |root, _home|
         said = []
         verdict_at(root, notice: ->(message) { said << message })
 
@@ -361,7 +299,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
   # production for the first time.
   describe "the project's [shell] exclusions, on the production path" do
     it "denies an excluded program at the triage rung, naming it and the session's table" do
-      in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root, home|
+      in_tree(config: %(shell exclude: %w[curl]\n)) do |root, home|
         board = board_over(root, home)
 
         expect(board.policy_switch.call(bash_of("curl http://example.com"), nil)).to be(false)
@@ -373,7 +311,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # The half a human would otherwise lift. This rung answers BEFORE the
     # queue, so nothing parks and no surface is ever asked.
     it "parks no approval for a human, because the rung already answered" do
-      in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root, home|
+      in_tree(config: %(shell exclude: %w[curl]\n)) do |root, home|
         board = board_over(root, home)
         board.policy_switch.call(bash_of("curl http://example.com"), nil)
 
@@ -401,7 +339,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # not understood has no reliable name to offer. So a loop mentioning `sh`
     # abstains to a human rather than claiming a refusal it cannot ground.
     it "abstains rather than denying on a command the parser could not read" do
-      in_tree(config: %([shell]\nexclude = ["sh"]\n)) do |root, home|
+      in_tree(config: %(shell exclude: %w[sh]\n)) do |root, home|
         board = board_over(root, home)
 
         while_parked(board, bash_of("for i in a; do sh; done")) do
@@ -414,7 +352,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # is a substitution, so the name the parse reconstructs is not the name that
     # would run. Abstention is the only answer a denylist can honestly give.
     it "abstains when the program name is not one the parse stands behind" do
-      in_tree(config: %([shell]\nexclude = ["sh"]\n)) do |root, home|
+      in_tree(config: %(shell exclude: %w[sh]\n)) do |root, home|
         board = board_over(root, home)
 
         while_parked(board, bash_of("$(echo sh) -c hi")) do
@@ -428,7 +366,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # argument at the one call site restores it and disarms the deny path with
     # a fully green suite.
     it "hands the triage rung the session's own verdict rather than the permissive default" do
-      in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root, home|
+      in_tree(config: %(shell exclude: %w[curl]\n)) do |root, home|
         verdict = described_class.shell_verdict(project: project_at(root))
         board = board_for(root, home, verdict:)
 
@@ -630,7 +568,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # IDENTITY at the construction site, on the triage-factory example's shape:
     # every behavioural example above still passes on a board whose rule was
     # handed a classifier refusing nothing, so the object is asserted directly.
-    it "appends the rule to the chain Project::Consent supplied, holding the real factory" do
+    it "appends the rule to the remembered chain, holding the real factory" do
       in_tree do |root, home|
         rules = board_over(root, home).ladder.to_a[1].instance_variable_get(:@rules)
 
@@ -815,16 +753,16 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
   # different spelling -- `.*` loaded and ungated every dot-named credential.
   describe "an exemption that lifts a class of credentials" do
     it "refuses the chat at load, naming the config file and the entries it would lift" do
-      in_tree(config: %([sensitivity]\nexempt = [".*"]\n)) do |root, home|
+      in_tree(config: %(sensitivity exempt: %w[.*]\n)) do |root, home|
         expect { board_for(root, home) }
-          .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.toml.*exempt.*\.env.*\.envrc}m)
+          .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.rb.*exempt.*\.env.*\.envrc}m)
       end
     end
 
     # APPENDED and not prepended, which is the precedence: a human's remembered
     # refusal of the whole tool still wins over an allowlisted pipeline.
     it "keeps a remembered answer ahead of it, so a human's refusal still wins" do
-      in_tree(config: %([[approval.deny_tool]]\ntool = "bash"\n)) do |root, home|
+      in_tree(config: %(approval do\n  deny_tool "bash"\nend\n)) do |root, home|
         board = board_over(root, home)
         rules = board.ladder.to_a[1].instance_variable_get(:@rules)
 
@@ -838,7 +776,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # predicate 1 refuses it -- and triage answers first regardless, which is
     # what makes the ordering a convenience rather than the safety property.
     it "does not approve an excluded program that is on the allowlist" do
-      in_tree(config: %([shell]\nexclude = ["cat"]\n)) do |root, home|
+      in_tree(config: %(shell exclude: %w[cat]\n)) do |root, home|
         board = board_over(root, home)
 
         expect(board.policy_switch.call(bash_of("cat README.md | head -20", "cwd" => root), nil)).to be(false)
@@ -870,7 +808,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
 
     it "refuses a read inside an anchored denied directory, and withholds it from a listing and a grep", :seam do
-      in_tree(config: %([sensitivity]\ndenied = ["/vault/"]\n)) do |root, home|
+      in_tree(config: %(sensitivity denied: %w[/vault/]\n)) do |root, home|
         write(root, "vault/a.txt", "TOKEN=inside\n")
         write(root, "notes.txt", "TOKEN=outside\n")
         board = board_for(root, home)
@@ -880,7 +818,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         listing = listed(board, root, "list_files", Lain::Tools::ListFiles.new, { "path" => ".", "recursive" => true })
         hits = listed(board, root, "grep", Lain::Tools::Grep.new, { "pattern" => "TOKEN", "path" => "." })
 
-        expect(listing).to include("notes.txt", "withheld (configured)")
+        expect(listing).to include("notes.txt", "withheld (configured")
         expect(listing).not_to include("vault")
         expect(hits).to include("notes.txt:1:", "1 match withheld (configured)")
         expect(hits).not_to include("inside")
@@ -888,7 +826,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
 
     it "reads an anchored exempt file without a prompt, while cat of it still parks for a human" do
-      in_tree(config: %([sensitivity]\nexempt = ["/fixtures/.env"]\n)) do |root, home|
+      in_tree(config: %(sensitivity exempt: %w[/fixtures/.env]\n)) do |root, home|
         fixture = write(root, "fixtures/.env", "PLAIN=value\n")
         write(root, ".env", "PLAIN=value\n")
         board = board_over(root, home)
@@ -904,7 +842,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
     it "withholds a directory's contents from a read, a listing and a grep when the denial has no trailing slash",
        :seam do
-      in_tree(config: %([sensitivity]\ndenied = ["/vault"]\n)) do |root, home|
+      in_tree(config: %(sensitivity denied: %w[/vault]\n)) do |root, home|
         write(root, "vault/a.txt", "TOKEN=inside\n")
         write(root, "notes.txt", "TOKEN=outside\n")
         board = board_for(root, home)
@@ -920,25 +858,25 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
 
     it "refuses an exemption naming a directory that exists, though it carries no trailing slash" do
-      in_tree(config: %([sensitivity]\nexempt = ["/fixtures"]\n)) do |root, home|
+      in_tree(config: %(sensitivity exempt: %w[/fixtures]\n)) do |root, home|
         write(root, "fixtures/.env", "PLAIN=value\n")
 
         expect { board_for(root, home) }
-          .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.toml.*exempt.*"/fixtures"}m)
+          .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.rb.*exempt.*"/fixtures"}m)
       end
     end
 
     it "refuses an anchored directory exemption at load, naming the pattern" do
-      in_tree(config: %([sensitivity]\nexempt = ["/fixtures/"]\n)) do |root, home|
+      in_tree(config: %(sensitivity exempt: %w[/fixtures/]\n)) do |root, home|
         expect { board_for(root, home) }
-          .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.toml.*exempt.*"/fixtures/"}m)
+          .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.rb.*exempt.*"/fixtures/"}m)
       end
     end
 
     # The same table reaches the triage and approving rungs through the factory,
     # anchored on the same root the policy uses.
     it "anchors the factory's classifiers on the project root, not on the call's cwd" do
-      in_tree(config: %([sensitivity]\ndenied = ["/vault/"]\n)) do |root, home|
+      in_tree(config: %(sensitivity denied: %w[/vault/]\n)) do |root, home|
         FileUtils.mkdir_p(File.join(root, "lib"))
         project = project_at(root)
         factory = described_class.classifiers(project:, paths: paths_at(home), table: described_class.rules(project:))
@@ -949,7 +887,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
 
     it "anchors on the project root even where the root confines nothing" do
-      in_tree(config: %([sensitivity]\ndenied = ["/vault/"]\n)) do |root, home|
+      in_tree(config: %(sensitivity denied: %w[/vault/]\n)) do |root, home|
         project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :none)
         board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home))
 
@@ -1251,7 +1189,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       # The checkout carries a copy of the tracked tree, and the project's own is
       # one absolute word away, so an anchored pattern denies under either root.
       it "denies an anchored pattern under the checkout AND under the project root, and its home rules as before" do
-        in_checkout(config: %([sensitivity]\ndenied = ["/vault/"]\n)) do |root, home, checkout|
+        in_checkout(config: %(sensitivity denied: %w[/vault/]\n)) do |root, home, checkout|
           leased = project_factory(root, home, table: table_at(root)).for(leased_at(checkout))
 
           expect(leased.call(nil).denied?("vault/token")).to be(true)
@@ -1263,7 +1201,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
 
       it "gates an anchored pattern under either root, and answers the stricter of the two verdicts" do
-        config = %([sensitivity]\ngated = ["/notes/"]\nexempt = ["/fixtures/.env"]\n)
+        config = %(sensitivity gated: %w[/notes/], exempt: %w[/fixtures/.env]\n)
         in_checkout(config:) do |root, home, checkout|
           leased = project_factory(root, home, table: table_at(root)).for(leased_at(checkout))
 
@@ -1274,7 +1212,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
 
       it "confines a leased worker to its checkout alone, whichever root denies" do
-        in_checkout(config: %([sensitivity]\ndenied = ["/vault/"]\n)) do |root, home, checkout|
+        in_checkout(config: %(sensitivity denied: %w[/vault/]\n)) do |root, home, checkout|
           leased = project_factory(root, home, table: table_at(root)).for(leased_at(checkout))
 
           expect(leased.confinement(nil).contains?(File.join(root, "README.md"))).to be(false)
@@ -1346,22 +1284,6 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
         expect(confined?(above, home, "home/notes.txt")).to be(false)
         expect(confined?(same, "#{home}/", "notes.txt")).to be(false)
-      end
-    end
-  end
-
-  # ONE parse, one notice. `.for` needs the compiled table twice -- once for the
-  # path boundary the gates read, once for the classifier the triage rung
-  # anchors per call -- and calling {.rules} again for the second would parse
-  # the config twice and say the same thing to the operator twice.
-  describe "the [sensitivity] table, compiled once" do
-    it "reports an unparseable config exactly once, however many collaborators need it" do
-      in_tree(config: "this is not [valid toml") do |root, home|
-        said = []
-        described_class.for(chronicle:, options: {}, model: "m", toolset:, project: project_at(root),
-                            paths: paths_at(home), notice: ->(message) { said << message })
-
-        expect(said.grep(/\[sensitivity\].*not in force/).size).to eq(1)
       end
     end
   end

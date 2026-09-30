@@ -24,7 +24,7 @@ module Lain
       #
       # @param root [String] the project root, which is also the parent checkout
       # @param paths [Paths] injected, so a spec resolves a throwaway state home
-      # @param config [Config] `.lain/config.toml`, already read
+      # @param config [Config] `.lain/config.rb`, already read
       # @param epics [CLI::Epic] answers WHICH epic a bare invocation means
       # @param shell_out_factory [#call] every git subprocess the landing runs
       # @param notice [#call] told who holds the parent checkout when a landing

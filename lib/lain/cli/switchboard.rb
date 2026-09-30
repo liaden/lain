@@ -80,8 +80,8 @@ module Lain
       # @param model [String] the model in force until the first /model
       # @param toolset [Lain::Toolset] the run's capability set
       # @param rules [Enumerable<Approval::Rule>] the deterministic rung's rules,
-      #   which for a live session is {Project::Consent#rules} -- the remembered
-      #   answers a CONSENTED root is allowed to contribute
+      #   which for a live session are the remembered answers of the project's
+      #   trusted config
       # @param sensitivity [#gates?] which PATHS this session gates, built by
       #   {CLI::Wiring} over the resolved {Project} and that project's
       #   `[sensitivity]` table. Defaulted to the same Null `new` defaults to,
@@ -133,8 +133,8 @@ module Lain
       # @param rules [Enumerable<Approval::Rule>] consulted by the ladder's
       #   deterministic `rules` rung, ahead of the queue and ahead of any human.
       #   EMPTY by default, which abstains on everything: filling it is
-      #   {Project::Consent}'s decision, because only a CONSENTED root's answers
-      #   may grant authority.
+      #   {CLI::Wiring::BoardBuild}'s decision, from a config {Project::Trust}
+      #   has let run.
       # @param approving [#call] `(rules, classifiers) -> rules`, the chain the
       #   rules rung consults over a factory: {REMEMBERED} by default, and
       #   {CLI::Wiring::BoardBuild.approving} in a real chat, which appends the

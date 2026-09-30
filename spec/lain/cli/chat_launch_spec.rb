@@ -623,29 +623,22 @@ RSpec.describe Lain::CLI::ChatLaunch do
       expect(session).to be_a(Lain::Session)
     end
 
-    # Six readers asked the same `.lain/config.toml` for six different tables
-    # during one startup -- `[sensitivity]`, `[shell]`, `[tests]`, `[approval]`,
-    # `[epics]`, `[isolation]` -- and each did its own `Tomlrb.load_file`. One
-    # {Lain::Config::Resolved} is what makes them one read. Counted at the
-    # parser, because that is the cost and the stat that guards the memo is not.
-    it "parses the project's config file once, however many tables it is asked for" do
-      write_config(@dir, <<~TOML)
-        [epics]
-        home = "repo"
-        [isolation]
-        retain_days = 3
-        [sensitivity]
-        denied = ["*.secret"]
-        [shell]
-        exclude = ["curl"]
-        [tests]
-        preset = "rspec"
-      TOML
-      allow(Tomlrb).to receive(:load_file).and_call_original
+    # Six readers ask the same config for six different tables during one
+    # startup, and the file is Ruby that runs: counted at the evaluation,
+    # because running it again is the cost.
+    it "evaluates the project's config file once, however many tables it is asked for" do
+      write_config(@dir, <<~RUBY)
+        epics home: :repo
+        isolation retain_days: 3
+        sensitivity denied: %w[*.secret]
+        shell exclude: %w[curl]
+        tests preset: :rspec
+      RUBY
+      allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
 
       launched
 
-      expect(Tomlrb).to have_received(:load_file).with(config_path(@dir)).once
+      expect(Lain::Config::Builder).to have_received(:evaluate).with(anything, path: config_path(@dir)).once
     end
   end
 

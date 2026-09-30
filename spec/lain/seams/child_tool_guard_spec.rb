@@ -170,7 +170,10 @@ RSpec.describe "A child's tools run behind its parent's guard", :seam do
         git("add", "-A")
         git("commit", "-q", "-m", "the layout")
         git("switch", "-q", "-c", "feat")
-        with_env("XDG_STATE_HOME" => File.realpath(state)) { Dir.chdir(root) { example.run } }
+        with_env("XDG_STATE_HOME" => File.realpath(state)) do
+          trust_project(root)
+          Dir.chdir(root) { example.run }
+        end
       end
     end
 
@@ -214,16 +217,6 @@ RSpec.describe "A child's tools run behind its parent's guard", :seam do
 
       expect([result_of("tu_1"), result_of("tu_2")]).to all(start_with("wrote"))
       expect(absences.size).to eq(1)
-    end
-
-    it "tells the human, when the next chat starts, that a malformed [tests] table was ignored" do
-      FileUtils.mkdir_p(File.join(root, ".lain"))
-      File.write(File.join(root, ".lain", "config.toml"), "[tests]\nprest = \"rspec\"\n")
-      told = []
-
-      wired(notice: told.method(:push))
-
-      expect(told.join("\n")).to include("[tests]", "ignored", "prest")
     end
   end
 

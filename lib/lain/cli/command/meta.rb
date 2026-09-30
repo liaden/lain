@@ -16,7 +16,7 @@ module Lain
       # it drives the read-only `meta_harness` role ({Skill::RoleSpawn}, `:inherit`
       # context) to assemble a plain lain-API script, writes it to
       # `.lain/meta/<slug>.rb` (the `.lain/` artifact home, beside the code the
-      # way `config.toml` and `summarizers.rb` are), and returns the path plus
+      # way `config.rb` and `summarizers.rb` are), and returns the path plus
       # a summary. The window opens ONLY when the human
       # comes back and types the run verb -- generation and execution are two
       # deliberate steps, never one.

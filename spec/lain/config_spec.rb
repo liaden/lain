@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "securerandom"
 require "tmpdir"
 
 RSpec.describe Lain::Config do
@@ -27,22 +28,22 @@ RSpec.describe Lain::Config do
     end
   end
 
-  describe "the [isolation] table" do
+  describe "the isolation table" do
     it "is read by .load" do
       Dir.mktmpdir do |root|
-        write_config(root, "[isolation]\nretain_days = 3\nrebase_retries = 0\n")
+        write_config(root, "isolation retain_days: 3, rebase_retries: 0\n")
 
         expect(described_class.load(root:).isolation.to_h)
           .to include(retain_days: 3, rebase_retries: 0)
       end
     end
 
-    it "refuses a bad value, naming the key and the file" do
+    it "refuses a bad value, naming the key and the file's line" do
       Dir.mktmpdir do |root|
-        write_config(root, "[isolation]\nretain_days = -1\n")
+        write_config(root, "\nisolation retain_days: -1\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}.*retain_days/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}:2.*retain_days/)
       end
     end
 
@@ -53,12 +54,12 @@ RSpec.describe Lain::Config do
       expect { described_class.new(epics:, isolation: { "retian_days" => 3 }) }
         .to raise_error(Lain::Config::Refusal, /retian_days/)
       expect { described_class.new(epics:, isolation: 3) }
-        .to raise_error(Lain::Config::Refusal, /\[isolation\] must be a table/)
+        .to raise_error(Lain::Config::Refusal, /`isolation` must be a table/)
     end
 
     it "refuses a misspelt key, naming the key and the file" do
       Dir.mktmpdir do |root|
-        write_config(root, "[isolation]\nretian_days = 7\n")
+        write_config(root, "isolation retian_days: 7\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}.*retian_days/)
@@ -66,143 +67,150 @@ RSpec.describe Lain::Config do
     end
   end
 
-  describe "malformed TOML" do
-    it "raises Config::Malformed naming the path" do
+  describe "a file Ruby cannot run" do
+    it "refuses a syntax error, naming the file and line" do
       Dir.mktmpdir do |root|
-        write_config(root, "this is not [valid toml")
+        write_config(root, "epics home: :repo\nshell exclude: [\n")
 
         expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Malformed, /#{Regexp.escape(config_path(root))}/)
+          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}:\d+/)
       end
     end
 
-    # A genuine TOML syntax error IS honestly described as "not valid TOML" --
-    # tomlrb actually tried to parse it and choked. This is the control case
-    # for the wording fix below: only the "never even read" causes lose that
-    # clause.
-    it "says 'is not valid TOML' for an actual syntax error" do
+    it "refuses every reader alike, since the file is evaluated whole" do
       Dir.mktmpdir do |root|
-        write_config(root, "this is not [valid toml")
+        write_config(root, "epics home: :nowhere\nshell exclude: %w[curl]\n")
 
-        expect { described_class.load(root:) }.to raise_error(/is not valid TOML/)
+        expect { described_class.shell_exclusions(root:) }.to raise_error(Lain::Config::Refusal, /home/)
       end
-    end
-
-    # Panel probe: tomlrb's lexer raises ArgumentError (not ParseError) on
-    # invalid bytes -- a distinct Ruby exception class the original rescue
-    # clause did not catch at all.
-    it "raises Config::Malformed on invalid UTF-8 bytes, not a raw ArgumentError" do
-      Dir.mktmpdir do |root|
-        FileUtils.mkdir_p(File.join(root, ".lain"))
-        File.binwrite(config_path(root), "[epics]\nhome = \"\xFF\xFE\"\n")
-
-        expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Malformed, /#{Regexp.escape(config_path(root))}/)
-      end
-    end
-
-    # Panel review round 2: the file was never successfully READ in any of
-    # these three cases, so "is not valid TOML" is a lie about what happened --
-    # only a genuine parse failure earns that phrase.
-    it "does not claim invalid UTF-8 bytes are 'not valid TOML' -- the file was never read" do
-      Dir.mktmpdir do |root|
-        FileUtils.mkdir_p(File.join(root, ".lain"))
-        File.binwrite(config_path(root), "[epics]\nhome = \"\xFF\xFE\"\n")
-
-        expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.message).to include("could not be read as TOML")
-          expect(error.message).not_to include("is not valid TOML")
-        end
-      end
-    end
-
-    # Panel probe: an unreadable file raises Errno::EACCES (a SystemCallError),
-    # not ParseError -- also uncaught before this fix.
-    it "raises Config::Malformed on a permission-denied file" do
-      Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = \"repo\"\n")
-        path = config_path(root)
-        File.chmod(0o000, path)
-
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Malformed)
-      ensure
-        File.chmod(0o600, path) if path && File.exist?(path)
-      end
-    end
-
-    it "does not claim a permission-denied file is 'not valid TOML' -- it was never read" do
-      Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = \"repo\"\n")
-        path = config_path(root)
-        File.chmod(0o000, path)
-
-        expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.message).to include("could not be read as TOML")
-          expect(error.message).not_to include("is not valid TOML")
-        end
-      ensure
-        File.chmod(0o600, path) if path && File.exist?(path)
-      end
-    end
-
-    # Panel probe: config.toml itself being a directory raises Errno::EISDIR.
-    it "raises Config::Malformed when config.toml is a directory" do
-      Dir.mktmpdir do |root|
-        FileUtils.mkdir_p(config_path(root))
-
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Malformed)
-      end
-    end
-
-    it "does not claim a directory is 'not valid TOML' -- it was never read" do
-      Dir.mktmpdir do |root|
-        FileUtils.mkdir_p(config_path(root))
-
-        expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.message).to include("could not be read as TOML")
-          expect(error.message).not_to include("is not valid TOML")
-        end
-      end
-    end
-
-    it "carries the path on the raised error, not just in the message" do
-      Dir.mktmpdir do |root|
-        write_config(root, "this is not [valid toml")
-
-        expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.path).to eq(config_path(root))
-        end
-      end
-    end
-
-    it "does not blow up on a bare raise with no arguments" do
-      expect { raise Lain::Config::Malformed }.to raise_error(Lain::Config::Malformed)
     end
   end
 
-  describe "an unknown table is tolerated" do
-    it "loads and epics_home is still the default" do
+  describe "trust" do
+    # The spec state home is shared by the process, so the bytes are made
+    # unique: a mark another example granted must not make these trusted.
+    it "never evaluates an untrusted file" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [prompt]
-          format = "anthropic"
-        TOML
+        FileUtils.mkdir_p(File.join(root, ".lain"))
+        File.write(config_path(root), "# #{SecureRandom.hex}\nshell exclude: %w[curl]\n")
+        allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
 
-        config = described_class.load(root:)
-
-        expect(config.epics_home).to eq(:xdg)
+        expect { described_class.load(root:) }.to raise_error(Lain::Project::Trust::Untrusted, /lain trust/)
+        expect(Lain::Config::Builder).not_to have_received(:evaluate)
       end
     end
 
-    # Panel Blocker 2: a top-level `epics` that isn't a table (TOML permits a
-    # scalar or array there) used to crash on the first `.keys` call with an
-    # unnamed NoMethodError instead of refusing loudly.
-    it "refuses a top-level epics value that is not a table" do
+    it "is refused while a sibling .lain/*.rb is untrusted, since trust covers the set" do
       Dir.mktmpdir do |root|
-        write_config(root, %(epics = "x"\n))
+        write_config(root, "shell exclude: %w[curl]\n")
+        File.write(File.join(root, ".lain", "services.rb"), "# #{SecureRandom.hex}\n")
 
-        expect { described_class.load(root:) }
-          .to raise_error(Lain::Config::Refusal, /must be a table/)
+        expect { described_class.shell_exclusions(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+      end
+    end
+  end
+
+  describe "evaluation" do
+    def unique = "# #{SecureRandom.hex}\n"
+
+    it "evaluates the bytes trust judged, even when the file changes after they were read" do
+      Dir.mktmpdir do |root|
+        write_config(root, "#{unique}shell exclude: %w[curl]\n")
+        allow(Lain::Project::Trust).to receive(:for).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs).tap { File.write(config_path(root), "shell exclude: %w[wget]\n") }
+        end
+
+        exclusions = described_class.shell_exclusions(root:)
+
+        expect([exclusions.permits?("curl"), exclusions.permits?("wget")]).to eq([false, true])
+      end
+    end
+
+    it "evaluates two roots holding the same bytes apart" do
+      Dir.mktmpdir do |one|
+        Dir.mktmpdir do |two|
+          body = "#{unique}tests preset: :rspec\n"
+          write_config(one, body)
+          write_config(two, body)
+          allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
+
+          described_class.test_layout(root: one)
+          described_class.test_layout(root: two)
+
+          expect(Lain::Config::Builder).to have_received(:evaluate).twice
+        end
+      end
+    end
+
+    it "runs a failing file once, refusing every reader with the same refusal" do
+      Dir.mktmpdir do |root|
+        write_config(root, "#{unique}nosuch 1\n")
+        allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
+
+        refusals = %i[load sensitivity shell_exclusions test_layout].map do |reader|
+          described_class.public_send(reader, root:)
+        rescue Lain::Config::Refusal => e
+          e.message
+        end
+
+        expect(Lain::Config::Builder).to have_received(:evaluate).once
+        expect(refusals.uniq).to contain_exactly(a_string_including("nosuch"))
+      end
+    end
+
+    it "refuses a file already evaluated once its trust mark is gone" do
+      Dir.mktmpdir do |root|
+        write_config(root, "#{unique}shell exclude: %w[curl]\n")
+        described_class.shell_exclusions(root:)
+        trust = Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root:))
+        File.delete(Lain::Project::Trust::Record.new.path_for(trust.digest))
+
+        expect { described_class.shell_exclusions(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+      end
+    end
+
+    # The restricting tables would be dropped in silence if this read as an
+    # absent file.
+    it "refuses a config.rb that is not a regular file" do
+      Dir.mktmpdir do |root|
+        FileUtils.mkdir_p(config_path(root))
+
+        expect { described_class.shell_exclusions(root:) }
+          .to raise_error(Lain::Project::Trust::Unreadable, /#{Regexp.escape(config_path(root))}/)
+      end
+    end
+
+    it "evaluates the file once for all four readers in one process" do
+      Dir.mktmpdir do |root|
+        write_config(root, "shell exclude: %w[curl]\ntests preset: :rspec\n")
+        allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
+
+        described_class.load(root:)
+        described_class.sensitivity(root:)
+        described_class.shell_exclusions(root:)
+        described_class.test_layout(root:)
+
+        expect(Lain::Config::Builder).to have_received(:evaluate).once
+      end
+    end
+
+    it "evaluates an edited file afresh once its new bytes are trusted" do
+      Dir.mktmpdir do |root|
+        write_config(root, "shell exclude: %w[curl]\n")
+        described_class.shell_exclusions(root:)
+        write_config(root, "shell exclude: %w[wget]\n")
+
+        expect(described_class.shell_exclusions(root:).permits?("curl")).to be(true)
+      end
+    end
+  end
+
+  describe "an absent table" do
+    it "loads and epics_home is still the default" do
+      Dir.mktmpdir do |root|
+        write_config(root, "shell exclude: %w[curl]\n")
+
+        expect(described_class.load(root:).epics_home).to eq(:xdg)
       end
     end
   end
@@ -250,7 +258,7 @@ RSpec.describe Lain::Config do
 
     it "distinguishes two configs with different worktree lifecycles" do
       epics = Lain::Config::Epics.new(home: :xdg)
-      isolation = Lain::Config::Isolation.from({ "retain_days" => 3 }, path: "config.toml")
+      isolation = Lain::Config::Isolation.from({ "retain_days" => 3 }, path: "config.rb")
       a = described_class.new(epics:, isolation:)
       b = described_class.new(epics:)
 
@@ -259,28 +267,17 @@ RSpec.describe Lain::Config do
     end
   end
 
-  # The `[sensitivity]` table is read on its OWN, by {.sensitivity} rather
-  # than through {.load}, and that separation is the point rather than an
-  # accident of load order: this table RESTRICTS, so it must refuse loudly, and
-  # every other table TOLERATES a typo at the cost of its own feature. Reading
-  # them together would force one posture on both -- which it did, briefly, and
-  # a typo in `[epics]` took `lain chat` down with it.
   describe ".sensitivity" do
     # No working-directory default, unlike {.load}: the caller holds a resolved
-    # project root, and defaulting one here is the divergence this chunk exists
-    # to remove.
+    # project root, and defaulting one here is the divergence the resolved
+    # project exists to remove.
     it "takes its root from the caller rather than the working directory" do
       expect { described_class.sensitivity }.to raise_error(ArgumentError, /root/)
     end
 
     it "compiles the project's patterns into rules the classifier can hold" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [sensitivity]
-          denied = ["*.secret"]
-          gated = ["*.private"]
-          exempt = [".gitconfig"]
-        TOML
+        write_config(root, "sensitivity denied: %w[*.secret], gated: %w[*.private], exempt: %w[.gitconfig]\n")
 
         rules = described_class.sensitivity(root:)
 
@@ -293,7 +290,7 @@ RSpec.describe Lain::Config do
     # project has no boundary".
     it "answers empty rules when a config file carries no sensitivity table" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = \"repo\"\n")
+        write_config(root, "epics home: :repo\n")
 
         expect(described_class.sensitivity(root:)).to eq(Lain::Sensitivity::Rules.empty)
       end
@@ -305,30 +302,9 @@ RSpec.describe Lain::Config do
       end
     end
 
-    # THE INDEPENDENCE, in both directions. A broken `[epics]` must not cost the
-    # project its path rules, and a broken `[sensitivity]` must not be excused
-    # by the rest of the file parsing cleanly.
-    it "reads the sensitivity table even when another table is malformed" do
+    it "refuses a list where a keyword belongs, naming the file" do
       Dir.mktmpdir do |root|
-        write_config(root, %(epics = "not a table"\n\n[sensitivity]\ndenied = ["*.secret"]\n))
-
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /\[epics\]/)
-        expect(described_class.sensitivity(root:).denied.size).to eq(1)
-      end
-    end
-
-    it "refuses its own bad table even when every other table is fine" do
-      Dir.mktmpdir do |root|
-        write_config(root, %(sensitivity = "strict"\n\n[epics]\nhome = "repo"\n))
-
-        expect { described_class.load(root:) }.not_to raise_error
-        expect { described_class.sensitivity(root:) }.to raise_error(Lain::Config::Refusal, /\[sensitivity\]/)
-      end
-    end
-
-    it "refuses a scalar where the table belongs, naming the file" do
-      Dir.mktmpdir do |root|
-        write_config(root, %(sensitivity = "strict"\n))
+        write_config(root, "sensitivity denied: \"*.secret\"\n")
 
         expect { described_class.sensitivity(root:) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
@@ -337,29 +313,14 @@ RSpec.describe Lain::Config do
 
     it "refuses a pattern that could never match, naming the file" do
       Dir.mktmpdir do |root|
-        write_config(root, "[sensitivity]\ndenied = [\"config/secrets/prod.key\"]\n")
+        write_config(root, "sensitivity denied: %w[config/secrets/prod.key]\n")
 
         expect { described_class.sensitivity(root:) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
-
-    # A file nobody can parse is a file whose sensitivity table nobody can read
-    # either, so this one stays a Malformed -- and {CLI::Wiring::BoardBuild} is
-    # where that degrades to a notice, because only there is there somebody to
-    # tell.
-    it "still reports an unparseable file as Malformed" do
-      Dir.mktmpdir do |root|
-        write_config(root, "this is not [valid toml")
-
-        expect { described_class.sensitivity(root:) }.to raise_error(Lain::Config::Malformed)
-      end
-    end
   end
 
-  # `[shell]` is the second table read on its own, for the reason above: it
-  # names programs a project has ruled out, so a typo that silently drops one
-  # reads as a refusal that is in force and is not.
   describe ".shell_exclusions" do
     it "takes its root from the caller rather than the working directory" do
       expect { described_class.shell_exclusions }.to raise_error(ArgumentError, /root/)
@@ -373,7 +334,7 @@ RSpec.describe Lain::Config do
 
     it "permits every program when the file carries no shell table" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = \"repo\"\n")
+        write_config(root, "epics home: :repo\n")
 
         expect(described_class.shell_exclusions(root:)).to eq(Lain::Shell::Exclusions.empty)
       end
@@ -381,7 +342,7 @@ RSpec.describe Lain::Config do
 
     it "excludes the programs the table names, by basename" do
       Dir.mktmpdir do |root|
-        write_config(root, %([shell]\nexclude = ["curl", "wget"]\n))
+        write_config(root, "shell exclude: %w[curl wget]\n")
 
         exclusions = described_class.shell_exclusions(root:)
 
@@ -393,24 +354,15 @@ RSpec.describe Lain::Config do
     # this table can only ever restrict.
     it "honours a wildcard entry" do
       Dir.mktmpdir do |root|
-        write_config(root, %([shell]\nexclude = ["*"]\n))
+        write_config(root, "shell exclude: %w[*]\n")
 
         expect(described_class.shell_exclusions(root:).permits?("cat")).to be(false)
       end
     end
 
-    it "refuses a scalar where the table belongs, naming the file" do
-      Dir.mktmpdir do |root|
-        write_config(root, %(shell = "off"\n))
-
-        expect { described_class.shell_exclusions(root:) }
-          .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
-      end
-    end
-
     it "refuses a key it does not read, naming the file" do
       Dir.mktmpdir do |root|
-        write_config(root, %([shell]\nexcluded = ["curl"]\n))
+        write_config(root, "shell excluded: %w[curl]\n")
 
         expect { described_class.shell_exclusions(root:) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
@@ -419,45 +371,14 @@ RSpec.describe Lain::Config do
 
     it "refuses a pattern that could never match, naming the file" do
       Dir.mktmpdir do |root|
-        write_config(root, %([shell]\nexclude = ["/usr/bin/curl"]\n))
+        write_config(root, "shell exclude: %w[/usr/bin/curl]\n")
 
         expect { described_class.shell_exclusions(root:) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
-
-    # The independence, both ways, as for the table above.
-    it "reads its table even when another table is malformed" do
-      Dir.mktmpdir do |root|
-        write_config(root, %(epics = "not a table"\n\n[shell]\nexclude = ["curl"]\n))
-
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /\[epics\]/)
-        expect(described_class.shell_exclusions(root:).permits?("curl")).to be(false)
-      end
-    end
-
-    it "refuses its own bad table even when every other table is fine" do
-      Dir.mktmpdir do |root|
-        write_config(root, %(shell = "off"\n\n[epics]\nhome = "repo"\n))
-
-        expect { described_class.load(root:) }.not_to raise_error
-        expect { described_class.shell_exclusions(root:) }
-          .to raise_error(Lain::Config::Refusal, /\[shell\]/)
-      end
-    end
-
-    it "still reports an unparseable file as Malformed" do
-      Dir.mktmpdir do |root|
-        write_config(root, "this is not [valid toml")
-
-        expect { described_class.shell_exclusions(root:) }.to raise_error(Lain::Config::Malformed)
-      end
-    end
   end
 
-  # `[tests]` is the third table read on its own: it restricts where a test
-  # file may be written, so a misspelt key must not leave the project quietly
-  # unguarded.
   describe ".test_layout" do
     it "takes its root from the caller rather than the working directory" do
       expect { described_class.test_layout }.to raise_error(ArgumentError, /root/)
@@ -471,7 +392,7 @@ RSpec.describe Lain::Config do
 
     it "falls back to a detected framework's preset when the file carries no tests table" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = \"repo\"\n")
+        write_config(root, "epics home: :repo\n")
 
         expect(described_class.test_layout(root:, framework: "rspec").preset.name).to eq("rspec")
       end
@@ -479,7 +400,7 @@ RSpec.describe Lain::Config do
 
     it "reads the table's preset and source roots" do
       Dir.mktmpdir do |root|
-        write_config(root, %([tests]\npreset = "rspec"\nsource_roots = ["app"]\n))
+        write_config(root, "tests preset: :rspec, source_roots: %w[app]\n")
 
         expect(described_class.test_layout(root:).mapping.test_path("app/models/order.rb", level: "unit"))
           .to eq("spec/unit/models/order_spec.rb")
@@ -488,36 +409,10 @@ RSpec.describe Lain::Config do
 
     it "refuses a misspelt key, naming the key and the file" do
       Dir.mktmpdir do |root|
-        write_config(root, %([tests]\nprest = "rspec"\n))
+        write_config(root, "tests prest: :rspec\n")
 
         expect { described_class.test_layout(root:) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}.*prest/)
-      end
-    end
-
-    it "reads its table even when another table is malformed" do
-      Dir.mktmpdir do |root|
-        write_config(root, %(epics = "not a table"\n\n[tests]\npreset = "pytest"\n))
-
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /\[epics\]/)
-        expect(described_class.test_layout(root:).preset.name).to eq("pytest")
-      end
-    end
-
-    it "refuses its own bad table even when every other table is fine" do
-      Dir.mktmpdir do |root|
-        write_config(root, %(tests = "rspec"\n\n[epics]\nhome = "repo"\n))
-
-        expect { described_class.load(root:) }.not_to raise_error
-        expect { described_class.test_layout(root:) }.to raise_error(Lain::Config::Refusal, /\[tests\]/)
-      end
-    end
-
-    it "still reports an unparseable file as Malformed" do
-      Dir.mktmpdir do |root|
-        write_config(root, "this is not [valid toml")
-
-        expect { described_class.test_layout(root:) }.to raise_error(Lain::Config::Malformed)
       end
     end
   end

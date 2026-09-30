@@ -157,7 +157,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
     # The survey builds its own classifier from the project's table, so an
     # anchored pattern there has to reach it with the root it is anchored on.
     it "withholds a path a project-anchored pattern denies" do
-      write(".lain/config.toml", %([sensitivity]\ndenied = ["/vault/"]\n))
+      write_config(@root, "sensitivity denied: %w[/vault/]\n")
       write("vault/keys.md", document("# Keys", "", "Nothing a survey should list."))
 
       rendered = command.present(@root)
@@ -483,7 +483,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
 
   # Where the project's own table went missing. The classifier was anchored on
   # the process's working directory AND asked for the table under it, so every
-  # `lain survey` below the repository top resolved `<cwd>/.lain/config.toml`,
+  # `lain survey` below the repository top resolved the config under the cwd,
   # found nothing, and classified with `Rules.empty` -- a project's denials
   # silently not in force, which is the worst outcome the whole boundary is
   # written against. The root answers "whose rules", the cwd answers "relative
@@ -496,8 +496,8 @@ RSpec.describe Lain::CLI::Survey, :seam do
     def monorepo(table)
       @project = File.join(@tmp, "monorepo")
       @here = File.join(@project, "services", "api")
-      FileUtils.mkdir_p([File.join(@project, ".lain"), File.join(@here, "secrets")])
-      File.write(File.join(@project, ".lain", "config.toml"), table)
+      FileUtils.mkdir_p(File.join(@here, "secrets"))
+      write_config(@project, table)
       File.write(File.join(@here, "secrets", "payroll.ledger"), "a roster of salaries\n")
       File.write(File.join(@here, "secrets", "README.md"), "# What lives here\n\nSalaries.\n")
     end
@@ -505,7 +505,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
     # A BASENAME glob, which is the shape `Sensitivity::Rules` compiles: a
     # path-shaped pattern with no anchor is refused outright, so `secrets/*`
     # could not be written here even to describe the defect.
-    def denying_ledgers = monorepo(%([sensitivity]\ndenied = ["*.ledger"]\n))
+    def denying_ledgers = monorepo("sensitivity denied: %w[*.ledger]\n")
 
     def surveyed_from_below
       described_class.new(paths:, project: project_at(@project, @here)).present(File.join(@here, "secrets"))
@@ -540,12 +540,11 @@ RSpec.describe Lain::CLI::Survey, :seam do
   describe "a config file that will not parse" do
     before do
       two_documents
-      FileUtils.mkdir_p(File.join(@root, ".lain"))
-      File.write(File.join(@root, ".lain", "config.toml"), "[sensitivity\ndenied = broken")
+      write_config(@root, "sensitivity denied: [\n")
     end
 
     it "refuses rather than surveying with the project's rules silently dropped" do
-      expect { command }.to raise_error(Lain::Config::Malformed, /#{Regexp.escape(@root)}/)
+      expect { command }.to raise_error(Lain::Config::Refusal, /#{Regexp.escape(@root)}/)
     end
 
     it "refuses as a Lain::Error, which is what the exe renders as a message" do
@@ -555,7 +554,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
     # BEFORE the walk and before the journal: nothing is opened over a tree this
     # command was never able to classify.
     it "journals no round" do
-      expect { command.present(@root) }.to raise_error(Lain::Config::Malformed)
+      expect { command.present(@root) }.to raise_error(Lain::Config::Refusal)
       expect(opened_records).to be_empty
     end
   end

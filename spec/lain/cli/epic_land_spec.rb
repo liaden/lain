@@ -49,8 +49,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
 
   # Untracked, so the parent checkout stays clean for the merge.
   def write_layout
-    FileUtils.mkdir_p(File.join(root, ".lain"))
-    File.write(File.join(root, ".lain", "config.toml"), %([tests]\npreset = "rspec"\nsource_roots = ["app"]\n))
+    write_config(root, "tests preset: :rspec, source_roots: %w[app]\n")
   end
 
   def shell(*args)

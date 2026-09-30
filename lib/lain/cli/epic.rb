@@ -176,7 +176,7 @@ module Lain
       #   home both resolve under it
       # @param paths [Paths] injected, so a spec resolves against a throwaway
       #   XDG state home
-      # @param config [Config] `.lain/config.toml`, already read
+      # @param config [Config] `.lain/config.rb`, already read
       # @param ignores [#reason] the git question, injected so no spec has to
       #   build a repository to exercise the warning
       def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),

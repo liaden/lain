@@ -26,9 +26,9 @@ module Lain
       # correction the refusal offers back.
       KEYS = %w[home gates width].freeze
 
-      # The table as `config.toml` spells it, which is how every refusal here
-      # names it.
-      TABLE = "[epics]"
+      # The verb of `.lain/config.rb` that declares this table, as every refusal
+      # here names it.
+      TABLE = "`epics`"
 
       # @param table [Object] whatever `raw["epics"]` parsed to: a Hash, nil when
       #   the table is absent, or anything a project wrote in its place
@@ -63,7 +63,7 @@ module Lain
       #
       # @return [Refusal]
       def self.invalid_home(value, path: nil)
-        Refusal.new("epics_home #{value.inspect} is not one of #{HOME_VALUES.join(", ")}", path:, value:)
+        Refusal.new("`epics` home: #{value.inspect} is not one of #{HOME_VALUES.join(", ")}", path:, value:)
       end
       private_class_method :home_from
 
@@ -104,7 +104,7 @@ module Lain
 
       # Closed-set validation belongs to the VALUE, not only to the TOML-parsing
       # path that usually builds it (`Epic::Issue` does the same):
-      # `Epics.new(home: :bogus)` must refuse as loudly as a bad `config.toml`.
+      # `Epics.new(home: :bogus)` must refuse as loudly as a bad `config.rb`.
       # `.from`'s own check stays -- it names the config path, which this
       # constructor-level guard cannot.
       #

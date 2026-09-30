@@ -53,16 +53,15 @@ RSpec.describe "the epic tier's project keying", :seam do
       root = File.join(base, "repo")
       sub = File.join(root, "services", "ingest")
       FileUtils.mkdir_p(sub)
-      write_repo_epic(root, "alpha")
       with_env("HOME" => base, "XDG_STATE_HOME" => File.join(base, "state")) do
+        write_repo_epic(root, "alpha")
         Dir.chdir(sub) { yield(root, sub) }
       end
     end
   end
 
   def write_repo_epic(root, slug)
-    FileUtils.mkdir_p(File.join(root, ".lain"))
-    File.write(File.join(root, ".lain", "config.toml"), %([epics]\nhome = "repo"\n))
+    write_config(root, "epics home: :repo\n")
     path = File.join(root, ".lain", "epics", slug, "epic.md")
     FileUtils.mkdir_p(File.dirname(path))
     graph = Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a1", title: "the a1 issue")])

@@ -7,8 +7,8 @@ module Lain
     class Wiring
       # What the run's {Switchboard} is BUILT FROM. Every half turns the
       # resolved {Lain::Project} into an authority, and none is the board's own
-      # question: {Project::Consent} says which remembered answers this root
-      # may contribute, the path boundary below says which paths it gates and
+      # question: the trusted config says which remembered answers this root
+      # contributes, the path boundary below says which paths it gates and
       # which it refuses outright, and {.shell_verdict} says which programs it
       # refuses by name. {.approving} is where the path boundary comes back as
       # an authority of a different kind: the same classifier factory, handed to
@@ -22,8 +22,8 @@ module Lain
       #
       # == They are two vocabularies, and the resemblance is a trap
       #
-      # Consent's `rules` are APPROVAL rules -- call SHAPES a consented root
-      # pre-approves, which GRANT. The `[sensitivity]` table's rules are PATH
+      # The remembered `rules` are APPROVAL rules -- call SHAPES a trusted
+      # config pre-approves, which GRANT. The `[sensitivity]` table's rules are PATH
       # rules, which restrict and grant nothing. Both arrive at
       # {Switchboard.for} as keywords, and one silently accepted where the
       # other belongs would be a config file's denials read as permissions.
@@ -78,7 +78,8 @@ module Lain
           # in one command's argv lands.
           factory = classifiers(project:, paths:, table:)
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
-                          rules: Project::Consent.for(project:, notice:).rules, approving: method(:approving),
+                          rules: [Lain::Approval::Remembered.from(Config.load(root: project.root))].reject(&:empty?),
+                          approving: method(:approving),
                           sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, test_layout: test_layout(project:, notice:))
         end
@@ -134,13 +135,13 @@ module Lain
         # allowlist would have approved. Prepending would silently overturn an
         # answer a person gave.
         #
-        # The chain is {Project::Consent}'s; this adds to it and does not own
-        # it, which is why the consented rules are threaded through rather than
+        # The chain is the trusted config's; this adds to it and does not own
+        # it, which is why the remembered rules are threaded through rather than
         # rebuilt here. The board is handed this method rather than its answer,
         # because a leased worker's chain is composed again over that worker's
         # own factory.
         #
-        # @param remembered [Array<Lain::Approval::Rule>] {Project::Consent#rules}
+        # @param remembered [Array<Lain::Approval::Rule>] the config's remembered answers
         # @param factory [#call, #confinement, #content] the `cwd -> #classify` factory,
         #   on {Lain::Approval::ComposedTerm}'s terms
         # @return [Array<Lain::Approval::Rule>]
@@ -292,9 +293,7 @@ module Lain
         # Two failures, two postures, and the line between them is what the
         # table SAYS versus whether the file can be read at all.
         #
-        # A malformed `[sensitivity]` table RAISES, where {Project::Consent}
-        # rescues a broken `[approval]` one. The asymmetry: that table GRANTS,
-        # so dropping it fails closed and costs a rung; this one RESTRICTS, so
+        # A malformed `[sensitivity]` table RAISES. This table RESTRICTS, so
         # dropping it fails OPEN, and a session quietly running with a
         # project's denials un-parsed is the worst outcome available.
         #

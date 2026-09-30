@@ -34,7 +34,7 @@ end
 # gate still refuses.
 #
 # Nothing between the board and the walk is doubled: a real
-# {Lain::CLI::Wiring::BoardBuild} board over a real `.lain/config.toml`, the
+# {Lain::CLI::Wiring::BoardBuild} board over a real `.lain/config.rb`, the
 # real `read_file`/`write_file` tools over a real {Lain::Session} rewriting it,
 # the real {Lain::CLI::Command::Surface} assembled from the board's own
 # `surface_kwargs`, and the real `/survey` reaching a real walk. The doubles
@@ -61,15 +61,15 @@ RSpec.describe "a survey and the gate beside it, after the config changes mid-se
       @tmp = File.realpath(made)
       @root = File.join(@tmp, "repo")
       @home = File.join(@tmp, "home")
-      FileUtils.mkdir_p([File.join(@root, ".lain"), @home])
-      File.write(config, %([sensitivity]\ndenied = ["*.ledger"]\n))
+      FileUtils.mkdir_p(@home)
+      write_config(@root, "sensitivity denied: %w[*.ledger]\n")
       File.write(File.join(@root, "payroll.ledger"), "a roster of salaries\n")
       File.write(File.join(@root, "notes.md"), "# Notes\n\nOne line of prose.\n")
       example.run
     end
   end
 
-  def config = File.join(@root, ".lain", "config.toml")
+  def config = config_path(@root)
 
   def paths = Lain::Paths.new(env: { "HOME" => @home })
 
@@ -102,7 +102,7 @@ RSpec.describe "a survey and the gate beside it, after the config changes mid-se
     session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @root, env: {}))
     invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
     Lain::Tools::ReadFile.new.call({ "path" => config }, invocation)
-    Lain::Tools::WriteFile.new.call({ "path" => config, "content" => "[sensitivity]\ndenied = []\n" }, invocation)
+    Lain::Tools::WriteFile.new.call({ "path" => config, "content" => "sensitivity denied: []\n" }, invocation)
   end
 
   def read_of(path)

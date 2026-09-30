@@ -2,7 +2,7 @@
 
 module Lain
   class Config
-    # Every refusal of a `.lain/config.toml` table, for all seven of them:
+    # Every refusal of a `.lain/config.rb` table, for all seven of them:
     # `[epics]`, `[epics.gates]`, `[approval]`, `[isolation]`, `[sensitivity]`,
     # `[shell]` and `[tests]`. One class because there is one concept -- this
     # file says something the reader will not act on -- where the seven readers
@@ -14,20 +14,17 @@ module Lain
     # means no file to open** -- a value built in memory came from a caller, not
     # from a config, and naming a file would send its reader somewhere the
     # mistake is not. **No table** is the rarer case, for the one detail naming
-    # a Ruby reader (`epics_home`) rather than a TOML spelling. And `table` is
-    # spelled as the FILE spells it (`"[[approval.allow]]"`), because the
-    # message exists to send a human to a line of TOML.
+    # a Ruby reader (`epics_home`) rather than a table. And `path` carries the
+    # line where {Builder} knows it, because the message exists to send a human
+    # to a line of the file.
     #
-    # One class is not one posture: the granting/restricting split
-    # {Config.load} argues for lives on the readers, not here.
-    #
-    # Deliberately NOT {Config::Malformed}, which is the TOML PARSE failing. A
-    # syntax error and a wrong key are different mistakes with different fixes,
-    # and {CLI::Wiring::BoardBuild} degrades on both by name.
+    # A file Ruby cannot run is one of these too, at the line Ruby names: the
+    # user wrote the file, so a backtrace into lain would point nowhere they
+    # can edit.
     class Refusal < Error
       # @return [String, nil] the config file, or file:line; absent for a value built by hand
       attr_reader :path
-      # @return [String, nil] the table as the file spells it, e.g. `"[shell]"`
+      # @return [String, nil] the verb that declares the table, e.g. "`shell`"
       attr_reader :table
       # @return [String, Array<String>, nil] the key, or every key, the refusal
       #   names -- a list wherever one pass can report several

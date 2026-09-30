@@ -42,13 +42,13 @@ RSpec.describe Lain::Config::Answers do
   it "refuses an answer list that is not a list of tables" do
     expect { described_class.from({ "allow" => "read_file" }, path: "/irrelevant") }
       .to raise_error(Lain::Config::Refusal,
-                      "/irrelevant: [approval] allow is a list of tables ([[approval.allow]]), got String")
+                      "/irrelevant: `approval` allow is a list of `allow` entries, got String")
   end
 
   it "refuses an entry with no tool" do
     expect { described_class.from({ "allow" => [{ "input" => { "path" => "a.md" } }] }, path: "/irrelevant") }
       .to raise_error(Lain::Config::Refusal,
-                      '/irrelevant: [[approval.allow]] needs a tool name: {"input" => {"path" => "a.md"}}')
+                      '/irrelevant: `allow` needs a tool name: {"input" => {"path" => "a.md"}}')
   end
 
   it "refuses an entry whose input is not a table of scalars, naming the offending field" do
@@ -57,7 +57,7 @@ RSpec.describe Lain::Config::Answers do
                            path: "/irrelevant")
     end
       .to raise_error(Lain::Config::Refusal,
-                      '/irrelevant: [[approval.allow]] input "path" is not a scalar: ' \
+                      '/irrelevant: `allow` input "path" is not a scalar: ' \
                       '{"tool" => "read_file", "input" => {"path" => ["a"]}}')
   end
 
@@ -91,7 +91,7 @@ RSpec.describe Lain::Config::Answers do
   # the VALUE, so a hand-built one cannot carry a shape `.from` would refuse.
   it "refuses a hand-built entry the parser would have refused" do
     expect { described_class.new(allow: [{ "tool" => 42 }]) }
-      .to raise_error(Lain::Config::Refusal, /\[\[approval\.allow\]\] needs a tool name/)
+      .to raise_error(Lain::Config::Refusal, /`allow` needs a tool name/)
   end
 
   # The third member used to skip the constructor check entirely: `[42]`
@@ -100,7 +100,7 @@ RSpec.describe Lain::Config::Answers do
   it "refuses hand-built tool-wide denials the parser would have refused" do
     [42, nil, ["bash"], ""].each do |name|
       expect { described_class.new(deny_tools: [name]) }
-        .to raise_error(Lain::Config::Refusal, /\[\[approval\.deny_tool\]\] needs a tool name/)
+        .to raise_error(Lain::Config::Refusal, /`deny_tool` needs a tool name/)
     end
   end
 
@@ -129,8 +129,8 @@ RSpec.describe Lain::Config::Answers do
         parsed = refusal { described_class.from({ key => shape }, path: "/cfg.toml") }
         built = refusal { described_class.new(**{ member => shape }) }
 
-        expect(parsed).to eq([Lain::Config::Refusal, "/cfg.toml: [approval] #{key} is a list of tables " \
-                                                     "([[approval.#{key}]]), got #{shape.class}"])
+        expect(parsed).to eq([Lain::Config::Refusal, "/cfg.toml: `approval` #{key} is a list of " \
+                                                     "`#{key}` entries, got #{shape.class}"])
         expect(built).to eq([Lain::Config::Refusal, parsed.last.delete_prefix("/cfg.toml: ")])
       end
     end
@@ -151,15 +151,15 @@ RSpec.describe Lain::Config do
   describe "the [approval] table through Config.load" do
     it "is empty when the file has no approval table" do
       Dir.mktmpdir do |root|
-        write_config(root, "[epics]\nhome = \"repo\"\n")
+        write_config(root, "epics home: :repo\n")
 
         expect(described_class.load(root:).approval).to eq(Lain::Config::Answers.empty)
       end
     end
 
-    it "raises a named error carrying the path when the table is not a table" do
+    it "raises a named error carrying the path when an entry is misshapen" do
       Dir.mktmpdir do |root|
-        write_config(root, "approval = \"yes please\"\n")
+        write_config(root, "approval do\n  allow \"read_file\", \"README.md\"\nend\n")
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
@@ -168,14 +168,12 @@ RSpec.describe Lain::Config do
 
     it "reads the remembered answers alongside [epics]" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~TOML)
-          [epics]
-          home = "repo"
-
-          [[approval.allow]]
-          tool = "read_file"
-          input = { path = "README.md" }
-        TOML
+        write_config(root, <<~RUBY)
+          epics home: :repo
+          approval do
+            allow "read_file", path: "README.md"
+          end
+        RUBY
 
         config = described_class.load(root:)
 

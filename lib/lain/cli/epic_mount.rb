@@ -133,8 +133,8 @@ module Lain
       #   session journal, which is what {CLI::Epic::Journals} reads back
       # @param root [String] the project root the epic's home is resolved under
       # @param paths [Paths] the XDG/project path authority
-      # @param config [Config] `.lain/config.toml`, loaded -- carries the
-      #   `[epics]` table
+      # @param config [Config] `.lain/config.rb`, loaded -- carries what its
+      #   `epics` verb declares
       # @param bindings [#call, nil] a thunk reading the live {HumanReplies},
       #   which the tool reads at CALL time because it does not exist yet when
       #   the toolset is built

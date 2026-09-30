@@ -23,7 +23,7 @@ module Lain
       class NotARepository < Error; end
 
       # @param root [String] the project's root, as chat resolves it: where the
-      #   repository search starts and `.lain/config.toml` is read
+      #   repository search starts and `.lain/config.rb` is read
       # @param paths [Paths] supplies the worktree root, the journal's home and
       #   the XDG bases the repository search stops at
       # @param home [String, nil] the user's home directory, where the
@@ -31,7 +31,7 @@ module Lain
       #   tries `Dir.home` too but never raises -- a nil here is refused
       #   downstream, by name, once the search needs it.
       # @param gc_factory [#call] builds the reaper
-      # @param config [#call] loads the project's `.lain/config.toml`
+      # @param config [#call] loads the project's `.lain/config.rb`
       # @param clock [#call] answers now, for the run's header
       def initialize(root:, paths: Paths.new,
                      home: paths.home_or_nil,

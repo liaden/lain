@@ -366,9 +366,9 @@ module Lain
       PROJECT_RUBY_REFUSAL = "reaches the project's own Ruby under .lain, which is always asked about: the " \
                              "model can write it and a later launch would run it"
 
-      # The table as `config.toml` spells it, which is how every refusal here
-      # names it.
-      TABLE = "[sensitivity]"
+      # The table the `sensitivity` verb of `.lain/config.rb` declares, as
+      # every refusal here names it.
+      TABLE = "`sensitivity`"
 
       # @param table [Object] whatever `raw["sensitivity"]` parsed to; nil when absent
       # @param path [String, nil] the config file, named in every refusal
@@ -760,7 +760,7 @@ module Lain
 
     def project_root(root, rules)
       return anchor(:root, root) unless root.nil?
-      raise ArgumentError, "root is required: this project's [sensitivity] table anchors a pattern on it" \
+      raise ArgumentError, "root is required: this project's `sensitivity` config anchors a pattern on it" \
         if rules.rooted?
 
       nil

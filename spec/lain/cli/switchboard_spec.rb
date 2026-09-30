@@ -154,8 +154,8 @@ RSpec.describe Lain::CLI::Switchboard do
 
     # The rules rung was wired EMPTY, because the remembered answers need a
     # project root this board does not hold. It takes them as `rules:` now, and
-    # what decides whether a root's `[approval]` table may fill that list is
-    # {Lain::Project::Consent} -- not this class, which only carries them.
+    # what decides whether a root's approval table may fill that list is
+    # {Lain::Project::Trust} -- not this class, which only carries them.
     it "hands the ladder's rules rung whatever the session consented to" do
       allower = Class.new(Lain::Approval::Rule) do
         def name = "spec_allow"

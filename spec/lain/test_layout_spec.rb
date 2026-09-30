@@ -92,7 +92,7 @@ RSpec.describe Lain::TestLayout do
 
   describe "a malformed table is refused by name" do
     it "refuses a scalar where the table belongs" do
-      expect(refusal("rspec")).to be_a(Lain::Config::Refusal).and(have_attributes(message: /#{config}.*\[tests\]/))
+      expect(refusal("rspec")).to be_a(Lain::Config::Refusal).and(have_attributes(message: /#{config}.*`tests`/))
     end
 
     it "refuses a table that names no preset" do
@@ -101,7 +101,7 @@ RSpec.describe Lain::TestLayout do
 
     it "refuses a preset it does not ship, naming the ones it does" do
       expect(refusal({ "preset" => "jest" }).message)
-        .to include('preset = "jest" is not one of cargo, minitest, pytest, rspec')
+        .to include('preset: "jest" is not one of cargo, minitest, pytest, rspec')
     end
 
     it "refuses a source root that is not a list of relative paths" do

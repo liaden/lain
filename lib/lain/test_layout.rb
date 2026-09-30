@@ -110,9 +110,9 @@ module Lain
 
     def self.detected(framework) = PRESETS.key?(framework) ? preset(framework) : None
 
-    # The table as `config.toml` spells it, which is how every refusal here
-    # names it.
-    TABLE = "[tests]"
+    # The verb of `.lain/config.rb` that declares this table, as every refusal
+    # here names it.
+    TABLE = "`tests`"
 
     def self.shaped!(table, path:)
       raise Config::Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
@@ -127,7 +127,7 @@ module Lain
     #
     # @return [Config::Refusal]
     def self.invalid_value(key, value, rule, path:)
-      Config::Refusal.new("#{key} = #{value.inspect} is not #{rule}", path:, table: TABLE, key:, value:)
+      Config::Refusal.new("#{key}: #{value.inspect} is not #{rule}", path:, table: TABLE, key:, value:)
     end
 
     def self.preset_named(table, path:)

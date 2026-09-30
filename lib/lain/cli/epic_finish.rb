@@ -54,7 +54,7 @@ module Lain
       # @param root [String] the project root, which is also the checkout
       #   holding `epic/<slug>`
       # @param paths [Paths] injected, so a spec resolves a throwaway state home
-      # @param config [Config] `.lain/config.toml`, already read
+      # @param config [Config] `.lain/config.rb`, already read
       # @param epics [CLI::Epic] answers WHICH epic a bare invocation means
       # @param shell_out_factory [#call] every git subprocess
       # @param github [#pr_create, #pr_merge, #pr_view, #pr_list, #merge_state]

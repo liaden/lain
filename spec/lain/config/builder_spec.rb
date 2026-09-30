@@ -79,7 +79,7 @@ RSpec.describe Lain::Config::Builder do
 
     it "keeps a semantic refusal, at the line of the verb" do
       expect { build("\nisolation retain_days: 0\n") }
-        .to raise_error(Lain::Config::Refusal, /config\.rb:2: \[isolation\] retain_days = 0 .*at least 1/)
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: `isolation` retain_days: 0 .*at least 1/)
     end
 
     it "refuses a gate with the wrong number of arguments at its line" do
@@ -123,9 +123,10 @@ RSpec.describe Lain::Config::Builder do
       expect(build(source).shell.patterns).to eq(["résumé"])
     end
 
-    it "refuses an input beside deny_tool, as the TOML reader did" do
+    it "refuses a field beside deny_tool, naming it as the file wrote it" do
       expect { build("approval do\n  deny_tool \"bash\", command: \"rm\"\nend\n") }
-        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*no "input"/)
+        .to raise_error(Lain::Config::Refusal,
+                        /config\.rb:2: `deny_tool` takes a tool name and no fields, got command: "rm"\z/)
     end
 
     it "refuses an extra positional argument to allow" do
@@ -150,7 +151,7 @@ RSpec.describe Lain::Config::Builder do
 
     it "refuses the same key given as a symbol and as a string" do
       expect { build("shell exclude: %w[curl], \"exclude\" => []\n") }
-        .to raise_error(Lain::Config::Refusal, /config\.rb:1: \[shell\] .*exclude.*twice/)
+        .to raise_error(Lain::Config::Refusal, /config\.rb:1: `shell` .*exclude.*twice/)
     end
 
     it "carries file:line as the path of a translated refusal" do
@@ -164,12 +165,12 @@ RSpec.describe Lain::Config::Builder do
     end
 
     it "carries the table an epics refusal is about" do
-      expect { build("epics width: 0\n") }.to raise_error(Lain::Config::Refusal) { |e| expect(e.table).to eq("[epics]") }
+      expect { build("epics width: 0\n") }.to raise_error(Lain::Config::Refusal) { |e| expect(e.table).to eq("`epics`") }
     end
 
     it "refuses a table declared twice" do
       expect { build("shell exclude: []\nshell exclude: []\n") }
-        .to raise_error(Lain::Config::Refusal, /config\.rb:2: \[shell\] declares shell twice/)
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: `shell` declares shell twice/)
     end
   end
 end

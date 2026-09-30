@@ -202,8 +202,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
     it "parks a command a human remembered in the checkout, rather than running it in plan auto" do
       command = "touch #{@repo}/remembered"
       remembered = Lain::Approval::Remembered.new(allow: [{ "tool" => "bash", "input" => { "command" => command } }])
-      allow(Lain::Project::Consent).to receive(:for).and_return(instance_double(Lain::Project::Consent,
-                                                                                rules: [remembered]))
+      allow(Lain::Approval::Remembered).to receive(:from).and_return(remembered)
       mode("plan auto")
 
       pending, = answered("bash", { "command" => command }, :deny)

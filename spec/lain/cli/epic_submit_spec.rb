@@ -549,7 +549,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
         expect(error).to be_a(Lain::Approval::Gate::Policies::Refusal)
         expect(error.kind).to eq(:missing_seam)
         expect(error.message).to match(/epic_plan.*interactive.*stdin is not a terminal/)
-        expect(error.message).to include('epic_plan = "hands_off"', '"deferred"')
+        expect(error.message)
+          .to include("`gate :epic_plan, :hands_off`", ":deferred", "`epics` block of .lain/config.rb")
         expect(error.message).not_to include("adjudicated", "\n")
       }
     end
@@ -1077,13 +1078,11 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "exits 130, with the fail-closed decision already journaled" do
       write_research
       write_epic
-      FileUtils.mkdir_p(File.join(root, ".lain"))
-      File.write(File.join(root, ".lain", "config.toml"), <<~TOML)
-        [epics]
-        home = "xdg"
-        [epics.gates]
-        research = "interactive"
-      TOML
+      write_config(root, <<~RUBY, paths:)
+        epics home: :xdg do
+          gate :research, :interactive
+        end
+      RUBY
 
       exe = File.expand_path("../../../exe/lain", __dir__)
       gemfile = File.expand_path("../../../Gemfile", __dir__)
