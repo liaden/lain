@@ -25,7 +25,7 @@ module Lain
     #
     # Read by {Config.shell_exclusions} rather than by `Config.load`, for the
     # reason {Config.sensitivity} carries: a table that RESTRICTS must refuse a
-    # typo loudly, where `Config.load` can afford to tolerate one.
+    # typo loudly.
     #
     # Every key here can only ever subtract capability, which is why a wildcard
     # is legal: `exclude = ["*"]` is the strictest posture the file can express.

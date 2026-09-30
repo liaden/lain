@@ -149,11 +149,17 @@ module Lain
       # recorded is still read, since that writes nothing, and a selector that
       # refuses reads as no recorded profile: that refusal stays the pane's.
       #
+      # The project's `.lain/config.rb` is evaluated here too, so a file that
+      # will not load refuses `lain up` on the operator's terminal rather than
+      # in a pane that dies before anyone sees it. It writes nothing and asks
+      # no server.
+      #
       # @return [nil]
       # @raise [Lain::Error] whatever the flags refuse, in the flag's own name
       def preflight(&notice)
         refuse_contradictory_flags!
         resolve_project!
+        Config.load(root: project.root)
         @recorded_header = preflight_header
         constructed
         # A mode that says nothing looks exactly like a hang, and this one is

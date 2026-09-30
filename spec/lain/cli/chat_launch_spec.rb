@@ -1179,3 +1179,65 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
       .to have_attributes(provider: "ollama", api_base: "http://127.0.0.1:11500", model: "qwen3:8b", typed: [:model])
   end
 end
+
+# A config the launch cannot evaluate refuses it whole, ahead of the record:
+# the production construction path, with no wiring or chronicle double.
+RSpec.describe Lain::CLI::ChatLaunch, "over a config that will not load" do
+  around do |example|
+    Dir.mktmpdir("lain-launch-config") do |dir|
+      @dir = File.realpath(dir)
+      with_env("XDG_STATE_HOME" => File.join(@dir, "state"), "HOME" => File.join(@dir, "home")) { example.run }
+    end
+  end
+
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: JSON.generate("models" => []))
+  end
+
+  def launch_over(line)
+    root = File.join(@dir, "repo")
+    write_config(root, "\n#{line}\n")
+    project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+    described_class.new({ journal: true, nvim: false, max_tokens: 16 },
+                        profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama"),
+                        project_factory: -> { project }, gc_schedule_factory: ->(**) { -> {} })
+                   .call { |_notice| nil }
+  end
+
+  def preflight_launch(project)
+    profile = Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama")
+    described_class.new({ journal: false, max_tokens: 16 }, profile:, project_factory: -> { project })
+  end
+
+  def session_files = Dir.glob(File.join(Lain::Paths.new.sessions_dir, "*"))
+
+  [%(shell exclude: "curl"), "nosuch_verb 1", "isolation retain_days: 0", "tests preset: :nose",
+   %(raise "boom")].each do |line|
+    it "refuses the launch at the file and line, and writes no session file, given `#{line}`" do
+      expect { launch_over(line) }.to raise_error(Lain::Config::Refusal, /config\.rb:2/)
+      expect(session_files).to be_empty
+    end
+
+    # The pre-flight is `lain up`'s only gate before it builds a tmux session, so
+    # a config it does not evaluate reaches the operator as a dead pane.
+    it "refuses a pre-flight at the file and line, given `#{line}`" do
+      root = File.join(@dir, "repo")
+      write_config(root, "\n#{line}\n")
+      project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+      launch = preflight_launch(project)
+
+      expect { launch.preflight { |_notice| nil } }.to raise_error(Lain::Config::Refusal, /config\.rb:2/)
+    end
+  end
+
+  it "refuses a pre-flight over a config whose bytes are not trusted" do
+    root = File.join(@dir, "repo")
+    write_config(root, "isolation retain_days: 3\n")
+    File.write(config_path(root), "isolation retain_days: 4\n")
+    project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+    launch = preflight_launch(project)
+
+    expect { launch.preflight { |_notice| nil } }.to raise_error(Lain::Project::Trust::Untrusted)
+  end
+end

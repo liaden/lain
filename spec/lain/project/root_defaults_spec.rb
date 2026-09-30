@@ -118,7 +118,6 @@ module RootDefaultDiscipline
     # project; the defaults are so that a spec constructing one by hand need not
     # restate either.
     "lain/cli/command/surface.rb" => %w[initialize:cwd initialize:root],
-    "lain/cli/epic_mount.rb" => %w[self.mount:root],
     "lain/cli/isolation_backend.rb" => %w[initialize:root],
     "lain/cli/review.rb" => %w[initialize:repo_root],
     "lain/cli/review_seams.rb" => %w[for:root],

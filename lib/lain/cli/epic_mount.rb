@@ -53,39 +53,29 @@ module Lain
       # than a startup notice: it works in memory for the process's life, and
       # such a session writes no session file for --resume to resume anyway.
       #
-      # == Every default lives on {.mount}, and that placement is the guard
-      #
-      # Ruby evaluates default arguments BEFORE the body's `rescue` is armed, so
-      # a default that raises escapes the very clause written to catch it. This
-      # method held `config: Config.load(root:)` and three config refusals went
-      # straight out of it -- looking correct, because the rescue named exactly
-      # the right class and simply never ran. Splitting the resolution onto
-      # {.mount} puts every default inside the guarded region.
-      #
       # @param chronicle [Epic::Chronicle] the epic's record, mounted read-write
       # @param options [Hash] the parsed CLI options; `:epic` names the slug
       # @param notice [#call, nil] told why a mount was abandoned; silent by default
+      # @param root [String] the project directory the epic's home is resolved under
+      # @param config [Config] `.lain/config.rb`, loaded by the caller: a file that
+      #   will not load refuses the launch, and is never a reason to drop the tool
       # @param injected [Hash] collaborators the caller substitutes, passed to {.mount}
       # @option injected [#call, nil] :bindings a thunk reading the live
       #   {HumanReplies}, which the tool reads at CALL time because it does not
       #   exist yet when the toolset is built
       # @return [EpicMount, NoEpic]
-      def self.for(chronicle:, options:, notice: nil, **injected)
-        mount(chronicle:, options:, **injected)
+      def self.for(chronicle:, options:, root:, config:, notice: nil, **injected)
+        mount(chronicle:, options:, root:, config:, **injected)
       rescue Lain::Error, SystemCallError => e
         (notice || SILENT).call(unwired(e)) if worth_saying?(options[:epic], e)
         NoEpic
       end
 
-      # Resolution proper, with nothing rescued: this method exists so that the
-      # defaults raise where {.for}'s answer can hear them.
-      #
       # @param chronicle [Epic::Chronicle] the epic's record, mounted read-write
       # @param options [Hash] the parsed CLI options
-      # @param root [String] the project directory every default resolves against
+      # @param root [String] the project directory the epic's home is resolved under
       # @param paths [Paths] where an epic's files live
-      # @param config [Config] read here rather than at {.for}, so a typo in
-      #   `[epics]` raises inside that method's rescue rather than past it
+      # @param config [Config] `.lain/config.rb`, loaded by the caller
       # @param bindings [#call, nil] a thunk reading the live {HumanReplies}
       # @param told [#call] the run's one line to the human, forwarded to the tool
       # @param changesets [#source, nil] builds the review source
@@ -97,7 +87,7 @@ module Lain
       # @option options [String] :epic the slug {Epic#resolve_slug} refuses by
       #   name when it is ambiguous or unknown
       # @return [EpicMount]
-      def self.mount(chronicle:, options:, told:, root: Dir.pwd, paths: Paths.new, config: Config.load(root:),
+      def self.mount(chronicle:, options:, told:, root:, config:, paths: Paths.new,
                      bindings: nil, changesets: nil, surface: nil, view: nil, policy: nil)
         new(slug: Epic.new(root:, paths:, config:).resolve_slug(options[:epic], command: "chat --epic"),
             journal: chronicle.record_journal, root:, paths:, config:, bindings:, told:,

@@ -22,9 +22,9 @@ module Lain
   # holds them, and a test-named file among them is collected by the runner
   # like any other.
   #
-  # Read by {Config.test_layout} rather than `Config.load`, because this table
-  # restricts where a test may be written: a misspelt key silently leaving the
-  # project unguarded is the worst outcome available, so it is refused.
+  # This table restricts where a test may be written: a misspelt key silently
+  # leaving the project unguarded is the worst outcome available, so it is
+  # refused.
   class TestLayout
     # A level root spelled this way keeps its tests inside the source file, as
     # Rust's `#[cfg(test)]` modules do, so there is no file to mirror.

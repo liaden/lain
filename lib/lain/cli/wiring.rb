@@ -49,13 +49,6 @@ module Lain
       # cannot be the value here.
       DEGRADE = :degrade
 
-      # A file the whole chat reads cannot take the chat down with it, and a
-      # worker handed back with lain's defaults is still handed back.
-      UNREAD = "the `isolation` settings in .lain/config.rb were not read, so workers hand back " \
-               "with lain's defaults: %<reason>s"
-
-      private_constant :UNREAD
-
       Handback = Data.define(:handoff, :sync)
 
       # How a worker's work comes home on the chat path: the
@@ -388,13 +381,13 @@ module Lain
         # handed {#durable_journal} instead.
         @channel = channel
         parent = -> { @agent.timeline }
-        @supervisor = supervise(notice)
+        @supervisor = supervise
         @ask_human = wire_askers(parent)
         toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, notice:)
         # Resolved BEFORE the record opens, and the statement order IS the
         # guarantee -- see #switchboard for what can refuse here and why a
         # refusal must land ahead of the header.
-        switchboard(backend, toolset, notice)
+        switchboard(backend, toolset)
         chronicle.start(context: backend.context, toolset:, profile: backend.run_profile,
                         compaction: backend.compaction_header, **resume_start(resumed))
         # ASSIGNED to an ivar, not merely returned: the `parent` thunk above and
@@ -414,7 +407,7 @@ module Lain
         # which holds ClassLength but puts this method over Metrics/AbcSize, so
         # it is owed together with the extraction this class asks for -- whoever
         # pays that debt must bring the guard with it.
-        @agent = build_agent(toolset:, channel:, session:, backend:, resumed:, views:, notice:)
+        @agent = build_agent(toolset:, channel:, session:, backend:, resumed:, views:)
       end
 
       private
@@ -613,8 +606,8 @@ module Lain
       # takes the resume RESULT rather than a `timeline:` lifted off it --
       # reading `resumed&.timeline` at the caller cost #wire_agent the one
       # branch that put it over AbcSize.
-      def build_agent(toolset:, channel:, session:, backend:, resumed: nil, views: nil, notice: nil)
-        agent_over(board: switchboard(backend, toolset, notice), channel:, session:, backend:,
+      def build_agent(toolset:, channel:, session:, backend:, resumed: nil, views: nil)
+        agent_over(board: switchboard(backend, toolset), channel:, session:, backend:,
                    timeline: resumed&.timeline, views:)
       end
 
@@ -823,8 +816,8 @@ module Lain
                                           chronicle:, options:, root:, usage: -> { @agent&.usage }, askers: @askers,
                                           supervisor: @supervisor, parent:, library: backend.library,
                                           switchboard: -> { @switchboard }, journal: durable_journal,
-                                          verdict: verdict(notice), isolation: fleet_isolation,
-                                          handback: handback(notice), epic: epic_mount(notice),
+                                          verdict:, isolation: fleet_isolation,
+                                          handback:, epic: epic_mount(notice),
                                           attachments:)
         @toolset_build.build(recorder, ask_human:)
       end
@@ -833,16 +826,13 @@ module Lain
       # run by the exe under a chat-level reactor that outlives asks. It leases
       # from the fleet's one backend and surrenders a crashed actor through the
       # run's one handoff.
-      def supervise(notice)
-        Lain::Supervisor.new(journal: durable_journal, isolation: fleet_isolation, handoff: handback(notice).handoff)
+      def supervise
+        Lain::Supervisor.new(journal: durable_journal, isolation: fleet_isolation, handoff: handback.handoff)
       end
 
       # How a worker's work comes home, built ONCE and handed to both lanes --
       # the {Supervisor}'s crashed actors and {ToolsetBuild}'s one-shot children
-      # -- so the two cannot hand work back to different places. Memoized for
-      # {#verdict}'s reason: the notice fires on the first call. Every caller
-      # names the notice, so which one came first cannot decide where a broken
-      # table is told.
+      # -- so the two cannot hand work back to different places.
       #
       # The Supervisor is built before the toolset, so the resolver reads the
       # run's {Skill::RoleSpawn} through a thunk at call time.
@@ -853,10 +843,10 @@ module Lain
       # chat's own tree would read the human's work as a worker's.
       #
       # @return [Handback]
-      def handback(notice)
+      def handback
         @handback ||= begin
           base = fleet_isolation.base
-          base.name.empty? ? Handback.none : handback_over(base, isolation_settings(notice))
+          base.name.empty? ? Handback.none : handback_over(base, isolation_settings)
         end
       end
 
@@ -871,12 +861,7 @@ module Lain
                      sync: Isolation::SelfSync.new(base:, strategy:, retries: settings.rebase_retries))
       end
 
-      def isolation_settings(notice)
-        Config.load(root:).isolation
-      rescue Lain::Error, SystemCallError => e
-        notice&.call(format(UNREAD, reason: e.message))
-        Config::Isolation.empty
-      end
+      def isolation_settings = Config.load(root:).isolation
 
       # Which epic this chat is seated in, resolved ONCE and read twice: the
       # toolset takes the mount's tools, and an attached editor's lain://status
@@ -898,8 +883,8 @@ module Lain
       #   FIRST call only, which is the toolset build's
       # @return [EpicMount, EpicMount::NoEpic]
       def epic_mount(notice = nil)
-        @epic_mount ||= EpicMount.for(chronicle:, options:, notice:, told:, root:, bindings: replies,
-                                      **ReviewSeams.for(replies, root:))
+        @epic_mount ||= EpicMount.for(chronicle:, options:, notice:, told:, root:, config: Config.load(root:),
+                                      bindings: replies, **ReviewSeams.for(replies, root:))
       end
 
       # What lain://status draws. {EpicMount::NoEpic} answers only `tools` --
@@ -944,9 +929,9 @@ module Lain
       # that module existed the board took the constructor's
       # {Lain::Sensitivity::Policy::Null} default, so `gates?` answered false for
       # every path in every real chat and the whole axis was dark.
-      def switchboard(backend, toolset, notice = nil)
+      def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
-                                        notice:, verdict: verdict(notice))
+                                        verdict:)
       end
 
       # The session's ONE {Lain::Shell::Verdict}, and the memo is the whole
@@ -961,10 +946,8 @@ module Lain
       #
       # Reached first from #build_toolset, which is ahead of `chronicle.start`:
       # the same refusal-before-journal ordering #switchboard keeps, and it
-      # matters because a malformed `[shell]` table refuses rather than
-      # degrading. The notice is passed on every call and fires on the first,
-      # for {BoardBuild.for}'s reason -- one broken config, one sentence.
-      def verdict(notice = nil) = @verdict ||= BoardBuild.shell_verdict(project:, notice:)
+      # matters because a config that will not load refuses the launch.
+      def verdict = @verdict ||= BoardBuild.shell_verdict(project:)
 
       # What the drain is handed is the DIRECTORY, not the run's one asker:
       # "which asker holds the set this answer names" is a question only the

@@ -16,12 +16,6 @@ module Lain
   # a wrong-shaped value inside one is loud instead of silently defaulting or
   # crashing three call frames deep.
   class Config
-    # Nothing raises this since the file became Ruby: a file that will not run
-    # is a {Refusal} at its line, and one that cannot be read is
-    # {Project::Trust::Unreadable}. It stands while {CLI::Wiring::BoardBuild}
-    # still rescues it by name.
-    class Malformed < Error; end
-
     # The evaluated file, memoised on its path and trusted bytes: a `lain chat`
     # startup asks the four readers below for one file, and an edit is new
     # bytes, so it is evaluated afresh once trusted. Nothing is evicted; the

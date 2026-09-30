@@ -29,23 +29,6 @@ module Lain
       # other belongs would be a config file's denials read as permissions.
       # They are assembled in one place so a reader sees both names at once.
       module BoardBuild
-        # Said when the config file cannot be parsed at all, so the project's
-        # own additions are lost. It names what is still standing, because "not
-        # in force" alone reads as "you have no boundary".
-        UNREADABLE = "this project's [sensitivity] rules are not in force (the built-in credential rules still " \
-                     "apply): %<reason>s"
-
-        # The same sentence for the other restricting table, and a separate one
-        # because a separate feature is lost: one broken file costs the project
-        # its path rules AND its excluded programs, and saying so once would
-        # leave an operator believing the other half survived.
-        NO_EXCLUSIONS = "this project's [shell] exclusions are not in force (no program is refused by name): " \
-                        "%<reason>s"
-
-        # The third restricting table's sentence. It names what it costs: no
-        # test layout is enforced for the session.
-        IGNORED_LAYOUT = "this project's [tests] table is ignored, so no test layout is enforced: %<reason>s"
-
         module_function
 
         # @param chronicle [CLI::Chronicle] resolves the journal the switches record onto
@@ -53,8 +36,6 @@ module Lain
         # @param model [String] the model in force until the first /model
         # @param toolset [Lain::Toolset] the run's BASE capability set
         # @param project [Lain::Project] the run's resolved root and cwd
-        # @param notice [#call, nil] the startup-notice seam an ignored
-        #   `[approval]` table reports through
         # @param paths [Paths] supplies the HOME the classifier anchors its
         #   home-relative rules against
         # @param verdict [#call] the session's ONE shell verdict, built by
@@ -66,13 +47,10 @@ module Lain
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
-        def for(chronicle:, options:, model:, toolset:, project:, notice: nil, paths: Paths.new,
+        def for(chronicle:, options:, model:, toolset:, project:, paths: Paths.new,
                 verdict: Lain::Shell::Verdict.new)
-          # Compiled ONCE and handed to both readers: {.rules} parses the
-          # config file and, when it cannot, SAYS so through `notice`, so a
-          # second call would parse the same file twice and tell the operator
-          # the same thing twice for one broken config.
-          table = rules(project:, notice:)
+          # Compiled once: the exemption check stats the disk.
+          table = rules(project:)
           # The SAME factory reaches both the triage rung and the approving
           # rule, so the two rungs cannot disagree about where a relative word
           # in one command's argv lands.
@@ -81,7 +59,7 @@ module Lain
                           rules: [Lain::Approval::Remembered.from(Config.load(root: project.root))].reject(&:empty?),
                           approving: method(:approving),
                           sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
-                          classifiers: factory, test_layout: test_layout(project:, notice:))
+                          classifiers: factory, test_layout: test_layout(project:))
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree
@@ -160,23 +138,16 @@ module Lain
         # permits every program, and nothing in lib/ ever built another. This
         # method is what makes a `deny` reachable in a real session.
         #
-        # Two failures, two postures, and they are {.rules}' exactly. A
-        # malformed `[shell]` table RAISES: the table RESTRICTS, so dropping it
-        # fails OPEN, and a session quietly running with a project's refusals
-        # un-parsed is the worst outcome available. A file that will not PARSE
-        # is rescued and SAID instead, because the typo is as likely in
-        # `[epics]` and taking `lain chat` down over an unrelated syntax error
-        # is a regression a user meets mid-task.
+        # A config that will not load refuses the launch, and so does a
+        # malformed `[shell]` table: the table RESTRICTS, so dropping it fails
+        # OPEN, and a session quietly running without a project's refusals is
+        # the worst outcome available.
         #
         # @param project [Lain::Project]
-        # @param notice [#call, nil]
-        # @raise [Lain::Config::Refusal] when the table itself is malformed
         # @return [Lain::Shell::Verdict]
-        def shell_verdict(project:, notice: nil)
+        # @raise [Lain::Config::Refusal] when the file or the table is malformed
+        def shell_verdict(project:)
           Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root))
-        rescue Config::Malformed => e
-          (notice || SILENT).call(format(NO_EXCLUSIONS, reason: e.message))
-          Lain::Shell::Verdict.new
         end
 
         # The session's ONE layout guard, which the parent's tool phase and
@@ -186,37 +157,11 @@ module Lain
         # preset would hold a project that declared nothing to level roots it
         # never chose, and refuse its existing flat specs as strays.
         #
-        # A malformed `[tests]` table is dropped and SAID, where a broken
-        # `[shell]` table refuses the chat. Dropping this one fails open too,
-        # but only to where a project stands before it opts in, and the
-        # land-time check still refuses a misplaced test.
-        #
-        # The refusal arm is NARROW ON PURPOSE, and the width has to be checked
-        # rather than inherited. {Config::Refusal} is one class for all seven
-        # config tables, so the class alone no longer says which table refused
-        # -- `#table` does. Rescuing it bare here would degrade the layout on an
-        # `[isolation]` typo and let the chat start, which is the restricting
-        # posture collapsing into the granting one at the only site that could
-        # hide it. Today the shared parse is lazy per table, so a foreign
-        # refusal cannot arrive here at all; this arm is what keeps that true if
-        # it ever stops being.
-        #
         # @param project [Lain::Project]
-        # @param notice [#call, nil]
         # @return [Lain::Middleware::GuardTestLayout::Run]
-        def test_layout(project:, notice: nil)
+        # @raise [Lain::Config::Refusal] when the file or the table is malformed
+        def test_layout(project:)
           layout_run(Config.test_layout(root: project.root), project)
-        rescue Config::Refusal => e
-          raise unless e.table == Lain::TestLayout::TABLE
-
-          ignored_layout(e, project, notice)
-        rescue Config::Malformed => e
-          ignored_layout(e, project, notice)
-        end
-
-        def ignored_layout(error, project, notice)
-          (notice || SILENT).call(format(IGNORED_LAYOUT, reason: error.message))
-          layout_run(Lain::TestLayout::None, project)
         end
 
         def layout_run(layout, project) = Lain::Middleware::GuardTestLayout::Run.new(layout:, root: project.root)
@@ -290,33 +235,21 @@ module Lain
             Lain::Approval::Risk::Root.new(project.root).contains?(paths.home)
         end
 
-        # Two failures, two postures, and the line between them is what the
-        # table SAYS versus whether the file can be read at all.
-        #
-        # A malformed `[sensitivity]` table RAISES. This table RESTRICTS, so
-        # dropping it fails OPEN, and a session quietly running with a
-        # project's denials un-parsed is the worst outcome available.
-        #
-        # A file that will not PARSE is rescued instead: the typo is as likely
-        # in `[epics]` as here, nothing in it is this boundary's to interpret,
-        # and taking `lain chat` down over an unrelated syntax error is a
-        # regression a user meets mid-task. It costs the project its ADDITIONS
-        # and nothing else, and it is SAID, because a boundary narrowing in
-        # silence is the failure this whole file is about.
+        # A config that will not load refuses the launch, and so does a
+        # malformed `[sensitivity]` table. This table RESTRICTS, so dropping it
+        # fails OPEN, and a session quietly running with a project's denials
+        # un-parsed is the worst outcome available.
         #
         # An exemption naming a directory is refused here too, where the root
         # is on disk to ask: the table itself makes no syscall.
         #
         # @param project [Lain::Project]
-        # @param notice [#call, nil]
         # @return [Lain::Sensitivity::Rules]
-        def rules(project:, notice: nil)
+        # @raise [Lain::Config::Refusal] when the file or the table is malformed
+        def rules(project:)
           root = project.root
           Config.sensitivity(root:).exempting_files!(->(anchored) { File.directory?(File.join(root, anchored)) },
                                                      path: ProjectDir.new(root:).config)
-        rescue Config::Malformed => e
-          (notice || SILENT).call(format(UNREADABLE, reason: e.message))
-          Lain::Sensitivity::Rules.empty
         end
 
         # The `cwd -> #classify` factory {Approval::Escalation::Triage} takes,

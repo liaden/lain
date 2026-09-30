@@ -1060,6 +1060,24 @@ RSpec.describe Lain::CLI::Up do
       expect(error.message).not_to match(/\.rb:\d+:in/)
     end
 
+    # The real pre-flight, shelling to this checkout's own exe: the child exits
+    # at the pre-flight and leaves no chat behind. A project config that will
+    # not load must refuse here, on the operator's terminal, and not in a pane.
+    it "refuses in the config's own words when the project's config.rb will not load", :seam do
+      Dir.mktmpdir("lain-up-config") do |dir|
+        root = File.realpath(dir)
+        FileUtils.mkdir_p(File.join(root, ".git"))
+        with_env("XDG_STATE_HOME" => File.join(root, "state"), "HOME" => File.join(root, "home")) do
+          write_config(root, "\nraise \"boom\"\n")
+          real = Lain::CLI::Up::ChatPreflight.new(shell_out_factory: Mixlib::ShellOut.public_method(:new),
+                                                  cwd: root, executable: lain_exe)
+
+          expect { real.call(["--epic", "demo", "--provider", "ollama", "--no-journal"]) }
+            .to raise_error(Lain::CLI::Up::ChatRefused, /config\.rb:2/)
+        end
+      end
+    end
+
     # The one message on this path that lain did not write. A refusal is a
     # line; a CRASHING child is a backtrace, and the acceptance criterion
     # promises the operator never reads a frame -- so the frames are dropped

@@ -37,14 +37,12 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
   def paths_at(home) = Lain::Paths.new(env: { "HOME" => home })
 
-  # `.classifier` takes the COMPILED table rather than a `notice:` of its own:
-  # the file is parsed once, by `.for`, and handed to all three readers. This
-  # composes the two the way `.for` does, so the examples below still drive the
-  # real "what does a broken config cost" behaviour.
-  def classifier_at(root, home, notice: nil, cwd: root)
+  # `.classifier` takes the COMPILED table: the file is evaluated once, by
+  # `.for`, and handed to all three readers. This composes the two the way
+  # `.for` does.
+  def classifier_at(root, home, cwd: root)
     project = project_at(root, cwd)
-    described_class.classifier(project:, paths: paths_at(home),
-                               table: described_class.rules(project:, notice:))
+    described_class.classifier(project:, paths: paths_at(home), table: described_class.rules(project:))
   end
 
   def board_for(root, home, options: {}, **rest)
@@ -57,8 +55,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
   # out at every call site that needs it rather than defaulted inside `.for`,
   # because the whole point of the object is that the toolset holds the SAME
   # instance and a default built here could not be shared.
-  def board_over(root, home, notice: nil, **rest)
-    board_for(root, home, verdict: described_class.shell_verdict(project: project_at(root), notice:), **rest)
+  def board_over(root, home, **rest)
+    board_for(root, home, verdict: described_class.shell_verdict(project: project_at(root)), **rest)
   end
 
   def read_of(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
@@ -131,15 +129,6 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
           .to raise_error(Lain::Config::Refusal, /config\.rb.*denied/)
       end
     end
-
-    it "stays silent about a file that parses" do
-      in_tree(config: %(sensitivity denied: %w[*.secret]\n)) do |root, home|
-        said = []
-        classifier_at(root, home, notice: ->(message) { said << message })
-
-        expect(said).to be_empty
-      end
-    end
   end
 
   describe ".for" do
@@ -183,43 +172,26 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
-  # The third config-derived authority this module builds, and the only one it
-  # does not keep: the session's {Lain::Shell::Verdict} is handed BACK to
-  # {Lain::CLI::Wiring}, which gives the same instance to the board here and to
-  # the bash tool through {Lain::CLI::Wiring::ToolsetBuild}. It is built here
-  # because this is where a project's config is read, and its refusal postures
-  # have to match `.rules`' -- a table that RESTRICTS is loud about a typo, and
-  # a file nobody can parse costs the project its additions and says so.
-  # The `[tests]` table restricts where a test may be written, and a table the
-  # project wrote wrong must not take a chat down with it: enforcement is
-  # opt-in, so the honest degradation is "no layout", said out loud.
+  # The `[tests]` table restricts where a test may be written, and a file the
+  # project wrote wrong refuses the launch like every other reader of it.
   describe ".test_layout" do
-    def run_at(root, notice: nil) = described_class.test_layout(project: project_at(root), notice:)
+    def run_at(root) = described_class.test_layout(project: project_at(root))
 
     it "holds the project to the layout its [tests] table declares" do
       in_tree(config: "tests preset: :rspec, source_roots: %w[app]\n") do |root, _home|
-        told = []
-
-        expect(run_at(root, notice: told.method(:push)).guard.layout.in_force?).to be(true)
-        expect(told).to be_empty
+        expect(run_at(root).guard.layout.in_force?).to be(true)
       end
     end
 
-    it "holds a project with no [tests] table to nothing, silently" do
+    it "holds a project with no [tests] table to nothing" do
       in_tree(config: "isolation retain_days: 3\n") do |root, _home|
-        told = []
-
-        expect(run_at(root, notice: told.method(:push)).guard.layout).to be(Lain::TestLayout::None)
-        expect(told).to be_empty
+        expect(run_at(root).guard.layout).to be(Lain::TestLayout::None)
       end
     end
 
-    it "ignores a malformed [tests] table and tells the human so, rather than refusing the chat" do
-      in_tree(config: "tests prest: :rspec\n") do |root, _home|
-        told = []
-
-        expect(run_at(root, notice: told.method(:push)).guard.layout).to be(Lain::TestLayout::None)
-        expect(told.join).to include("[tests]", "prest")
+    it "refuses a malformed [tests] table, naming the file and line" do
+      in_tree(config: "\ntests prest: :rspec\n") do |root, _home|
+        expect { run_at(root) }.to raise_error(Lain::Config::Refusal, /config\.rb:2.*prest/)
       end
     end
 
@@ -229,32 +201,34 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         expect(board_for(root, home).test_layout.guard.layout.in_force?).to be(true)
       end
     end
+  end
 
-    # The degrade is the `[tests]` table's own and nobody else's, and the width
-    # of this rescue has to be checked rather than inherited: since the seven
-    # config families collapsed into one {Lain::Config::Refusal}, the class no
-    # longer says which table refused -- `#table` does. A bare rescue here would
-    # let an `[isolation]` typo degrade the layout and start the chat, which is
-    # a restricting table failing open at the one site that could hide it.
-    #
-    # The refusal is INJECTED so the example names the table it is about
-    # without depending on which table the whole-file evaluation reaches first.
-    it "re-raises a refusal about another table rather than degrading the layout" do
-      in_tree(config: "tests preset: :rspec\n") do |root, _home|
-        told = []
-        foreign = Lain::Config::Refusal.new("retain_days: -1 is not a whole number of days",
-                                            path: config_path(root),
-                                            table: Lain::Config::Isolation::TABLE)
-        allow(Lain::Config).to receive(:test_layout).and_raise(foreign)
+  # The file is evaluated whole, so a failure anywhere in it refuses every
+  # reader: there is no table a session can carry on without.
+  describe "a config that will not load" do
+    {
+      "an excluded program that is not a list" => %(shell exclude: "curl"),
+      "a verb nothing declares" => "nosuch_verb 1",
+      "a retention of zero days" => "isolation retain_days: 0",
+      "an unknown test preset" => "tests preset: :nose",
+      "a raise" => %(raise "boom")
+    }.each do |what, line|
+      it "refuses every reader at the file and line, given #{what}" do
+        in_tree(config: "\n#{line}\n") do |root, home|
+          project = project_at(root)
+          readers = [-> { described_class.rules(project:) },
+                     -> { described_class.shell_verdict(project:) },
+                     -> { described_class.test_layout(project:) },
+                     -> { board_for(root, home) }]
 
-        expect { run_at(root, notice: told.method(:push)) }.to raise_error(foreign)
-        expect(told).to be_empty
+          readers.each { |reader| expect(&reader).to raise_error(Lain::Config::Refusal, /config\.rb:2/) }
+        end
       end
     end
   end
 
   describe ".shell_verdict" do
-    def verdict_at(root, notice: nil) = described_class.shell_verdict(project: project_at(root), notice:)
+    def verdict_at(root) = described_class.shell_verdict(project: project_at(root))
 
     it "compiles the project's own [shell] table into the capability set" do
       in_tree(config: %(shell exclude: %w[curl]\n)) do |root, _home|
@@ -278,15 +252,6 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       in_tree(config: %(shell exclude: "curl"\n)) do |root, _home|
         expect { verdict_at(root) }
           .to raise_error(Lain::Config::Refusal, /config\.rb.*list of program names/)
-      end
-    end
-
-    it "stays silent about a file that parses" do
-      in_tree(config: %(shell exclude: %w[curl]\n)) do |root, _home|
-        said = []
-        verdict_at(root, notice: ->(message) { said << message })
-
-        expect(said).to be_empty
       end
     end
   end

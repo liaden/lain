@@ -1671,15 +1671,6 @@ RSpec.describe Lain::CLI::Wiring do
           expect(handbacks.map(&:sync)).to eq([:disabled])
         end
 
-        # Memoized, so whichever caller came first would decide which notice a
-        # broken table is told through: every caller names it instead.
-        it "is built with the notice every caller hands it, never an order-dependent default" do
-          # The KINDS, not the names: what matters is that nothing is optional,
-          # since an optional notice is what would let the first caller decide.
-          # Asserting the spelling too reddened this on a rename.
-          expect(described_class.instance_method(:handback).parameters.map(&:first)).to eq([:req])
-        end
-
         it "anchors a crashed actor's commits when the supervisor stops, instead of keeping nothing" do
           anchored = nil
           worker = in_throwaway_repo do |repo|
@@ -3967,7 +3958,13 @@ RSpec.describe Lain::CLI::Wiring, "the handback a worker's work comes home on", 
                         chronicle: Lain::CLI::Chronicle::Null.new,
                         status_feed: instance_double(Lain::StatusFeed),
                         project: Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag))
-                   .send(:handback, nil)
+                   .send(:handback)
+  end
+
+  it "refuses, naming the file and line, when the project's config will not load" do
+    write_config(@root, "\nisolation retain_days: 0\n")
+
+    expect { handback_of_chat }.to raise_error(Lain::Config::Refusal, /config\.rb:2/)
   end
 
   it "wires the handoff with the working branch's repository" do
