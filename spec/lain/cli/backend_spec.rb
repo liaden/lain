@@ -1454,23 +1454,40 @@ RSpec.describe Lain::CLI::Backend do
       end
 
       it "records the arm in the session header's compaction section" do
-        expect(compacting_backend.compaction_header).to eq("compact_fallback" => "handoff")
         expect(compacting_backend(compact_fallback: "none").compaction_header)
           .to eq("compact_fallback" => "none")
+      end
+
+      # An unset flag and a default are different things: a header naming the
+      # default would make a later resume think the human had chosen it.
+      it "records no compaction key for a flag nobody typed, while still using the shipped default" do
+        backend = compacting_backend
+
+        expect(backend.compaction_header).to eq({})
+        expect(backend.compaction).to eq(Lain::CLI::CompactionProfile::UNSET)
+        expect(backend.pipeline_source(cache_profile: profile, journal:).instance_variable_get(:@derived).keep_last)
+          .to eq(described_class::DEFAULT_KEEP_LAST)
+        expect(fallback_of(backend)).to be_a(Lain::Compaction::Source::Fallback)
       end
 
       # `--compact-strategy` is the OTHER comparability axis on the same
       # header -- `bench variance` groups recordings by it, so its name has to
       # travel onto the record, and its absence has to stay tellable from
       # "summarizing" rather than collapsing into it.
-      it "also records a named --compact-strategy, verbatim, beside the fallback" do
-        expect(compacting_backend(compact_strategy: "elide").compaction_header)
-          .to eq("compact_fallback" => "handoff", "compact_strategy" => "elide")
+      it "also records a named --compact-strategy and the knobs typed, verbatim" do
+        expect(compacting_backend(compact_strategy: "elide", compact_keep: 4).compaction_header)
+          .to eq("compact_strategy" => "elide", "compact_keep" => 4)
       end
 
-      it "writes no compact_strategy key when the flag is unset" do
-        expect(compacting_backend.compaction_header).not_to have_key("compact_strategy")
-        expect(compacting_backend(compact_fallback: "none").compaction_header).not_to have_key("compact_strategy")
+      it "takes the arm from a compaction profile handed in, over what the options say" do
+        recorded = Lain::CLI::CompactionProfile.typed({ compact_keep: 4, compact_fallback: "none" })
+        backend = described_class.new({ provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64 },
+                                      compaction: recorded, root: Dir.pwd)
+
+        expect(fallback_of(backend)).to be(Lain::Compaction::Source::Fallback::None)
+        expect(backend.pipeline_source(cache_profile: profile,
+                                       journal:).instance_variable_get(:@derived).keep_last).to eq(4)
+        expect(backend.compaction_header).to eq("compact_keep" => 4, "compact_fallback" => "none")
       end
 
       # Built on FIRST USE. A chat that never hands off must not open a second

@@ -21,7 +21,7 @@ module Lain
 
       # What the current run resolved, carried together to the one place it is
       # compared against the recording.
-      Mismatch = Data.define(:profile, :model)
+      Mismatch = Data.define(:profile, :model, :compaction)
 
       # WHICH door a human came through and WHICH file they named -- the two
       # facts every refusal needs. As two bare Strings riding seven frames as
@@ -113,21 +113,21 @@ module Lain
       # @raise [Refusal]
       def fork_point(selector) = ForkPoint.new(dir:).call(selector)
 
-      # The run profile a selected session recorded, read BEFORE the backend
-      # exists so an untyped field can default to it. Reads the header and
-      # nothing else: no load, no salvage, no write.
+      # The header a selected session recorded, read BEFORE the backend exists
+      # so an untyped flag can default to it. Reads the header and nothing
+      # else: no load, no salvage, no write.
       #
       # @param path [String] a path {#locate} or {#fork_point} selected
-      # @return [RunProfile]
-      def recorded_profile(path)
-        RunProfile.from_header(self.class.header(path))
+      # @return [Hash{String=>Object}] empty when the file is gone
+      def recorded_header(path)
+        self.class.header(path)
       rescue Errno::ENOENT
-        RunProfile::UNRECORDED
+        {}
       end
 
       # {#resume_at} over a fresh {#locate}.
-      def call(selector: nil, profile: RunProfile::UNRECORDED, model: nil)
-        resume_at(locate(selector), profile:, model:)
+      def call(selector: nil, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET)
+        resume_at(locate(selector), profile:, model:, compaction:)
       end
 
       # @param path [String] the session {#locate} selected
@@ -135,15 +135,17 @@ module Lain
       #   against the recorded header for the mismatch notices
       # @param model [String, nil] the model the current run resolved to,
       #   compared against the recording for the mismatch notice
+      # @param compaction [CompactionProfile] the compaction flags the human
+      #   TYPED, compared against the recorded arm
       # @return [Result]
       # @raise [Refusal]
-      def resume_at(path, profile: RunProfile::UNRECORDED, model: nil)
-        rebuild(path, Mismatch.new(profile:, model:))
+      def resume_at(path, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET)
+        rebuild(path, Mismatch.new(profile:, model:, compaction:))
       end
 
       # {#fork_at} over a fresh {#fork_point}.
-      def fork(selector:, profile: RunProfile::UNRECORDED, model: nil)
-        fork_at(fork_point(selector), profile:, model:)
+      def fork(selector:, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET)
+        fork_at(fork_point(selector), profile:, model:, compaction:)
       end
 
       # Fork mode: the new run starts at a recorded turn instead of the parent's
@@ -158,12 +160,13 @@ module Lain
       # @param point [ForkPoint::Point] the fork point {#fork_point} selected
       # @param profile [RunProfile] as {#resume_at}'s, against the forked file's header
       # @param model [String, nil] as {#resume_at}'s, against the forked recording
+      # @param compaction [CompactionProfile] as {#resume_at}'s
       # @return [Result] whose `resumed_from` names `{file, fork digest}`
       # @raise [Refusal]
-      def fork_at(point, profile: RunProfile::UNRECORDED, model: nil)
+      def fork_at(point, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET)
         recording = load_recording(point.path)
         forked = recording.timeline.checkout(point.digest)
-        fork_result(point, recording, forked, Mismatch.new(profile:, model:))
+        fork_result(point, recording, forked, Mismatch.new(profile:, model:, compaction:))
       # The MissingObject arm is DEFENSIVE and kept deliberately: it is not
       # reachable from any journal we can construct, and the last time that was
       # believed it was false. The property lives in two classes a door cannot

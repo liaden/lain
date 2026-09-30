@@ -850,12 +850,20 @@ class LainCLI < Thor
   # Every default names its authority in lib -- Backend's constants, the oracle's
   # ceiling -- rather than restating a number, so `lain help chat` and the wiring
   # cannot come to disagree about what an unset flag means.
+  #
+  # The five --compact-* flags below carry NO Thor `default:`, and that is
+  # load-bearing: Thor would materialize the key, so an unset flag could not be
+  # told from a typed one and a resume could never inherit the recorded arm.
+  # Unset reaches {Lain::CLI::Backend} as nil, and its constants answer.
   module CompactionFlags
+    INHERITED = "a resumed or forked chat inherits what the session recorded"
+
     # Thor's `method_option` accumulates onto the command declared NEXT, so this
     # runs from the class body where the band belongs: after chat's other flags,
     # before `def chat`.
     def self.declare(thor)
       history(thor)
+      fallback(thor)
       strategy(thor)
       pipeline(thor)
       summarizer(thor)
@@ -865,17 +873,26 @@ class LainCLI < Thor
     def self.history(thor)
       thor.method_option :compact, type: :boolean, default: true,
                                    desc: "Summarize the history's head as it grows; --no-compact opts out"
-      thor.method_option :compact_bytes, type: :numeric, default: Backend::DEFAULT_BYTE_THRESHOLD,
-                                         desc: "Droppable-head bytes above which a compaction is warranted"
-      thor.method_option :compact_cap, type: :numeric, default: Backend::DEFAULT_HARD_CAP,
-                                       desc: "History bytes that force a compaction even while the cache is warm"
-      thor.method_option :compact_keep, type: :numeric, default: Backend::DEFAULT_KEEP_LAST,
-                                        desc: "Trailing messages a compaction leaves verbatim"
-      thor.method_option :compact_fallback, type: :string, default: Backend::DEFAULT_COMPACT_FALLBACK,
+      thor.method_option :compact_bytes, type: :numeric,
+                                         desc: "Droppable-head bytes above which a compaction is warranted " \
+                                               "(default #{Backend::DEFAULT_BYTE_THRESHOLD}; #{INHERITED})"
+      thor.method_option :compact_cap, type: :numeric,
+                                       desc: "History bytes that force a compaction even while the cache is warm " \
+                                             "(default #{Backend::DEFAULT_HARD_CAP}; #{INHERITED})"
+      thor.method_option :compact_keep, type: :numeric,
+                                        desc: "Trailing messages a compaction leaves verbatim " \
+                                              "(default #{Backend::DEFAULT_KEEP_LAST}; #{INHERITED})"
+    end
+
+    # What happens when no cut can make room, apart from {#history} only to
+    # keep each method to one band of knobs.
+    def self.fallback(thor)
+      thor.method_option :compact_fallback, type: :string,
                                             desc: "What happens when no cut can make room " \
                                                   "(#{Backend::COMPACT_FALLBACKS.join(", ")}): handoff replaces " \
                                                   "the history before the current ask with one state document " \
-                                                  "and answers the ask; none lets the refusal stand"
+                                                  "and answers the ask; none lets the refusal stand " \
+                                                  "(default #{Backend::DEFAULT_COMPACT_FALLBACK}; #{INHERITED})"
     end
 
     # HOW a compacted span collapses, its own method for the same reason
@@ -899,7 +916,7 @@ class LainCLI < Thor
       thor.method_option :compact_strategy, type: :string,
                                             desc: "How a compacted span collapses " \
                                                   "(#{Lain::CLI::CompactionStrategy::STRATEGIES.join(", ")}; " \
-                                                  "unset keeps the eager tool-result tier)"
+                                                  "unset keeps the eager tool-result tier; #{INHERITED})"
     end
 
     # Beside `--compact-strategy` because it is the other render-strategy arm,

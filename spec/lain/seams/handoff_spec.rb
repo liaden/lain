@@ -252,6 +252,56 @@ RSpec.describe "a handoff when no cut can make room", :seam do
     end
   end
 
+  # A cut is held only by the arm that wrote it, so a resume that lost the arm
+  # renders the whole history again.
+  describe "a resume with no compaction flag typed" do
+    let(:arm) { "elide-tools+summarize-conversation" }
+    let(:flags) { { provider: "ollama", model: "qwen3:4b", max_tokens: 64 } }
+
+    def live_line
+      live = Lain::CLI::Backend.new(flags.merge(compact_strategy: arm), root: Dir.pwd)
+      built = Lain::Compaction::Source.new(
+        need: Lain::Compaction::Need.new(byte_threshold: 1_000_000),
+        cold: Lain::Compaction::Cold.new(cache_profile: Lain::CacheProfile::NO_CACHING, journal:),
+        hard_cap: 1_000_000, keep_last: 20, journal:,
+        fallback: Lain::Compaction::Source::Fallback.new(tier: method(:handoff_tier)),
+        strategy: Lain::CLI::Backend::SpanSummarizer.resolve(backend: live, options: { compact_strategy: arm }),
+        context_window: Lain::ContextWindow.new(windows: { "qwen3" => 8192 })
+      )
+      chat = agent(built)
+      fill(chat)
+      chat.ask("so what is left to do?")
+      chat.timeline.rewind(1)
+    end
+
+    def resumed_text(compaction)
+      line = live_line
+      session = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session
+      backend = Lain::CLI::Backend.new(flags, compaction:, root: Dir.pwd)
+      built = backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING)
+      Lain::Canonical.dump(built.context_for(base: context, timeline: line, usage: nil, session:)
+                                .render(timeline: line, toolset:, workspace: Lain::Workspace.empty).messages)
+    end
+
+    def recorded
+      Lain::CLI::CompactionProfile.from_header({ "compact_strategy" => arm, "compact_keep" => 4 })
+    end
+
+    it "renders the handoff document, not the history, under the arm the header recorded" do
+      text = resumed_text(Lain::CLI::CompactionProfile.typed({}).over(recorded))
+
+      expect(text).to include("finish the parser")
+      expect(text).not_to include(HandoffSeam::MARKER)
+    end
+
+    it "renders the full history again when the arm is lost" do
+      text = resumed_text(Lain::CLI::CompactionProfile::UNSET)
+
+      expect(text).to include(HandoffSeam::MARKER)
+      expect(text).not_to include("finish the parser")
+    end
+  end
+
   describe "with the fallback off" do
     it "leaves the refusal standing, with no handoff cut and no summarizer call" do
       built = refusing_still

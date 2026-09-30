@@ -41,9 +41,10 @@ module Lain
         # @param profile [RunProfile] what the current run resolved, carrying
         #   which fields the human typed
         # @param model [String, nil] the model the current run resolved
+        # @param compaction [CompactionProfile] the compaction flags the human typed
         # @return [Array<String>] one notice per disagreement, model first
-        def call(profile:, model:)
-          [model_notice(model), *typed_notices(profile)].compact
+        def call(profile:, model:, compaction: CompactionProfile::UNSET)
+          [model_notice(model), *typed_notices(profile), *compaction_notices(compaction)].compact
         end
 
         private
@@ -67,6 +68,15 @@ module Lain
             ours = profile.public_send(field)
             theirs = recorded.public_send(field)
             continuing(LABELS.fetch(field), theirs, ours) unless theirs.nil? || ours == theirs
+          end
+        end
+
+        def compaction_notices(compaction)
+          recorded = CompactionProfile.from_header(header)
+          CompactionProfile::FLAGS.filter_map do |field, flag|
+            ours = compaction.public_send(field)
+            theirs = recorded.public_send(field)
+            continuing("--#{flag.to_s.tr("_", "-")}", theirs, ours) unless ours.nil? || theirs.nil? || ours == theirs
           end
         end
 

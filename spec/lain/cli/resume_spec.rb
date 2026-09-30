@@ -35,12 +35,14 @@ RSpec.describe Lain::CLI::Resume do
   # value, the same discipline `resumed_from` already follows here: a header
   # written before `provider` existed genuinely has no "provider" key at all,
   # not a nil-valued one, and the fixture must be able to say that.
-  def open_header(resumed_from: nil, provider: nil)
-    header = Lain::SessionRecord.header(context: recorded_context, toolset:, head: nil)
+  def open_header(resumed_from: nil, provider: nil, compaction: {})
+    header = Lain::SessionRecord.header(context: recorded_context, toolset:, head: nil, compaction:)
     header = header.merge("resumed_from" => resumed_from) unless resumed_from.nil?
     header = header.merge("provider" => provider) unless provider.nil?
     header
   end
+
+  def recorded_profile(path) = Lain::CLI::RunProfile.from_header(resume.recorded_header(path))
 
   def turn_records(timeline) = timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) }
 
@@ -65,9 +67,10 @@ RSpec.describe Lain::CLI::Resume do
     path
   end
 
-  def write_closed(name, timeline, extra: [], provider: nil)
+  def write_closed(name, timeline, extra: [], provider: nil, compaction: {})
     write_session(name,
-                  [open_header(provider:)] + turn_records(timeline) + extra + [closed_record(timeline.head_digest)])
+                  [open_header(provider:,
+                               compaction:)] + turn_records(timeline) + extra + [closed_record(timeline.head_digest)])
   end
 
   describe "restoring the whole conversation (a closed session of three turns)" do
@@ -909,7 +912,7 @@ RSpec.describe Lain::CLI::Resume do
     def typed(**options) = Lain::CLI::RunProfile.from_options(options)
 
     it "resolves a typed provider over the recording, and the notice names both" do
-      profile = typed(provider: "anthropic").over(resume.recorded_profile(resume.locate("")))
+      profile = typed(provider: "anthropic").over(recorded_profile(resume.locate("")))
 
       expect(profile.provider).to eq("anthropic")
       expect(resume.call(profile:).notices.join).to include("recorded with provider ollama", "anthropic")
@@ -920,7 +923,7 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     it "stays silent when nothing was typed, and resolves to the recording" do
-      profile = typed.with_defaults(provider: "anthropic").over(resume.recorded_profile(resume.locate("")))
+      profile = typed.with_defaults(provider: "anthropic").over(recorded_profile(resume.locate("")))
 
       expect(profile.provider).to eq("ollama")
       expect(resume.call(profile:).notices).to be_empty
@@ -956,10 +959,41 @@ RSpec.describe Lain::CLI::Resume do
       before = File.read(path)
 
       head = chain("hi", "yo").head_digest.delete_prefix("blake3:")[0, 12]
-      recorded = resume.recorded_profile(resume.fork_point("20260101@#{head}").path)
+      recorded = recorded_profile(resume.fork_point("20260101@#{head}").path)
 
       expect(recorded).to have_attributes(provider: "ollama", model: "recorded-model")
       expect(File.read(path)).to eq(before)
+    end
+  end
+
+  describe "the compaction-arm notice" do
+    before do
+      write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), provider: "ollama",
+                                                                  compaction: { "compact_keep" => 4,
+                                                                                "compact_strategy" => "elide" })
+    end
+
+    def typed(**options) = Lain::CLI::CompactionProfile.typed(options)
+
+    it "reads the arm the header recorded" do
+      recorded = Lain::CLI::CompactionProfile.from_header(resume.recorded_header(resume.locate("")))
+
+      expect(recorded).to have_attributes(keep: 4, strategy: "elide")
+    end
+
+    it "names the flag a typed value disagrees on" do
+      notices = resume.call(compaction: typed(compact_keep: 8)).notices
+
+      expect(notices.join).to include("--compact-keep", "4", "8")
+    end
+
+    it "stays silent when the typed flag agrees, or nothing was typed" do
+      expect(resume.call(compaction: typed(compact_keep: 4)).notices).to be_empty
+      expect(resume.call(compaction: typed).notices).to be_empty
+    end
+
+    it "answers an empty header for a session file that is gone" do
+      expect(resume.recorded_header("/nope/none.ndjson")).to eq({})
     end
   end
 

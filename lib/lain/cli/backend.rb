@@ -159,6 +159,10 @@ module Lain
       #   one it resolved; left out, it is read off `options`, where every field
       #   holding a value counts as typed. A keyword, so a caller passing both
       #   writes the option hash in braces and neither can be taken for the other.
+      # @param compaction [CompactionProfile] the compaction arm, each field nil
+      #   until said. Left out, it is read off `options`; a resumed chat hands in
+      #   what it typed laid over the recording, and {#compaction_header} then
+      #   records only what is set.
       # @option options [String] :provider name of the chat tier's provider
       # @option options [String] :model model id for the chat tier
       # @option options [String] :api_base base URL override, ollama only
@@ -177,10 +181,12 @@ module Lain
       # @option options [String] :summarizer_provider provider for the summarizer tier
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
-      def initialize(options, root:, profile: RunProfile.from_options(options))
+      def initialize(options, root:, profile: RunProfile.from_options(options),
+                     compaction: CompactionProfile.typed(options))
         @options = options
         @root = root
         @run_profile = profile
+        @compaction = compaction
         summarizer_name
         summarizer_max_tokens
         compact_fallback
@@ -501,13 +507,17 @@ module Lain
       #   `--no-compact` turned it off
       def compaction? = @options.fetch(:compact, true)
 
+      # @return [CompactionProfile] the arm this run was handed; an unset field
+      #   falls to this class's DEFAULT_* constants where it is read
+      attr_reader :compaction
+
       # `--compact-fallback`, validated. An unset flag is the default arm, not
       # "no fallback": a run that never typed the flag still keeps its asks.
       #
       # @return [String] a member of {COMPACT_FALLBACKS}
       # @raise [UnknownFallback] on a name outside that set
       def compact_fallback
-        name = @options[:compact_fallback] || DEFAULT_COMPACT_FALLBACK
+        name = @compaction.fallback || DEFAULT_COMPACT_FALLBACK
         unless COMPACT_FALLBACKS.include?(name)
           raise UnknownFallback, "--compact-fallback #{name.inspect} is not one of " \
                                  "#{COMPACT_FALLBACKS.join(", ")}"
@@ -516,28 +526,21 @@ module Lain
         name
       end
 
-      # The compaction section of the session header: which fallback arm and
-      # which span-collapse strategy this run takes. Neither is on {RunProfile}
-      # -- a profile says which model server answers, and a resumed chat
-      # defaults its backend to it, while these are arms of the experiment,
-      # recorded so a bench can group runs by them and read nothing else back.
+      # The compaction section of the session header: the arm this run was handed, said
+      # or inherited, so a resume can render under it and a bench can group runs by it. Only a
+      # set field is written -- an unset flag is not "the default", it is the
+      # absence a later resume must be able to tell from a choice; and an unset
+      # `compact_strategy` in particular is the run's own eager tool-result
+      # tier, the comparability axis's CONTROL arm, which a reader normalizes
+      # from the absence.
       #
-      # `compact_strategy` merges in only when `--compact-strategy` was given,
-      # {SessionRecord.context_pipeline}'s own only-when-named idiom: an unset
-      # flag is not "no strategy", it is the run's own eager tool-result tier,
-      # the comparability axis's CONTROL arm, and a reader normalizes that
-      # absence to it rather than this method writing the name itself. The
-      # value travels VERBATIM and UNVALIDATED -- {SpanSummarizer} is the
+      # The strategy travels VERBATIM and UNVALIDATED -- {SpanSummarizer} is the
       # object that refuses a name {CLI::CompactionStrategy} rejects, and
       # duplicating that refusal here would mean building a second resolver
       # just to check a string this one already checks for real.
       #
       # @return [Hash{String=>Object}]
-      def compaction_header
-        strategy = @options[:compact_strategy]
-        header = { "compact_fallback" => compact_fallback }
-        strategy.nil? ? header : header.merge("compact_strategy" => strategy)
-      end
+      def compaction_header = @compaction.to_header
 
       # The run's ONE {Skill::Library} -- the project's skills and the prompt
       # slots they render through, read once. Owned HERE because {#context}
@@ -661,11 +664,11 @@ module Lain
       # session from a quiet one.
       def compaction_source(cache_profile:, journal:, sink:)
         Compaction::Source.new(
-          need: Compaction::Need.new(byte_threshold: knob(:compact_bytes, DEFAULT_BYTE_THRESHOLD)),
+          need: Compaction::Need.new(byte_threshold: @compaction.bytes || DEFAULT_BYTE_THRESHOLD),
           cold: Compaction::Cold.new(cache_profile:, journal:),
-          hard_cap: knob(:compact_cap, DEFAULT_HARD_CAP), keep_last: knob(:compact_keep, DEFAULT_KEEP_LAST),
+          hard_cap: @compaction.cap || DEFAULT_HARD_CAP, keep_last: @compaction.keep || DEFAULT_KEEP_LAST,
           eager:, journal:, model:, price_book: COMPACTION_PRICES, context_window:, sink:, fallback:,
-          strategy: SpanSummarizer.resolve(backend: self, options: @options, sink:)
+          strategy: SpanSummarizer.resolve(backend: self, options: @compaction.to_options, sink:)
         )
       end
 

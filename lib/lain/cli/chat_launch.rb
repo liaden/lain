@@ -74,6 +74,7 @@ module Lain
                      env: ENV)
         @options = options
         @typed_profile = profile
+        @typed_compaction = CompactionProfile.typed(options)
         @resume_factory = resume_factory
         @chronicle_factory = chronicle_factory
         @live_views_factory = live_views_factory
@@ -153,7 +154,7 @@ module Lain
       def preflight(&notice)
         refuse_contradictory_flags!
         resolve_project!
-        @profile = preflight_profile
+        @recorded_header = preflight_header
         constructed
         # A mode that says nothing looks exactly like a hang, and this one is
         # reachable by accident: LAIN_PREFLIGHT is inherited like any other
@@ -208,13 +209,18 @@ module Lain
       # Its root is the resolved {#project}'s, and that is what carries `--root`
       # into the system prompt: the skills and slots the Backend loads are the
       # named project's, not the ones in whatever directory the shell was in.
-      def backend = @backend ||= Backend.new(@options, profile:, root: project.root)
+      def backend = @backend ||= Backend.new(@options, profile:, compaction:, root: project.root)
 
       # The ONE {RunProfile} the run's backend is built from: what was typed,
       # over the profile a `--resume`d or `--fork`ed header recorded. Resolved
       # before the backend, and so before every refusal the backend raises,
       # because each is judged against the fields this resolves.
-      def profile = @profile ||= @typed_profile.over(recorded_profile)
+      def profile = @profile ||= @typed_profile.over(RunProfile.from_header(recorded_header))
+
+      # The compaction arm, resolved the way {#profile} is: what was typed over
+      # what the resumed or forked header recorded, so a resume renders under
+      # the arm its recording ran with unless a flag says otherwise.
+      def compaction = @compaction ||= @typed_compaction.over(CompactionProfile.from_header(recorded_header))
 
       # The ONE RunClock for the run. Written by the Conductor and by the tee's
       # Telemetry::Compaction, read by the StatusFeed; two instances would
@@ -274,7 +280,7 @@ module Lain
         # Gated, because a pre-flight must refuse a SUBSET of what chat refuses
         # and never a superset: under --no-compact chat resolves no strategy,
         # so a refusal here would reject a chat that would have run.
-        Backend::SpanSummarizer.resolve(backend:, options: @options) if backend.compaction?
+        Backend::SpanSummarizer.resolve(backend:, options: backend.compaction.to_options) if backend.compaction?
         # Gated for the same reason: the summarizer tier is a SECOND provider
         # with a second key. `--summarizer-provider` naming an arm whose
         # credential is missing used to pre-flight clean and then die at the
@@ -334,27 +340,35 @@ module Lain
       # read-only (never salvages it) and wins over --resume when both are
       # given.
       def resumed_run(backend)
-        return resume.fork_at(fork_point, profile:, model: backend.context.model) if @options[:fork]
+        if @options[:fork]
+          return resume.fork_at(fork_point, profile:, model: backend.context.model,
+                                            compaction: @typed_compaction)
+        end
 
-        @options[:resume] && resume.resume_at(resumed_path, profile:, model: backend.context.model)
+        @options[:resume] &&
+          resume.resume_at(resumed_path, profile:, model: backend.context.model, compaction: @typed_compaction)
       end
 
       # Only the header, so a pre-flight may read it too: a recorded profile
-      # decides which arm's refusals the flags must pass.
-      def recorded_profile
-        return resume.recorded_profile(fork_point.path) if @options[:fork]
-        return resume.recorded_profile(resumed_path) if @options[:resume]
-
-        RunProfile::UNRECORDED
+      # decides which arm's refusals the flags must pass. Read once, and both
+      # the run profile and the compaction arm are built from it.
+      def recorded_header
+        @recorded_header ||= if @options[:fork]
+                               resume.recorded_header(fork_point.path)
+                             elsif @options[:resume]
+                               resume.recorded_header(resumed_path)
+                             else
+                               {}
+                             end
       end
 
       # A pre-flight leaves a selector's refusal -- nothing to resume, an
       # ambiguous or unmatched name -- to the pane that reports it, as it always
       # has, and reads the selection as having recorded nothing.
-      def preflight_profile
-        @typed_profile.over(recorded_profile)
+      def preflight_header
+        recorded_header
       rescue Resume::Refusal
-        @typed_profile
+        {}
       end
 
       # Each door selects its session ONCE, and the header read and the open
