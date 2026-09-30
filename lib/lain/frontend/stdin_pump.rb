@@ -19,6 +19,12 @@ module Lain
     #
     # The editor's read runs in a task of its own, stopped the moment its prompt
     # is withdrawn: the rail tells the pump, which never asks on a clock.
+    #
+    # WITH NOTHING PUBLISHED no editor opens -- it would draw a prompt among an
+    # ask's output -- but the pump still waits on the descriptor, so a `/stop`
+    # the human finishes reaches the rail at once and stops the ask. It takes
+    # only a cooked terminal's whole lines, never a raw one's: raw is the
+    # countdown's key window, and its keys are not lines.
     class StdinPump
       # The chat that reads no line, so nothing is started and nothing stopped
       # -- and nothing is ever open on the terminal, so a caller borrowing it
@@ -27,6 +33,7 @@ module Lain
         def self.start(_task) = self
         def self.stop = nil
         def self.untouched?(_prompt) = true
+        def self.keep(_partial) = nil
 
         def self.exclusively(**) = yield(true)
       end
@@ -74,8 +81,12 @@ module Lain
       # @param screen [Frontend::TTY] composes and draws the prompt, and says
       #   what was held or discarded
       # @param input [IO] the process's stdin
-      def initialize(rail:, screen:, input: $stdin)
+      # @param listening [Boolean] whether a line finished while nothing is
+      #   published is taken at once. Off for a caller that reads the terminal
+      #   itself in that state.
+      def initialize(rail:, screen:, input: $stdin, listening: true)
         @rail = rail
+        @listening = listening
         @screen = screen
         @input = input
         @editor = LineEditor.new(vi_mode: -> { screen.vi? }, notify: ->(message) { screen.render_warning(message) })
@@ -112,6 +123,13 @@ module Lain
           typed.lines.each { |line| @rail.hold(line) }
           @unfinished = typed
         end
+        nil
+      end
+
+      # A partial line a caller took off the terminal, put back as the unfinished
+      # line the next read starts from.
+      def keep(partial)
+        @terminal.synchronize { @unfinished = Typeahead.pending([], "#{@unfinished.partial}#{partial}") }
         nil
       end
 
@@ -195,8 +213,34 @@ module Lain
       end
 
       def changed
-        @told.pop
+        with_line_reader { @told.pop }
         @rail.published
+      end
+
+      # The reader lives exactly as long as the wait for a publication, so it
+      # never runs beside an editor that is using the same descriptor.
+      def with_line_reader
+        return yield unless listens?
+
+        reading = Async::Task.current.async do
+          @typeahead.listen(lock: @terminal, kept: -> { @unfinished }) { |typed| forwarded(typed) }
+        end
+        yield
+      ensure
+        reading&.stop
+      end
+
+      def listens? = @listening && @typeahead.console?
+
+      # ONLY A STOP THE RAIL WILL LIFT IS ACTED ON. Every other line, a `/stop`
+      # with no ask behind it included, is put back as the typeahead it was, in
+      # the order typed, so the prompt that opens next reads it as it always has:
+      # a `command>` takes it for its own line, an answer holds it. Holding it
+      # here would send a `/approve` typed just ahead of a parked call to `you>`.
+      def forwarded(typed)
+        lifted, others = typed.lines.partition { |line| @rail.lifts?(Intake::Line.new(text: line, generation: 0)) }
+        lifted.each { |line| @rail << Intake::Line.new(text: line, generation: Intake::Unpublished.generation) }
+        @unfinished = Typeahead.pending(others, typed.partial)
       end
 
       def serve(prompt)
@@ -393,6 +437,13 @@ module Lain
 
         NOTHING = Typed.new(lines: [].freeze, partial: "")
 
+        READ_LIMIT = 64 * 1024
+
+        # How long a readable but raw terminal is left alone before the wait
+        # looks again. Its bytes are another reader's, so readability stays true
+        # and the wait would otherwise spin.
+        RAW_WAIT = 0.05
+
         # @param input [IO] the terminal; anything that is not one -- a spec's
         #   StringIO, a pipe -- has no typeahead to tell from input
         def initialize(input:)
@@ -403,6 +454,49 @@ module Lain
         # sweep, if there was one.
         def drain(after = NOTHING)
           Typed.from(after.partial.b + (terminal? ? LineEditor.typed_ahead(@input) : ""))
+        end
+
+        # Lines and a partial one as the unfinished line a later sweep or read
+        # takes, which reads its `\r`-joined bytes as the keys they were.
+        def self.pending(lines, partial)
+          Typed.new(lines: [].freeze, partial: "#{lines.map { |line| "#{line}\r" }.join}#{partial}".freeze)
+        end
+
+        # Only a real console can say whether it is cooked; a stream has no
+        # typeahead to tell from input.
+        def console? = terminal? && @input.respond_to?(:echo?)
+
+        # What a cooked terminal has ready: whole lines only, read on from the
+        # unfinished line of an earlier sweep, if there was one.
+        #
+        # @return [Typed, nil] nil while the terminal is raw or has nothing to
+        #   give. Echo is what raw mode switches off; the check and the read
+        #   share no yield, so the mode cannot change between them on this
+        #   reactor.
+        def finished(after = NOTHING)
+          return nil unless console? && @input.echo?
+
+          ready = @input.read_nonblock(READ_LIMIT, exception: false)
+          ready.is_a?(String) ? Typed.from(after.partial.b + ready) : nil
+        end
+
+        # Waits on the descriptor and hands each cooked read to the block, until
+        # the task is stopped or the terminal dies. A raw terminal's bytes are
+        # another reader's, so it is left alone for {RAW_WAIT}.
+        #
+        # @param kept [#call] the unfinished line to read on from, asked afresh
+        #   for each read because a sweep may have changed it
+        # @param lock [#synchronize] held across each read and its handling
+        # @yieldparam typed [Typed] what one read found; the block takes over
+        #   what it does not act on
+        def listen(kept:, lock: Mutex.new, &handle)
+          loop do
+            @input.wait_readable
+            typed = lock.synchronize { finished(kept.call)&.tap(&handle) }
+            Async::Task.current.sleep(RAW_WAIT) if typed.nil?
+          end
+        rescue IOError, SystemCallError
+          nil
         end
 
         # Text put back where the next read takes its first keys from, as the

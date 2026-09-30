@@ -32,6 +32,34 @@ RSpec.describe Lain::Frontend::Intake do
     end.new(received, ask_in_flight)
   end
 
+  describe "#lifts?" do
+    def lifts?(text, ask_in_flight:)
+      rail.route(sink_over([], ask_in_flight:))
+      rail.lifts?(line(text, 0))
+    end
+
+    it "is true of a /stop while an ask is in flight" do
+      expect(lifts?("/stop", ask_in_flight: true)).to be(true)
+    end
+
+    it "is false of a /stop with no ask to stop, of any other line, and of a value that is not a line" do
+      expect([lifts?("/stop", ask_in_flight: false), lifts?("hello", ask_in_flight: true),
+              rail.lifts?(described_class::Eof.new)]).to eq([false, false, false])
+    end
+
+    it "is false at you>, where a /stop is an ordinary line" do
+      rail.route(sink_over([], ask_in_flight: true))
+
+      lifted = Sync do |task|
+        reading = task.async { rail.read(:you, "you> ") }
+        pumped_until(task, reason: "you> published") { rail.published.kind == :you }
+        rail.lifts?(line("/stop", 0)).tap { reading.stop }
+      end
+
+      expect(lifted).to be(false)
+    end
+  end
+
   # A producer that answers each published prompt as a human at it would.
   def answered_when_published(task, generation: nil)
     task.async do

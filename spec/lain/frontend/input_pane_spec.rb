@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "pty"
 require "socket"
 require "stringio"
 require "tmpdir"
@@ -291,6 +292,136 @@ RSpec.describe Lain::Frontend::InputPane do
     keyboard.write("/stop\n")
 
     expect(next_frame(chat, of: "line")).to eq({ "v" => "line", "text" => "/stop", "generation" => 7 })
+  end
+
+  # An ask in flight publishes nothing, and a pane that took nothing then had no
+  # way to send the human's `/stop` or `/goal off` until the ask was over. The
+  # keyboard here is a real terminal's slave side: only a console can be cooked.
+  describe "when the chat says nothing is published" do
+    let(:pty) { PTY.open }
+    let(:reader) { pty.last }
+    let(:keyboard) { pty.first }
+
+    after { pty.each { |io| io.close unless io.closed? } }
+
+    def unpublished(chat)
+      publish(chat, { "generation" => 3 })
+      say(chat, { "v" => "unpublished" })
+      sleep(0.2)
+    end
+
+    it "sends a line the human finishes, with no generation, for the chat's rail to judge" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("/stop\r")
+
+      expect(next_frame(chat, of: "line")).to eq({ "v" => "line", "text" => "/stop", "generation" => 0 })
+    end
+
+    it "sends each line typed there, one after another" do
+      chat = open_pane
+      unpublished(chat)
+      keyboard.write("first\r")
+      next_frame(chat, of: "line")
+
+      keyboard.write("second\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("second")
+    end
+
+    it "sends a pasted pair of lines as two lines, in order, once each" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("first\rsecond\r")
+
+      expect([next_frame(chat, of: "line")["text"], next_frame(chat, of: "line")["text"]]).to eq(%w[first second])
+    end
+
+    it "joins a partial line ended by Ctrl-D to what is typed after it" do
+      chat = open_pane
+      unpublished(chat)
+      keyboard.write("par\x04")
+      sleep(0.2)
+
+      keyboard.write("tial\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("partial")
+    end
+
+    it "leaves a raw terminal's bytes alone, since they are a countdown's keys" do
+      chat = open_pane
+      unpublished(chat)
+      reader.raw!
+
+      keyboard.write("c")
+
+      expect(settles { reader.read_nonblock(1, exception: false).then { |key| key if key.is_a?(String) } }).to eq("c")
+      expect(chat.wait_readable(0)).to be_nil
+    end
+
+    # Reline is stubbed: what is pinned is that the partial line reaches the
+    # editor's typeahead when a prompt takes the terminal, not Reline's own keys.
+    it "hands a partial line to the prompt the chat then publishes" do
+      ungot = []
+      allow(Reline::IOGate).to receive(:ungetc) { |byte| ungot.unshift(byte) }
+      allow(Reline).to receive(:readmultiline) { "#{ungot.pack("C*")}tial" }
+      chat = open_pane
+      unpublished(chat)
+      keyboard.write("par\x04")
+      sleep(0.2)
+
+      publish(chat, { "generation" => 5 })
+
+      expect(next_frame(chat, of: "line")).to eq({ "v" => "line", "text" => "partial", "generation" => 5 })
+    end
+  end
+
+  # A console the pane can wait on, that says how many waits are open on it.
+  describe "the reader it runs while nothing is published" do
+    let(:console) do
+      Class.new do
+        attr_reader :waiting
+
+        def initialize(io) = (@io = io) && (@waiting = 0)
+        def tty? = true
+        def echo? = true
+        def read_nonblock(*args, **opts) = @io.read_nonblock(*args, **opts)
+
+        def wait_readable
+          @waiting += 1
+          @io.wait_readable
+        ensure
+          @waiting -= 1
+        end
+      end.new(pipe.first)
+    end
+    let(:reader) { console }
+    let(:keyboard) { pipe.last }
+
+    it "is gone while the chat's prompt is drawn" do
+      allow(Reline).to receive(:readmultiline) { sleep(0.4) && "hi" }
+      chat = open_pane
+      publish(chat, { "generation" => 3 })
+      say(chat, { "v" => "unpublished" })
+      settles { console.waiting == 1 || nil }
+      publish(chat, { "generation" => 4 })
+
+      expect(settles { console.waiting.zero? || nil }).to be(true)
+    end
+  end
+
+  it "gives the pane back to the chat's own prompt when it publishes one after nothing" do
+    chat = open_pane
+    publish(chat, { "generation" => 3 })
+    say(chat, { "v" => "unpublished" })
+    publish(chat, { "generation" => 4, "header" => "ctx:1%" })
+    settles { screen.string.include?("ctx:1%") || nil }
+
+    keyboard.write("hello\n")
+
+    expect(next_frame(chat, of: "line")).to eq({ "v" => "line", "text" => "hello", "generation" => 4 })
   end
 
   it "draws the countdown the chat published, keys and all" do

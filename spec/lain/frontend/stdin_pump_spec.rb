@@ -568,6 +568,175 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
   end
 
+  # Typed while nothing is published, where no read is open to take it. A
+  # terminal cooks a line until Enter, so the pump waits on the descriptor and
+  # takes only a whole line -- and never while the terminal is raw, which is the
+  # countdown's window and its keys are not lines. Only a stop is acted on; the
+  # rest waits where it always did, for the prompt that reads or sweeps it.
+  describe "a line typed while nothing is published, over a real terminal", :seam do
+    let(:child) do
+      <<~'RUBY'
+        require "lain"
+
+        dir = ARGV.fetch(0)
+        log = ->(text) { File.write(File.join(dir, "log"), "#{text}\n", mode: "a") }
+        sink = Class.new do
+          def initialize(log, dir) = (@log = log) && (@dir = dir)
+          def signal(name) = @log.call("signal:#{name}")
+          def ask_in_flight? = !File.exist?(File.join(@dir, "noask"))
+        end.new(log, dir)
+        tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, history_path: File.join(dir, "history"),
+                                      state_path: File.join(dir, "state.json"), pastel: Pastel.new(enabled: false))
+        rail = Lain::Frontend::Intake.new(screen: tty).route(sink)
+        Sync do |task|
+          pumping = Lain::Frontend::StdinPump.new(rail:, screen: tty).start(task)
+          task.sleep(0.2)
+          log.call("ready")
+          task.sleep(0.02) until %w[raw quit].any? { |name| File.exist?(File.join(dir, name)) }
+          if File.exist?(File.join(dir, "raw"))
+            $stdin.raw!(intr: true)
+            task.sleep(0.4)
+            log.call("key:#{$stdin.read_nonblock(1, exception: false).inspect}")
+            $stdin.cooked!
+          end
+          task.sleep(0.02) until File.exist?(File.join(dir, "quit"))
+          if File.exist?(File.join(dir, "reads"))
+            3.times { log.call("read:#{rail.read(:you, "you> ").inspect}") }
+          else
+            rail.gather
+            log.call("held:#{[rail.take_held, rail.take_held].inspect}")
+          end
+          pumping.stop
+        end
+      RUBY
+    end
+
+    def logged(dir) = File.exist?(File.join(dir, "log")) ? File.read(File.join(dir, "log")) : ""
+
+    def await_log(dir, pattern)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 8
+      sleep(0.02) until logged(dir).match?(pattern) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+    end
+
+    it "delivers /stop as the signal it is and keeps every other line as typeahead, with no prompt open" do
+      terminal = StdinPumpRaceTerminal.new(child, @dir)
+      await_log(@dir, /ready/)
+      terminal.type("hello\r")
+      terminal.type("/stop\r")
+      await_log(@dir, /signal:stop/)
+      FileUtils.touch(File.join(@dir, "quit"))
+      await_log(@dir, /held:/)
+
+      expect(logged(@dir)).to include("signal:stop").and include('held:["hello", nil]')
+    ensure
+      terminal&.close
+    end
+
+    it "leaves a /stop the chat would not treat as one in the order it was typed" do
+      FileUtils.touch(File.join(@dir, "noask"))
+      terminal = StdinPumpRaceTerminal.new(child, @dir)
+      await_log(@dir, /ready/)
+      terminal.type("hello\r")
+      terminal.type("/stop\r")
+      sleep(0.5)
+      FileUtils.touch(File.join(@dir, "quit"))
+      await_log(@dir, /held:/)
+
+      expect(logged(@dir)).to include('held:["hello", "/stop"]')
+      expect(logged(@dir)).not_to include("signal:stop")
+    ensure
+      terminal&.close
+    end
+
+    it "reads lines typed one at a time and a pasted pair at the next prompts, in order, once each" do
+      FileUtils.touch(File.join(@dir, "reads"))
+      terminal = StdinPumpRaceTerminal.new(child, @dir)
+      await_log(@dir, /ready/)
+      terminal.type("one\r")
+      sleep(0.3)
+      terminal.type("two\rthree\r")
+      sleep(0.5)
+      FileUtils.touch(File.join(@dir, "quit"))
+      await_log(@dir, /(?:read:.*\n){3}/)
+
+      expect(logged(@dir).scan(/read:("[^"]*"|nil)/).flatten).to eq(["\"one\"", "\"two\"", "\"three\""])
+    ensure
+      terminal&.close
+    end
+
+    it "leaves a key typed under a raw window to the window, and takes it as no line" do
+      terminal = StdinPumpRaceTerminal.new(child, @dir)
+      await_log(@dir, /ready/)
+      FileUtils.touch(File.join(@dir, "raw"))
+      sleep(0.2)
+      terminal.type("c")
+      await_log(@dir, /key:/)
+      FileUtils.touch(File.join(@dir, "quit"))
+      await_log(@dir, /held:/)
+
+      expect(logged(@dir)).to include('key:"c"').and include("held:[nil, nil]")
+    ensure
+      terminal&.close
+    end
+  end
+
+  # A console the pump can wait on, that says how many waits are open on it.
+  describe "the reader it runs while nothing is published" do
+    let(:console) do
+      Class.new do
+        attr_reader :waiting
+
+        def initialize(io) = (@io = io) && (@waiting = 0)
+        def tty? = true
+        def echo? = true
+        def read_nonblock(*args, **opts) = @io.read_nonblock(*args, **opts)
+
+        def wait_readable
+          @waiting += 1
+          @io.wait_readable
+        ensure
+          @waiting -= 1
+        end
+      end.new(pipe.first)
+    end
+    let(:pipe) { IO.pipe }
+
+    after { pipe.each(&:close) }
+
+    it "is gone once a prompt is published, and back when it is withdrawn" do
+      allow(Reline).to receive(:readmultiline) do
+        Async::Task.current.sleep(0.05)
+        "hi"
+      end
+      seen = []
+      pumped(console) do
+        Async::Task.current.sleep(0.05)
+        seen << console.waiting
+        reading = Async::Task.current.async { rail.read(:you, "you> ") }
+        Async::Task.current.sleep(0.02)
+        seen << console.waiting
+        reading.wait
+        Async::Task.current.sleep(0.05)
+        seen << console.waiting
+      end
+
+      expect(seen).to eq([1, 0, 1])
+    end
+  end
+
+  describe "#keep" do
+    it "hands a partial line to the next sweep, which joins it to the rest" do
+      allow(Lain::Frontend::LineEditor).to receive(:typed_ahead).and_return("ial\r")
+
+      pumped(terminal) do |pump|
+        pump.keep("part")
+        rail.gather
+      end
+
+      expect(rail.take_held).to eq("partial")
+    end
+  end
+
   describe ".keys" do
     it "offers the countdown one key at a time from the pump's terminal, and nothing from a stream" do
       keys = described_class.keys(StringIO.new("c"))

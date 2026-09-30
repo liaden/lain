@@ -30,6 +30,14 @@ module Lain
     # resized under itself loses the header off the top and nothing upstream can
     # see that happen, so it polls {Geometry} and repaints what it last drew.
     #
+    # WITH NOTHING PUBLISHED THE PANE STILL TAKES A LINE. An ask in flight
+    # publishes nothing, and the pane's own terminal is the one place the human
+    # can type `/stop` or `/goal off` to it: so each finished line goes to the
+    # chat stamped with no generation, and the chat's rail decides -- a stop
+    # lands as the signal it is, anything else is held for `you>`. No editor
+    # opens for it: the terminal stays cooked, so a Ctrl-C still reaches the
+    # pane's own trap as it does with nothing to type at.
+    #
     # A stream that simply ends is the chat restarting, and the pane reconnects
     # to the same path. Only the chat's `closed` goodbye ends the pane.
     class InputPane
@@ -76,7 +84,7 @@ module Lain
         @drawn = NOTHING_DRAWN
         @reported = nil
         @client = nil
-        @quit = false
+        @quit = @idle = false
         @pump = StdinPump::Idle
         @relay = Relay.new
         @rail.route(@relay)
@@ -149,7 +157,7 @@ module Lain
       end
 
       def start_pump(task)
-        @pump = StdinPump.new(rail: @rail, screen: @tty, input: @input)
+        @pump = StdinPump.new(rail: @rail, screen: @tty, input: @input, listening: false)
         @pump.start(task)
       end
 
@@ -206,10 +214,33 @@ module Lain
       def received(task, client, frame)
         case frame["v"]
         when "prompt" then prompted(task, client, frame)
-        when "unpublished" then stop_drawing
+        when "unpublished" then idle(task, client)
         when "context" then @commands.replace(Array(frame["commands"]))
         when "closed" then :closed
         end
+      end
+
+      # The read that was open is withdrawn so the terminal stays cooked: only
+      # a cooked one hands over a finished line with no editor to open.
+      def idle(task, client)
+        return if @idle
+
+        stop_drawing
+        @idle = true
+        @drawing = task.async { unprompted(client) }
+      end
+
+      def unprompted(client)
+        typeahead = StdinPump::Typeahead.new(input: @input)
+        return unless typeahead.console?
+
+        typeahead.listen(kept: -> { @carried || StdinPump::Typeahead::NOTHING }) { |typed| sent(client, typed) }
+      end
+
+      # A partial line, one ended by Ctrl-D, waits for the rest of it.
+      def sent(client, typed)
+        typed.lines.each { |line| emit(client, { "v" => "line", "text" => line, "generation" => 0 }) }
+        @carried = typed
       end
 
       def prompted(task, client, frame)
@@ -298,6 +329,9 @@ module Lain
       def stop_drawing
         @drawing&.stop
         @drawing = nil
+        @pump.keep(@carried.partial) if @carried
+        @carried = nil
+        @idle = false
         @drawn = NOTHING_DRAWN
       end
 
