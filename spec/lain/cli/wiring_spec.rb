@@ -2912,7 +2912,7 @@ RSpec.describe Lain::CLI::Wiring do
       in_tree do |root|
         board = board_for(root:)
 
-        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")))).to be(true)
+        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")), cwd: root)).to be(true)
       end
     end
 
@@ -2928,7 +2928,7 @@ RSpec.describe Lain::CLI::Wiring do
       in_tree do |root|
         board = board_for(root:)
 
-        expect(board.sensitivity.gates?(read_of(File.join(root, "README.md")))).to be(false)
+        expect(board.sensitivity.gates?(read_of(File.join(root, "README.md")), cwd: root)).to be(false)
       end
     end
 
@@ -2936,7 +2936,7 @@ RSpec.describe Lain::CLI::Wiring do
     # unambiguous half of the denied table matches wherever it sits.
     it "denies a private key with no config to say so" do
       in_tree do |root, home|
-        denial = board_for(root:).sensitivity.denial(read_of(File.join(home, ".ssh", "id_rsa")))
+        denial = board_for(root:).sensitivity.denial(read_of(File.join(home, ".ssh", "id_rsa")), cwd: root)
 
         expect([denial&.path, denial&.reason]).to eq([File.join(home, ".ssh", "id_rsa"), :protected])
       end
@@ -2949,14 +2949,15 @@ RSpec.describe Lain::CLI::Wiring do
       in_tree do |root, home|
         board = board_for(root:)
 
-        expect(board.sensitivity.denial(read_of(File.join(home, ".kube", "config")))&.reason).to eq(:protected)
-        expect(board.sensitivity.denial(read_of(File.join(root, ".kube", "config")))).to be_nil
+        expect(board.sensitivity.denial(read_of(File.join(home, ".kube", "config")),
+                                        cwd: root)&.reason).to eq(:protected)
+        expect(board.sensitivity.denial(read_of(File.join(root, ".kube", "config")), cwd: root)).to be_nil
       end
     end
 
     it "denies what the project's own [sensitivity] table denies, in the project's own words" do
       in_tree(config: "[sensitivity]\ndenied = [\"*.secret\"]\n") do |root|
-        denial = board_for(root:).sensitivity.denial(read_of(File.join(root, "prod.secret")))
+        denial = board_for(root:).sensitivity.denial(read_of(File.join(root, "prod.secret")), cwd: root)
 
         expect(denial&.reason).to eq(:configured)
         expect(denial&.verdict&.explanation).to eq("named by this project's sensitivity config")
@@ -2967,8 +2968,8 @@ RSpec.describe Lain::CLI::Wiring do
       in_tree(config: "[sensitivity]\ngated = [\"*.private\"]\n") do |root|
         board = board_for(root:)
 
-        expect(board.sensitivity.gates?(read_of(File.join(root, "notes.private")))).to be(true)
-        expect(board.sensitivity.denial(read_of(File.join(root, "notes.private")))).to be_nil
+        expect(board.sensitivity.gates?(read_of(File.join(root, "notes.private")), cwd: root)).to be(true)
+        expect(board.sensitivity.denial(read_of(File.join(root, "notes.private")), cwd: root)).to be_nil
       end
     end
 
@@ -3018,7 +3019,7 @@ RSpec.describe Lain::CLI::Wiring do
       in_tree(config: %(epics = "not a table"\n\n[sensitivity]\ndenied = ["*.secret"]\n)) do |root|
         board = board_for(root:)
 
-        expect(board.sensitivity.denial(read_of(File.join(root, "prod.secret")))&.reason).to eq(:configured)
+        expect(board.sensitivity.denial(read_of(File.join(root, "prod.secret")), cwd: root)&.reason).to eq(:configured)
       end
     end
 
@@ -3026,8 +3027,9 @@ RSpec.describe Lain::CLI::Wiring do
       in_tree(config: "this is not [valid toml") do |root, home|
         board = board_for(root:)
 
-        expect(board.sensitivity.denial(read_of(File.join(home, ".ssh", "id_rsa")))&.reason).to eq(:protected)
-        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")))).to be(true)
+        expect(board.sensitivity.denial(read_of(File.join(home, ".ssh", "id_rsa")),
+                                        cwd: root)&.reason).to eq(:protected)
+        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")), cwd: root)).to be(true)
       end
     end
 
@@ -3039,7 +3041,8 @@ RSpec.describe Lain::CLI::Wiring do
         child_gate = wired(root:).send(:toolset_build).send(:seam).tool_middleware
                                  .call(Lain::WorkerEnv.default).to_a.last
 
-        expect(child_gate.instance_variable_get(:@sensitivity).gates?(read_of(File.join(root, ".env")))).to be(true)
+        expect(child_gate.instance_variable_get(:@sensitivity).gates?(read_of(File.join(root, ".env")),
+                                                                      cwd: root)).to be(true)
       end
     end
 

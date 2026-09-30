@@ -30,6 +30,21 @@ module SensitivityPolicySpecSupport
   end
 
   def self.takes_a_path = ToolRegistry.names.reject { |name| path_fields(name).empty? }
+
+  # A classifier that keeps every path it was asked about.
+  class Counting
+    attr_reader :asked
+
+    def initialize(inner)
+      @inner = inner
+      @asked = []
+    end
+
+    def classify(path)
+      @asked << path
+      @inner.classify(path)
+    end
+  end
 end
 
 RSpec.describe Lain::Sensitivity::Policy do
@@ -71,11 +86,11 @@ RSpec.describe Lain::Sensitivity::Policy do
 
   describe "#gates?" do
     it "gates a read_file naming .env" do
-      expect(policy.gates?(call("read_file", { "path" => ".env" }))).to be(true)
+      expect(policy.gates?(call("read_file", { "path" => ".env" }), cwd:)).to be(true)
     end
 
     it "leaves an ordinary path alone" do
-      expect(policy.gates?(call("read_file", { "path" => "README.md" }))).to be(false)
+      expect(policy.gates?(call("read_file", { "path" => "README.md" }), cwd:)).to be(false)
     end
 
     # Every entry in the table, driven through its OWN field. `.env` is a
@@ -83,13 +98,13 @@ RSpec.describe Lain::Sensitivity::Policy do
     # both axes.
     it "gates every tool in the table through the field that tool declares" do
       declared.each do |name, field|
-        expect(policy.gates?(call(name, { field => ".env" }))).to be(true), "#{name}.#{field} was not gated"
+        expect(policy.gates?(call(name, { field => ".env" }), cwd:)).to be(true), "#{name}.#{field} was not gated"
       end
     end
 
     it "leaves every tool in the table alone for an ordinary value in the same field" do
       declared.each do |name, field|
-        expect(policy.gates?(call(name, { field => "README.md" }))).to be(false), "#{name}.#{field} was gated"
+        expect(policy.gates?(call(name, { field => "README.md" }), cwd:)).to be(false), "#{name}.#{field} was gated"
       end
     end
 
@@ -97,23 +112,23 @@ RSpec.describe Lain::Sensitivity::Policy do
     # `path` and a file tool's `cwd` are fields neither declares, so reading
     # them would be reading input the tool will never act on.
     it "reads only the field the table names for that tool" do
-      expect(policy.gates?(call("bash", { "path" => ".env" }))).to be(false)
-      expect(policy.gates?(call("read_file", { "cwd" => ".env" }))).to be(false)
+      expect(policy.gates?(call("bash", { "path" => ".env" }), cwd:)).to be(false)
+      expect(policy.gates?(call("read_file", { "cwd" => ".env" }), cwd:)).to be(false)
     end
 
     it "declines a tool the table does not name at all" do
-      expect(policy.gates?(call("todo_write", { "path" => ".env" }))).to be(false)
+      expect(policy.gates?(call("todo_write", { "path" => ".env" }), cwd:)).to be(false)
     end
 
     # `glob`'s path and `bash`'s cwd are both optional, so absence is the
     # common case rather than an error.
     it "declines when the field is absent" do
-      expect(policy.gates?(call("glob", { "pattern" => "**/*.rb" }))).to be(false)
+      expect(policy.gates?(call("glob", { "pattern" => "**/*.rb" }), cwd:)).to be(false)
     end
 
     it "declines a field whose value is not a path at all" do
-      expect(policy.gates?(call("read_file", { "path" => 42 }))).to be(false)
-      expect(policy.gates?(call("read_file", { "path" => nil }))).to be(false)
+      expect(policy.gates?(call("read_file", { "path" => 42 }), cwd:)).to be(false)
+      expect(policy.gates?(call("read_file", { "path" => nil }), cwd:)).to be(false)
     end
 
     # The fail-OPEN this class had, and the reason it was not a theoretical one:
@@ -127,8 +142,8 @@ RSpec.describe Lain::Sensitivity::Policy do
     # never the limit; this class narrowed it. Same argument as the Symbol/String
     # key spellings above: whichever spelling is not read fails open.
     it "gates a Pathname exactly as it gates the same path spelled as a String" do
-      expect(policy.gates?(call("read_file", { "path" => Pathname.new(".env") }))).to be(true)
-      expect(policy.gates?(call("read_file", { "path" => Pathname.new("README.md") }))).to be(false)
+      expect(policy.gates?(call("read_file", { "path" => Pathname.new(".env") }), cwd:)).to be(true)
+      expect(policy.gates?(call("read_file", { "path" => Pathname.new("README.md") }), cwd:)).to be(false)
     end
 
     # The benign half of the same miss, kept so the asymmetry is stated rather
@@ -136,7 +151,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     # file, so declining it leaks nothing. Pathname was the one that bit because
     # `to_path` is the one coercion that yields a path somebody can open.
     it "still declines an Array, which coerces to a name no file has" do
-      expect(policy.gates?(call("read_file", { "path" => [".env"] }))).to be(false)
+      expect(policy.gates?(call("read_file", { "path" => [".env"] }), cwd:)).to be(false)
       expect(Lain::Tools::ReadFile::Input.build({ "path" => [".env"] }).path).to eq('[".env"]')
     end
 
@@ -145,8 +160,8 @@ RSpec.describe Lain::Sensitivity::Policy do
     # spelling fails OPEN on the other, which is the direction this boundary
     # must never fail in.
     it "reads the field under either key spelling" do
-      expect(policy.gates?(call("read_file", { path: ".env" }))).to be(true)
-      expect(policy.gates?(call("read_file", { "path" => ".env" }))).to be(true)
+      expect(policy.gates?(call("read_file", { path: ".env" }), cwd:)).to be(true)
+      expect(policy.gates?(call("read_file", { "path" => ".env" }), cwd:)).to be(true)
     end
 
     # Not ordinary, rather than `gated?`: a DENIED path answers false to
@@ -157,19 +172,19 @@ RSpec.describe Lain::Sensitivity::Policy do
     # gate on a denied path costs at most one prompt for a file already refused.
     it "gates a denied path too, since a denial is not ordinary either" do
       expect(sensitivity.classify("~/.ssh/id_rsa")).to have_attributes(denied?: true, gated?: false)
-      expect(policy.gates?(call("read_file", { "path" => "~/.ssh/id_rsa" }))).to be(true)
+      expect(policy.gates?(call("read_file", { "path" => "~/.ssh/id_rsa" }), cwd:)).to be(true)
     end
 
     it "gates a path nothing can read lexically, rather than waving it through" do
-      expect(policy.gates?(call("read_file", { "path" => "notes\0.md" }))).to be(true)
+      expect(policy.gates?(call("read_file", { "path" => "notes\0.md" }), cwd:)).to be(true)
     end
 
     # The classifier is INJECTED and its home is injected in turn, so a
     # home-anchored rule has to arrive through both. A policy holding a table
     # of its own would answer this from the wrong home.
     it "gates a home-anchored path through the injected home, not the process's" do
-      expect(policy.gates?(call("list_files", { "path" => "#{home}/Downloads" }))).to be(true)
-      expect(policy.gates?(call("list_files", { "path" => "/home/someone-else/Downloads" }))).to be(false)
+      expect(policy.gates?(call("list_files", { "path" => "#{home}/Downloads" }), cwd:)).to be(true)
+      expect(policy.gates?(call("list_files", { "path" => "/home/someone-else/Downloads" }), cwd:)).to be(false)
     end
 
     # Same argument, project config half: what a `[sensitivity]` table adds must
@@ -178,7 +193,7 @@ RSpec.describe Lain::Sensitivity::Policy do
       let(:rules) { Lain::Sensitivity::Rules.from({ "gated" => ["*.private"] }) }
 
       it "gates what the project named" do
-        expect(policy.gates?(call("read_file", { "path" => "notes.private" }))).to be(true)
+        expect(policy.gates?(call("read_file", { "path" => "notes.private" }), cwd:)).to be(true)
       end
     end
 
@@ -195,8 +210,8 @@ RSpec.describe Lain::Sensitivity::Policy do
     # answer without the trap.
     it "declines rather than raises when the input is not a Hash at all" do
       [[1, 2], nil, "raw", 42].each do |input|
-        expect { policy.gates?(call("read_file", input)) }.not_to raise_error
-        expect(policy.gates?(call("read_file", input))).to be(false)
+        expect { policy.gates?(call("read_file", input), cwd:) }.not_to raise_error
+        expect(policy.gates?(call("read_file", input), cwd:)).to be(false)
       end
     end
 
@@ -206,14 +221,14 @@ RSpec.describe Lain::Sensitivity::Policy do
     # Harmless by luck (`"path"` classifies ordinary), and not a rule anybody
     # wrote, which is why the Hash check replaces it.
     it "does not read a raw JSON String input as though it held fields" do
-      expect(policy.gates?(call("read_file", '{"path":".env"}'))).to be(false)
+      expect(policy.gates?(call("read_file", '{"path":".env"}'), cwd:)).to be(false)
     end
 
     it "declines an effect that is not a tool call at all" do
       wrapped = Lain::Effect::Approval.new(effect: call("read_file", { "path" => ".env" }))
 
-      expect(policy.gates?(wrapped)).to be(false)
-      expect(policy.gates?(Lain::Effect::ModelCall.new(request: nil))).to be(false)
+      expect(policy.gates?(wrapped, cwd:)).to be(false)
+      expect(policy.gates?(Lain::Effect::ModelCall.new(request: nil), cwd:)).to be(false)
     end
   end
 
@@ -248,7 +263,7 @@ RSpec.describe Lain::Sensitivity::Policy do
                                                invocation)
 
       expect(result.content).to include("wJalrXUtnFEMI", "sk_live_51H8xQ2")
-      expect(policy.gates?(call("ast_search", { "path" => secret }))).to be(true)
+      expect(policy.gates?(call("ast_search", { "path" => secret }), cwd:)).to be(true)
     end
 
     # A smaller leak -- key names rather than values -- and still an enumeration
@@ -257,14 +272,14 @@ RSpec.describe Lain::Sensitivity::Policy do
       result = Lain::Tools::FileSymbols.new.call({ "path" => secret, "language" => "ruby" }, invocation)
 
       expect(result.content).to include("AWS_SECRET_ACCESS_KEY")
-      expect(policy.gates?(call("file_symbols", { "path" => secret }))).to be(true)
+      expect(policy.gates?(call("file_symbols", { "path" => secret }), cwd:)).to be(true)
     end
 
     it "leaves both alone for an ordinary path, so the boundary is still the path" do
       ordinary = File.join(tmpdir, "notes.rb")
 
       %w[ast_search file_symbols].each do |name|
-        expect(policy.gates?(call(name, { "path" => ordinary }))).to be(false), "#{name} was gated for notes.rb"
+        expect(policy.gates?(call(name, { "path" => ordinary }), cwd:)).to be(false), "#{name} was gated for notes.rb"
       end
     end
   end
@@ -277,8 +292,8 @@ RSpec.describe Lain::Sensitivity::Policy do
     # gates, including the paths the real policy above gates.
     it "gates nothing, for every tool the real table names" do
       declared.each do |name, field|
-        expect(null.gates?(call(name, { field => ".env" }))).to be(false), "#{name} was gated by the Null policy"
-        expect(null.gates?(call(name, { field => "~/.ssh/id_rsa" }))).to be(false)
+        expect(null.gates?(call(name, { field => ".env" }), cwd:)).to be(false), "#{name} was gated by the Null policy"
+        expect(null.gates?(call(name, { field => "~/.ssh/id_rsa" }), cwd:)).to be(false)
       end
     end
 
@@ -289,7 +304,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     # opinion about its input.
     it "answers without raising whatever the input is" do
       [nil, [1, 2], "raw", { "path" => ".env" }].each do |input|
-        expect { null.gates?(call("read_file", input)) }.not_to raise_error
+        expect { null.gates?(call("read_file", input), cwd:) }.not_to raise_error
       end
     end
 
@@ -307,7 +322,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     it "answers both layers' ducks, which is what lets one object serve both" do
       expect(null).to respond_to(:gates?, :denial)
       expect(null.denial(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
-                                                    input: { "path" => "/home/tester/.ssh/id_rsa" }))).to be_nil
+                                                    input: { "path" => "/home/tester/.ssh/id_rsa" }), cwd:)).to be_nil
     end
   end
 
@@ -319,7 +334,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     let(:denied) { "#{home}/.ssh/id_ed25519" }
 
     it "answers a Denial naming the call, the tool, the path and the verdict" do
-      denial = policy.denial(call("read_file", { "path" => denied }))
+      denial = policy.denial(call("read_file", { "path" => denied }), cwd:)
 
       expect(denial).to be_a(Lain::Sensitivity::Denial)
       expect(denial).to have_attributes(tool_use_id: "tu_1", tool: "read_file", path: denied, reason: :protected)
@@ -327,25 +342,25 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
 
     it "answers nil for a GATED path, which is the gate's to decide and not this one's" do
-      expect(policy.denial(call("read_file", { "path" => ".env" }))).to be_nil
-      expect(policy.gates?(call("read_file", { "path" => ".env" }))).to be(true)
+      expect(policy.denial(call("read_file", { "path" => ".env" }), cwd:)).to be_nil
+      expect(policy.gates?(call("read_file", { "path" => ".env" }), cwd:)).to be(true)
     end
 
     it "answers nil for an ordinary path, and for a tool the table does not name" do
-      expect(policy.denial(call("read_file", { "path" => "README.md" }))).to be_nil
-      expect(policy.denial(call("web_search", { "path" => denied }))).to be_nil
+      expect(policy.denial(call("read_file", { "path" => "README.md" }), cwd:)).to be_nil
+      expect(policy.denial(call("web_search", { "path" => denied }), cwd:)).to be_nil
     end
 
     it "names the tool a WRITE refusal refused, so the Journal can tally by verb" do
-      expect(policy.denial(call("write_file", { "path" => denied })).tool).to eq("write_file")
-      expect(policy.denial(call("bash", { "cwd" => "#{home}/.gnupg" })).tool).to eq("bash")
+      expect(policy.denial(call("write_file", { "path" => denied }), cwd:).tool).to eq("write_file")
+      expect(policy.denial(call("bash", { "cwd" => "#{home}/.gnupg" }), cwd:).tool).to eq("bash")
     end
 
     # {#path_in} reads `effect.name`, which these have not got. A NoMethodError
     # on the dispatch path invites a `rescue` answering "not denied", which is
     # this boundary failing OPEN.
     it "answers nil rather than raising for an effect that names no tool" do
-      expect(policy.denial(Lain::Effect::ModelCall.new(request: nil))).to be_nil
+      expect(policy.denial(Lain::Effect::ModelCall.new(request: nil), cwd:)).to be_nil
     end
 
     describe "an Approval wrapper" do
@@ -356,24 +371,24 @@ RSpec.describe Lain::Sensitivity::Policy do
       # approves. The unwrap belongs here because this class already owns
       # "which effects name paths".
       it "is looked through, so wrapping cannot lift a denial" do
-        expect(policy.denial(wrapped(call("read_file", { "path" => denied })))).not_to be_nil
+        expect(policy.denial(wrapped(call("read_file", { "path" => denied })), cwd:)).not_to be_nil
       end
 
       it "is looked through however many times it is applied" do
         deep = (1..6).inject(call("read_file", { "path" => denied })) { |effect, _| wrapped(effect) }
 
-        expect(policy.denial(deep)).to have_attributes(path: denied, tool_use_id: "tu_1")
+        expect(policy.denial(deep, cwd:)).to have_attributes(path: denied, tool_use_id: "tu_1")
       end
 
       # The asymmetry, pinned so it is not "tidied" away: Gate unwraps BEFORE
       # it consults `gates?`, so teaching `gates?` to unwrap would change when
       # the gate fires.
       it "is deliberately NOT looked through by #gates?" do
-        expect(policy.gates?(wrapped(call("read_file", { "path" => ".env" })))).to be(false)
+        expect(policy.gates?(wrapped(call("read_file", { "path" => ".env" })), cwd:)).to be(false)
       end
 
       it "does not promote a wrapped gated path into a denial" do
-        expect(policy.denial(wrapped(call("read_file", { "path" => ".env" })))).to be_nil
+        expect(policy.denial(wrapped(call("read_file", { "path" => ".env" })), cwd:)).to be_nil
       end
     end
   end
@@ -419,14 +434,14 @@ RSpec.describe Lain::Sensitivity::Policy do
     it "withholds exactly what the gate gates" do
       gated = "#{cwd}/.env"
 
-      expect(policy.gates?(call("read_file", { "path" => gated }))).to be(true)
+      expect(policy.gates?(call("read_file", { "path" => gated }), cwd:)).to be(true)
       expect(sift(policy.filter, gated).withheld.map(&:reason)).to eq([:credential])
     end
 
     it "keeps a row the gate would let through" do
       ordinary = "#{cwd}/README.md"
 
-      expect(policy.gates?(call("read_file", { "path" => ordinary }))).to be(false)
+      expect(policy.gates?(call("read_file", { "path" => ordinary }), cwd:)).to be(false)
       expect(sift(policy.filter, ordinary).kept).to eq([ordinary])
     end
 
@@ -459,7 +474,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     it "agrees with the gate, path for path" do
       gated = "#{cwd}/prod.secret"
 
-      expect(policy.gates?(call("read_file", { "path" => gated }))).to be(true)
+      expect(policy.gates?(call("read_file", { "path" => gated }), cwd:)).to be(true)
       expect(policy.classify(gated)).not_to be_ordinary
     end
   end
@@ -485,6 +500,122 @@ RSpec.describe Lain::Sensitivity::Policy do
       sifted = described_class::Null.instance.filter.sift(["/home/tester/.ssh/id_rsa"]) { |row| [row] }
 
       expect([sifted.kept, sifted.withheld]).to eq([["/home/tester/.ssh/id_rsa"], []])
+    end
+  end
+
+  # A link's name says nothing about what it opens, so the path is judged twice:
+  # as written and where it lands, and the stricter verdict wins.
+  describe "judging a path where it lands" do
+    around do |example|
+      Dir.mktmpdir("lain-policy-landing") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p([File.join(@base, "home", ".ssh"), File.join(@base, "project"), File.join(@base, "worker")])
+        File.write(File.join(@base, "home", ".ssh", "id_qa"), "key\n")
+        example.run
+      end
+    end
+
+    let(:home) { File.join(@base, "home") }
+    let(:cwd) { File.join(@base, "project") }
+
+    def link(name, target, under: cwd) = File.symlink(target, File.join(under, name))
+    def read(path) = call("read_file", { "path" => path })
+
+    it "refuses a link to a denied file, naming the link as the model wrote it" do
+      link("notes.txt", File.join(home, ".ssh", "id_qa"))
+
+      expect(policy.denial(read("notes.txt"), cwd:)).to have_attributes(path: "notes.txt", reason: :protected)
+    end
+
+    it "gates a link to a gated file" do
+      File.write(File.join(cwd, ".env.local"), "PLAIN=1\n")
+      link("readme2.txt", ".env.local")
+
+      expect(policy.gates?(read("readme2.txt"), cwd:)).to be(true)
+      expect(policy.denial(read("readme2.txt"), cwd:)).to be_nil
+    end
+
+    it "gates a write through a link" do
+      FileUtils.mkdir_p(File.join(cwd, "config"))
+      link("cfg.txt", "config/master.key")
+
+      expect(policy.gates?(call("write_file", { "path" => "cfg.txt", "content" => "x" }), cwd:)).to be(true)
+    end
+
+    it "leaves a link to an ordinary file ordinary" do
+      File.write(File.join(cwd, "b.txt"), "plain\n")
+      link("a.txt", "b.txt")
+
+      expect(policy.gates?(read("a.txt"), cwd:)).to be(false)
+    end
+
+    it "resolves a relative link against the cwd it is given, not the classifier's" do
+      link("notes.txt", File.join(home, ".ssh", "id_qa"), under: File.join(@base, "worker"))
+
+      expect(policy.denial(read("notes.txt"), cwd: File.join(@base, "worker"))).not_to be_nil
+      expect(policy.denial(read("notes.txt"), cwd:)).to be_nil
+    end
+
+    it "gates a dangling link and a looping one as malformed, and raises for neither" do
+      link("gone", "missing")
+      link("loop", "loop")
+
+      %w[gone loop].each do |name|
+        expect(policy.gates?(read(name), cwd:)).to be(true), "#{name} was not gated"
+        expect(policy.denial(read(name), cwd:)).to be_nil
+        expect(policy.judge(name, cwd:)).to have_attributes(level: :gated, reason: :malformed)
+      end
+    end
+
+    # `~/.kube/config` is denied only under home, so this fails without the
+    # re-spelling; an `id_*` under any `.ssh` is denied anywhere and could not.
+    it "judges a home-anchored rule on a landing under a home that is itself a link" do
+      FileUtils.mkdir_p(File.join(home, ".kube"))
+      File.write(File.join(home, ".kube", "config"), "token: x\n")
+      linked_home = File.join(@base, "home-link")
+      File.symlink(home, linked_home)
+      spelled = described_class.new(sensitivity: Lain::Sensitivity.new(home: linked_home, cwd:), home: linked_home)
+      link("k", File.join(linked_home, ".kube", "config"))
+
+      expect(spelled.denial(read("k"), cwd:)).to have_attributes(reason: :protected)
+    end
+
+    it "refuses a dangling link whose target would be a denied file" do
+      link("ak", File.join(home, ".ssh", "id_new"))
+
+      expect(policy.denial(call("write_file", { "path" => "ak", "content" => "x" }), cwd:))
+        .to have_attributes(path: "ak", reason: :protected)
+    end
+
+    it "refuses a dangling link whose .. climbs out of a linked directory onto a denied file" do
+      FileUtils.mkdir_p(File.join(home, ".ssh", "config.d"))
+      link("sd", File.join(home, ".ssh", "config.d"))
+      link("dk", "sd/../id_kern")
+
+      expect(policy.denial(read("dk"), cwd:)).to have_attributes(reason: :protected)
+    end
+
+    it "refuses a chain of dangling links ending on a denied file" do
+      link("hop", File.join(home, ".ssh", "id_new"))
+      link("ak", "hop")
+
+      expect(policy.denial(read("ak"), cwd:)).to have_attributes(reason: :protected)
+    end
+
+    it "classifies an absolute path that lands on itself once, not once per spelling" do
+      counting = SensitivityPolicySpecSupport::Counting.new(sensitivity)
+      File.write(File.join(cwd, "b.txt"), "plain\n")
+
+      described_class.new(sensitivity: counting).judge(File.join(cwd, "b.txt"), cwd:)
+
+      expect(counting.asked).to eq([File.join(cwd, "b.txt")])
+    end
+
+    it "withholds a listing row under a linked directory as the gate would refuse it" do
+      link("keys", File.join(home, ".ssh"))
+      row = File.join(cwd, "keys", "id_qa")
+
+      expect(policy.filter.sift([row]) { |each| [each] }.withheld.map(&:reason)).to eq([:protected])
     end
   end
 end

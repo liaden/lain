@@ -107,8 +107,8 @@ module Lain
       # @param policy [#rule, #call] the approval decision, `(effect, context)
       #   -> Ruling`, or a bare `-> Boolean` callable adapted once here; receives
       #   the inner ToolCall even when wrapped in an Approval
-      # @param sensitivity [#gates?] the second gating axis, `(effect) ->
-      #   Boolean`, over the PATH a call names rather than the tool's tier.
+      # @param sensitivity [#gates?] the second gating axis, `(effect, cwd:)
+      #   -> Boolean`, over the PATH a call names rather than the tool's tier.
       #   ROOT-QUALIFIED because {Middleware::Sensitivity} is a sibling under
       #   this very namespace, and a bare `Sensitivity` resolves to it.
       # @param denial [String] the sentence a refusal that is not final is
@@ -161,7 +161,7 @@ module Lain
 
       def gated?(env)
         effect = env.fetch(:effect)
-        effect.approval? || (effect.tool_call? && judged?(effect, env.fetch(:tool)))
+        effect.approval? || (effect.tool_call? && judged?(effect, env.fetch(:tool), env[:context]))
       end
 
       # Two axes, OR'd: the TIER the tool declares about itself, and the PATH
@@ -172,8 +172,9 @@ module Lain
       # Both stay behind `held?`: a name the toolset does not hold passes on to
       # the interpreter, which reports it by name, rather than being gated on a
       # path in an input nothing will read.
-      def judged?(effect, tool)
-        tool.held? && (tool.requires_approval? || @sensitivity.gates?(effect))
+      def judged?(effect, tool, context)
+        tool.held? &&
+          (tool.requires_approval? || @sensitivity.gates?(effect, cwd: ::Lain::Session.cwd_of(context)))
       end
     end
   end

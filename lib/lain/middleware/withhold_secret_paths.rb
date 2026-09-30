@@ -252,7 +252,7 @@ module Lain
       # path reading out of a sentence that merely happens to be one line long
       # (see {Rows}).
       def reported(carried, effect, shape, content)
-        target = base(effect, carried.fetch(:context) || Session::Null.instance)
+        target = base(effect, ::Lain::Session.cwd_of(carried.fetch(:context)))
         return carried if shape.no_rows?(effect, content, target)
 
         sifted = sift(shape, content, target)
@@ -335,8 +335,7 @@ module Lain
       # UTF-8, like {#rows}, so a row and its base join without an encoding
       # clash -- and as {Tools::ListFiles#perform} reads its own root, so a
       # rebuilt no-rows sentence compares equal to the one the tool wrote.
-      def base(effect, session)
-        cwd = session.worker_env.cwd
+      def base(effect, cwd)
         field = ::Lain::Sensitivity::Policy::PATH_FIELDS[effect.name]
         String.new(File.expand_path(at(effect.input, field) || CWD, cwd), encoding: Encoding::UTF_8)
       end

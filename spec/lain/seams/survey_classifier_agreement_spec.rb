@@ -125,7 +125,7 @@ RSpec.describe "a survey and the gate beside it, after the config changes mid-se
     chat_started
     turn_rewrites_the_config
 
-    expect(board.sensitivity.denial(read_of(File.join(@root, "payroll.ledger")))).not_to be_nil
+    expect(board.sensitivity.denial(read_of(File.join(@root, "payroll.ledger")), cwd: @root)).not_to be_nil
   end
 
   # THE example. Before this card the survey re-read the rewritten file and

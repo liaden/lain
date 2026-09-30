@@ -384,7 +384,7 @@ RSpec.describe Lain::Sensitivity do
       read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
                                         input: { "path" => "#{home}/.kube/config.bak" })
 
-      expect(policy.gates?(read)).to be(true)
+      expect(policy.gates?(read, cwd:)).to be(true)
     end
   end
 

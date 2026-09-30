@@ -619,6 +619,14 @@ RSpec.describe Lain::Session do
       expect(session.writes).to eq([File.join(cwd, "notes.md")])
     end
 
+    it "names the worker cwd a call made in this session resolves against" do
+      expect(described_class.cwd_of(session)).to eq(cwd)
+    end
+
+    it "resolves a call made with no session from the process, as the Null session does" do
+      expect(described_class.cwd_of(nil)).to eq(Dir.pwd)
+    end
+
     it "takes the base as an explicit argument, so the class method has one too" do
       expect(described_class.normalize_path("notes.md", cwd:)).to eq(File.join(cwd, "notes.md"))
       expect(described_class.normalize_path("/etc/hosts", cwd:)).to eq("/etc/hosts")

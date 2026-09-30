@@ -120,7 +120,7 @@ module Lain
       # is normal operation, so the loser's answer is a quiet no-op here and NOT
       # the coordination bug {Promise::AlreadyResolved} names.
       class Pending
-        attr_reader :requester, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency
+        attr_reader :requester, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd
 
         # Defaulting here is NOT the ledger's no-default rule bent: a defaulted
         # LEDGER lets a forgotten injection become a second ledger whose
@@ -137,8 +137,14 @@ module Lain
         # `humans_only` is a call whose automatically approved output was
         # withheld: only a person may decide it, so {Queue#automatic} leaves it
         # out of what a machine surface is offered.
-        def initialize(effect:, requester:, clock:, outstanding: Outstanding::NONE, humans_only: false)
+        #
+        # `cwd` is where the parked call's relative path resolves, so a surface
+        # judging that path lands it where the gate did; absent, it is the
+        # process's, as for a call made with no session.
+        def initialize(effect:, requester:, clock:, outstanding: Outstanding::NONE, humans_only: false,
+                       cwd: ::Lain::Session.cwd_of(nil))
           @humans_only = humans_only == true
+          @cwd = cwd
           @tool = effect.name
           @tool_use_id = effect.tool_use_id
           @input = effect.input
@@ -176,6 +182,17 @@ module Lain
         # rubocop:enable Naming/PredicateMethod
 
         def humans_only? = @humans_only
+
+        # The path this call's input names, read from the table
+        # {Sensitivity::Policy} classifies by, and only a String: a value the
+        # policy would coerce is one no surface is shown.
+        #
+        # @return [String, nil]
+        def path
+          field = ::Lain::Sensitivity::Policy::PATH_FIELDS[@tool.to_s]
+          value = field && @input.is_a?(Hash) && (@input[field] || @input[field.to_sym])
+          value if value.is_a?(String)
+        end
 
         def approve(surface:) = decide(true, surface:)
         def deny(surface:) = decide(false, surface:)
@@ -302,7 +319,8 @@ module Lain
       # yield point between them.
       def admit(effect, context, outstanding)
         pending = Pending.new(effect:, requester: Queue.requester_for(context, @requester), clock: @clock,
-                              outstanding:, humans_only: Escalation.barred?(context))
+                              outstanding:, humans_only: Escalation.barred?(context),
+                              cwd: ::Lain::Session.cwd_of(context))
         record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }
         @parked << pending
         @arrivals.enqueue(pending)

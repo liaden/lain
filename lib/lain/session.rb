@@ -105,6 +105,18 @@ module Lain
       WorkerEnv.new(cwd:, env: {}).resolve(path.to_s)
     end
 
+    # The directory a call's relative path resolves against: its session's
+    # worker cwd, which `/mode plan` and a leased worktree move, so it is read
+    # off the call rather than captured when a stack is built. A context that
+    # carries no session -- none at all, or a spec's bare double -- resolves
+    # as {Null} does, from the process.
+    #
+    # @param context [Session, #worker_env, nil] as a middleware env or a parked call carries it
+    # @return [String]
+    def self.cwd_of(context)
+      (context.respond_to?(:worker_env) ? context : Null.instance).worker_env.cwd
+    end
+
     # Every line of a file, as a read's span: `(first..last)` for a window that
     # stopped short, `(first..)` for one that reached the end of the file.
     WHOLE_FILE = (1..)

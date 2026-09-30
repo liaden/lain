@@ -189,7 +189,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       guard = guards(board).grep(Lain::Middleware::WithholdSecretPaths).first
       gated = "/home/tester/project/.env"
 
-      expect(board.sensitivity.gates?(read_call(gated))).to be(true)
+      expect(board.sensitivity.gates?(read_call(gated), cwd: "/home/tester/project")).to be(true)
       expect(guard.filter.sift([gated]) { |row| [row] }.withheld.map(&:reason)).to eq([:credential])
     end
 

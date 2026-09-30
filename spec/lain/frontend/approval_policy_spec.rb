@@ -653,6 +653,21 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       expect(rendered(pending)).to eq("agent asks: approve bash(#{effect.input.inspect})? [y/N] ")
     end
 
+    # A link's name says nothing about what it opens, so the human is shown
+    # where the path lands whenever that differs from the name.
+    it "shows where a linked path lands, both ends escaped" do
+      Dir.mktmpdir("lain-approval-landing") do |dir|
+        root = File.realpath(dir)
+        File.write(File.join(root, ".env.local"), "x")
+        File.symlink(".env.local", File.join(root, "readme2.txt"))
+        read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => "readme2.txt" })
+        linked = Lain::Approval::Queue::Pending.new(effect: read, requester: "agent", clock: -> { 0.0 }, cwd: root)
+
+        expect(rendered(linked))
+          .to start_with(%("readme2.txt" -> #{File.join(root, ".env.local").inspect}: agent asks: approve read_file))
+      end
+    end
+
     it "still asks the ordinary y/N question, so the verdict path is untouched" do
       approval = disclosing
       policy_for("y\n").decide(approval)

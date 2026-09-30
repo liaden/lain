@@ -68,6 +68,64 @@ RSpec.describe Lain::Landing do
     expect(spellings).to eq([real("realrepo", "a.txt"), real("linkrepo", "a.txt")])
   end
 
+  # A dangling link is not a missing file: writing through it creates its
+  # target, so where it WOULD land is judged, not the link's own name.
+  describe ".eventual" do
+    it "follows a dangling link to where its target would be created" do
+      FileUtils.mkdir_p(real("keys"))
+      File.symlink(real("keys", "id_new"), File.join(@root, "ak"))
+
+      expect(described_class.eventual("ak", cwd: @root).first).to eq(real("keys", "id_new"))
+    end
+
+    it "follows a chain of dangling links, each target relative to its own link" do
+      FileUtils.mkdir_p(real("keys"))
+      File.symlink("../keys/id_new", real("repo", "hop"))
+      File.symlink("hop", File.join(@root, "ak"))
+
+      expect(described_class.eventual("ak", cwd: @root).first).to eq(real("keys", "id_new"))
+    end
+
+    # `..` after a link is the link target's parent to the kernel, so a
+    # relative target is resolved through the filesystem, never cleaned first.
+    it "resolves a dangling target's .. through the link it passes, not by string" do
+      FileUtils.mkdir_p(real("home", ".ssh", "config.d"))
+      File.symlink(real("home", ".ssh", "config.d"), File.join(@root, "sd"))
+      File.symlink("sd/../id_kern", File.join(@root, "dk"))
+
+      expect(described_class.eventual("dk", cwd: @root).first).to eq(real("home", ".ssh", "id_kern"))
+    end
+
+    it "follows a dangling link in the middle of the path, keeping the rest" do
+      File.symlink(real("gone-dir"), File.join(@root, "dir"))
+
+      expect(described_class.eventual("dir/a.txt", cwd: @root).first).to eq(real("gone-dir", "a.txt"))
+    end
+
+    it "answers as .of does for a path with no dangling link" do
+      File.write(File.join(@root, "a"), "x")
+
+      expect(described_class.eventual("a", cwd: @root)).to eq(described_class.of("a", cwd: @root))
+    end
+  end
+
+  describe ".redirect" do
+    it "names the landing of a link" do
+      File.write(File.join(@root, ".env.local"), "x")
+      File.symlink(".env.local", File.join(@root, "readme2.txt"))
+
+      expect(described_class.redirect("readme2.txt", cwd: @root)).to eq(File.join(@root, ".env.local"))
+    end
+
+    it "answers nil where the path lands on itself, and where it cannot be resolved" do
+      File.write(File.join(@root, "a"), "x")
+      File.symlink("loop", File.join(@root, "loop"))
+
+      expect([described_class.redirect("a", cwd: @root), described_class.redirect("loop", cwd: @root)])
+        .to eq([nil, nil])
+    end
+  end
+
   it "adds no respelling when the lexical anchors are already real" do
     File.write(File.join(@root, "a"), "x")
 

@@ -33,6 +33,9 @@ module Lain
     # tool call name a sensitive path ({#gates?}), is it refused outright
     # ({#denial}), which rows may a listing keep ({#filter}), and what is this
     # one path ({#classify}) -- four phrasings of one question over one table.
+    # The first three judge a path where it lands as well as by its name
+    # ({#judge}); {#classify} is the name alone, for a caller that judges a
+    # link's target itself ({Survey::Walk}).
     #
     # {#gates?} is the one {Middleware::Gate} asks, so a `read_file` on
     # `.env` reaches a human although `read_file` declares itself tier 1. The
@@ -48,9 +51,22 @@ module Lain
     #
     # == It is the PATH boundary, and it is pre-read
     #
-    # Only the name is judged, before the file is opened. Whether the BYTES look
-    # like a credential is post-read, cannot withhold the read that already
-    # happened, and lives in its own arm. This one makes no claim about content.
+    # The path is judged before the file is opened, twice: as the call wrote it,
+    # and where it lands ({Landing}), and the stricter verdict wins. A link's
+    # name says nothing about what it opens, so `notes.txt -> ~/.ssh/id_rsa`
+    # judged by name alone would be read as ordinary. {Sensitivity} itself
+    # stays lexical; the filesystem is asked here and, for the links it walks,
+    # by {Survey::Walk}.
+    #
+    # A dangling link is judged where its target would be created, because a
+    # write through it creates that file, and is at least {MALFORMED}. A landing
+    # that cannot be resolved at all -- a loop, a directory it may not enter --
+    # answers {MALFORMED} rather than raising, because the repair a raise here
+    # invites is a rescue that fails open.
+    #
+    # Whether the BYTES look like a credential is post-read, cannot withhold the
+    # read that already happened, and lives in its own arm. This one makes no
+    # claim about content.
     #
     # == Not ordinary, rather than gated
     #
@@ -87,8 +103,8 @@ module Lain
       # default would make two otherwise identical {Tools::Subagent::Seam}s
       # compare unequal.
       class Null
-        def gates?(_effect) = false
-        def denial(_effect) = nil
+        def gates?(_effect, **) = false
+        def denial(_effect, **) = nil
 
         def classify(_path) = ORDINARY.verdict
 
@@ -116,13 +132,30 @@ module Lain
 
       # @param sensitivity [Sensitivity] the classifier, injected -- its home,
       #   cwd and project rules are all somebody else's to resolve
-      def initialize(sensitivity:)
+      # @param home [String, nil] the classifier's home as configured, so a
+      #   landing under its real path is judged under this spelling too
+      # @param root [String, nil] the project root as configured, likewise
+      def initialize(sensitivity:, home: nil, root: nil)
         @sensitivity = sensitivity
+        @anchors = { home:, root: }.freeze
         # Built HERE, not memoized in the reader: this object freezes itself, so
         # a lazy `@filter ||=` raises FrozenError the first time anybody asks --
         # and the first asker is the tool phase, mid-run.
-        @filter = Filter.new(sensitivity:)
+        @filter = Filter.new(sensitivity: Rows.new(self))
         freeze
+      end
+
+      # What {#filter} classifies a listing row by. A readable row reaching the
+      # filter is already absolute ({Middleware::WithholdSecretPaths#reading}
+      # joins it to its base); an unreadable one is handed over unjoined and is
+      # {MALFORMED} by name, so the root stands in for a cwd nothing reads.
+      class Rows
+        def initialize(policy)
+          @policy = policy
+          freeze
+        end
+
+        def classify(row) = @policy.judge(row, cwd: File::SEPARATOR)
       end
 
       # A message rather than a reader handing the classifier out, so a
@@ -132,14 +165,28 @@ module Lain
       # @return [Sensitivity::Verdict]
       def classify(path) = @sensitivity.classify(path)
 
+      # The stricter of the path as written and every spelling of where it
+      # lands. The literal is asked first, so a denied name costs no syscall.
+      #
+      # @param path [String] as the call wrote it
+      # @param cwd [String] absolute; what the tool resolves a relative path against
+      # @return [Sensitivity::Verdict]
+      def judge(path, cwd:)
+        literal = @sensitivity.classify(path)
+        return literal if literal.denied?
+
+        strictest([literal, *landed(path, cwd)])
+      end
+
       # @param effect [Lain::Effect] any effect at all; the question is total
       #   over the vocabulary, so no caller guards on kind first
+      # @param cwd [String] absolute; the call's own base, see {Session.cwd_of}
       # @return [Boolean]
-      def gates?(effect)
+      def gates?(effect, cwd:)
         return false unless effect.tool_call?
 
         path = path_in(effect)
-        !path.nil? && !@sensitivity.classify(path).ordinary?
+        !path.nil? && !judge(path, cwd:).ordinary?
       end
 
       # The DENIAL half of the same question, for {Middleware::Sensitivity},
@@ -164,8 +211,9 @@ module Lain
       #
       # @param effect [Lain::Effect] any effect at all; the question is total
       #   over the vocabulary, so no caller guards on kind first
+      # @param cwd [String] absolute; the call's own base, see {Session.cwd_of}
       # @return [Denial, nil] nil when nothing here refuses
-      def denial(effect)
+      def denial(effect, cwd:)
         call = unwrapped(effect)
         # {#path_in} reads `effect.name`, which a {Effect::ModelCall} has not
         # got. Without this guard the boundary raises NoMethodError on the
@@ -175,13 +223,34 @@ module Lain
         return nil unless call.tool_call?
 
         path = path_in(call)
-        verdict = path && @sensitivity.classify(path)
+        verdict = path && judge(path, cwd:)
         return nil unless verdict&.denied?
 
         Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path:, verdict:)
       end
 
       private
+
+      # Resolved as {WorkerEnv#resolve} resolves it, so the landing judged is the
+      # file the tool then opens. A spelling equal to the name already judged is
+      # skipped: every listing row is absolute, and most land on themselves.
+      def landed(path, cwd)
+        named = File.expand_path(path, cwd)
+        judged = path.start_with?(File::SEPARATOR) ? named : nil
+        Landing.of(named, cwd:, **@anchors).reject { _1 == judged }.map { @sensitivity.classify(_1) }
+      rescue Landing::Dangling
+        [MALFORMED, *eventually(named, cwd)]
+      rescue SystemCallError, ArgumentError, EncodingError
+        [MALFORMED]
+      end
+
+      def eventually(named, cwd)
+        Landing.eventual(named, cwd:, **@anchors).map { @sensitivity.classify(_1) }
+      rescue Landing::Dangling, SystemCallError, ArgumentError, EncodingError
+        []
+      end
+
+      def strictest(verdicts) = verdicts.find(&:denied?) || verdicts.find { !_1.ordinary? } || verdicts.first
 
       # Recursive rather than a single unwrap: {Effect::Approval} takes any
       # effect, including another Approval, and one level of unwrapping would

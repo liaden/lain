@@ -246,8 +246,46 @@ RSpec.describe Lain::Middleware::Sensitivity do
     it "is unwrapped by #denial and deliberately not by #gates?" do
       effect = wrapped(reads("#{home}/.ssh/id_ed25519"))
 
-      expect(policy.denial(effect)).to have_attributes(path: "#{home}/.ssh/id_ed25519")
-      expect(policy.gates?(effect)).to be(false)
+      expect(policy.denial(effect, cwd: project)).to have_attributes(path: "#{home}/.ssh/id_ed25519")
+      expect(policy.gates?(effect, cwd: project)).to be(false)
+    end
+  end
+
+  # A relative path resolves where the TOOL will resolve it: the call's own
+  # session, whose cwd a worktree or `/mode plan` moves away from the project's.
+  describe "a link to a denied file" do
+    around do |example|
+      Dir.mktmpdir("lain-sensitivity-link") do |dir|
+        @base = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:home) { File.join(@base, "home") }
+    let(:project) { File.join(@base, "project") }
+    let(:worker) { File.join(@base, "worker") }
+
+    before do
+      FileUtils.mkdir_p([File.join(home, ".ssh"), project, worker])
+      File.write(File.join(home, ".ssh", "id_ed25519"), "PRIVATE KEY\n")
+      File.symlink(File.join(home, ".ssh", "id_ed25519"), File.join(worker, "notes.txt"))
+    end
+
+    def in_session(cwd) = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd:, env: {}))
+
+    def refused(context)
+      layer.call({ effect: reads("notes.txt"), tool: Lain::Toolset::Unheld.new("unused"), context: }) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok("downstream ran"))
+      end.fetch(:result)
+    end
+
+    it "refuses it, resolving the link against the call's worker cwd" do
+      expect(refused(in_session(worker)).content).to include("refused", "notes.txt", "protected path")
+      expect(journal.map(&:reason)).to eq(["protected"])
+    end
+
+    it "leaves the same name alone where the worker's cwd holds no such link" do
+      expect(refused(in_session(project)).content).to eq("downstream ran")
     end
   end
 

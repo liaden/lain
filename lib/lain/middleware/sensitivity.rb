@@ -46,7 +46,7 @@ module Lain
     # refuse -- could be told two different things about one call.
     class Sensitivity < Base
       # @param sensitivity [#denial] the session's ONE path policy, answering
-      #   `(effect) -> Lain::Sensitivity::Denial | nil`. Injected, never built
+      #   `(effect, cwd:) -> Lain::Sensitivity::Denial | nil`. Injected, never built
       #   here: building a {Lain::Sensitivity} raises on an unusable cwd, and a
       #   raise on the synchronous dispatch path becomes a fault a human is
       #   then invited to allow -- a disarm the model controls the timing of.
@@ -64,7 +64,7 @@ module Lain
       # a raised refusal wedges the loop, where an is_error Result is something
       # the next turn can read and act on.
       def call(env, &app)
-        denial = @sensitivity.denial(env.fetch(:effect))
+        denial = @sensitivity.denial(env.fetch(:effect), cwd: ::Lain::Session.cwd_of(env[:context]))
         return downstream(env, &app) if denial.nil?
 
         env.merge(result: refuse(denial))

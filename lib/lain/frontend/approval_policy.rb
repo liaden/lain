@@ -255,8 +255,17 @@ module Lain
       # string a turn produced. The real question still ENDS the rendering, which
       # is the property the escaped path above relies on.
       def prompt_for(pending)
-        "#{pending.outstanding.preamble}#{pending.requester} asks: " \
+        "#{pending.outstanding.preamble}#{landing(pending)}#{pending.requester} asks: " \
           "approve #{pending.tool}(#{pending.input.inspect})? [y/N] "
+      end
+
+      # Where a linked path lands, because its name says nothing about what it
+      # opens. Both ends `inspect`ed, on the preamble's rule: both are
+      # model-influenced.
+      def landing(pending)
+        path = pending.path
+        target = path && ::Lain::Landing.redirect(path, cwd: pending.cwd)
+        target ? "#{path.inspect} -> #{target.inspect}: " : ""
       end
 
       def prompt_and_read(prompt)

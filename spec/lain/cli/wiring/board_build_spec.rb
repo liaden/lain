@@ -173,7 +173,23 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         board = board_for(root, home)
 
         expect(board.sensitivity).not_to equal(Lain::Sensitivity::Policy::Null.instance)
-        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")))).to be(true)
+        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")), cwd: root)).to be(true)
+      end
+    end
+
+    # A link's landing is a REAL path, while the home-anchored rules are spelled
+    # under HOME as configured; when HOME is itself a link the two differ.
+    it "refuses a link landing under a home that is itself a symlink" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(File.join(home, ".kube"))
+        File.write(File.join(home, ".kube", "config"), "token: x\n")
+        linked_home = File.join(File.dirname(home), "home-link")
+        File.symlink(home, linked_home)
+        File.symlink(File.join(linked_home, ".kube", "config"), File.join(root, "k"))
+
+        denial = board_for(root, linked_home).sensitivity.denial(read_of("k"), cwd: root)
+
+        expect(denial&.reason).to eq(:protected)
       end
     end
 
@@ -187,7 +203,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         board = board_for(root, home)
 
         expect(board.ladder.to_a[1].instance_variable_get(:@rules).map(&:name)).to eq(%w[composed_term])
-        expect(board.sensitivity.denial(read_of(File.join(root, "a.secret")))&.reason).to eq(:configured)
+        expect(board.sensitivity.denial(read_of(File.join(root, "a.secret")), cwd: root)&.reason).to eq(:configured)
       end
     end
   end
@@ -681,7 +697,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         while_parked(board, bash_of("cat config/master.key", "cwd" => root)) do
           expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
         end
-        expect(board.sensitivity.gates?(read_of(key))).to be(true)
+        expect(board.sensitivity.gates?(read_of(key), cwd: root)).to be(true)
         expect(board.sensitivity.classify(key)).to have_attributes(level: :gated, reason: :credential)
       end
     end
@@ -859,8 +875,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         write(root, "notes.txt", "TOKEN=outside\n")
         board = board_for(root, home)
 
-        expect(board.sensitivity.denial(read_of("vault/a.txt"))).to have_attributes(reason: :configured)
-        expect(board.sensitivity.denial(read_of(File.join(root, "vault", "a.txt")))).not_to be_nil
+        expect(board.sensitivity.denial(read_of("vault/a.txt"), cwd: root)).to have_attributes(reason: :configured)
+        expect(board.sensitivity.denial(read_of(File.join(root, "vault", "a.txt")), cwd: root)).not_to be_nil
         listing = listed(board, root, "list_files", Lain::Tools::ListFiles.new, { "path" => ".", "recursive" => true })
         hits = listed(board, root, "grep", Lain::Tools::Grep.new, { "pattern" => "TOKEN", "path" => "." })
 
@@ -877,9 +893,9 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         write(root, ".env", "PLAIN=value\n")
         board = board_over(root, home)
 
-        expect(board.sensitivity.gates?(read_of(fixture))).to be(false)
-        expect(board.sensitivity.gates?(read_of("fixtures/.env"))).to be(false)
-        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")))).to be(true)
+        expect(board.sensitivity.gates?(read_of(fixture), cwd: root)).to be(false)
+        expect(board.sensitivity.gates?(read_of("fixtures/.env"), cwd: root)).to be(false)
+        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")), cwd: root)).to be(true)
         while_parked(board, bash_of("cat fixtures/.env", "cwd" => root)) do
           expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
         end
@@ -896,7 +912,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         listing = listed(board, root, "list_files", Lain::Tools::ListFiles.new, { "path" => ".", "recursive" => true })
         hits = listed(board, root, "grep", Lain::Tools::Grep.new, { "pattern" => "TOKEN", "path" => "." })
 
-        expect(board.sensitivity.denial(read_of("vault/a.txt"))).to have_attributes(reason: :configured)
+        expect(board.sensitivity.denial(read_of("vault/a.txt"), cwd: root)).to have_attributes(reason: :configured)
         expect(listing).not_to include("vault")
         expect(hits).to include("notes.txt:1:")
         expect(hits).not_to include("inside")

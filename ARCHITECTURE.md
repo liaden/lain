@@ -766,6 +766,18 @@ The split is forced by *when the answer is available*: a path classifier can ans
 is opened, a region detector cannot until it has the bytes. So there are three places, and
 tier-1 `read_file`/`grep`/`glob`/`list_files` check nothing themselves.
 
+`Policy` judges a path twice before the call runs: as the call wrote it, and where it lands
+(`Landing.of`, resolved against the call's own worker cwd, so a worktree or `/mode plan` moves the
+base with it), and the stricter verdict wins. A link's name says nothing about what it opens, so
+`notes.txt -> ~/.ssh/id_rsa` is refused like the key itself. A dangling link is judged where its
+target would be created (`Landing.eventual`), since a write through it creates that file, and is
+at least gated as malformed; a landing that cannot be resolved at all (a loop, an unreadable
+directory) is gated as malformed, never raised. The filter judges each listing row the same way,
+because a walk follows a linked base, and the oracle and the human prompt are shown
+`name -> landing` whenever the two differ. `Sensitivity` itself stays lexical: the filesystem is
+asked by `Policy` and, for the links a survey walks, by `Survey::Walk`, which classifies a link's
+name and target itself.
+
 | where | object | question |
 |---|---|---|
 | gate on the effect | `Sensitivity::Policy` | may this CALL happen? |

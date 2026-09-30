@@ -231,7 +231,8 @@ module Lain
         #   need the same one.
         # @return [Lain::Sensitivity::Policy]
         def policy(project:, paths:, table:)
-          Lain::Sensitivity::Policy.new(sensitivity: classifier(project:, paths:, table:))
+          Lain::Sensitivity::Policy.new(sensitivity: classifier(project:, paths:, table:), home: paths.home,
+                                        root: project.root)
         end
 
         # {Lain::Sensitivity} takes no `Dir.pwd` default: a relative path

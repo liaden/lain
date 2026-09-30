@@ -106,6 +106,18 @@ RSpec.describe Lain::Approval::Queue do
       expect(runs.length).to eq(1)
     end
 
+    # A surface judging the parked call's path must land it where the gate did.
+    it "records the cwd of the session the call was made in" do
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/srv/worker", env: {}))
+
+      Sync do |task|
+        task.async { queue.call(tool_call, session) }
+        pending = queue.dequeue
+        expect(pending.cwd).to eq("/srv/worker")
+        pending.deny(surface: "spec")
+      end
+    end
+
     it "parks the fiber, not the reactor: a sibling fiber proceeds while the call waits" do
       log = []
       gate = gate_over([])
@@ -717,7 +729,8 @@ RSpec.describe Lain::Approval::Queue do
     # collaborator here has one) fails right here.
     it "takes no ledger, so `decide` has nothing to release into" do
       expect(described_class::Pending.instance_method(:initialize).parameters)
-        .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key outstanding], %i[key humans_only]])
+        .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key outstanding], %i[key humans_only],
+                %i[key cwd]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

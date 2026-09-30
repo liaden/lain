@@ -138,6 +138,29 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
+  # A walk follows a linked base, so `keys -> ~/.ssh` lists the key under a name
+  # no rule matches. The run's filter is the policy's, which judges each row
+  # where it lands.
+  describe "a listing through a link to a denied directory" do
+    let(:filter) { Lain::Sensitivity::Policy.new(sensitivity:, home:).filter }
+
+    before { File.symlink(File.join(home, ".ssh"), File.join(dir, "keys")) }
+
+    it "withholds the denied file from list_files" do
+      shown = content(list("keys"))
+
+      expect(shown).not_to match(/id_rsa$/)
+      expect(shown).to include("id_rsa.pub", "1 path withheld (protected)")
+    end
+
+    it "withholds the denied file's lines from grep" do
+      shown = content(grep("KEY", path: "keys"))
+
+      expect(shown).not_to include("PRIVATE KEY")
+      expect(shown).to include("PUBLIC KEY", "1 match withheld (protected)")
+    end
+  end
+
   describe "a glob over a denied directory" do
     it "enumerates nothing under it and reports the count" do
       shown = content(glob(".password-store/**/*", path: home))
