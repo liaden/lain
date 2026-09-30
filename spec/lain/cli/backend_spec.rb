@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "tmpdir"
 
 # Backend is the plain object the CLI's chat and bench-record paths BOTH resolve
@@ -1681,6 +1682,37 @@ RSpec.describe Lain::CLI::Backend do
 
       expect(catalog).to be_a(Lain::Summarizer::Catalog)
       expect(catalog).to be_empty
+    end
+
+    describe "a project root that declares summarizers, entered from a subdirectory" do
+      around do |example|
+        Dir.mktmpdir("lain-backend-summarizers") do |tmp|
+          @project = File.join(tmp, "app")
+          @nested = File.join(@project, "lib", "deep")
+          @sentinel = File.join(tmp, "evaluated")
+          FileUtils.mkdir_p([File.join(@project, ".lain"), @nested])
+          File.write(File.join(@project, ".lain", "summarizers.rb"),
+                     "File.write(#{@sentinel.inspect}, 'ran')\n" \
+                     "summarizer 'root-#{object_id}' do\n  def suitable?(_) = false\n  def compact(_) = ''\nend\n")
+          Dir.chdir(@nested) { example.run }
+        end
+      end
+
+      def catalog_at_root
+        summarizer_for(root: @project).send(:summary_oracle).instance_variable_get(:@catalog)
+      end
+
+      it "refuses before evaluating an untrusted file, naming it and `lain trust`" do
+        expect { catalog_at_root }
+          .to raise_error(Lain::Project::Trust::Untrusted, /summarizers\.rb.*lain trust/m)
+        expect(File.exist?(@sentinel)).to be(false)
+      end
+
+      it "loads the catalog from the project root once trusted, not from the working directory" do
+        trust_project(@project)
+
+        expect(catalog_at_root.map(&:name)).to eq(["root-#{object_id}"])
+      end
     end
 
     # Open decision 4, wired. The eager tier and the span summarizer call the

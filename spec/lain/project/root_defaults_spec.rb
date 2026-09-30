@@ -139,7 +139,6 @@ module RootDefaultDiscipline
     "lain/cli/command/survey.rb" => %w[initialize:cwd],
     "lain/cli/up.rb" => %w[initialize:cwd],
     "lain/config.rb" => %w[self.load:root],
-    "lain/dsl_catalog.rb" => %w[self.load:root],
     "lain/epic/home.rb" => %w[self.container:root self.resolve:root],
     "lain/forge/gh.rb" => %w[initialize:cwd],
     "lain/forge/promotion.rb" => %w[initialize:repo_root],
@@ -373,9 +372,9 @@ module RootDefaultDiscipline
   #
   # `Catalog` is the one leaf a RECEIVER cannot place on its own: it names three
   # classes here -- {Lain::Skill::Catalog}, {Lain::Role::Catalog} and
-  # {Lain::Summarizer::Catalog} -- and only the first takes a root, so watching
-  # the bare spelling everywhere would be a false positive on
-  # `Lain::Summarizer::Catalog.load`. The PATH places it, which is why
+  # {Lain::Summarizer::Catalog} -- and only the first DEFAULTS its root: the
+  # summarizer's is required, so Ruby refuses an omission there before this scan
+  # could. The PATH places the one worth watching, which is why
   # {WATCHED_UNDER} exists rather than a fourth entry here.
   WATCHED_CALLS = {
     "Skill::Library.load" => "root",
@@ -859,9 +858,9 @@ RSpec.describe "root: omitted at a call site" do
     end
 
     # The two halves of the path scope, and the second is what the scope buys:
-    # `Lain::Summarizer::Catalog.load` takes no root and lives in
-    # `lain/cli/backend.rb`, so watching the bare leaf project-wide would redden
-    # a correct call. The prefix separates them without guessing.
+    # `Lain::Summarizer::Catalog.load` requires its root and lives in
+    # `lain/cli/backend.rb`, so watching the bare leaf project-wide would watch
+    # a call Ruby already refuses. The prefix separates them without guessing.
     it "ignores a bare Catalog.load outside lain/skill/" do
       expect(omissions_at("lain/cli/backend.rb", "x = Catalog.load")).to be_empty
     end

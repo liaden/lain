@@ -83,6 +83,7 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
   def declare_services(source, root: @project)
     FileUtils.mkdir_p(File.join(root, ".lain"))
     File.write(File.join(root, ".lain", "services.rb"), source)
+    trust_project(root, paths:)
   end
 
   def write_compose_file(root: @project)

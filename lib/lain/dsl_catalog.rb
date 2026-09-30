@@ -33,15 +33,33 @@ module Lain
     # An absent file is an EMPTY catalog, never an error: a project that
     # declares nothing is the common case, so it is Null-Object by an empty
     # enumeration rather than a nil check every caller repeats. `root` is
-    # explicit and never read at require time, so a spec -- and a bench arm --
-    # loads a catalog from a throwaway tree.
-    def self.load(root: Dir.pwd)
+    # REQUIRED: defaulted to the working directory, a chat started in a
+    # subdirectory read no catalog at all.
+    #
+    # A present file runs only once {Project::Trust} says its bytes are
+    # trusted, and what runs is the bytes the trust was judged on. A catalog
+    # whose own file is absent reads nothing else, so an unreadable sibling
+    # cannot refuse it; one gone by the time trust reads is absent too.
+    #
+    # @param root [String] the project root the DSL file sits under
+    # @param paths [Paths] supplies the state home the trust marks live under
+    # @return [DslCatalog]
+    # @raise [Project::Trust::Untrusted] when the file's bytes are not trusted
+    def self.load(root:, paths: Paths.new)
       path = File.join(root, dsl_path)
+      return new([]) unless File.file?(path)
+
+      trust = Project::Trust.for(project_dir: ProjectDir.new(root:, paths:), paths:)
+      source = trust.sources[path]
+      return new([]) if source.nil?
+
       # `builder` resolved HERE, outside {.read}'s rescue: a subclass that
       # names none raises NotImplementedError, which -- being a ScriptError --
       # would otherwise be caught and misreported as a broken DSL FILE rather
       # than the subclass's own missing declaration.
-      new(File.exist?(path) ? read(builder, path) : [])
+      evaluator = builder
+      trust.require!
+      new(read(evaluator, path, source))
     end
 
     # Both Builders `instance_eval` the user's own file with no sandbox, so a
@@ -50,8 +68,8 @@ module Lain
     # than the one file a project author can fix. Translated here, once, so
     # `exe/lain`'s ordinary `rescue Lain::Error` is what a broken `.lain/*.rb`
     # ever reaches, instead of a fourteen-frame backtrace.
-    def self.read(evaluator, path)
-      evaluator.build(File.read(path), path)
+    def self.read(evaluator, path, source)
+      evaluator.build(source, path)
     # NoMethodError is a NameError, so naming it too would only shadow it.
     rescue ScriptError, ArgumentError, NameError => e
       raise Error, refusal_message(e, path)

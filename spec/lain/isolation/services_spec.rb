@@ -14,6 +14,7 @@ RSpec.describe Lain::Isolation::Services do
     Dir.mktmpdir("lain-services") do |root|
       FileUtils.mkdir_p(File.join(root, ".lain"))
       File.write(File.join(root, ".lain", "services.rb"), source)
+      trust_project(root)
       return described_class.load(root:)
     end
   end

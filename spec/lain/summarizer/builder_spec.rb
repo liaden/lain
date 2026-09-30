@@ -15,6 +15,7 @@ RSpec.describe Lain::Summarizer::Builder do
     Dir.mktmpdir("lain-summarizers") do |root|
       FileUtils.mkdir_p(File.join(root, ".lain"))
       File.write(File.join(root, ".lain", "summarizers.rb"), source)
+      trust_project(root)
       return Lain::Summarizer::Catalog.load(root:)
     end
   end

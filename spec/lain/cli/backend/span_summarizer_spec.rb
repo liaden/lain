@@ -63,13 +63,13 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     Lain::Provider::Mock.new(responses: [reply])
   end
 
-  # The project's own `.lain/summarizers.rb`. {Lain::Summarizer::Catalog.load}
-  # reads `Dir.pwd`, so a declaration is only reachable from inside the
-  # throwaway tree that holds it.
+  # The project's own `.lain/summarizers.rb`, trusted, in a throwaway tree the
+  # example stands in, because {#summarizing_backend} names `Dir.pwd` as its root.
   def in_project_declaring(kind, &)
     Dir.mktmpdir("lain-span-summarizer") do |root|
       FileUtils.mkdir_p(File.join(root, ".lain"))
       File.write(File.join(root, ".lain", "summarizers.rb"), SpanSummarizerSpecSupport::DECLARATIONS.fetch(kind))
+      trust_project(root)
       Dir.chdir(root, &)
     end
   end

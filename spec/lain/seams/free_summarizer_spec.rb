@@ -74,12 +74,13 @@ RSpec.describe "Free summarizer tier seam", :seam do
                  body: JSON.generate("models" => []))
   end
 
-  # A real project tree with a real declaration file, entered so that
-  # {Lain::Summarizer::Catalog.load}'s `Dir.pwd` root finds it.
+  # A real project tree with a real, trusted declaration file, entered because
+  # {#backend} names `Dir.pwd` as the project root it loads the catalog from.
   def in_project(declaration = FreeSummarizerSeam::DECLARATION, &block)
     Dir.mktmpdir("lain-free-summarizer") do |dir|
       FileUtils.mkdir_p(File.join(dir, ".lain"))
       File.write(File.join(dir, ".lain", "summarizers.rb"), declaration)
+      trust_project(dir)
       Dir.chdir(dir, &block)
     end
   end

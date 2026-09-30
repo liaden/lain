@@ -26,12 +26,13 @@ RSpec.describe Lain::DslCatalog do
     end
   end
 
-  # Writes the subclass's DSL file under a throwaway root and loads it.
+  # Writes the subclass's DSL file under a throwaway root, trusts it, and loads it.
   def load_from(catalog_class, source)
     Dir.mktmpdir("lain-dsl-catalog") do |root|
       path = File.join(root, catalog_class.dsl_path)
       FileUtils.mkdir_p(File.dirname(path))
       File.write(path, source)
+      trust_project(root)
       return [catalog_class.load(root:), path]
     end
   end
@@ -57,6 +58,106 @@ RSpec.describe Lain::DslCatalog do
 
       expect(path).to end_with(File.join(".lain", "things.rb"))
       expect(path).not_to start_with(Dir.pwd)
+    end
+
+    # The file is a cloned repository's own Ruby, so nothing in it runs until
+    # the human has trusted these exact bytes.
+    describe "an untrusted DSL file" do
+      let(:evaluated) { [] }
+      let(:recording_builder) do
+        calls = evaluated
+        Module.new do
+          define_singleton_method(:build) do |source, _path|
+            calls << source
+            []
+          end
+        end
+      end
+
+      def isolated_paths(tmp) = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(tmp, "state"), "HOME" => tmp })
+
+      it "refuses before evaluating it, naming the file and `lain trust`" do
+        builder = recording_builder
+        catalog_class.define_singleton_method(:builder) { builder }
+        Dir.mktmpdir("lain-dsl-catalog-untrusted") do |root|
+          path = File.join(root, catalog_class.dsl_path)
+          FileUtils.mkdir_p(File.dirname(path))
+          File.write(path, "things\n")
+
+          expect { catalog_class.load(root:, paths: isolated_paths(root)) }
+            .to raise_error(Lain::Project::Trust::Untrusted, /#{Regexp.escape(path)}.*lain trust/m)
+          expect(evaluated).to be_empty
+        end
+      end
+
+      it "evaluates the file once its bytes are trusted" do
+        builder = recording_builder
+        catalog_class.define_singleton_method(:builder) { builder }
+        Dir.mktmpdir("lain-dsl-catalog-trusted") do |root|
+          path = File.join(root, catalog_class.dsl_path)
+          FileUtils.mkdir_p(File.dirname(path))
+          File.write(path, "things\n")
+          trust_project(root, paths: isolated_paths(root))
+
+          catalog_class.load(root:, paths: isolated_paths(root))
+
+          expect(evaluated).to eq(["things\n"])
+        end
+      end
+
+      # A rewrite between the trust check and the evaluation must not run.
+      it "hands the builder the bytes trust digested, not a second read of the file" do
+        builder = recording_builder
+        catalog_class.define_singleton_method(:builder) { builder }
+        Dir.mktmpdir("lain-dsl-catalog-reread") do |root|
+          path = File.join(root, catalog_class.dsl_path)
+          FileUtils.mkdir_p(File.dirname(path))
+          File.write(path, "things\n")
+          trust_project(root, paths: isolated_paths(root))
+          allow(Lain::Project::Trust).to receive(:for).and_wrap_original do |original, **kwargs|
+            original.call(**kwargs).tap { File.write(path, "rewritten\n") }
+          end
+
+          catalog_class.load(root:, paths: isolated_paths(root))
+
+          expect(evaluated).to eq(["things\n"])
+        end
+      end
+
+      # Presence is decided by what trust read, so a file gone by then is an
+      # absent file rather than a lookup that raises.
+      it "is empty when the file is gone by the time trust reads the project" do
+        Dir.mktmpdir("lain-dsl-catalog-vanished") do |root|
+          path = File.join(root, catalog_class.dsl_path)
+          FileUtils.mkdir_p(File.dirname(path))
+          File.write(path, "things\n")
+          allow(Lain::Project::Trust).to receive(:for).and_wrap_original do |original, **kwargs|
+            File.rename(path, "#{path}.moved")
+            original.call(**kwargs)
+          end
+
+          expect(catalog_class.load(root:, paths: isolated_paths(root))).to be_empty
+        end
+      end
+
+      # Another catalog's file is not this launch's business, so a sibling
+      # nobody can read must not refuse a catalog that never reads it.
+      it "is empty without reading the project when its own file is absent" do
+        Dir.mktmpdir("lain-dsl-catalog-sibling") do |root|
+          sibling = File.join(root, ".lain", "other.rb")
+          FileUtils.mkdir_p(File.dirname(sibling))
+          File.write(sibling, "anything\n")
+          File.chmod(0o000, sibling)
+
+          expect(catalog_class.load(root:, paths: isolated_paths(root))).to be_empty
+        end
+      end
+
+      it "needs no trust when the project declares no DSL file at all" do
+        Dir.mktmpdir("lain-dsl-catalog-bare") do |root|
+          expect(catalog_class.load(root:, paths: isolated_paths(root))).to be_empty
+        end
+      end
     end
 
     it "refuses to load a subclass that declares no DSL_PATH" do
@@ -133,6 +234,7 @@ RSpec.describe Lain::DslCatalog do
           path = File.join(root, ".lain", "summarizers.rb")
           FileUtils.mkdir_p(File.dirname(path))
           File.write(path, "summarizer \"x\" do\n")
+          trust_project(root)
 
           expect { Lain::Summarizer::Catalog.load(root:) }
             .to raise_error(Lain::Error, /#{Regexp.escape(path)}:1/)
@@ -144,6 +246,7 @@ RSpec.describe Lain::DslCatalog do
           path = File.join(root, ".lain", "services.rb")
           FileUtils.mkdir_p(File.dirname(path))
           File.write(path, "postgres bogus_kwarg: 1\n")
+          trust_project(root)
 
           expect { Lain::Isolation::Services.load(root:) }
             .to raise_error(Lain::Error, /#{Regexp.escape(path)}:1.*bogus_kwarg/m)

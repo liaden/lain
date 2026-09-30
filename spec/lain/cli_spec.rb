@@ -418,6 +418,7 @@ RSpec.describe LainCLI do
     def write_broken_services(source)
       FileUtils.mkdir_p(File.join(@dir, ".lain"))
       File.write(File.join(@dir, ".lain", "services.rb"), source)
+      trust_project(@dir)
     end
 
     # `debug: true` for the reason every other example in this file uses it:
@@ -446,6 +447,31 @@ RSpec.describe LainCLI do
           .to output(/services\.rb:1/).to_stderr
           .and raise_error(SystemExit) { |error| expect(error.status).to eq(1) }
       end
+    end
+  end
+
+  # A cloned repository's `.lain/summarizers.rb` must not run before a human
+  # trusts it, and the refusal has to come at launch: a model turn would mean
+  # the session started with the file's fate still undecided.
+  describe "an untrusted .lain/summarizers.rb" do
+    around { |example| Dir.mktmpdir("lain-chat-untrusted") { |dir| (@dir = dir) && example.run } }
+
+    it "refuses the chat before any turn and before evaluating the file, naming it and `lain trust`" do
+      project = File.join(@dir, "proj")
+      nested = File.join(project, "lib", "deep")
+      sentinel = File.join(@dir, "evaluated")
+      FileUtils.mkdir_p([File.join(project, ".lain"), nested])
+      File.write(File.join(project, ".lain", "summarizers.rb"), "File.write(#{sentinel.inspect}, 'ran')\n")
+
+      with_env("ANTHROPIC_API_KEY" => "sk-test") do
+        Dir.chdir(nested) do
+          expect do
+            described_class.start(%w[chat --isolation none --non-interactive --prompt hi --no-journal], debug: true)
+          end.to raise_error(Thor::Error, /summarizers\.rb.*lain trust/m)
+        end
+      end
+      expect(File.exist?(sentinel)).to be(false)
+      expect(a_request(:any, /.*/)).not_to have_been_made
     end
   end
 

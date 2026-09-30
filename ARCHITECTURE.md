@@ -1219,7 +1219,7 @@ overrides because each owns a `release` that must compose with the inner backend
 
 `Isolation::Services` (`lib/lain/isolation/services.rb`) is what they read: a `.lain/services.rb`
 Ruby DSL on the same `.lain/` convention as `Prompt::Slots` and `Skill::Catalog`, `instance_eval`'d
-with no sandbox (shape-not-safety, as `Tool::Input` reads), whose surface is `postgres` and
+with no sandbox once its bytes are trusted (below), whose surface is `postgres` and
 `compose`. A `redis` line is refused by name and pointed at a container: it was the one service
 that allocated its resource from state shared across a backend's workers rather than naming it
 from the worker key, so a second backend in one run handed out a colliding index. An absent file loads to an empty collection, which makes both decorators Null by empty
@@ -1228,6 +1228,19 @@ command runs at all**, and the lease is simply the inner one. The loading half o
 `ProjectDir`-relative `DSL_PATH`, the exist-guard, the `Builder.build(source, path)` dispatch and
 the frozen enumeration -- is `DslCatalog` (`lib/lain/dsl_catalog.rb`), shared with
 `Summarizer::Catalog`; a subclass names only where its file is and who evaluates it.
+
+**A project's Ruby runs only once its bytes are trusted.** A cloned repository carries its
+`.lain/*.rb`, so `DslCatalog.load` asks `Project::Trust` (`lib/lain/project/trust.rb`) first and
+refuses an untrusted file before evaluating it, naming the file and `lain trust`. Trust is keyed
+on content, not on a root: the mark is `<state_home>/trust/<digest>`, over every `.lain/*.rb`
+name and its bytes. A leased worktree or a bench subject holding the same bytes needs no second
+decision, and a changed byte, an added file or a rename among those files is a new one. Trust
+covers the top-level `.lain/*.rb` files only, never what they `require` or `load`: a helper a
+trusted file pulls in can change with no new decision. Digesting `.lain/**` instead would void
+trust on every `/meta` draft under `.lain/summarizers/`. `lain trust [PATH]` (`CLI::Trust`) shows
+every file with its control and format characters escaped, says what is not covered, asks
+`[y/N]`, and records the mark on a yes; a decline exits non-zero, and `--yes` grants headless.
+The loader evaluates the bytes `Trust` digested, not a second read of the file.
 
 `Isolation::Compose` is worth reading before you touch it, because 3 of its decisions are
 safety-critical:

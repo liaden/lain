@@ -191,7 +191,7 @@ module Lain
       # Read ONCE: both decorators partition the same declarations, and a
       # second read would let a `.lain/services.rb` edited mid-resolution give
       # them different answers.
-      def services = @services ||= Isolation::Services.load(root: @root)
+      def services = @services ||= Isolation::Services.load(root: @root, paths: @paths)
 
       # {Isolation::DbIndex} provisions EVERY service it is handed -- unlike
       # {Isolation::Compose}, which selects its own declarations -- so it gets

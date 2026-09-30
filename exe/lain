@@ -1183,6 +1183,15 @@ class LainCLI < Thor
   method_option :all, type: :boolean, default: false, desc: "Include ephemeral (--btw) sessions"
   def sessions = render { Lain::CLI::Sessions.new.listing(all: options[:all]) }
 
+  desc "trust [PATH]", "Show this project's .lain/*.rb and, on a yes, let lain run those exact bytes"
+  method_option :yes, type: :boolean, default: false, desc: "Trust without asking, for a headless run"
+  def trust(path = nil)
+    render do
+      Lain::CLI::Trust.new(root: directory!(path, "PATH") || Lain::Project::Resolver.default_project.root,
+                           input: $stdin, output: $stdout, yes: options[:yes]).call
+    end
+  end
+
   desc "input", "The pane a human types into, feeding a `lain chat --input socket:NAME`"
   # Either half names the socket: `--socket` for a path already derived (what
   # `lain up` writes into the pane command), `--name` for the tmux session name

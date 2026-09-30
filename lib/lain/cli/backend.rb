@@ -746,10 +746,10 @@ module Lain
       #
       # `Summarizer` here is {Backend::Summarizer} -- the flag resolution --
       # and `Lain::Summarizer` is the project's declared free tier. Two
-      # different objects one lexical scope apart, hence the explicit root.
+      # different objects one lexical scope apart, hence the root-qualified name.
       def summary_oracle
         Oracle::RoutedSummarizer.new(inner: Summarizer.new(backend: self).oracle,
-                                     catalog: Lain::Summarizer::Catalog.load)
+                                     catalog: Lain::Summarizer::Catalog.load(root: @root))
       end
 
       # Only the sampler flags the caller actually set, String-keyed to match
