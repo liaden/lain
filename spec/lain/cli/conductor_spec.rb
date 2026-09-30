@@ -295,6 +295,28 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
+  # A chat whose ask holds no prompt has nothing drawn for a producer to type
+  # at, and the stop must still reach it before the ask would have finished.
+  describe "a /stop line delivered while the ask has published nothing" do
+    it "records run_interrupted stopped" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
+
+      Sync do |task|
+        driver = task.async do
+          entered.dequeue
+          rail << Lain::Frontend::Intake::Line.new(text: "/stop", generation: 0)
+        end
+        conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        driver.wait
+      end
+
+      expect(chronicle.events).to eq([:catch_up, [:interrupted, agent.timeline.head_digest, :stopped]])
+    end
+  end
+
   # At `you>` the conversation is between asks by construction, so a stop that
   # reaches the idle routing has nothing to stop and must not break the prompt.
   describe "a stop with nothing running" do

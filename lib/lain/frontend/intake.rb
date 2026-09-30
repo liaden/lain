@@ -135,7 +135,7 @@ module Lain
       # line or an end of stream waits for the reader whose prompt it answers.
       def <<(value)
         sent = stops_a_run?(value) ? Signal.new(name: :stop) : value
-        sent.is_a?(Signal) ? @sink.signal(sent.name) : @inbound.push(sent)
+        sent.is_a?(Signal) ? @sink.signal(sent.name) : deliver(sent)
         self
       end
 
@@ -218,6 +218,12 @@ module Lain
       end
 
       private
+
+      # With nothing published no reader is waiting, and a queued line would sit
+      # unseen until some later prompt: the chat looks for held lines instead.
+      def deliver(sent) = unread?(sent) ? hold(sent.text) : @inbound.push(sent)
+
+      def unread?(value) = value.is_a?(Line) && glimpse.kind.nil?
 
       def held_line = @lock.synchronize { @held.shift }
 

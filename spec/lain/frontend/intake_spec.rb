@@ -657,6 +657,54 @@ RSpec.describe Lain::Frontend::Intake do
     end
   end
 
+  # Nothing published means no reader is waiting, so a line delivered then
+  # would sit in the queue unseen until some later prompt: it is held instead,
+  # where the chat looks for lines typed while it worked.
+  describe "a line delivered while no prompt is published" do
+    it "is held and said, and is the next you> line" do
+      rail << line("hello", 0)
+
+      expect([screen.said, Sync { rail.read(:you, "you> ") }]).to eq([[[:held, "hello"]], "hello"])
+    end
+
+    it "is taken by the chat as a held line" do
+      rail << line("/goal off", 0)
+
+      expect(rail.take_held).to eq("/goal off")
+    end
+
+    it "keeps its place in the history it reaches you> with" do
+      history = Class.new do
+        def remember(line) = (@lines ||= []) << line
+        attr_reader :lines
+      end.new
+      recording = described_class.new(screen:, history:)
+      recording << line("hello", 0)
+      Sync { recording.read(:you, "you> ") }
+
+      expect(history.lines).to eq(["hello"])
+    end
+
+    it "waits for you> when typed ahead of a command> the chat then reads" do
+      rail << line("/approve", 0)
+
+      answer = Sync do |task|
+        answered_when_published(task) { "/next" }
+        [rail.read(:command, "command> "), rail.take_held]
+      end
+
+      expect(answer).to eq(["/next", "/approve"])
+    end
+
+    it "is still a stop signal for /stop while an ask is in flight" do
+      received = []
+      rail.route(sink_over(received, ask_in_flight: true))
+      rail << line("/stop", 0)
+
+      expect([received, rail.take_held]).to eq([[:stop], nil])
+    end
+  end
+
   # History is what `you>` was answered with -- the line a recall at that
   # prompt would put back. An answer is not one, and a line read anywhere else
   # is held and reaches `you>` in its own time, so it is kept once, there.

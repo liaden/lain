@@ -58,6 +58,8 @@ module Lain
 
         def self.poll(_timeline) = nil
 
+        def self.withdraw = self
+
         def self.interrupt = self
 
         # The write duck too, so the command surface degrades cleanly where no
@@ -188,6 +190,14 @@ module Lain
         retire
       end
 
+      # The iteration the last poll drove was not dispatched: a line typed
+      # meanwhile ran first. It is journaled as dropped and stops counting, so
+      # the next poll drives it again if the goal still stands.
+      def withdraw
+        @current.withdraw
+        self
+      end
+
       def goal = @current.goal
 
       # The mode switch the human's `/mode` writes through ({Guard}).
@@ -254,6 +264,13 @@ module Lain
 
         def interrupt
           @interrupted = true
+          self
+        end
+
+        def withdraw
+          @journal.record({ "type" => "goal_iteration_dropped", "goal" => @goal,
+                            "iteration" => @iterations, "surface" => SURFACE })
+          @iterations -= 1
           self
         end
 

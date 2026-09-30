@@ -770,7 +770,92 @@ RSpec.describe Lain::CLI::Repl do
 
       expect(iterations).to eq(2)
       expect(dispatched.last).to eq("/goal off")
-      expect(output.string).to include("stopped")
+      expect(output.string).to include("goal off -- the driver stopped before its next iteration")
+    end
+
+    # No sweep: a thread pushes the line at the rail, as the input pane's socket
+    # does, and it is held for the chat to run between iterations.
+    context "when a producer delivers /goal off during the first iteration" do
+      let(:rail) { Lain::Frontend::Intake.new(screen: tty) }
+      let(:dispatched) do
+        typed = rail
+        [].tap do |lines|
+          lines.define_singleton_method(:<<) do |text|
+            super(text)
+            if text.start_with?("Standing")
+              Thread.new { typed << Lain::Frontend::Intake::Line.new(text: "/goal  OFF", generation: 0) }.join
+            end
+            self
+          end
+        end
+      end
+
+      it "drives no second iteration and says the goal stopped, in the command's words" do
+        converse
+
+        expect([iterations, driver.active?, output.string]).to match([1, false, /goal off -- the driver stopped/])
+      end
+    end
+
+    # A line lands while the driver is already choosing the next iteration,
+    # after the chat looked for held lines. The journal write is the moment the
+    # iteration is chosen, so it is where the line is delivered.
+    context "when a line lands as the second iteration is driven" do
+      let(:rail) { Lain::Frontend::Intake.new(screen: tty) }
+      let(:late) { ["/goal off"] }
+      let(:fleet) { [true] }
+      let(:driver) do
+        typed = rail
+        lines = late
+        quiet = fleet
+        journal = Object.new
+        real = Lain::Journal.new(io: journal_io)
+        journal.define_singleton_method(:record) do |record|
+          real.record(record)
+          second = record["type"] == "goal_iteration" && record["iteration"] == 2
+          return unless second && record["goal"] == "make the specs green"
+
+          lines.each { |text| typed << Lain::Frontend::Intake::Line.new(text:, generation: 0) }
+          quiet[0] = !lines.include?("hello")
+        end
+        Lain::CLI::GoalDriver.new(journal:, quiescent: -> { quiet.first })
+      end
+
+      def driven = dispatched.grep(/\AStanding goal/).size
+
+      it "dispatches no second iteration for a /goal off" do
+        converse
+
+        expect([driven, dispatched.last]).to eq([1, "/goal off"])
+      end
+
+      it "journals the dropped iteration as dropped, so the drives match the dispatches" do
+        converse
+
+        dropped = records("goal_iteration_dropped").size
+        expect(iterations - dropped).to eq(driven)
+      end
+
+      context "with a new goal" do
+        let(:late) { ["/goal beta"] }
+
+        it "never runs the old goal's prompt under the new one" do
+          converse
+
+          expect(dispatched.each_cons(2).map { |pair| pair.map { |line| line[0, 23] } })
+            .not_to include(["/goal beta", "Standing goal: make the"])
+        end
+      end
+
+      context "when the late line leaves the fleet unquiet" do
+        let(:late) { ["hello"] }
+
+        it "asks the driver again before driving, so an unquiet fleet is not driven" do
+          converse
+
+          expect([driven, dispatched.last]).to eq([1, "hello"])
+        end
+      end
     end
 
     # The objective's pin settles on the driver's look at the timeline, and a

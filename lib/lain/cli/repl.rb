@@ -163,7 +163,18 @@ module Lain
         return if action == :quit || !reads_a_line?
 
         @goal_driver.settle_pin(@agent.timeline)
-        held_line || @goal_driver.poll(@agent.timeline) { |notice| deliver_text(notice) } || prompt.read
+        held_line || driven_prompt || prompt.read
+      end
+
+      # A line delivered while the driver chose the iteration is dispatched
+      # first and the iteration is withdrawn: that line may be the `/goal off`
+      # or the new `/goal` that makes it moot, and the driver is asked afresh,
+      # quiet-fleet check included, once the line has run.
+      def driven_prompt
+        text = @goal_driver.poll(@agent.timeline) { |notice| deliver_text(notice) }
+        late = held_line
+        @goal_driver.withdraw if late && text
+        late || text
       end
 
       # While a goal drives, `you>` never opens, so what the human typed during

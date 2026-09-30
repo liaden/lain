@@ -33,6 +33,26 @@ RSpec.describe Lain::CLI::GoalDriver do
     end
   end
 
+  describe "an iteration withdrawn before it was dispatched" do
+    subject(:driver) { described_class.new(journal:) }
+
+    it "is journaled as dropped and does not count against the cap" do
+      driver.start("ship it")
+      first = driver.poll(settled_with("x"))
+      driver.withdraw
+      again = driver.poll(settled_with("x"))
+      dropped = Lain::Journal.records(journal_io.string.lines, type: "goal_iteration_dropped").to_a
+
+      expect([again, iterations.map { |r| r["iteration"] }, dropped.map { |r| r["iteration"] }])
+        .to eq([first, [1, 1], [1]])
+    end
+
+    it "is a no-op with no goal standing" do
+      expect(driver.withdraw).to eq(driver)
+      expect(journal_io.string).to be_empty
+    end
+  end
+
   describe "goal loops until done-signal" do
     subject(:driver) { described_class.new(journal:) }
 
