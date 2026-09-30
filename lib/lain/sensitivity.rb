@@ -168,8 +168,8 @@ module Lain
 
       # A literal path under the project root: that one path when `exact`,
       # otherwise the directory and everything beneath it.
-      def self.rooted(under, level:, reason:, exact:)
-        new(level:, reason:, under:, inside: nil, name: nil, except: nil, exact:, anchor: ROOT)
+      def self.rooted(under, level:, reason:, exact:, name: nil, specimens: NO_SPECIMENS)
+        new(level:, reason:, under:, inside: nil, name:, except: nil, exact:, anchor: ROOT, specimens: specimens.freeze)
       end
 
       def self.within(inside, level:, reason:, name: nil, except: nil)
@@ -363,6 +363,9 @@ module Lain
       WHOLESALE = "lifts %<count>d built-in gated entries (%<entries>s), and one exemption may lift at most " \
                   "one -- name each file or directory on its own line"
 
+      PROJECT_RUBY_REFUSAL = "reaches the project's own Ruby under .lain, which is always asked about: the " \
+                             "model can write it and a later launch would run it"
+
       # The table as `config.toml` spells it, which is how every refusal here
       # names it.
       TABLE = "[sensitivity]"
@@ -401,6 +404,7 @@ module Lain
         compiled = located(key, pattern, path:)
         lifted = key == EXEMPT ? lifted_by(compiled) : []
         raise malformed(key, pattern, wholesale(lifted), path:) if lifted.size > 1
+        raise malformed(key, pattern, PROJECT_RUBY_REFUSAL, path:) if key == EXEMPT && lifts_project_ruby?(compiled)
 
         compiled
       end
@@ -432,6 +436,8 @@ module Lain
       def self.lifted_by(exemption)
         Sensitivity::GATED.select { |gated| exemption.lifts?(gated, PROBE) }
       end
+
+      def self.lifts_project_ruby?(exemption) = exemption.lifts?(Sensitivity::PROJECT_RUBY, PROBE)
 
       def self.wholesale(lifted)
         format(WHOLESALE, count: lifted.size, entries: lifted.map { |gated| gated.label.inspect }.join(", "))
@@ -491,8 +497,9 @@ module Lain
       # under `denied` or `gated` can only ever add, so they stay legal.
       def self.unbounded?(key, pattern) = key == EXEMPT && UNBOUNDED.include?(pattern)
 
-      private_class_method :compile, :rule, :located, :rooted, :literal, :lifted_by, :wholesale, :check!, :unbounded?,
-                           :unmatchable_home?, :unmatchable_root?, :unclean?, :not_a_list
+      private_class_method :compile, :rule, :located, :rooted, :literal, :lifted_by, :wholesale,
+                           :lifts_project_ruby?, :check!, :unbounded?, :unmatchable_home?, :unmatchable_root?,
+                           :unclean?, :not_a_list
 
       # Validated in the constructor too, {Config::Answers}' precedent: a value
       # built by hand carries rules that never came through {.from}.
@@ -630,6 +637,16 @@ module Lain
       Rule.within(".git", name: "config", level: :gated, reason: :credential)
     ].freeze
 
+    # The project's own Ruby, which a later launch evaluates. The trust digest
+    # is the control; this makes a model write to it visible to a human as it
+    # happens, and reads too, since the file may hold what the human typed.
+    # It does not cover a `bash` redirect into the file, and that is accepted.
+    # Only exists where a root does: a classifier with none has no project.
+    PROJECT_RUBY_FILES = ["config.rb", *[ProjectDir.services, ProjectDir.summarizers].map { File.basename(_1) }]
+                         .map(&:freeze).freeze
+    PROJECT_RUBY = Rule.rooted(ProjectDir.join.freeze, level: :gated, reason: :protected, exact: false, name: "*.rb",
+                                                       specimens: PROJECT_RUBY_FILES).freeze
+
     # The Null Object at the end of the chain, so no caller and no branch here
     # asks whether a rule was found.
     ORDINARY = Rule.new(level: :ordinary, reason: :none, under: nil, inside: nil, name: nil, except: nil)
@@ -696,8 +713,8 @@ module Lain
       self.class.check!(home: @home)
       @anchors = Anchors.new(home: @home, root: project_root(root, rules))
 
-      @rules = [*DENIED, *rules.denied, *rules.exempt.map(&:exactly), *CREDENTIALS, *rules.exempt.select(&:homed?),
-                *PERSONAL, *rules.gated, ORDINARY].freeze
+      @rules = [*DENIED, *project_ruby(@anchors), *rules.denied, *rules.exempt.map(&:exactly), *CREDENTIALS,
+                *rules.exempt.select(&:homed?), *PERSONAL, *rules.gated, ORDINARY].freeze
       freeze
     end
 
@@ -738,6 +755,8 @@ module Lain
       # that must not be waved through.
       MALFORMED
     end
+
+    def project_ruby(anchors) = anchors.root.nil? ? [] : [PROJECT_RUBY]
 
     def project_root(root, rules)
       return anchor(:root, root) unless root.nil?

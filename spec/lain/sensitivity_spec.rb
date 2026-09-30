@@ -600,6 +600,81 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  describe "the project's own Ruby under .lain" do
+    let(:root) { "/srv/project" }
+    let(:guarded) { described_class.new(home:, cwd: root, root:) }
+
+    it "gates every .rb file beneath the project's .lain, absolute or relative" do
+      %w[.lain/config.rb .lain/services.rb .lain/summarizers.rb .lain/deep/x.rb].each do |path|
+        expect(guarded.classify(path)).to be_gated, path
+        expect(guarded.classify("#{root}/#{path}")).to be_gated, path
+      end
+    end
+
+    it "leaves other files and other directories' .lain alone" do
+      expect(guarded.classify(".lain/config.toml")).to be_ordinary
+      expect(guarded.classify("lib/config.rb")).to be_ordinary
+      expect(guarded.classify("/srv/other/.lain/config.rb")).to be_ordinary
+    end
+
+    it "is not lifted by an exemption the config already accepted" do
+      rules = Lain::Sensitivity::Rules.from({ "exempt" => [".gitconfig"] })
+
+      expect(described_class.new(home:, cwd: root, root:, rules:).classify(".lain/config.rb")).to be_gated
+    end
+
+    it "refuses a config exempting it, naming the pattern" do
+      ["/.lain/config.rb", "/.lain/services.rb", "*.rb", "config.rb"].each do |pattern|
+        expect { Lain::Sensitivity::Rules.from({ "exempt" => [pattern] }, path: "/p/.lain/config.toml") }
+          .to raise_error(Lain::Config::Refusal, /config\.toml: .*exempt.*#{Regexp.escape(pattern.inspect)}/), pattern
+      end
+    end
+
+    it "still accepts an exemption of some other project file" do
+      expect { Lain::Sensitivity::Rules.from({ "exempt" => ["/fixtures/.env", "/lib/config.rb"] }) }.not_to raise_error
+    end
+
+    it "needs no root to build, since a checkout-less classifier has no project Ruby to guard" do
+      expect(classify(".lain/config.rb")).to be_ordinary
+    end
+  end
+
+  describe "the project's own Ruby through the policy, as the board builds it", :seam do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @base = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:root) { "#{@base}/proj" }
+    let(:home) { "#{@base}/home" }
+    let(:policy) do
+      Lain::Sensitivity::Policy.new(sensitivity: described_class.new(home:, cwd: root, root:), home:, root:)
+    end
+
+    def gates?(name, input) = policy.gates?(Lain::Effect::ToolCall.new(tool_use_id: "t", name:, input:), cwd: root)
+
+    before do
+      FileUtils.mkdir_p(["#{root}/.lain", "#{root}/lib", home])
+      File.write("#{root}/.lain/config.rb", "x")
+      File.symlink("#{root}/.lain/config.rb", "#{root}/lib/innocent.txt")
+    end
+
+    it "parks a write_file and a read_file of .lain/config.rb" do
+      expect(gates?("write_file", { "path" => ".lain/config.rb", "content" => "x" })).to be(true)
+      expect(gates?("read_file", { "path" => ".lain/config.rb" })).to be(true)
+    end
+
+    it "parks a write through a symlink that lands on it" do
+      expect(gates?("write_file", { "path" => "lib/innocent.txt", "content" => "x" })).to be(true)
+    end
+
+    it "leaves an ordinary project file alone" do
+      expect(gates?("write_file", { "path" => "lib/a.rb", "content" => "x" })).to be(false)
+    end
+  end
+
   # A leading `/` anchors a pattern at the project root, which a committed
   # config can name wherever the checkout lives. A trailing `/` is a directory
   # and everything beneath it, and only the keys that add may say that.
