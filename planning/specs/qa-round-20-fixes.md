@@ -1,6 +1,6 @@
 # QA round 20 fixes: where a path lands, what a handoff keeps, and a Ruby config
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -228,8 +228,11 @@ The orchestrator owns these; cards hand back diffs.
 - **Interactive first-run trust prompt.** `Consent`'s confirmer was never wired in production. `lain
   trust` is 1 explicit place, works headless, and the refusal names it.
 - **Re-evaluating `config.rb` on a stat change mid-session.** Running Ruby is not idempotent the way
-  parsing TOML is. It is evaluated once per process; a change takes a restart, and T31's digest makes
-  a changed file a new trust decision anyway.
+  parsing TOML is. It is evaluated once per process for a given file's bytes, and T31's digest makes
+  a changed file a new trust decision anyway. Amended during execution (T39 review): a TRUSTED edit is
+  evaluated afresh in the same process, as the TOML reader re-read on a stat change; an untrusted one
+  refuses. So a long chat's `/survey` can see new rules while the board keeps its startup ones, the same
+  split the TOML reader had.
 - **Keying trust on the project root.** A leased worktree and the bench altitude subjects are other
   roots holding the same bytes, so root keying breaks bench grading and asks twice for 1 decision.
   Keying on the digest of the `.lain/*.rb` set is smaller and covers both (panel, 2026-09-29).
@@ -1288,7 +1291,7 @@ commit; T34 then removes the degrade postures.
 **Shared-file wiring:** `exe/lain`: `desc "trust [PATH]"` plus 1 line calling `CLI::Trust.new(...).call`; `ARCHITECTURE.md:1208-1210`: replace the "no sandbox" note with 1 paragraph on trust
 **Reachable from:** `DslCatalog#read`, loaded by `Summarizer::Catalog` from `cli/backend.rb:748-749` (this card passes `root: @root` there; today it defaults to `Dir.pwd` while the comment at `:745-746` claims an explicit root) and by `Isolation::Services` from `cli/isolation_backend.rb:194`; T39 adds the `Config` readers
 
-**Trust is keyed on content, not on a root.** The mark is `<state_home>/trust/<digest>`, where the digest covers the sorted set of `.lain/*.rb` paths and bytes. Identical bytes are the same consent wherever they sit, so a leased worktree of a trusted project and the bench altitude subjects need no second decision, and a changed byte is a new decision. `Trust` takes its state home from an injected `Paths`; readers that have none use `Paths.new`, the same ambient read every `Paths` consumer makes today, and `spec/support/isolated_state_home.rb:12` already isolates it per example.
+**Trust is keyed on content, not on a root.** The mark is `<state_home>/trust/<digest>`, where the digest covers the sorted set of `.lain/*.rb` paths and bytes. Identical bytes are the same consent wherever they sit, so a leased worktree of a trusted project and the bench altitude subjects need no second decision, and a changed byte is a new decision. `Trust` takes its state home from an injected `Paths`; readers that have none use `Paths.new`, the same ambient read every `Paths` consumer makes today, and `spec/support/isolated_state_home.rb:12` isolates it per process, not per example, so an example that pins a refusal injects its own `Paths`.
 
 **Acceptance criteria**
 
@@ -1581,3 +1584,97 @@ After the last card lands, with nothing else running (`pgrep -cf 'mise/installs/
 - 2026-09-29: start. Base `main` at `8c8bcb01`. `git worktree list`: `/home/tara/dev/lain 8c8bcb01 [main]` only. Branches: `main`, `flake/review`.
 - Hooks: pre-commit runs stock checks (shebangs, merge-conflict, yaml, eof, whitespace), shellcheck, cargo fmt/clippy/test and cargo-deny on Rust or Cargo files, `rake compile check` (rubocop plus the full parallel suite, about 100s at 12 workers) on any Ruby or Rust file, `yard-lint --staged` on Ruby, `bin/lint-gherkin-docs` on `planning/specs/*.md`, and `bin/lint-commit-msg` at commit-msg. A docs-only commit takes seconds. The suite cannot run beside another suite (shared `TMPDIR`), so cards land in windows.
 - Models: Sonnet 5.5 for every implementer and reviewer, except Opus 5.5 for the T2, T31 and T39 implementers and for every high-risk review (user direction 2026-09-29: use Sonnet 5.5 more aggressively).
+- 2026-09-29: T1, T3, T9, T33, T17, T5, T12, T23 started from `dc220f49` (Sonnet).
+- 2026-09-29: T35, T36, T7, T16 started from `dc220f49` (Sonnet).
+- 2026-09-29: T7 scope ruling: the middleware cannot see the approval mode, and `/mode` switches at runtime, so the refusal names `/mode ask` in wording true under either mode; no `ToolGuard` argument.
+- 2026-09-29: T36 scope change: `lib/lain/approval/risk.rb` added (a comment naming `Persister`). `project/consent.rb:139` keeps its mention until T39 deletes the file, so the card's grep returns only that line.
+- 2026-09-29: T6, T18, T20, T25, T26, T27, T28, T29, T30 started from `dc220f49` (Sonnet).
+- 2026-09-29: T7's first commit went red in the hook: seed 38780, `62_approval_spec.rb` (3 examples), green alone. Base on that seed: 21231 examples, 0 failures. T7 tree on that seed: 1 different failure, `input_pane_spec.rb` "a signal the human sends the pane goes to the chat" (IO timeout). Both are pty timing specs under load average 8 to 11 from about 15 agents. Switched to landing windows: commits run only when no agent runs specs.
+- 2026-09-29: T35 wiring: `ARCHITECTURE.md` has no Project ladder section and no doc names `root =`, so nothing to hand-apply; T37's sweep covers the rest.
+- 2026-09-29: T5 scope: wired the run ledger into interactive `/review` (`command/surface.rb`, `command/review.rb`, `cli/review.rb`). Follow-up, not in this plan: the model's `request_review` path (`ReviewSeams` / `Source::Repository`, built from `wiring.rb`) still gets a fresh ledger, so it masks every region and ignores releases. It fails closed.
+- 2026-09-29: note for T39 from T33's review: the builder evaluates the whole `config.rb` at once, so a typo in 1 table refuses all 4 readers until T34 makes that a launch refusal.
+- 2026-09-29: T6 ruling: the park reason is not carried on the pending (it would cross the Escalation ladder). `Approval::PathGate` re-asks the same `Sensitivity::Policy`, with a WHY comment naming the coupling to `Middleware::Gate`. A disagreement falls back to today's routing, so it opens no hole. **T2 must judge `PathGate` by landing too, with a spec**; its brief says so.
+- 2026-09-29: pre-existing, outside this plan: under `LANG=C`, 11 consolidate examples fail in `Canonical.utf8` through `Role#child_context` (found by T23's review; no T23 code in the stack).
+- 2026-09-29: T7 landed `8e5530ca`.
+- 2026-09-29: T1 landed `cb1fb2e7`. T35's first commit went red: `consent_spec.rb:693` (a real failure, the example tested the removed config rung; the implementer rewrote it) and `tty_spec.rb:1517` (documented flake, green alone). Base `cb1fb2e7` on seed 18931 was also red, on `62_approval_spec.rb:158`, a documented flake.
+- 2026-09-29: user ruling on flakes: retry once when every red example is named in `docs/toolchain-traps.md` and passes alone, and keep the box quiet during a landing. Mechanism: agents run specs through a wrapper holding a shared lock; a landing holds a gate plus the exclusive lock for its whole commit.
+- 2026-09-29: T35 landed `cb46163b` (1 retry: `support_headless_editor_spec.rb:129`, listed flake, green alone). T36 red on `root_defaults_spec.rb:616` (a real miss: its allowlist named the deleted writer); back to its implementer.
+- 2026-09-29: T33's first commit red on `input_pane_spec.rb:342` (seed 1410; its watchdog also cut the worker, so the count read 19413). Green 3 of 3 alone, red in 2 whole-suite runs on different trees. User ruling: record it in `docs/toolchain-traps.md` (`cb72ffd0`) and keep the retry-once rule.
+- 2026-09-29: T33's second commit failed with 21256 examples, 0 failures: the orchestrator appended to this plan file during the hook, which pre-commit reads as a hook modifying a stashed file. Log lines now go to a scratch file while a batch runs.
+- T8 note from T4: `survey/projection.rb`'s residual comment clause "`machine host login sam password hunter2` has no assignment shape and is not seen;" is false once T4 lands; delete that clause.
+- 2026-09-29: T4 ruling after its second review: pgpass escaped IPv6 host and netrc order-free login/password (with `default`) are fixed; a login-less netrc entry stays unseen, recorded in a WHY comment, because requiring login is what keeps prose region-free. No third review.
+- 2026-09-29: T33 landed `47e9caef`. T9 landed `561905ed` (1 retry: `tty_spec.rb:1517`, listed, green alone). T26 landed `570115d6`. T27 landed `2b2d827e`. T12 red on 3 unlisted `repl_delivery_spec.rb` examples; back to its implementer.
+- 2026-09-29: T10, T11 started from `2b2d827e` (Sonnet).
+- 2026-09-29: T4 approved after 2 reviews; unescaped IPv6 pgpass hosts stay unseen (invalid pgpass syntax).
+- 2026-09-29: T5 landed `f88c0db9`. T17 red on 2 unlisted `inbox_spec.rb` examples; back to its implementer.
+- 2026-09-29: T8 started from `f88c0db9` (Sonnet).
+- 2026-09-29: T6 red on `neovim_buffers_spec.rb:287` (seed 7814, socket connect before the headless editor listened), green 3 of 3 alone; recorded in the flake ledger `56c839cf` under the same ruling as the input pane spec.
+- 2026-09-29: T12 fixed: `repl_delivery_spec.rb`'s response double (a Struct with only `text`) is now a real `Lain::Response`; 6829 examples over every Repl, Ask or Response spec, 0 failures.
+- 2026-09-29: T17 fixed: `Pending` keeps a nil-digest item, and `inbox_spec.rb:124` reaches the stale refusal by withdrawing a live question during the read; its reviewer ruled the intent kept.
+- 2026-09-29: T6 landed `2ac60622`, T16 `692101b6`, T18 `44628bdd`, T20 `7393a784`. T19, T21 started from `30725381` (Sonnet).
+- 2026-09-29: T25 landed `30725381`. T28 landed `8e9a7504` (1 retry, `input_pane_spec.rb:320`, listed). T29 red: `plain_chat_prompt_guards_spec.rb:527` is on the flake list but fails 3 of 3 alone on T29's tree, a real regression; back to its implementer.
+- 2026-09-29: T11 review REQUEST-CHANGES (seam spec could not fail on the resume scenario). For T38: `planning/qa/scenarios/session-and-window.md:278-280` still expects the default compact fallback in the session header; T11 stops writing it.
+- 2026-09-29: pre-existing, outside this plan: under `LANG=C`, `Skill::Catalog.split_front_matter` (`skill/catalog.rb:96`) raises ArgumentError (found by T11's review).
+- 2026-09-29: T30 landed `80a08937`. T3 red on `tty_spec.rb:1517` (listed), which also went red 1 of 3 alone on unchanged HEAD `80a08937`, so it is intermittent alone. The flake check now runs each red example alone 3 times and needs 2 green. T8, T10, T12, T17, T19 and T21 approved.
+- 2026-09-29: T3 red twice on flakes unrelated to it: `support_headless_editor_spec.rb:129` (listed) then `agent_spec.rb:237` (descriptor count, green 3 of 3 alone), recorded in the ledger `f2a71d26`.
+- 2026-09-29: T3 landed `f1b237c8`, T36 `68d288fd`. T23 red on `cli_spec.rb:222` (memory read-back; its own area); back to its implementer.
+- 2026-09-29: T2 started from `68d288fd` (Opus).
+- 2026-09-29: T29 approved after a second review: close_row now writes the row end and the verdict in 1 print, so the reader's cancel cannot land between them. The race is timing-dependent, so no spec reliably pins the single write.
+- 2026-09-29: T4 landed `d93cdad0`. T12's commit exited 1 with 0 failures over 12 finished workers, 20315 examples against about 21340 usual, and an nvim `Errno::ECONNRESET` in the log; retried once as a diagnostic. T23 fixed `cli_spec.rb`'s memory read-back expectation.
+- 2026-09-29: T12 landed `6e9ce2ca`, T17 `fb6d2389`, T10 `b93da4cd`, T8 `d1d3fb1b`, T19 `f6c553fc`, T21 `e96c765b`, T29 `95fd0ffa`. T23 red twice on `input_pane_spec.rb:342`; base `95fd0ffa` on seed 27787 green, T23's tree on the same seed red on a different example (`annotate_spec.rb:299`), so the flakes move between runs.
+- 2026-09-29: user ruling: up to 2 retries when every red example is green 2 of 3 alone and no example is red on 2 attempts.
+- 2026-09-29: T2 done (Opus); it applies its own `board_build.rb` line (only later cards name that file).
+- 2026-09-29: T23 landed `545da01c`. T13, T15, T22, T24 started from `545da01c` (Sonnet).
+- 2026-09-29: T24 landed `56a73cb5`.
+- 2026-09-29: T22 landed `7bca70f8`.
+- 2026-09-29: T15 landed `58533771` (its close-path spec moved to a real `Docent#ask` after the second review found the first passed by construction).
+- 2026-09-29: T13 review REQUEST-CHANGES: the control block ran on the producer's thread with no lock against the chat fiber (probe: iteration 2 after the stop). Ruling: hold the line while nothing is published and let the chat fiber run the real /goal command; accepted caveat that a generation-0 line meant for a later command> waits for you>.
+- 2026-09-30: T13's second review still requested changes (the poll-race fix could run a deferred prompt under a different goal, skip the quiet-fleet check, and journal a dropped iteration). User chose a third, contained round.
+- 2026-09-30: T2 approved on its second review with 2 required fixes (a relative dangling target's `..` resolved as a string let `write_file` create `~/.ssh/id_kern` under `/mode auto`; a stale ARCHITECTURE paragraph). Follow-ups, not in this plan: the nvim approval list shows only the link's name; `Survey::Walk` does not re-spell a link under a symlinked home.
+- 2026-09-30: T2 landed `5cffb3a9`.
+- 2026-09-30: T11 approved on its second review. Integration note: `bin/spec-census --check` fails on main (assertions 200 against a ceiling of 184); T11 adds none of them. To trace at close-out.
+- 2026-09-30: T11 landed `5561288e`.
+- 2026-09-30: T31 started from `5561288e` (Opus).
+- 2026-09-30: T13 landed `c59bbf7f` after its third review (the orchestrator added its ARCHITECTURE line and fixed one over-long spec line the hook caught).
+- 2026-09-30: T14 started from `c59bbf7f` (Sonnet).
+- 2026-09-30: T31 review APPROVE-WITH-FIXES (gate holds; fixes: escaped names incl. bidi, pins for no-second-read, framing and FIFO skip, documented top-level-only scope, a launch-level spec). README and docs/commands.md for `lain trust` moved to T37.
+- 2026-09-30: user direction: the suite runs at LAIN_SPEC_WORKERS=8 for now (mempalace mining raises base RAM use; fewer workers may also cut contention flakes).
+- 2026-09-30: T31 landed `05f24904` (first attempt red on a real miss: `error_taxonomy_discipline_spec.rb` wanted `Trust::Unreadable` told apart by a spec).
+- 2026-09-30: T32 started from `05f24904` (Sonnet).
+- 2026-09-30: T14 review APPROVE-WITH-FIXES: no byte lost or doubled at the publish boundary; a /stop typed with no ask in flight jumped ahead of earlier lines (fix: only a stop the Intake lifts jumps). Accepted limits: on the TTY /goal off acts at the next iteration boundary; a half-typed line waits for Enter. Pre-existing, outside this plan: under LANG=C a multibyte line hangs you>.
+- 2026-09-30: user killed-on-request 6 orphaned `lain chat --provider ollama --no-journal` processes (ppid 1, no tty; needed SIGKILL). All started after T16 landed (`692101b6`, 17:28), none before; up_spec.rb:324's real chat in a tmux pane is the only spec launching that command line. New card T16b (not in the original plan): a chat whose terminal is gone must still exit on HUP or TERM. Started (Opus).
+- 2026-09-30: T14 landed `0a606a3b`. T32 red on `project_dir_spec.rb:628` (a hand-spelled .lain path; back to its implementer).
+- 2026-09-30: T32 landed `bb811ee7`.
+- 2026-09-30: T39 started from `bb811ee7` (Opus).
+- 2026-09-30: T39 review APPROVE-WITH-FIXES (0 blockers): bench altitude must check trust before any paid arm runs; port consent_spec's exact-match examples; pin the digested-bytes and per-path memo; memoise refusals; a non-file config.rb refuses. Plan's rejected-options entry on re-evaluation amended.
+- 2026-09-30: T16b review APPROVE-WITH-FIXES: the race reproduced (old code: 7 of 51 tmux kills and 2 of 6 PTY runs left a chat that ignored TERM; fixed: 0 of 102 and 0 of 25). Follow-ups, not in this plan: (high) once a conversation has ended, TERM and HUP should take their default action so any future leaked fiber cannot keep the process alive (Repl#run or Signals); pre-existing, under LC_ALL=C `lain chat` crashes at boot in skill/catalog.rb:96.
+- 2026-09-30: T16b (added during execution) landed `72aebda2`; that suite left no orphaned chat.
+- 2026-09-30: T39 landed `eefc260a`.
+- 2026-09-30: T34 started from `eefc260a` (Sonnet).
+- 2026-09-30: T34 review REQUEST-CHANGES: `lain up`'s preflight never evaluated config.rb, so a broken or untrusted config built the cockpit and died only in the chat pane (card scenario 2 unmet). Fix: preflight loads config.
+- 2026-09-30: T34 landed `286b3503`.
+- 2026-09-30: T37 started from `286b3503` (Sonnet).
+- 2026-09-30: integration check: `bin/spec-census --check` was already failing at the plan's base (`8c8bcb01`: assertions 199 against a ceiling of 184, pre-existing, outside this plan). This plan added 2 entries (`sensitivity_spec` "still accepts an exemption of some other project file", `supervisor_spec` "does not wait on a one-shot when draining", both sole_raise_error) and removed 1; card SC fixes the 2 so the plan adds none.
+- Main session slip: T37's worktree was cut without copying lib/lain/lain.so; the agent copied it.
+- 2026-09-30: T37 landed `5841e3cd`. SC (spec-census cleanup of this plan's 2 entries) landed `77bd5b4a`. T38 started from `5841e3cd` (Sonnet).
+- 2026-09-30: T38 landed `8409c373`. Every card has landed, plus 2 added during execution: T16b (`72aebda2`, a chat whose terminal is gone ignored HUP and TERM after T16) and SC (`77bd5b4a`, this plan's 2 spec-census entries).
+
+### Close-out (2026-09-30)
+
+Integration checks, on `77bd5b4a` (T38 changes only QA scenario prose), nothing else running:
+1. `bundle exec rake pspec` at `LAIN_SPEC_WORKERS=8`: 21508 examples, 0 failures, 13 pending, 147s. The base (`dc220f49`) ran 21231, so no worker was lost.
+2. `bundle exec rubocop`: 1806 files, 0 offenses. `pre-commit run --all-files`: pass on the second run; the first went red on `input_pane_spec.rb` "a signal the human sends the pane goes to the chat", a ledger flake, green 3 of 3 alone.
+3. `bin/comment-census --check-tickets` and `--check-load-order`: 0 unclassified. `bin/zeitwerk-census --check`: 0 in every tier.
+4a. `grep -rn "config.toml\|Tomlrb\|Consent" lib exe`: only the word "Consent" in a trust.rb comment. `bundle exec lain trust <scratch> --yes` wrote its mark and exited 0.
+4. `bin/spec-census --check`: FAILS, assertions 198 against a ceiling of 184. Pre-existing: the plan's base `8c8bcb01` read 199. This plan's net change is minus 1.
+5. `grep -rn require_relative lib/`: 0.
+6. Manual QA the human owes (the plan's list), with at most 4 concurrent forks. Steps T38 wrote but could not drive are marked in the scenarios; prove these first: hello mid-ask as the next prompt, a half-typed /goal off, cockpit /goal off; B-1, B-2, B-3, B-4 and C-1 in the cockpit; the --secret-oracle gated path, the symlink table under a worker and /mode plan, the D-2 note mask, H-1 cat rows, RB-1 three handoffs, RB-2 resume, RB-3 lone-turn handoff, docent /stop and G-2 anchors, max_tokens and 410, bench arms ceiling and leftover worktrees, pre-spend refusals, E-3 SIGHUP, lain trust, E-1, E-2 and E-5, G-4.
+
+Follow-ups, not in this plan:
+- (high) Once a conversation has ended, TERM and HUP should take their default action, so a future leaked fiber cannot keep a chat alive (`Repl#run` or `Signals`).
+- The model's `request_review` path gets a fresh release ledger, so it masks every region and ignores releases (fails closed).
+- The nvim approval list shows a link's name only; `Survey::Walk` does not re-spell a link under a symlinked home.
+- Under `LANG=C`/`LC_ALL=C`: `lain chat` crashes at boot in `skill/catalog.rb:96`, 11 consolidate examples fail in `Canonical.utf8`, and a multibyte line hangs you>.
+- `bin/spec-census` assertions ceiling (198 against 184), pre-existing.
+- `/manual-qa` should reap its own processes and check for orphans at close.
+- The pty and nvim timing specs flake about once per full run; 4 were added to `docs/toolchain-traps.md` during this run.

@@ -1950,7 +1950,7 @@ XDG path relative, which put machine state back inside the user's repository)
    - Deliberately deferred, each with its reason recorded: `bench arms`' ceiling abort,
      a consumer for `Telemetry::TruncatedStream`, and scoping the session write-set across a rebind.
 
-50. **Planned (2026-09-29)**: `planning/specs/qa-round-20-fixes.md`, the QA round-20 discharge
+50. **Done (2026-09-30)**: `planning/specs/qa-round-20-fixes.md`, the QA round-20 discharge
    (`planning/qa-findings-round20-2026-09-29.md`) over every finding rated LOW-MED or higher, plus
    `.lain/config.toml` replaced by a trust-gated `.lain/config.rb` (H-3). 39 cards, panel-reviewed.
 
