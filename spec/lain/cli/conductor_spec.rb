@@ -521,6 +521,35 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
+  # The breaker's Break is raised into the prompt thread from another thread, so
+  # it can land between a fiber being spawned and the local that names it being
+  # assigned. The countdown here spawns and is then broken before it can keep its
+  # task, which is that race held still: a fiber nobody can name used to keep the
+  # reactor, and so the chat, alive forever with every later signal dropped.
+  describe "a Break landing while the idle prompt is still being set up" do
+    it "leaves none of the prompt's fibers running, so the read returns" do
+      broken_mid_offer = Class.new do
+        def offering(_shutdown, task, **)
+          task.async { loop { Async::Task.current.sleep(0.01) } }
+          raise Lain::CLI::PromptBreaker::Break, :sigterm
+        end
+
+        def withdraw = nil
+      end.new
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new,
+                                  countdown: broken_mid_offer)
+      line = :unset
+      # Inside a chat-wide reactor, as the repl reads it: that reactor returns
+      # only once every fiber under it has ended.
+      reader = Thread.new { Sync { line = conductor.read_prompt("you> ") } }
+
+      expect(reader.join(5)).to be(reader)
+      expect([line, conductor.closed?]).to eq([nil, true])
+    ensure
+      reader&.kill
+    end
+  end
+
   # Conductor is the one place a user prompt is answered, so #read_prompt
   # is the run clock's one write site -- a signal-ended (Break) or EOF (nil)
   # prompt is NOT user input and must not record.

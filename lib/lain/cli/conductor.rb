@@ -415,22 +415,35 @@ module Lain
         breaker.dispose
       end
 
+      # Every fiber is spawned through one barrier that exists before any of
+      # them, because the breaker's Break is raised from another thread and can
+      # land between a spawn and the local that names it. A fiber no local names
+      # outlives this read, and one still looping keeps the chat's reactor, and
+      # so the process, alive after the conversation has ended, with every later
+      # signal routed nowhere.
+      def read_you(task, text, breaker)
+        idle = Async::Barrier.new(parent: task)
+        read_idle(idle, text, breaker)
+      ensure
+        idle&.stop
+      end
+
       # `you>` read as the run of a countdown of its own, which only a signal
       # arriving while an answer stands in front of `you>` ever opens
       # ({IdleSignals}). `you>` steps aside for that countdown too, or it would
       # take the terminal back the moment the answer stepped aside. Settled as
       # {#supervise} settles an ask, so an expiry closes the session before the
       # countdown's fibers are stopped.
-      def read_you(task, text, breaker)
+      def read_idle(idle, text, breaker)
         @prompting = true
         # Recording FIRST, before a prompt exists to signal at: a signal arriving
         # while this is still being set up is kept in the ingress and routed when
         # the fiber below starts, rather than reaching a sink that is still NULL.
         recorder = IdleSignals.new(rail: @rail)
         route(recorder)
-        reading = task.async(finished: false) { aside_of_countdown(:you, text) }
+        reading = idle.async(finished: false) { aside_of_countdown(:you, text) }
         shutdown = @shutdown = idle_shutdown(reading)
-        routing, coordinator, ticker_task = idle_fibers(task, shutdown, recorder, breaker)
+        routing, coordinator, ticker_task = idle_fibers(idle, shutdown, recorder, breaker)
         reading.wait.tap { settle(shutdown, coordinator) }
       ensure
         @prompting = false
@@ -443,10 +456,10 @@ module Lain
       # The three fibers an idle `you>` needs beside its read -- the recorded
       # signals' routing, the coordinator, and the ticker -- and the rail's own
       # offering of the countdown they drive, which {#teardown} withdraws.
-      def idle_fibers(task, shutdown, recorder, breaker)
-        @countdown.offering(shutdown, task, keys: @idle_keys)
-        [task.async { routed_idle(recorder, shutdown, breaker) }, task.async { shutdown.coordinate },
-         task.async { @ticker.run(shutdown, task, bindings: @idle_keys) }]
+      def idle_fibers(idle, shutdown, recorder, breaker)
+        @countdown.offering(shutdown, idle, keys: @idle_keys)
+        [idle.async { routed_idle(recorder, shutdown, breaker) }, idle.async { shutdown.coordinate },
+         idle.async { |ticking| @ticker.run(shutdown, ticking, bindings: @idle_keys) }]
       end
 
       def idle_shutdown(reading)

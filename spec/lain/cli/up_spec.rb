@@ -317,10 +317,10 @@ RSpec.describe Lain::CLI::Up do
     #
     # So the environment carries one, deliberately. What must hold is that the
     # session is still built, nothing is warned about, and the pane's own line
-    # neutralises the variable whatever the server it landed on holds. (The
-    # pane still dies moments later, as it does in every example here: it
-    # re-execs $PROGRAM_NAME, which under rspec is rspec. What the pane's SHELL
-    # does with the scrub is pinned separately, against a real `sh`.)
+    # neutralises the variable whatever the server it landed on holds. The pane
+    # here execs this checkout's own `lain chat`, so it stays up at `you>`
+    # until the server is torn down, and then it must end with it. (What the
+    # pane's SHELL does with the scrub is pinned separately, against a real `sh`.)
     it "creates for real, with a real pre-flight, even when LAIN_PREFLIGHT is exported", :seam do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
       real_preflight = Lain::CLI::Up::ChatPreflight.new(shell_out_factory: Mixlib::ShellOut.public_method(:new),
@@ -334,8 +334,42 @@ RSpec.describe Lain::CLI::Up do
                                           "#{chat_args.join(" ")}").call
       end
 
+      chat = chat_pane_pid
       expect([report.created, report.warnings]).to eq([true, []])
       expect(session_survives_its_own_launch?).to be true
+      expect(lain_chat?(chat)).to be true
+      expect(outlives_its_server?(chat)).to be false
+    ensure
+      kill_leftover_chat(chat)
+    end
+
+    # The chat pane's process, which `exec` makes the lain chat itself.
+    def chat_pane_pid
+      # rubocop:disable-next Lint/InterpolationCheck
+      tmux("list-panes", "-t", "#{session}:chat", "-F", '#{pane_pid}').lines.first.to_i
+    end
+
+    # Tearing the server down hangs the chat up. One that outlived it once sat
+    # orphaned with no terminal, deaf to every later signal, until a SIGKILL.
+    def outlives_its_server?(pid)
+      system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL)
+      deadline = Time.now + 10
+      sleep(0.05) while Time.now < deadline && lain_chat?(pid)
+      lain_chat?(pid)
+    end
+
+    # By its command line, so a pid the kernel has since handed to another
+    # process is never mistaken for the chat.
+    def lain_chat?(pid)
+      pid.to_i.positive? && File.read("/proc/#{pid}/cmdline").split("\0").each_cons(2).include?([lain_exe, "chat"])
+    rescue Errno::ENOENT, Errno::ESRCH
+      false
+    end
+
+    def kill_leftover_chat(pid)
+      Process.kill("KILL", pid) if lain_chat?(pid)
+    rescue Errno::ESRCH
+      nil
     end
 
     # The blocker's signature, and why THIS is the assertion rather than "the
