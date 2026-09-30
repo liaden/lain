@@ -2,14 +2,14 @@
 
 module Lain
   class Config
-    # The `[epics]` table, its own collaborator rather than a private method on
+    # The `epics` table, its own collaborator rather than a private method on
     # {Config}: other top-level tables are coming, and each one earns exactly
     # this shape -- one small class that knows its own keys and its own allowed
     # values, refusing through {Config::Refusal} -- rather than {Config}
     # accreting another `*_from` method per table it learns to read.
     #
-    # The TOML key is `home` (`[epics]` / `home = "repo"`); the Ruby reader stays
-    # `#epics_home`. `[epics] epics_home` would stutter (`epics.epics_home`).
+    # The verb's keyword is `home` (`epics home: :repo`); the Ruby reader stays
+    # `#epics_home`. `epics epics_home:` would stutter (`epics.epics_home`).
     Epics = Data.define(:home, :gates, :width)
 
     class Epics
@@ -57,7 +57,7 @@ module Lain
         home.to_sym
       end
 
-      # Named `epics_home` rather than `[epics] home`, because that is the Ruby
+      # Named `epics_home` rather than `epics home:`, because that is the Ruby
       # reader a caller who built this value by hand has in front of them --
       # which is also why this refusal names no table.
       #
@@ -92,7 +92,7 @@ module Lain
         value
       end
 
-      # Named `[epics] width` rather than a Ruby reader, because the TOML
+      # Named `epics width:` rather than a Ruby reader, because the TOML
       # spelling and the reader are the same word -- so the refusal can send a
       # reader to the line of TOML, which {Refusal} says is the point of it.
       #

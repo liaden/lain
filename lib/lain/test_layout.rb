@@ -6,11 +6,10 @@ module Lain
   # Where a project keeps its tests: which directories hold source, which hold
   # each level's tests, and which test paths are exempt from the mirror.
   #
-  #   [tests]
-  #   preset = "rspec"
-  #   source_roots = ["app"]
-  #   level_roots = { unit = "spec/unit", seam = "spec/seam" }
-  #   exempt = ["spec/*_discipline_spec.rb"]
+  #   tests preset: :rspec,
+  #         source_roots: %w[app],
+  #         level_roots: { unit: "spec/unit", seam: "spec/seam" },
+  #         exempt: %w[spec/*_discipline_spec.rb]
   #
   # The mirror is relative to a source root, so `app/models/order.rb` mirrors
   # to `spec/unit/models/order_spec.rb`, never `spec/unit/app/models/...`.

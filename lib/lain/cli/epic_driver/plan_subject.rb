@@ -22,8 +22,8 @@ module Lain
       # code they describe, so the file the layout mirrors from routinely does
       # not exist yet; only its placement under a declared source root is
       # checked. That check, and the level's, happen only when the project
-      # declares a layout at all -- one with no `[tests]` table is refused by
-      # the test step, naming `[tests]`, rather than here naming an empty list
+      # declares a layout at all -- one with no `tests` table is refused by
+      # the test step, naming `tests`, rather than here naming an empty list
       # of roots.
       class PlanSubject
         SUBJECT = "Subject"
@@ -59,7 +59,7 @@ module Lain
           placed(canonical!(found.first, plan), plan, layout)
         end
 
-        # Shape before placement, and refused the way a `[tests]` source root
+        # Shape before placement, and refused the way a `tests` source root
         # is: `app/../../etc/passwd.rb` passes any prefix test, and the layout
         # would then mirror a test file to a path outside the checkout
         # altogether -- which the write-time guard admits, since it lets a test

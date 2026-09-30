@@ -23,7 +23,7 @@ module Lain
       # == They are two vocabularies, and the resemblance is a trap
       #
       # The remembered `rules` are APPROVAL rules -- call SHAPES a trusted
-      # config pre-approves, which GRANT. The `[sensitivity]` table's rules are PATH
+      # config pre-approves, which GRANT. The `sensitivity` table's rules are PATH
       # rules, which restrict and grant nothing. Both arrive at
       # {Switchboard.for} as keywords, and one silently accepted where the
       # other belongs would be a config file's denials read as permissions.
@@ -139,7 +139,7 @@ module Lain
         # method is what makes a `deny` reachable in a real session.
         #
         # A config that will not load refuses the launch, and so does a
-        # malformed `[shell]` table: the table RESTRICTS, so dropping it fails
+        # malformed `shell` table: the table RESTRICTS, so dropping it fails
         # OPEN, and a session quietly running without a project's refusals is
         # the worst outcome available.
         #
@@ -172,7 +172,7 @@ module Lain
         #
         # @param project [Lain::Project]
         # @param paths [Paths]
-        # @param table [Lain::Sensitivity::Rules] the compiled `[sensitivity]`
+        # @param table [Lain::Sensitivity::Rules] the compiled `sensitivity`
         #   table. REQUIRED, and it is {.for} that compiles it: three readers
         #   need the same one.
         # @return [Lain::Sensitivity::Policy]
@@ -236,7 +236,7 @@ module Lain
         end
 
         # A config that will not load refuses the launch, and so does a
-        # malformed `[sensitivity]` table. This table RESTRICTS, so dropping it
+        # malformed `sensitivity` table. This table RESTRICTS, so dropping it
         # fails OPEN, and a session quietly running with a project's denials
         # un-parsed is the worst outcome available.
         #
@@ -446,7 +446,7 @@ module Lain
           # @param home [String] the HOME the home-anchored rules resolve against
           # @param cwd [String] the session's working directory, which a
           #   call's own relative `cwd` resolves against
-          # @param rules [Lain::Sensitivity::Rules] the compiled `[sensitivity]` table
+          # @param rules [Lain::Sensitivity::Rules] the compiled `sensitivity` table
           # @param root [String, nil] the project root its `/`-anchored patterns
           #   are read from, on {Lain::Sensitivity}'s terms. Apart from
           #   `confinement` because a root that confines nothing still anchors a

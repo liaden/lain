@@ -4,7 +4,7 @@ module Lain
   class Config
     Isolation = Data.define(:retain_days, :rebase_retries, :diff_algorithm, :conflict_style)
 
-    # The `[isolation]` table: how long a worker's checkout may outlive its
+    # The `isolation` table: how long a worker's checkout may outlive its
     # lease, how many times a worker is asked to rebase itself before handback,
     # and the merge strategy lain puts on git's command line.
     #

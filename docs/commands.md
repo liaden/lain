@@ -134,7 +134,7 @@ from. Two things are true and worth knowing before you reach for it:
   over the epic's working branch rather than leasing through this flag.
 - **A chat's workers do hand their commits back.** A worker brings itself current first, and the
   merge into the parent checkout is serialized across processes, so a `lain epic land` cannot
-  interleave with a live chat's merge. `[isolation]` tunes both halves.
+  interleave with a live chat's merge. The `isolation` verb tunes both halves.
 - **One concurrent isolated run per project.** The worktree root is keyed on the repository and
   worker ids restart at 1 per process, so a second `--isolation worktree` run in the same repo
   reaps the first's live checkouts. That is a deliberate trade — it is what lets a *crashed* run's
@@ -250,6 +250,19 @@ Knob guidance from one session's friction signals. Offline, deterministic, no AP
 Reads the journal back and tells you which knobs the run was fighting: approval churn,
 compaction thrash, iteration ceilings.
 
+### lain trust
+
+```
+lain trust [PATH]          # show the project's .lain/*.rb, ask [y/N]
+lain trust --yes [PATH]    # grant without asking, for a headless run
+```
+
+Shows every top-level `.lain/*.rb` of the project at `PATH` (default: the current project), with
+control characters escaped, and on a yes records a mark for those exact bytes. Trust covers those
+files only, not what they `require` or `load`. Any changed byte, added file or rename is a new
+decision. A no, or end of input, records nothing and exits non-zero, so `lain trust && lain chat`
+stops there. A project with no `.lain/*.rb` has nothing to trust.
+
 ### lain consolidate
 
 Court-clerk pass: distill a session's completed subagent lineages into memory.
@@ -323,7 +336,7 @@ reason cannot be read means keep. Before anything is removed, the committed `HEA
 of any dirty state — is anchored under `refs/lain/worker/*`, so a reaped tree still cannot cost a
 commit. An `epic/<slug>` branch is deleted only once its tip has moved from its marker, is an
 ancestor of `main`, and is checked out nowhere. How long a released checkout is kept is
-[`[isolation] retain_days`](#isolation).
+[`isolation retain_days:`](#isolation).
 
 Runs take a per-repository lock, so a second concurrent `gc` does nothing and says so.
 
@@ -773,13 +786,42 @@ End the session. Same as a bare `quit`.
 
 ---
 
-## Configuration tables
+## Configuration (config.rb)
 
-Two tables in `.lain/config.toml` govern what the commands above do. Both are read by their own
-**strict** reader: an unknown key is refused by name, in one pass, listing the keys that do exist —
-a restricting table has to refuse a typo loudly rather than silently leave the restriction off.
+`.lain/config.rb` is Ruby, evaluated once per launch, with 6 verbs: `epics`, `approval`,
+`isolation`, `sensitivity`, `shell` and `tests`. Each verb may appear once, and every one is
+optional. Each is read by its own **strict** reader: an unknown key is refused by name, listing the
+keys that do exist, because a restricting table has to refuse a typo loudly rather than silently
+leave the restriction off.
 
-### [isolation]
+The file runs only after [`lain trust`](#lain-trust) has recorded its bytes. A file that is
+untrusted, or that will not load (a Ruby error, an unknown verb, a refused value), refuses every
+launch before anything starts, naming `.lain/config.rb:LINE`.
+
+```ruby
+epics home: :repo, width: 3 do
+  gate :research, :hands_off
+end
+approval do
+  allow "bash", command: "bundle exec rspec"
+  deny_tool "web_fetch"
+end
+isolation retain_days: 14
+sensitivity gated: %w[secrets.yml]
+shell exclude: %w[curl]
+tests preset: :rspec
+```
+
+* `epics`: `home:` (`:xdg` by default, or `:repo` to keep epics under `.lain/epics/`), `width:`, and
+  one `gate stage, policy` line per stage in the block.
+* `approval`: `allow "tool", field: value` and `deny "tool", field: value` match one tool call by
+  input; `deny_tool "tool"` refuses a whole tool and takes no fields.
+* `isolation`, `tests`: documented below.
+* `sensitivity`: `denied:`, `gated:` and `exempt:`, each a list of path globs.
+* `shell`: `exclude:`, a list of program names or globs the shell tool refuses. `exclude: %w[*]` is
+  the strictest setting.
+
+### isolation
 
 How a worker's checkout is kept, brought current, and merged. Every key has a default, so the
 table is optional and an absent one behaves exactly like the defaults below.
@@ -795,22 +837,20 @@ Both merge knobs ride **lain's own command line**, never your `git config`: a wo
 not depend on the machine it ran on, and it must not rewrite a setting the human chose for their own
 checkout. `rerere.enabled=false` is pinned on the same line for the same reason.
 
-```toml
-[isolation]
-retain_days = 14
-rebase_retries = 3
+```ruby
+isolation retain_days: 14, rebase_retries: 3
 ```
 
-A bad value is refused naming the key and what would have been legal —
-`[isolation] retain_days = 0 is not a whole number of days, at least 1`.
+A bad value is refused at `.lain/config.rb:LINE`, naming the key and what would have been legal:
+`retain_days: 0 is not a whole number of days, at least 1`.
 
-### [tests]
+### tests
 
 A target project's test layout: where its source lives, where each level of test goes, and what is
 exempt. This is what holds lain's own writes — and its subagents' — to the layout a project already
 keeps.
 
-**Enforcement is opt-in.** A project with **no `[tests]` table is refused nothing**: the layout
+**Enforcement is opt-in.** A project with **no `tests` verb is refused nothing**: the layout
 resolves to `TestLayout::None`, no write is ever refused for its path, and the session journals a
 single `test_layout_absent` record to say the guard ran with nothing to enforce. Nothing is
 auto-detected on your behalf, deliberately — a detected preset would impose level roots on a project
@@ -824,12 +864,9 @@ that never chose them and start refusing its existing flat specs as strays.
 | `exempt` | the preset's, which is always empty | Globs no refusal applies to. A preset exempts nothing by design — an exemption is a project's own decision to state. |
 | `default_level` | unset — `unit` wherever the table declares that level, or the only level that mirrors | Where a test that names no level belongs: what the guard holds an untagged test to, and where `/implement-epic` writes an issue's failing tests. Must name a level the table declares. Required only when the table mirrors two or more levels and none is `unit`, which is otherwise refused rather than settled by whichever key was typed first. |
 
-```toml
-[tests]
-preset = "rspec"
-source_roots = ["lib", "app"]
-exempt = ["spec/fixtures/**"]
+```ruby
+tests preset: :rspec, source_roots: %w[lib app], exempt: %w[spec/fixtures/**]
 ```
 
 Omitted keys inherit the preset's, so the table above changes the source roots and the exemptions
-and keeps `rspec`'s level roots. A `[tests]` table naming no `preset` is refused, listing the four.
+and keeps `rspec`'s level roots. A `tests` verb naming no `preset` is refused, listing the four.

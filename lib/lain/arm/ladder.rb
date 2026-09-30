@@ -10,7 +10,7 @@ module Lain
     # A frozen Array, not a term algebra -- nothing that walks it needs one.
     # Gate policy is deliberately absent from this class: WHICH answers a
     # rung's gate gives is a {Approval::Gate::Policy} concern, decided by
-    # `[epics.gates]` or a bench's own policy map, and folding it into the
+    # `epics` gates or a bench's own policy map, and folding it into the
     # ladder would make two arms differing only in policy also differ in the
     # stages they visit -- exactly the confound a bench comparing them must
     # not introduce. Two arms under an all-approve stub visit the SAME rungs

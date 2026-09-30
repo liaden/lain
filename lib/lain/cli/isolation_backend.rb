@@ -81,7 +81,7 @@ module Lain
       # different subdirectories of one project lease out of one root (so the
       # clearing of a leftover checkout finds it), while two projects never
       # collide. Under {Paths#state_home}, not the tmpfs runtime dir, because a
-      # checkout is retained for `[isolation] retain_days` and a reboot must not
+      # checkout is retained for `isolation retain_days:` and a reboot must not
       # cut that short.
       #
       # @param repo [String] the repository, as {Project::Repository.nearest} found it

@@ -129,7 +129,7 @@ module Lain
 
     # @param stage [#to_s] an {Epic::Stage} or its name
     # @return [String] the gate policy that stage runs under, "interactive"
-    #   unless `[epics.gates]` says otherwise
+    #   unless `epics` gates says otherwise
     def gate_policy_for(stage) = epics.gates.policy_for(stage)
 
     # `instance_of?`, not `is_a?`: equality must be symmetric, and a subclass

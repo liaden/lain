@@ -137,11 +137,11 @@ RSpec.describe "the living docs" do
     end
 
     # The fact a table of keys cannot carry, and the one a reader most needs:
-    # `TestLayout::None` refuses nothing, so a project that declares no [tests]
+    # `TestLayout::None` refuses nothing, so a project that declares no tests
     # table is held to no layout at all. A doc that listed the keys without
     # saying this would read as though the guard were on by default.
-    it "says layout enforcement is opt-in, so no [tests] table refuses nothing" do
-      expect(doc).to include("`[tests]`").and match(/opt-in/i)
+    it "says layout enforcement is opt-in, so no tests verb refuses nothing" do
+      expect(doc).to include("no `tests` verb").and match(/opt-in/i)
     end
   end
 

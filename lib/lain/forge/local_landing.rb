@@ -66,7 +66,7 @@ module Lain
       # @param progress [#call] answers the epic's {Epic::Progress}, read fresh
       # @param scribe [#issue_moved] {Epic::Scribe}
       # @param queue [#call] {Isolation::LandingQueue}, the only thing that merges
-      # @param layout [TestLayout] the project's `[tests]` layout; {TestLayout::None}
+      # @param layout [TestLayout] the project's `tests` layout; {TestLayout::None}
       #   when it declares none, which checks nothing
       # @param landings [#call] answers the journal records landings of this
       #   epic wrote; a commit already on the branch counts as this issue's

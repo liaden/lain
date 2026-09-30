@@ -161,7 +161,7 @@ module Lain
     # a word the classifier could not READ cannot pass as un-denied.
     #
     # An ordinary verdict whose reason is `exempt` does not count. The
-    # `[sensitivity] exempt` key tells a HUMAN's prompt that one file is not
+    # `sensitivity exempt:` key tells a HUMAN's prompt that one file is not
     # worth asking about; it lifts the prompt, never this approval. Measured,
     # one basename exemption for a fixture `.env` approved `cat` of every
     # `.env` in the tree with nobody asked.
@@ -182,7 +182,7 @@ module Lain
     # word classifying ordinary, the directory included -- the denied rule names
     # `id_*` INSIDE `.ssh` and the directory itself is not a match. It prints a
     # private key, which {Escalation::Triage} records nothing lifts: not a
-    # policy, not `/mode auto`, not `ApproveAll`, not `[sensitivity] exempt`.
+    # policy, not `/mode auto`, not `ApproveAll`, not `sensitivity exempt:`.
     # Predicate 4 cannot save it. So each entry carries the flags that
     # disqualify it, and a stage naming one is refused. (The `~/.ssh` spelling of
     # the same command abstains earlier, at the parser, because a leading `~`

@@ -3,8 +3,8 @@
 module Lain
   class Config
     # Every refusal of a `.lain/config.rb` table, for all seven of them:
-    # `[epics]`, `[epics.gates]`, `[approval]`, `[isolation]`, `[sensitivity]`,
-    # `[shell]` and `[tests]`. One class because there is one concept -- this
+    # `epics`, `epics` gates, `approval`, `isolation`, `sensitivity`,
+    # `shell` and `tests`. One class because there is one concept -- this
     # file says something the reader will not act on -- where the seven readers
     # had each invented a family of it, four of them carrying a prose comment
     # saying they were copying a sibling's posture.

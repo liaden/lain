@@ -21,7 +21,7 @@ module Lain
     #
     # A model told only "no" resends the same call spelled differently, so the
     # message names the path, names WHY (the classifier's own
-    # {Lain::Sensitivity::Verdict#explanation}, so a project's `[sensitivity]`
+    # {Lain::Sensitivity::Verdict#explanation}, so a project's `sensitivity`
     # denial reads as the project's rather than as ours), and says the boundary
     # cannot be moved. It names no VERB: one sentence answers a refused write.
     #

@@ -3,7 +3,7 @@
 module Lain
   module Approval
     class Gate
-      # WHICH policy a stage runs under, read off `[epics.gates]` and built
+      # WHICH policy a stage runs under, read off `epics` gates and built
       # from one dependencies value. {Policy} is how a verdict is reached; this
       # is the choosing, kept apart because choosing is a WIRING concern.
       #
@@ -35,7 +35,7 @@ module Lain
         # apart, and nothing ever did -- `exe/lain` maps {Lain::Error} and no
         # site in `lib/` names one of the four. {Config::Refusal}'s posture,
         # one subsystem over: the sentence is what sends an operator to a line
-        # of `[epics.gates]`, and the class name was never the part doing that.
+        # of `epics` gates, and the class name was never the part doing that.
         #
         # What the four carried that a reader still needs is WHICH entry and
         # WHY, so the stage, the policy and the seams are attributes and
@@ -48,7 +48,7 @@ module Lain
           #   `:unusable_seam`, or `:unknown_seam` -- the last being a recipe
           #   ROW written wrong rather than a session wired wrong
           attr_reader :kind
-          # @return [String, nil] the `[epics.gates]` stage that asked
+          # @return [String, nil] the `epics` gates stage that asked
           attr_reader :stage
           # @return [String, nil] the configured policy name
           attr_reader :policy
@@ -174,7 +174,7 @@ module Lain
           def missing(deps) = seams.select { |seam| deps.public_send(seam).nil? }
 
           # A policy that refused its OWN construction. Re-raised with the
-          # stage on it because only the factory knows which `[epics.gates]`
+          # stage on it because only the factory knows which `epics` gates
           # line asked, and a startup refusal that cannot name the stage sends
           # an operator to the wrong one. Scoped to this ONE call, so it can
           # never swallow the refusal {#build} raises itself.

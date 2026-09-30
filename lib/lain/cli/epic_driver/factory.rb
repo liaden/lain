@@ -776,7 +776,7 @@ module Lain
 
         # How many issues to carry, stated in ONE place because the order is the
         # rule: a human who typed `--width N` meant it, a project that declared
-        # `[epics] width` meant it for every run of theirs, and only when neither
+        # `epics width:` meant it for every run of theirs, and only when neither
         # spoke does where the models run get to decide.
         #
         # Both spoken answers are held to {Config::Epics.width!} rather than to
@@ -784,11 +784,11 @@ module Lain
         # obliges this method to refuse at all: a zero reaches {Bounds}, which
         # guards nothing, and `room?` then compares the live count against it,
         # so the loop launches nothing and reports nothing wrong. The refusal
-        # names `[epics]` even for a typed width, because one wording is the
+        # names `epics` even for a typed width, because one wording is the
         # point of borrowing the check.
         #
         # @param typed [Integer, nil] `--width N`
-        # @param configured [Integer, nil] `[epics] width`
+        # @param configured [Integer, nil] `epics width:`
         # @param endpoint [String, nil] where this run's models are dialled
         # @return [Integer]
         # @raise [Config::Refusal] when either spoken width is not a whole
@@ -1271,7 +1271,7 @@ module Lain
       # there, and committed on the checkout's branch only once they fail.
       #
       # Every refusal stops the issue with nothing committed. A project with no
-      # `[tests]` table is refused rather than handed a layout detected from
+      # `tests` table is refused rather than handed a layout detected from
       # its files, because enforcement is opt-in: a detected preset would
       # impose level roots the project never declared. Tests that pass before
       # any work is done are refused too. They check nothing the work will

@@ -39,10 +39,10 @@ can actually be implemented by a small model in a fixture project: keep them tin
 ```bash
 export QA_PROJ="$QA/epic-subject"; mkdir -p "$QA_PROJ/.lain"; cd "$QA_PROJ"   # .lain too -- round 17
 git init -q .; git config user.email qa@example.invalid; git config user.name QA  # §10 commits here
-cat > .lain/config.toml <<'TOML'
-[epics]
-home = "xdg"
-TOML
+cat > .lain/config.rb <<'RUBY'
+epics home: :xdg
+RUBY
+lain trust --yes                                                                 # config.rb runs only once trusted
 ```
 
 (Round 17's corrections: the `cat >` above failed with no `.lain/` to write into, and §10's red step
@@ -90,27 +90,29 @@ journal folds, never a file, so a status or queue file appearing beside `epic.md
 
 ```bash
 # each of these must refuse at load, naming the config path, exit 1, no backtrace
-printf '[epics]\nhome = "repo "\n'      > .lain/config.toml && lain epic status
-printf '[epics]\nhoem = "repo"\n'       > .lain/config.toml && lain epic status
-printf '[epics]\nhome = ["repo"]\n'     > .lain/config.toml && lain epic status
-printf 'epics = "repo"\n'               > .lain/config.toml && lain epic status
+printf 'epics home: "repo "\n'    > .lain/config.rb && lain trust --yes && lain epic status
+printf 'epics hoem: :repo\n'      > .lain/config.rb && lain trust --yes && lain epic status
+printf 'epics home: [:repo]\n'    > .lain/config.rb && lain trust --yes && lain epic status
+printf 'epics :repo\n'            > .lain/config.rb && lain trust --yes && lain epic status
 ```
 
-Expected shapes: `[epics] must be a table, got String: "repo"`; `[epics] has no keys "hoem"; known
-keys: home, gates`; and an invalid-home refusal naming the two legal values. **Every one names the
-config file path first** — a refusal that says only "[epics] …" sends an operator hunting through
-three possible config locations.
+Expected shapes: an invalid-home refusal naming the two legal values; a refusal that names the
+unknown key `hoem` and lists the known ones; a wrong-typed `home`; and Ruby's own error for
+`epics :repo`. **Every one names `.lain/config.rb:LINE` first** — a refusal that names no file sends
+an operator hunting through possible config locations. Drop the `lain trust --yes` from one line to
+see the other refusal: the untrusted file, naming `lain trust`.
 
 ### 1b — the repo-mode trap, which is a real one
 
-`home = "repo"` resolves under `<root>/.lain/epics/`, and **this repository's own `.gitignore`
+`epics home: :repo` resolves under `<root>/.lain/epics/`, and **this repository's own `.gitignore`
 holds `/.lain/`** — so the mode chosen specifically so a team can review an epic in a pull request
 can produce a tree git will never show them. `Epic::Home` does not detect this (it is a pure path
 calculator with no subprocess); `lain epic status` does, beside the line where it prints the home.
 
 ```bash
 git init -q .; printf '/.lain/\n' > .gitignore
-printf '[epics]\nhome = "repo"\n' > .lain/config.toml
+printf 'epics home: :repo\n' > .lain/config.rb
+lain trust --yes
 lain epic status
 ```
 
@@ -283,7 +285,7 @@ Parks instead of deciding. Then §7's fold is what sees it.
 Spawns a role over the artifact and settles the verdict, parking anything it is unsure about.
 
 ```bash
-printf '[epics.gates]\nresearch = "adjudicated"\n' >> .lain/config.toml
+printf 'epics home: :xdg do\n  gate :research, :adjudicated\nend\n' > .lain/config.rb && lain trust --yes
 lain epic submit research
 ```
 
@@ -307,7 +309,7 @@ is allowed to accumulate *within* a stage — that is what deferring is for — 
 boundary, or an epic reaches implementation on a plan nobody signed off.
 
 ```bash
-printf '[epics.gates]\nresearch = "deferred"\n' > .lain/config.toml
+printf 'epics do\n  gate :research, :deferred\nend\n' > .lain/config.rb && lain trust --yes
 lain epic submit research          # parks
 lain epic submit epic_plan         # MUST refuse: StageBlocked
 ```
@@ -332,7 +334,7 @@ drained, **and** is the newest terminal decision on its `(epic_slug, stage[, iss
 partition an approval? Drive the case the old rule got wrong:
 
 ```bash
-printf '[epics.gates]\nresearch = "interactive"\n' > .lain/config.toml
+printf 'epics do\n  gate :research, :interactive\nend\n' > .lain/config.rb && lain trust --yes
 lain epic submit research          # then DENY it at the gate
 lain epic queue                    # nothing parked -- the stage is drained
 lain epic submit epic_plan         # MUST refuse: drained, but never approved
@@ -485,8 +487,8 @@ This is the new half, and it has never been driven. It needs the epic's issues *
 `[tests]` table (§13), and a `Subject:` line in each issue's plan.
 
 **Two things round 17 had to learn before §10 worked, both preconditions rather than findings.** The
-subject repository needs a git identity the red step can commit under (§0), and the `[tests]` table
-may live in a **gitignored** `.lain/config.toml` — the conventional place — since 2026-09-14: the
+subject repository needs a git identity the red step can commit under (§0), and the `tests` verb
+may live in a **gitignored** `.lain/config.rb` — the conventional place — since 2026-09-14: the
 driver reads the layout once from the project root, where round 17's driver read it from each
 issue's worktree and blocked every issue for want of a file git never checked out (F115). A
 `[tests]`-missing refusal naming the worktree rather than the project is that defect back.

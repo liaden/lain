@@ -179,8 +179,8 @@ ls -d "$LAIN_REPO"/.lain 2>/dev/null && echo "LEAKED: remove it"   # must print 
 
 **Keep this check, but know its rationale changed (round 13).** The status feed no longer lands in
 `.lain/`, so the specific leak P11 described — `Project` writing `.lain/state.json` into the launch
-cwd — is gone. `.lain/` is still where `config.toml`, `slots/`, `skills/`, `prompt.toml` and
-`epics/` live, and a remembered approval persisted into `.lain/config.toml` in the lain checkout is
+cwd — is gone. `.lain/` is still where `config.rb`, `slots/`, `skills/`, `prompt.toml` and
+`epics/` live, and a remembered approval persisted into `.lain/config.rb` in the lain checkout is
 exactly the kind of durable state this check exists to catch. It is still invisible to
 `git status` (`.gitignore:22`).
 
@@ -273,7 +273,7 @@ only worth having if it is read rather than skimmed:
    byte-identical to one with no mode support at all — you cannot tell the mode by looking. Only
    `plan` (`PLAN`), `auto` (`AUTO`) and the layers (`AA`, `GOAL`, `BELL`, `VI`) show.
 5. **Answering "always" writes durable state.** `Approval::Remembered` persists a pre-approval into
-   `.lain/config.toml`. Check that file between acts; a non-empty approvals table is itself a finding.
+   `.lain/config.rb`. Check that file between acts; a non-empty approvals table is itself a finding.
 6. **Read the command in `lain://approval` over RPC before answering, every time.** In a cockpit the
    chat pane no longer draws a `[y/N]` at all (since 2026-09-14): a parked call is one arrival line,
    `! <requester> asks to run <tool>(<input>)  -- answer in lain://approval, or /approve`, and the
@@ -954,7 +954,7 @@ Per act, with literal spellings:
 - **The status feed**, at `$XDG_STATE_HOME/lain/status/<project_hash>/state.json` — **not**
   `.lain/state.json`, which `ProjectDir` retired (round 13 lost a cross-check to the old spelling).
   `lain up` prints the resolved path on its `HUD state:` line; read it from there.
-  And **`.lain/config.toml`** for the approval-persistence check, which is still under `.lain/`.
+  And **`.lain/config.rb`** for the approval-persistence check, which is still under `.lain/`.
 - **`capture-pane -p` for BOTH panes** at the moment of a finding.
 - **`ollama ps`** — residency is a precondition for the cold-start reading and is not recoverable
   after the fact.

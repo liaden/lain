@@ -65,7 +65,7 @@ paid section**: one real working session against a metered provider, because an 
 *distribution* is only meaningful over commands a model chose for its own reasons.
 
 **Needs:** the cockpit (`lain up`) from §1 onward; a throwaway project directory you write
-`.lain/config.toml` into for §2 and §3; the **local** ollama bench for §5–§7 (see
+`.lain/config.rb` into for §2 and §3; the **local** ollama bench for §5–§7 (see
 [`bench.md`](../bench.md) for residency and `--num-ctx` alignment); a docker daemon for §7;
 a metered provider key for §9 only.
 
@@ -211,10 +211,9 @@ from, and until this chunk landed nothing in `lib/` ever built one.
 
 New in this chunk and the reason it exists. In a throwaway project root:
 
-```toml
-# .lain/config.toml
-[shell]
-exclude = ["curl"]
+```ruby
+# .lain/config.rb (run `lain trust --yes` after writing it)
+shell exclude: %w[curl]
 ```
 
 Launch a cockpit with `--root` at that directory, then:
@@ -269,9 +268,9 @@ Four properties to drive, all free:
   the notice `this project's [shell] exclusions are not in force (no program is refused by
   name): …`. The notice still exists in `board_build.rb`, but the whole config is parsed first
   and refuses, so the notice is unreachable from a broken file. *Driven 2026-09-14* with
-  `exclude = ["curl"` (an unclosed array): exit 1,
-  `<path>/.lain/config.toml is not valid TOML: parse error on value nil (EOS)`. If a round ever
-  sees the notice instead, the parse order moved — say which.
+  `shell exclude: %w[curl` (an unclosed array), then `lain trust --yes`: exit 1, a refusal naming
+  `<path>/.lain/config.rb` and the line. Before `lain trust` the same launch is refused as untrusted,
+  naming `lain trust`. If a round ever sees the notice instead, the load order moved — say which.
 - **Attended, a denied command settles at the triage rung and never reaches a human** — and
   this is drivable **without a model**, by asking the rung directly instead of waiting for
   the model to emit `curl`. Building the rung the way wiring does costs nothing:

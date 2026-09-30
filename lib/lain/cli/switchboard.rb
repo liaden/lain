@@ -84,7 +84,7 @@ module Lain
       #   trusted config
       # @param sensitivity [#gates?] which PATHS this session gates, built by
       #   {CLI::Wiring} over the resolved {Project} and that project's
-      #   `[sensitivity]` table. Defaulted to the same Null `new` defaults to,
+      #   `sensitivity` table. Defaulted to the same Null `new` defaults to,
       #   so the direct-construction seams a spec drives are unchanged
       # @param approving [#call] composes the rules rung's chain, on `new`'s terms
       # @param classifiers [#call] the triage rung's `cwd -> #classify` factory,
@@ -160,7 +160,7 @@ module Lain
       # @param verdict [#call] `String -> Shell::Verdict::Decision`, the
       #   session's ONE shell verdict, handed on to the ladder's triage rung.
       #   THE SAME INSTANCE {Lain::Tools::Bash} chooses its arm with: {Wiring}
-      #   builds it from the project's `[shell]` table and gives it to the
+      #   builds it from the project's `shell` table and gives it to the
       #   toolset and to this board, so the verdict a record names and the
       #   verdict a command ran under are one object rather than two agreeing
       #   parses. Its exclusion table is also the only thing on this ladder

@@ -48,7 +48,7 @@ write, and that is also where a path escaping the home is refused.
 
 An epic home holds exactly four kinds of artifact: `research.md`, `epic.md`, `issues/<id>.md`,
 `plans/<id>.md`. By default it lives under XDG state, so an epic never shows up in
-`git status`; a project opts in-repo with `[epics] home = "repo"` in `.lain/config.toml`, which
+`git status`; a project opts in-repo with `epics home: :repo` in `.lain/config.rb`, which
 puts it at `.lain/epics/<slug>/` where a team can review it in a pull request.
 
 Nothing else belongs in `research.md`. In particular there is no status field: an issue's live

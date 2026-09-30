@@ -126,7 +126,7 @@ improvise:
   `(no approvals pending)` and taking no window, so its ABSENCE has flipped meaning: it used to be
   the ordinary state of a session that had never gated, and is now itself a defect.
 
-Record per act as `method.md` says: journal path, `.lain/state.json`, `.lain/config.toml`, both
+Record per act as `method.md` says: journal path, `.lain/state.json`, `.lain/config.rb`, both
 panes captured at the moment of a finding, `ollama ps`.
 
 **The session ceiling no longer bounds the round, and that changed in both halves.** It used to be

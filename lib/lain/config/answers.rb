@@ -4,7 +4,7 @@ module Lain
   class Config
     Answers = Data.define(:allow, :deny, :deny_tools)
 
-    # The `[approval]` table: the answers a human chose to remember, so a call
+    # The `approval` table: the answers a human chose to remember, so a call
     # shape they have already ruled on is never put to them twice.
     # {Approval::Remembered} interprets them; this class only decides whether the
     # file says something well-formed, which is why it names no tool, no verdict
@@ -22,12 +22,10 @@ module Lain
     # table, and every comment a human wrote, survives an answer being
     # remembered.
     #
-    #   [[approval.allow]]
-    #   tool = "read_file"
-    #   input = { path = "README.md" }
-    #
-    #   [[approval.deny_tool]]
-    #   tool = "bash"
+    #   approval do
+    #     allow "read_file", path: "README.md"
+    #     deny_tool "bash"
+    #   end
     class Answers
       # Reopened rather than written in the `Data.define` block, per
       # {Request::SYSTEM_PREFIX}: nested constants declared there belong to the
@@ -40,7 +38,7 @@ module Lain
       ALLOW = "allow"
       DENY = "deny"
       SHAPED = [ALLOW, DENY].freeze
-      # Singular, because each `[[approval.deny_tool]]` is ONE tool's denial;
+      # Singular, because each `approval` `deny_tool` is ONE tool's denial;
       # the reader over all of them is {#deny_tools}.
       TOOL_WIDE = "deny_tool"
       KEYS = [*SHAPED, TOOL_WIDE].freeze
@@ -75,7 +73,7 @@ module Lain
         raise Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
 
         unknown = table.keys - KEYS
-        # A silently dropped `[[approval.alow]]` reads as an answer that was
+        # A silently dropped `approval` `alow` reads as an answer that was
         # remembered and is not, so the human is asked again and cannot see why.
         raise Refusal.unknown_keys(unknown, known: KEYS, path:, table: TABLE) unless unknown.empty?
 

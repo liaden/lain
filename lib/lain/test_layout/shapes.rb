@@ -2,7 +2,7 @@
 
 module Lain
   class TestLayout
-    # What a `[tests]` table is allowed to SAY: the shape of each value, and
+    # What a `tests` table is allowed to SAY: the shape of each value, and
     # the words a refusal uses when one is wrong.
     #
     # Named and nested rather than left loose in {TestLayout}, because these
@@ -94,7 +94,7 @@ module Lain
       # what {TestLayout.admit!} reaches for by name, and {PathShape} is the
       # sole authority on what a plain relative path inside the project looks
       # like -- the plan-declared subject a test is mirrored FROM has to be
-      # judged by the same rule the `[tests]` source roots are, and two copies
+      # judged by the same rule the `tests` source roots are, and two copies
       # of it meant tightening one left the other admitting what it now
       # refuses, with no spec anywhere failing.
       private_constant :Overlap, :Clashing

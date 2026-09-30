@@ -787,8 +787,8 @@ name and target itself.
 The invariant is **one compiled `[sensitivity]` table per run, and one object that answers about
 a path**. The claim that stood here before — "`Policy` holds the only `Filter.new` in `lib/`" —
 was true and too narrow: a second FILTER was hard to build, but a second CLASSIFIER was not, and
-`/survey` built one from its own later re-read of `.lain/config.toml`. A session outlives that
-file: a turn may rewrite it — `write_file` is tier-1, and `.lain/config.toml` classifies *ordinary*,
+`/survey` built one from its own later re-read of `.lain/config.rb`. A session outlives that
+file: a turn may rewrite it — `write_file` is tier-1, and `.lain/config.rb` classifies *ordinary*,
 because the table names secrets and not itself — and so may a human in the next pane. So the listing walked one table while the gate beside
 it held another — both halves working, nothing wrong to look at.
 
@@ -1142,7 +1142,7 @@ every turn, with nothing in `lib/` writing a `.gitignore` for it — so every se
 one Ruby resolver *for that file*: `StatusFeed`, `CLI::Up`'s HUD and `Frontend::TTY`'s prompt all
 default through it, and `spec/lain/project_dir_spec.rb` parses every file in `lib/` with Ripper and
 fails on any expression that recomposes the path, in any spelling. It is now the authority for the
-whole `.lain/` tree too — `config.toml`, `prompt.toml`, the slot and skill directories, `epics/`,
+whole `.lain/` tree too — `config.rb`, `prompt.toml`, the slot and skill directories, `epics/`,
 `/meta/`'s two destinations and both DSL files are named readers on it. The
 `<state_home>/<kind>/<key>` recipe that names the sessions, status, epics, worktrees, workspace, gc
 and consent containers is `Paths#container`, one layer down beside the `state_home` and

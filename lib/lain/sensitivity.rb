@@ -293,7 +293,7 @@ module Lain
 
     Rules = Data.define(:denied, :gated, :exempt)
 
-    # The `[sensitivity]` table: what a project adds to the rules below, and the
+    # The `sensitivity` table: what a project adds to the rules below, and the
     # one thing it may take away.
     #
     # Three keys, all lists of patterns. `denied` and `gated` ADD; `exempt`
@@ -319,10 +319,9 @@ module Lain
     # is one entry and still a class of files, and a config listing every
     # gated name on its own line lifts them all, deliberately, one line each.
     #
-    #   [sensitivity]
-    #   denied = ["*.secret", "/vault/"]
-    #   gated  = ["*.private"]
-    #   exempt = [".gitconfig", "/fixtures/.env"]
+    #   sensitivity denied: %w[*.secret /vault/],
+    #               gated: %w[*.private],
+    #               exempt: %w[.gitconfig /fixtures/.env]
     #
     # `exempt` is a real key rather than a politely ignored one because
     # {Config::Answers} is right that an entry which can never do anything is

@@ -4,11 +4,10 @@ module Lain
   module Shell
     Exclusions = Data.define(:patterns)
 
-    # The `[shell]` table: the programs a project has ruled out, whatever else a
+    # The `shell` table: the programs a project has ruled out, whatever else a
     # command says.
     #
-    #   [shell]
-    #   exclude = ["curl", "nc", "*sh"]
+    #   shell exclude: %w[curl nc *sh]
     #
     # This is the capability set {Verdict} consults, so the whole interface is
     # `permits?(program)` and the answer is about a bare program name --

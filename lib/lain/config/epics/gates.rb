@@ -3,7 +3,7 @@
 module Lain
   class Config
     class Epics
-      # The `[epics.gates]` sub-table: which {Approval::Gate::Policy} each epic
+      # The `epics` gates sub-table: which {Approval::Gate::Policy} each epic
       # stage's gates run under (`epic_plan = "deferred"`). BOTH sides of the
       # mapping are closed sets, so both are refused at load rather than
       # discovered at the first overnight gate.
@@ -24,7 +24,7 @@ module Lain
         # here names it.
         TABLE = "`gate`"
 
-        # @param table [Object] whatever `[epics] gates` parsed to; nil when absent
+        # @param table [Object] whatever `epics` gates parsed to; nil when absent
         # @param path [String, nil] the config file, named in every refusal
         # @return [Gates]
         def self.from(table, path: nil)

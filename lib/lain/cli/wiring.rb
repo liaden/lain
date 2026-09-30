@@ -99,7 +99,7 @@ module Lain
         #   session's ONE shell verdict -- the object {Lain::Tools::Bash} picks
         #   its arm with AND the object the approval ladder's triage rung
         #   judges with. {Lain::CLI::Wiring} builds it from the project's
-        #   `[shell]` table and hands the same instance to both. {Wiring#verdict}
+        #   `shell` table and hands the same instance to both. {Wiring#verdict}
         #   is where that sharing is stated and where the memo that makes it
         #   true lives; this parameter is the tool's end of it.
         #
@@ -837,7 +837,7 @@ module Lain
       # The Supervisor is built before the toolset, so the resolver reads the
       # run's {Skill::RoleSpawn} through a thunk at call time.
       # Built from the fleet's isolation, which names the working branch, and
-      # from the project's `[isolation]` table, which names the merge strategy
+      # from the project's `isolation` table, which names the merge strategy
       # and the rebase retries. With no branch named no checkout was cut, so
       # nothing is synced and the handoff only releases: a handback run over the
       # chat's own tree would read the human's work as a worker's.

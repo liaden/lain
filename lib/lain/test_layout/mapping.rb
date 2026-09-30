@@ -36,7 +36,7 @@ module Lain
                              "its levels are #{@levels.map(&:name).join(", ")}"
       end
 
-      # Level roots never nest (the `[tests]` reader refuses it), so at most
+      # Level roots never nest (the `tests` reader refuses it), so at most
       # one holds a path.
       # @return [Level, nil] nil for a path under no level root
       def level_of(path) = @levels.find { |level| level.holds?(path) }

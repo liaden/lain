@@ -486,7 +486,7 @@ module Lain
         # checkouts live. Denying on a bare word therefore stops
         # `grep -n Cookies lib/lain/sensitivity.rb` in this very repository, and
         # NOTHING lifts it -- not a policy, not `/mode auto`, not `ApproveAll`,
-        # and not `[sensitivity] exempt`, which subtracts from the gated half
+        # and not `sensitivity exempt:`, which subtracts from the gated half
         # only.
         #
         # The trade is deliberate and small. A denied path named as a bare word
@@ -501,8 +501,8 @@ module Lain
         # seam in every case, since today's {Shell::Verdict} abstains on any
         # word matching its `EXPANDING`. Past that, a SLASHLESS tilde word is
         # rewritten by {Sensitivity} to the home directory ITSELF, so the arm
-        # fires when that directory is denied -- either by a `[sensitivity]
-        # denied` rule naming the home's basename, or by a home that is a denied
+        # fires when that directory is denied -- either by a `sensitivity
+        # denied:` rule naming the home's basename, or by a home that is a denied
         # path in its own right (`/home/.gnupg`, `/home/x/.netrc`; both
         # verified). It stays because the two objects agree deliberately about
         # what a leading `~` means, and dropping it would silently disagree.

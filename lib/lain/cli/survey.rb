@@ -84,7 +84,7 @@ module Lain
       end
 
       # @param project [Lain::Project] the run's resolved project: its ROOT holds
-      #   the `[sensitivity]` table in force, its CWD is what a relative path
+      #   the `sensitivity` table in force, its CWD is what a relative path
       #   resolves against. REQUIRED and resolved by the CALLER -- `exe/lain` is
       #   where a resolution that refuses can be rendered, and a resolver
       #   evaluated here walks the tree (and can raise) before anybody reads it
@@ -97,7 +97,7 @@ module Lain
       # @param ledger [Sensitivity::Ledger, nil] the run's ONE region ledger;
       #   nil builds this process's one and only, per the class doc
       # @raise [Config::Refusal] when the project's config file will not run,
-      #   or its `[sensitivity]` table is malformed
+      #   or its `sensitivity` table is malformed
       def initialize(project:, paths: Paths.new, bounds: Lain::Review::Bounds.new, surface: nil, ledger: nil)
         @paths = paths
         @bounds = bounds

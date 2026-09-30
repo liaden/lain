@@ -13,7 +13,7 @@ module Lain
     # every config file. zdiff3 is the default because its markers carry the
     # merge base, the one side a resolver otherwise has to guess.
     class MergeStrategy
-      # @param isolation [Config::Isolation] the project's `[isolation]` table
+      # @param isolation [Config::Isolation] the project's `isolation` table
       # @return [MergeStrategy]
       def self.from(isolation)
         new(conflict_style: isolation.conflict_style, diff_algorithm: isolation.diff_algorithm)

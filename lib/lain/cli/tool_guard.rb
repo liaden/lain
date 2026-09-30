@@ -267,7 +267,7 @@ module Lain
       # filtered through a policy the gate never consults would hide a path the
       # child can still read by name. The read guard needs no path policy to
       # mask a credential region, which is the half this run can enforce. It
-      # reads no `[tests]` table either: its children write nothing a layout
+      # reads no `tests` table either: its children write nothing a layout
       # holds.
       #
       # @param journal [#<<] where a refusal or a mask is recorded

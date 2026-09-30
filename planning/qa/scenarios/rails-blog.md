@@ -317,7 +317,7 @@ a `[y/N]` for them** (since 2026-09-14): each parked call is one arrival line, a
 `b:lain_approval_calls` over RPC (`method.md`) before approving, and check every arrival line has
 a row — a parked call with no row, or a row with no arrival line, is the wedge's new shape.
 
-Check `.lain/config.toml` between acts. A model that talks you into "always" for `bash` in a Rails
+Check `.lain/config.rb` between acts. A model that talks you into "always" for `bash` in a Rails
 tree has just pre-approved arbitrary shell for the rest of the session.
 
 ### 4. Session lifetime
