@@ -631,7 +631,12 @@ RSpec.describe Lain::Sensitivity do
     end
 
     it "still accepts an exemption of some other project file" do
-      expect { Lain::Sensitivity::Rules.from({ "exempt" => ["/fixtures/.env", "/lib/config.rb"] }) }.not_to raise_error
+      rules = Lain::Sensitivity::Rules.from({ "exempt" => ["/fixtures/.env", "/lib/config.rb"] })
+      sensitivity = described_class.new(home:, cwd: root, root:, rules:)
+
+      expect(sensitivity.classify("fixtures/.env")).to be_ordinary
+      expect(sensitivity.classify("lib/config.rb")).to be_ordinary
+      expect(guarded.classify("other/.env")).to be_gated
     end
 
     it "needs no root to build, since a checkout-less classifier has no project Ruby to guard" do

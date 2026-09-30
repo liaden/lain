@@ -703,7 +703,12 @@ RSpec.describe Lain::Supervisor do
         supervisor = described_class.new.run(task)
         supervisor.track(parked(task), role: "diff_docent")
 
-        expect { supervisor.drain(within: 1).each(&:settle) }.not_to raise_error
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        drains = supervisor.drain(within: 20).each(&:settle)
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+        expect(elapsed).to be < 5
+        expect(drains.map(&:class)).to eq([Lain::Supervisor::Drain])
       ensure
         supervisor.stop
       end
