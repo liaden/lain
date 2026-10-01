@@ -186,6 +186,34 @@ The failure is easy to misread: `parallel_tests` reports only the examples that 
 dead worker looks like "fewer examples, 0 failures, non-zero exit" — the same shape an OOM kill
 produces. Check the example COUNT against a serial run before blaming memory.
 
+## Process creation is fork, not the commands
+
+Measured 2026-09-30 at 21,508 examples. A git command itself is cheap; creating it from a large
+Ruby parent is not.
+
+| measurement | fork (Mixlib) | vfork (`Lain::Shell::Out`, `Process.spawn`) |
+|---|---|---|
+| one `git rev-parse`, parent at 98MB RSS | 7.7ms | 1.3ms |
+| the same, parent at 371MB RSS | 29.4ms | 1.3ms |
+| per git call inside a worker, via `bin/strace-children` | 21.2ms (clone 8.2, pre-exec 1.7, exec teardown 8.6, git 2.7) | 2.9ms |
+| parent syscall over a whole `pspec`, via `bin/trace-pspec` | 9,740 forks, 74s | 12,813 vforks, 3.6s |
+
+Every git program in that run executed in 64s in total; forking them cost the parents 74s in
+`clone` and the children about 84s tearing down their copied address space at `execve`. `perf`
+puts `copy_page_range` and `__zap_vma_range` at about 20% of CPU in fork-heavy files, and
+copy-on-write faults at 0.4%: the cost is page tables, so it grows with the parent's RSS (8, 11
+and 14ms per fork at 100, 200 and 300MB). `GC.compact` before a fork made it 1.9ms slower.
+
+## Worker memory is mostly glibc's, not Ruby's
+
+A worker's RSS grows to 140 to 360MB while its live Ruby objects are 21 to 57MB. On the heaviest
+worker, `malloc_trim(0)` returned 100MB of 345MB: memory glibc freed and kept. `bin/trace-memleak`
+attributes the rest of the malloc'd memory to Ruby's own `xmalloc`/`xcalloc` (about 74MB, twice
+what `ObjectSpace.memsize_of_all` reports); `lain.so` and the C extensions hold almost none. A
+Ruby built `--with-jemalloc` returned about 18% of end-of-run RSS on one sample and cut system CPU
+about 5% against the precompiled build, with total work within noise. `LD_PRELOAD`-ing jemalloc
+into the suite is not a fair test: every git child loads it too.
+
 ## Tools for measuring it
 
 The figures above are from 2026-08-05. A fuller, later set -- per-file probes, kernel traces,
@@ -195,6 +223,7 @@ avoids at the top of the file.
 
 | command | root | what it answers |
 |---|---|---|
+| `bin/box-state [--guard\|--json]` | no | what else is competing for this machine (load, pressure, swap, THP, governor, running mempalace units, other suites); `--guard` refuses a timed run while it is not quiet |
 | `bin/setup-profiling <tool...>` | to install | whether bpftrace, the libbpf bcc tools, strace and perf are present; the install command for Arch, Debian or Ubuntu, run for you with `PROFILING_INSTALL=1` |
 | `bin/trace-pspec` | yes | one `pspec` under bpftrace: every exec, each program's life, the parent's time in `clone` against `vfork`, off-CPU stacks, run-queue latency, syscalls; summarized by `bin/trace-summary` |
 | `bin/trace-memleak <spec files...>` | yes | every libc allocation still held at the end of one rspec process, by caller and library; summarized by `bin/memleak-summary` |
