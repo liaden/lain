@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# The state of this machine at the moment a timed run starts, so a number can be read
+# against what else was competing for it.
+#
+#   bin/box-state            print it
+#   bin/box-state --json     one JSON object, for a harness to store beside each sample
+#   bin/box-state --guard    print it, and exit 1 if the box is not quiet enough to time
+#
+# Why it exists: on 2026-09-30 the suite's baseline was taken while a 7h, 7.6GB
+# mempalace job ran on the same 15GB box, and nothing recorded it. A guard refuses
+# while any mempalace-* user unit is running (they peak at 8 to 11GB and run for
+# hours), while memory pressure is high, or while another suite run is going.
+# Everything it reads is world-readable; no root needed.
+#
+# Knobs it records because they move fork and memory numbers: transparent huge pages
+# (this box ships `always`, GitHub's Ubuntu runners `madvise`), the CPU frequency
+# governor and energy preference (unpinned unless someone pinned them).
+set -euo pipefail
+
+mode=${1:-}
+psi() { awk -v k="$2" '$1 == k { split($4, a, "="); print a[2] }' "/proc/pressure/$1"; }
+read_or() { cat "$1" 2> /dev/null || echo "$2"; }
+
+load=$(cut -d' ' -f1-3 /proc/loadavg)
+mem_some=$(psi memory some)
+mem_full=$(psi memory full)
+cpu_some=$(psi cpu some)
+avail_mb=$(awk '/MemAvailable/ { printf "%d", $2 / 1024 }' /proc/meminfo)
+swap_used_mb=$(awk '/SwapTotal/ { t = $2 } /SwapFree/ { f = $2 } END { printf "%d", (t - f) / 1024 }' /proc/meminfo)
+thp=$(sed -n 's/.*\[\(.*\)\].*/\1/p' /sys/kernel/mm/transparent_hugepage/enabled 2> /dev/null || echo unknown)
+governor=$(read_or /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor unknown)
+epp=$(read_or /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference unknown)
+# Under sudo, `systemctl --user` would ask root's manager; ask the invoking user's.
+user_systemctl() {
+  if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    runuser -u "$SUDO_USER" -- env XDG_RUNTIME_DIR="/run/user/$(id -u "$SUDO_USER")" systemctl --user "$@"
+  else
+    systemctl --user "$@"
+  fi
+}
+units=$(user_systemctl list-units --state=running --no-legend --plain 'mempalace*' 2> /dev/null | awk '{ print $1 }' | paste -sd, -)
+suites=$(pgrep -cf 'bin/(parallel_)?rspec' || true)
+top=$(ps -eo pcpu=,rss=,comm= --sort=-pcpu | head -5 | awk '{ printf "%s(%s%%,%dMB) ", $3, $1, $2 / 1024 }')
+
+if [ "$mode" = "--json" ]; then
+  printf '{"time":"%s","load":"%s","psi_mem_some_avg10":%s,"psi_mem_full_avg10":%s,"psi_cpu_some_avg10":%s,' \
+    "$(date -Iseconds)" "$load" "$mem_some" "$mem_full" "$cpu_some"
+  printf '"mem_available_mb":%s,"swap_used_mb":%s,"thp":"%s","governor":"%s","epp":"%s","mempalace_units":"%s","rspec_processes":%s}\n' \
+    "$avail_mb" "$swap_used_mb" "$thp" "$governor" "$epp" "$units" "$suites"
+  exit 0
+fi
+
+echo "time          $(date -Iseconds)"
+echo "load          $load"
+echo "pressure      memory some/full avg10 $mem_some/$mem_full, cpu some avg10 $cpu_some"
+echo "memory        ${avail_mb}MB available, ${swap_used_mb}MB swap used"
+echo "kernel        THP $thp, governor $governor, energy preference $epp"
+echo "co-tenants    mempalace units: ${units:-none}; rspec processes: $suites"
+echo "top CPU       $top"
+
+[ "$mode" = "--guard" ] || exit 0
+reasons=()
+[ -n "$units" ] && reasons+=("a mempalace unit is running ($units)")
+[ "$suites" != 0 ] && reasons+=("$suites rspec processes are already running")
+awk -v v="$mem_full" 'BEGIN { exit !(v > 5) }' && reasons+=("memory pressure full avg10 is $mem_full%")
+if [ ${#reasons[@]} -gt 0 ]; then
+  printf 'not quiet: %s\n' "${reasons[@]}" >&2
+  exit 1
+fi
+echo "quiet enough to time"

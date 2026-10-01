@@ -16,12 +16,15 @@ require "fileutils"
 #   exec      the execve syscall itself, which includes tearing down the address
 #             space a fork copied -- the cost that grows with the parent's RSS
 #   run       from execve returning to exit_group: the program
+#   reap      from the child's exit_group to the parent's wait4 returning it: how long
+#             the parent's read-and-wait loop takes to notice (Mixlib polls its pipes)
+#   total     from the parent's clone to that wait4: what the caller waited
 #
 # strace slows every traced syscall, so the phases are inflated evenly; compare rows,
 # not absolutes. The trace file is kept in tmp/profiling/ for a second look.
 module StraceChildren
   REPO = File.expand_path("..", __dir__)
-  EVENTS = "clone,clone3,vfork,execve,exit_group"
+  EVENTS = "clone,clone3,vfork,execve,exit_group,wait4,pipe2,poll,ppoll,read"
 
   module_function
 
@@ -57,38 +60,47 @@ module StraceChildren
 
   CREATE = /\A(clone3?|vfork)\(.*\) = (\d+)/
   EXEC = /\Aexecve\("([^"]+)".*\) = 0/
+  REAP = /\Await4\(.*\) = (\d+)/
 
   def children(lines)
-    seen = { created: {}, execs: {}, exits: {} }
+    seen = { created: {}, execs: {}, exits: {}, reaped: {} }
     lines.each { |pid, ts, rest| note(seen, pid, ts, rest) }
-    phases(seen[:created], seen[:execs], seen[:exits])
+    phases(seen)
   end
 
   def note(seen, pid, stamp, rest)
     dur = rest[/<([\d.]+)>\s*$/, 1].to_f
-    if (m = rest.match(CREATE)) && !rest.include?("CLONE_THREAD")
-      seen[:created][m[2].to_i] = [stamp, dur, vfork?(rest, m[1])]
-    elsif (m = rest.match(EXEC))
-      seen[:execs][pid] ||= [stamp, dur, File.basename(m[1])]
-    elsif rest.start_with?("exit_group")
-      seen[:exits][pid] = stamp
+    if (m = rest.match(CREATE)) then created(seen, m, stamp, dur, rest)
+    elsif (m = rest.match(EXEC)) then seen[:execs][pid] ||= [stamp, dur, File.basename(m[1])]
+    elsif rest.start_with?("exit_group") then seen[:exits][pid] = stamp
+    elsif (m = rest.match(REAP)) then seen[:reaped][m[1].to_i] ||= stamp + dur
     end
+  end
+
+  def created(seen, match, stamp, dur, rest)
+    return if rest.include?("CLONE_THREAD")
+
+    seen[:created][match[2].to_i] = [stamp, dur, vfork?(rest, match[1])]
   end
 
   def vfork?(rest, call) = call == "vfork" || rest.include?("CLONE_VFORK")
 
-  def phases(created, execs, exits)
-    execs.filter_map do |pid, (ets, edur, prog)|
-      born = created[pid] or next
-      died = exits[pid] or next
-      { prog:, kind: born[2] ? "vfork" : "fork", create: born[1], preexec: [ets - (born[0] + born[1]), 0].max,
-        exec: edur, run: died - (ets + edur) }
+  def phases(seen)
+    seen[:execs].filter_map do |pid, exec|
+      born = seen[:created][pid] or next
+      died = seen[:exits][pid] or next
+      span(born, exec, died, seen[:reaped][pid] || died)
     end
   end
 
-  PHASES = %i[create preexec exec run].freeze
-  HEADER = %w[how program n create preexec exec run total].freeze
-  WIDTHS = [-6, -18, 6, 10, 10, 10, 10, 10].freeze
+  def span(born, (ets, edur, prog), died, reaped)
+    { prog:, kind: born[2] ? "vfork" : "fork", create: born[1], preexec: [ets - (born[0] + born[1]), 0].max,
+      exec: edur, run: died - (ets + edur), reap: [reaped - died, 0].max, total: reaped - born[0] }
+  end
+
+  PHASES = %i[create preexec exec run reap].freeze
+  HEADER = %w[how program n create preexec exec run reap total].freeze
+  WIDTHS = [-6, -18, 6, 10, 10, 10, 10, 10, 10].freeze
 
   def row(cells)
     puts(cells.zip(WIDTHS).map { |c, w| w.negative? ? c.to_s.ljust(-w) : c.to_s.rjust(w) }.join(" ").rstrip)
@@ -96,11 +108,12 @@ module StraceChildren
 
   def ms(seconds) = "#{format("%<v>.2f", v: 1000 * seconds)}ms"
 
+  def mean(rows, key) = rows.sum { |r| r[key] } / rows.size
+
   def report(rows)
     row(HEADER)
     rows.group_by { |r| [r[:kind], r[:prog]] }.max_by(15) { |_, rs| rs.size }.each do |(kind, prog), rs|
-      means = PHASES.map { |phase| rs.sum { |r| r[phase] } / rs.size }
-      row([kind, prog[0, 18], rs.size, *means.map { |m| ms(m) }, ms(means.sum)])
+      row([kind, prog[0, 18], rs.size, *PHASES.map { |phase| ms(mean(rs, phase)) }, ms(mean(rs, :total))])
     end
   end
 

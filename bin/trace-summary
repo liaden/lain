@@ -48,6 +48,8 @@ module TraceSummary
     execs = keyed(text, "execs")
     puts "== processes exec'd: #{execs.values.sum}"
     top(execs, 12).each { |name, n| row(n, name, widths: [7, -30]) }
+    reexecs = keyed(text, "reexecs")
+    puts "re-execs on the same pid (bundle exec and the like): #{reexecs.values.sum}" unless reexecs.empty?
     lifetimes(text)
     creations(text)
   end
@@ -101,6 +103,19 @@ module TraceSummary
       row(name, names.fetch(id.to_i, id), seconds(ns / 1000), counts.fetch([name, id], 0), widths: [-18, -16, 10, 9])
     end
     %w[opens write_bytes].each { |map| per_name(text, map) }
+    by_program(text, names, counts)
+  end
+
+  WATCHED = %w[execve fsync fdatasync wait4 clone vfork].freeze
+
+  # The calls that answer the fork and disk questions, for EVERY program: an execve is
+  # keyed by the program it became, so git's own exec teardown is under "git".
+  def by_program(text, names, counts)
+    puts "\n== process and sync calls, every program (process, call, seconds, count):"
+    rows = keyed(text, "sys_ns", fields: 2).select { |(_, id), _| WATCHED.include?(names[id.to_i]) }
+    top(rows, 15).each do |(name, id), ns|
+      row(name, names[id.to_i], seconds(ns / 1000), counts.fetch([name, id], 0), widths: [-18, -10, 10, 9])
+    end
   end
 
   def per_name(text, map)

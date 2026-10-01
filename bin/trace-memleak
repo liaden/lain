@@ -29,6 +29,7 @@ user=${SUDO_USER:?run this with sudo, from the user who owns the checkout}
 repo=$(cd "$(dirname "$0")/.." && pwd)
 out=${MEMLEAK_OUT:-$repo/tmp/profiling/memleak-$(date +%Y%m%d-%H%M%S)}
 "$repo/bin/setup-profiling" memleak
+"$repo/bin/box-state" --guard
 
 if [ "$(pgrep -cf 'bin/(parallel_)?rspec')" != 0 ]; then
   echo "an rspec run is already going; wait for it" >&2

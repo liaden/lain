@@ -4,6 +4,8 @@
 #
 #   sudo bin/trace-pspec [output-dir]      (default tmp/profiling/trace-pspec-<time>)
 #   sudo PROFILING_INSTALL=1 bin/trace-pspec   installs bpftrace and the libbpf tools first
+#   sudo TRACE_SETUP='export GIT_CONFIG_GLOBAL=/dev/null' bin/trace-pspec
+#                                    runs those shell commands as the user before pspec
 #
 # What it records, all counted in the kernel for that user's processes:
 #   procs.txt              every exec by program, each program's life from exec to
@@ -27,6 +29,9 @@
 #     shell has none; parallel_rspec is called directly, which also leaves the
 #     runtime log alone.
 #   - the uid filter also sees the user's desktop apps; summarize by process name.
+#   - a `bundle exec` re-execs on the same pid; the first exec's start is kept and the
+#     re-exec is counted in @reexecs, rather than the lifetime restarting.
+#   - the tracers stop after TRACE_SECONDS (default 240); a longer run is warned about.
 set -euo pipefail
 
 user=${SUDO_USER:?run this with sudo, from the user who owns the checkout}
@@ -36,6 +41,7 @@ out=${1:-$repo/tmp/profiling/trace-pspec-$(date +%Y%m%d-%H%M%S)}
 mkdir -p "$out"
 
 "$repo/bin/setup-profiling" bpftrace runqlat
+"$repo/bin/box-state" --guard
 
 if [ "$(pgrep -cf 'bin/(parallel_)?rspec')" != 0 ]; then
   echo "an rspec run is already going; wait for it" >&2
@@ -47,7 +53,9 @@ window=${TRACE_SECONDS:-240}
 pids=()
 
 bpftrace -e "$cfg
-tracepoint:sched:sched_process_exec /uid == $uid/ { @execs[comm] = count(); @exec_ts[pid] = nsecs; }
+tracepoint:sched:sched_process_exec /uid == $uid/ {
+  @execs[comm] = count();
+  if (has_key(@exec_ts, pid)) { @reexecs[comm] = count(); } else { @exec_ts[pid] = nsecs; } }
 tracepoint:sched:sched_process_exit /uid == $uid && tid == pid && has_key(@exec_ts, pid)/ {
   @life_ms[comm] = hist((nsecs - @exec_ts[pid]) / 1000000); @life_us_sum[comm] = sum((nsecs - @exec_ts[pid]) / 1000); @life_n[comm] = count();
   delete(@exec_ts[pid]); }
@@ -87,10 +95,14 @@ interval:s:$window { clear(@start); clear(@sysid); exit(); }
 sleep 3
 start=$(date +%s)
 # shellcheck disable=SC2024 # root writes the log; the directory is chowned back below
-sudo -u "$user" -H bash -lc "cd $repo && direnv exec . bundle exec parallel_rspec spec -n \${LAIN_SPEC_WORKERS:-12} \
+sudo -u "$user" -H bash -lc "cd $repo && ${TRACE_SETUP:+$TRACE_SETUP;} direnv exec . bundle exec parallel_rspec spec -n \${LAIN_SPEC_WORKERS:-12} \
   --group-by runtime --runtime-log tmp/parallel_runtime_rspec.log --test-options '--format progress --no-profile'" \
   > "$out/pspec.txt" 2>&1 || true
-echo "pspec wall: $(( $(date +%s) - start ))s" | tee -a "$out/pspec.txt"
+elapsed=$(( $(date +%s) - start ))
+echo "pspec wall: ${elapsed}s" | tee -a "$out/pspec.txt"
+if [ "$elapsed" -ge $(( window - 3 )) ]; then
+  echo "WARNING: pspec ran ${elapsed}s, past the tracers' ${window}s window; counts are truncated. Rerun with TRACE_SECONDS=$(( elapsed + 60 ))." | tee -a "$out/pspec.txt" >&2
+fi
 
 for p in "${pids[@]}"; do kill -INT "$p" 2>/dev/null || true; done
 wait || true
