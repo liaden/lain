@@ -1497,16 +1497,56 @@ RSpec.describe Lain::Frontend::TTY do
 
     def shows(pattern, timeout: 20)
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-      sleep(0.05) until screen.match?(pattern) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-      raise "#{pattern.inspect} never showed; the screen was:\n#{screen}" unless screen.match?(pattern)
+      current = screen
+      until current.match?(pattern) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        sleep(0.01)
+        current = screen
+      end
+      raise "#{pattern.inspect} never showed; the screen was:\n#{current}" unless current.match?(pattern)
     end
 
     def notes(count, gap: 0.0)
       File.write(File.join(@dir, "notes"), "#{count} #{gap}")
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
       noted = File.join(@dir, "noted")
       sleep(0.02) until File.exist?(noted) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-      sleep(0.3)
+      raise "the notes were never sent; the screen was:\n#{screen}" unless File.exist?(noted)
+
+      settled
+    end
+
+    # 100ms outlasts the late draw that a 30ms beat missed.
+    def settled(quiet: 0.1, limit: 2)
+      now = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+      deadline = now.call + limit
+      current = screen
+      changed_at = now.call
+      while now.call - changed_at < quiet && now.call < deadline
+        sleep(0.01)
+        latest = screen
+        changed_at = now.call unless latest == current
+        current = latest
+      end
+      raise "the screen never stopped changing; it was:\n#{current}" if now.call - changed_at < quiet
+
+      current
+    end
+
+    describe "the helpers that wait on the terminal" do
+      it "settles on a draw that lands 50ms after the last change" do
+        start_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        allow(self).to receive(:screen) do
+          Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_at < 0.05 ? "typed\n" : "typed\nnote drawn\n"
+        end
+
+        expect(settled).to include("note drawn")
+      end
+
+      it "names the screen when a pattern never shows" do
+        allow(self).to receive(:screen).and_return("you> half\n")
+
+        expect { shows(/never/, timeout: 0.05) }.to raise_error(RuntimeError, /never.*never showed.*you> half/m)
+      end
     end
 
     it "holds the note while the prompt is drawn, keeps the typed words, and prints the note as the prompt closes" do
@@ -1567,12 +1607,10 @@ RSpec.describe Lain::Frontend::TTY do
       type("hello world")
       shows(/hello world/)
       press("Escape")
-      sleep(0.3)
       type("0")
-      sleep(0.3)
       notes(1)
       type("iX")
-      sleep(0.2)
+      settled
       press("Enter")
 
       expect(submitted).to eq('"Xhello world"')
@@ -1589,7 +1627,7 @@ RSpec.describe Lain::Frontend::TTY do
       end
       notes(15, gap: 0.02)
       typist.join
-      sleep(0.5)
+      settled
 
       expect(rows(/note \d+ of the fleet/)).to be_empty
       press("Enter")
