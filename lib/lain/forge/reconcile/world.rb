@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module Forge
     class Reconcile
@@ -12,7 +10,7 @@ module Lain
           @github = github
         end
 
-        def self.live(repo_root:, github:, remote: "origin", shell_out_factory: Mixlib::ShellOut.public_method(:new))
+        def self.live(repo_root:, github:, remote: "origin", shell_out_factory: Shell::Out.public_method(:new))
           new(heads: Promotion::Remote.new(repo_root:, remote:, shell_out_factory:), github:)
         end
 

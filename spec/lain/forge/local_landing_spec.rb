@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "tmpdir"
 
 # One approved issue's commit, landed onto its epic's working branch in this
@@ -13,10 +12,14 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
   around do |example|
     Dir.mktmpdir("lain-local-landing") do |repo|
       @repo = File.realpath(repo)
-      FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", @repo)
-      git("branch", "-M", "main")
-      commit("app/models/order.rb" => "class Order\nend\n")
-      git("switch", "-q", "-c", "epic/demo")
+      SeedRepo.derived("local_landing_epic", into: @repo) do |template|
+        SeedRepo.git(template, "branch", "-M", "main")
+        FileUtils.mkdir_p(File.join(template, "app/models"))
+        File.write(File.join(template, "app/models/order.rb"), "class Order\nend\n")
+        SeedRepo.git(template, "add", "app/models/order.rb")
+        SeedRepo.git(template, "commit", "-q", "-m", "work on app/models/order.rb")
+        SeedRepo.git(template, "switch", "-q", "-c", "epic/demo")
+      end
       example.run
     end
   end
@@ -46,11 +49,11 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
   # Scrubbed exactly as the subject scrubs, so a pre-commit hook's
   # GIT_INDEX_FILE never points these calls at lain's own index.
   def shell(*args)
-    Mixlib::ShellOut.new("git", "-C", @repo, *args,
+    Lain::Shell::Out.new("git", "-C", @repo, *args,
                          environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command
   end
 
-  def git(*) = shell(*).tap(&:error!).stdout.strip
+  def git(*) = SeedRepo.git(@repo, *).stdout.strip
 
   def commit(files)
     files.each do |path, body|

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module Forge
     # Put an epic's working branch on the remote as `epic/<slug>`, and delete it
@@ -179,7 +177,7 @@ module Lain
       # @param remote [String] the remote the branch is pushed to
       # @param shell_out_factory [#call] builds the subprocess runner
       def initialize(epic_slug:, journaled:, repo_root: Dir.pwd, remote: DEFAULT_REMOTE,
-                     shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                     shell_out_factory: Shell::Out.public_method(:new))
         @branch = Branch.new(epic_slug:)
         @journaled = journaled
         @remote = Remote.new(repo_root:, remote:, shell_out_factory:)

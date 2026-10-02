@@ -17,7 +17,8 @@ module Lain
     #
     # gh refusing, gh printing something unreadable, gh running past its bound --
     # each answers a not-ok {Answer} carrying why, never a raised
-    # `JSON::ParserError` or a leaked `Mixlib::ShellOut::CommandTimeout`. A
+    # `JSON::ParserError` or a leaked `Shell::Out::Timeout` or
+    # `Mixlib::ShellOut::CommandTimeout`. A
     # landing folds on these answers and journals them ({Journaled}), so a
     # refusal has to be a value the fold can carry; an exception would be a
     # second control path the journal never sees.
@@ -228,7 +229,7 @@ module Lain
       # @param shell_out_factory [#call] builds the subprocess runner, injected
       #   exactly as {Isolation::Worktree} and {Tools::Bash} do
       def initialize(cwd: Dir.pwd, timeout: DEFAULT_TIMEOUT, poll: Poll.new,
-                     shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                     shell_out_factory: Shell::Out.public_method(:new))
         @cwd = cwd.to_s
         @timeout = timeout
         @poll = poll
@@ -330,12 +331,12 @@ module Lain
         shell = @shell_out_factory.call("gh", *argv, cwd: @cwd, timeout: @timeout, **stdin(input))
         shell.run_command
         shell.exitstatus.zero? ? yield(shell) : on_refusal.call(argv, shell)
-      rescue Mixlib::ShellOut::CommandTimeout => e
+      rescue Shell::Out::Timeout, Mixlib::ShellOut::CommandTimeout => e
         failure(argv, "timeout", e.message)
       end
 
       # A verb with something to send says so, and the four that have nothing
-      # never acquire a stdin pipe: `input:` makes Mixlib open one, write and
+      # never acquire a stdin pipe: `input:` makes the runner open one, write and
       # close it, and a subprocess whose stdin behaviour changed is not the
       # subprocess the other verbs were verified against.
       def stdin(input) = input.nil? ? {} : { input: }

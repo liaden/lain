@@ -58,8 +58,6 @@ module Lain
       # @param epics [CLI::Epic] answers WHICH epic a bare invocation means
       # @param shell_out_factory [#call] every git subprocess
       # @param github [#pr_create, #pr_merge, #pr_view, #pr_list, #merge_state]
-      #   {Forge::Gh} keeps its own subprocess runner, since `gh` needs a cwd,
-      #   a timeout and a stdin that {Shell::Out} does not take
       def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                      epics: Epic.new(root:, paths:, config:),
                      shell_out_factory: Shell::Out.public_method(:new), github: Lain::Forge::Gh.new(cwd: root))

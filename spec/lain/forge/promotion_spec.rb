@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "tmpdir"
-require "mixlib/shellout"
 
 # Operates on THROWAWAY repos it creates itself -- a local checkout plus a local
 # BARE remote under one mktmpdir -- never the lain repo it runs in, and never the
@@ -18,11 +17,12 @@ RSpec.describe Lain::Forge::Promotion, :seam do
   end
 
   before do
-    Dir.mkdir(@repo_root)
     Dir.mkdir(@remote_root)
     run_git(@remote_root, "init", "--bare", "-q")
-    init_repo(@repo_root)
-    run_git(@repo_root, "remote", "add", "origin", @remote_root)
+    # Relative because the derived template is shared across every example's tmpdir.
+    SeedRepo.derived("promotion_checkout", into: @repo_root) do |dir|
+      SeedRepo.git(dir, "remote", "add", "origin", "../remote.git")
+    end
   end
 
   let(:records) { [] }
@@ -49,7 +49,7 @@ RSpec.describe Lain::Forge::Promotion, :seam do
     recorder
   end
 
-  def recording_factory(seen, delegate: Mixlib::ShellOut.public_method(:new))
+  def recording_factory(seen, delegate: Lain::Shell::Out.public_method(:new))
     lambda do |*args, **kwargs|
       seen << { args:, kwargs: }
       delegate.call(*args, **kwargs)
@@ -59,7 +59,7 @@ RSpec.describe Lain::Forge::Promotion, :seam do
   # Fails ONE git subcommand without running it, so a refusal git will not
   # produce on demand still gets pinned. Everything else runs for real.
   def factory_failing(subcommand, seen)
-    real = Mixlib::ShellOut.public_method(:new)
+    real = Lain::Shell::Out.public_method(:new)
     broken = Struct.new(:stdout, :stderr, :exitstatus) do
       def run_command = self
     end
@@ -69,23 +69,13 @@ RSpec.describe Lain::Forge::Promotion, :seam do
     end
   end
 
-  # Scrubbed exactly as the subject scrubs, so building the throwaway repos is
-  # hermetic under a pre-commit hook's GIT_* environment.
+  # Scrubbed exactly as the subject scrubs, so a hook's GIT_* never leaks in.
   def try_git(dir, *args)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
-                                 environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command
-    shell
+    Lain::Shell::Out.new("git", "-C", dir, *args,
+                         environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command
   end
 
-  def run_git(dir, *args) = try_git(dir, *args).tap(&:error!).stdout
-
-  def init_repo(dir)
-    run_git(dir, "init", "-q")
-    run_git(dir, "config", "user.email", "test@example.com")
-    run_git(dir, "config", "user.name", "Test")
-    commit_in(dir, "seed\n", "seed")
-  end
+  def run_git(dir, *args) = SeedRepo.git(dir, *args).stdout
 
   def commit_in(dir, contents, message, file: "README")
     File.write(File.join(dir, file), contents)

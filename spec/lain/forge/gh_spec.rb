@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "mixlib/shellout"
+require "tmpdir"
 
 # Forge::Gh is the tier's one door out to GitHub, and the whole of its design is
 # that the door is narrow: four verbs, each spelling its own argv array, none of
@@ -193,6 +194,43 @@ RSpec.describe Lain::Forge::Gh do
 
       expect(answer).not_to be_ok
       expect(answer.detail["reason"]).to eq("timeout")
+    end
+
+    it "answers the same structured value for Shell::Out's own timeout" do
+      slow = described_class.new(shell_out_factory: GhParity::FakeGh.new do
+        raise Lain::Shell::Out::Timeout, "command timed out after 60s"
+      end)
+
+      answer = slow.pr_merge(number: 7)
+
+      expect(answer).not_to be_ok
+      expect(answer.detail["reason"]).to eq("timeout")
+    end
+  end
+
+  # The production construction path: no factory injected, a real child.
+  describe "through the default runner" do
+    around do |example|
+      Dir.mktmpdir("lain-gh-default") do |dir|
+        @dir = File.realpath(dir)
+        bin = File.join(@dir, "bin")
+        Dir.mkdir(bin)
+        File.write(File.join(bin, "gh"), "#!/bin/sh\npwd > seen_cwd\ncat > seen_input\necho '{}'\n")
+        File.chmod(0o755, File.join(bin, "gh"))
+        path = ENV.fetch("PATH")
+        ENV["PATH"] = "#{bin}:#{path}"
+        example.run
+      ensure
+        ENV["PATH"] = path
+      end
+    end
+
+    it "gives gh its input on stdin and runs it in the cwd" do
+      answer = described_class.new(cwd: @dir, timeout: 5).submit_review(number: 7, review: { "body" => "b" })
+
+      expect(answer).to be_ok
+      expect(File.read(File.join(@dir, "seen_cwd")).strip).to eq(@dir)
+      expect(File.read(File.join(@dir, "seen_input"))).to eq('{"body":"b"}')
     end
   end
 

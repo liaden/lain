@@ -15,6 +15,13 @@ RSpec.describe Lain::Forge::Reconcile::World do
     expect(heads).to have_received(:heads).once
   end
 
+  it "reads a git timeout while listing remote refs as Unobservable" do
+    allow(heads).to receive(:heads).and_raise(Lain::Shell::Out::Timeout, "git timed out")
+
+    expect { world.ref_exists?("refs/heads/epic/demo/a1") }
+      .to raise_error(Lain::Forge::Unobservable, /cannot observe remote refs: git timed out/)
+  end
+
   it "finds a pull request by its head branch" do
     response = Lain::Forge::Gh::Answer.new(ok: true, detail: { "value" => [{ "number" => 17 }] })
     allow(github).to receive(:pr_list).with(head: "epic/demo/a1")
