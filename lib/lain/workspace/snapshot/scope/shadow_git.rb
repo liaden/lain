@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
 require "securerandom"
 
 module Lain
@@ -54,13 +53,13 @@ module Lain
               new("shadow git #{operation} failed (#{outcome(shell)}): #{shell.stderr.strip}")
             end
 
-            # git missing from PATH, or mixlib's own timeout: no exit status
+            # git missing from PATH, or the runner's own timeout: no exit status
             # exists to report, so the exception names itself instead.
             def self.from_error(operation, error)
               new("shadow git #{operation} failed (#{error.class}): #{error.message}")
             end
 
-            # Mixlib reports a NIL exit status for a child that died on a signal,
+            # The runner reports a NIL exit status for a child that died on a signal,
             # and `nil.zero?` is a NoMethodError in place of the refusal. The OOM
             # killer reaping `add --all` on a large tree is the realistic case,
             # and exactly when git's stderr is worth having.
@@ -82,8 +81,8 @@ module Lain
                  "by a ../ form no undo could act on. The project's own repository is never read or written."
 
           # The git-context env that redirects where git finds its repository,
-          # index and objects. Mapping each to `nil` DELETES it in the forked
-          # child (the {WorkerEnv} scrub semantics mixlib honours), which keeps a
+          # index and objects. Mapping each to `nil` DELETES it in the
+          # child, as {Shell::Out} honours it, which keeps a
           # lain running under a git hook from staging into the hooked
           # repository's index or spilling objects into its store.
           #
@@ -112,7 +111,7 @@ module Lain
           # @param shell_out_factory [#call] builds the subprocess runner,
           #   injected as a factory, as {Isolation::Worktree} does
           def initialize(paths: Paths.new, session: SecureRandom.hex(6),
-                         shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                         shell_out_factory: Shell::Out.method(:new))
             @paths = paths
             @session = session
             @shell_out_factory = shell_out_factory

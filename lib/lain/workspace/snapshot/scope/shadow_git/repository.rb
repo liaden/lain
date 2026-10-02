@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "securerandom"
 
 module Lain
@@ -41,7 +40,7 @@ module Lain
             # @param shell_out_factory [#call] builds the subprocess runner
             # @raise [Failed, Paths::Unwritable] when the store cannot be made
             def self.open(root:, paths:, session: SecureRandom.hex(6),
-                          shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                          shell_out_factory: Shell::Out.method(:new))
               expanded = File.expand_path(root.to_s)
               dir = ProjectDir.new(root: expanded, paths:).container("workspace")
               new(root: expanded, dir:, index: File.join(dir, "index-#{session}"), shell_out_factory:).ready
@@ -152,7 +151,7 @@ module Lain
               raise Failed.from_git(operation, shell) unless answers.include?(shell.exitstatus)
 
               shell
-            rescue Errno::ENOENT, Mixlib::ShellOut::CommandTimeout => e
+            rescue Errno::ENOENT, Shell::Out::Timeout => e
               raise Failed.from_error(operation, e)
             end
 

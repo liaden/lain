@@ -83,7 +83,7 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
   def stub_git(fail_on:, stderr: "fatal: unable to read tree")
     lambda do |*argv, **|
       failed = argv.include?(fail_on)
-      instance_double(Mixlib::ShellOut, run_command: nil, stdout: "",
+      instance_double(Lain::Shell::Out, run_command: nil, stdout: "",
                                         exitstatus: failed ? 128 : 0, stderr: failed ? stderr : "")
     end
   end
@@ -434,14 +434,14 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
         .to raise_error(Lain::Error, /shadow git init failed \(exit 128\): fatal: cannot mkdir/)
     end
 
-    # Mixlib reports a NIL exit status for a child killed by a signal, and the
+    # The runner reports a NIL exit status for a child killed by a signal, and the
     # OOM killer reaping `add --all` on a large tree is the realistic way to get
     # one. `nil.zero?` would be a NoMethodError in place of the refusal.
     it "names a signal death rather than raising NoMethodError on a nil exit" do
       # An empty stderr on purpose: a SIGKILLed git says nothing, so the
       # message has to carry the signal itself or it carries nothing at all.
       killed = lambda do |*argv, **|
-        instance_double(Mixlib::ShellOut, run_command: nil, stdout: "", stderr: "",
+        instance_double(Lain::Shell::Out, run_command: nil, stdout: "", stderr: "",
                                           exitstatus: argv.include?("add") ? nil : 0)
       end
       scope = shadow(root: nil, shell_out_factory: killed)
@@ -456,11 +456,11 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
         .to raise_error(Lain::Error, /shadow git init failed \(Errno::ENOENT\).*No such file or directory/)
     end
 
-    it "raises when git outruns mixlib's timeout" do
-      slow = ->(*, **) { raise Mixlib::ShellOut::CommandTimeout, "command timed out after 600s" }
+    it "raises when git outruns its timeout" do
+      slow = ->(*, **) { raise Lain::Shell::Out::Timeout, "command timed out after 600s" }
 
       expect { shadow(shell_out_factory: slow) }
-        .to raise_error(Lain::Error, /shadow git init failed \(Mixlib::ShellOut::CommandTimeout\).*600s/)
+        .to raise_error(Lain::Error, /shadow git init failed \(Lain::Shell::Out::Timeout\).*600s/)
     end
 
     # Paths::Unwritable is the refusal Paths raises for every other XDG

@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "fileutils"
-require "mixlib/shellout"
 
 # Every git call against the lain-owned store, and the one place git's `-z`
 # names become Ruby strings.
@@ -135,7 +134,7 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit::Repository, :seam do
     # A git whose first `init` loses the lock race a second process creating
     # the same store would cause.
     it "survives losing a lock race while creating the store" do
-      real = Mixlib::ShellOut.public_method(:new)
+      real = Lain::Shell::Out.method(:new)
       lost = false
       loser = Struct.new(:exitstatus, :stdout, :stderr) { def run_command = self }
       racing = lambda do |*argv, **options|
@@ -146,6 +145,24 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit::Repository, :seam do
 
       expect(described_class.open(root: project, paths:, shell_out_factory: racing).stage).to match(/\A\h+\z/)
     end
+  end
+
+  it "runs git through Shell::Out when no factory is given" do
+    allow(Lain::Shell::Out).to receive(:new).and_call_original
+
+    described_class.open(root: project, paths:)
+
+    expect(Lain::Shell::Out).to have_received(:new).with("git", any_args).at_least(:once)
+  end
+
+  it "raises the Lain refusal, not naming Mixlib, when git outruns its timeout" do
+    slow = ->(*, **) { raise Lain::Shell::Out::Timeout, "command timed out after 600s" }
+
+    expect { described_class.open(root: project, paths:, shell_out_factory: slow) }
+      .to raise_error(Lain::Workspace::Snapshot::Scope::ShadowGit::Failed) { |error|
+        expect(error.message).to match(/shadow git init failed \(Lain::Shell::Out::Timeout\).*600s/)
+        expect(error.message).not_to include("Mixlib")
+      }
   end
 
   describe "names outside ASCII" do
