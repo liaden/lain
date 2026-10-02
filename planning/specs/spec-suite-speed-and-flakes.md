@@ -1969,7 +1969,7 @@ Spec file: the line editor's spec (a PTY example; the reviewer's probe is tmp/wo
 
 ### Phase F: baseline
 
-### T60: Record the new baseline          [risk: low]
+### T60: Record the new baseline          [risk: low] [x]
 
 **Depends on:** every card T0 to T62
 **Files:** `tmp/profiling-2026-09-30/pass7/` (data, gitignored)
@@ -2124,3 +2124,4 @@ Prerequisite before T1: commit the uncommitted `bin/box-state` fix in the main c
 - T65: after the second review's C-x finding and the ruling, the main session verified the fix with the reviewer's probe (C-x at 0ms, C-x C-x twice) instead of a third review.
 - T65 landed `07ecf1cd` (suite 21,730 examples, 0 failures).
 - T42 landed `bbd57cf7` (suite 21,730 examples, 0 failures). Every card but T60 has landed.
+- T60: baseline at `tmp/profiling-2026-09-30/pass7/`: main 57.7s / 53.7s / 53.1s at 12 / 14 / 16 workers against the pre-plan tree's 116.2s / 101.4s / 103.5s; runs with a failure 0 of 15 against 9 of 15. 12 stays the default. The slow list is regenerated (29 files). T59's ceilings stay at their post-speedup seed until 3 quiet logs are recorded.

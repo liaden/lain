@@ -123,9 +123,10 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
   projections, and editable `lain://request` + `:LainResend` (a resend journals as
   `request_resent`, never mistakable for a real dispatch). Provider round-trip of an edited
   request remains later `[exp]` work.
-- **Spec suite speed and flakes.** `[planned]` `planning/specs/spec-suite-speed-and-flakes.md` (62
+- **Spec suite speed and flakes.** `[done]` `planning/specs/spec-suite-speed-and-flakes.md` (65
   cards, 2026-10-02): the measured fixes from `planning/spec-suite-solutions-research-2026-10.md`
-  (dev-box wall 112s to about 54s on the research branch) and the load flakes they exposed.
+  and the load flakes they exposed. Dev-box `rake pspec` median wall 116s to 58s at 12 workers,
+  runs with a failure 9 of 15 to 0 of 15, and mixlib-shellout is gone from the bundle.
 
 **The bench — the deliverable — now exists.** For the first time the project can *compare strategies*:
 `DryReplay` re-renders a recorded Timeline byte-identically under one `Context` and yields a

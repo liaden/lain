@@ -82,6 +82,21 @@ follows the workload, not a period, so repetition alone cannot average it out. A
 n=11** -- spreads wider than any difference between counts. Every number in this section was taken
 with that load present.
 
+**2026-10-02 baseline, after the speed and flakes plan.** `bin/suite-redrate`, main against the
+pre-plan tree (`d374aac8`), 5 interleaved rounds per worker count, raw output in
+`tmp/profiling-2026-09-30/pass7/`:
+
+| workers | main median | pre-plan median | main runs with a failure | pre-plan runs with a failure |
+|---|---|---|---|---|
+| 12 | 57.7s | 116.2s | 0 of 5 | 2 of 5 |
+| 14 | 53.7s | 101.4s | 0 of 5 | 4 of 5 (and 2 truncated counts) |
+| 16 | 53.1s | 103.5s | 0 of 5 | 3 of 5 |
+
+12 stays the default: 14 and 16 are about 4s faster on 5 runs each, which is inside the run-to-run
+spread this section warns about. **The wall is the larger of two terms**: the slowest file
+(`seams/input_pane_socket_spec.rb`, 37s at 16 workers) and the total work divided by the workers
+(653s / n), plus about 10s of startup outside the workers' own clocks.
+
 ## The wall is a MAX, not a sum
 
 `parallel_tests` packs whole FILES into groups, so **the longest single file is a hard floor** and

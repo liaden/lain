@@ -326,6 +326,10 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   It sits beside the rule above on purpose: that rule is about a run that finishes and
   under-reports, this one about a run that never finishes to report anything at all. Any spec helper that blocks on a real `accept`, `read` or
   `connect` needs its own bound, not just the one on the socket it hands back.
+- **2026-10-02: after the speed and flakes plan, 15 full `rake pspec` runs at 12, 14 and 16 workers
+  had no failure; the pre-plan tree failed 9 of the same 15.** The names below stay as the record;
+  the retired list further down says which were fixed and how. Budget a retry only for a name
+  still live here.
 - **The known load-induced flakes, by name** (2026-08-18; all pass in isolation, all driven by real
   `git`/`tmux`/`nvim` under a loaded box — see the TMPDIR note above before believing any of them):
   `Lain::Frontend::Neovim the review thread pane following the cursor
