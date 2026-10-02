@@ -325,8 +325,11 @@ RSpec.describe Lain::CLI::Wiring do
                                                   stop_reason: :end_turn)
                              ])
   end
-  let(:backend) { offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider) }
-
+  let(:backend_root) { Dir.pwd }
+  let(:backend) do
+    offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider,
+                                                                                  root: backend_root)
+  end
   # A provider that answers BOTH questions the occupancy pin below needs of
   # one: what window it is serving (`Provider#context_window_tokens`, which the
   # base class answers nil for) and a turn whose usage gives `#occupancy` a
@@ -351,6 +354,8 @@ RSpec.describe Lain::CLI::Wiring do
   # so the #run group below can assert that call actually happened.
   let(:status_feed) { instance_double(Lain::StatusFeed, bind_store: nil) }
   let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
+
+  def throwaway_project(dir) = Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :flag)
 
   def wire_agent
     recorder, session = wiring.run_state(nil)
@@ -754,8 +759,10 @@ RSpec.describe Lain::CLI::Wiring do
 
     let(:wiring) do
       described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }))
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                          project: throwaway_project(@state))
     end
+    let(:backend_root) { @state }
     let(:credential_provider) do
       Lain::Provider::Mock.new(responses: [
                                  Lain::Response.new(content: [credential_tool_use], stop_reason: :tool_use),
@@ -817,8 +824,10 @@ RSpec.describe Lain::CLI::Wiring do
 
     let(:wiring) do
       described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }))
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                          project: throwaway_project(@state))
     end
+    let(:backend_root) { @state }
     let(:journal) { RecordingChannel.new }
     # See the note above on journal_path: pure string manipulation derives the
     # WAL path, and a Provider::Mock run never writes a frame.
@@ -953,8 +962,10 @@ RSpec.describe Lain::CLI::Wiring do
     # snapshot store, which lives there.
     let(:wiring) do
       described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }))
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                          project: throwaway_project(@state))
     end
+    let(:backend_root) { @state }
 
     around do |example|
       Dir.mktmpdir("lain-wiring-state") do |state|
@@ -1037,8 +1048,10 @@ RSpec.describe Lain::CLI::Wiring do
     end
     let(:wiring) do
       described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }))
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                          project: throwaway_project(@state))
     end
+    let(:backend_root) { @state }
 
     around do |example|
       Dir.mktmpdir("lain-wiring-records") do |state|
@@ -1224,7 +1237,8 @@ RSpec.describe Lain::CLI::Wiring do
 
     let(:backend) do
       summarizing_backend_class.new(compaction_options, mock: reading_provider,
-                                                        oracle: WiringSpecSummarizer.new(summary_text))
+                                                        oracle: WiringSpecSummarizer.new(summary_text),
+                                                        root: backend_root)
     end
 
     let(:journal) { RecordingChannel.new }
@@ -1233,8 +1247,10 @@ RSpec.describe Lain::CLI::Wiring do
     # under the state home -- this example's own tmpdir, not the developer's.
     let(:wiring) do
       described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir, "HOME" => @dir }))
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir, "HOME" => @dir }),
+                          project: throwaway_project(@dir))
     end
+    let(:backend_root) { @dir }
 
     around do |example|
       Dir.mktmpdir do |dir|
