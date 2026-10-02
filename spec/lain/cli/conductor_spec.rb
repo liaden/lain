@@ -100,6 +100,16 @@ RSpec.describe Lain::CLI::Conductor do
                         run_clock:, countdown:)
   end
 
+  def while_terming_at_prompt
+    killer = Thread.new do
+      sleep(0.002) until rail.published.generation.positive?
+      Process.kill("TERM", Process.pid)
+    end
+    yield killer
+  ensure
+    killer.kill.join
+  end
+
   # A human at the rail, on a thread of their own because an idle prompt is read
   # with no reactor under it: each line typed at the next prompt published, and
   # a nil the stream ending there.
@@ -469,18 +479,27 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
+  describe "while_terming_at_prompt" do
+    it "leaves no live thread behind when the block raises before the signal is sent" do
+      thread = nil
+      expect do
+        while_terming_at_prompt do |killer|
+          thread = killer
+          raise "read_prompt failed"
+        end
+      end.to raise_error("read_prompt failed")
+
+      expect(thread).not_to be_alive
+    end
+  end
+
   describe "read_prompt at an idle prompt" do
     it "breaks the prompt out on a signal and closes the session :exit, returning nil" do
       signals = Lain::CLI::Signals.new.install
       conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals:)
       # Nothing feeds the rail, so the read waits as it would on a human who
       # types nothing; the breaker raises the reader out of that wait.
-      killer = Thread.new do
-        sleep(0.002) until rail.published.generation.positive?
-        Process.kill("TERM", Process.pid)
-      end
-      line = conductor.read_prompt("you> ")
-      killer.join
+      line = while_terming_at_prompt { conductor.read_prompt("you> ") }
 
       expect(line).to be_nil
       expect(conductor).to be_closed
@@ -582,13 +601,8 @@ RSpec.describe Lain::CLI::Conductor do
       run_clock = instance_double(Lain::RunClock, record_input: nil)
       signals = Lain::CLI::Signals.new.install
       conductor = build_with_run_clock(run_clock:, signals:)
-      killer = Thread.new do
-        sleep(0.002) until rail.published.generation.positive?
-        Process.kill("TERM", Process.pid)
-      end
 
-      conductor.read_prompt("you> ")
-      killer.join
+      while_terming_at_prompt { conductor.read_prompt("you> ") }
 
       expect(run_clock).not_to have_received(:record_input)
     ensure
