@@ -73,7 +73,7 @@ RSpec.describe "lain nvim plugin", :nvim do
   # spawn env hash removes the variable from the child, which is how the
   # XDG-absent branch gets exercised at all.
   def boot_nvim(plugin: true, xdg: nil, state: :fixture, home: :fixture, extra_args: [])
-    args = ["nvim", "--headless", "--clean"]
+    args = [HeadlessEditor.binary, "--headless", "--clean"]
     args += ["--cmd", "set rtp+=#{plugin_root}"] if plugin
     args += extra_args
     args += ["--listen", @control]
@@ -470,7 +470,7 @@ RSpec.describe "lain nvim plugin", :nvim do
 
       Dir.mktmpdir("lain-helptags") do |dir|
         FileUtils.cp(File.join(plugin_root, "doc", "lain.txt"), dir)
-        system("nvim", "--clean", "--headless", "-c", "helptags #{dir}", "-c", "qa!",
+        system(HeadlessEditor.binary, "--clean", "--headless", "-c", "helptags #{dir}", "-c", "qa!",
                out: File::NULL, err: File::NULL)
         expect(File.exist?(File.join(dir, "tags"))).to be(true)
       end

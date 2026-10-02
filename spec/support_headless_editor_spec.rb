@@ -262,4 +262,33 @@ RSpec.describe HeadlessEditor, :seam do
       FileUtils.rm_f(path) if path
     end
   end
+
+  describe ".binary" do
+    def executable_in(dir)
+      FileUtils.mkdir_p(dir)
+      File.join(dir, "nvim").tap { |path| File.write(path, "#!/bin/sh\n") && File.chmod(0o755, path) }
+    end
+
+    around { |example| Dir.mktmpdir("headless-editor-binary") { |dir| (@root = dir) && example.run } }
+
+    it "returns the real nvim when a shims directory comes first" do
+      executable_in(File.join(@root, "shims"))
+      real = executable_in(File.join(@root, "bin"))
+
+      expect(described_class.binary([File.join(@root, "shims"), File.join(@root, "bin")].join(":"))).to eq(real)
+    end
+
+    it "returns plain nvim when only a shim provides one" do
+      executable_in(File.join(@root, "shims"))
+
+      expect(described_class.binary(File.join(@root, "shims"))).to eq("nvim")
+    end
+
+    it "keeps an earlier real nvim ahead of a later one" do
+      first = executable_in(File.join(@root, "first"))
+      executable_in(File.join(@root, "second"))
+
+      expect(described_class.binary([File.join(@root, "first"), File.join(@root, "second")].join(":"))).to eq(first)
+    end
+  end
 end

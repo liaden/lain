@@ -216,6 +216,9 @@ heap, instead of `bundler/setup`. A child's CPU for `require "lain"` fell from a
 research, and from about 1.5s to 1.1s on a loaded box on 2026-10-02. `exe/lain` children get the
 heap sizing only, because `exe/lain` requires `bundler/setup` itself. `LAIN_NO_CHILD_BOOT=1` puts
 `bundler/setup` back.
+Headless editors skip PATH entries named `shims` (`HeadlessEditor.binary`): a mise shim costs
+about 135ms per editor boot against 4 to 5ms for the real binary (the 2026-10-01 research), with
+no box configuration needed.
 
 ## Worker memory is mostly glibc's, not Ruby's
 

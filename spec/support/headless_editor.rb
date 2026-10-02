@@ -24,7 +24,7 @@ module HeadlessEditor
   # swap beside the fixture, and the next example's `bufload` answers
   # `E325: ATTENTION` -- a cascade that names nothing about itself. A spec that
   # needs the option rather than the flag passes `args:`.
-  COMMAND = %w[nvim --headless --clean -n].freeze
+  FLAGS = %w[--headless --clean -n].freeze
 
   # Generous, because it bounds a startup and not a behaviour: the editor is up
   # in single-digit milliseconds, and anything approaching this is a box under
@@ -103,6 +103,16 @@ module HeadlessEditor
     end
   end
 
+  # A mise or asdf shim is a launcher costing about 135ms before it execs the
+  # editor, against 4 to 5ms for the real binary, paid by every example that
+  # boots one. PATH is walked rather than cached so a spec that puts a stand-in
+  # first still wins.
+  def self.binary(path = ENV.fetch("PATH", "")) = candidates(path).find { |file| File.executable?(file) } || "nvim"
+
+  def self.candidates(path)
+    path.split(File::PATH_SEPARATOR).reject { |dir| File.basename(dir) == "shims" }.map { |dir| File.join(dir, "nvim") }
+  end
+
   # Spawned and accepting connections, or nothing.
   #
   # An `ensure` with a handover flag rather than a `rescue`, and both halves of
@@ -115,7 +125,7 @@ module HeadlessEditor
   # every way out, `throw` included.
   def self.start(name, chdir: nil, args: [], wait: WAIT)
     socket = socket_path(name)
-    session = Session.new(socket, spawn(*COMMAND, *args, "--listen", socket,
+    session = Session.new(socket, spawn(binary, *FLAGS, *args, "--listen", socket,
                                         **{ chdir:, out: File::NULL, err: File::NULL }.compact))
     Timeout.timeout(wait) { sleep 0.02 until File.exist?(socket) }
     until_accepting(wait) { Socket.unix(socket).close }
