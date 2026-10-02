@@ -20,10 +20,10 @@ module Lain
     # the process shelling out per turn.
     #
     # NOT A REPLACEMENT FOR `Mixlib::ShellOut` EVERYWHERE. It answers the calls
-    # that pass an argv array and read three values back. Callers wanting
-    # mixlib's `cwd:`, `input:`, `live_stdout:` or its `CommandTimeout` class
-    # keep mixlib; a keyword this does not implement is an `ArgumentError` here
-    # rather than a silently ignored option.
+    # that pass an argv array, optionally a directory and some stdin, and read
+    # three values back. Callers wanting mixlib's `user:`, `live_stdout:` or its
+    # `CommandTimeout` class keep mixlib; a keyword this does not implement is
+    # an `ArgumentError` here rather than a silently ignored option.
     #
     # NEVER THROUGH A SHELL. `Process.spawn("ls -l")` is not `exec`: a lone
     # String is re-split on whitespace, and one holding a metacharacter goes to
@@ -56,11 +56,7 @@ module Lain
 
       # `pgroup: true` makes the child a group leader, which is what lets a
       # timeout kill the command's own descendants rather than only the command.
-      # `in:` is `/dev/null` because the child would otherwise inherit lain's
-      # stdin and read the human's keystrokes -- mixlib hands its child an
-      # immediately-closed pipe and `crates/lain-core/src/exec.rs` sets
-      # `Stdio::null()`, so all three arms agree.
-      SPAWN = { in: File::NULL, pgroup: true, unsetenv_others: false }.freeze
+      SPAWN = { pgroup: true, unsetenv_others: false }.freeze
 
       # The file descriptors one run needs: opened together, handed to `spawn`,
       # and closed exactly once. Its own object because the bookkeeping is a
@@ -85,6 +81,66 @@ module Lain
         def close = [@stdout, @stderr].flatten.each { |io| io.close unless io.closed? }
       end
 
+      # The stdin of a run given no input: `/dev/null`, never a pipe and never
+      # inherited. Inherited, the child would read the human's keystrokes; a
+      # pipe, even an empty one, changes what some tools do -- rg searches its
+      # stdin instead of the directory. `crates/lain-core/src/exec.rs` sets
+      # `Stdio::null()` for the same reason.
+      module Unfed
+        def self.redirection = { in: File::NULL }
+        def self.close_read = nil
+        def self.writers = []
+        def self.closed? = true
+        def self.close = nil
+      end
+
+      # The input still owed to the child, written a pipe-buffer at a time as
+      # the select loop finds stdin writable. Writing it all up front instead
+      # deadlocks once the input outgrows what the pipes and the child's own
+      # buffer absorb: the parent blocks on a full stdin while the child
+      # blocks on a full stdout.
+      class Feed
+        # @param input [String, nil]
+        # @return [Feed, Unfed]
+        def self.for(input) = input.nil? ? Unfed : new(input)
+
+        def initialize(input)
+          @read, @io = IO.pipe
+          @pending = input.b
+        end
+
+        def redirection = { in: @read }
+
+        # Called once the child holds its copy, so the child's exit is what
+        # closes the last read end and turns a pending write into EPIPE.
+        def close_read
+          @read.close
+          finish if @pending.empty?
+        end
+
+        # @return [Array<IO>] the stdin write end while input is owed, else none
+        def writers = @io.closed? ? [] : [@io]
+
+        def closed? = @io.closed?
+
+        def close = [@read, @io].each { |io| io.close unless io.closed? }
+
+        # A child that exits without reading closes its end, and the write
+        # answers EPIPE: the input is moot, the exit status is still the answer.
+        def write
+          @pending = @pending.byteslice(@io.write_nonblock(@pending)..)
+          finish if @pending.empty?
+        rescue IO::WaitWritable
+          nil # writable went stale between select and write; the next round retries
+        rescue Errno::EPIPE
+          finish
+        end
+
+        private
+
+        def finish = @io.close
+      end
+
       # @return [String] everything the child wrote to stdout
       attr_reader :stdout
 
@@ -101,15 +157,22 @@ module Lain
       #   environment in the child, where a nil value DELETES the variable --
       #   mixlib's `environment:` semantics, which
       #   {Isolation::Worktree::GIT_CONTEXT_SCRUB} depends on
+      # @param cwd [String, nil] the child's working directory; nil keeps the
+      #   parent's
+      # @param input [String, nil] written to the child's stdin, which then
+      #   closes; nil gives the child an empty stdin
       # @param timeout [Numeric] seconds before the child's process group is
       #   TERMed, then KILLed
       # @param clock [#call] the monotonic source the bound is measured
       #   against, defaulted from {RunClock::MONOTONIC} as every `clock:` seam
       #   in the repo is -- naming the primitive here instead would be the
       #   second site of a constant that is spec'd to have exactly one
-      def initialize(*argv, environment: {}, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC)
+      def initialize(*argv, environment: {}, cwd: nil, input: nil, timeout: DEFAULT_TIMEOUT,
+                     clock: RunClock::MONOTONIC)
         @argv = argv
         @environment = environment
+        @chdir = { chdir: cwd }.compact
+        @input = string_or_nil(input)
         @timeout = timeout
         @clock = clock
         @stdout = +""
@@ -123,15 +186,29 @@ module Lain
       # @raise [Timeout] when the child outlives its bound
       def run_command
         pipes = Pipes.new
-        pid = Process.spawn(@environment, *command, **pipes.redirection, **SPAWN)
-        pipes.close_writes
-        @exitstatus = collect(pid, pipes.readers(@stdout, @stderr))
+        feed = Feed.for(@input)
+        pid = spawn(pipes, feed)
+        @exitstatus = collect(pid, pipes.readers(@stdout, @stderr), feed)
         self
       ensure
         pipes&.close
+        feed&.close
       end
 
       private
+
+      def spawn(pipes, feed)
+        pid = Process.spawn(@environment, *command, **pipes.redirection, **feed.redirection, **@chdir, **SPAWN)
+        pipes.close_writes
+        feed.close_read
+        pid
+      end
+
+      def string_or_nil(input)
+        return input if input.nil? || input.is_a?(String)
+
+        raise TypeError, "input: must be a String or nil, got #{input.class}"
+      end
 
       # `[program, argv0]` rather than a bare String: see the class comment on
       # why a one-word command would otherwise be re-split or shelled out.
@@ -140,31 +217,32 @@ module Lain
       # The kill happens HERE and not at the caller: a Timeout that escaped with
       # the child still running would leave an orphan holding the pipes this
       # method's caller is about to close.
-      def collect(pid, buffers)
-        pump(buffers)
+      def collect(pid, buffers, feed)
+        pump(buffers, feed)
         reap(pid)
       rescue Timeout
         terminate(pid)
         raise
       end
 
-      def pump(buffers)
+      def pump(buffers, feed)
         deadline = clock + @timeout
         open = buffers.keys
-        open = read_ready(open, buffers, deadline) until open.empty?
+        open = transfer(open, buffers, feed, deadline) until open.empty? && feed.closed?
       end
 
-      def read_ready(open, buffers, deadline)
-        finished = ready(open, deadline).select { |io| read_chunk(io, buffers.fetch(io)).nil? }
-        open - finished
+      def transfer(open, buffers, feed, deadline)
+        readable, writable = ready(open, feed.writers, deadline)
+        feed.write unless writable.empty?
+        open - readable.select { |io| read_chunk(io, buffers.fetch(io)).nil? }
       end
 
-      def ready(open, deadline)
+      def ready(open, writers, deadline)
         remaining = deadline - clock
-        selected = remaining.positive? ? IO.select(open, nil, nil, remaining) : nil
+        selected = remaining.positive? ? IO.select(open, writers, nil, remaining) : nil
         raise Timeout, "timed out after #{@timeout}s: #{@argv.join(" ")}" if selected.nil?
 
-        selected.first
+        selected
       end
 
       # `readpartial` answers ASCII-8BIT, and an empty buffer adopts the encoding

@@ -204,9 +204,82 @@ RSpec.describe Lain::Shell::Out do
     end
   end
 
+  describe "the directory the child runs in" do
+    it "runs the child in the directory named" do
+      Dir.mktmpdir("lain-out") do |dir|
+        shell = described_class.new("pwd", cwd: dir).run_command
+
+        expect(shell.stdout.chomp).to eq(File.realpath(dir))
+      end
+    end
+  end
+
+  describe "input on stdin" do
+    # A pipe on stdin changes what some tools do: rg searches the pipe instead
+    # of the directory. So without input the child gets /dev/null, not a pipe.
+    it "gives the child /dev/null rather than a pipe when no input is given" do
+      shell = described_class.new("sh", "-c", "if test -p /dev/stdin; then echo pipe; else echo other; fi").run_command
+
+      expect(shell.stdout).to eq("other\n")
+    end
+
+    it "rejects input that is not a String rather than converting it" do
+      expect { described_class.new("cat", input: 42) }.to raise_error(TypeError)
+    end
+
+    # A runner that writes all input before reading deadlocks once the input
+    # outgrows what the stdin pipe, the stdout pipe and cat's own buffer absorb
+    # together; 200KB fits in them, 1MB does not. The outer bound is there
+    # because such a runner blocks in write(2), where Out's own timeout never runs.
+    it "feeds input larger than the pipes can hold and reads it back without deadlocking" do
+      input = Random.new(26).bytes(1024 * 1024)
+      shell = Timeout.timeout(10) { described_class.new("cat", input:, timeout: 30).run_command }
+
+      expect(shell.stdout.b).to eq(input.b)
+      expect(shell.exitstatus).to eq(0)
+    end
+
+    it "agrees with Mixlib::ShellOut on what the child read" do
+      mine, theirs = both("sh", "-c", "tr a-z A-Z; exit 5", input: "hello\n")
+
+      expect([mine.stdout, mine.exitstatus]).to eq([theirs.stdout, theirs.exitstatus])
+    end
+
+    it "reports the exit status of a child that exits without reading its input" do
+      shell = described_class.new("sh", "-c", "exit 4", input: "x" * (200 * 1024), timeout: 30).run_command
+
+      expect(shell.exitstatus).to eq(4)
+    end
+  end
+
+  describe "how the child is started" do
+    def forks_during
+      count = 0
+      allow(Process).to receive(:_fork).and_wrap_original do |original|
+        count += 1
+        original.call
+      end
+      yield
+      count
+    end
+
+    # The hook is only evidence if it sees a fork when one happens. Its limit:
+    # it counts Ruby-level forks, so a fallback from vfork to fork(2) inside
+    # Process.spawn's C code would not show here.
+    it "has a fork counter that sees mixlib's fork" do
+      expect(forks_during { Mixlib::ShellOut.new("true").run_command }).to eq(1)
+    end
+
+    it "never forks the parent, with a directory and input given" do
+      Dir.mktmpdir("lain-out") do |dir|
+        expect(forks_during { described_class.new("cat", cwd: dir, input: "hi").run_command }).to eq(0)
+      end
+    end
+  end
+
   describe "options it does not implement" do
     it "refuses a mixlib keyword rather than ignoring it" do
-      expect { described_class.new("true", cwd: "/tmp") }.to raise_error(ArgumentError)
+      expect { described_class.new("true", user: "root") }.to raise_error(ArgumentError)
     end
   end
 
