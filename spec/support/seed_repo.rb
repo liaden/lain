@@ -2,7 +2,7 @@
 
 require "fileutils"
 require "tmpdir"
-require "mixlib/shellout"
+require "concurrent/map"
 
 # A throwaway git repo to start an example from, built ONCE and copied after
 # that.
@@ -27,6 +27,8 @@ module SeedRepo
   # The same scrub the subjects use, so building the template is hermetic under
   # an ambient GIT_*-polluted env (a pre-commit hook) exactly as they are.
   SCRUB = Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB
+
+  SEED = { "README" => "seed\n" }.freeze
 
   # The CONFIG half of that hermeticity, which the scrub cannot reach: these
   # arrive from ~/.gitconfig, not from the environment. A developer with
@@ -65,19 +67,83 @@ module SeedRepo
            "maintenance.auto" => "false", "gc.auto" => "0",
            "rerere.enabled" => "false" }.freeze
 
+  class GitFailed < StandardError; end
+
+  # Two key shapes share it: the seed files hash for {.at}, and `[:layout, dir]`
+  # or `[:derived, key]` for the copy-returning builders.
+  TEMPLATES = Concurrent::Map.new
+  private_constant :TEMPLATES
+
   class << self
     # @param files [Hash{String=>String}] seed path => contents
     # @return [String] a directory to copy, never to mutate
     def at(files)
-      templates[files] ||= build(files)
+      TEMPLATES.compute_if_absent(files) { build(files) }
+    end
+
+    # The seed plus a fixture directory committed on top, on `main`.
+    #
+    # @param layout [String] a directory whose contents are copied over the seed
+    # @param into [String] a directory the caller owns and removes
+    # @return [String] `into`
+    def with_layout(layout, into:)
+      seed = at(SEED)
+      copy_into(TEMPLATES.compute_if_absent([:layout, layout]) { build_layout(seed, layout) }, into)
+    end
+
+    # The seed plus whatever the block does to it, built once per key. The block
+    # must not call SeedRepo's template methods: it runs inside the map's lock.
+    #
+    # @param key [String] a second block under the same key never runs
+    # @yieldparam dir [String] a copy of the seed to commit on top of
+    # @param into [String] a directory the caller owns and removes
+    # @return [String] `into`
+    def derived(key, into:, &block)
+      seed = at(SEED)
+      copy_into(TEMPLATES.compute_if_absent([:derived, key]) { build_derived(seed, &block) }, into)
+    end
+
+    # @param dir [String] the repository to run in
+    # @param args [Array<String>] git's argv after `-C dir`
+    # @param input [String, nil] fed on stdin
+    # @return [Lain::Shell::Out] already run
+    # @raise [GitFailed] on any exit other than 0
+    def git(dir, *args, input: nil)
+      shell = Lain::Shell::Out.new("git", "-C", dir, *args, environment: SCRUB, input:).run_command
+      return shell if shell.exitstatus&.zero?
+
+      raise GitFailed, "expected exit 0, got #{shell.exitstatus.inspect}: git -C #{dir} #{args.join(" ")}\n" \
+                       "STDOUT: #{shell.stdout}\nSTDERR: #{shell.stderr}"
     end
 
     private
 
-    # Process-wide by design, and safe without a lock for the reason the whole
-    # suite is: `parallel_tests` forks PROCESSES, and one example runs at a
-    # time within each, so nothing races this.
-    def templates = @templates ||= {} # rubocop:disable ThreadSafety/ClassInstanceVariable
+    def copy_into(template, dir)
+      FileUtils.mkdir_p(dir)
+      FileUtils.cp_r("#{template}/.", dir)
+      dir
+    end
+
+    def new_template(seed)
+      dir = Dir.mktmpdir("lain-seed-template")
+      at_exit { FileUtils.remove_entry(dir, true) }
+      copy_into(seed, dir)
+    end
+
+    def build_layout(seed, layout)
+      dir = new_template(seed)
+      FileUtils.cp_r(File.join(layout, "."), dir)
+      git(dir, "add", "-A")
+      git(dir, "commit", "-q", "-m", "layout")
+      git(dir, "branch", "-M", "main")
+      dir
+    end
+
+    def build_derived(seed)
+      dir = new_template(seed)
+      yield dir
+      dir
+    end
 
     def build(files)
       dir = Dir.mktmpdir("lain-seed-template")
@@ -92,10 +158,6 @@ module SeedRepo
       git(dir, "add", "-A")
       git(dir, "commit", "-q", "-m", "seed")
       dir
-    end
-
-    def git(dir, *)
-      Mixlib::ShellOut.new("git", "-C", dir, *, environment: SCRUB).run_command.error!
     end
   end
 end
