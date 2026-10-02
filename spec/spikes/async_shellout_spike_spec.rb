@@ -1,21 +1,22 @@
 # frozen_string_literal: true
 
 require "async"
-require "mixlib/shellout"
 
-# 5-0.1: does Mixlib::ShellOut's internal IO.select (unix.rb ~line 282) and
-# Process.waitpid2 (unix.rb ~line 406) stall the single OS thread an Async
-# reactor runs on, or does Ruby's fiber scheduler hook those calls so other
-# tasks keep making progress? This is measured, not assumed -- see
+# 5-0.1: does {Lain::Shell::Out}'s wait on a child (an IO.select on its pipes,
+# then a waitpid) stall the single OS thread an Async reactor runs on, or does
+# Ruby's fiber scheduler hook those calls so other tasks keep making progress?
+# The question was first measured against a gem runner that has since been
+# replaced; the scenarios below now pin the runner the code base uses. This is measured, not assumed -- see
 # docs/concurrency.md for the reasoning that made the question load-bearing.
 #
 # Both scenarios below run the SAME workload: one task shells out to `sleep
 # 1s`, a second task ticks a monotonic timestamp into an array every 50ms.
-# Only one can be true of a given (ruby, async, mixlib-shellout) triple, so
+# Only one can be true of a given (ruby, async) pair, so
 # only one scenario is committed passing; see the pinned versions below.
-RSpec.describe "Async x Mixlib::ShellOut", :spike do
+RSpec.describe "Async x Shell::Out", :spike do
   # Pinned at measurement time (see docs/concurrency.md for the dated entry):
-  #   ruby 4.0.5, async 2.42.0, mixlib-shellout 3.4.10
+  #   ruby 4.0.5, async 2.42.0 with the gem runner (2026-07-13); ported to
+  #   Shell::Out and re-run on ruby 4.0.6, async 2.42.0 (2026-10-02)
   let(:tick_interval) { 0.05 }
   let(:tick_count) { 30 }
 
@@ -24,7 +25,7 @@ RSpec.describe "Async x Mixlib::ShellOut", :spike do
   # run_command call.
   def run_shellout
     start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    Mixlib::ShellOut.new("sleep 1").run_command
+    Lain::Shell::Out.new("sleep", "1").run_command
     [start, Process.clock_gettime(Process::CLOCK_MONOTONIC)]
   end
 
@@ -66,15 +67,15 @@ RSpec.describe "Async x Mixlib::ShellOut", :spike do
   end
 
   # MEASURED, not assumed: five consecutive runs on ruby 4.0.5 + async 2.42.0
-  # + mixlib-shellout 3.4.10 (2026-07-13) each recorded ~20/20 expected ticks
+  # against the gem runner this replaced (2026-07-13) each recorded ~20/20 expected ticks
   # inside the shellout window, with inter-tick gaps holding at ~50ms (max
   # observed 51.4ms -- no gap resembling the full 1s window). That is the
   # cooperative outcome, so the starvation scenario below did not occur and
   # is skipped as the documented, empirically-rejected alternative. See
   # docs/concurrency.md's dated 5-0.1 entry for the full measurement.
   it "starves the ticker while the shellout blocks the reactor's one OS thread",
-     skip: "measured cooperative, not starved: ruby 4.0.5 + async 2.42.0 + " \
-           "mixlib-shellout 3.4.10 (2026-07-13) -- ticker recorded ~20/20 ticks " \
+     skip: "measured cooperative, not starved: ruby 4.0.5 + async 2.42.0 " \
+           "with the gem runner (2026-07-13), ported to Shell::Out 2026-10-02 -- ticker recorded ~20/20 ticks " \
            "throughout the shellout window across 5 runs, no stall observed; " \
            "see docs/concurrency.md" do
     ticks, window = run_workload

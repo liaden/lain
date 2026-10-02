@@ -1,13 +1,12 @@
 # frozen_string_literal: true
 
 require "async"
-require "mixlib/shellout"
 require "rbconfig"
 
-# 5-0.3 re-verify: 5-0.1 proved Mixlib::ShellOut cooperates with the fiber
-# scheduler for an *idle* child (its IO.select / Process.waitpid2 wait), but
-# explicitly did NOT measure a stdout-FLOODING child -- chunked read_nonblock
-# under pipe-buffer backpressure, a different code path in unix.rb. This spec
+# 5-0.3 re-verify: 5-0.1 proved a shell-out cooperates with the fiber
+# scheduler for an *idle* child (its IO.select / waitpid wait), but did NOT
+# measure a stdout-FLOODING child -- chunked reads under pipe-buffer
+# backpressure, a different code path. It now pins {Lain::Shell::Out}. This spec
 # closes that gap: a child streams ~10MB to stdout inside the reactor while a
 # heartbeat fiber ticks every 50ms, and we assert the heartbeat's latency stays
 # under a PINNED bound rather than stalling for the flood's duration.
@@ -21,31 +20,32 @@ require "rbconfig"
 # ~2x headroom, and an order of magnitude below the ~1.2s stall a starved
 # reactor would show. So it fails loudly on a real stall without flaking on
 # jitter. "Bounded" is thus a number, not a mood.
-RSpec.describe "Async x Mixlib::ShellOut under stdout flood", :spike do
+RSpec.describe "Async x Shell::Out under stdout flood", :spike do
   # Pinned at measurement time (see docs/concurrency.md's 5-0.3 entry):
-  #   ruby 4.0.5, async 2.42.0, mixlib-shellout 3.4.10
+  #   ruby 4.0.5, async 2.42.0 with the gem runner (2026-07-13); ported to
+  #   Shell::Out and re-run on ruby 4.0.6, async 2.42.0 (2026-10-02)
   let(:tick_interval) { 0.05 }
   let(:tick_count) { 40 }
   let(:latency_ceiling_ms) { 150 }
 
   # ~10MB streamed to stdout as a sustained trickle over ~1.2s: 200 chunks of
   # 50KB (each larger than the ~64KB pipe buffer's drain granularity) with a 5ms
-  # pause between them. This keeps Mixlib::ShellOut's chunked read_nonblock loop
+  # pause between them. This keeps the runner's chunked read loop
   # under real backpressure across a window many ticks wide -- long enough that a
   # starved reactor would show an unmistakable multi-tick stall. A one-shot 10MB
   # write drains in ~30ms, shorter than a single tick, so it could not tell a
   # cooperative reactor from a starved one; the trickle is what makes the bound
   # non-vacuous, and it also mirrors how real `bash` output arrives (a trickle
   # over a pipe -- see docs/concurrency.md's opening).
-  def flood_command
-    %(#{RbConfig.ruby} -e '200.times { STDOUT.write("x" * 50_000); sleep 0.005 }')
+  def flood_argv
+    [RbConfig.ruby, "-e", %(200.times { STDOUT.write("x" * 50_000); sleep 0.005 })]
   end
 
   # Streams the flood and returns [start, finish] monotonic timestamps
   # bracketing the child's entire run_command call, plus the bytes captured.
   def run_flood
     start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    shell = Mixlib::ShellOut.new(flood_command, timeout: 30)
+    shell = Lain::Shell::Out.new(*flood_argv, timeout: 30)
     shell.run_command
     [start, Process.clock_gettime(Process::CLOCK_MONOTONIC), shell.stdout.bytesize]
   end

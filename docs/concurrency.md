@@ -59,6 +59,14 @@ task at a scheduler-controlled yield point, and the task tree cancels together. 
 property threads cannot offer, and it maps directly onto `max_iterations`, cost ceilings, and
 user interrupts — the exact three cancellation triggers this loop needs.
 
+> **History note (2026-10).** Everything below that names `Mixlib::ShellOut` (this blocker, the
+> 5-0.1 and 5-0.3 spike results and their pinned versions) records what was measured while the
+> `bash` tool ran on that gem. The gem is gone: `Lain::Shell::Out` spawns its child with
+> `Process.spawn` and waits with `IO.select` and `waitpid`, and the two spikes under `spec/spikes`
+> now pin that runner. The measurements are kept as dated, because they are what made the
+> question's answer (cooperative) trustworthy; read the gem's file and line references as
+> pointing at a dependency no longer in the bundle.
+
 **The blocker, stated plainly, because it has to be verified rather than assumed:**
 `Mixlib::ShellOut` — the gem the `bash` tool is built on — blocks on `IO.select`
 (`unix.rb:282`) and `Process.waitpid2` (`unix.rb:406`) when it waits for a child process. Ruby's

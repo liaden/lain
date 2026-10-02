@@ -357,8 +357,8 @@ module Lain
         #   opt-out, and it is spelled at the call site that takes it.
         # @param shell_out_factory [#call] builds the subprocess runner, a
         #   factory exactly as {Worktree} takes one, defaulting to {Shell::Out}
-        #   for the reason {Worktree#initialize} gives: mixlib forks, and this
-        #   object spawns git a dozen times per handback
+        #   for the reason {Worktree#initialize} gives: this object spawns git a
+        #   dozen times per handback
         def initialize(base:, repo_root: Dir.pwd, journal: Channel::Null.instance, strategy: MergeStrategy::DEFAULT,
                        shell_out_factory: Shell::Out.public_method(:new))
           @parent = Checkout.new(File.expand_path(repo_root), shell_out_factory:)

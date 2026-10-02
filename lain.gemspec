@@ -79,10 +79,6 @@ Gem::Specification.new do |spec|
   # bug class we most fear: a `data:` line split across two TCP reads. A VCR cassette
   # stores the body as one blob and would replay green forever over that bug.
   spec.add_dependency "event_stream_parser", "~> 1.0"
-  # Chef's Mixlib::ShellOut. Handles stdout/stderr capture, environment, cwd, timeout,
-  # and live_stdout/live_stderr streaming for the `bash` tool. It is not a sandbox --
-  # isolation arrives later via the out-of-process Rust exec boundary.
-  spec.add_dependency "mixlib-shellout", "~> 3.4"
   # Wire format for Core::Client, the msgpack-RPC client to the lain-core exec
   # daemon. Already in the bundle transitively (neovim, bootsnap) -- declared
   # because Core requires it directly; a transitive dep is one upstream refactor

@@ -644,7 +644,7 @@ properties about itself, and both default to the conservative answer so a new to
 deliberately.
 
 `#requires_approval?` is the **tier** axis, and the tiers are not a list the gate maintains. Tier
-1 is direct Ruby with no subprocess. Tier 2 is an argv Array through `Mixlib::ShellOut`. Neither
+1 is direct Ruby with no subprocess. Tier 2 is an argv Array through `Lain::Shell::Out`. Neither
 has a model-controlled command string, so neither gates. Tier 3 is a String command through
 `sh -c`, and those override to `true`. The axis that predicts danger is **whether the model
 controls the command string**, not read-versus-write, which is why `write_file` does not gate and

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module CLI
     # The `lain epic` verbs that work on one epic's own document: `status`,

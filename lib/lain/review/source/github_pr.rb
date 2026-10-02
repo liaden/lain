@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "json"
-require "mixlib/shellout"
 
 module Lain
   module Review
@@ -154,7 +153,7 @@ module Lain
             return CombinedDiff.new(bytes: "".b, origin: refusal(shell)) if refused?(shell)
 
             CombinedDiff.new(bytes: shell.stdout.b.freeze, origin: DiffOrigin.served)
-          rescue Shell::Out::Timeout, Mixlib::ShellOut::CommandTimeout => e
+          rescue Shell::Out::Timeout => e
             CombinedDiff.new(bytes: "".b, origin: DiffOrigin.fallback(reason: "timeout", message: e.message))
           end
 
@@ -178,7 +177,7 @@ module Lain
           rescue JSON::ParserError => e
             raise UnknownRef, "gh answered a document this source cannot read for pull request " \
                               "#{@ref.inspect}: #{e.message}"
-          rescue Shell::Out::Timeout, Mixlib::ShellOut::CommandTimeout => e
+          rescue Shell::Out::Timeout => e
             raise UnknownRef, "gh did not answer about pull request #{@ref.inspect} within its " \
                               "bound, so its refs are unknown: #{e.message}"
           end

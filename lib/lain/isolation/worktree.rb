@@ -58,9 +58,8 @@ module Lain
       # pre-commit exports these -- would otherwise have its shelled `git`
       # resolve the index and dir against the HOOK's repository rather than the
       # leased worktree's, so every git call scrubs them. Mapping each to `nil`
-      # deletes it in the child (`Mixlib::ShellOut` and `Process.spawn` agree on
-      # that, which is what lets {Shell::Out} and an injected mixlib both run
-      # these calls), leaving `-C <repository>` the sole authority.
+      # deletes it in the child (`Process.spawn` semantics, which {Shell::Out}
+      # follows), leaving `-C <repository>` the sole authority.
       # GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT are how a hook's `-c`
       # settings reach its children; without COUNT, the KEY_n/VALUE_n pairs
       # are ignored, so scrubbing it is enough.
@@ -112,11 +111,8 @@ module Lain
       #   each lease lock, and judges the lock on a leftover
       # @param clock [#call] answers now, stamped into a retention lock
       # @param shell_out_factory [#call] builds the subprocess runner, a factory
-      #   so a spec substitutes it. {Shell::Out} rather than `Mixlib::ShellOut`
-      #   because mixlib FORKS, and a fork copies the parent's page tables:
-      #   every `git` here would cost the parent an amount linear in its own
-      #   RSS, for a runner whose result is three values. Same argv, same
-      #   `environment:` semantics, same timeout, so an injected mixlib works.
+      #   so a spec substitutes it. {Shell::Out} spawns rather than forks, so a
+      #   `git` here costs the parent nothing linear in its own RSS.
       def initialize(root:, repo_root: Dir.pwd, base: WorkingBranch::NONE, paths: Paths.new,
                      process_table: LeaseLock::ProcessTable.new, clock: -> { Time.now },
                      shell_out_factory: Shell::Out.public_method(:new))

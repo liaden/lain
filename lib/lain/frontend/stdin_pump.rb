@@ -12,10 +12,10 @@ module Lain
     #
     # On a terminal it runs the line editor. Off one it reads a PRIVATE
     # duplicate of the descriptor, unbuffered, and seats the original on the
-    # null device: a forked child's `STDIN.reopen` hands back what its copy of a
+    # null device: any forked child that reopens STDIN hands back what its copy of a
     # buffered read held by seeking the descriptor it shares, and a regular
     # file's offset is shared, so a chat reading `lain chat < prompts.txt`
-    # buffered re-read its own prompts after every mixlib call.
+    # buffered re-read its own prompts after every such child.
     #
     # The editor's read runs in a task of its own, stopped the moment its prompt
     # is withdrawn: the rail tells the pump, which never asks on a clock.

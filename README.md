@@ -352,7 +352,7 @@ cause it:
 - an FFI or native call that blocks without the fiber scheduler's hooks,
 - blocking IO not routed through a scheduler-aware call.
 
-Shelling out is not one of them. Ruby's fiber scheduler hooks `Mixlib::ShellOut`'s `IO.select` and
+Shelling out is not one of them. Ruby's fiber scheduler hooks `Lain::Shell::Out`'s `IO.select` and
 `Process.waitpid2`, measured under a 10MB stdout flood, so `bash` runs as an ordinary task.
 
 **No middleware here can interrupt what runs inside it.** Interrupting arbitrary Ruby would need a

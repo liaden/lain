@@ -195,7 +195,10 @@ produces. Check the example COUNT against a serial run before blaming memory.
 Measured 2026-09-30 at 21,508 examples. A git command itself is cheap; creating it from a large
 Ruby parent is not.
 
-| measurement | fork (Mixlib) | vfork (`Lain::Shell::Out`, `Process.spawn`) |
+The fork column is history: since 2026-10-02 lib shells out only through `Lain::Shell::Out`, and
+mixlib-shellout is gone from the bundle.
+
+| measurement | fork (mixlib-shellout, since removed) | vfork (`Lain::Shell::Out`, `Process.spawn`) |
 |---|---|---|
 | one `git rev-parse`, parent at 98MB RSS | 7.7ms | 1.3ms |
 | the same, parent at 371MB RSS | 29.4ms | 1.3ms |

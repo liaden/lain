@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "json"
-require "mixlib/shellout"
 require "tmpdir"
 
 # A pull request to review, built ONCE per process and copied after that --
@@ -650,24 +649,6 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     it "refuses as the port does when gh runs past its bound" do
       replies[:view] = raising(Lain::Shell::Out::Timeout.new("gh took too long"))
       expect { build }.to raise_error(Lain::Review::Source::UnknownRef, /took too long/)
-    end
-  end
-
-  # lib still rescues Mixlib's timeout (github_pr.rb); these examples go when
-  # those arms are deleted.
-  describe "a Mixlib runner injected by a caller" do
-    it "reports a view timeout as the port's refusal" do
-      local_repo_with_head
-      replies[:view] = raising(Mixlib::ShellOut::CommandTimeout.new("gh took too long"))
-      expect { build }.to raise_error(Lain::Review::Source::UnknownRef, /took too long/)
-    end
-
-    it "falls back on a diff timeout" do
-      local_repo_without_head
-      replies[:diff] = raising(Mixlib::ShellOut::CommandTimeout.new("gh took too long"))
-      source = build
-      expect(source.diff).to eq(expected_diff)
-      expect(source.diff_origin.reason).to eq("timeout")
     end
   end
 

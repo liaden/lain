@@ -3,7 +3,6 @@
 require "fileutils"
 require "io/console"
 require "json"
-require "mixlib/shellout"
 require "pastel"
 require "reline"
 require "time"

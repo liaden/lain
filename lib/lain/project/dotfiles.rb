@@ -65,8 +65,7 @@ module Lain
       # Its own constant rather than {Isolation::Worktree::GIT_CONTEXT_SCRUB},
       # which is the precedent for the shape: that set predates
       # `GIT_CEILING_DIRECTORIES`. `nil` deletes the variable in the child -- the
-      # {WorkerEnv} scrub semantics both `Shell::Out` and `Mixlib::ShellOut`
-      # honour.
+      # {WorkerEnv} scrub semantics `Shell::Out` honours.
       GIT_CONTEXT_SCRUB = {
         "GIT_DIR" => nil, "GIT_INDEX_FILE" => nil, "GIT_WORK_TREE" => nil,
         "GIT_PREFIX" => nil, "GIT_COMMON_DIR" => nil, "GIT_NAMESPACE" => nil,
@@ -166,7 +165,7 @@ module Lain
         # @param repository [String] the git directory this claims to be
         # @param shell_out_factory [#call] builds the subprocess runner, injected
         #   as a factory exactly as {Isolation::Worktree} does. {Shell::Out}
-        #   rather than `Mixlib::ShellOut` because mixlib forks and this runs in
+        #   because it spawns rather than forks, and this runs in
         #   the process holding a Store and a Timeline.
         def initialize(home:, repository:, shell_out_factory: Shell::Out.public_method(:new))
           @home = home

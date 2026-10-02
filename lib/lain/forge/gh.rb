@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "json"
-require "mixlib/shellout"
 
 module Lain
   module Forge
@@ -17,8 +16,7 @@ module Lain
     #
     # gh refusing, gh printing something unreadable, gh running past its bound --
     # each answers a not-ok {Answer} carrying why, never a raised
-    # `JSON::ParserError` or a leaked `Shell::Out::Timeout` or
-    # `Mixlib::ShellOut::CommandTimeout`. A
+    # `JSON::ParserError` or a leaked `Shell::Out::Timeout`. A
     # landing folds on these answers and journals them ({Journaled}), so a
     # refusal has to be a value the fold can carry; an exception would be a
     # second control path the journal never sees.
@@ -331,7 +329,7 @@ module Lain
         shell = @shell_out_factory.call("gh", *argv, cwd: @cwd, timeout: @timeout, **stdin(input))
         shell.run_command
         shell.exitstatus.zero? ? yield(shell) : on_refusal.call(argv, shell)
-      rescue Shell::Out::Timeout, Mixlib::ShellOut::CommandTimeout => e
+      rescue Shell::Out::Timeout => e
         failure(argv, "timeout", e.message)
       end
 

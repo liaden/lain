@@ -7,7 +7,7 @@ module Lain
   # cwd through.
   #
   # `env` is an OVERRIDE, not confinement, and callers must build on that
-  # reading. Mixlib-shellout applies `environment:` per-key in the forked child
+  # reading. {Shell::Out} applies `environment:` per-key in the child
   # onto the ENV it already inherited and never clears ENV first, so a host var
   # this `env` OMITS still reaches the command. True confinement belongs to the
   # out-of-process exec boundary, never to this hash. The ONE in-band removal

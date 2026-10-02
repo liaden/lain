@@ -204,7 +204,7 @@ module Lain
       # SERVER accepts the request and then destroys a dead pane before a
       # second client can even connect, so a `set-window-option` SENT AFTER
       # loses the race about one time in ten (measured here against tmux 3.7
-      # through Mixlib::ShellOut). Chained into the same command list it
+      # through a forked shell-out). Chained into the same command list it
       # cannot: tmux runs a list to completion before it processes the pane's
       # death.
       #

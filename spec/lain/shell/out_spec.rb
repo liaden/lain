@@ -1,22 +1,10 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 # Drives real subprocesses, because every property here IS a property of the
 # spawn: what the child inherits, what it does not, and what happens when it
 # refuses to die. A double would be asserting this file's own beliefs about
 # `Process.spawn`, which is the thing under test.
-#
-# `Mixlib::ShellOut` appears as an ORACLE, not as a collaborator. The subject
-# exists to be substitutable for it under {Isolation::Worktree}, so the claim
-# worth pinning is agreement, not behaviour in isolation -- a subject that
-# quietly disagreed about (say) a nil environment value would pass every
-# hand-written expectation and still break the caller it was written for.
 RSpec.describe Lain::Shell::Out do
-  def both(*argv, **)
-    [described_class.new(*argv, **).run_command, Mixlib::ShellOut.new(*argv, **).run_command]
-  end
-
   describe "the three values a caller reads back" do
     it "captures stdout, stderr and the exit status of a real command" do
       shell = described_class.new("sh", "-c", "printf out; printf err >&2; exit 3").run_command
@@ -31,17 +19,16 @@ RSpec.describe Lain::Shell::Out do
       expect(described_class.new("false").run_command.exitstatus).to eq(1)
     end
 
-    it "answers itself, so `run_command.stdout` reads as it does with mixlib" do
+    it "answers itself, so `run_command.stdout` chains" do
       shell = described_class.new("true")
 
       expect(shell.run_command).to be(shell)
     end
 
-    it "agrees with Mixlib::ShellOut on all three" do
-      mine, theirs = both("sh", "-c", "printf hello; printf oops >&2; exit 7")
+    it "reads back exactly what a command with a distinct exit status wrote" do
+      shell = described_class.new("sh", "-c", "printf hello; printf oops >&2; exit 7").run_command
 
-      expect([mine.stdout, mine.stderr, mine.exitstatus])
-        .to eq([theirs.stdout, theirs.stderr, theirs.exitstatus])
+      expect([shell.stdout, shell.stderr, shell.exitstatus]).to eq(["hello", "oops", 7])
     end
 
     # A payload past one CHUNK is where a naive read-then-wait deadlocks: the
@@ -54,10 +41,10 @@ RSpec.describe Lain::Shell::Out do
       expect(shell.stderr.bytesize).to eq(size)
     end
 
-    it "keeps binary output byte-identical to what mixlib captures" do
-      mine, theirs = both("printf", '\376\377\000\001')
+    it "keeps binary output byte-identical to what the child wrote" do
+      shell = described_class.new("printf", '\376\377\000\001').run_command
 
-      expect(mine.stdout.bytes).to eq(theirs.stdout.bytes)
+      expect(shell.stdout.bytes).to eq([0xfe, 0xff, 0x00, 0x01])
     end
   end
 
@@ -70,12 +57,12 @@ RSpec.describe Lain::Shell::Out do
     end
 
     # The semantics GIT_CONTEXT_SCRUB is built on: a nil value DELETES.
-    it "deletes an inherited variable mapped to nil, as mixlib does" do
+    it "deletes an inherited variable mapped to nil" do
       with_env("LAIN_OUT_SPEC" => "inherited") do
-        mine, theirs = both("sh", "-c", 'printf "[$LAIN_OUT_SPEC]"', environment: { "LAIN_OUT_SPEC" => nil })
+        shell = described_class.new("sh", "-c", 'printf "[$LAIN_OUT_SPEC]"',
+                                    environment: { "LAIN_OUT_SPEC" => nil }).run_command
 
-        expect(mine.stdout).to eq("[]")
-        expect(theirs.stdout).to eq("[]")
+        expect(shell.stdout).to eq("[]")
       end
     end
 
@@ -112,10 +99,8 @@ RSpec.describe Lain::Shell::Out do
       expect { described_class.new("no such program").run_command }.to raise_error(Errno::ENOENT)
     end
 
-    it "raises Errno::ENOENT for a program that is not there, as mixlib does" do
+    it "raises Errno::ENOENT for a program that is not there" do
       expect { described_class.new("lain-no-such-binary", "--version").run_command }
-        .to raise_error(Errno::ENOENT)
-      expect { Mixlib::ShellOut.new("lain-no-such-binary", "--version").run_command }
         .to raise_error(Errno::ENOENT)
     end
   end
@@ -196,11 +181,8 @@ RSpec.describe Lain::Shell::Out do
   end
 
   describe "a child killed by a signal" do
-    it "reports a nil exit status, the same nil mixlib reports" do
-      mine, theirs = both("sh", "-c", "kill -TERM $$")
-
-      expect(mine.exitstatus).to be_nil
-      expect(theirs.exitstatus).to be_nil
+    it "reports a nil exit status" do
+      expect(described_class.new("sh", "-c", "kill -TERM $$").run_command.exitstatus).to be_nil
     end
   end
 
@@ -239,10 +221,10 @@ RSpec.describe Lain::Shell::Out do
       expect(shell.exitstatus).to eq(0)
     end
 
-    it "agrees with Mixlib::ShellOut on what the child read" do
-      mine, theirs = both("sh", "-c", "tr a-z A-Z; exit 5", input: "hello\n")
+    it "reads back what the child made of its input" do
+      shell = described_class.new("sh", "-c", "tr a-z A-Z; exit 5", input: "hello\n").run_command
 
-      expect([mine.stdout, mine.exitstatus]).to eq([theirs.stdout, theirs.exitstatus])
+      expect([shell.stdout, shell.exitstatus]).to eq(["HELLO\n", 5])
     end
 
     it "reports the exit status of a child that exits without reading its input" do
@@ -266,8 +248,8 @@ RSpec.describe Lain::Shell::Out do
     # The hook is only evidence if it sees a fork when one happens. Its limit:
     # it counts Ruby-level forks, so a fallback from vfork to fork(2) inside
     # Process.spawn's C code would not show here.
-    it "has a fork counter that sees mixlib's fork" do
-      expect(forks_during { Mixlib::ShellOut.new("true").run_command }).to eq(1)
+    it "has a fork counter that sees a fork" do
+      expect(forks_during { Process.wait(fork { exit!(0) }) }).to eq(1)
     end
 
     it "never forks the parent, with a directory and input given" do
@@ -278,7 +260,7 @@ RSpec.describe Lain::Shell::Out do
   end
 
   describe "options it does not implement" do
-    it "refuses a mixlib keyword rather than ignoring it" do
+    it "refuses a keyword it lacks rather than ignoring it" do
       expect { described_class.new("true", user: "root") }.to raise_error(ArgumentError)
     end
   end

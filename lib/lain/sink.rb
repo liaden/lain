@@ -3,8 +3,8 @@
 module Lain
   # Where output goes when it is NOT the frontend's to render. Only the frontend
   # touches the terminal; everything else is handed a sink. {Sink::IOAdapter}
-  # exists because some third-party code (and `Mixlib::ShellOut`'s `live_stdout`
-  # / `live_stderr`) insists on writing to an IO. {Sink::Null} is `/dev/null`.
+  # exists because some writers (the bash tool's streamed output, compaction
+  # diagnostics) insist on writing to an IO. {Sink::Null} is `/dev/null`.
   module Sink
     # A minimal IO look-alike over a {Lain::Channel}: each write becomes a
     # {Lain::Telemetry::ToolOutput} carrying a fixed `tool_use_id` and `stream`,

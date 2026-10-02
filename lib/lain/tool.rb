@@ -109,7 +109,7 @@ module Lain
 
     # Whether a call to this tool must pass through an approval gate
     # (Middleware::Gate) before it runs. Defaults to false: tier 1 (direct
-    # Ruby, no subprocess) and tier 2 (an argv Array through Mixlib::ShellOut)
+    # Ruby, no subprocess) and tier 2 (an argv Array through Shell::Out)
     # tools have no model-controlled command string to approve. Tier 3 tools --
     # a String command through `sh -c` -- override this to true. The axis that
     # predicts danger is whether the model controls the command string, not

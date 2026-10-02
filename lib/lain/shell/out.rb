@@ -5,25 +5,21 @@ require "open3"
 module Lain
   module Shell
     # One command, run to completion, reported as stdout, stderr and an exit
-    # status. The `Mixlib::ShellOut` surface the `shell_out_factory` seam is
-    # spelled against -- `#run_command`, `#stdout`, `#stderr`, `#exitstatus` --
-    # so it substitutes for it wherever only that surface is used.
+    # status. It presents the surface the `shell_out_factory` seam is spelled
+    # against: `#run_command`, `#stdout`, `#stderr`, `#exitstatus`.
     #
-    # SPAWNED, NOT FORKED, and that is the entire reason it exists beside a gem
-    # that already works. `Mixlib::ShellOut` runs its child with `fork` + `exec`,
-    # so the parent copies its page tables on every invocation and the cost is
-    # linear in the parent's RSS. Measured on this machine, same git command,
+    # SPAWNED, NOT FORKED. A `fork` + `exec` runner copies the parent's page
+    # tables on every invocation, so the cost is linear in the parent's RSS.
+    # Measured on this machine, same git command,
     # same repository: **3.1ms from a 25MB heap, 7.2ms at 128MB, 26.7ms at
     # 542MB**, against a flat **0.6-1.8ms** for `Process.spawn`, which reaches
     # `posix_spawn`/`vfork` and copies no page tables at all. The process that
     # pays most is the one holding a Store, a Timeline and an index -- which is
     # the process shelling out per turn.
     #
-    # NOT A REPLACEMENT FOR `Mixlib::ShellOut` EVERYWHERE. It answers the calls
-    # that pass an argv array, optionally a directory and some stdin, and read
-    # three values back. Callers wanting mixlib's `user:`, `live_stdout:` or its
-    # `CommandTimeout` class keep mixlib; a keyword this does not implement is
-    # an `ArgumentError` here rather than a silently ignored option.
+    # It answers the calls that pass an argv array, optionally a directory and
+    # some stdin, and read three values back. A keyword it does not implement
+    # is an `ArgumentError` rather than a silently ignored option.
     #
     # NEVER THROUGH A SHELL. `Process.spawn("ls -l")` is not `exec`: a lone
     # String is re-split on whitespace, and one holding a metacharacter goes to
@@ -32,19 +28,14 @@ module Lain
     # for the same reason.
     class Out
       # A child that outlived its bound. Subclasses {Lain::Error} next to the
-      # owner that raises it, per the error-taxonomy convention; it is NOT
-      # `Mixlib::ShellOut::CommandTimeout`, which nothing reaching for this class
-      # rescues by name -- both are `StandardError`, so a caller that rescues
-      # broadly sees no difference.
+      # owner that raises it, per the error-taxonomy convention.
       class Timeout < Error; end
 
-      # Mixlib's own default, matched so that swapping the runner under a caller
-      # that never passed one does not change when a hung child dies.
+      # Ten minutes: long enough for a build or test run, short enough that a
+      # hung child does not hold a turn open for the session.
       DEFAULT_TIMEOUT = 600
 
-      # Seconds between TERM and KILL. Mixlib hardcodes 3 with no option and
-      # {Shell::Pipeline} matched the figure; this is the third arm of the same
-      # agreement.
+      # Seconds between TERM and KILL, the figure {Shell::Pipeline} shares.
       GRACE = 3.0
 
       # One `read(2)` per ready stream.
@@ -148,14 +139,14 @@ module Lain
       attr_reader :stderr
 
       # @return [Integer, nil] the child's exit status, or nil when a signal
-      #   killed it -- the same nil `Mixlib::ShellOut` reports for that case
+      #   killed it -- the same nil a signalled `Process::Status` reports
       attr_reader :exitstatus
 
       # @param argv [Array<String>] the command and its arguments, never a
       #   single string for a shell to parse
       # @param environment [Hash{String=>String,nil}] merged over the parent's
       #   environment in the child, where a nil value DELETES the variable --
-      #   mixlib's `environment:` semantics, which
+      #   `Process.spawn`'s `env` semantics, which
       #   {Isolation::Worktree::GIT_CONTEXT_SCRUB} depends on
       # @param cwd [String, nil] the child's working directory; nil keeps the
       #   parent's
@@ -180,9 +171,9 @@ module Lain
       end
 
       # Run it and wait. Raises whatever `Process.spawn` raises -- `Errno::ENOENT`
-      # for a program that is not there, as mixlib does.
+      # for a program that is not there.
       #
-      # @return [self] so `run_command.stdout` reads as it does with mixlib
+      # @return [self] so `run_command.stdout` chains
       # @raise [Timeout] when the child outlives its bound
       def run_command
         pipes = Pipes.new
@@ -246,9 +237,8 @@ module Lain
       end
 
       # `readpartial` answers ASCII-8BIT, and an empty buffer adopts the encoding
-      # of the first thing appended to it -- the mechanics `Mixlib::ShellOut`
-      # accumulates through, which is what keeps a binary payload byte-identical
-      # across the two runners.
+      # of the first thing appended to it -- which keeps a binary payload
+      # byte-identical to what the child wrote.
       def read_chunk(io, buffer)
         chunk = io.readpartial(CHUNK)
         buffer << chunk

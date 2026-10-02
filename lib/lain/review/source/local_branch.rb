@@ -159,8 +159,8 @@ module Lain
               "--end-of-options", "#{@base_ref}..#{@head_ref}").stdout.b
         end
 
-        # A runner's stdout encoding is its own choice: mixlib tags it UTF-8 when
-        # the bytes HAPPEN to be valid and BINARY when not, {Shell::Out} always
+        # A runner's stdout encoding is its own choice: a runner may tag it UTF-8 only
+        # when the bytes HAPPEN to be valid and BINARY when not, {Shell::Out} always
         # UTF-8, so without this a field's encoding depends on the runner.
         # These fields are journalled as JSON, where a BINARY string
         # warns today and raises in json 3.0, and invalid bytes raise now -- into

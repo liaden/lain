@@ -227,7 +227,7 @@ module Lain
     #
     #   1. Tool tier. A structured tool (`delete_file(path:)` calling `File.delete`)
     #      has no string to interpolate. Prefer it to shelling out. A pre-canned
-    #      command tool passes an argv *Array* to Mixlib::ShellOut, which execs with
+    #      command tool passes an argv *Array* to Shell::Out, which execs with
     #      no shell at all -- only a String command goes through `sh -c`.
     #   2. `Middleware::Gate`, which gates the invocation before it happens --
     #      on the TIER axis (does the model control the command string?) and on the

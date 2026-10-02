@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
 require "tmpdir"
 
 # Forge::Gh is the tier's one door out to GitHub, and the whole of its design is
@@ -185,18 +184,7 @@ RSpec.describe Lain::Forge::Gh do
       expect(answer.detail["stderr"]).to include("Resource not accessible")
     end
 
-    it "answers a structured value rather than leaking mixlib's timeout" do
-      slow = described_class.new(shell_out_factory: GhParity::FakeGh.new do
-        raise Mixlib::ShellOut::CommandTimeout, "command timed out after 60s"
-      end)
-
-      answer = slow.pr_merge(number: 7)
-
-      expect(answer).not_to be_ok
-      expect(answer.detail["reason"]).to eq("timeout")
-    end
-
-    it "answers the same structured value for Shell::Out's own timeout" do
+    it "answers a structured value rather than leaking Shell::Out's timeout" do
       slow = described_class.new(shell_out_factory: GhParity::FakeGh.new do
         raise Lain::Shell::Out::Timeout, "command timed out after 60s"
       end)
