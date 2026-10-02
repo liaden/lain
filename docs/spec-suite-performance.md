@@ -208,6 +208,15 @@ puts `copy_page_range` and `__zap_vma_range` at about 20% of CPU in fork-heavy f
 copy-on-write faults at 0.4%: the cost is page tables, so it grows with the parent's RSS (8, 11
 and 14ms per fork at 100, 200 and 300MB). `GC.compact` before a fork made it 1.9ms slower.
 
+## Child boots
+
+Spec children boot through a generated load-path file (`spec/support/child_boot.rb`, named by a
+digest of the load paths bundler resolved, and activating only the locked gems) with a presized
+heap, instead of `bundler/setup`. A child's CPU for `require "lain"` fell from about 1.19s to 0.85s in the
+research, and from about 1.5s to 1.1s on a loaded box on 2026-10-02. `exe/lain` children get the
+heap sizing only, because `exe/lain` requires `bundler/setup` itself. `LAIN_NO_CHILD_BOOT=1` puts
+`bundler/setup` back.
+
 ## Worker memory is mostly glibc's, not Ruby's
 
 A worker's RSS grows to 140 to 360MB while its live Ruby objects are 21 to 57MB. On the heaviest
