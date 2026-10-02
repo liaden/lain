@@ -288,7 +288,7 @@ Spec file: `spec/lain/suite_load_spec.rb` (stubbed commands, never a real suite)
 
 ### Phase A: reliability
 
-### T1: Make input_pane_spec deterministic under load          [risk: medium]
+### T1: Make input_pane_spec deterministic under load          [risk: medium] [x]
 
 **Depends on:** T0
 **Files:** `spec/lain/frontend/input_pane_spec.rb`
@@ -320,7 +320,7 @@ Spec file: `spec/lain/frontend/input_pane_spec.rb` (load proof: bin/suite-load, 
 - `deliver` cannot read back a Proc for INT or TERM on Ruby 4.0.6.
 - The group still fails under bin/suite-load after the event waits: the race is in `lib/lain/frontend/input_pane.rb#received`, not the spec.
 
-### T2: supervisor_spec waits for the rows to leave          [risk: low]
+### T2: supervisor_spec waits for the rows to leave          [risk: low] [x]
 
 **Depends on:** T0
 **Files:** `spec/lain/supervisor_spec.rb`
@@ -419,7 +419,7 @@ Spec file: `spec/support_headless_editor_spec.rb`, `spec/lain/frontend/neovim/ru
 **Stop and report if:**
 - `Neovim.attach_unix` raises something other than `Errno::ECONNREFUSED` for the not-yet-listening case.
 
-### T6: 62_approval_spec never waits blind          [risk: medium]
+### T6: 62_approval_spec never waits blind          [risk: medium] [x]
 
 **Depends on:** T5, T0
 **Files:** `spec/lain/frontend/neovim/runtime/62_approval_spec.rb`
@@ -478,7 +478,7 @@ Spec file: `spec/lain/frontend/approval_policy_spec.rb`, `spec/lain/frontend/tty
 
 ### Phase B: waits and pre-booted children
 
-### T8: The stall monitor wakes when the stream stops          [risk: medium]
+### T8: The stall monitor wakes when the stream stops          [risk: medium] [x]
 
 **Depends on:** none
 **Files:** `lib/lain/provider/http/streaming/faraday_handlers.rb` (`stop` `:343-351`, `start_monitor` `:359-365`, `sweep` `:368`), `spec/lain/provider/http/stall_protection_spec.rb`
@@ -1003,7 +1003,7 @@ Spec file: `spec/lain/shell/out_spec.rb`
 - `input:` needs a thread to avoid deadlock.
 - Any option forces `fork` on Ruby 4.0.6.
 
-### T27: SeedRepo builds derived templates without forking          [risk: low]
+### T27: SeedRepo builds derived templates without forking          [risk: low] [x]
 
 **Depends on:** T26
 **Files:** `spec/support/seed_repo.rb`, `spec/support_seed_repo_spec.rb`
@@ -1039,7 +1039,7 @@ Spec file: `spec/support_seed_repo_spec.rb`
 **Stop and report if:**
 - A template copy shares state (refs, index) with another copy.
 
-### T28: LocalBranch spawns through Shell::Out with 2 git calls          [risk: medium]
+### T28: LocalBranch spawns through Shell::Out with 2 git calls          [risk: medium] [x]
 
 **Depends on:** T26
 **Files:** `lib/lain/review/source/local_branch.rb`, `spec/lain/review/source/local_branch_spec.rb`
@@ -1065,7 +1065,7 @@ Spec file: `spec/lain/review/source/local_branch_spec.rb`
 **Stop and report if:**
 - `rev-parse` with `--end-of-options` behaves differently on the installed git.
 
-### T29: GithubPr spawns through Shell::Out          [risk: medium]
+### T29: GithubPr spawns through Shell::Out          [risk: medium] [x]
 
 **Depends on:** T26
 **Files:** `lib/lain/review/source/github_pr.rb` (default `:253`, rescues `:157`, `:181`), `spec/lain/review/source/github_pr_spec.rb`
@@ -1865,7 +1865,7 @@ Spec file: `spec/lain/runtime_census_spec.rb` (fixture logs, never a real run)
 **Stop and report if:**
 - `rspec --dry-run` over the whole suite takes more than 30s.
 
-### T62: A `:slow` tag a bare local `rspec` skips, and `rake pspec` always runs          [risk: medium]
+### T62: A `:slow` tag a bare local `rspec` skips, and `rake pspec` always runs          [risk: medium] [x]
 
 Added 2026-10-02 at the user's request, mid-run.
 
@@ -1968,3 +1968,17 @@ Prerequisite before T1: commit the uncommitted `bin/box-state` fix in the main c
 - T13 landed `9fb52204` (suite 21,546 examples, 0 failures). Gap: WarmCockpit pair, terminal and pane have no example; the first card using them (T14 to T17) must exercise them.
 - T26 landed `81b89b90`. Suite 21,554 examples, 1 failure: the ledger-named 62_approval "carries the wrapped command unwrapped..." (T6), green alone. The card's 200KB input became 1MB (200KB fit in the pipe buffers and could not show the deadlock); with no input, stdin stays on /dev/null (main-session ruling).
 - Checkpoint after wave 1: landed T0, T3, T4, T5, T9, T13, T26, T54, T55, T57, T58. No agent in flight; `git worktree list` shows only the main checkout. T62 added at the user's request (a `:slow` tag). Next: T1, T2, T6, T8, T27, T28, T29, T62. Load proofs (T1, T2, T6 and later) run in the main session between landing windows.
+- T1, T2, T6, T8, T27, T28, T29, T62 started (wave 2, worktrees at `9365f178`).
+- Ruling 2026-10-02 (T29 review): a lib site flipped to Shell::Out whose production caller still injects a Mixlib factory rescues both timeout classes until T42 removes Mixlib, so every commit keeps `lain review` and the other CLIs correct.
+- Follow-ups noted by T29's review: once T27 lands, `github_pr_spec`'s WITHOUT_HEAD moves onto SeedRepo.derived (T41 or T42 sweep); T42 drops the Mixlib rescue arms. T5's review: spec/plugin/nvim_plugin_spec.rb:102 still calls Neovim.attach_unix directly.
+- T8 landed `be30ad16`. Suite 21,556 examples, 2 failures: the 2 ledger-named 62_approval examples (T6), green alone.
+- T28 landed `9355aad3` (suite 21,558 examples, 0 failures).
+- T29 landed `af5b01c4` (suite 21,561 examples, 0 failures).
+- T27 landed `c6ce75b0` (suite 21,568 examples, 0 failures). API changed in review: `SeedRepo.derived(key, into:) { |template_dir| }` and `with_layout(layout, into:)` copy into a caller-owned directory (T31, T38, T39 use this shape).
+- T62 landed `b910b660` (suite 21,579 examples, 0 failures; a bare rspec runs 18,748). The first landing attempt was backed out: slow_files.rb tripped thread_view_spec's deletability scan, now a listed consumer. The list holds 62 files, not the card's 110.
+- Load proofs: trees `tmp/worktrees/proof-base` (at `9365f178`, the wave 2 cards' base) and `tmp/worktrees/proof-load` (main). T6 started, 30 rounds.
+- T6 load proof: card 30 of 30 green (12 examples per run), base 24 of 30 (6 failures across the 3 named examples). T6 landed `0fee6ff8`. Suite 21,583 examples, 1 failure: the ledger-named plain_chat "ends its line with who decided it and how" (T7), green alone.
+- T2 load proof: card 20 of 20 (70 examples), base 20 of 20; the scratch 2-yields example is the red. T2 landed `1bbc76bd` (suite 21,584 examples, 0 failures).
+- T1 load proof: card 30 of 30, base 27 of 30. T1 landed `e589221d` (suite 21,584 examples, 0 failures). The "pane with no chat..." entry stays live: base failed it once, but no run reproduced its cause. The load loop's pspec runs failed in every proof (4 of 4, 1 of 1, 2 of 2); to look at before trusting a load proof's pressure as representative.
+- The load tree's suite run alone at `e589221d`: 21,584 examples, 0 failures, so its failures inside the proofs are contention, which is what a proof applies.
+- Checkpoint after wave 2: landed T1, T2, T6, T8, T27, T28, T29, T62. Next wave 3: T14, T20, T21, T30, T31, T32, T33, T46.
