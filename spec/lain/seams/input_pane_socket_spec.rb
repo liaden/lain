@@ -1,10 +1,8 @@
 # frozen_string_literal: true
 
+require "English"
 require "fileutils"
 require "json"
-require "pty"
-require "rbconfig"
-require "tmpdir"
 
 # The split cockpit, end to end: a chat process that reads NO stdin and a
 # separate `lain input` pane in a real PTY, joined by a real Unix socket. Two
@@ -14,11 +12,9 @@ require "tmpdir"
 #
 # The pane runs THE REPOSITORY'S `exe/lain`, never one the spec runner happens
 # to have on PATH: an installed gem's binary is a different program, and a pane
-# spec that passed against it would say nothing about this checkout.
+# spec that passed against it would say nothing about this checkout. It comes
+# booted from the file's pool, so its load overlaps the example before.
 module InputPaneSocket
-  LIB = File.expand_path("../../../lib", __dir__)
-  EXE = File.expand_path("../../../exe/lain", __dir__)
-
   # The chat: a real Intake, InputSocket, Conductor and TTY, with its stdin
   # closed so nothing on this side can read a line at all. `lines` reads `you>`
   # until the stream ends; `approval` parks one gated call through a real
@@ -104,48 +100,62 @@ module InputPaneSocket
     File.write(File.join(dir, "exited"), "")
   RUBY
 
+  # The signalled endings arrive before the script installs any trap, so only
+  # what the fork reset decides how they end.
+  ENDINGS = {
+    "finishes" => ["nil", nil], "exits 3" => ["exit 3", nil],
+    "overflows its stack" => ["def deeper = deeper; deeper", nil],
+    "runs out of memory" => ["raise NoMemoryError", nil],
+    "TERM" => ["File.write(File.join(ARGV[0], ARGV[1]), ''); sleep 10", "TERM"],
+    "INT" => ["File.write(File.join(ARGV[0], ARGV[1]), ''); sleep 10", "INT"]
+  }.freeze
+
+  # Opens pipes on the numbers the worker's dropped IOs held, then collects
+  # those IOs: a finalizer that still owned its number would close a pipe.
+  PIPES = <<~RUBY
+    pipes = Array.new(20) { IO.pipe }
+    GC.start
+    intact = begin
+      pipes.all? { |reader, writer| writer.write("x") && reader.read_nonblock(1) == "x" }
+    rescue SystemCallError, IOError
+      false
+    end
+    File.write(File.join(ARGV[0], "pipes"), intact.to_s)
+  RUBY
+
   # One cockpit's two processes and the directory they meet in.
   class Cockpit
-    attr_reader :dir, :path
+    attr_reader :dir, :path, :chats
 
-    def initialize(dir)
-      @dir = dir
+    # @param warm [WarmCockpit::Booted] a pane already spawned on `warm.dir`'s socket
+    def initialize(warm)
+      @warm = warm
+      @dir = warm.dir
       @path = File.join(dir, "input.sock")
       @screen = +""
       @lock = Mutex.new
       @chats = []
     end
 
-    # `$HOME` is deliberately left alone: both children run under this runner's
-    # bundle, and a moved home is a bundler that cannot find its own gems. The
-    # XDG variables are enough to keep the pane's history and state out of the
-    # human's directories.
-    def env
-      { "XDG_STATE_HOME" => File.join(@dir, "state"), "XDG_RUNTIME_DIR" => File.join(@dir, "run"),
-        "XDG_CONFIG_HOME" => File.join(@dir, "config"), "XDG_CACHE_HOME" => File.join(@dir, "cache"),
-        "TERM" => "xterm", "INPUTRC" => File.join(@dir, "no-inputrc"), "LAIN_SPEC_GRACE" => "30" }
-    end
+    def env = WarmCockpit.env(@dir, "LAIN_SPEC_GRACE" => "30")
 
     # A chat process. Returns its pid; `bound` appears once it owns the socket.
-    def chat(shape)
-      pid = Process.spawn(env, RbConfig.ruby, "-I", LIB, "-e", CHILD, @dir, shape, @path,
-                          out: File.join(@dir, "chat.err"), err: %i[child out])
+    def chat(shape, script: CHILD)
+      pid = fork { run_chat(shape, script) }
       @chats << pid
       pid
     end
 
-    # The pane, in a real PTY, running THIS checkout's executable.
-    def pane
-      @reader, @writer, @pid = PTY.spawn(env, RbConfig.ruby, EXE, "input", "--socket", @path)
-      @drain = Thread.new { drain }
+    def watch_screen
+      @drain ||= Thread.new { drain }
       self
     end
 
-    def type(text) = @writer.write(text)
+    def type(text) = @warm.writer.write(text)
 
     # What tmux's `resize-pane` does to a pane, as the pane can see it: the
     # master's winsize, which the slave reads back by ioctl.
-    def resize(rows, cols = 80) = @reader.winsize = [rows, cols]
+    def resize(rows, cols = 80) = @warm.reader.winsize = [rows, cols]
 
     def screen = @lock.synchronize { @screen.dup }
 
@@ -155,11 +165,18 @@ module InputPaneSocket
     end
 
     def close
-      @writer&.close
-      @drain&.kill
+      @drain&.kill&.join(1)
       @chats.each { |pid| reap(pid) }
-      reap(@pid)
+      @warm.reap
     end
+
+    # A chat that died first answers false at once, so the example fails with
+    # its stderr rather than at the watchdog.
+    def bound?(chat)
+      settles { File.exist?(File.join(@dir, "bound")) || (Process.waitpid(chat, Process::WNOHANG) && false) }
+    end
+
+    def chat_err = File.exist?(File.join(@dir, "chat.err")) ? File.read(File.join(@dir, "chat.err")) : ""
 
     # Whatever the block answers once it stops answering nil, or nil at the
     # deadline: two processes and a PTY settle on their own clock.
@@ -171,6 +188,59 @@ module InputPaneSocket
 
     private
 
+    # Forked from the worker, which already holds `lain`: the chat stands in for
+    # the far end of the socket and the pane is the subject, so a second boot of
+    # the library buys no fidelity. The worker's traps and at_exit hooks are not
+    # this process's to run, so however the script ends, it ends in `exit!`.
+    def run_chat(shape, script)
+      status = 1
+      reset_traps
+      $stdin.reopen(File::NULL)
+      $stdout.reopen(File.join(@dir, "chat.err"), "w")
+      $stderr.reopen($stdout)
+      close_inherited
+      ENV.update(env)
+      ARGV.replace([@dir, shape, @path])
+      status = chat_status(script)
+    ensure
+      File.write(File.join(@dir, "chat.err"), $ERROR_INFO.full_message, mode: "a") if $ERROR_INFO
+      exit!(status)
+    end
+
+    # PIPE stays ignored, as Ruby sets it at boot, so a write to a gone peer raises EPIPE.
+    def reset_traps
+      Signal.list.except("EXIT", "PIPE").each_key { |name| reset_trap(name) }
+    end
+
+    def reset_trap(name)
+      trap(name, "SYSTEM_DEFAULT")
+    rescue ArgumentError, Errno::EINVAL
+      nil
+    end
+
+    # A worker descriptor left open here keeps its far end alive: the pane's
+    # PTY master would outlive the worker's close. Each worker IO gives up its
+    # fd first, or its finalizer would later close a number the chat reused.
+    # IO.for_fd refuses the VM's own reserved descriptors, which stay.
+    def close_inherited
+      ObjectSpace.each_object(IO).reject { |io| io.closed? || [$stdin, $stdout, $stderr].include?(io) }
+                 .each { |io| io.autoclose = false }
+      Dir.children("/proc/self/fd").map(&:to_i).select { |fd| fd > 2 }.each { |number| close_fd(number) }
+    end
+
+    def close_fd(number)
+      IO.for_fd(number).close
+    rescue ArgumentError, Errno::EBADF
+      nil
+    end
+
+    def chat_status(script)
+      TOPLEVEL_BINDING.eval(script, "chat_child")
+      0
+    rescue SystemExit => e
+      e.status
+    end
+
     def parsed(line)
       JSON.parse(line)
     rescue JSON::ParserError
@@ -178,7 +248,7 @@ module InputPaneSocket
     end
 
     def drain
-      Enumerator.produce { @reader.readpartial(4096) }.each { |bytes| @lock.synchronize { @screen << bytes } }
+      Enumerator.produce { @warm.reader.readpartial(4096) }.each { |bytes| @lock.synchronize { @screen << bytes } }
     rescue Errno::EIO, IOError
       nil
     end
@@ -195,21 +265,92 @@ module InputPaneSocket
 end
 
 RSpec.describe "a chat fed by an input pane", :seam do
-  subject(:cockpit) { InputPaneSocket::Cockpit.new(dir) }
+  warm_pool(:panes) { WarmCockpit.pane(prefix: "lain-pane", "LAIN_SPEC_GRACE" => "30") }
 
-  let(:dir) { Dir.mktmpdir("lain-input-pane-seam") }
+  subject(:cockpit) { InputPaneSocket::Cockpit.new(panes.take) }
 
-  after do
-    cockpit.close
-    FileUtils.remove_entry(dir)
-  end
+  let(:dir) { cockpit.dir }
+
+  after { cockpit.close }
 
   # The chat is up and the pane has drawn its first prompt.
   def cockpit_at(shape, prompt: "you> ")
-    cockpit.chat(shape)
-    cockpit.settles { File.exist?(File.join(dir, "bound")) || nil }
-    cockpit.pane
+    cockpit.watch_screen
+    expect_bound(cockpit.chat(shape))
     cockpit.settles { cockpit.screen.include?(prompt) || nil }
+  end
+
+  def expect_bound(chat)
+    expect(cockpit.bound?(chat)).to be(true), -> { "the chat never bound; its stderr:\n#{cockpit.chat_err}" }
+  end
+
+  # Anonymous inodes are skipped: the chat keeps the VM's own eventfd and
+  # epoll, which IO.for_fd refuses to close, and every anonymous inode reads
+  # back as the same link, so it cannot say whose it is.
+  def descriptors(pid)
+    Dir.children("/proc/#{pid}/fd").map(&:to_i).select { |fd| fd > 2 }.filter_map do |fd|
+      target = File.readlink("/proc/#{pid}/fd/#{fd}")
+      target unless target.start_with?("anon_inode:")
+    rescue Errno::ENOENT
+      nil
+    end
+  end
+
+  it "boots the pane before the chat, and forks the chat holding none of the worker's descriptors" do
+    cockpit.watch_screen
+    waited = cockpit.settles { cockpit.screen.include?("waiting for a lain chat") || nil }
+    File.open(__FILE__) do
+      cockpit_at("lines")
+      chat = cockpit.chats.first
+
+      forked = File.binread("/proc/#{chat}/cmdline") == File.binread("/proc/self/cmdline")
+
+      expect([waited, forked, descriptors(chat) & descriptors(Process.pid)]).to eq([true, true, []])
+    end
+  end
+
+  def ended(name, (script, signal))
+    chat = cockpit.chat(name, script:)
+    if signal
+      cockpit.settles(within: 5) { File.exist?(File.join(dir, name)) || nil }
+      Process.kill(signal, chat)
+    end
+    _, status = Process.wait2(chat)
+    [status.exitstatus, status.termsig]
+  end
+
+  # The hook is registered in a throwaway fork of the worker, so none outlives
+  # the example; it fires only in a process that inherited it and ran it.
+  def in_a_worker_with_an_at_exit_hook(ran)
+    answer = File.join(dir, "answer.json")
+    pid = fork do
+      worker = Process.pid
+      at_exit { File.write(ran, "") unless Process.pid == worker }
+      File.write(answer, JSON.generate(yield))
+    ensure
+      exit!(0)
+    end
+    Process.wait(pid)
+    JSON.parse(File.read(answer))
+  end
+
+  it "ends a forked chat with its own status however it ends, running none of the worker's at_exit hooks" do
+    ran = File.join(dir, "at_exit ran")
+
+    statuses = in_a_worker_with_an_at_exit_hook(ran) { InputPaneSocket::ENDINGS.to_h { |name, ending| [name, ended(name, ending)] } }
+
+    expect([statuses, File.exist?(ran)]).to eq(
+      [{ "finishes" => [0, nil], "exits 3" => [3, nil], "overflows its stack" => [1, nil],
+         "runs out of memory" => [1, nil], "TERM" => [nil, 15], "INT" => [nil, 2] }, false]
+    )
+  end
+
+  it "keeps the chat's own descriptors working across a GC of the worker's dropped IOs" do
+    20.times { IO.pipe }
+
+    _, status = Process.wait2(cockpit.chat("pipes", script: InputPaneSocket::PIPES))
+
+    expect([status.exitstatus, File.read(File.join(dir, "pipes"))]).to eq([0, "true"])
   end
 
   it "answers a line typed in the pane, with the chat reading no stdin of its own" do
@@ -399,13 +540,12 @@ RSpec.describe "a chat fed by an input pane", :seam do
 
   it "rebinds the path a killed chat left behind, and the pane's next line reaches the new chat" do
     cockpit_at("lines")
-    killed = cockpit.instance_variable_get(:@chats).first
+    killed = cockpit.chats.first
     Process.kill("KILL", killed)
     Process.wait(killed)
     FileUtils.rm_f(File.join(dir, "bound"))
 
-    cockpit.chat("lines")
-    cockpit.settles { File.exist?(File.join(dir, "bound")) || nil }
+    expect_bound(cockpit.chat("lines"))
     cockpit.settles { cockpit.screen.scan("you> ").size > 1 || nil }
     cockpit.type("after the restart\r")
 
@@ -414,13 +554,13 @@ RSpec.describe "a chat fed by an input pane", :seam do
   end
 
   it "refuses a second chat on one path, naming it" do
-    cockpit.chat("lines")
-    cockpit.settles { File.exist?(File.join(dir, "bound")) || nil }
+    expect_bound(cockpit.chat("lines"))
 
     second = cockpit.chat("lines")
-    Process.wait(second)
+    _, status = Process.wait2(second)
 
     expect(cockpit.settles { File.exist?(File.join(dir, "refused")) || nil }).to be(true)
     expect(File.read(File.join(dir, "refused"))).to include(cockpit.path)
+    expect(status.exitstatus).to eq(3)
   end
 end
