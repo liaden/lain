@@ -38,7 +38,8 @@ user_systemctl() {
     systemctl --user "$@"
   fi
 }
-units=$(user_systemctl list-units --state=running --no-legend --plain 'mempalace*' 2> /dev/null | awk '{ print $1 }' | paste -sd, -)
+# A refresh unit sits in "activating" for its whole run when it is Type=oneshot.
+units=$(user_systemctl list-units --state=running,activating --no-legend --plain 'mempalace*' 2> /dev/null | awk '{ print $1 }' | paste -sd, -)
 suites=$(pgrep -cf 'bin/(parallel_)?rspec' || true)
 top=$(ps -eo pcpu=,rss=,comm= --sort=-pcpu | head -5 | awk '{ printf "%s(%s%%,%dMB) ", $3, $1, $2 / 1024 }')
 
