@@ -963,13 +963,15 @@ RSpec.describe "exe/lain outside its own repository", :seam do
     end
   end
 
-  it "starts in a project whose Gemfile it cannot resolve, rather than dying in that project's bundle" do
-    hostile_project do |dir|
-      output, status = lain("help", chdir: dir)
+  # One boot answers both examples that ask of the checkout's exe in a hostile
+  # project: the same command in the same environment, read two ways.
+  once(:checkout_boot) { hostile_project { |dir| lain("help", chdir: dir) } }
 
-      expect(output).not_to include("Bundler::GemNotFound")
-      expect(status).to eq(0)
-    end
+  it "starts in a project whose Gemfile it cannot resolve, rather than dying in that project's bundle" do
+    output, status = checkout_boot
+
+    expect(output).not_to include("Bundler::GemNotFound")
+    expect(status).to eq(0)
   end
 
   # The INSTALLED gem, simulated by the one difference that matters: the
@@ -997,12 +999,10 @@ RSpec.describe "exe/lain outside its own repository", :seam do
   # elsewhere -- `ruby ~/dev/lain/exe/lain` inside the repository under review
   # -- still had `bundler/setup` walking up from the CWD to the wrong Gemfile.
   it "resolves ITS OWN Gemfile from a source checkout, not the one it is standing in" do
-    hostile_project do |dir|
-      output, status = lain("help", chdir: dir)
+    output, status = checkout_boot
 
-      expect(status).to eq(0)
-      expect(output).to include("lain review")
-    end
+    expect(status).to eq(0)
+    expect(output).to include("lain review")
   end
 end
 
