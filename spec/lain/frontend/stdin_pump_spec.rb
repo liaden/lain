@@ -10,31 +10,52 @@ require "tmpdir"
 
 # The far end of a PTY a pump child reads: what the human types, and everything drawn.
 class StdinPumpRaceTerminal
-  def initialize(child, dir)
+  # @param warm [WarmCockpit::Booted] a pump child already booted and parked in
+  #   its own directory
+  def initialize(warm)
+    @warm = warm
     @screen = +""
-    @output, @input, @pid = PTY.spawn({ "TERM" => "xterm", "INPUTRC" => File.join(dir, "no-inputrc") },
-                                      RbConfig.ruby, "-W0", "-I", File.expand_path("../../../lib", __dir__),
-                                      "-e", child, dir)
+    @output = warm.reader
+    @input = warm.writer
     @output.winsize = [40, 120]
     @reader = Thread.new { pump }
+    warm.tell(warm.dir)
   end
+
+  def dir = @warm.dir
 
   attr_reader :screen
 
   def type(bytes) = @input.write(bytes)
 
-  def await(pattern)
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
-    sleep(0.02) until @screen.match?(pattern) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+  def await(pattern) = wait_for("screen to match #{pattern.inspect}") { @screen.match?(pattern) }
+
+  def type_and_await_echo(bytes)
+    seen = @screen.size
+    type(bytes)
+    wait_for("the echo of #{bytes.inspect}") { @screen.size > seen }
   end
 
+  def await_file(path) = wait_for("#{File.basename(path)} written") { File.exist?(path) }
+
+  def await_lines(pattern)
+    wait_for("lines to match #{pattern.inspect}") { lines.match?(pattern) }
+  end
+
+  def lines = File.exist?(File.join(dir, "lines")) ? File.read(File.join(dir, "lines")) : ""
+
   def close
-    Process.kill("KILL", @pid)
-    Process.wait(@pid)
+    @warm.reap
     @reader.join(2)
   end
 
   private
+
+  def wait_for(reason, limit: 20)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + limit
+    sleep(0.005) until yield || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+    raise "#{reason} never held within #{limit}s" unless yield
+  end
 
   def pump
     loop do
@@ -379,63 +400,63 @@ RSpec.describe Lain::Frontend::StdinPump do
   # the line died with the read, as it always did. Never an `n` reaching `you>`
   # with nobody told.
   describe "a line entered at a [y/N] as it is withdrawn, over a real terminal", :seam do
-    let(:child) do
-      <<~'RUBY'
-        require "lain"
+    child = <<~'RUBY'
+      require "lain"
 
-        dir = ARGV.fetch(0)
-        tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, history_path: File.join(dir, "history"),
-                                      state_path: File.join(dir, "state.json"), pastel: Pastel.new(enabled: false))
-        rail = Lain::Frontend::Intake.new(screen: tty)
-        Sync do |task|
-          pumping = Lain::Frontend::StdinPump.new(rail:, screen: tty).start(task)
-          3.times do
-            line = rail.read(:you, "you> ")
-            File.write(File.join(dir, "lines"), "#{line.inspect}\n", mode: "a")
-            if line == "race"
-              approval = task.async { rail.read(:approval, "[y/N] ") }
-              task.sleep(0.02) until File.exist?(File.join(dir, "arm"))
-              $stdin.wait_readable
-              approval.stop
-            end
+      dir = ARGV.fetch(0)
+      tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, history_path: File.join(dir, "history"),
+                                    state_path: File.join(dir, "state.json"), pastel: Pastel.new(enabled: false))
+      rail = Lain::Frontend::Intake.new(screen: tty)
+      Sync do |task|
+        pumping = Lain::Frontend::StdinPump.new(rail:, screen: tty).start(task)
+        3.times do
+          line = rail.read(:you, "you> ")
+          File.write(File.join(dir, "lines"), "#{line.inspect}\n", mode: "a")
+          if line == "race"
+            approval = task.async { rail.read(:approval, "[y/N] ") }
+            task.sleep(0.02) until File.exist?(File.join(dir, "arm"))
+            File.write(File.join(dir, "armed"), "")
+            $stdin.wait_readable
+            approval.stop
           end
-          pumping.stop
         end
-      RUBY
-    end
+        pumping.stop
+      end
+    RUBY
+
+    warm_pool(:terminals, expected: 3) { WarmCockpit.terminal(prefix: "stdin-pump-race", script: child) }
 
     # `n` typed at the drawn `[y/N]`, then Enter just after the child is told to
     # withdraw the prompt the moment Enter reaches its terminal.
-    def race(dir)
-      terminal = StdinPumpRaceTerminal.new(child, dir)
+    def race(terminal)
+      dir = terminal.dir
       terminal.await(/you> /)
       terminal.type("race\r")
       terminal.await(%r{\[y/N\] })
       terminal.type("n")
-      sleep(0.3)
+      terminal.await(%r{\[y/N\] (?:\e\[[0-9;?]*[A-Za-z])*n})
       FileUtils.touch(File.join(dir, "arm"))
-      sleep(0.2)
-      entered_then(terminal, dir)
+      terminal.await_file(File.join(dir, "armed"))
+      entered_then(terminal)
     ensure
       terminal&.close
     end
 
-    def entered_then(terminal, dir)
-      terminal.type("\r")
-      sleep(1.0)
+    def entered_then(terminal)
+      terminal.type_and_await_echo("\r")
       terminal.type("after\r")
-      sleep(1.0)
-      [File.readlines(File.join(dir, "lines"), chomp: true), terminal.screen]
+      terminal.await_lines(/"after"/)
+      terminal.await(/after/)
+      [terminal.lines.lines(chomp: true), terminal.screen]
     end
 
     it "never sends the line to you> unannounced" do
       3.times do
-        Dir.mktmpdir do |dir|
-          lines, screen = race(dir)
+        lines, screen = race(StdinPumpRaceTerminal.new(terminals.take))
 
-          expect(lines.first).to eq('"race"')
-          expect(screen).to include("held as your next prompt: n") if lines.include?('"n"')
-        end
+        expect(lines.first).to eq('"race"')
+        expect(lines.last).to eq('"after"')
+        expect(screen).to include("held as your next prompt: n") if lines.include?('"n"')
       end
     end
   end
@@ -574,42 +595,45 @@ RSpec.describe Lain::Frontend::StdinPump do
   # countdown's window and its keys are not lines. Only a stop is acted on; the
   # rest waits where it always did, for the prompt that reads or sweeps it.
   describe "a line typed while nothing is published, over a real terminal", :seam do
-    let(:child) do
-      <<~'RUBY'
-        require "lain"
+    child = <<~'RUBY'
+      require "lain"
 
-        dir = ARGV.fetch(0)
-        log = ->(text) { File.write(File.join(dir, "log"), "#{text}\n", mode: "a") }
-        sink = Class.new do
-          def initialize(log, dir) = (@log = log) && (@dir = dir)
-          def signal(name) = @log.call("signal:#{name}")
-          def ask_in_flight? = !File.exist?(File.join(@dir, "noask"))
-        end.new(log, dir)
-        tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, history_path: File.join(dir, "history"),
-                                      state_path: File.join(dir, "state.json"), pastel: Pastel.new(enabled: false))
-        rail = Lain::Frontend::Intake.new(screen: tty).route(sink)
-        Sync do |task|
-          pumping = Lain::Frontend::StdinPump.new(rail:, screen: tty).start(task)
-          task.sleep(0.2)
-          log.call("ready")
-          task.sleep(0.02) until %w[raw quit].any? { |name| File.exist?(File.join(dir, name)) }
-          if File.exist?(File.join(dir, "raw"))
-            $stdin.raw!(intr: true)
-            task.sleep(0.4)
-            log.call("key:#{$stdin.read_nonblock(1, exception: false).inspect}")
-            $stdin.cooked!
-          end
-          task.sleep(0.02) until File.exist?(File.join(dir, "quit"))
-          if File.exist?(File.join(dir, "reads"))
-            3.times { log.call("read:#{rail.read(:you, "you> ").inspect}") }
-          else
-            rail.gather
-            log.call("held:#{[rail.take_held, rail.take_held].inspect}")
-          end
-          pumping.stop
+      dir = ARGV.fetch(0)
+      log = ->(text) { File.write(File.join(dir, "log"), "#{text}\n", mode: "a") }
+      sink = Class.new do
+        def initialize(log, dir) = (@log = log) && (@dir = dir)
+        def signal(name) = @log.call("signal:#{name}")
+        def ask_in_flight? = !File.exist?(File.join(@dir, "noask"))
+      end.new(log, dir)
+      tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, history_path: File.join(dir, "history"),
+                                    state_path: File.join(dir, "state.json"), pastel: Pastel.new(enabled: false))
+      rail = Lain::Frontend::Intake.new(screen: tty).route(sink)
+      Sync do |task|
+        pumping = Lain::Frontend::StdinPump.new(rail:, screen: tty).start(task)
+        task.sleep(0.2)
+        log.call("ready")
+        task.sleep(0.02) until %w[raw quit].any? { |name| File.exist?(File.join(dir, name)) }
+        if File.exist?(File.join(dir, "raw"))
+          $stdin.raw!(intr: true)
+          task.sleep(0.4)
+          log.call("key:#{$stdin.read_nonblock(1, exception: false).inspect}")
+          $stdin.cooked!
         end
-      RUBY
-    end
+        task.sleep(0.02) until File.exist?(File.join(dir, "quit"))
+        if File.exist?(File.join(dir, "reads"))
+          3.times { log.call("read:#{rail.read(:you, "you> ").inspect}") }
+        else
+          rail.gather
+          log.call("held:#{[rail.take_held, rail.take_held].inspect}")
+        end
+        pumping.stop
+      end
+    RUBY
+
+    warm_pool(:terminals) { WarmCockpit.terminal(prefix: "stdin-pump-typed", script: child) }
+
+    let(:warm) { terminals.take }
+    let(:dir) { warm.dir }
 
     def logged(dir) = File.exist?(File.join(dir, "log")) ? File.read(File.join(dir, "log")) : ""
 
@@ -619,62 +643,62 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
 
     it "delivers /stop as the signal it is and keeps every other line as typeahead, with no prompt open" do
-      terminal = StdinPumpRaceTerminal.new(child, @dir)
-      await_log(@dir, /ready/)
+      terminal = StdinPumpRaceTerminal.new(warm)
+      await_log(dir, /ready/)
       terminal.type("hello\r")
       terminal.type("/stop\r")
-      await_log(@dir, /signal:stop/)
-      FileUtils.touch(File.join(@dir, "quit"))
-      await_log(@dir, /held:/)
+      await_log(dir, /signal:stop/)
+      FileUtils.touch(File.join(dir, "quit"))
+      await_log(dir, /held:/)
 
-      expect(logged(@dir)).to include("signal:stop").and include('held:["hello", nil]')
+      expect(logged(dir)).to include("signal:stop").and include('held:["hello", nil]')
     ensure
       terminal&.close
     end
 
     it "leaves a /stop the chat would not treat as one in the order it was typed" do
-      FileUtils.touch(File.join(@dir, "noask"))
-      terminal = StdinPumpRaceTerminal.new(child, @dir)
-      await_log(@dir, /ready/)
+      FileUtils.touch(File.join(dir, "noask"))
+      terminal = StdinPumpRaceTerminal.new(warm)
+      await_log(dir, /ready/)
       terminal.type("hello\r")
       terminal.type("/stop\r")
       sleep(0.5)
-      FileUtils.touch(File.join(@dir, "quit"))
-      await_log(@dir, /held:/)
+      FileUtils.touch(File.join(dir, "quit"))
+      await_log(dir, /held:/)
 
-      expect(logged(@dir)).to include('held:["hello", "/stop"]')
-      expect(logged(@dir)).not_to include("signal:stop")
+      expect(logged(dir)).to include('held:["hello", "/stop"]')
+      expect(logged(dir)).not_to include("signal:stop")
     ensure
       terminal&.close
     end
 
     it "reads lines typed one at a time and a pasted pair at the next prompts, in order, once each" do
-      FileUtils.touch(File.join(@dir, "reads"))
-      terminal = StdinPumpRaceTerminal.new(child, @dir)
-      await_log(@dir, /ready/)
+      FileUtils.touch(File.join(dir, "reads"))
+      terminal = StdinPumpRaceTerminal.new(warm)
+      await_log(dir, /ready/)
       terminal.type("one\r")
       sleep(0.3)
       terminal.type("two\rthree\r")
       sleep(0.5)
-      FileUtils.touch(File.join(@dir, "quit"))
-      await_log(@dir, /(?:read:.*\n){3}/)
+      FileUtils.touch(File.join(dir, "quit"))
+      await_log(dir, /(?:read:.*\n){3}/)
 
-      expect(logged(@dir).scan(/read:("[^"]*"|nil)/).flatten).to eq(["\"one\"", "\"two\"", "\"three\""])
+      expect(logged(dir).scan(/read:("[^"]*"|nil)/).flatten).to eq(["\"one\"", "\"two\"", "\"three\""])
     ensure
       terminal&.close
     end
 
     it "leaves a key typed under a raw window to the window, and takes it as no line" do
-      terminal = StdinPumpRaceTerminal.new(child, @dir)
-      await_log(@dir, /ready/)
-      FileUtils.touch(File.join(@dir, "raw"))
+      terminal = StdinPumpRaceTerminal.new(warm)
+      await_log(dir, /ready/)
+      FileUtils.touch(File.join(dir, "raw"))
       sleep(0.2)
       terminal.type("c")
-      await_log(@dir, /key:/)
-      FileUtils.touch(File.join(@dir, "quit"))
-      await_log(@dir, /held:/)
+      await_log(dir, /key:/)
+      FileUtils.touch(File.join(dir, "quit"))
+      await_log(dir, /held:/)
 
-      expect(logged(@dir)).to include('key:"c"').and include("held:[nil, nil]")
+      expect(logged(dir)).to include('key:"c"').and include("held:[nil, nil]")
     ensure
       terminal&.close
     end
