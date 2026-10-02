@@ -453,24 +453,24 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     # file and the whole of {Lain::Frontend::Neovim::ListView}'s own spec,
     # because nothing else renders between the read and the store.
     #
-    # Here something does, and under that shape both posts read the SAME
-    # unchanged counter and go out carrying the SAME number -- two renderings,
-    # one stamp, which is precisely the aliasing the stamp exists to make
-    # impossible. It is reachable in production because `#prime` renders from
-    # the drain thread while the sweeps are on the reactor.
-    #
-    # What this CANNOT state is which rendering the editor ends up displaying:
-    # the buffer's contents are settled by the render queue on the RPC thread,
-    # not by the order these posts were made, so the resolution half of the
-    # defect is only visible across threads. The uniqueness of the stamps is
-    # the half that is visible here, and it is the half that has to hold.
-    it "gives two renderings two stamps even when one lands mid-post" do
+    # Here something tries to: `#prime` renders from the drain thread while
+    # the sweeps are on the reactor, so a prime is started from inside a
+    # sweep's post. Under that shape both posts read the SAME unchanged counter
+    # and go out carrying the SAME number -- two renderings, one stamp, which
+    # is precisely the aliasing the stamp exists to make impossible. Which
+    # rendering the editor ends up showing is the `#prime` examples' claim.
+    it "gives two renderings two stamps even when one is attempted mid-post" do
+      primer = nil
       gated(timeout: 0.4, calls: [effect("bash", { "command" => "one" }, "tu_1"),
                                   effect("write", { "path" => "two" }, "tu_2")]) do |queue|
         queue.first.approve(surface: "elsewhere")
-        rpc.interleave = -> { view.prime }
+        rpc.interleave = lambda do
+          primer = Thread.new { view.prime }
+          Thread.pass until primer.stop?
+        end
         view.sweep(queue)
       end
+      primer.join
 
       stamps = rpc.posts.map { |post| post[:generation] }
       expect(stamps.uniq).to eq(stamps)
@@ -803,6 +803,35 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       view.prime
 
       expect(view.decide(1, "approve", generation: rpc.last[:generation])).not_to be_decided
+    end
+
+    # The drain thread is not ordered against the watch fiber, so the prime can
+    # land after a call is already on screen. Blanking it there left the call
+    # parked with no row to answer until the parked set next moved.
+    it "redraws the list a sweep already drew rather than blanking it" do
+      gated(timeout: 0.1) { view.prime }
+
+      expect(rpc.last[:rows]).to be_positive
+    end
+
+    # Production never nests a draw inside a draw, and one that re-entered
+    # would post mid-render and bring the blank row back in silence.
+    it "refuses a prime nested inside a post on the same fiber, loudly" do
+      rpc.interleave = -> { view.prime }
+
+      expect { gated(timeout: 0.1) { nil } }.to raise_error(ThreadError)
+      expect(rpc.posts.size).to eq(1)
+    end
+
+    it "waits out a sweep in flight on another thread rather than posting inside it" do
+      primer = nil
+      rpc.interleave = lambda do
+        primer = Thread.new { view.prime }
+        Thread.pass until primer.stop?
+      end
+      gated(timeout: 0.1) { primer.join }
+
+      expect(rpc.last[:rows]).to be_positive
     end
   end
 

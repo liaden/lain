@@ -425,6 +425,17 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
     unjoined-thread trap above). `after` now joins it, with a bound. Under `bin/suite-load`, 30
     rounds: the old file failed 3, the new one 0.
 
+  - 2026-10-02: `62_approval_spec.rb`'s `the repl's own wiring puts a parked approval in front of
+    the human announces the second gated call too, once the editor answered the first, and asks
+    y/N about neither`, red in a landing under suite load, green alone; its sibling `... answers it
+    with y ...` shares the window, so part of what the entry above credits to the helper fix was
+    this race. A lib race, not the spec: `ApprovalView#prime` runs on
+    the drain thread and nothing ordered it before the watch fiber's sweeps, so a late prime drew
+    the empty list over a parked call's row, and the view's record of what it last drew kept any
+    sweep from redrawing it. Drawing is now under one Monitor and a prime redraws what a sweep
+    already drew. Under a 4-core load the old code failed 6 of 160, the fix none; under
+    `bin/suite-load`, 30 rounds, the fix 0.
+
 - **The `:ollama` live suite has a KNOWN-RED example, and it predates this chunk.**
   `Lain::Provider::Ollama temperature-0 reproducibility produces identical text across three warm
   same-seed runs` (`spec/integration/provider/ollama_spec.rb`) fails on this box: three warm

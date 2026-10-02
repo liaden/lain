@@ -38,21 +38,25 @@ module Lain
       # is. It rides the command inbox to the editor-command consumer fiber
       # ({CLI::HumanReplies::Gestures}), which is on the reactor.
       #
-      # THREAD CONTRACT, AND WHY THERE IS NO LOCK. Both callers -- {#sweep} from
-      # the watch fiber, {#decide} from the editor-command consumer -- are
-      # fibers of the SAME reactor thread, and neither method has a yield point
-      # between reading this object's state and writing it: the editor post is
-      # the non-blocking {RenderInlet} path, which refuses a full queue rather
-      # than parking on it. {Approval::Queue}'s own argument for its lock-free
-      # `@parked`, with the same warning -- a caller reaching this from the RPC
-      # thread would break it, which is precisely why the gesture is acked.
+      # THREAD CONTRACT. {#sweep} from the watch fiber and {#decide} from the
+      # editor-command consumer are fibers of the SAME reactor thread, and
+      # neither has a yield point between reading this object's state and
+      # writing it: the editor post is the non-blocking {RenderInlet} path,
+      # which refuses a full queue rather than parking on it. A caller reaching
+      # this from the RPC thread would break that, which is why the gesture is
+      # acked.
       #
-      # THE RING IS {ListView}'s, shared with lain://inbox, and sharing it takes
-      # NO lock from here and gives none: {ListView} is lock-free and says so,
-      # serialized by whatever its holder already does. lain://inbox holds a
-      # `Mutex` because it has a listing two threads mutate; this view has the
-      # fiber-ownership argument above and keeps it. What the two surfaces
-      # genuinely share is the stamping rule, not a concurrency posture.
+      # {#prime} is the exception, on the drain thread, and nothing orders it
+      # before the sweeps: the conversation starts the watch fiber before
+      # {Neovim#run} starts the thread that primes. So every write -- reading
+      # `@shown`, minting a stamp, posting, storing `@shown` -- happens under
+      # one `Mutex`, or a late prime posts its lines after a sweep's and the
+      # editor shows the older ones. Not reentrant, so a draw nested in a draw
+      # raises rather than posting mid-render. {#decide} takes no lock: it reads
+      # the ring's frozen snapshot.
+      #
+      # THE RING IS {ListView}'s, shared with lain://inbox, and lock-free: this
+      # view serializes its writes under the same `Mutex`.
       class ApprovalView
         # Absent from the runtime's BUFFERS set (00_constants.lua) like
         # {Compose::BUFFER} and {QuestionView::BUFFER}, because that set is what
@@ -236,6 +240,7 @@ module Lain
           # of an empty queue, so `:buffer lain://approval` is somewhere to
           # look from the moment a session can be gated at all.
           @shown = nil
+          @drawing = Mutex.new
         end
 
         # One fiber beside the TTY prompt, spawned per ask and stopped with it.
@@ -259,18 +264,17 @@ module Lain
         # for the approval surface on an idle cockpit finds no buffer and
         # `:buffer lain://approval` answers E94.
         #
-        # IT DOES NOT TOUCH `@shown`: the nil {#initialize} leaves there is what
+        # IT DOES NOT WRITE `@shown`: the nil {#initialize} leaves there is what
         # makes the FIRST sweep render even an empty queue, and recording the
         # empty list here as "what the screen shows" would make that sweep skip.
         # The cost is one extra whole-buffer replace of the same line, at attach.
         #
-        # Safe on the drain thread where the sweeps are on the reactor (the
-        # class doc's thread contract), because it runs strictly BEFORE either
-        # fiber exists: {Neovim#initialize} builds this view, then {Surfaces},
-        # and only {Neovim#run} starts the thread that primes.
+        # It READS it, because a sweep may have drawn first (the class doc's
+        # thread contract): an at-rest projection posted then would blank a
+        # parked call's row until the parked set next moved.
         # @return [void]
         def prime
-          posted([])
+          @drawing.synchronize { posted(@shown || []) }
           nil
         end
 
@@ -284,7 +288,7 @@ module Lain
         # @return [void]
         def sweep(queue)
           parked = queue.reject(&:decided?)
-          render(parked) unless parked == @shown
+          @drawing.synchronize { render(parked) unless parked == @shown }
           nil
         end
 
@@ -383,10 +387,9 @@ module Lain
         #
         # ONE CALL MINTS AND STORES, so the number these lines go out with is
         # the number they are kept under. Reading the counter first and storing
-        # afterwards leaves a gap in which another render takes the same number,
-        # and {#prime} on the drain thread against a sweep on the reactor is a
-        # real way to be inside it -- the spec forces that interleave and holds
-        # two renderings to two stamps.
+        # afterwards leaves a gap in which another render takes the same number.
+        # The drawing lock keeps {#prime} on the drain thread out of that gap
+        # today, and the spec still holds two renderings to two stamps.
         #
         # Separate from {#render} because {#prime} needs exactly this half and
         # must not have the other.

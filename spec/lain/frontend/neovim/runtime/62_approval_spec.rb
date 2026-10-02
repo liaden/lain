@@ -86,6 +86,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend.run do |handle|
         settled = with_parked_approval(handle, grace: 1.5) do
           wait_until_editor { buffer_lines("lain://approval").join.include?("pwd") }
+          # The drain thread primes lain://journal, unordered against the row.
+          wait_until_editor { live_buffer_names.include?("lain://journal") }
           press("lain://journal", "y", cursor: [1, 0])
           inspector.command("buffer lain://journal")
           inspector.command("LainApprove")
@@ -245,10 +247,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       # describes: whatever the chat reads, nobody types, so the ONLY thing that
       # can settle this call is the editor.
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(60) }
-      presser = thread_raising_into_owner do
-        wait_until_editor(timeout: 20) { buffer_lines("lain://approval").join.include?("pwd") }
-        press("lain://approval", "y", cursor: [1, 0])
-      end
+      presser = thread_raising_into_owner { approve_in_editor("pwd", queue) }
 
       Timeout.timeout(30) { repl_over(queue).run(**repl_session) }
 
@@ -289,8 +288,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         Async::Task.current.sleep(60)
       end
       presser = thread_raising_into_owner do
-        approve_in_editor("pwd")
-        approve_in_editor("whoami", after: "pwd")
+        approve_in_editor("pwd", queue)
+        approve_in_editor("whoami", queue, after: "pwd")
       end
 
       Dir.mktmpdir do |dir|
@@ -312,12 +311,22 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # the row the PREVIOUS press retired: pressing before it leaves the buffer
     # would land the keystroke on the call that was already approved, and the
     # example would hang rather than fail.
-    def approve_in_editor(command, after: nil)
+    def approve_in_editor(command, queue, after: nil)
+      await_row(command, queue, after:)
+      press("lain://approval", "y", cursor: [1, 0])
+    end
+
+    # A row that never shows fails naming what the editor drew beside what is
+    # parked: a parked call with no row is the view's fault, and no parked call
+    # is the agent's.
+    def await_row(command, queue, after:)
       wait_until_editor(timeout: 20) do
         text = buffer_lines("lain://approval").join
         text.include?(command) && !(after && text.include?(after))
       end
-      press("lain://approval", "y", cursor: [1, 0])
+    rescue RuntimeError => e
+      raise e.exception("#{e.message}; lain://approval shows #{buffer_lines("lain://approval").inspect} " \
+                        "while #{queue.reject(&:decided?).map(&:input).inspect} is parked")
     end
 
     # The REAL HumanReplies, undelegated: repl_spec wraps it in a double that
