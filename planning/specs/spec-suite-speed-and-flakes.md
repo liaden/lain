@@ -216,7 +216,7 @@ flowchart LR
     T54 --> T56; T55 --> T56; T57; T58; T59
   end
   T42 --> T60; T56 --> T60; T59 --> T60
-  T14 --> T60; T15 --> T60; T16 --> T60; T17 --> T60; T49 --> T60; T51 --> T60; T52 --> T60; T62 --> T60; T63 --> T60
+  T14 --> T60; T15 --> T60; T16 --> T60; T17 --> T60; T49 --> T60; T51 --> T60; T52 --> T60; T62 --> T60; T63 --> T60; T64 --> T60; T65 --> T60
 ```
 
 T60 depends on every other card (T0 to T62); the graph shows the edges that order work.
@@ -449,7 +449,7 @@ Spec file: `spec/lain/frontend/neovim/runtime/62_approval_spec.rb`
 **Stop and report if:**
 - With the presser's errors surfaced, the hang remains and names a cause in `lib/` (for example the `y` map firing before the view binds the pending): report the cause and the evidence; the fix becomes its own card.
 
-### T7: The approval window's closing note always prints          [risk: high]
+### T7: The approval window's closing note always prints          [risk: high] [x]
 
 **Depends on:** T21, T0
 **Files:** `lib/lain/frontend/tty.rb` (`close_prompt` `:221-225`, `close_row` `:937`, the writer lock `:1049`), `lib/lain/frontend/approval_policy.rb` (`:79-81`, `:140-155`), `lib/lain/frontend/intake.rb` (`:259-270`), `spec/lain/frontend/approval_policy_spec.rb`, `spec/lain/frontend/tty_spec.rb`
@@ -588,7 +588,7 @@ Spec file: `spec/lain/seams/recorded_run_spec.rb` (9 examples)
 **Stop and report if:**
 - An example mutates the shared `Run`.
 
-### T12: Shorter graces in 8 specs, each still discriminating          [risk: low]
+### T12: Shorter graces in 8 specs, each still discriminating          [risk: low] [x]
 
 **Depends on:** T8, T0
 **Files:** `spec/lain/seams/hangup_spec.rb` (`:48`), `spec/lain/exec/docker_spec.rb` (`~:906`), `spec/lain/cli/repl/approval_surfaces_spec.rb` (`:58`), `spec/lain/approval/gate_spec.rb` (`:312`), `spec/lain/exec/core_spec.rb`, `spec/lain/shell/pipeline_spec.rb` (`:426`), `spec/lain/provider/http/stall_protection_spec.rb` (`:166`, `:180`), `spec/lain/cli/epic_submit_spec.rb` (`:997`)
@@ -678,7 +678,7 @@ Spec file: `spec/lain/seams/plain_chat_prompt_guards_spec.rb` (load proof: 20 ro
 **Stop and report if:**
 - Renaming `denied_by_the_next_n` to an `expect_` helper does not clear `RSpec/NoExpectationExample`.
 
-### T15: input_pane_socket_spec on the pool          [risk: high]
+### T15: input_pane_socket_spec on the pool          [risk: high] [x]
 
 **Depends on:** T13, T1, T0
 **Files:** `spec/lain/seams/input_pane_socket_spec.rb`
@@ -726,7 +726,7 @@ Spec file: the 4 files
 **Stop and report if:**
 - A hand-counted `expected:` disagrees with the examples that take a child.
 
-### T17: stdin_pump_spec on the pool, with an armed marker          [risk: medium]
+### T17: stdin_pump_spec on the pool, with an armed marker          [risk: medium] [x]
 
 **Depends on:** T13, T0
 **Files:** `spec/lain/frontend/stdin_pump_spec.rb`
@@ -751,7 +751,7 @@ Spec file: `spec/lain/frontend/stdin_pump_spec.rb`
 **Stop and report if:**
 - A 0.15s quiet window fails under bin/suite-load: lengthen it and report the beat that held.
 
-### T18: cli_spec boots the checkout once per file          [risk: low]
+### T18: cli_spec boots the checkout once per file          [risk: low] [x]
 
 **Depends on:** T13
 **Files:** `spec/lain/cli_spec.rb`
@@ -772,7 +772,7 @@ Spec file: `spec/lain/cli_spec.rb`
 **Stop and report if:**
 - An example asserts on a fresh boot's side effects.
 
-### T19: repl_spec forks its PTY children without an inline disable          [risk: high]
+### T19: repl_spec forks its PTY children without an inline disable          [risk: high] [x]
 
 **Depends on:** none
 **Files:** `spec/lain/cli/repl_spec.rb` (`ReplGoalTerminal`)
@@ -850,7 +850,7 @@ Spec file: `spec/lain/frontend/tty_spec.rb`
 **Stop and report if:**
 - No beat under the old fixed sleeps passes the delayed-draw example.
 
-### T22: qa_sandbox_pane_resolution_spec drops its quiet window          [risk: low]
+### T22: qa_sandbox_pane_resolution_spec drops its quiet window          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/lain/seams/qa_sandbox_pane_resolution_spec.rb` (`:283`, `:306`)
@@ -871,7 +871,7 @@ Spec file: `spec/lain/seams/qa_sandbox_pane_resolution_spec.rb`
 **Stop and report if:**
 - An example depends on the journal settling.
 
-### T61: qa_sandbox_pane_resolution_spec leaves no editor behind          [risk: low]
+### T61: qa_sandbox_pane_resolution_spec leaves no editor behind          [risk: low] [x]
 
 **Depends on:** T22
 **Files:** `spec/lain/seams/qa_sandbox_pane_resolution_spec.rb` (teardown `:42-47`)
@@ -892,7 +892,7 @@ Spec file: `spec/lain/seams/qa_sandbox_pane_resolution_spec.rb` (6 examples)
 **Stop and report if:**
 - The embed server's pid cannot be found from the pane (no process group or parent link).
 
-### T23: approval_view_spec awaits the clock only when it reads the verdict          [risk: low]
+### T23: approval_view_spec awaits the clock only when it reads the verdict          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/lain/frontend/neovim/approval_view_spec.rb` (`:85-105` and 16 call sites)
@@ -913,7 +913,7 @@ Spec file: `spec/lain/frontend/neovim/approval_view_spec.rb` (66 examples)
 **Stop and report if:**
 - An `await: false` example reads `verdicts`.
 
-### T24: human_replies_spec scales its windows with stubbed ticks          [risk: low]
+### T24: human_replies_spec scales its windows with stubbed ticks          [risk: low] [x]
 
 **Depends on:** T0
 **Files:** `spec/lain/cli/human_replies_spec.rb`
@@ -934,7 +934,7 @@ Spec file: `spec/lain/cli/human_replies_spec.rb`
 **Stop and report if:**
 - A window shorter than 3 ticks is needed.
 
-### T25: exec/local_spec runs the grown-pipe example once          [risk: low]
+### T25: exec/local_spec runs the grown-pipe example once          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/lain/exec/local_spec.rb` (`:117`, deadlines)
@@ -1206,7 +1206,7 @@ Spec file: `spec/lain/grader/test_harness_spec.rb` (14 examples)
 **Stop and report if:**
 - The scrubbed environment (`test_harness.rb:20`) is not applied by Shell::Out.
 
-### T35: The TTY spawns through Shell::Out          [risk: low]
+### T35: The TTY spawns through Shell::Out          [risk: low] [x]
 
 **Depends on:** T26, T7, T21
 **Files:** `lib/lain/frontend/tty.rb` (`:845`, `:865`), `spec/lain/frontend/tty_spec.rb` (doubles `:1271`, `:1297`, fake `:1375`)
@@ -1334,7 +1334,7 @@ Spec file: `spec/lain/cli/wiring_spec.rb`
 **Stop and report if:**
 - An example asserts on the real checkout's contents.
 
-### T41: The remaining spec Mixlib sites use Shell::Out          [risk: low]
+### T41: The remaining spec Mixlib sites use Shell::Out          [risk: low] [x]
 
 **Depends on:** T2, T10, T11, T14, T15, T16, T22, T28, T29, T30, T31, T33, T34, T35, T36, T37, T38, T39, T40, T12
 **Files:** every spec file still matching `Mixlib::ShellOut` after the cards above, except `spec/lain/shell/out_spec.rb` and `spec/spikes/async_shellout_*` (T42); at grounding: `spec/lain/supervisor_spec.rb`, `spec/lain/qa/changeset_spec.rb`, `spec/lain/seams/*`, `spec/lain/seams/history_rewrite_spec.rb`, `spec/lain/review/handover_spec.rb`, `spec/lain/seams/hangup_spec.rb` (`require "mixlib/shellout"` at `:5`), `spec/lain/shell/pipeline_spec.rb` (`:105`, `:430`), `spec/lain/review/critique_spec.rb`, `spec/journal_routing_discipline_spec.rb`, `spec/lain/frontend/neovim/changeset_diff_spec.rb`, `spec/lain/cli/command/qa_spec.rb`
@@ -1355,7 +1355,7 @@ Spec file: the files listed
 **Stop and report if:**
 - The comments at `supervisor_spec.rb:802`, `:1144` and `supervisor.rb:324` say Mixlib "blocks the whole reactor". The panel's probe found a sibling fiber ticks during both Mixlib and Shell::Out (`scratchpad/probe_shell_out_reactor.rb`): rewrite them to the real reason the guard holds; report if no reason survives.
 
-### T42: Remove mixlib-shellout          [risk: medium]
+### T42: Remove mixlib-shellout          [risk: medium] [x]
 
 **Depends on:** T41
 **Files:** every `lib/` file that mentions Mixlib after T41 (at grounding 30: `cli/command/review.rb`, `cli/command/review_submit.rb`, `cli/epic.rb`, `cli/isolation_backend.rb`, `cli/review.rb`, `cli/tmux_surface.rb`, `cli/up.rb`, `forge/gh.rb`, `forge/promotion.rb`, `forge/reconcile/world.rb`, `frontend/stdin_pump.rb`, `frontend/tty.rb`, `grader/test_harness.rb`, `isolation/compose.rb`, `isolation/db_index.rb`, `isolation/spike.rb`, `isolation/working_branch.rb`, `isolation/worktree/handback.rb`, `isolation/worktree.rb`, `project/dotfiles.rb`, `review/source/github_pr.rb`, `review/source/local_branch.rb`, `shell/out.rb`, `sink.rb`, `supervisor.rb`, `tool/input.rb`, `tool.rb`, `worker_env.rb`, `workspace/snapshot/scope/shadow_git.rb`, `workspace/snapshot/scope/shadow_git/repository.rb`, all under `lib/lain/`), `spec/lain/shell/out_spec.rb` (the 5 oracle examples using `both` at `:41`, `:58`, `:75`, `:200` and Mixlib at `:118`, rewritten as direct expectations of byte identity, nil-env deletion and nil signalled status), `spec/spikes/async_shellout_*` (ported to Shell::Out: they pin that a shell-out does not stall the reactor), `docs/concurrency.md` (`:63-201`, annotated as history), `spec/mixlib_free_lib_spec.rb` (new guard)
@@ -1383,7 +1383,7 @@ Spec file: `spec/mixlib_free_lib_spec.rb`
 
 ### Phase D: lib CPU, child boots, isolation
 
-### T43: Fleet#tree rebuilds in linear time          [risk: medium]
+### T43: Fleet#tree rebuilds in linear time          [risk: medium] [x]
 
 **Depends on:** none
 **Files:** `lib/lain/status_feed/fleet.rb` (`:162-176`, `Member` `:213-251`), `spec/lain/status_feed/fleet_spec.rb`
@@ -1414,7 +1414,7 @@ Spec file: `spec/lain/status_feed/fleet_spec.rb`
 **Stop and report if:**
 - `Member` has a mutator other than `ended` and `progressed`.
 
-### T44: TreeSitter caches compiled queries          [risk: high]
+### T44: TreeSitter caches compiled queries          [risk: high] [x]
 
 **Depends on:** none
 **Files:** `ext/lain/src/treesitter.rs` (`:81`, FFI `:262`)
@@ -1450,7 +1450,7 @@ Spec file: Rust unit tests in `ext/lain/src/treesitter.rs`; parity in `spec/lain
 - A hit cannot be looked up without allocating a `String`: report the cost against the 3.8ms compile it saves.
 - `cargo clippy --all-targets -- -D warnings` objects to the global and no idiomatic form passes.
 
-### T45: Lib-scanning specs share parses          [risk: low]
+### T45: Lib-scanning specs share parses          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/support/parsed_source.rb` (new), `spec/lain/project/root_defaults_spec.rb`, `spec/lain/run_clock_spec.rb`, `spec/approval_consumer_discipline_spec.rb`, `spec/output_discipline_spec.rb`, `spec/refusal_width_discipline_spec.rb`, `spec/reply_surface_discipline_spec.rb`, `spec/provider_construction_discipline_spec.rb`, `spec/lain/project_dir_spec.rb`, `spec/lain/review/bounds_spec.rb`
@@ -1512,7 +1512,7 @@ Spec file: `spec/lain/canonical_spec.rb` (23 to 28 examples)
 **Stop and report if:**
 - A spec that runs `Canonical` in a non-main Ractor goes green for a different reason (`review/hunk_spec:264` already raises on blake3).
 
-### T47: Compaction resumes a held derived chain          [risk: high]
+### T47: Compaction resumes a held derived chain          [risk: high] [x]
 
 **Depends on:** none
 **Files:** `lib/lain/compaction/derivation.rb` (`derive` `:154-163`, `refuse_invalid` `:230`, class doc `:41-67`), `lib/lain/compaction/source/derived.rb` (`:153-157`, `:215`, `:235`), `lib/lain/compaction/held_cut.rb` (`:354-358`), `spec/lain/compaction/derivation_spec.rb` (incl. `:436-440`), `spec/lain/compaction/source/derived_spec.rb`
@@ -1555,7 +1555,7 @@ The 3 places that assert a derivation holds no derived head (`held_cut.rb:354-35
 - Any journal record or store object differs from the full derivation's for the same input.
 - The class doc cannot be rewritten to state the ruling without contradicting the non-functor characterization example.
 
-### T48: irb and nokogiri load where they are used          [risk: low]
+### T48: irb and nokogiri load where they are used          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `lib/lain/cli/command/ruby.rb` (`:3`), `lib/lain/tools/web_fetch/readable.rb` (`:3`), `spec/lain/cli/command/ruby_spec.rb`, `spec/lain/tools/web_fetch/readable_spec.rb`
@@ -1576,7 +1576,7 @@ Spec file: `spec/lain/cli/command/ruby_spec.rb`, `spec/lain/tools/web_fetch/read
 **Stop and report if:**
 - A class body references `IRB` or `Nokogiri`.
 
-### T49: Spec children boot with static load paths and a sized heap          [risk: medium]
+### T49: Spec children boot with static load paths and a sized heap          [risk: medium] [x]
 
 **Depends on:** none
 **Files:** `spec/support/child_boot.rb` (new), `spec/support_child_boot_spec.rb` (new)
@@ -1622,7 +1622,7 @@ Spec file: `spec/support_child_boot_spec.rb`
 **Stop and report if:**
 - Stubbing `Kernel#gem` is needed: report which child calls `gem`, since the stub hides version conflicts.
 
-### T50: Spec git reads a spec-owned global config          [risk: low]
+### T50: Spec git reads a spec-owned global config          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/support/isolated_git_config.rb` (new), `spec/support_isolated_git_config_spec.rb` (new)
@@ -1643,7 +1643,7 @@ Spec file: `spec/support_isolated_git_config_spec.rb`
 **Stop and report if:**
 - `dotfiles_spec` or `shadow_git_spec` loses its own `GIT_CONFIG_GLOBAL`.
 
-### T51: Spec tmux servers load no user config          [risk: low]
+### T51: Spec tmux servers load no user config          [risk: low] [x]
 
 **Depends on:** T61
 **Files:** `spec/support/isolated_tmux.rb` (new), `spec/support_isolated_tmux_spec.rb` (new), `spec/lain/seams/qa_sandbox_pane_resolution_spec.rb` (drop its own `-f /dev/null`)
@@ -1670,7 +1670,7 @@ Spec file: `spec/support_isolated_tmux_spec.rb`
 **Stop and report if:**
 - A production code path resolves tmux by absolute path, bypassing PATH.
 
-### T52: Headless editors skip mise shims          [risk: low]
+### T52: Headless editors skip mise shims          [risk: low] [x]
 
 **Depends on:** T5
 **Files:** `spec/support/headless_editor.rb` (`binary`, `FLAGS`), `spec/support_headless_editor_spec.rb`
@@ -1691,7 +1691,7 @@ Spec file: `spec/support_headless_editor_spec.rb`
 **Stop and report if:**
 - The resolved nvim's version differs from the mise-pinned one.
 
-### T53: 4 scanning specs do less work          [risk: low]
+### T53: 4 scanning specs do less work          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/lain/test_layout/guard_spec.rb`, `spec/lain/provider/http/streaming_spec.rb`, `spec/lain/review/deletability_spec.rb` (`:594`), `spec/error_taxonomy_discipline_spec.rb`
@@ -1760,7 +1760,7 @@ Spec file: none (Rakefile); verified by running `rake pspec` with a truncated lo
 **Stop and report if:**
 - parallel_tests falls back to file-size packing for the missing files in a way that changes worker counts.
 
-### T56: CI caches the compiled extension and the runtime log          [risk: medium]
+### T56: CI caches the compiled extension and the runtime log          [risk: medium] [x]
 
 **Depends on:** T54, T55
 **Files:** `.github/workflows/main.yml`
@@ -1828,7 +1828,7 @@ Spec file: none
 **Stop and report if:**
 - The matrix exceeds the repository's concurrent job limit.
 
-### T59: bin/runtime-census guards against re-growth          [risk: medium]
+### T59: bin/runtime-census guards against re-growth          [risk: medium] [x]
 
 **Depends on:** none
 **Files:** `bin/runtime-census` (new), `spec/lain/runtime_census_spec.rb` (new)
@@ -1906,7 +1906,7 @@ Spec file: `spec/support_slow_files_spec.rb`
 - Excluding the tag changes the example count `rake pspec` reports.
 - An explicit file argument cannot be told apart from the default pattern inside RSpec's configuration.
 
-### T63: 62_approval_spec's second gated call is announced under load          [risk: medium]
+### T63: 62_approval_spec's second gated call is announced under load          [risk: medium] [x]
 
 Added 2026-10-02 by the user's ruling after a landing went red on it.
 
@@ -1928,6 +1928,44 @@ Spec file: `spec/lain/frontend/neovim/runtime/62_approval_spec.rb`
 
 **Stop and report if:**
 - The second approval never reaches `lain://approval` in a reproduction: the cause is in `lib/`; report the mechanism before fixing it.
+
+### T64: SlowFiles.named does not read a tag value as a path          [risk: low] [x]
+
+Added 2026-10-02: T45's review found `bundle exec rspec --tag '~seam'`, the inner loop CLAUDE.md documents, errors outside examples since T62, because `SlowFiles.named` expands every non-flag argument as a path and `~seam` expands as a home directory.
+
+**Depends on:** T62
+**Files:** `spec/support/slow_files.rb`, `spec/support_slow_files_spec.rb`
+**Shared-file wiring:** none
+**Reachable from:** every `rspec` run through `spec/support/tags.rb`
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: an option's value is not taken for a named file
+  Given rspec --tag '~seam', --tag slow, -e "a name", --pattern 'x', and a path:line
+  When SlowFiles.named reads the arguments
+  Then only real spec paths are named, nothing raises, and a bare --tag '~seam' run starts its examples
+```
+Spec file: `spec/support_slow_files_spec.rb`
+
+### T65: The line editor binds Reline's default keys          [risk: medium] [x]
+
+Added 2026-10-02: T19's review found and confirmed in a real PTY that `lib/lain/frontend/line_editor.rb:207` (`config.read unless config.loaded?`) runs before Reline's own lazy read, which is the only caller of `IOGate.set_default_key_bindings`, so a real chat on the ANSI gate never binds the up arrow (history) or bracketed paste.
+
+**Depends on:** T19
+**Files:** `lib/lain/frontend/line_editor.rb`, its spec
+**Shared-file wiring:** none
+**Reachable from:** the plain chat's prompt, `Frontend::LineEditor`
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the up arrow recalls history and a paste arrives whole in a real chat
+  Given a chat line editor over a real PTY on the ANSI gate, with history
+  When the human presses the up arrow, and separately pastes text in bracketed-paste mode
+  Then the previous line is recalled, and the pasted text arrives as one insertion
+```
+Spec file: the line editor's spec (a PTY example; the reviewer's probe is tmp/worktrees/T19/tmp/probes/t19_review_preread_arrow.rb)
 
 ### Phase F: baseline
 
@@ -2037,3 +2075,52 @@ Prerequisite before T1: commit the uncommitted `bin/box-state` fix in the main c
 - T17, T18, T19, T22, T23, T24 started (wave 6, worktrees at `380aff10`).
 - T24: the card's "4 TICK constants" is 2 in practice (Arrivals and QueueSurface are never built in human_replies_spec); a pre-existing vacuous negative window ("leaves an open set untouched") is fixed inside T24 by ruling.
 - User ruling 2026-10-02: a landing (T18) went red on a flake not in the ledger, 62_approval "announces the second gated call too..." (20s presser timeout under load, green alone). Fix it first, hold landings: T63 added.
+- T7 load proof: card 29 of 30, base 28 of 30. The target "ends its line with who decided it and how" failed 0 times on the card and 2 on base; the card's 1 failure is the ledger-named "Ctrl-C at human> offers stop..." (seed 11440), outside T7's scope. T7 approved to land, after T63.
+- T43, T47, T48, T50 started (wave 7, worktrees at `604561d4`).
+- T47: covers?(timeline, cut) became covers?(plan, into) (the card's signature cannot see live ranges or the store); held_cut.rb is under compaction/source/; derived_spec.rb was created.
+- T12 load proof: 7 files card 20 of 20 except docker_spec's container-diff contamination (base too); after scoping the diff to its own containers, docker_spec card 20 of 20, base 18 of 20. T12 cleared to land.
+- T63: the cause is a lib race in ApprovalView#prime (drain thread) against the watch fiber's sweeps; a late prime blanked a parked call's row. Fixed under one Monitor; 160 of 160 under a 4-core load against 6 of 160 failing before.
+- T19, T25, T49, T53 started (wave 8, worktrees at `604561d4`).
+- T15 load proof: card 20 of 20 (16 examples), base 20 of 20. Cleared to land.
+- T53: deletability_spec's lookup was 15s only in the main checkout, because the old glob walked tmp/worktrees; 0.03s after.
+- T63 load proof: card 30 of 30, base 30 of 30 (the race needed the reviewer's 4-core stress to show: 6 of 160 before, 0 after). T63 landed `7d4bba77` (suite 21,614 examples, 0 failures). Landings resume.
+- T7 landed `30ea9ed7` (suite 21,629 examples, 0 failures). Scope grew in review to channel.rb, channel/drop_oldest.rb and decorators.rb (Channel#offer, a rendered PromptUnclosed) and the seam spec.
+- T12's landing suite went red once on github_pr_spec: `git maintenance` deleted `.git/objects/maintenance.lock` inside the shared template mid-copy (the user's maintenance.auto reaching a fixture). T50 removes that cause, so T50 lands first.
+- T50 landed `5dbf86a1`. Suite 21,632 examples, 3 failures, each green alone: 2 ledger-named (HeadlessEditor.start's TERM example, tty "loses and repeats nothing typed") and deletability_spec's map lookup timing out at 30s under load 24 (the tmp/worktrees glob T53 removes).
+- T53 landed `ab301f16` (suite 21,632 examples, 0 failures).
+- T12 landed `3fb9b636` (suite 21,632 examples, 0 failures).
+- T15 landed `e5e94877` (suite 21,635 examples, 0 failures).
+- T18 landed `eb76c719`. Suite 21,635 examples, 1 failure: ledger-named plain_chat "Ctrl-C at human> offers stop...", green alone.
+- T22 landed `df0b8604` (suite 21,635 examples, 0 failures).
+- T23 landed `466f17a7`. Suite 21,635 examples, 1 failure: ledger-named HeadlessEditor.start TERM example, green alone.
+- T25 landed `2f3645ea` (suite 21,635 examples, 0 failures).
+- T43 landed `819bad89` (suite 21,639 examples, 0 failures).
+- T47 landed `2afded7d` (suite 21,652 examples, 0 failures).
+- T48 landed `8346b9f8` (suite 21,655 examples, 0 failures).
+- T49's first landing was backed out: 8 failures, children that exec bundle or rake could not resolve gems once Gem::Specification.all was restricted to the lock. Returned to its implementer. T19's review found the forked child's ensure could still run the worker's at_exit hooks; T15 (landed) has the same defect, fixed through a shared spec/support module in T19.
+- T35, T61, T45, T52 started (wave 9, worktrees at `8346b9f8`).
+- T49 landed `1e27be51` (suite 21,669 examples, 0 failures).
+- T35 landed `2a9e0bf5`. Suite 21,670 examples, 1 failure: ledger-named HeadlessEditor.start TERM example, green alone.
+- T52 landed `afbb9dbd` (suite 21,673 examples, 0 failures).
+- T41, T44, T56, T59 started (wave 10, worktrees at `afbb9dbd`).
+- T24 load proof: card 30 of 30, base 30 of 30. T24 landed `5c3ee40e` (suite 21,673 examples, 0 failures).
+- T61 landed `2889eabf` (suite 21,674 examples, 0 failures).
+- User ruling 2026-10-02: T45 gets a third fix round after a second REQUEST-CHANGES (the memo cleared only at the run's end); the main session verifies it with the reviewer's probe instead of a third review.
+- T56 landed `c84261c7` (CI only; verified on CI by the user's owed pass).
+- T17's proof and T64's landing were stopped at load 115-132 (3-suite proof, a landing suite and 7 agents together); both rerun once agents settle.
+- T64 landed `1db92ab7` (suite 21,677 examples, 0 failures).
+- T45 landed `866563e4` (suite 21,688 examples, 0 failures).
+- T44 landed `9a120743` (suite 21,689 examples, 0 failures; cargo fmt, clippy and test 235 by the commit hook).
+- T65 added: a production bug T19's review confirmed (Reline's default key bindings never load in a real chat). T59's landing run went red with 138 load-induced failures (it ran beside T17's proof at load 118); it reruns alone after the proof.
+- T51, T65 started (worktrees at `9a120743`).
+- T59 landed `6b04288c` (suite 21,715 examples, 0 failures). Ceilings seeded at 2x from today's post-speedup log; T60 re-seeds.
+- T41 landed `8babfa26` (suite 21,717 examples, 0 failures). 3 Mixlib examples remain for T42 to delete with lib's rescue arms.
+- T42 started (worktree at `8babfa26`).
+- T19 landed `43a3339a`. Suite 21,722 examples, 1 failure: up_spec "names no shell variable, and no filter program" asserts the HUD job omits "jq" and the random tmpdir name was ...i63pjq; green alone, fixed in the next commit.
+- `09b249fe`: up_spec's no-jq check matches /jq/ (a random tmpdir suffix contained jq).
+- T65 ruling: the gate's default sequences that start with a byte lain binds alone (C-x) are removed after load, keeping completion instant; the C-x C-x exchange-mark default is the cost.
+- T17 load proof: card 20 of 20, base failed rounds. T17 landed `43647a78` (suite 21,722 examples, 0 failures).
+- T51 landed `8cfa912f` (suite 21,724 examples, 0 failures).
+- T65: after the second review's C-x finding and the ruling, the main session verified the fix with the reviewer's probe (C-x at 0ms, C-x C-x twice) instead of a third review.
+- T65 landed `07ecf1cd` (suite 21,730 examples, 0 failures).
+- T42 landed `bbd57cf7` (suite 21,730 examples, 0 failures). Every card but T60 has landed.
