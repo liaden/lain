@@ -91,20 +91,29 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
 
   def rulings = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
 
-  # `:approved`, `:parked`, or `[:refused, what the model was told]`. A call
-  # still waiting when the window closes waits for a human, and is stopped
-  # rather than answered.
+  # A parked call is heard from the queue; the 2s bound only fires on a hang.
   def outcome(stack, command, cwd: nil, worker_env: lease.worker_env)
     Sync do |task|
-      call = task.async { run(stack, command, cwd:, worker_env:) }
-      told = task.with_timeout(2) { call.wait }
-      told.content == "the command ran" ? :approved : [:refused, told.content]
-    rescue Async::TimeoutError
-      :parked
+      heard = Async::Queue.new
+      call = task.async { heard << call_result(stack, command, cwd, worker_env) }
+      waiting = task.async { heard << board.approvals.dequeue }
+      told = task.with_timeout(2) { heard.dequeue }
+      raise told if told.is_a?(Exception)
+
+      told.is_a?(Lain::Approval::Queue::Pending) ? :parked : verdict(told)
     ensure
       call&.stop
+      waiting&.stop
     end
   end
+
+  def call_result(stack, command, cwd, worker_env)
+    run(stack, command, cwd:, worker_env:)
+  rescue StandardError => e
+    e
+  end
+
+  def verdict(told) = told.content == "the command ran" ? :approved : [:refused, told.content]
 
   # Every deterministic rung abstained, so the call waits on the board's one
   # queue, where the pending it left is read.
@@ -254,7 +263,7 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
         task.with_timeout(2) { board.approvals.dequeue }
         auto!
 
-        expect { task.with_timeout(1) { call.wait } }.to raise_error(Async::TimeoutError)
+        expect { task.with_timeout(0.3) { call.wait } }.to raise_error(Async::TimeoutError)
       ensure
         call&.stop
       end
@@ -288,6 +297,20 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
     it "parks an ordinary read for the parent and for a leased child alike" do
       expect(outcome(parent, "cat README.md", worker_env: parent_env)).to eq(:parked)
       expect(outcome(child, "cat README.md")).to eq(:parked)
+    end
+  end
+
+  describe "outcome" do
+    it "surfaces the error of a call that raises rather than a timeout" do
+      allow(self).to receive(:run).and_raise(ArgumentError, "boom")
+
+      expect { outcome(child, "cat README.md") }.to raise_error(ArgumentError, "boom")
+    end
+
+    it "raises for a call that neither finishes nor queues an approval" do
+      allow(self).to receive(:run) { sleep }
+
+      expect { outcome(child, "cat README.md") }.to raise_error(Async::TimeoutError)
     end
   end
 end
