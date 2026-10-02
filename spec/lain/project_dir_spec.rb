@@ -122,7 +122,7 @@ module ProjectDirDiscipline
     # @return [Array<Violation>] at most one per line, since the composition
     #   sites of one expression nest (a string inside a `File.join`)
     def scan(source)
-      sexp = Ripper.sexp(source)
+      sexp = ParsedSource.sexp(source)
       raise "could not parse #{@path}" if sexp.nil?
 
       @bindings = bindings_in(sexp)

@@ -189,7 +189,7 @@ module RootDefaultDiscipline
 
     # @return [Array<Default>]
     def scan(source)
-      sexp = Ripper.sexp(source)
+      sexp = ParsedSource.sexp(source)
       raise "could not parse #{@path}" if sexp.nil?
 
       walk(sexp, ANONYMOUS)
@@ -460,7 +460,7 @@ module RootDefaultDiscipline
 
     # @return [Array<WatchedCall>]
     def scan(source)
-      sexp = Ripper.sexp(source)
+      sexp = ParsedSource.sexp(source)
       raise "could not parse #{@path}" if sexp.nil?
 
       calls = collect(sexp)
@@ -543,10 +543,12 @@ module RootDefaultDiscipline
   # @return [Hash{String => Array<String>}] every cwd-reading keyword default in
   #   `lib/`, as sorted labels per lib-relative path
   def declared
-    lib_root.glob("**/*.rb").each_with_object({}) do |file, out|
-      relative = file.relative_path_from(lib_root).to_s
-      found = Scanner.new(relative).scan(file.read)
-      out[relative] = found.map(&:label).sort unless found.empty?
+    ParsedSource.once(:root_defaults_declared) do
+      lib_root.glob("**/*.rb").each_with_object({}) do |file, out|
+        relative = file.relative_path_from(lib_root).to_s
+        found = Scanner.new(relative).scan(file.read)
+        out[relative] = found.map(&:label).sort unless found.empty?
+      end
     end
   end
 
@@ -572,10 +574,12 @@ module RootDefaultDiscipline
   # @return [Hash{String => Array<WatchedCall>}] every watched call in `lib/`,
   #   keyword passed or not, per lib-relative path
   def watched_sites
-    lib_root.glob("**/*.rb").each_with_object({}) do |file, out|
-      relative = file.relative_path_from(lib_root).to_s
-      found = CallScanner.new(relative).scan(file.read)
-      out[relative] = found unless found.empty?
+    ParsedSource.once(:root_defaults_watched) do
+      lib_root.glob("**/*.rb").each_with_object({}) do |file, out|
+        relative = file.relative_path_from(lib_root).to_s
+        found = CallScanner.new(relative).scan(file.read)
+        out[relative] = found unless found.empty?
+      end
     end
   end
 

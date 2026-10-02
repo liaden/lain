@@ -80,7 +80,7 @@ module ApprovalConsumerDiscipline
 
     # @return [Array<Violation>]
     def scan(source)
-      sexp = Ripper.sexp(source)
+      sexp = ParsedSource.sexp(source)
       raise "could not parse #{@path}" if sexp.nil?
 
       walk(sexp)

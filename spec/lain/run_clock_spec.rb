@@ -36,13 +36,15 @@ module MonotonicDiscipline
 
   # @return [Array<String>] "path:line" for every reference under `lib/`
   def sites
-    lib_root.glob("**/*.rb").flat_map do |file|
-      scan(file.relative_path_from(lib_root).to_s, file.read)
+    ParsedSource.once(:run_clock_sites) do
+      lib_root.glob("**/*.rb").flat_map do |file|
+        scan(file.relative_path_from(lib_root).to_s, file.read)
+      end
     end
   end
 
   def scan(path, source)
-    sexp = Ripper.sexp(source)
+    sexp = ParsedSource.sexp(source)
     raise "could not parse #{path}" if sexp.nil?
 
     references(sexp).map { |node| "#{path}:#{node[2]&.first}" }

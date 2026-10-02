@@ -630,7 +630,7 @@ module RefusalWidthDiscipline
     end
 
     def parse(file)
-      Ripper.sexp(file.read) || raise("could not parse #{file}")
+      ParsedSource.sexp(file.read) || raise("could not parse #{file}")
     end
 
     def sites_in(file, index, table)
@@ -779,7 +779,7 @@ module RefusalWidthDiscipline
   # can take to the rail are EXAMPLES rather than a harness that edits `lib/`.
   # @return [Array(Set<String>, Array<String>)] constant names, literal texts
   def reaches(source)
-    reach = Reach.new(FileIndex.new(Ripper.sexp(source)))
+    reach = Reach.new(FileIndex.new(ParsedSource.sexp(source)))
     [reach.constants, reach.literals.map(&:first)]
   end
 end

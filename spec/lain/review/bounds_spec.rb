@@ -962,7 +962,7 @@ RSpec.describe Lain::Review::Bounds do
     end
 
     def call_sites_in(source)
-      sexp = Ripper.sexp(source)
+      sexp = ParsedSource.sexp(source)
       raise "could not parse the source under test" if sexp.nil?
 
       [].tap { |found| guard_lines(sexp, found) }

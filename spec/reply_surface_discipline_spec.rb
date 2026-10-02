@@ -54,7 +54,7 @@ module ReplySurfaceDiscipline
 
     # @return [Array<Read>]
     def scan(source)
-      sexp = Ripper.sexp(source)
+      sexp = ParsedSource.sexp(source)
       raise "could not parse #{@path}" if sexp.nil?
 
       walk(sexp)
@@ -337,7 +337,7 @@ module StdinReaders
   module_function
 
   def routes(source, path)
-    walk(Ripper.sexp(source) || raise("could not parse #{path}"), path)
+    walk(ParsedSource.sexp(source) || raise("could not parse #{path}"), path)
   end
 
   def walk(node, path)
