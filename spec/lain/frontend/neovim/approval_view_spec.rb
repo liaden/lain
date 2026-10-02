@@ -69,9 +69,11 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
 
   # A real queue with real gated fibers parked in it. The block runs with every
-  # pending admitted and the view already rendered, and the result carries the
-  # verdicts the gated fibers finally received -- the only evidence that a
-  # decision reached the agent rather than merely the journal.
+  # pending admitted and the view already rendered, and with await: true the result
+  # carries the verdicts the gated fibers finally received -- the only evidence
+  # that a decision reached the agent rather than merely the journal. Without it
+  # the parked fibers are stopped rather than waited out against the fail-closed
+  # clock, and reading verdicts raises.
   #
   # `with_timeout` bounds the whole thing, so a view that resolves nothing
   # fails in words instead of hanging: under parallel_rspec a hung worker
@@ -82,7 +84,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   # state it.
   def asked_by(requester) = Lain::Approval::PolicySwitch::Requested.new(nil, requester)
 
-  def gated(timeout: 0.4, calls: [effect], requesters: nil,
+  def gated(timeout: 0.4, await: false, calls: [effect], requesters: nil,
             outstanding: Lain::Approval::Queue::Outstanding::NONE, &block)
     Sync do |task|
       queue = Lain::Approval::Queue.new(journal:, timeout:)
@@ -90,18 +92,20 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       parked = calls.zip(asking).map do |call, requester|
         task.async { queue.adjudicate(call, asked_by(requester), outstanding:).approved? }
       end
-      task.with_timeout(10) { answered(queue, parked, &block) }
+      task.with_timeout(10) { answered(queue, parked, await, &block) }
     ensure
       parked&.each(&:stop)
     end
   end
 
   # The bounded half: every call admitted and rendered, then the example's own
-  # gesture, then the verdicts the gated fibers actually received.
-  def answered(queue, parked)
+  # gesture, then (when awaited) the verdicts the gated fibers actually received.
+  def answered(queue, parked, await)
     spun_until { queue.count == parked.size }
     view.sweep(queue)
     outcome = yield(queue)
+    return Hash.new { |_, key| raise KeyError, "#{key} read without gated(await: true)" }.merge(outcome:) unless await
+
     { outcome:, verdicts: parked.map(&:wait) }
   end
 
@@ -124,14 +128,14 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
   describe "the round trip that was never written" do
     it "resolves the parked call with the verdict pressed in the editor" do
-      result = gated { |_queue| view.decide(1, "approve", generation:) }
+      result = gated(await: true) { |_queue| view.decide(1, "approve", generation:) }
 
       expect(result[:verdicts]).to eq([true])
       expect(result[:outcome]).to be_decided
     end
 
     it "denies when the human presses deny -- the two verdicts are not swapped" do
-      result = gated { |_queue| view.decide(1, "deny", generation:) }
+      result = gated(await: true) { |_queue| view.decide(1, "deny", generation:) }
 
       expect(result[:verdicts]).to eq([false])
       expect(decisions.map { |record| record.fetch("verdict") }).to eq(["deny"])
@@ -145,8 +149,8 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "answers the row the cursor is on, not the first one" do
-      result = gated(calls: [effect("bash", { "command" => "one" }, "tu_1"),
-                             effect("write", { "path" => "two" }, "tu_2")]) do |_queue|
+      result = gated(await: true, calls: [effect("bash", { "command" => "one" }, "tu_1"),
+                                          effect("write", { "path" => "two" }, "tu_2")]) do |_queue|
         view.decide(2, "approve", generation:)
       end
 
@@ -158,7 +162,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
   describe "first answer wins, and the loser changes nothing" do
     it "leaves the terminal's answer standing when the terminal got there first" do
-      result = gated do |queue|
+      result = gated(await: true) do |queue|
         queue.first.approve(surface: Lain::Frontend::ApprovalPolicy::SURFACE)
         view.decide(1, "deny", generation:)
       end
@@ -179,7 +183,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "refuses its OWN second answer: one row cannot be answered twice" do
-      result = gated do |_queue|
+      result = gated(await: true) do |_queue|
         [view.decide(1, "approve", generation:), view.decide(1, "deny", generation:)]
       end
 
@@ -193,7 +197,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     let(:window) { 0.1 }
 
     it "never resolves a pending the clock already denied" do
-      result = gated(timeout: 0.05) do |queue|
+      result = gated(await: true, timeout: 0.05) do |queue|
         spun_until { queue.first.nil? || queue.first.decided? }
         view.decide(1, "approve", generation:)
       end
@@ -263,7 +267,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
   describe "a gesture is resolved against the rendering the human is looking at" do
     it "refuses a rendering it no longer holds rather than guessing" do
-      result = gated { |_queue| view.decide(1, "approve", generation: generation + 10_000) }
+      result = gated(await: true) { |_queue| view.decide(1, "approve", generation: generation + 10_000) }
 
       expect(result[:outcome]).not_to be_decided
       expect(result[:outcome].report).to include(described_class::BUFFER)
@@ -277,7 +281,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     # and lain://inbox's sixteen, are deliberately not reconciled -- nothing
     # known says why this surface remembers half as many.
     it "still answers the oldest rendering its own depth keeps" do
-      result = gated(timeout: 0.4) do |_queue|
+      result = gated(await: true, timeout: 0.4) do |_queue|
         oldest = generation
         (described_class::HELD - 1).times { view.prime }
         view.decide(1, "approve", generation: oldest)
@@ -288,7 +292,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "refuses that same rendering one render later, when it has fallen out" do
-      result = gated(timeout: 0.4) do |_queue|
+      result = gated(await: true, timeout: 0.4) do |_queue|
         oldest = generation
         described_class::HELD.times { view.prime }
         view.decide(1, "approve", generation: oldest)
@@ -300,7 +304,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "refuses a line that names no row" do
-      result = gated do |_queue|
+      result = gated(await: true) do |_queue|
         [view.decide(0, "approve", generation:), view.decide(9, "approve", generation:)]
       end
 
@@ -309,7 +313,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "refuses an unknown verdict rather than letting anything fall toward approve" do
-      result = gated { |_queue| view.decide(1, "yes", generation:) }
+      result = gated(await: true) { |_queue| view.decide(1, "yes", generation:) }
 
       expect(result[:outcome]).not_to be_decided
       expect(result[:outcome].report).to include("approve", "deny", '"yes"')
@@ -319,8 +323,8 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "resolves an OLD rendering's row to the call that rendering drew, never to its neighbour" do
-      result = gated(calls: [effect("bash", { "command" => "one" }, "tu_1"),
-                             effect("write", { "path" => "two" }, "tu_2")]) do |queue|
+      result = gated(await: true, calls: [effect("bash", { "command" => "one" }, "tu_1"),
+                                          effect("write", { "path" => "two" }, "tu_2")]) do |queue|
         stale = generation
         queue.first.approve(surface: "elsewhere")
         view.sweep(queue)
@@ -412,7 +416,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "OBSERVES the queue and never drains it, so the terminal surface still sees the pending" do
-      taken = gated(timeout: window) { |queue| Async::Task.current.with_timeout(2) { queue.dequeue } }
+      taken = gated(await: true, timeout: window) { |queue| Async::Task.current.with_timeout(2) { queue.dequeue } }
 
       expect(taken[:outcome].tool).to eq("bash")
       expect(taken[:verdicts]).to eq([false])
@@ -441,7 +445,9 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     it "hands out no rendering the editor refused, so a gesture citing one is refused too" do
       rpc.refusal = described_class::DETACHED
 
-      result = gated(timeout: window) { |_queue| view.decide(1, "approve", generation: rpc.last[:generation]) }
+      result = gated(await: true, timeout: window) do |_queue|
+        view.decide(1, "approve", generation: rpc.last[:generation])
+      end
 
       expect(result[:outcome]).not_to be_decided
       expect(result[:verdicts]).to eq([false])
@@ -588,7 +594,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "answers the item the summary line belongs to, never its neighbour" do
-      result = gated(timeout: window, calls: three_long_calls) do |_queue|
+      result = gated(await: true, timeout: window, calls: three_long_calls) do |_queue|
         view.decide(item_starts.last, "approve", generation:)
       end
 
@@ -598,7 +604,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "answers that same item from a CONTINUATION line, and is never inert on one" do
-      result = gated(timeout: window, calls: three_long_calls) do |_queue|
+      result = gated(await: true, timeout: window, calls: three_long_calls) do |_queue|
         view.decide(item_starts.last + 1, "approve", generation:)
       end
 
@@ -609,7 +615,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     # The line BETWEEN two items is the second one's summary, not the first
     # one's tail: an item owns its own lines and no more.
     it "stops an item at its own last line, so the next summary answers the next call" do
-      result = gated(timeout: window, calls: three_long_calls) do |_queue|
+      result = gated(await: true, timeout: window, calls: three_long_calls) do |_queue|
         [view.decide(item_starts[0], "deny", generation:), view.decide(item_starts[1], "approve", generation:)]
       end
 
