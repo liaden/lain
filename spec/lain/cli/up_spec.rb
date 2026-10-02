@@ -2242,7 +2242,7 @@ RSpec.describe Lain::CLI::Up do
     # yet" on Ubuntu 24.04 and every GitHub runner.
     it "names no shell variable, and no filter program" do
       expect(job).not_to include("$")
-      expect(job).not_to include("jq")
+      expect(job).not_to match(/\bjq\b/)
     end
   end
 
