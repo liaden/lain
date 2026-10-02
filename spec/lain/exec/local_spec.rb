@@ -111,22 +111,17 @@ RSpec.describe Lain::Exec::Local do
       expect(run("#{flooding(1_048_576)}; exit 3").exit_status).to eq(3)
     end
 
-    # A stage can grow its pipe past one read before it exits, and a busy thread
-    # elsewhere in this process can hold the interpreter lock between reads:
-    # what it wrote before exiting is still all counted and all forwarded.
-    it "takes every byte a stage wrote before exiting, from a grown pipe, while this process is busy" do
+    # A stage can grow its pipe past one read before it exits, and a slow sink
+    # holds the reader between reads: what it wrote before exiting is still all
+    # counted and all forwarded.
+    it "takes every byte a stage wrote before exiting, from a grown pipe, while the reader is held" do
       grown = "#{RbConfig.ruby} --disable-gems -e 'STDOUT.fcntl(1031, 1_048_576); STDOUT.write(%(a) * 1_048_576)'"
-      sink = RecordingChannel.new
-      busy = Thread.new { loop { (1..1000).sum } }
+      sink = Class.new(RecordingChannel) { def <<(event) = sleep(0.02).then { super } }.new
 
-      captures = Array.new(3) do
-        backend.call(command: grown, cwd: Dir.pwd, env: ENV.to_h, timeout: 30, stdout_sink: sink)
-      end
+      capture = backend.call(command: grown, cwd: Dir.pwd, env: ENV.to_h, timeout: 30, stdout_sink: sink)
 
-      expect(captures.map(&:size)).to all(eq(1_048_576))
-      expect(sink.events.sum(&:bytesize)).to eq(3 * 1_048_576)
-    ensure
-      busy&.kill
+      expect(capture.size).to eq(1_048_576)
+      expect(sink.events.sum(&:bytesize)).to eq(1_048_576)
     end
 
     it "streams every byte to the live sink, past the ceiling" do
@@ -267,11 +262,12 @@ RSpec.describe Lain::Exec::Local do
 
   describe "a deadline that passes" do
     let(:short_grace) { Lain::Shell::Pipeline.new(grace: 0.1) }
+    let(:deadline) { 0.5 }
 
     it "raises Exec::Timeout when a String command outlives its timeout" do
       expect do
         described_class.new(pipeline: short_grace)
-                       .call(command: %(sh -c 'sleep 5'), cwd: Dir.pwd, env: ENV.to_h, timeout: 1)
+                       .call(command: %(sh -c 'sleep 5'), cwd: Dir.pwd, env: ENV.to_h, timeout: deadline)
       end.to raise_error(Lain::Exec::Timeout)
     end
 
@@ -279,7 +275,7 @@ RSpec.describe Lain::Exec::Local do
       expect do
         described_class.new(pipeline: short_grace)
                        .call(command: %(sh -c "printf '\\342\\234\\205'; : ✅; sleep 5"), cwd: Dir.pwd,
-                             env: ENV.to_h, timeout: 1)
+                             env: ENV.to_h, timeout: deadline)
       end.to raise_error(Lain::Exec::Timeout) { |error| expect(error.message.b).to include("✅".b) }
     end
 
@@ -289,7 +285,7 @@ RSpec.describe Lain::Exec::Local do
       bounded = described_class.new(pipeline: short_grace, ceiling: 1024)
 
       expect do
-        bounded.call(command: "#{flooding(1_048_576)}; sleep 5", cwd: Dir.pwd, env: ENV.to_h, timeout: 1)
+        bounded.call(command: "#{flooding(1_048_576)}; sleep 5", cwd: Dir.pwd, env: ENV.to_h, timeout: deadline)
       end.to raise_error(Lain::Exec::Timeout) { |error| expect(error.message.bytesize).to be < 2048 }
     end
 
@@ -301,7 +297,8 @@ RSpec.describe Lain::Exec::Local do
 
     it "raises the SAME Exec::Timeout when a term outlives its timeout" do
       expect do
-        described_class.new(pipeline: short_grace).call(command: [%w[sleep 5]], cwd: Dir.pwd, env: ENV.to_h, timeout: 1)
+        described_class.new(pipeline: short_grace)
+                       .call(command: [%w[sleep 5]], cwd: Dir.pwd, env: ENV.to_h, timeout: deadline)
       end.to raise_error(Lain::Exec::Timeout)
     end
   end
