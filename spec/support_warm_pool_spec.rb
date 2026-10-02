@@ -151,7 +151,10 @@ RSpec.describe WarmPool do
         child = reader.gets.to_i
         Process.wait(worker)
 
-        expect { wait_until(timeout: 1, reason: "the orphaned child exiting") { !alive?(child) } }.not_to raise_error
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 1
+        sleep(0.02) while alive?(child) && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+
+        expect(alive?(child)).to be(false)
       ensure
         Process.kill("KILL", child) if child&.positive? && alive?(child)
       end

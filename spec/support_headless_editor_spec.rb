@@ -172,7 +172,7 @@ RSpec.describe HeadlessEditor, :seam do
 
       with_slow_shim { session = described_class.start(tag) }
 
-      expect { Socket.unix(session.socket_path).close }.not_to raise_error
+      expect(Socket.unix(session.socket_path) { |socket| socket.remote_address.unix_path }).to eq(session.socket_path)
     ensure
       session&.reap
     end

@@ -39,7 +39,7 @@ RSpec.describe SlowFiles do
     end
 
     it "passes when every listed path exists" do
-      expect { described_class.verify!(root:, paths: [slow_file]) }.not_to raise_error
+      expect(described_class.verify!(root:, paths: [slow_file])).to be_nil
     end
   end
 
