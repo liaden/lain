@@ -11,7 +11,7 @@ while holding the GVL is a known footgun, and an "in-process sandbox" is not a s
 ## Toolchain
 
 ```bash
-cargo test                                  # 231/231 today (`-p lain`); must not regress
+cargo test                                  # 235/235 today (`-p lain`); must not regress
 cargo clippy --all-targets -- -D warnings   # warnings are errors
 cargo doc --no-deps                         # clean; broken intra-doc links are denied
 cargo fmt -- --check                        # pre-commit runs this, not `cargo fmt`
@@ -24,7 +24,7 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
 
 > ⚠️ **`cargo test` never compiles the magnus surface, so a green `cargo test` is not a
 > building crate.** Every `ffi` module here is `#[cfg(not(test))]` — `lib.rs:242`,
-> `prompt.rs:1447`, `fuzzy.rs:304`, `astgrep.rs:356`, `treesitter.rs:261` — and there is no
+> `prompt.rs:1447`, `fuzzy.rs:304`, `astgrep.rs:356`, `treesitter.rs:430` — and there is no
 > `tests/` directory and no doctest target, so under `--cfg test` the entire FFI layer is
 > absent from the build graph. `lib.rs:236` explains *why* the modules are gated (a magnus
 > item needs an embedded Ruby VM that `cargo test` has no way to start) but never says what

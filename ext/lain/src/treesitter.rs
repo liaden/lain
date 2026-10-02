@@ -10,11 +10,13 @@
 //! `tree-sitter-*` grammar dependency is pulled in, and the runtime ABI matches
 //! the grammars ast-grep already links (both resolve `tree-sitter 0.27.0`).
 //!
-//! Every call is STATELESS: parse an in-memory `&str`, run one compiled query,
-//! return an owned `Vec<Capture>` in match-then-capture order. There is no index
-//! handle to keep, so -- unlike `Bm25` -- this needs no `TypedData` wrapper and
-//! makes no `frozen_shareable` promise; the FFI wrapper just freezes the Ruby
-//! Array it builds per call.
+//! Every call is observably STATELESS: parse an in-memory `&str`, run one
+//! compiled query, return an owned `Vec<Capture>` in match-then-capture order.
+//! The one thing kept between calls is a per-thread `QueryCache` of compiled
+//! queries, which changes cost and never an answer. There is no index handle to
+//! keep, so -- unlike `Bm25` -- this needs no `TypedData` wrapper and makes no
+//! `frozen_shareable` promise; the FFI wrapper just freezes the Ruby Array it
+//! builds per call.
 //!
 //! Nothing in this layer touches `magnus`, so language parsing, capture
 //! extraction, and malformed-query rejection are all unit-tested in `cargo test`
@@ -23,6 +25,9 @@
 //! Byte offsets only. Byte -> line/column conversion is the Ruby wrapper's job.
 
 use ast_grep_language::{LanguageExt, SupportLang};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
 /// One named capture (`@name`) and where its node sits in the source. A single
@@ -80,28 +85,118 @@ fn parse_lang(lang: &str) -> Result<SupportLang, QueryFailure> {
 /// explicitly "raw" surface, so it is not enforced here.
 pub fn query(src: &str, lang: &str, query_src: &str) -> Result<Vec<Capture>, QueryFailure> {
     let lang = parse_lang(lang)?;
-    let ts_lang = lang.get_ts_language();
+    let query = compiled(lang, query_src)?;
+    run(&query, src, lang)
+}
 
-    let compiled = Query::new(&ts_lang, query_src).map_err(|err| QueryFailure::BadQuery {
+/// Compile `query_src` for `lang`, rejecting a query that binds no `@capture`.
+///
+/// Such a query can never emit output for ANY source -- an empty/whitespace/
+/// comment-only query (zero patterns) or a structural query with no `@` (e.g.
+/// `(method)`). That is a fat-fingered query, not a no-match, so it raises
+/// rather than returning a silent `[]` -- the same worst-failure class the
+/// astgrep guard fights. Safe against over-rejection BECAUSE a real query the
+/// caller wants results from MUST bind >=1 capture; `(method) @m` on
+/// non-matching source keeps returning `[]` (a genuine no-match), since it binds
+/// one capture and merely finds nothing there.
+fn compile(lang: SupportLang, query_src: &str) -> Result<Query, QueryFailure> {
+    let bad = |reason: String| QueryFailure::BadQuery {
         query: query_src.to_string(),
-        reason: err.to_string(),
-    })?;
-
-    // A query that binds no `@capture` can never emit output for ANY source --
-    // an empty/whitespace/comment-only query (zero patterns) or a structural
-    // query with no `@` (e.g. `(method)`). That is a fat-fingered query, not a
-    // no-match, so it raises rather than returning a silent `[]` -- the same
-    // worst-failure class T1's astgrep guard fights. Safe against over-rejection
-    // BECAUSE a real query the caller wants results from MUST bind >=1 capture;
-    // `(method) @m` on non-matching source keeps returning `[]` (a genuine
-    // no-match), since it binds one capture and merely finds nothing here.
+        reason,
+    };
+    let compiled =
+        Query::new(&lang.get_ts_language(), query_src).map_err(|err| bad(err.to_string()))?;
     if compiled.capture_names().is_empty() {
-        return Err(QueryFailure::BadQuery {
-            query: query_src.to_string(),
-            reason: "query binds no @capture, so it can never yield a result".to_string(),
-        });
+        return Err(bad(
+            "query binds no @capture, so it can never yield a result".to_string(),
+        ));
+    }
+    Ok(compiled)
+}
+
+/// Compiled queries by language, then by query source.
+///
+/// `Query::new` resolves every name against the whole grammar, so it costs
+/// milliseconds even for a one-node query, while running it on a short command
+/// costs microseconds; `Shell::Parse` compiles the same constant query for every
+/// command it classifies. A compiled `Query` carries no per-run state (that is
+/// the `QueryCursor`, which stays per call), so a reused one answers exactly as
+/// a fresh one does -- `a_cached_query_agrees_with_a_fresh_one` is the proof.
+///
+/// Keyed by language first so a hit is looked up by `&str` without allocating
+/// the key. Only successes are stored, so a malformed query keeps raising and
+/// cannot take a slot. A full cache stops admitting: every later query is
+/// compiled on each call and stays uncached on that thread. The cap bounds
+/// memory, not cost; a caller building queries from input still pays a
+/// compile per call once the slots are gone.
+struct QueryCache {
+    compiled: HashMap<SupportLang, HashMap<String, Rc<Query>>>,
+    len: usize,
+    cap: usize,
+}
+
+impl QueryCache {
+    fn new(cap: usize) -> Self {
+        Self {
+            compiled: HashMap::new(),
+            len: 0,
+            cap,
+        }
     }
 
+    fn get_or_compile(
+        &mut self,
+        lang: SupportLang,
+        query_src: &str,
+    ) -> Result<Rc<Query>, QueryFailure> {
+        if let Some(hit) = self
+            .compiled
+            .get(&lang)
+            .and_then(|by_src| by_src.get(query_src))
+        {
+            return Ok(Rc::clone(hit));
+        }
+        let query = Rc::new(compile(lang, query_src)?);
+        // Admit until full, then never evict: the first queries a thread sees keep their slots.
+        if self.len < self.cap {
+            self.compiled
+                .entry(lang)
+                .or_default()
+                .insert(query_src.to_string(), Rc::clone(&query));
+            self.len += 1;
+        }
+        Ok(query)
+    }
+}
+
+thread_local! {
+    /// Per thread, so the cache needs no lock and holds `Rc` rather than `Arc`.
+    /// What makes it safe under Ruby is the GVL plus `try_borrow_mut`, the same
+    /// argument `fuzzy.rs`'s `MATCHER` makes. 64 is far above the handful of
+    /// constant queries `lib/` passes.
+    static QUERIES: RefCell<QueryCache> = RefCell::new(QueryCache::new(64));
+}
+
+/// The thread's cached compile of `query_src`, falling back to an uncached
+/// compile if the thread-local is unreachable (during TLS teardown) or already
+/// borrowed (re-entrancy). Neither is reachable from a Ruby method call, but
+/// both are *panics* on the ergonomic API, and a panic here is undefined
+/// behaviour.
+fn compiled(lang: SupportLang, query_src: &str) -> Result<Rc<Query>, QueryFailure> {
+    QUERIES
+        .try_with(|cell| {
+            cell.try_borrow_mut()
+                .ok()
+                .map(|mut cache| cache.get_or_compile(lang, query_src))
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| compile(lang, query_src).map(Rc::new))
+}
+
+/// Every capture `compiled` binds in `src`, in match-then-capture order.
+fn run(compiled: &Query, src: &str, lang: SupportLang) -> Result<Vec<Capture>, QueryFailure> {
+    let ts_lang = lang.get_ts_language();
     let mut parser = Parser::new();
     parser
         .set_language(&ts_lang)
@@ -116,7 +211,7 @@ pub fn query(src: &str, lang: &str, query_src: &str) -> Result<Vec<Capture>, Que
     // tree-sitter 0.25+ hands back a StreamingIterator, not a std Iterator, so
     // this is a `while let Some(..) = it.next()` drive rather than a `for`/`map`
     // -- the borrow of the reused row buffer is what forbids a plain Iterator.
-    let mut matches = cursor.matches(&compiled, tree.root_node(), src_bytes);
+    let mut matches = cursor.matches(compiled, tree.root_node(), src_bytes);
     let mut out = Vec::new();
     while let Some(matched) = matches.next() {
         matched.captures().iter().for_each(|capture| {
@@ -195,7 +290,7 @@ mod tests {
     fn captureless_query_is_a_bad_query_error() {
         // A query binding no `@capture` can never emit output for ANY source, so
         // it is a fat-fingered query, not a no-match -- the same silent-[] worst
-        // failure T1's astgrep guard fights. Covers empty/whitespace/comment-only
+        // failure the astgrep guard fights. Covers empty/whitespace/comment-only
         // (zero patterns) and structurally-matching-but-unbound queries alike.
         [
             "",
@@ -255,6 +350,80 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn a_second_compile_of_the_same_query_is_the_same_object() {
+        let mut cache = QueryCache::new(64);
+        let first = cache
+            .get_or_compile(SupportLang::Ruby, "(method) @m")
+            .unwrap();
+        let second = cache
+            .get_or_compile(SupportLang::Ruby, "(method) @m")
+            .unwrap();
+        assert!(Rc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn the_same_source_in_another_language_is_a_separate_entry() {
+        let mut cache = QueryCache::new(64);
+        let ruby = cache
+            .get_or_compile(SupportLang::Ruby, "(identifier) @i")
+            .unwrap();
+        let rust = cache
+            .get_or_compile(SupportLang::Rust, "(identifier) @i")
+            .unwrap();
+        assert!(!Rc::ptr_eq(&ruby, &rust));
+    }
+
+    #[test]
+    fn failures_are_not_stored_and_the_cap_holds() {
+        let mut cache = QueryCache::new(64);
+        assert!(matches!(
+            cache.get_or_compile(SupportLang::Ruby, "(method name: @nope"),
+            Err(QueryFailure::BadQuery { .. })
+        ));
+        assert!(matches!(
+            cache.get_or_compile(SupportLang::Ruby, "(method)"),
+            Err(QueryFailure::BadQuery { .. })
+        ));
+
+        let sources: Vec<String> = (0..65).map(|n| format!("(identifier) @c{n}")).collect();
+        let firsts: Vec<Rc<Query>> = sources
+            .iter()
+            .map(|src| cache.get_or_compile(SupportLang::Ruby, src).unwrap())
+            .collect();
+        let kept: Vec<bool> = sources
+            .iter()
+            .zip(&firsts)
+            .map(|(src, first)| {
+                Rc::ptr_eq(
+                    first,
+                    &cache.get_or_compile(SupportLang::Ruby, src).unwrap(),
+                )
+            })
+            .collect();
+
+        assert!(
+            kept[..64].iter().all(|&hit| hit),
+            "the 2 failures took no slot"
+        );
+        assert!(!kept[64], "the 65th query is compiled but not kept");
+    }
+
+    #[test]
+    fn a_cached_query_agrees_with_a_fresh_one() {
+        let src = "a.save\nb.save\ndef total(x)\n  x\nend\n";
+        let query_src = "(call receiver: (identifier) @recv) (method name: (identifier) @name)";
+        let mut cache = QueryCache::new(64);
+        let cached = cache.get_or_compile(SupportLang::Ruby, query_src).unwrap();
+        let fresh = compile(SupportLang::Ruby, query_src).unwrap();
+        let first = run(&cached, src, SupportLang::Ruby).unwrap();
+        let reused = run(&cached, src, SupportLang::Ruby).unwrap();
+        let expected = run(&fresh, src, SupportLang::Ruby).unwrap();
+        assert_eq!(first, expected);
+        assert_eq!(reused, expected);
+        assert_eq!(expected.len(), 3, "2 receivers and 1 method name");
     }
 }
 

@@ -75,7 +75,7 @@ module Lain
       COMMAND = "command"
       SEPARATOR = "separator"
 
-      # One query, one compilation, one FFI crossing (~2.7 ms measured). The
+      # One query, compiled once per thread by the extension, one FFI crossing. The
       # ERROR/MISSING alternation is first and carries two capture names, so a
       # caller can tell which of the two fired.
       QUERY = [

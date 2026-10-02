@@ -54,6 +54,19 @@ RSpec.describe Lain::Ext::TreeSitter do
       expect(described_class.query("def total(x)\n  x\nend", "ruby", "(method name: (identifier) @name)"))
         .to be_deeply_frozen
     end
+
+    # Compiled queries are reused between calls; a reuse must never change an answer.
+    it "answers a repeated query from each call's own source and language, and keeps raising a bad one" do
+      query = "(identifier) @i"
+
+      expect(described_class.query("total", "ruby", query).map { |c| c["text"] }).to eq(["total"])
+      expect(described_class.query("other", "ruby", query).map { |c| c["text"] }).to eq(["other"])
+      expect(described_class.query("fn f() {}", "rust", query).map { |c| c["text"] }).to eq(["f"])
+      2.times do
+        expect { described_class.query("x", "ruby", "(method name: @nope") }
+          .to raise_error(described_class::BadQuery)
+      end
+    end
   end
 
   # The shared `read_text` policy (ext/lain/src/read_text.rs). Same reason as
