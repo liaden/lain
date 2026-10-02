@@ -1378,6 +1378,40 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  shared_context "with a submitted-lines file" do
+    def submitted
+      path = File.join(@dir, "lines")
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
+      # The file exists before its first line does.
+      sleep(0.02) until File.size?(path) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      File.readlines(path, chomp: true).first
+    end
+  end
+
+  describe "reading a submitted line" do
+    include_context "with a submitted-lines file"
+
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = dir
+        example.run
+      end
+    end
+
+    it "waits for a line to be written, not merely for the file to be created empty" do
+      path = File.join(@dir, "lines")
+      FileUtils.touch(path)
+      writer = Thread.new do
+        sleep(0.2)
+        File.write(path, "\"late\"\n")
+      end
+
+      expect(submitted).to eq('"late"')
+    ensure
+      writer&.join
+    end
+  end
+
   # A note that arrives while a prompt is drawn is HELD, and printed, in arrival
   # order, the moment that prompt closes and before the next one draws. It never
   # interrupts the line editor's read, so what the human has typed -- its text,
@@ -1390,6 +1424,8 @@ RSpec.describe Lain::Frontend::TTY do
   # a terminal SHOWS -- rows, a wrapped line, vi's cursor -- and only a terminal
   # emulator can say that. The child runs the real TTY, Intake and StdinPump.
   describe "a note rendered while a prompt is drawn", :seam do
+    include_context "with a submitted-lines file"
+
     before { skip("tmux not found on PATH") unless system("tmux", "-V", out: File::NULL, err: File::NULL) }
 
     child = <<~'RUBY'
@@ -1471,13 +1507,6 @@ RSpec.describe Lain::Frontend::TTY do
       noted = File.join(@dir, "noted")
       sleep(0.02) until File.exist?(noted) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
       sleep(0.3)
-    end
-
-    def submitted
-      path = File.join(@dir, "lines")
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
-      sleep(0.02) until File.exist?(path) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-      File.readlines(path, chomp: true).first
     end
 
     it "holds the note while the prompt is drawn, keeps the typed words, and prints the note as the prompt closes" do
