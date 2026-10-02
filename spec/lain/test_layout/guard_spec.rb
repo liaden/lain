@@ -275,14 +275,15 @@ RSpec.describe Lain::TestLayout::Guard do
   # The property the model relies on: following a refusal's advice ends the
   # refusals. A path named by `expected` must pass the same content.
   describe "a refusal never names a path the guard would itself refuse" do
-    def unsound(guard, cases)
-      cases.map { |path, content| [guard.check(path, content), content] }
-           .select { |verdict, _content| verdict.expected }
-           .select { |verdict, content| guard.check(verdict.expected, content).refused? }
-           .map { |verdict, _content| "#{verdict.path} -> #{verdict.expected}: #{verdict.reason}" }
+    def verdicts(guard, cases) = cases.map { |path, content| [guard.check(path, content), content] }
+
+    def unsound(guard, judged)
+      judged.select { |verdict, _content| verdict.expected }
+            .select { |verdict, content| guard.check(verdict.expected, content).refused? }
+            .map { |verdict, _content| "#{verdict.path} -> #{verdict.expected}: #{verdict.reason}" }
     end
 
-    def advised(guard, cases) = cases.count { |path, content| guard.check(path, content).expected }
+    def advised(judged) = judged.count { |verdict, _content| verdict.expected }
 
     it "holds over every path and content shape the fixture can be written with" do
       paths = %w[spec/unit/models/order_spec.rb spec/unit/models/order_extra_spec.rb spec/seam/models/order_spec.rb
@@ -295,7 +296,9 @@ RSpec.describe Lain::TestLayout::Guard do
                   spec_for("CLI::Backend"), spec_for("Refund")]
       cases = paths.product(contents)
 
-      expect([unsound(guard, cases), advised(guard, cases).positive?]).to eq([[], true])
+      judged = verdicts(guard, cases)
+
+      expect([unsound(guard, judged), advised(judged).positive?]).to eq([[], true])
     end
 
     # Lain's own spec tree is the realistic corpus: hundreds of files written
@@ -308,7 +311,9 @@ RSpec.describe Lain::TestLayout::Guard do
       own = described_class.new(layout:, root:)
       cases = Dir.glob("spec/lain/**/*_spec.rb", base: root).map { |path| [path, File.read(File.join(root, path))] }
 
-      expect([unsound(own, cases), advised(own, cases).positive?]).to eq([[], true])
+      judged = verdicts(own, cases)
+
+      expect([unsound(own, judged), advised(judged).positive?]).to eq([[], true])
     end
   end
 end

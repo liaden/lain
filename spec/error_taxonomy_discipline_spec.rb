@@ -143,7 +143,7 @@ module ErrorTaxonomyDiscipline
     def library_hits(lines, rel)
       scopes = namespaces(lines)
       lines.each_with_index.flat_map do |line, index|
-        quiet = line.strip.start_with?("#") || line.match?(/^\s*class\s/) ||
+        quiet = line.strip.start_with?("#") || line.match?(/^\s*class\s/) || !line.match?(leaf_names) ||
                 (line.match?(/\braise[( ]/) && !line.match?(/\brescue\b/))
         quiet ? [] : line.scan(CONST).filter_map { |token| pair(lexical(token, scopes[index]), rel, index) }
       end
@@ -156,12 +156,15 @@ module ErrorTaxonomyDiscipline
     def spec_hits(lines, rel)
       mirrored = rel.sub(%r{\Aspec/}, "lib/").sub(/_spec\.rb\z/, ".rb")
       subject = declarations.select { _1.file == mirrored }
-      running = lines.each_with_index.reject { |line, _| line.strip.start_with?("#") }
+      running = lines.each_with_index.reject { |line, _| line.strip.start_with?("#") || !line.match?(leaf_names) }
       running.flat_map do |line, index|
         line.scan(/(?:described_class|#{CONST})(?:::#{CONST})?/o)
             .flat_map { |token| named_by(token, subject).map { |full| pair(full, rel, index) } }
       end
     end
+
+    # The scan regex over every line of the tree is the cost.
+    def leaf_names = @leaf_names ||= /\b(?:#{declarations.map { _1.name.split("::").last }.uniq.join("|")})\b/
 
     def named_by(token, subject)
       return [token] if by_full.key?(token)

@@ -233,7 +233,11 @@ RSpec.describe Lain::Provider::HTTP::Streaming do
       lib_root = Pathname(__dir__).join("..", "..", "..", "..", "lib").expand_path
       needles = ["Faraday::VERSION", "faraday_v1", "faraday_1?"]
 
-      offenders = lib_root.glob("**/*.rb").filter_map do |file|
+      # Stripping comments only removes text, so a file whose raw text lacks every
+      # needle cannot hold one in code, and lexing all of lib/ is 3s of waste.
+      mentioning = lib_root.glob("**/*.rb").select { |file| needles.any? { |needle| file.read.include?(needle) } }
+
+      offenders = mentioning.filter_map do |file|
         source = source_without_comments(file)
         hits = needles.select { |needle| source.include?(needle) }
         "#{file.relative_path_from(lib_root)}: #{hits.join(", ")}" unless hits.empty?
