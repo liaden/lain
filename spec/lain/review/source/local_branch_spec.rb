@@ -237,9 +237,9 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
   end
 
   # A subject whose bytes are latin-1 rather than UTF-8. This is what exposes the
-  # encoding defect: mixlib tags stdout UTF-8 when the bytes HAPPEN to be valid
-  # and BINARY when they are not, so a field's encoding depends on its content.
-  # An all-ASCII fixture cannot see it.
+  # encoding defect: a runner may tag stdout UTF-8 or BINARY depending on whether
+  # the bytes HAPPEN to be valid (mixlib does), so a field's encoding can depend
+  # on its content. An all-ASCII fixture cannot see it.
   def add_latin1_subject
     run_git("commit", "-q", "--allow-empty", "-m", "caf\xE9 subject".b)
     head
@@ -545,9 +545,9 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
   end
 
   # The rich fixture carries a binary file and a latin-1 subject, which makes the
-  # diff bytes invalid UTF-8 -- and mixlib then tags them BINARY on its own. It
-  # is the ALL-ASCII changeset that shows the forcing doing work, because there
-  # mixlib hands back UTF-8.
+  # diff bytes invalid UTF-8 -- and a runner like mixlib then tags them BINARY on
+  # its own. It is the ALL-ASCII changeset that shows the forcing doing work,
+  # because there the runner hands back UTF-8.
   describe "an all-ASCII changeset" do
     it "still answers the diff as raw bytes" do
       expect(source.diff.encoding).to eq(Encoding::ASCII_8BIT)
@@ -647,7 +647,8 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
   describe "an unresolvable ref" do
     it "refuses loudly, naming the base ref" do
       expect { described_class.new(base: "no-such-branch", repo_root: @repo) }
-        .to raise_error(Lain::Review::Source::UnknownRef, /no-such-branch/)
+        .to raise_error(Lain::Review::Source::UnknownRef,
+                        /\Abase ref "no-such-branch" does not resolve to a commit in #{Regexp.escape(@repo)}/)
     end
 
     it "refuses loudly, naming the head ref" do
@@ -663,7 +664,9 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
       run_git("rm", "-rqf", ".")
       commit("unrelated root", "other.rb" => "x\n")
       expect { described_class.new(base: "base", head: "unrelated", repo_root: @repo) }
-        .to raise_error(Lain::Review::Source::UnknownRef, /merge base/)
+        .to raise_error(Lain::Review::Source::UnknownRef,
+                        "\"base\" and \"unrelated\" share no merge base in #{@repo}, " \
+                        "so there is no revision to anchor the old side to")
     end
 
     # Reporting only `head ref "HEAD" does not resolve` for a directory that is
@@ -686,6 +689,27 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
       expect { described_class.new(base: "--upload-pack=touch /tmp/lain-canary", repo_root: @repo) }
         .to raise_error(Lain::Review::Source::UnknownRef, /upload-pack/)
       expect(File).not_to exist("/tmp/lain-canary")
+    end
+  end
+
+  describe "the cost of construction" do
+    def constructing_calls(**)
+      calls = []
+      factory = lambda { |*argv, **options|
+        calls << argv
+        Lain::Shell::Out.new(*argv, **options)
+      }
+      described_class.new(repo_root: @repo, shell_out_factory: factory, **)
+      calls
+    end
+
+    it "runs 2 git processes for a valid branch and finds the merge base" do
+      expect(constructing_calls(base: "base").size).to eq(2)
+    end
+
+    it "spawns through Shell::Out by default" do
+      expect(Lain::Shell::Out).to receive(:new).at_least(:once).and_call_original
+      described_class.new(base: "base", repo_root: @repo)
     end
   end
 

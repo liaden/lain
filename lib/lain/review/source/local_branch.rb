@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module Review
     module Source
@@ -68,11 +66,11 @@ module Lain
         # @raise [UnknownRef] if either ref does not resolve, or they share no
         #   history
         def initialize(base:, head: "HEAD", repo_root: Dir.pwd,
-                       shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                       shell_out_factory: Shell::Out.public_method(:new))
           @repo_root = File.expand_path(repo_root)
           @shell_out_factory = shell_out_factory
           @head_ref = resolve!("head", head)
-          @base_ref = merge_base!(base, head, resolve!("base", base))
+          @base_ref = merge_base!(base, head)
         end
 
         # @return [String] the merge base sha, frozen
@@ -161,9 +159,10 @@ module Lain
               "--end-of-options", "#{@base_ref}..#{@head_ref}").stdout.b
         end
 
-        # mixlib tags stdout UTF-8 when the bytes HAPPEN to be valid and BINARY
-        # when they are not, so without this a field's encoding depends on its
-        # content. These fields are journalled as JSON, where a BINARY string
+        # A runner's stdout encoding is its own choice: mixlib tags it UTF-8 when
+        # the bytes HAPPEN to be valid and BINARY when not, {Shell::Out} always
+        # UTF-8, so without this a field's encoding depends on the runner.
+        # These fields are journalled as JSON, where a BINARY string
         # warns today and raises in json 3.0, and invalid bytes raise now -- into
         # NDJSON, where one bad line breaks the parse of the experiment record.
         # Only {#diff} stays raw, because a diff carries whatever the files do.
@@ -223,11 +222,13 @@ module Lain
         # Two roots have no merge base. Diffing against the empty tree instead
         # would silently present the entire branch as additions, which reads as a
         # successful review of a changeset nobody wrote.
-        def merge_base!(base, head, base_sha)
-          shell = git("merge-base", "--end-of-options", base_sha, @head_ref)
-          raise UnknownRef.no_merge_base(base, head, @repo_root) unless shell.exitstatus.zero?
+        def merge_base!(base, head)
+          shell = git("merge-base", "--end-of-options", "#{base}^{commit}", @head_ref)
+          return text(shell.stdout).strip.freeze if shell.exitstatus.zero?
 
-          text(shell.stdout).strip.freeze
+          # Only a failure pays for telling the two refusals apart.
+          resolve!("base", base)
+          raise UnknownRef.no_merge_base(base, head, @repo_root)
         end
 
         # {Isolation::Worktree}'s pinned scrub set, not a parallel copy: an
