@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "tmpdir"
 
 # Drives real git in a throwaway repository it creates itself, never the lain

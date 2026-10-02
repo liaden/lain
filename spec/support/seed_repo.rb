@@ -106,10 +106,11 @@ module SeedRepo
     # @param dir [String] the repository to run in
     # @param args [Array<String>] git's argv after `-C dir`
     # @param input [String, nil] fed on stdin
+    # @param env [Hash{String=>String,nil}] merged beneath {SCRUB}, which wins on a clash
     # @return [Lain::Shell::Out] already run
     # @raise [GitFailed] on any exit other than 0
-    def git(dir, *args, input: nil)
-      shell = Lain::Shell::Out.new("git", "-C", dir, *args, environment: SCRUB, input:).run_command
+    def git(dir, *args, input: nil, env: {})
+      shell = Lain::Shell::Out.new("git", "-C", dir, *args, environment: env.merge(SCRUB), input:).run_command
       return shell if shell.exitstatus&.zero?
 
       raise GitFailed, "expected exit 0, got #{shell.exitstatus.inspect}: git -C #{dir} #{args.join(" ")}\n" \

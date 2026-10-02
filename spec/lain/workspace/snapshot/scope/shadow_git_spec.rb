@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "fileutils"
-require "mixlib/shellout"
 
 RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
   # Two roots, always: the project the scope watches, and the XDG state home the
@@ -40,7 +39,7 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
   # it. Every mutation below goes through here rather than through Ruby's File,
   # so the specs read as the scenarios do.
   def bash(script)
-    shell = Mixlib::ShellOut.new("bash", "-c", script,
+    shell = Lain::Shell::Out.new("bash", "-c", script,
                                  cwd: project, environment: described_class::GIT_CONTEXT_SCRUB)
     shell.run_command
     raise "bash -c #{script.inspect} failed: #{shell.stderr}" unless shell.exitstatus.zero?
@@ -52,7 +51,7 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
   # exports GIT_DIR and GIT_INDEX_FILE) builds the fixture in the tmpdir it
   # names rather than in this repository.
   def attempt_git(*argv)
-    Mixlib::ShellOut.new("git", "-c", "user.email=spec@lain.test", "-c", "user.name=lain spec", *argv,
+    Lain::Shell::Out.new("git", "-c", "user.email=spec@lain.test", "-c", "user.name=lain spec", *argv,
                          cwd: project, environment: described_class::GIT_CONTEXT_SCRUB).tap(&:run_command)
   end
 
@@ -62,7 +61,7 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
     end
   end
 
-  # Process-wide, and restored afterwards: mixlib merges its `environment:` onto
+  # Process-wide, and restored afterwards: Shell::Out merges its `environment:` onto
   # the PARENT's env, so the scrub can only be exercised by a parent that really
   # carries a hook's variables. This is the shape `pre-commit` hands any process
   # it launches, this repository included.

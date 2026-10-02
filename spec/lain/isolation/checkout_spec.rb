@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "fileutils"
-require "mixlib/shellout"
 
 # Operates on a THROWAWAY repo copied from {SeedRepo}, never the lain repo.
 RSpec.describe Lain::Isolation::Checkout, :seam do

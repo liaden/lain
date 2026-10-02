@@ -2,7 +2,6 @@
 
 require "async"
 require "fileutils"
-require "mixlib/shellout"
 require "stringio"
 require "tmpdir"
 
@@ -68,10 +67,7 @@ RSpec.describe "A symlink is judged where it lands", :seam do
 
   def records(type) = Lain::Journal.records(journal_io.string.lines, type:).to_a
 
-  def git(*args)
-    Mixlib::ShellOut.new("git", "-C", @repo, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-                    .run_command.tap(&:error!).stdout
-  end
+  def git(*args) = SeedRepo.git(@repo, *args).stdout
 
   it "refuses a read through a link to a denied file, and parks nothing" do
     link("notes.txt", key)

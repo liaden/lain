@@ -5,7 +5,7 @@ require "rbconfig"
 require "tmpdir"
 
 # `lain chat < prompts.txt`: stdin is a REGULAR FILE, whose offset every process
-# holding the descriptor shares. `Mixlib::ShellOut` forks, and the child's
+# holding the descriptor shares. A forking runner's child
 # `STDIN.reopen` hands back what its copy of the parent's read buffer held by
 # seeking that shared descriptor -- so the chat, which read stdin buffered,
 # re-read its own prompts once a prompt made the model run bash through the

@@ -5,7 +5,6 @@ require "fileutils"
 require "async"
 require "async/queue"
 require "json"
-require "mixlib/shellout"
 require "stringio"
 require "tmpdir"
 
@@ -819,10 +818,10 @@ RSpec.describe Lain::Supervisor do
         end
       end)
 
-      # A handoff that SUSPENDS before it does anything, which is what a
-      # fiber-aware one would do (the real one blocks the whole reactor inside
-      # Mixlib::ShellOut, which is what makes the concurrent-reap race benign by
-      # accident rather than by construction). The sleep is NOT zero and that is
+      # A handoff that SUSPENDS before it does anything, as the real one does at
+      # its first git call (a sibling fiber ticks during a shell-out, measured),
+      # so the concurrent-reap race is closed by the Supervisor's claim and by
+      # nothing in the handoff. The sleep is NOT zero and that is
       # measured: a zero-duration timer is already due when the adopting task
       # parks on its `.wait`, so the reactor resumes this reap to completion
       # before the second adoption ever starts -- and the overlap under test
@@ -1163,9 +1162,9 @@ RSpec.describe Lain::Supervisor do
 
     # Two adoptions in flight over one crashed row. The real WorkerHandoff's own
     # exactly-once guard (Report.nothing over an already-released lease) is
-    # check-then-act, and holds only because Mixlib::ShellOut blocks the whole
-    # reactor -- an accident of that collaborator, not a property of this loop.
-    # The claim is taken synchronously, so a fiber-aware handoff is safe too.
+    # check-then-act and does not hold alone: a shell-out suspends its fiber, so a
+    # sibling adoption can run between the check and the release. The Supervisor
+    # takes its claim synchronously, which is what makes the reap happen once.
     it "reaps a crashed row exactly once across two concurrent adoptions" do
       surrenders = []
       Sync do |task|
@@ -1251,15 +1250,7 @@ RSpec.describe Lain::Supervisor do
                                             journal: handback_journal)
       end
 
-      # The spec's OWN git calls scrub the git-context env, so building and
-      # inspecting the throwaway repo is hermetic under an ambient GIT_*-polluted
-      # env (a pre-commit hook) exactly as the subject is.
-      def run_git(dir, *args)
-        shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
-                                     environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-        shell.run_command.error!
-        shell.stdout
-      end
+      def run_git(dir, *args) = SeedRepo.git(dir, *args).stdout
 
       # Copied, not rebuilt: five git subprocesses per example for a directory that
       # is identical every time (see {SeedRepo}). A method, not a constant --
@@ -1670,8 +1661,7 @@ RSpec.describe Lain::Supervisor do
 
             File.write(File.join(dir, "actor.txt"), "the actor's work (#{object_id})\n")
             [%w[add -A], %w[commit -q -m actor-work]].each do |args|
-              Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-                              .run_command.error!
+              SeedRepo.git(dir, *args)
             end
             Lain::Tool::Result.ok("committed")
           end
@@ -1705,11 +1695,7 @@ RSpec.describe Lain::Supervisor do
       end
       let(:real_retirement) { Lain::Isolation::Worktree::Handback::Retirement.over(isolation: backend, journal:) }
 
-      def git(dir, *args)
-        shell = Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-        shell.run_command
-        shell.stdout.strip
-      end
+      def git(dir, *args) = SeedRepo.git(dir, *args).stdout.strip
 
       def parent_state = [git(@repo_root, "rev-parse", "HEAD"), git(@repo_root, "status", "--porcelain")]
 

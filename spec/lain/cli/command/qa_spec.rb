@@ -3,7 +3,6 @@
 require "fileutils"
 require "json"
 require "tmpdir"
-require "mixlib/shellout"
 
 # What a spawn hands back: the child's final answer, which is all a rung reads.
 QaCommandSpecAnswer = Data.define(:content)
@@ -235,10 +234,7 @@ RSpec.describe Lain::CLI::Command::QA do
   describe "over a real checkout", :seam do
     let(:risk) { "high" }
 
-    def git(*args)
-      Mixlib::ShellOut.new("git", "-C", @root, *args, environment: SeedRepo::SCRUB)
-                      .run_command.tap(&:error!).stdout
-    end
+    def git(*args) = SeedRepo.git(@root, *args).stdout
 
     # Every byte of the tree the command promised not to touch, keyed by path.
     # `.lain/` is excluded because the report is the one thing it does write.

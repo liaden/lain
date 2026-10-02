@@ -2,7 +2,6 @@
 
 require "async"
 require "fileutils"
-require "mixlib/shellout"
 require "stringio"
 require "tmpdir"
 
@@ -38,12 +37,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
     git("commit", "-q", "-m", "lib")
   end
 
-  # Scrubbed of any inherited GIT_INDEX_FILE, so a run inside a git hook reads
-  # this repository's index and not the hook's.
-  def git(*args, dir: @repo)
-    Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-                    .run_command.tap(&:error!).stdout
-  end
+  def git(*args, dir: @repo) = SeedRepo.git(dir, *args).stdout
 
   def paths = Lain::Paths.new(env: { "HOME" => @home, "XDG_STATE_HOME" => File.join(@base, "state") })
 

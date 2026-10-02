@@ -987,11 +987,9 @@ RSpec.describe Lain::CLI::Epic do
 
     it "asks git through Shell::Out when no factory is injected" do
       allow(Lain::Shell::Out).to receive(:new).and_call_original
-      allow(Mixlib::ShellOut).to receive(:new).and_call_original
 
       expect(described_class.new(root).reason("/x")).to be_a(String)
       expect(Lain::Shell::Out).to have_received(:new).with("git", "-C", root, "check-ignore", "-v", "--", "/x")
-      expect(Mixlib::ShellOut).not_to have_received(:new)
     end
 
     it "hands the source field on verbatim, so a pattern holding a colon survives" do

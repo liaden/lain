@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "tmpdir"
 
 # The worker lain asks to rebase: it records every prompt and runs an injected
@@ -85,12 +84,7 @@ RSpec.describe Lain::Isolation::SelfSync, :seam do
                          environment: env.merge(Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)).run_command
   end
 
-  def git(dir, *args, env: {})
-    result = shell(dir, *args, env:)
-    raise SeedRepo::GitFailed, "git #{args.join(" ")}: #{result.stderr}" unless result.exitstatus&.zero?
-
-    result.stdout.strip
-  end
+  def git(dir, *args, env: {}) = SeedRepo.git(dir, *args, env:).stdout.strip
 
   def commit(dir, file, body)
     File.write(File.join(dir, file), body)

@@ -117,7 +117,7 @@ RSpec.describe Lain::Frontend::StdinPump do
     # A forked child's `STDIN.reopen` puts back whatever its copy of the parent's
     # read buffer held by seeking the descriptor it shares, and a regular file's
     # offset is shared -- so a chat reading stdin buffered re-read its own
-    # prompts after every mixlib call. The pump reads a private duplicate and
+    # prompts after every forking runner call. The pump reads a private duplicate and
     # leaves the descriptor children inherit on the null device.
     it "reads a private copy of a real descriptor and seats the original on the null device" do
       path = File.join(@dir, "prompts.txt")

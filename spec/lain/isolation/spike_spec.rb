@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "tmpdir"
-require "mixlib/shellout"
 
 RSpec.describe Lain::Isolation::Spike, :seam do
   around do |example|
@@ -129,12 +128,12 @@ RSpec.describe Lain::Isolation::Spike, :seam do
     end
 
     it "deletes through Shell::Out, passing the transaction on stdin" do
-      allow(Mixlib::ShellOut).to receive(:new).and_call_original
+      allow(Lain::Shell::Out).to receive(:new).and_call_original
       taken = spike.acquire
 
       spike.release(taken)
 
-      expect(Mixlib::ShellOut).not_to have_received(:new)
+      expect(Lain::Shell::Out).to have_received(:new).with("git", any_args).at_least(:once)
       expect(refs(taken)).to be_empty
     end
 

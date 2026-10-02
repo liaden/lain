@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "fileutils"
-require "mixlib/shellout"
 
 # Operates on a THROWAWAY repo it copies per example ({SeedRepo}), never the lain
 # repo it runs in -- the same posture worktree_spec.rb takes, and the reason this

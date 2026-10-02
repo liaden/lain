@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "tmpdir"
-require "mixlib/shellout"
 
 # Runs the REAL `git` -- the worktree backend genuinely checks out, and git is
 # always present, so the default suite exercises it -- while faking every other
@@ -254,11 +253,11 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
 
     it "builds the worktree backend on Shell::Out by default, so leasing forks nothing" do
       init_repo(@project)
-      allow(Mixlib::ShellOut).to receive(:new).and_call_original
+      allow(Lain::Shell::Out).to receive(:new).and_call_original
 
       described_class.resolve("worktree", root: @project, paths:).acquire("w1").release
 
-      expect(Mixlib::ShellOut).not_to have_received(:new)
+      expect(Lain::Shell::Out).to have_received(:new).with("git", any_args).at_least(:once)
     end
 
     # The stop rule needs a home to stop AT, so `--isolation worktree` now has a

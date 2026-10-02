@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "fileutils"
-require "mixlib/shellout"
 
 # Operates on a THROWAWAY repo it creates itself (git init in a mktmpdir), never
 # the lain repo it runs in. git is always present, so this stays in the default

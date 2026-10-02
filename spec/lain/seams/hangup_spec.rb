@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "json"
-require "mixlib/shellout"
 require "rbconfig"
 require "tmpdir"
 

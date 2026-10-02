@@ -102,7 +102,7 @@ RSpec.describe Lain::Shell::Pipeline do
     end
 
     # `IO#readpartial` hands back ASCII-8BIT and the buffer adopts it on first
-    # append -- the same mechanics `Mixlib::ShellOut` accumulates through, which
+    # append -- the same mechanics {Shell::Out} accumulates through, which
     # is what keeps the two arms' rendered bytes identical for a binary payload.
     it "carries a non-UTF-8 payload through unmangled" do
       result = run([["printf", '\377\376']])
@@ -321,8 +321,7 @@ RSpec.describe Lain::Shell::Pipeline do
       ENV.delete("LAIN_PIPE_SCRUB")
     end
 
-    # `Dir.chdir` fails in mixlib's forked CHILD (exit 1, a ruby backtrace on
-    # stderr) and in the parent for `spawn`, where it would be a raise. Refusing
+    # `spawn` raises for a missing directory. Refusing
     # up front keeps the two arms' posture the same: an ok result, exit 1, the
     # directory named.
     it "refuses a cwd that does not exist, with the shell arm's exit-1 posture" do
@@ -427,8 +426,8 @@ RSpec.describe Lain::Shell::Pipeline do
         .to raise_error(described_class::Timeout) { |error| expect(error.message.count("a")).to be < 100 }
     end
 
-    # Mixlib embeds the pre-kill capture in its CommandTimeout message, and the
-    # exec-boundary parity group pins that NEITHER arm discards it.
+    # The timeout message embeds the pre-kill capture, and the exec-boundary
+    # parity group pins that NEITHER arm discards it.
     it "carries the output produced before the kill" do
       Dir.mktmpdir do |dir|
         path = File.join(dir, "log")

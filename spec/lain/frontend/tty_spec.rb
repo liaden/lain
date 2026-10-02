@@ -1457,14 +1457,12 @@ RSpec.describe Lain::Frontend::TTY do
       expect(message(shell: failing).call("a note")).to be_nil
     end
 
-    it "spawns through Shell::Out by default, never Mixlib" do
+    it "spawns through Shell::Out by default" do
       Dir.mktmpdir do |dir|
         record = File.join(dir, "argv")
         bin = File.join(dir, "tmux")
         File.write(bin, "#!/bin/sh\nprintf '%s' \"$1\" > '#{record}'\n")
         File.chmod(0o755, bin)
-        allow(Mixlib::ShellOut).to receive(:new).and_raise("mixlib was used")
-
         allow(Lain::Shell::Out).to receive(:new).and_wrap_original do |original, *argv, environment:, **options|
           original.call(*argv, environment: environment.merge("PATH" => "#{dir}:#{ENV.fetch("PATH")}"), **options)
         end

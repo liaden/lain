@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "tmpdir"
-require "mixlib/shellout"
 
 # worktree_handback_spec was flaky for weeks because `git commit` and `git merge`
 # end by spawning a DETACHED `git maintenance run --auto`, which outlives the
@@ -13,10 +12,8 @@ require "mixlib/shellout"
 RSpec.describe SeedRepo, :seam do
   def commit_trace(repo, *config)
     args = config.flat_map { |pair| ["-c", pair] }
-    shell = Mixlib::ShellOut.new("git", "-C", repo, *args, "commit", "--allow-empty", "-q", "-m", "probe",
-                                 environment: SeedRepo::SCRUB.merge("GIT_TRACE" => "2"))
-    shell.run_command.error!
-    shell.stderr
+    described_class.git(repo, *args, "commit", "--allow-empty", "-q", "-m", "probe",
+                        env: { "GIT_TRACE" => "2" }).stderr
   end
 
   around do |example|
@@ -63,6 +60,24 @@ RSpec.describe SeedRepo, :seam do
         expect([forks,
                 error.message]).to match([0,
                                           a_string_including("rev-parse --verify nope", "128", "STDERR:", "STDOUT:")])
+      end
+    end
+
+    it "adds a caller's env beside the scrub, so a variable reaches git" do
+      Dir.mktmpdir("lain-seed-git") do |dir|
+        described_class.git(dir, "init", "-q")
+
+        expect(described_class.git(dir, "var", "GIT_EDITOR", env: { "GIT_EDITOR" => "probe-editor" }).stdout.strip)
+          .to eq("probe-editor")
+      end
+    end
+
+    it "lets the scrub win over a caller's env, so GIT_DIR cannot redirect git" do
+      Dir.mktmpdir("lain-seed-git") do |dir|
+        described_class.git(dir, "init", "-q")
+        out = described_class.git(dir, "rev-parse", "--git-dir", env: { "GIT_DIR" => "/nonexistent" }).stdout.strip
+
+        expect(out).to eq(".git")
       end
     end
 

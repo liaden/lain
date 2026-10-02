@@ -419,11 +419,7 @@ RSpec.describe Lain::Review::Critique do
   end
 
   describe Lain::Review::Critique::Checkouts, :seam do
-    def git(dir, *)
-      shell = Mixlib::ShellOut.new("git", "-C", dir, *, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-      shell.run_command.error!
-      shell.stdout
-    end
+    def git(dir, *) = SeedRepo.git(dir, *).stdout
 
     around do |example|
       Dir.mktmpdir("lain-critique-checkouts") do |root|

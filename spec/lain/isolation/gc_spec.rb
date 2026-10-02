@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "fileutils"
-require "mixlib/shellout"
 require "open3"
 require "socket"
 

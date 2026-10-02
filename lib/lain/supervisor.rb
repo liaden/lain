@@ -321,9 +321,9 @@ module Lain
     # suspension point -- which is what makes two concurrent adoptions (or an
     # adoption racing {#stop}) surrender one row exactly once. The real
     # {Isolation::WorkerHandoff}'s released?-then-anchor guard is check-then-act
-    # and survives only because Mixlib::ShellOut blocks the whole reactor; that is
-    # a property of that collaborator, and a fiber-aware handoff
-    # double-surrenders without this (measured).
+    # and does not hold alone: a shell-out suspends its fiber, so a sibling
+    # adoption can run between the check and the release. The claim is what makes the
+    # surrender happen once.
     #
     # NOT handed back on failure: one attempt, then the record says what happened,
     # which keeps a broken handoff from journaling once per adoption forever.

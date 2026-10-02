@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "tmpdir"
 
 # The inlet as this object uses it: ONE of {Lain::Frontend::Neovim::RenderInlet}'s
@@ -690,10 +689,7 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
       end
     end
 
-    def git(*)
-      Mixlib::ShellOut.new("git", "-C", @repo, *, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-                      .run_command.error!
-    end
+    def git(*) = SeedRepo.git(@repo, *)
 
     # Two commits on `feature`, so one commit behind the head is still a
     # checkout of the branch with a DIFFERENT `guide.rb`.

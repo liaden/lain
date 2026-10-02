@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "fileutils"
-require "mixlib/shellout"
 
 # The half of a handback that a RETIREMENT does: the ref is written and nothing
 # else. Driven directly rather than through {Lain::Supervisor}, which is what
@@ -63,12 +62,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback::Retirement do
 
     # The spec's own git scrubs the inherited git context exactly as the subject
     # does, so it is hermetic under a pre-commit hook's GIT_* environment.
-    def run_git(dir, *args)
-      shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
-                                   environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-      shell.run_command.error!
-      shell.stdout.strip
-    end
+    def run_git(dir, *args) = SeedRepo.git(dir, *args).stdout.strip
 
     def commit_in(dir, contents, message)
       File.write(File.join(dir, "worker.txt"), contents)

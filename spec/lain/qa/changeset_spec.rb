@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "tmpdir"
-require "mixlib/shellout"
 
 RSpec.describe Lain::QA::Changeset, :seam do
   around do |example|
@@ -13,12 +12,7 @@ RSpec.describe Lain::QA::Changeset, :seam do
     end
   end
 
-  # The scrub is what makes this hermetic under pre-commit, which exports
-  # GIT_INDEX_FILE into every hook: unscrubbed, the fixture would stage into
-  # lain's own index.
-  def git(*)
-    Mixlib::ShellOut.new("git", "-C", @repo, *, environment: SeedRepo::SCRUB).run_command.tap(&:error!).stdout
-  end
+  def git(*) = SeedRepo.git(@repo, *).stdout
 
   def commit(files, message)
     files.each { |path, body| File.write(File.join(@repo, path), body) }
@@ -109,7 +103,7 @@ RSpec.describe Lain::QA::Changeset, :seam do
     git("checkout", "-q", "-b", "theirs", seed)
     commit({ "order.rb" => "theirs\n" }, "theirs")
     git("checkout", "-q", trunk)
-    Mixlib::ShellOut.new("git", "-C", @repo, "merge", "theirs", environment: SeedRepo::SCRUB).run_command
+    Lain::Shell::Out.new("git", "-C", @repo, "merge", "theirs", environment: SeedRepo::SCRUB).run_command
 
     expect { described_class.read(root: @repo, base:) }
       .to raise_error(Lain::Error, /operation in progress.*Finish or abort it/m)
@@ -121,7 +115,7 @@ RSpec.describe Lain::QA::Changeset, :seam do
   it "refuses a rebase stopped part way, whose empty diff would fail every card at once" do
     seed = base
     commit({ "order.rb" => "total\n" }, "work")
-    Mixlib::ShellOut.new("git", "-C", @repo, "rebase", "-i", seed,
+    Lain::Shell::Out.new("git", "-C", @repo, "rebase", "-i", seed,
                          environment: SeedRepo::SCRUB.merge("GIT_SEQUENCE_EDITOR" => "sed -i '1i break'")).run_command
 
     expect { described_class.read(root: @repo, base: seed) }.to raise_error(Lain::Error, /operation in progress/)

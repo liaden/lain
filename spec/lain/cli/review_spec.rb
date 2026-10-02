@@ -3,7 +3,6 @@
 require "digest"
 require "fileutils"
 require "json"
-require "mixlib/shellout"
 require "tmpdir"
 
 # One repository carrying BOTH readings of a bare number: a `feature` branch to
@@ -20,11 +19,6 @@ module ReviewCliFixture
   # The card's own example, so the ambiguity rule is checked at the spelling it
   # is written against.
   NUMBER = 4821
-
-  # The same scrub the subjects use, so building the template is hermetic under
-  # an ambient GIT_*-polluted env (a pre-commit hook sets one) exactly as they
-  # are.
-  SCRUB = Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB
 
   class << self
     # Process-wide, and safe without a lock for the reason the whole suite is:
@@ -62,9 +56,7 @@ module ReviewCliFixture
       git(dir, "commit", "-q", "-m", message)
     end
 
-    def git(dir, *)
-      Mixlib::ShellOut.new("git", "-C", dir, *, environment: SCRUB).run_command.error!
-    end
+    def git(dir, *) = SeedRepo.git(dir, *)
   end
 end
 
@@ -87,10 +79,7 @@ RSpec.describe Lain::CLI::Review, :seam do
 
   def number = ReviewCliFixture::NUMBER
 
-  def git_in(dir, *args)
-    Mixlib::ShellOut.new("git", "-C", dir, *args, environment: ReviewCliFixture::SCRUB)
-                    .run_command.tap(&:error!).stdout
-  end
+  def git_in(dir, *args) = SeedRepo.git(dir, *args).stdout
 
   def run_git(*) = git_in(@repo, *)
 
@@ -136,7 +125,7 @@ RSpec.describe Lain::CLI::Review, :seam do
   def factory
     lambda do |*argv, **options|
       calls << argv
-      argv.first == "gh" ? gh_reply(argv) : Mixlib::ShellOut.new(*argv, **options)
+      argv.first == "gh" ? gh_reply(argv) : Lain::Shell::Out.new(*argv, **options)
     end
   end
 
@@ -170,12 +159,10 @@ RSpec.describe Lain::CLI::Review, :seam do
 
     it "runs its git through Shell::Out when no factory is injected" do
       allow(Lain::Shell::Out).to receive(:new).and_call_original
-      allow(Mixlib::ShellOut).to receive(:new).and_call_original
 
       described_class.new(repo_root: @repo, paths:).present("feature")
 
       expect(Lain::Shell::Out).to have_received(:new).with("git", any_args).at_least(:once)
-      expect(Mixlib::ShellOut).not_to have_received(:new)
     end
 
     it "reads a branch name as a local branch, spawning no gh at all" do
@@ -529,8 +516,7 @@ RSpec.describe Lain::CLI::Review, :seam do
     def repo_without_the_head
       @refs_repo = @repo
       @repo = File.join(@root, "local")
-      Mixlib::ShellOut.new("git", "init", "-q", @repo, environment: ReviewCliFixture::SCRUB)
-                      .run_command.error!
+      SeedRepo.git(@root, "init", "-q", @repo)
       run_git("remote", "add", "origin", @refs_repo)
     end
 

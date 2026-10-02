@@ -39,11 +39,7 @@ RSpec.describe "a critique of a held review", :seam do
     end
   end
 
-  def git(*)
-    shell = Mixlib::ShellOut.new("git", "-C", @repo, *, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout
-  end
+  def git(*) = SeedRepo.git(@repo, *).stdout
 
   def commit(files, message)
     files.each do |path, body|

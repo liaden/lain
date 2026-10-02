@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "tmpdir"
 
 # `lain epic finish SLUG`: once every issue of an epic is done, its working
@@ -40,11 +39,11 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
   end
 
   def shell(dir, *args)
-    Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+    Lain::Shell::Out.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
                     .run_command
   end
 
-  def git(dir, *) = shell(dir, *).tap(&:error!).stdout.strip
+  def git(dir, *) = SeedRepo.git(dir, *).stdout.strip
 
   def commit(files)
     files.each { |path, body| File.write(File.join(root, path), body) }
@@ -66,7 +65,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
   let(:recording) do
     lambda do |*argv, **options|
       calls << argv
-      Mixlib::ShellOut.new(*argv, **options)
+      Lain::Shell::Out.new(*argv, **options)
     end
   end
 

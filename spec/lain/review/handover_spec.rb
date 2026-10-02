@@ -2,7 +2,6 @@
 
 require "async"
 require "fileutils"
-require "mixlib/shellout"
 require "stringio"
 require "tmpdir"
 
@@ -1422,8 +1421,6 @@ RSpec.describe Lain::Review::Handover do
   # the end -- has to leave its note on the record, or a resumed round has lost
   # the human's words while this rail answered that it took them.
   describe "notes over a real branch, journaled and replayed", :seam do
-    let(:scrub) { Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB }
-
     around do |example|
       Dir.mktmpdir("lain-handover-branch") do |made|
         @repo = File.realpath(made)
@@ -1435,7 +1432,7 @@ RSpec.describe Lain::Review::Handover do
 
     def numbered = (1..20).map { |n| "line #{n}\n" }.join
 
-    def git(*) = Mixlib::ShellOut.new("git", "-C", @repo, *, environment: scrub).run_command.error!
+    def git(*) = SeedRepo.git(@repo, *)
 
     def branched
       git("checkout", "-q", "-b", "base")

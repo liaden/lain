@@ -3,7 +3,6 @@
 require "async"
 require "fileutils"
 require "json"
-require "mixlib/shellout"
 require "neovim"
 require "stringio"
 require "tmpdir"
@@ -108,7 +107,7 @@ end
 
 RSpec.describe Lain::CLI::Command::Review do
   let(:command) do
-    described_class.new(root: @repo, outbox:, shell_out_factory: Mixlib::ShellOut.public_method(:new),
+    described_class.new(root: @repo, outbox:, shell_out_factory: Lain::Shell::Out.public_method(:new),
                         ledger: Lain::Sensitivity::Ledger.new)
   end
 
@@ -159,14 +158,12 @@ RSpec.describe Lain::CLI::Command::Review do
 
   it "runs its git through Shell::Out when no factory is injected" do
     allow(Lain::Shell::Out).to receive(:new).and_call_original
-    allow(Mixlib::ShellOut).to receive(:new).and_call_original
     defaulted = described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new)
 
     attached
     defaulted.call("feature", env)
 
     expect(Lain::Shell::Out).to have_received(:new).at_least(:once)
-    expect(Mixlib::ShellOut).not_to have_received(:new)
   end
 
   def commit(dir, subject)
@@ -174,10 +171,7 @@ RSpec.describe Lain::CLI::Command::Review do
     git(dir, "commit", "-q", "-m", subject)
   end
 
-  def git(dir, *)
-    Mixlib::ShellOut.new("git", "-C", dir, *,
-                         environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.error!
-  end
+  def git(dir, *) = SeedRepo.git(dir, *)
 
   # An editor attached, exactly as {Lain::CLI::Repl#run} attaches one.
   def attached
@@ -917,7 +911,7 @@ RSpec.describe Lain::CLI::Command::Review do
     # honestly.
     def bounded(**ceilings)
       described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new, bounds: Lain::Review::Bounds.new(**ceilings),
-                          shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                          shell_out_factory: Lain::Shell::Out.public_method(:new))
     end
 
     # A branch off `main` wide enough to meet {Lain::Review::Bounds}' own

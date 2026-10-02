@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "tmpdir"
 
 # `exe/lain` is a script, not a lib file; it guards its own `LainCLI.start`, so
@@ -53,11 +52,11 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
   end
 
   def shell(*args)
-    Mixlib::ShellOut.new("git", "-C", root, *args,
+    Lain::Shell::Out.new("git", "-C", root, *args,
                          environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command
   end
 
-  def git(*) = shell(*).tap(&:error!).stdout.strip
+  def git(*) = SeedRepo.git(root, *).stdout.strip
 
   def commit(files)
     files.each do |path, body|

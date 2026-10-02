@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "tmpdir"
-require "mixlib/shellout"
 
 # A throwaway git repo with two branches -- `trunk` and `feature` -- built ONCE
 # per process and copied per example (`spec/lain/review/delta_spec.rb:8-30`'s
@@ -13,11 +12,6 @@ require "mixlib/shellout"
 # lines of one 40-line file, so the cumulative diff has three hunks and every
 # rewrite below has real content to preserve or break.
 module HistoryRewriteRepo
-  # {Isolation::Worktree}'s scrub, reused rather than duplicated -- an ambient
-  # GIT_DIR (a pre-commit hook sets one) would otherwise point every call below
-  # at the hook's own repository instead of the fixture.
-  SCRUB = Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB
-
   LINES = 40
 
   # Ten lines apart, comfortably outside `DIFF_HYGIENE`'s `-U3` context window
@@ -38,6 +32,8 @@ module HistoryRewriteRepo
     def content(changes = {})
       (1..LINES).map { |n| "#{changes.fetch(n, "line #{n}")}\n" }.join
     end
+
+    def pinned(date) = date ? { "GIT_AUTHOR_DATE" => date, "GIT_COMMITTER_DATE" => date } : {}
 
     private
 
@@ -78,10 +74,7 @@ module HistoryRewriteRepo
     # positives (chunk-survey-corpus.md's grounding).
     def date_for(offset) = Time.at(1_700_000_000 + offset).utc.iso8601
 
-    def git(dir, *, date: nil)
-      env = date ? SCRUB.merge("GIT_AUTHOR_DATE" => date, "GIT_COMMITTER_DATE" => date) : SCRUB
-      Mixlib::ShellOut.new("git", "-C", dir, *, environment: env).run_command.error!
-    end
+    def git(dir, *, date: nil) = SeedRepo.git(dir, *, env: pinned(date))
   end
 end
 
@@ -117,15 +110,7 @@ RSpec.describe "history rewriting preserves marks", :seam do
   end
 
   def repo_git(*args, date: nil)
-    env = if date
-            HistoryRewriteRepo::SCRUB.merge("GIT_AUTHOR_DATE" => date, "GIT_COMMITTER_DATE" => date)
-          else
-            HistoryRewriteRepo::SCRUB
-          end
-    shell = Mixlib::ShellOut.new("git", "-C", @repo, *args, environment: env)
-    shell.run_command
-    shell.error!
-    shell
+    SeedRepo.git(@repo, *args, env: HistoryRewriteRepo.pinned(date))
   end
 
   def repo_commit(message, files, date: next_date)

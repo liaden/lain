@@ -155,13 +155,12 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit::Repository, :seam do
     expect(Lain::Shell::Out).to have_received(:new).with("git", any_args).at_least(:once)
   end
 
-  it "raises the Lain refusal, not naming Mixlib, when git outruns its timeout" do
+  it "raises the Lain refusal when git outruns its timeout" do
     slow = ->(*, **) { raise Lain::Shell::Out::Timeout, "command timed out after 600s" }
 
     expect { described_class.open(root: project, paths:, shell_out_factory: slow) }
       .to raise_error(Lain::Workspace::Snapshot::Scope::ShadowGit::Failed) { |error|
         expect(error.message).to match(/shadow git init failed \(Lain::Shell::Out::Timeout\).*600s/)
-        expect(error.message).not_to include("Mixlib")
       }
   end
 

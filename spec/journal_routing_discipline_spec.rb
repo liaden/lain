@@ -2,7 +2,6 @@
 
 require "async"
 require "fileutils"
-require "mixlib/shellout"
 require "tmpdir"
 
 # The run's display Channel is not a journal. The TTY renders the few record
@@ -133,8 +132,7 @@ RSpec.describe Lain::CLI::Wiring, "the journal routing discipline" do
       Dir.mktmpdir("lain-routing-repo") do |repo|
         repo = File.realpath(repo)
         FileUtils.cp_r("#{SeedRepo.at({ "README" => "seed\n" })}/.", repo)
-        Mixlib::ShellOut.new("git", "-C", repo, "switch", "-q", "-c", "feat",
-                             environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.error!
+        SeedRepo.git(repo, "switch", "-q", "-c", "feat")
         with_env("XDG_STATE_HOME" => @state) { Dir.chdir(repo) { example.run } }
       end
     end

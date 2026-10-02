@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "json"
-require "mixlib/shellout"
 require "tmpdir"
 
 # An issue orchestrator's children lease from the ISSUE's isolation, hand back
@@ -35,11 +34,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
                         switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build)
   end
 
-  def git(dir, *args)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout.strip
-  end
+  def git(dir, *args) = SeedRepo.git(dir, *args).stdout.strip
 
   def checkout(id) = File.join(@root, "issue-#{id}")
 

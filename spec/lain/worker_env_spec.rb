@@ -82,7 +82,7 @@ RSpec.describe Lain::WorkerEnv do
       expect(built.env).to eq("A" => "1")
     end
 
-    # A nil value is the sanctioned scrub marker (mixlib's `ENV[k] = nil` deletes
+    # A nil value is the sanctioned scrub marker (a nil value deletes the variable
     # in the child). The key must be RETAINED with its nil, not dropped, and the
     # value object must stay shareable -- nil is frozen.
     it "preserves a nil env value (the scrub marker) rather than dropping the key" do

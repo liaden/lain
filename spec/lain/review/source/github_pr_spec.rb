@@ -22,9 +22,8 @@ module GithubPrFixture
   # The pull request number, and so the `refs/pull/N/head` the source fetches.
   NUMBER = 42
 
-  WITHOUT_HEAD = Concurrent::Map.new
   TEMPLATES = Concurrent::Map.new
-  private_constant :WITHOUT_HEAD, :TEMPLATES
+  private_constant :TEMPLATES
 
   # The same scrub the subject uses, so building the template is hermetic under
   # an ambient GIT_*-polluted env exactly as it is.
@@ -44,20 +43,20 @@ module GithubPrFixture
     # @return [Shape] a directory to copy, never to mutate, and its constants
     def at(rich:) = TEMPLATES.compute_if_absent(rich) { build(rich) }
 
-    # @return [String] a directory to copy, never to mutate
-    def without_head_at(rich:)
-      WITHOUT_HEAD.compute_if_absent(rich) { build_without_head(at(rich:).dir) }
+    # @param into [String] a directory the caller owns and removes
+    # @param rich [Boolean] as for {.at}
+    # @return [String] `into`
+    def without_head_into(into, rich:)
+      origin = at(rich:).dir
+      SeedRepo.derived([:github_pr_without_head, rich], into:) { |dir| build_without_head(dir, origin) }
     end
 
     private
 
-    # Built by `init` plus an explicit refspec rather than by `clone`, because a
+    # Built by a remote plus an explicit refspec rather than by `clone`, because a
     # local-path clone HARDLINKS the whole object directory and would silently
     # have every object already.
-    def build_without_head(origin)
-      dir = Dir.mktmpdir("lain-review-github-nohead-template")
-      at_exit { FileUtils.remove_entry(dir, true) }
-      git(dir, "init", "-q")
+    def build_without_head(dir, origin)
       git(dir, "remote", "add", "origin", origin)
       git(dir, "fetch", "-q", "--no-tags", "origin", "refs/heads/base:refs/heads/base")
       dir
@@ -196,7 +195,7 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
   # And one that has never seen it, pointed at this example's own origin.
   def local_repo_without_head
     @repo = File.join(@root, "local")
-    FileUtils.cp_r(GithubPrFixture.without_head_at(rich:), @repo)
+    GithubPrFixture.without_head_into(@repo, rich:)
     run_git(@repo, "remote", "set-url", "origin", origin)
   end
 
@@ -654,8 +653,8 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     end
   end
 
-  # CLI::Review still injects Mixlib's factory, so its timeout must keep
-  # meaning what Shell::Out's does.
+  # lib still rescues Mixlib's timeout (github_pr.rb); these examples go when
+  # those arms are deleted.
   describe "a Mixlib runner injected by a caller" do
     it "reports a view timeout as the port's refusal" do
       local_repo_with_head

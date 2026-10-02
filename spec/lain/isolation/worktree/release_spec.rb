@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "fileutils"
-require "mixlib/shellout"
 
 RSpec.describe Lain::Isolation::Worktree::Release, :seam do
   around do |example|
@@ -46,8 +45,7 @@ RSpec.describe Lain::Isolation::Worktree::Release, :seam do
       path = checkout_with_uncommitted_work
       release.call(path, discard: true)
 
-      listed = Mixlib::ShellOut.new("git", "-C", @repo_root, "worktree", "list", "--porcelain",
-                                    environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.stdout
+      listed = SeedRepo.git(@repo_root, "worktree", "list", "--porcelain").stdout
 
       expect(listed).not_to include(path)
     end

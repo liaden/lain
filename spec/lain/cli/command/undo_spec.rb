@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "tmpdir"
-require "mixlib/shellout"
 
 # Parks on an `Async::Variable` nobody resolves, announcing on another that it
 # has entered, so a spec can tear a turn while a tool is genuinely running.
@@ -100,7 +99,7 @@ RSpec.describe Lain::CLI::Command::Undo do
   # The user's own git, in the user's own repository -- never the shadow one --
   # scrubbed so a run under a git hook builds in the tmpdir it names.
   def user_git(*argv)
-    Mixlib::ShellOut.new("git", "-c", "user.email=spec@lain.test", "-c", "user.name=lain spec", *argv,
+    Lain::Shell::Out.new("git", "-c", "user.email=spec@lain.test", "-c", "user.name=lain spec", *argv,
                          cwd: root,
                          environment: Lain::Workspace::Snapshot::Scope::ShadowGit::GIT_CONTEXT_SCRUB)
                     .tap(&:run_command).stdout

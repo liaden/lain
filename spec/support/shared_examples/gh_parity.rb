@@ -79,7 +79,7 @@ module GhParity
   # rather than trusting three spec files to list the same five.
   VERBS = %i[pr_create pr_merge pr_view merge_state submit_review].freeze
 
-  # The one duck a gh executor exercises on a Mixlib::ShellOut: #run_command,
+  # The one duck a gh executor exercises on a Shell::Out: #run_command,
   # #exitstatus, #stdout, #stderr. Named distinctly from up_spec.rb's
   # FakeShellOut and tmux_surface_spec.rb's FakeTmuxShellOut so the three
   # top-level constants never collide when the suite loads all of them.

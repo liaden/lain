@@ -173,7 +173,7 @@ RSpec.describe Lain::Tools::Bash do
       end
     end
 
-    # WorkerEnv is an OVERRIDE, not confinement: mixlib applies
+    # WorkerEnv is an OVERRIDE, not confinement: the runner applies
     # `environment:` per-key onto the child's already-inherited ENV and never
     # clears it, so a host var the injected env omits still reaches the command.
     # This pins that true behavior -- probe tmp/b1-probes/env_semantics.rb.
@@ -190,8 +190,8 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     # The sanctioned scrub: an explicit nil VALUE (not an absent key) removes a
-    # var, because mixlib's child does `ENV[k] = nil`, and Ruby's `ENV[k] = nil`
-    # deletes. WorkerEnv preserves the nil marker through make_shareable.
+    # var, because Process.spawn unsets a variable whose env value is nil.
+    # WorkerEnv preserves the nil marker through make_shareable.
     it "scrubs a host env var mapped to nil in the injected WorkerEnv" do
       ENV["LAIN_SCRUB_ME"] = "leaked"
       scrubbed = ENV.to_h.merge("LAIN_SCRUB_ME" => nil)

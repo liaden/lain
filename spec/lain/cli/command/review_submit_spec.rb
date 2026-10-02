@@ -112,7 +112,6 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
 
   it "spawns gh through Shell::Out when no factory is injected" do
     allow(Lain::Shell::Out).to receive(:new) { |*argv, **options| factory.call(*argv, **options) }
-    allow(Mixlib::ShellOut).to receive(:new).and_raise("Mixlib::ShellOut used; the default factory is not Shell::Out")
     note(path: "app.rb", side: :new, line: 42, text: "kaboom", revision: head_sha)
     hold
 

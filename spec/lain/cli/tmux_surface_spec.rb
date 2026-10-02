@@ -15,7 +15,7 @@ require "open3"
 #   shell_out_factory, so the control-mode / old-tmux / no-tmux scenarios run
 #   on every machine regardless of what tmux (if any) is actually installed.
 #
-# A Mixlib::ShellOut double satisfying the one duck TmuxSurface exercises:
+# A Shell::Out double satisfying the one duck TmuxSurface exercises:
 # #run_command (a no-op), #exitstatus/#stderr/#stdout. Named distinctly from
 # up_spec.rb's FakeShellOut (which has no #stdout) so the two top-level
 # constants never collide when the suite loads both files.
@@ -232,7 +232,7 @@ RSpec.describe Lain::CLI::TmuxSurface do
       expect(surface.window(command: "echo hi", name: "probe", keep_failed: true).degraded).to be(false)
     end
 
-    # Mixlib::ShellOut#exitstatus is `@status&.exitstatus`, so a tmux client
+    # Shell::Out#exitstatus is nil for a child a signal killed, so a tmux client
     # killed by a signal answers nil rather than a number. Asking `.zero?` of
     # that raises NoMethodError out of a queued pump command.
     it "survives a signalled tmux client rather than raising NoMethodError on a nil exit status" do
@@ -467,13 +467,11 @@ RSpec.describe Lain::CLI::TmuxSurface do
     end
 
     it "runs tmux through Shell::Out, and the command still runs" do
-      allow(Mixlib::ShellOut).to receive(:new).and_call_original
       allow(Lain::Shell::Out).to receive(:new).and_call_original
 
       described_class.new(socket: "s").rename_window(target: "=w", name: "done")
 
       expect(File.read(File.join(@dir, "argv")).strip).to eq("-L s rename-window -t =w done")
-      expect(Mixlib::ShellOut).not_to have_received(:new)
       expect(Lain::Shell::Out).to have_received(:new).with("tmux", "-L", "s", "rename-window", "-t", "=w", "done")
     end
   end

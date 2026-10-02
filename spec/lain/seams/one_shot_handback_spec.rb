@@ -2,7 +2,6 @@
 
 require "async"
 require "fileutils"
-require "mixlib/shellout"
 require "tmpdir"
 
 # Scripted like {Lain::Provider::Mock}, except that a step may be a lambda, run
@@ -56,17 +55,11 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
 
   def seed_files = { "README" => "seed\n", "notes.txt" => "seed\n" }
 
-  # Scrubbed exactly as the subject scrubs, so a pre-commit hook's
-  # GIT_INDEX_FILE never points these calls at lain's own index.
-  def git(*args, dir: repo)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout.strip
-  end
+  def git(*args, dir: repo) = SeedRepo.git(dir, *args).stdout.strip
 
   def contains?(commit, branch = "feat")
-    Mixlib::ShellOut.new("git", "-C", repo, "merge-base", "--is-ancestor", commit, branch,
-                         environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.exitstatus.zero?
+    Lain::Shell::Out.new("git", "-C", repo, "merge-base", "--is-ancestor", commit, branch,
+                         environment: SeedRepo::SCRUB).run_command.exitstatus.zero?
   end
 
   def commit(dir, file, body, message)

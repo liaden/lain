@@ -91,11 +91,7 @@ class WiringSpecCrashedWorker
 
   private
 
-  def git(dir, *)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout.strip
-  end
+  def git(dir, *) = SeedRepo.git(dir, *).stdout.strip
 end
 
 # Counts the calls to `#start` and is otherwise the chronicle it wraps. The
@@ -1429,7 +1425,6 @@ RSpec.describe Lain::CLI::Wiring do
   # adopted through this Supervisor.
   describe "the fleet's isolation backend" do
     require "fileutils"
-    require "mixlib/shellout"
     require "tmpdir"
 
     # The lease and handback records land in the session record, read back here
@@ -1529,13 +1524,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     context "with the worktree isolation option" do
-      # The spec's own git calls reuse the backend's pinned scrub set, so the
-      # throwaway repo is built hermetically under a GIT_*-polluted env (a
-      # pre-commit hook) exactly as the backend runs.
-      def run_git(dir, *args)
-        Mixlib::ShellOut.new("git", "-C", dir, *args,
-                             environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.error!
-      end
+      def run_git(dir, *args) = SeedRepo.git(dir, *args)
 
       # Copied, not rebuilt: five git subprocesses per example for a directory that
       # is identical every time (see {SeedRepo}). A method, not a constant --
@@ -1647,12 +1636,7 @@ RSpec.describe Lain::CLI::Wiring do
       # same handoff, so a crashed actor's commits are anchored rather than
       # kept by nothing.
       describe "the handback a worker's work comes home through" do
-        def git_out(dir, *args)
-          shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
-                                       environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-          shell.run_command.error!
-          shell.stdout.strip
-        end
+        def git_out(dir, *args) = SeedRepo.git(dir, *args).stdout.strip
 
         def on_feat(repo, config: nil)
           git_out(repo, "switch", "-q", "-c", "feat")
@@ -2566,8 +2550,7 @@ RSpec.describe Lain::CLI::Wiring do
         def commit(dir)
           File.write(File.join(dir, "README"), "seed\nthe line under review\n")
           [%w[add -A], ["commit", "-q", "-m", "the work under review"]].each do |argv|
-            Mixlib::ShellOut.new("git", "-C", dir, *argv,
-                                 environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.error!
+            SeedRepo.git(dir, *argv)
           end
         end
 

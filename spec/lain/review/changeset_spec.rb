@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 
 # The three-commit repository the seam half reviews, built ONCE per process and
 # copied after that -- {SeedRepo}'s reasoning at the scale of the whole fixture.
@@ -15,8 +14,6 @@ require "mixlib/shellout"
 # onto `base` BEFORE feature forks, so it is present at the merge base and its
 # change is a modification with anchors on both sides.
 module ChangesetRepo
-  SCRUB = Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB
-
   # Hermeticity, not decoration: a developer with `core.autocrlf=input` in
   # ~/.gitconfig would have git normalize the fixture on the way in and the CRLF
   # examples would pass by not testing anything. Written into the template's
@@ -74,11 +71,7 @@ module ChangesetRepo
       git(dir, "rev-parse", "HEAD").stdout.strip
     end
 
-    def git(dir, *)
-      shell = Mixlib::ShellOut.new("git", "-C", dir, *, environment: SCRUB)
-      shell.run_command.error!
-      shell
-    end
+    def git(dir, *) = SeedRepo.git(dir, *)
   end
 end
 
@@ -1100,12 +1093,7 @@ RSpec.describe Lain::Review::Changeset do
 
     def long_file(changed: false) = ChangesetRepo.long_file(changed:)
 
-    def run_git(*args)
-      shell = Mixlib::ShellOut.new("git", "-C", @repo, *args,
-                                   environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-      shell.run_command.error!
-      shell.stdout
-    end
+    def run_git(*args) = SeedRepo.git(@repo, *args).stdout
 
     # BINARY writes, so a fixture means the bytes it says: `File.write` on a
     # CRLF body would still be exact here, but the intent is that nothing in

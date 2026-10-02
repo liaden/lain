@@ -2,7 +2,6 @@
 
 require "async"
 require "fileutils"
-require "mixlib/shellout"
 require "stringio"
 require "tmpdir"
 
@@ -177,12 +176,7 @@ RSpec.describe "A child's tools run behind its parent's guard", :seam do
       end
     end
 
-    # Scrubbed as the subject scrubs, so a pre-commit hook's GIT_INDEX_FILE never
-    # points these at lain's own index.
-    def git(*args)
-      Mixlib::ShellOut.new("git", "-C", root, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-                      .run_command.error!
-    end
+    def git(*args) = SeedRepo.git(root, *args)
 
     it "refuses a split sibling written in its checkout, naming the path its subject's test belongs at" do
       script.push(writes("tu_child", "spec/unit/models/order_extra_spec.rb", describing("Order")),

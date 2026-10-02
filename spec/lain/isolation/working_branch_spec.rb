@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "fileutils"
-require "mixlib/shellout"
 
 # A Checkout that runs a hook once, right after a chosen git invocation: how
 # a sibling's move lands in the one window a race can use.
@@ -347,11 +346,11 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
 
     it "deletes the branch and marker through Shell::Out, passing the transaction on stdin" do
       owned_with_work
-      allow(Mixlib::ShellOut).to receive(:new).and_call_original
+      allow(Lain::Shell::Out).to receive(:new).and_call_original
 
       discarded(branch_over)
 
-      expect(Mixlib::ShellOut).not_to have_received(:new)
+      expect(Lain::Shell::Out).to have_received(:new).with("git", any_args).at_least(:once)
       expect([ref?("refs/heads/#{name}"), ref?(marker)]).to eq([false, false])
     end
 

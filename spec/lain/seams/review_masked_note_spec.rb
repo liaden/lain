@@ -22,11 +22,7 @@ RSpec.describe "a note placed on a line holding a secret", :seam do
     end
   end
 
-  def git(*)
-    shell = Mixlib::ShellOut.new("git", "-C", @repo, *, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout
-  end
+  def git(*) = SeedRepo.git(@repo, *).stdout
 
   def place_note(ledger: Lain::Sensitivity::Ledger.new)
     source = Lain::Review::Source::LocalBranch.new(base: @base, repo_root: @repo)

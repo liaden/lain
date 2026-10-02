@@ -4,7 +4,6 @@ require "tmpdir"
 require "fileutils"
 require "delegate"
 require "async"
-require "mixlib/shellout"
 
 # The resolver spawn seam's duck -- `Skill::RoleSpawn#call(role_name,
 # context_mode, prompt)`, answering a `Tool::Result`. It RECORDS every spawn (so

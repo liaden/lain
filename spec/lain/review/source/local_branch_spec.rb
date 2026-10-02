@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 
 # The diverged repository every example starts from, built ONCE per process and
 # copied after that -- {SeedRepo}'s reasoning one level up, applied to the whole
@@ -21,13 +20,6 @@ require "mixlib/shellout"
 # a binary file, a non-ASCII path, a latin-1 subject and a merge carrying its
 # own hand-resolved file.
 module DivergedRepo
-  # The same scrub the subject uses, so building the template is hermetic under
-  # an ambient GIT_*-polluted env (a pre-commit hook) exactly as it is. The
-  # CONFIG half of that hermeticity is inherited: the template starts as a copy
-  # of {SeedRepo}'s, whose `.git/config` already pins `commit.gpgsign=false` and
-  # `core.hooksPath=/dev/null`.
-  SCRUB = Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB
-
   # The oids an example used to capture while building the repo itself.
   Shape = Data.define(:dir, :fork_point, :first, :second, :base_only)
 
@@ -73,7 +65,7 @@ module DivergedRepo
     # it says, and BOTH reported it missing while the file was sitting there:
     # `-z`, because `ls-tree` C-quotes a non-ASCII name into `"caf\303\251.rb"`
     # by default and NUL-terminated output is unquoted by construction; and the
-    # `force_encoding`, because mixlib tags stdout BINARY when the bytes are not
+    # `force_encoding`, because a runner may tag stdout BINARY when the bytes are not
     # valid UTF-8, and a BINARY "café.rb" is not `eql?` a UTF-8 one -- so the
     # Array difference below silently found nothing to match.
     def assert_rich!(dir)
@@ -126,11 +118,7 @@ module DivergedRepo
 
     def head(dir) = git(dir, "rev-parse", "HEAD").stdout.strip
 
-    def git(dir, *)
-      shell = Mixlib::ShellOut.new("git", "-C", dir, *, environment: SCRUB)
-      shell.run_command.error!
-      shell
-    end
+    def git(dir, *) = SeedRepo.git(dir, *)
   end
 end
 
@@ -175,10 +163,7 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
   # carries `commit.gpgsign=false` and `core.hooksPath=/dev/null` in its own
   # `.git/config`. One mechanism, in the place that covers every consumer.
   def run_git(*args, env: {})
-    shell = Mixlib::ShellOut.new("git", "-C", @repo, *args,
-                                 environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(env))
-    shell.run_command.error!
-    shell.stdout
+    SeedRepo.git(@repo, *args, env:).stdout
   end
 
   # No keyword parameter here on purpose: `commit("m", "p" => "body")` passes a
@@ -238,7 +223,7 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
 
   # A subject whose bytes are latin-1 rather than UTF-8. This is what exposes the
   # encoding defect: a runner may tag stdout UTF-8 or BINARY depending on whether
-  # the bytes HAPPEN to be valid (mixlib does), so a field's encoding can depend
+  # the bytes HAPPEN to be valid (a gem runner did), so a field's encoding can depend
   # on its content. An all-ASCII fixture cannot see it.
   def add_latin1_subject
     run_git("commit", "-q", "--allow-empty", "-m", "caf\xE9 subject".b)
@@ -545,9 +530,8 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
   end
 
   # The rich fixture carries a binary file and a latin-1 subject, which makes the
-  # diff bytes invalid UTF-8 -- and a runner like mixlib then tags them BINARY on
-  # its own. It is the ALL-ASCII changeset that shows the forcing doing work,
-  # because there the runner hands back UTF-8.
+  # diff bytes invalid UTF-8 -- and a runner may then tag them BINARY on its own. It is the
+  # ALL-ASCII changeset that shows the forcing doing work, because there the runner hands back UTF-8.
   describe "an all-ASCII changeset" do
     it "still answers the diff as raw bytes" do
       expect(source.diff.encoding).to eq(Encoding::ASCII_8BIT)
@@ -560,7 +544,7 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
       add_latin1_subject
     end
 
-    # Only #diff is deliberately binary; a subject or path inheriting mixlib's
+    # Only #diff is deliberately binary; a subject or path inheriting a runner's
     # content-dependent encoding breaks JSON generation into the NDJSON Journal,
     # which is the experiment record and where one bad line breaks the parse.
     it "reports sha, subject, body and path as UTF-8, not binary" do
@@ -718,7 +702,7 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
       calls = []
       factory = lambda { |*argv, **options|
         calls << argv
-        Mixlib::ShellOut.new(*argv, **options)
+        Lain::Shell::Out.new(*argv, **options)
       }
       described_class.new(base: "base", repo_root: @repo, shell_out_factory: factory).diff
       expect(calls).not_to be_empty
