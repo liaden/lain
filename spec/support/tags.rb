@@ -261,3 +261,26 @@ RSpec.configure do |config|
     end
   end
 end
+
+# A renamed file must not leave a silent hole in the suite, so the list is checked at load.
+SlowFiles.verify!(root: File.expand_path("../..", __dir__))
+
+RSpec.configure do |config|
+  root = File.expand_path("../..", __dir__)
+  skipped = SlowFiles.skipped(root:).to_set { |path| "./#{path}" }
+
+  config.define_derived_metadata(file_path: ->(path) { skipped.include?(path) }) { |meta| meta[:slow] = true }
+
+  unless SlowFiles.enabled?
+    config.filter_run_excluding(:slow)
+
+    config.before(:suite) do
+      running = RSpec.configuration.files_to_run.to_set { |path| path.delete_prefix("#{root}/") }
+      count = skipped.count { |path| running.include?(path.delete_prefix("./")) }
+      RSpec.configuration.reporter.message(
+        "Skipping #{count} :slow files (#{SlowFiles::THRESHOLD_SECONDS}s or more each). " \
+        "Set LAIN_SLOW=1 to run them; rake pspec always does."
+      )
+    end
+  end
+end

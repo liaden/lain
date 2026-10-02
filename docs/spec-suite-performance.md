@@ -22,6 +22,10 @@ not removable -- but it parallelises. Serial **197s**; `rake pspec` **21-27s**. 
 system ratio has held while the suite doubled in size, which is the mechanical statement of
 "the work is spawning, not computing".
 
+A bare local `rspec` skips the `:slow` files that `spec/support/slow_files.rb` lists; its header
+holds the threshold, when it was measured, and how to regenerate the list. `rake pspec` sets
+`LAIN_SLOW=1`, so the hook and CI always run them.
+
 ## What binds, and why more workers than cores helps
 
 **Neither cores nor memory is the ceiling. Kernel spawn cost is.** Measured 2026-08-05 on a

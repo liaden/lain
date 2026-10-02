@@ -28,8 +28,8 @@ task :pspec do
   runtime_log = "tmp/parallel_runtime_rspec.log"
   # A partial log (CI restores one) must not raise; missing files weigh the average known runtime.
   group_by = File.exist?(runtime_log) ? "--group-by runtime --allowed-missing 100 " : ""
-  sh "bundle exec parallel_rspec spec -n #{spec_workers} #{group_by}--test-options " \
-     "'--format progress --format ParallelTests::RSpec::RuntimeLogger --out #{runtime_log}'"
+  sh({ "LAIN_SLOW" => "1" }, "bundle exec parallel_rspec spec -n #{spec_workers} #{group_by}--test-options " \
+                             "'--format progress --format ParallelTests::RSpec::RuntimeLogger --out #{runtime_log}'")
 end
 
 # A deliberately CONSERVATIVE default, and not the fastest count -- which is the

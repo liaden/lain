@@ -158,7 +158,7 @@ RSpec.describe Lain::Frontend::Neovim::ThreadView do
       own = ["lib/lain/frontend/neovim/thread_view.rb", "lib/lain/frontend/neovim/runtime/51_thread.lua",
              "spec/lain/frontend/neovim/runtime/51_thread_spec.rb",
              "spec/lain/frontend/neovim/thread_view_spec.rb", "spec/support/recording_thread_inlet.rb"]
-      consumers = ["lib/lain/review/docent.rb", "lib/lain/review/surface/neovim.rb",
+      consumers = ["lib/lain/review/docent.rb", "lib/lain/review/surface/neovim.rb", "spec/support/slow_files.rb",
                    "spec/lain/review/docent_spec.rb", "spec/lain/review/surface/neovim_spec.rb"]
       # `deletability_spec.rb` is the MAP, so it names every deletable
       # capability by construction and exempts itself from its own sweep for the

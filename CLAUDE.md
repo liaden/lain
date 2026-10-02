@@ -31,11 +31,14 @@ export LAIN_SPEC_WORKERS=12                             # .envrc is gitignored; 
 
 ```bash
 bundle exec rake pspec         # THE suite command: ~101s at 12 workers, 20,511 examples, 2026-09-20.
-                               # Bare `rspec` is the same examples SERIALLY, ~22m, 2026-09-20 -- 13x
-                               # the wall, and NOT "no extra signal": it is how you tell a real
-                               # failure from a contention flake. The tmux/nvim/wall-clock specs
-                               # that red under 12 workers ran green serially.
-bundle exec rspec path/to/one_spec.rb   # one file or one example: use this, not a bare `rspec`
+                               # It always runs the :slow files (it sets LAIN_SLOW=1), and so do
+                               # the commit hook and CI, which both go through it.
+bundle exec rspec              # the quick local loop: skips the :slow files (spec/support/slow_files.rb).
+LAIN_SLOW=1 bundle exec rspec  # every example SERIALLY, ~22m, 2026-09-20 -- 13x the wall, and NOT
+                               # "no extra signal": it is how you tell a real failure from a
+                               # contention flake. The tmux/nvim/wall-clock specs that red under
+                               # 12 workers ran green serially.
+bundle exec rspec path/to/one_spec.rb   # one file or one example; a :slow file named by path runs
 bundle exec rubocop -a         # safe autocorrect only; never -A
 bundle exec rake compile       # builds the Rust extension into lib/lain/lain.so (needs clang)
 cargo test && cargo clippy --all-targets -- -D warnings
@@ -228,6 +231,9 @@ defects have lived:
   `spec/lain/seams/` is for seams belonging to no single subject; one with an obvious subject
   stays at its mirror path and carries the tag. 2.5% of the suite but ~35% of a serial run —
   which is what makes `--tag '~seam'` a useful inner loop.
+- **`:slow`** — a cost, not a kind: the spec files `spec/support/slow_files.rb` lists (its header
+  holds the threshold and how to regenerate it), tagged by path, so no spec file carries it. A bare
+  local `rspec` skips them and says how many; `LAIN_SLOW=1`, a file named by path, and `rake pspec` run them.
 - **`:api_integration`** — hits the live API, costs money, opt-in. Named for what it integrates
   WITH: calling both tiers "integration" hid the distinction that matters, which is that one of
   them can fail because somebody else's service is down.
