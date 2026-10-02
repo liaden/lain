@@ -216,10 +216,10 @@ flowchart LR
     T54 --> T56; T55 --> T56; T57; T58; T59
   end
   T42 --> T60; T56 --> T60; T59 --> T60
-  T14 --> T60; T15 --> T60; T16 --> T60; T17 --> T60; T49 --> T60; T51 --> T60; T52 --> T60
+  T14 --> T60; T15 --> T60; T16 --> T60; T17 --> T60; T49 --> T60; T51 --> T60; T52 --> T60; T62 --> T60
 ```
 
-T60 depends on every other card (T0 to T61); the graph shows the edges that order work.
+T60 depends on every other card (T0 to T62); the graph shows the edges that order work.
 
 ## Tasks
 
@@ -246,7 +246,7 @@ Conventions for every card:
 
 ### Phase 0: tools
 
-### T0: bin/suite-load proves a spec change under real suite load          [risk: medium]
+### T0: bin/suite-load proves a spec change under real suite load          [risk: medium] [x]
 
 **Depends on:** none
 **Files:** `bin/suite-load` (new), `bin/suite-redrate` (new), `spec/lain/suite_load_spec.rb` (new)
@@ -345,7 +345,7 @@ Spec file: `spec/lain/supervisor_spec.rb`
 **Stop and report if:**
 - The 2-extra-yields example passes with a single `task.yield` on Ruby 4.0.6 and async 2.46 (the mechanism is wrong).
 
-### T3: conductor_spec joins its signalling threads          [risk: low]
+### T3: conductor_spec joins its signalling threads          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/lain/cli/conductor_spec.rb`
@@ -366,7 +366,7 @@ Spec file: `spec/lain/cli/conductor_spec.rb`
 **Stop and report if:**
 - Joining the thread changes what `:480` or `:587` assert.
 
-### T4: tty_spec reads a submitted line only once it is written          [risk: low]
+### T4: tty_spec reads a submitted line only once it is written          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/lain/frontend/tty_spec.rb` (the `submitted` helper, `:1476-1481` on `main`)
@@ -387,7 +387,7 @@ Spec file: `spec/lain/frontend/tty_spec.rb`
 **Stop and report if:**
 - Any of the 4 callers (`:1495`, `:1533`, `:1549`, `:1567` on `main`) asserts on an empty file.
 
-### T5: HeadlessEditor.connect retries a socket that is not yet listening          [risk: low]
+### T5: HeadlessEditor.connect retries a socket that is not yet listening          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/support/headless_editor.rb`, `spec/support_headless_editor_spec.rb`, `spec/lain/frontend/neovim/runtime/51_thread_spec.rb`
@@ -520,7 +520,7 @@ The test that waits for the monitor to sleep bounds its `Thread.pass` loop, and 
 **Stop and report if:**
 - `faraday_handlers.rb` loses its `ThreadSafety/NewThread` exclusion in `.rubocop.yml` or needs a new one.
 
-### T9: neovim_request_spec stubs the teardown grace          [risk: low]
+### T9: neovim_request_spec stubs the teardown grace          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/lain/frontend/neovim_request_spec.rb` (`:366`)
@@ -609,7 +609,7 @@ Spec file: the 8 files listed
 **Stop and report if:**
 - `hangup_spec` at a 0.5s grace fails under bin/suite-load: keep 5s and report.
 
-### T13: A shared pool of pre-booted children for PTY seam specs          [risk: medium]
+### T13: A shared pool of pre-booted children for PTY seam specs          [risk: medium] [x]
 
 **Depends on:** none
 **Files:** `spec/support/warm_pool.rb`, `spec/support/warm_cockpit.rb`, `spec/support/once_per_file.rb`, `spec/support_warm_pool_spec.rb` (all new)
@@ -957,7 +957,7 @@ Spec file: `spec/lain/exec/local_spec.rb` (25 examples)
 
 ### Phase C: Shell::Out everywhere
 
-### T26: Shell::Out runs in a directory with input on stdin          [risk: high]
+### T26: Shell::Out runs in a directory with input on stdin          [risk: high] [x]
 
 **Depends on:** none
 **Files:** `lib/lain/shell/out.rb`, `spec/lain/shell/out_spec.rb`
@@ -1714,7 +1714,7 @@ Spec file: the 4 files
 
 ### Phase E: CI and ratchet
 
-### T54: CI build job runs the suite only, with bounds          [risk: medium]
+### T54: CI build job runs the suite only, with bounds          [risk: medium] [x]
 
 **Depends on:** none
 **Files:** `.github/workflows/main.yml`
@@ -1739,7 +1739,7 @@ Spec file: none (CI config); verification is the Integration checks' CI run
 **Stop and report if:**
 - Branch protection does not require the lint job (the user must add it).
 
-### T55: pspec tolerates a partial runtime log          [risk: low]
+### T55: pspec tolerates a partial runtime log          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `Rakefile` (`:28-31`)
@@ -1786,7 +1786,7 @@ Spec file: none; verification is the Integration checks' CI runs
 **Stop and report if:**
 - `setup-ruby-and-rust@v1`'s inputs differ from `ci.md`'s reading.
 
-### T57: CI stops reinstalling tmux          [risk: low]
+### T57: CI stops reinstalling tmux          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `.github/actions/spec-binaries/action.yml`
@@ -1807,7 +1807,7 @@ Spec file: none; verification in the CI run
 **Stop and report if:**
 - The image's tmux is older than the version the specs need.
 
-### T58: A dispatchable CI workflow measures worker counts          [risk: low]
+### T58: A dispatchable CI workflow measures worker counts          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `.github/workflows/spec-workers-bench.yml` (new)
@@ -1845,7 +1845,7 @@ bin/runtime-census --check    # exit 1 when a named file is over its ceiling in 
                               # or when `rspec --dry-run` counts fewer examples than the floor
 ```
 
-Sources: per-file seconds from the recorded runtime logs (`path:seconds`); the example floor from `rspec --dry-run`, which counts examples that exist, not examples that ran (the truncation guard is T1, not this tool). Ceilings live in the script as a frozen Hash, like `bin/spec-census`'s `CEILINGS`.
+Sources: per-file seconds from the recorded runtime logs (`path:seconds`); the example floor from `LAIN_SLOW=1 rspec --dry-run` (T62's tag must not shrink it), which counts examples that exist, not examples that ran (the truncation guard is T1, not this tool). Ceilings live in the script as a frozen Hash, like `bin/spec-census`'s `CEILINGS`.
 
 **Acceptance criteria**
 
@@ -1865,14 +1865,55 @@ Spec file: `spec/lain/runtime_census_spec.rb` (fixture logs, never a real run)
 **Stop and report if:**
 - `rspec --dry-run` over the whole suite takes more than 30s.
 
+### T62: A `:slow` tag a bare local `rspec` skips, and `rake pspec` always runs          [risk: medium]
+
+Added 2026-10-02 at the user's request, mid-run.
+
+**Depends on:** none
+**Files:** `spec/support/slow_files.rb` (new), `spec/support/tags.rb` (the gate, beside `LAIN_SEAM`), `spec/support_slow_files_spec.rb` (new), `Rakefile` (`pspec` sets `LAIN_SLOW=1` for its workers)
+**Reuse:** `tmp/parallel_runtime_rspec.log` (per-file seconds); the `:seam` and `:nvim` gates in `spec/support/tags.rb`; `config.define_derived_metadata(file_path: ...)`, so no spec file is edited
+**Shared-file wiring:** `CLAUDE.md` Toolchain block: a bare `rspec` skips `:slow` files (`LAIN_SLOW=1` runs them); `rake pspec`, the commit hook and CI always run them. `CLAUDE.md` Testing: one line naming the tag beside `:seam`. `docs/spec-suite-performance.md`: the threshold and how to regenerate the list.
+**Reachable from:** every `rspec` run through `spec/spec_helper.rb`; the hook's `rake compile check` and CI's `rake compile pspec` reach it through `pspec`
+
+The list is the spec files at or above 5s in the runtime log at landing time (110 files, 76% of file-seconds on 2026-10-02), kept in `spec/support/slow_files.rb` as a frozen list of paths with the threshold and the date it was measured. T60 regenerates it after the plan's speedups.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a bare local rspec skips the slow files and says so
+  Given LAIN_SLOW is unset and no file is named on the command line
+  When bundle exec rspec runs
+  Then examples in the listed files are excluded, and one line names how many files were skipped and how to run them
+
+Scenario: rake pspec runs every example
+  Given the pspec task
+  When it starts its workers
+  Then LAIN_SLOW=1 reaches them, and the example count equals a run with the tag ignored
+
+Scenario: a slow file named on the command line still runs
+  Given a listed file passed to rspec by path
+  When it runs without LAIN_SLOW
+  Then its examples run, because naming a file is asking for it
+
+Scenario: the list cannot rot silently
+  Given a listed path that no longer exists
+  When the suite loads
+  Then it fails naming the path
+```
+Spec file: `spec/support_slow_files_spec.rb`
+
+**Stop and report if:**
+- Excluding the tag changes the example count `rake pspec` reports.
+- An explicit file argument cannot be told apart from the default pattern inside RSpec's configuration.
+
 ### Phase F: baseline
 
 ### T60: Record the new baseline          [risk: low]
 
-**Depends on:** every card T0 to T61
+**Depends on:** every card T0 to T62
 **Files:** `tmp/profiling-2026-09-30/pass7/` (data, gitignored)
 **Reuse:** `bin/suite-redrate` (T0); `tmp/profiling-2026-09-30/pass2/ab_runner.rb`
-**Shared-file wiring:** `CLAUDE.md:33` (wall, example count, date), `CLAUDE.md:64-67` (the wall is the larger of the slowest file and total work / workers; the worker count), `docs/spec-suite-performance.md` (worker table, "The wall is the larger of two terms", floor table), `docs/toolchain-traps.md` (ledger summary), `ROADMAP.md` Status line marked done
+**Shared-file wiring:** `CLAUDE.md:33` (wall, example count, date), `spec/support/slow_files.rb` (regenerate T62's list), `CLAUDE.md:64-67` (the wall is the larger of the slowest file and total work / workers; the worker count), `docs/spec-suite-performance.md` (worker table, "The wall is the larger of two terms", floor table), `docs/toolchain-traps.md` (ledger summary), `ROADMAP.md` Status line marked done
 **Reachable from:** n/a (measurement)
 
 **Acceptance criteria**
@@ -1913,3 +1954,17 @@ Prerequisite before T1: commit the uncommitted `bin/box-state` fix in the main c
   A docs or shell commit takes about 1s. The suite cannot run beside another suite (shared `TMPDIR`,
   contention flakes), so Ruby cards land in windows with no agent running a suite or a load proof.
 - Grounding re-check: HEAD differs from the grounding SHA only by `bin/box-state`; no card is affected.
+- T0, T26, T13, T5, T3, T4, T9 started (wave 1, worktrees at `4f5eeb09`).
+- T54, T55, T57, T58 started (CI cards, no suite runs).
+- T57 landed `e351e405`. T58 landed `38ac8947`.
+- T54 landed `0370247e` (main session applied the draft and the review's `!cancelled()` fix, per the user's approval).
+- T55 landed `38b707d8`; its hook run used a runtime log cut to 90 of 902 lines and passed (no RuntimeLogTooSmallError). From here the main session runs `rake compile check` itself with output kept, so the example count is read, then commits with `SKIP=ruby-checks`: the hook hides a passing run's output.
+- T3 landed `900aebae` (suite 21,509 examples, 0 failures).
+- User ruling 2026-10-02 on flakes: a red in an example the ledger already names, in a file a card here fixes, lands once it passes alone; any other red follows the full flaky procedure, since no new flake may land.
+- T4 landed `2a0baa4c`. Suite 21,510 examples, 2 failures: the 2 ledger-named 62_approval examples ("carries the wrapped command unwrapped..." and "resolves one unwrapped call per answerable row..."), T6's scope; the file passed alone 8 of 8. Review agents were running probes during the suite.
+- T9 landed `4d5ad58b` (suite 21,510 examples, 0 failures).
+- T5 landed `ae48fe6e`. Suite 21,513 examples, 2 failures, both green alone: input_pane_spec "a pane with no chat to talk to..." (ledger, T1) and supervisor_spec "drops the row when the task is stopped, and when it fails" (not in the ledger, but red on main in the bisect logs and in the research report; T2 fixes it).
+- T0 landed `5024f2f2` (suite 21,533 examples, 0 failures). Its second review's count fix was verified by the main session with the reviewer's probe instead of a third review.
+- T13 landed `9fb52204` (suite 21,546 examples, 0 failures). Gap: WarmCockpit pair, terminal and pane have no example; the first card using them (T14 to T17) must exercise them.
+- T26 landed `81b89b90`. Suite 21,554 examples, 1 failure: the ledger-named 62_approval "carries the wrapped command unwrapped..." (T6), green alone. The card's 200KB input became 1MB (200KB fit in the pipe buffers and could not show the deadlock); with no input, stdin stays on /dev/null (main-session ruling).
+- Checkpoint after wave 1: landed T0, T3, T4, T5, T9, T13, T26, T54, T55, T57, T58. No agent in flight; `git worktree list` shows only the main checkout. T62 added at the user's request (a `:slow` tag). Next: T1, T2, T6, T8, T27, T28, T29, T62. Load proofs (T1, T2, T6 and later) run in the main session between landing windows.
