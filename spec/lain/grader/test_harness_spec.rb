@@ -45,7 +45,7 @@ RSpec.describe Lain::Grader::TestHarness do
       captured = nil
       factory = lambda do |*argv, **options|
         captured = options
-        Mixlib::ShellOut.new(*argv, **options)
+        Lain::Shell::Out.new(*argv, **options)
       end
       described_class.new(rspec_mini, shell_out_factory: factory)
                      .grade(worker_env_for(rspec_mini, worker_env_class))
@@ -56,6 +56,21 @@ RSpec.describe Lain::Grader::TestHarness do
       scrubbed = captured.fetch(:environment)
       expect(scrubbed).to include("BUNDLE_GEMFILE" => nil)
       expect(scrubbed["RUBYOPT"]).to be_nil
+    end
+
+    it "gives the child a scrubbed environment through the production runner" do
+      Dir.mktmpdir do |dir|
+        probe = Lain::Grader::TestHarness::Adapter::Command.new(
+          out_argv: lambda { |out|
+            ["sh", "-c", "printf 'PASS %s\\n' \"${BUNDLE_GEMFILE:-unset}\" > #{Shellwords.escape(out)}"]
+          },
+          passed: /\APASS (.+)/, failed: /\AFAIL (.+)/
+        )
+        env = worker_env_for(dir, worker_env_class)
+        env = worker_env_class.new(cwd: dir, env: env.env.merge("BUNDLE_GEMFILE" => "/host/Gemfile"))
+
+        expect(described_class.new(dir, adapter: probe).run(env).passed).to eq(["unset"])
+      end
     end
   end
 
@@ -194,17 +209,20 @@ RSpec.describe Lain::Grader::TestHarness do
   end
 
   describe "a hung child is bounded by an injectable timeout" do
-    it "raises a named Timeout (not the raw mixlib class) naming the command and the limit" do
+    # The child dies on TERM; one that ignored it would take GRACE (3s) longer.
+    it "raises a named Timeout naming the command and the limit, within a second of it" do
       sleeper = Lain::Grader::TestHarness::Adapter::Command.new(
-        out_argv: ->(out_path) { ["sh", "-c", "sleep 5 > #{out_path}"] },
+        out_argv: ->(out_path) { ["sh", "-c", "sleep 5 > #{Shellwords.escape(out_path)}"] },
         passed: /\APASS (.+)/, failed: /\AFAIL (.+)/
       )
 
       Dir.mktmpdir do |dir|
         harness = described_class.new(dir, adapter: sleeper, timeout: 0.3)
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
         expect { harness.grade(worker_env_for(dir, worker_env_class)) }
           .to raise_error(Lain::Grader::TestHarness::Timeout, /sleep 5.*0\.3/m)
+        expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 1.3
       end
     end
   end

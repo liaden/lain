@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "tmpdir"
-require "mixlib/shellout"
 
 module Lain
   module Grader
@@ -30,16 +29,15 @@ module Lain
     # The framework is a duck ({Adapter}); detection is loud (no silent guess),
     # and an explicit `adapter:` always wins.
     class TestHarness
-      # The child ran past its bound. Wraps mixlib's own timeout in a
-      # Lain-taxonomy error naming the command and the limit, so a caller
-      # catches one named type rather than a leaked dependency class.
+      # The child ran past its bound. Wraps {Shell::Out::Timeout} in an error
+      # naming the command and the limit, so a caller catches one type here.
       class Timeout < Lain::Error; end
 
       # A hung or runaway suite (an infinite loop in a test, a wedged child) must
       # not stall the bench that grades it, so the child is always bounded. 300s
       # is generous enough for a substantial real suite yet finite; a spec injects
       # a tiny value, and a slow real suite raises it deliberately at the call
-      # site rather than inheriting mixlib's unadvertised 600s default.
+      # site rather than inheriting the runner's 600s default.
       DEFAULT_TIMEOUT = 300
 
       # rspec reports a load crash (SyntaxError, a missing require) in the JSON
@@ -55,7 +53,7 @@ module Lain
       # @param shell_out_factory [#call] the subprocess runner, injected as a
       #   factory as {Tools::Bash} and the isolation backends do
       def initialize(root, adapter: nil, timeout: DEFAULT_TIMEOUT,
-                     shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                     shell_out_factory: Shell::Out.public_method(:new))
         @root = File.expand_path(root.to_s)
         @adapter = adapter || Adapter.detect(@root)
         @timeout = timeout
@@ -117,7 +115,7 @@ module Lain
 
       def capture(shell, argv)
         shell.run_command
-      rescue Mixlib::ShellOut::CommandTimeout => e
+      rescue Shell::Out::Timeout => e
         raise Timeout, "test command `#{argv.join(" ")}` exceeded the #{@timeout}s timeout: #{e.message}"
       end
 
