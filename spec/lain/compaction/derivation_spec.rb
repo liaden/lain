@@ -436,9 +436,10 @@ RSpec.describe Lain::Compaction::Derivation do
 
     # The cut is the seam a committed compaction froze: the source digest it
     # collapsed up to, and what every range at or before it was replaced with.
-    # The derivation is still taken from the SOURCE root every time -- it holds
-    # no derived head -- but the ranges at or before the cut are not the
-    # strategy's to answer again.
+    # The derivation is still taken from the SOURCE root -- extending an
+    # earlier derived chain only where its held seam and prefix digests match
+    # -- but the ranges at or before the cut are not the strategy's to answer
+    # again.
     describe "a held cut" do
       def seam_of(source, strategy: fixtures.summarizing, cut: described_class::UNCUT)
         described_class.new(strategy:, keep_last: 3).derive(source, cut:) { |_derived, seam| seam }
@@ -537,6 +538,128 @@ RSpec.describe Lain::Compaction::Derivation do
         longer = derivation.derive(extended(earlier, 2), cut:)
 
         expect(shorter.ancestor_of?(longer)).to be(true)
+      end
+
+      # A correct resume and a full derivation write the same digests, so only
+      # the work done can tell them apart: the envelopes put into the store.
+      describe "resuming an earlier derivation" do
+        let(:holding) { described_class.new(strategy: Lain::Compaction::Strategy::Identity.new, keep_last: 3) }
+        let(:earlier) { fixtures.history(9) }
+        let(:later) { extended(earlier, 3) }
+        let(:cut) { seam_of(earlier) }
+        let(:first) { holding.derive(earlier, cut:) }
+        let(:resume) do
+          described_class::Resume.new(head: earlier.head_digest, size: earlier.length, seam: cut, derived: first)
+        end
+
+        def envelopes_put(store)
+          written = []
+          allow(store).to receive(:put).and_wrap_original do |put, object|
+            written << object
+            put.call(object)
+          end
+          yield
+          written.grep(Lain::Event)
+        end
+
+        def edge_of(derivation_journal, **options)
+          described_class.new(strategy: Lain::Compaction::Strategy::Identity.new, keep_last: 3,
+                              journal: derivation_journal).derive(later, cut:, **options)
+          derivation_journal.last
+        end
+
+        def full_and_resumed(stale, derivation:, held:)
+          full = derivation.derive(later, cut: held)
+          resumed = nil
+          written = envelopes_put(later.store) { resumed = derivation.derive(later, cut: held, resume: stale) }
+          [full, resumed, written]
+        end
+
+        def expect_full_derivation(stale, derivation: holding, held: cut)
+          full, resumed, written = full_and_resumed(stale, derivation:, held:)
+
+          expect([resumed.head_digest, resumed.store]).to eq([full.head_digest, later.store])
+          expect(written.size).to eq(full.length)
+        end
+
+        it "derives the head digest a full derivation does, and journals the same edge" do
+          full = holding.derive(later, cut:)
+
+          resumed = holding.derive(later, cut:, resume:)
+
+          expect(resumed.head_digest).to eq(full.head_digest)
+          expect(edge_of([], resume:)).to eq(edge_of([]))
+        end
+
+        it "writes one turn per new source turn, and nothing the earlier chain holds" do
+          first
+          objects = later.store.size
+
+          written = envelopes_put(later.store) { holding.derive(later, cut:, resume:) }
+
+          expect(written.size).to eq(3)
+          expect(later.store.size - objects).to eq(3)
+        end
+
+        it "yields itself as a resume only when nothing new collapsed" do
+          yielded = holding.derive(earlier, cut:) { |_derived, _seam, kept| kept }
+          collapsing = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
+
+          expect(yielded).to eq(resume)
+          expect(collapsing.derive(later, cut:) { |_derived, _seam, kept| kept }).to be_nil
+        end
+
+        # A new turn alone may already be invalid, so the verdict is compared
+        # whole: the positions a refusal names count the turns before it.
+        it "refuses an invalid new turn as the full derivation does, writing nothing" do
+          orphan = { "type" => "tool_result", "tool_use_id" => "toolu_nope", "content" => "x" }
+          invalid = earlier.commit(role: "user", content: [orphan])
+          refusal = lambda do |**options|
+            holding.derive(invalid, cut:, **options)
+          rescue described_class::Invalid => e
+            e.message
+          end
+          resume
+          objects = invalid.store.size
+
+          expect(refusal.call(resume:)).to eq(refusal.call).and include("messages[4]")
+          expect(invalid.store.size).to eq(objects)
+        end
+
+        it "derives in full, ignoring a resume, under a different seam" do
+          expect_full_derivation(resume.with(seam: described_class::UNCUT, derived: holding.derive(earlier)))
+        end
+
+        it "derives in full, ignoring a resume, when a held range ends beyond the old prefix" do
+          expect_full_derivation(resume.with(head: earlier.to_a[2].digest, size: 3))
+        end
+
+        it "derives in full, ignoring a resume, when the source's digest at size - 1 is another" do
+          other = extended(fixtures.history(6, store: earlier.store), 3)
+          stale = described_class::Resume.new(head: other.head_digest, size: other.length, seam: cut,
+                                              derived: holding.derive(other, cut:))
+
+          expect_full_derivation(stale)
+        end
+
+        it "derives in full, ignoring a resume, when the plan collapses something new" do
+          expect_full_derivation(resume, derivation: described_class.new(strategy: fixtures.summarizing,
+                                                                         keep_last: 3))
+        end
+
+        it "derives in full, ignoring a resume, when its chain sits in a store other than the one derived into" do
+          elsewhere = fixtures.history(9)
+
+          expect_full_derivation(resume.with(derived: holding.derive(elsewhere, cut:)))
+        end
+
+        # A size of 0 would read the digest at index -1, which is the head.
+        it "derives in full, ignoring a resume, when it claims an empty prefix" do
+          uncut = described_class::UNCUT
+          stale = resume.with(head: later.head_digest, size: 0, seam: uncut, derived: holding.derive(earlier))
+
+          expect_full_derivation(stale, held: uncut)
+        end
       end
 
       it "names the cut it derived from on the edge, beside every held span" do
@@ -696,10 +819,11 @@ RSpec.describe Lain::Compaction::Derivation do
     # re-addressed. Put another way, the failure of structural sharing IS the
     # failure of functoriality.
     #
-    # If this ever goes red because derivation became prefix-preserving, that is
-    # a real result and needs confirming -- but the far likelier cause is
-    # someone "optimising" the derivation into an incremental extend, which the
-    # Open decisions forbid. Either way: stop, do not delete the example.
+    # A resume extends a derived chain only under a held seam with nothing new
+    # collapsing, which this example's strategy never is. If it ever goes red,
+    # the likelier cause is an extension taken where a range collapses anew,
+    # and that chain is not the full derivation's. Either way: stop, do not
+    # delete the example.
     it "is not a functor on the prefix order: T1 <= T2 does not imply derive(T1) <= derive(T2)" do
       store = Lain::Store.new
       earlier = fixtures.history(9, store:)

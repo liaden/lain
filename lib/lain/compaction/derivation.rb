@@ -21,13 +21,14 @@ module Lain
     # never filtered or dropped ({Arm::Synthesis}'s discipline), so a digest
     # the Store has not seen RAISES rather than leaving an edge out quietly.
     #
-    # == There is no prefix sharing, and none is needed
+    # == Prefix sharing only under a held cut
     #
     # `Event#payload` folds `render_parent`, so a retained turn re-committed
     # under a new parent chain gets a DIFFERENT digest: the derived chain
-    # shares nothing with its source, and successive derived chains share
-    # nothing with each other. What makes that affordable is that the WRITTEN
-    # chain is bounded by the retained tail plus the number of ranges, never by
+    # shares nothing with its source, and two derived chains share a prefix
+    # only when a held cut keeps their parent chains the same (see "A held
+    # cut" below). What makes the rest affordable is that the WRITTEN chain is
+    # bounded by the retained tail plus the number of ranges, never by
     # history length -- measured at 23 objects per derivation whether the
     # source holds 50 turns or 3,200.
     #
@@ -38,14 +39,13 @@ module Lain
     # `Canonical.dump`s the whole history and that dump is most of what
     # {Context::Compact} spends.
     #
-    # That is also why there is no `#extend`: an incremental extension would
-    # have to hold the last derived head -- the state non-recursion exists to
-    # avoid -- and would buy nothing, since derivation is not a functor on the
-    # prefix order (`A <= B` does not imply `derive(A) <= derive(B)`), pinned
-    # as a characterization example in the spec. The source is the SESSION
-    # timeline, never a previously derived one, which is what keeps a derived
-    # head a pure content address of (source head, strategy, cut) and so makes
-    # re-derivation exact and the artifact diffable.
+    # The source is the SESSION timeline, never a previously derived one,
+    # which is what keeps a derived head a pure content address of (source
+    # head, strategy, cut) and so makes re-derivation exact and the artifact
+    # diffable. Derivation is not a functor on the prefix order (`A <= B`
+    # does not imply `derive(A) <= derive(B)`), pinned as a characterization
+    # example in the spec: a range that collapses anew re-addresses every
+    # event after it.
     #
     # == A held cut
     #
@@ -54,11 +54,20 @@ module Lain
     # derivation still starts from the source root, but those ranges are not
     # the strategy's to answer again -- they are written from the record --
     # and the strategy is offered only the span after the cut. So the cut is
-    # policy state its owner passes in, never a derived head held here, and
-    # while it holds with nothing new collapsing the derived chain DOES extend
-    # as the source does: the replacement's bytes and its parent chain are the
-    # same turn to turn. That monotonicity is the cut's purpose, and it is
-    # pinned beside the negative above.
+    # policy state its owner passes in, and while it holds with nothing new
+    # collapsing the derived chain DOES extend as the source does: the
+    # replacement's bytes and its parent chain are the same turn to turn.
+    # That monotonicity is the cut's purpose, and it is pinned beside the
+    # negative above.
+    #
+    # It is also the one place a derived chain may be EXTENDED rather than
+    # rewritten. A {Resume} names an earlier derivation of a prefix of the
+    # source; when its seam is the held one, the source's digest where that
+    # prefix ended is the one it recorded, and nothing new collapses, the
+    # full derivation would rewrite the same digests, so only the turns after
+    # the prefix are written. The head digest, the store objects and the
+    # journalled edge are the full derivation's; a resume that does not match
+    # is ignored and the full derivation runs.
     #
     # == What this object does not decide
     #
@@ -146,20 +155,25 @@ module Lain
       #   chain and short of the keep_last boundary -- the caller decides which
       #   cut still holds, and holding one anywhere else would collapse either
       #   the wrong range or turns a forward run sent verbatim
+      # @param resume [Resume, nil] an earlier derivation of a prefix of
+      #   `source`, extended rather than rewritten when it {Resume#covers?}
+      #   this one; nil, or one that does not cover it, derives in full
       # @yieldparam derived [Timeline] the derived chain
       # @yieldparam seam [Seam] the seam this derivation froze: `cut` itself
       #   when nothing after it collapsed, and otherwise a later one holding
       #   every range this chain collapsed. It is the caller's to commit or
       #   discard -- a derivation does not know whether its chain will be sent.
+      # @yieldparam resume [Resume, nil] this derivation as a later one may
+      #   resume it; nil when something new collapsed or the source is empty
       # @return [Timeline, Object] the derived chain, in `into`; or the block's
       #   value when a block is given
-      def derive(source, into: source.store, walk: nil, cut: UNCUT)
+      def derive(source, into: source.store, walk: nil, cut: UNCUT, resume: nil)
         refuse_foreign(source, into)
         plan = Plan.over(strategy: @strategy, walk: walk || Walk.of(source), keep_last: @keep_last, cut:)
         collapsed = plan.collapsed
-        derived = committed(plan.writes(collapsed), into)
+        derived = resume&.covers?(plan, into) ? extended(plan, resume) : committed(plan.writes(collapsed), into)
         @journal << edge(plan, source, derived)
-        block_given? ? yield(derived, plan.seam(collapsed)) : derived
+        block_given? ? yield(derived, plan.seam(collapsed), plan.resume(derived)) : derived
       end
 
       # {Head}'s projection verbatim: the derived chain has to be validated in
@@ -207,7 +221,39 @@ module Lain
         end
       end
 
+      # Where an earlier derivation stopped: the source digest it ended at and
+      # how many turns that source held, the seam it held, and the chain it
+      # wrote. Content addressing is what makes the prefix check sound: the
+      # source's digest at `size - 1` equalling `head` proves the source
+      # begins with the very turns that chain was derived from.
+      Resume = Data.define(:head, :size, :seam, :derived) do
+        # @param plan [Plan] this derivation's plan
+        # @param into [Store] where this derivation writes
+        # @return [Boolean] whether extending `derived` gives the full
+        #   derivation's chain: the same seam held, the same prefix, every held
+        #   range inside it, nothing new collapsing, and the same store
+        def covers?(plan, into)
+          plan.live_ranges.empty? && plan.held == seam && derived.store.equal?(into) && prefix_of?(plan)
+        end
+
+        private
+
+        # `size` is checked from below too: a digest at index -1 is the head.
+        def prefix_of?(plan)
+          size.between?(1, plan.turns.size) && plan.turns.fetch(size - 1).digest == head &&
+            plan.held_ranges.all? { |range| range.max < size }
+        end
+      end
+
       private
+
+      # Judged as {#committed} is and over the whole chain, since a violation
+      # can straddle the turn where the earlier chain ended.
+      def extended(plan, resume)
+        writes = plan.retained_after(resume.size)
+        refuse_invalid(writes, before: resume.derived.to_a)
+        writes.inject(resume.derived) { |chain, write| write.onto(chain) }
+      end
 
       def committed(writes, into)
         refuse_invalid(writes)
@@ -230,8 +276,8 @@ module Lain
       # `Canonical.normalize` is the transform {Event::Payload} applies on the
       # way in, so these are the bytes the provider would have seen and this is
       # the SAME judgement the committed chain would get.
-      def refuse_invalid(writes)
-        messages = Canonical.normalize(writes.map(&:projection))
+      def refuse_invalid(writes, before: NO_RANGES)
+        messages = Canonical.normalize(Derivation.projected(before) + writes.map(&:projection))
         conversation = Context::Conversation.new(messages)
         return if conversation.valid?
 
@@ -402,6 +448,16 @@ module Lain
 
           Seam.new(digest: digest(live_ranges.last.max), collapses: collapsed.map { |pair| recorded(*pair) },
                    keeps_last: held.keeps_last)
+        end
+
+        def retained_after(size) = retained(size...turns.size)
+
+        # Only where nothing new collapsed, since {Resume#covers?} refuses a
+        # plan with live ranges and a resume taken past one would never match.
+        def resume(derived)
+          return unless live_ranges.empty? && turns.any?
+
+          Resume.new(head: turns.last.digest, size: turns.size, seam: held, derived:)
         end
 
         private

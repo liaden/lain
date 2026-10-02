@@ -355,7 +355,8 @@ module Lain
         # the summarizer's input may be earlier replacements, so a collapse
         # re-summarizes summaries rather than a history nothing can fit. What
         # it ANSWERS is still a range over the source turns, addressed by their
-        # digests, so no derivation ever holds a derived head.
+        # digests, so a derivation is still taken from the source root; only
+        # a held seam over a matching prefix ever extends a derived chain.
         class Stretch
           # One rendered message of the stretch and the source turns it stands
           # for: a retained turn, or a held range with the collapse that

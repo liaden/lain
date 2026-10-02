@@ -66,9 +66,9 @@ module Lain
         # @return [Boolean] whether a session with that streak has stopped
         #   compacting, rather than merely having met one awkward turn
         #
-        # A class method because the ASKER never has a Derived: this object is
-        # per-turn and lives inside the render path, while the readers are a
-        # prompt line and a status bar reading a published number back.
+        # A class method because the ASKER never has a Derived: this object
+        # lives inside the render path, while the readers are a prompt line and
+        # a status bar reading a published number back.
         def self.stalled?(streak) = streak >= STALLED_STREAK
 
         # The policy a held render derives under. Named on the edge as what it
@@ -127,6 +127,7 @@ module Lain
           @journal = journal
           @consecutive = 0
           @named = UNJOURNALED
+          @resume = nil
         end
 
         # Held here and asked back for the {Head}: the cut a derivation makes
@@ -154,7 +155,10 @@ module Lain
         # they already rendered -- their replacements, and the turns they
         # retained between them -- and what it answers is recorded as ranges
         # over the SOURCE turns, so the derivation still starts at the source
-        # root and holds no derived head.
+        # root. The new seam is derived under the holding policy, so the
+        # earlier chain held for a resume is offered to it; only the seam
+        # check in {Derivation::Resume#covers?} stops that chain being
+        # extended here.
         #
         # It is how a session whose every summary is already held makes room
         # again: an advance has nothing droppable left to collapse, and ten
@@ -212,7 +216,8 @@ module Lain
         # instead, and every journalled rate shifts back one turn, permanently
         # and silently, with the whole suite still green.
         def replayed(policy, timeline, walk, cut)
-          outcome = derivation(policy).derive(timeline, walk:, cut:) do |derived, seam|
+          outcome = derivation(policy).derive(timeline, walk:, cut:, resume: resumable(policy)) do |derived, seam, kept|
+            @resume = resumable(policy, kept)
             Outcome.new(replay: Replay.new(Derivation.projected(derived.to_a)), seam:,
                         hits: policy.hits, misses: policy.misses,
                         size_declined_misses: policy.size_declined_misses)
@@ -228,6 +233,12 @@ module Lain
           Outcome.new(replay: nil, seam: cut, hits: policy.hits, misses: policy.misses,
                       size_declined_misses: policy.size_declined_misses)
         end
+
+        # Only held renders resume: once a cut commits they are most turns, and
+        # the only ones whose whole cost is the derivation. Another policy's
+        # turn pays its strategy whatever a resume would save, so its chain is
+        # not kept.
+        def resumable(policy, resume = @resume) = policy.equal?(HOLDING) ? resume : nil
 
         # A fresh {Derivation} per turn, because the policy it is frozen around
         # is this turn's -- {PinCuts} closes over a pin set that moves. Both

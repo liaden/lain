@@ -1543,10 +1543,11 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
-  # The cut is POLICY STATE, not a derived head: the Source re-derives from the
-  # source root every turn, with the ranges a committed compaction collapsed
-  # held at their recorded replacement and everything after them kept. A signal
-  # that clears therefore never renders the full history again.
+  # The cut is POLICY STATE, not a derived head: the Source derives from the
+  # source root, extending its last chain only while the cut holds unchanged,
+  # with the ranges a committed compaction collapsed held at their recorded
+  # replacement and everything after them kept. A signal that clears therefore
+  # never renders the full history again.
   describe "a committed compaction cut" do
     let(:session) { recording_session }
 

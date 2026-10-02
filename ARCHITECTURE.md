@@ -1639,8 +1639,9 @@ its prefix. It does not (`derive(T1) <= derive(T2)` fails even when `T1 <= T2`),
 independent reasons: a retained turn re-committed under a different parent chain gets a
 different digest, and the `keep_last` window slides. (In the glossary's categorical terms:
 derivation is not a [functor](docs/GLOSSARY.md#functor) between the prefix orders.) The wrong
-model has a name, `Derivation#extend` holding the last derived head, and 2 specs go red if
-anyone "fixes" the code toward it. Full re-derivation stays affordable because the derived
+model is extending from the last derived head unconditionally, and 2 specs go red if anyone
+"fixes" the code toward it; `Derivation::Resume` extends only when the held seam and the
+prefix digests match what a full derivation would produce, and is otherwise refused. Full re-derivation stays affordable because the derived
 chain is bounded by `keep_last`, not by history length. A **held compaction cut** changes what
 the negative means without making it false: the cut is a source digest passed in, not a derived
 head held, and while it holds with nothing new collapsing the derived chain *does* extend as the

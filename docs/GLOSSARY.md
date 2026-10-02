@@ -109,9 +109,11 @@ second through the live `Compaction::Source`.
 
 The wrong model those two exist to prevent is "**derivation is incremental**" — that a compacting
 turn extends the previous derived chain, sharing its prefix, the way the session timeline extends
-itself. A reader who assumes it writes a `Derivation#extend`, which would have to hold the last
-derived head, which is the state the non-recursive ruling exists to avoid. So there is no `#extend`,
-every compacting turn derives fully, and the specs go red if someone "fixes" it. Failed structural
+itself. A turn that collapses a new range derives fully, from the source root, and the specs go red
+if someone "fixes" it. The one exception is narrow: a turn that holds a cut and collapses nothing
+new may extend the last derived chain (`Derivation::Resume`), and only when the held seam and the
+source's digest where that chain ended both match, so the result is byte for byte the full
+derivation's. There is still no `#extend` method; the resume rides on `#derive`. Failed structural
 sharing and failed functoriality are the same fact stated twice; what makes full re-derivation
 affordable is that the derived chain is bounded by `keep_last`, not by history length
 (`spec/lain/compaction/derivation_spec.rb` pins 21 events and 22 store objects at 50, 200 and 800
@@ -120,8 +122,8 @@ source turns alike).
 The negative is about a derivation taken with **no compaction cut held**. A committed compaction
 records a cut (`Telemetry::CompactionCut`: a source digest, the turn the committing render stood
 on, and the replacement of each range it newly collapsed), and later derivations on a chain
-containing that commit head hold it: still from the source root, still with no derived head kept,
-but with the ranges at or before the cut written from the record. The commit head is the render's
+containing that commit head hold it: still from the source root (or extending the last held
+chain, under the exception above), with the ranges at or before the cut written from the record. The commit head is the render's
 own footing rather than the prompt it was asked with, so a prompt withdrawn before any model saw
 it leaves the cut standing instead of taking it off the chain. Between two advances of a held cut
 the map *is* monotone, since the replacement's bytes and parent chain do not move, and that is the
