@@ -43,13 +43,11 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
   # Scrubbed exactly as the subject scrubs, so a pre-commit hook's exported
   # GIT_INDEX_FILE cannot point these at lain's own index.
   def run_git(dir, *args)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout
+    SeedRepo.git(dir, *args).stdout
   end
 
   def try_git(dir, *args)
-    Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+    Lain::Shell::Out.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
                     .run_command
   end
 
@@ -345,6 +343,16 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
     def main_moved
       File.write(File.join(@repo_root, "README"), "main side\n")
       run_git(@repo_root, "commit", "-q", "-am", "main side")
+    end
+
+    it "deletes the branch and marker through Shell::Out, passing the transaction on stdin" do
+      owned_with_work
+      allow(Mixlib::ShellOut).to receive(:new).and_call_original
+
+      discarded(branch_over)
+
+      expect(Mixlib::ShellOut).not_to have_received(:new)
+      expect([ref?("refs/heads/#{name}"), ref?(marker)]).to eq([false, false])
     end
 
     it "anchors the tip under refs/lain/worker/, then deletes the branch and its marker" do

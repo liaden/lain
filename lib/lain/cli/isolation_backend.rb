@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module CLI
     # Turns `--isolation <name>` into the {Isolation} backend a run leases
@@ -118,7 +116,7 @@ module Lain
       #   as a factory so a spec substitutes it
       def initialize(name = nil, root: Dir.pwd, journal: Channel::Null.instance, paths: Paths.new,
                      home: paths.home_or_nil,
-                     shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                     shell_out_factory: Shell::Out.public_method(:new))
         @name = name || DEFAULT
         @root = Project::Resolver.resolved(File.expand_path(root), File)
         @journal = journal

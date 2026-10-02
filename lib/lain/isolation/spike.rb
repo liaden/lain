@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "pathname"
 require "securerandom"
 require "tmpdir"
@@ -127,13 +126,12 @@ module Lain
 
       # One transaction deleting the branch together with lain's marker, each
       # only at the commit it was made at, so a branch lain did not mark, or one
-      # moved since, is never deleted. Through mixlib, because a transaction is
-      # read from stdin and {Shell::Out} gives its child none.
+      # moved since, is never deleted.
       def discard(origin)
         lines = "delete refs/heads/#{origin.branch} #{origin.base}\n" \
                 "delete #{WorkingBranch::OWNED}/#{origin.branch} #{origin.base}\n"
-        shell = Mixlib::ShellOut.new("git", "-C", @repo_root, "update-ref", "--stdin",
-                                     input: lines, environment: Worktree::GIT_CONTEXT_SCRUB)
+        shell = Shell::Out.new("git", "-C", @repo_root, "update-ref", "--stdin",
+                               input: lines, environment: Worktree::GIT_CONTEXT_SCRUB)
         shell.run_command
         shell.exitstatus.zero? ? "" : format(UNDELETED, branch: origin.branch, reason: said(shell))
       end

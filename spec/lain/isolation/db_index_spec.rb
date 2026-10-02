@@ -119,6 +119,17 @@ RSpec.describe Lain::Isolation::DbIndex do
     end
   end
 
+  describe "the default subprocess runner" do
+    it "is Shell::Out, so provisioning forks nothing" do
+      allow(Lain::Shell::Out).to receive(:new) { |*argv, **| shell.call(*argv) }
+
+      described_class.new(services: [Lain::Isolation::Services::Postgres.new], inner: RecordingInner.new,
+                          paths: stub_paths).acquire("w1")
+
+      expect(shell.calls).to include(%w[createdb lain_worker_hashw1])
+    end
+  end
+
   describe "a declared Postgres service" do
     subject(:backend) { build([postgres]) }
 

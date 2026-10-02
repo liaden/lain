@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module Isolation
     # Isolation by per-worker `docker compose` stack: DECORATES an inner backend
@@ -174,7 +172,7 @@ module Lain
       #   defaulting to the live process ENV; injected so a spec pins the
       #   acquire-time daemon deterministically
       def initialize(services:, inner: Null.new, paths: Paths.new, project_root: Dir.pwd,
-                     compose_file: nil, shell_out_factory: Mixlib::ShellOut.public_method(:new), env: ENV)
+                     compose_file: nil, shell_out_factory: Shell::Out.public_method(:new), env: ENV)
         @services = services
         @inner = inner
         @paths = paths

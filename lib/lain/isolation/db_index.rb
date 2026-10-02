@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module Isolation
     # Isolation by per-worker database: DECORATES an inner backend ({Null} or
@@ -77,7 +75,7 @@ module Lain
       # @param shell_out_factory [#call] builds the subprocess runner, a factory
       #   exactly as {Worktree} takes one, so a spec substitutes it
       def initialize(services:, inner: Null.new, paths: Paths.new,
-                     shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                     shell_out_factory: Shell::Out.public_method(:new))
         @services = services
         @inner = inner
         @paths = paths

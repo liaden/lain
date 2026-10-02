@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module Isolation
     # The named branch workers are cut from and handed back to: the branch a
@@ -343,13 +341,12 @@ module Lain
         !standing.empty? && transacted("verify #{ref} #{standing}", "create #{owned_ref} #{marked}").exitstatus.zero?
       end
 
-      # git applies every line or none. Through mixlib rather than {Checkout},
-      # because a transaction is read from stdin and {Shell::Out} gives its
-      # child none.
+      # git applies every line or none. Not through {Checkout}, which feeds its
+      # child no stdin.
       def transacted(*lines)
-        Mixlib::ShellOut.new("git", "-C", File.expand_path(@repo_root), "update-ref", "--stdin",
-                             input: lines.map { |line| "#{line}\n" }.join,
-                             environment: Worktree::GIT_CONTEXT_SCRUB).run_command
+        Shell::Out.new("git", "-C", File.expand_path(@repo_root), "update-ref", "--stdin",
+                       input: lines.map { |line| "#{line}\n" }.join,
+                       environment: Worktree::GIT_CONTEXT_SCRUB).run_command
       end
 
       def standing(owned_only)

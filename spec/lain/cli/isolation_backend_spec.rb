@@ -22,7 +22,7 @@ class IsolationBackendShells
 
   def call(*argv, **)
     @calls << argv
-    argv.first == "git" ? Mixlib::ShellOut.new(*argv, **) : Fake.new(argv, 0, "", stdout_for(argv))
+    argv.first == "git" ? Lain::Shell::Out.new(*argv, **) : Fake.new(argv, 0, "", stdout_for(argv))
   end
 
   private
@@ -68,8 +68,7 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
   # the throwaway repo is hermetic under a GIT_*-polluted env (a pre-commit
   # hook) exactly as the backend is.
   def run_git(dir, *args)
-    Mixlib::ShellOut.new("git", "-C", dir, *args,
-                         environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.error!
+    SeedRepo.git(dir, *args)
   end
 
   # Copied, not rebuilt: five git subprocesses per example for a directory that
@@ -93,15 +92,13 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
   # The repo's own registrations: one line per worktree, the primary checkout
   # included -- so a stranded lease shows up as a second `worktree ` line.
   def registered_worktrees
-    Mixlib::ShellOut.new("git", "-C", @project, "worktree", "list", "--porcelain",
-                         environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.stdout
+    SeedRepo.git(@project, "worktree", "list", "--porcelain").stdout
   end
 
   def worktree_root = File.join(@state, "lain", "worktrees", paths.project_hash(@project))
 
   def head_of(dir)
-    Mixlib::ShellOut.new("git", "-C", dir, "rev-parse", "HEAD",
-                         environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.stdout.strip
+    SeedRepo.git(dir, "rev-parse", "HEAD").stdout.strip
   end
 
   def commit_on_project(message)
@@ -253,6 +250,15 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
 
         expect(resolve_in(scratch, home:)).to be_a(Lain::Isolation::Worktree)
       end
+    end
+
+    it "builds the worktree backend on Shell::Out by default, so leasing forks nothing" do
+      init_repo(@project)
+      allow(Mixlib::ShellOut).to receive(:new).and_call_original
+
+      described_class.resolve("worktree", root: @project, paths:).acquire("w1").release
+
+      expect(Mixlib::ShellOut).not_to have_received(:new)
     end
 
     # The stop rule needs a home to stop AT, so `--isolation worktree` now has a

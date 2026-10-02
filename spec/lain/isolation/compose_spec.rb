@@ -93,6 +93,19 @@ RSpec.describe Lain::Isolation::Compose do
 
   def compose_service(**) = Lain::Isolation::Services::Compose.new(**)
 
+  describe "the default subprocess runner" do
+    it "is Shell::Out, so a compose call forks nothing" do
+      shell = happy_shell
+      allow(Lain::Shell::Out).to receive(:new) { |*argv, **kwargs| shell.call(*argv, **kwargs) }
+      service = compose_service(service: "db", container_port: 5432, env_var: "DATABASE_URL")
+
+      described_class.new(services: [service], inner: Lain::Isolation::Null.new, paths: stub_paths,
+                          compose_file:).acquire("w1")
+
+      expect(shell.calls.map { |argv| FakeComposeShell.subcommand(argv) }).to include("up")
+    end
+  end
+
   describe "the compose DSL verb" do
     def declare(source) = Lain::Isolation::Services::Builder.build(source, "(compose_spec)")
 

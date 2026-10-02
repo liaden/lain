@@ -19,8 +19,7 @@ RSpec.describe Lain::Isolation::Spike, :seam do
   end
 
   def git(*args, dir: @repo)
-    Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-                    .run_command.tap(&:error!).stdout.strip
+    SeedRepo.git(dir, *args).stdout.strip
   end
 
   def spike(cwd: @repo) = described_class.new(repo_root: @repo, root: @root, cwd:)
@@ -127,6 +126,16 @@ RSpec.describe Lain::Isolation::Spike, :seam do
 
       expect(spike.release(taken)).to eq("")
       expect([refs(taken), taken]).to match([[], be_released])
+    end
+
+    it "deletes through Shell::Out, passing the transaction on stdin" do
+      allow(Mixlib::ShellOut).to receive(:new).and_call_original
+      taken = spike.acquire
+
+      spike.release(taken)
+
+      expect(Mixlib::ShellOut).not_to have_received(:new)
+      expect(refs(taken)).to be_empty
     end
 
     it "moves the branch forward to the spike's commits and names it" do
