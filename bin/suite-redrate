@@ -1,0 +1,103 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+load File.expand_path("suite-load", __dir__)
+
+# Full `rake pspec` on the card tree and on the base tree, interleaved in random order each
+# round, each run padded with an environment variable of random length (the environment's
+# size shifts the stack and can bias a timing). Reports, per tree, the runs with a failure,
+# the failing examples by name, and the median wall time. Exits 1 when a tree's example
+# count varies between runs, which is how a dead worker looks like a pass.
+#
+#   bin/suite-redrate --card <tree> --base <tree> --rounds N
+#
+# Env knobs, each a stub point for the spec: SUITE_REDRATE_GUARD (default bin/box-state
+# --guard), SUITE_REDRATE_RUN (default `bundle exec rake pspec`), SUITE_REDRATE_POLL,
+# SUITE_REDRATE_TIMEOUT.
+module SuiteRedrate
+  Run = Struct.new(:wall, :outcome)
+
+  # Interleaves the trees, one guarded and padded run each per round.
+  class Main
+    def initialize(opts, env: ENV, out: $stdout)
+      @opts = opts
+      @env = env
+      @out = out
+      @runs = Hash.new { |h, k| h[k] = [] }
+    end
+
+    def call
+      @opts.fetch(:rounds).times do
+        %i[card base].shuffle.each do |name|
+          guard.wait
+          @runs[name] << run(@opts.fetch(name))
+        end
+      end
+      report
+      SuiteLoad::Report.counts_vary?(by_tree) ? 1 : 0
+    end
+
+    private
+
+    def guard
+      @guard ||= SuiteLoad::Guard.new(command: @env.fetch("SUITE_REDRATE_GUARD") { "#{__dir__}/box-state --guard" },
+                                      poll: Float(@env.fetch("SUITE_REDRATE_POLL", 30)), out: @out)
+    end
+
+    def runner
+      @runner ||= SuiteLoad::Runner.new(run_command: @env.fetch("SUITE_REDRATE_RUN", "bundle exec rake pspec"),
+                                        timeout: Float(@env.fetch("SUITE_REDRATE_TIMEOUT", 3600)))
+    end
+
+    def run(tree)
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      outcome = runner.call(tree, [], env: { "AB_PAD" => "x" * rand(0..4096) })
+      Run.new(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, outcome)
+    end
+
+    def counts(name) = @runs[name].filter_map { _1.outcome.summary.examples }.uniq.sort
+
+    def by_tree = @runs.to_h { |name, _| [name.to_s, counts(name)] }
+
+    def report
+      @runs.each_key { report_tree(_1) }
+      SuiteLoad::Report.count_lines(by_tree).each { @out.puts(_1) }
+    end
+
+    def report_tree(name)
+      runs = @runs.fetch(name)
+      failing = runs.reject { _1.outcome.ok }
+      @out.puts("#{name}: #{runs.size} runs, #{failing.size} with a failure, #{counts(name).join("/")} examples " \
+                "per run, median wall #{median(runs.map(&:wall)).round(1)}s")
+      failing.flat_map { named_failures(_1.outcome) }.tally.each { |ex, n| @out.puts("#{name} failed #{n}x: #{ex}") }
+    end
+
+    def named_failures(outcome)
+      named = outcome.summary.failed.map { |where, title| "#{where.sub(/:\d+\z/, "")} # #{title}" }
+      named.empty? ? [outcome.reason] : named
+    end
+
+    def median(values)
+      sorted = values.sort
+      (sorted[(sorted.size - 1) / 2] + sorted[sorted.size / 2]) / 2.0
+    end
+  end
+
+  def self.parse(argv)
+    opts = {}
+    parser = OptionParser.new do |o|
+      %i[card base].each { |k| o.on("--#{k} TREE") { |v| opts[k] = File.expand_path(v) } }
+      o.on("--rounds N", Integer) { |v| opts[:rounds] = v }
+    end
+    parser.parse(argv)
+    abort(parser.to_s) unless %i[card base rounds].all? { opts.key?(_1) }
+    opts
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  %w[INT TERM HUP].each { |sig| trap(sig) { raise Interrupt } }
+  $stdout.sync = true
+  exit SuiteRedrate::Main.new(SuiteRedrate.parse(ARGV)).call
+end

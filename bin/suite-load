@@ -1,0 +1,282 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+require "open3"
+require "shellwords"
+require "timeout"
+require "tmpdir"
+
+# Runs a card's spec files on the card's tree and on the base tree, alternating in random
+# order each round, while full pspec runs loop in a third tree. A wait that passes on a
+# quiet box proves nothing; this is the contention it has to survive.
+#
+#   bin/suite-load --card <tree> --base <tree> --load <tree> --rounds N <spec files...>
+#
+# Exits 1 when the card tree failed a round, a tree's example count varies between rounds,
+# or the load loop died. Env knobs, each a stub point for the spec: SUITE_LOAD_GUARD (default bin/box-state
+# --guard), SUITE_LOAD_RUN (default `bundle exec rspec`), SUITE_LOAD_LOOP (the load
+# command, run in the load tree), SUITE_LOAD_WARMUP, SUITE_LOAD_POLL, SUITE_LOAD_MAX_WAIT,
+# SUITE_LOAD_RUN_TIMEOUT.
+module SuiteLoad
+  # `exit 0` inside an example, or a run that loads nothing, ends 0 with no summary line
+  # or none counted, so an exit status alone proves nothing about a run.
+  Summary = Struct.new(:examples, :failures, :seed, :failed) do
+    def self.parse(text)
+      counts = text.scan(/^(\d+) examples?, (\d+) failures?/).last
+      new(counts&.first&.to_i, counts&.last&.to_i, text[/^Randomized with seed (\d+)/, 1],
+          text.scan(%r{^rspec (\./\S+)(?: # (.*))?$}))
+    end
+
+    def clean? = examples.to_i.positive? && failures&.zero? && failed.empty?
+  end
+
+  Outcome = Struct.new(:ok, :summary, :reason)
+
+  # Raised so a caller can tell a box that never went quiet from a failed proof.
+  class BusyBox < StandardError; end
+
+  # Raised when the load loop is gone, which makes every later pass a quiet-box pass.
+  class LoadDied < StandardError; end
+
+  # A timed run is only worth reading from a quiet box, so this refuses until one exists.
+  class Guard
+    def initialize(command:, poll:, max_wait: Float::INFINITY, out: $stdout)
+      @command = command
+      @poll = poll
+      @max_wait = max_wait
+      @out = out
+    end
+
+    def wait
+      started = clock
+      until quiet?
+        raise BusyBox, "box still busy after #{@max_wait}s" if clock - started > @max_wait
+
+        sleep @poll
+      end
+    end
+
+    private
+
+    def quiet?
+      text, status = Open3.capture2e(*Shellwords.split(@command))
+      @out.puts("waiting: #{text.strip}") unless status.success?
+      status.success?
+    end
+
+    def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  end
+
+  # Its own process group, because a suite leaves grandchildren (tmux, nvim, workers)
+  # that a plain kill of the leader would orphan.
+  class Group
+    def self.spawn(env, *, **)
+      new(Process.spawn(env, *, pgroup: true, **))
+    end
+
+    def initialize(pid)
+      @pid = pid
+    end
+
+    def wait = Process.wait2(@pid).last
+
+    def exited?
+      !Process.wait(@pid, Process::WNOHANG).nil?
+    rescue Errno::ECHILD
+      true
+    end
+
+    def stop
+      sleep 0.2 if signal("TERM")
+      signal("KILL")
+      Process.wait(@pid)
+    rescue Errno::ECHILD
+      nil
+    end
+
+    private
+
+    # False once no process is left in the group.
+    def signal(name)
+      Process.kill(name, -@pid)
+      true
+    rescue Errno::ESRCH
+      false
+    end
+  end
+
+  # The timeout is what lets a grandchild holding the pipe open fail a run instead of
+  # hanging the proof on `read`.
+  class Runner
+    def initialize(run_command:, timeout:, extra: [])
+      @run_command = run_command
+      @timeout = timeout
+      @extra = extra
+    end
+
+    def call(tree, files, env: {})
+      reader, writer = IO.pipe
+      group = Group.spawn(env, "sh", "-c", %(#{@run_command} "$@"), "sh", *files, *@extra,
+                          chdir: tree, %i[out err] => writer)
+      writer.close
+      text = Timeout.timeout(@timeout) { reader.read }
+      judge(group.wait, Summary.parse(text))
+    rescue Timeout::Error
+      Outcome.new(false, Summary.parse(""), "timed out after #{@timeout}s")
+    ensure
+      group&.stop
+      reader&.close
+    end
+
+    private
+
+    def judge(status, summary)
+      ok = status.success? && summary.clean?
+      Outcome.new(ok, summary, ok ? nil : reason(status, summary))
+    end
+
+    def reason(status, summary)
+      return "no example summary (#{ended(status)})" if summary.examples.nil?
+      return "0 examples ran" if summary.examples.zero?
+      return "exit status #{status.exitstatus}" if summary.failed.empty?
+
+      nil
+    end
+
+    def ended(status) = status.termsig ? "killed by signal #{status.termsig}" : "exit #{status.exitstatus}"
+  end
+
+  # Per-tree tally, and the cross-tree checks a single run cannot make.
+  class Report
+    Tally = Struct.new(:passed, :failed, :counts, :failures)
+
+    def initialize
+      @trees = Hash.new { |h, k| h[k] = Tally.new(0, 0, [], []) }
+    end
+
+    def record(name, outcome)
+      tally = @trees[name]
+      summary = outcome.summary
+      tally.counts << summary.examples if summary.examples
+      return tally.passed += 1 if outcome.ok
+
+      tally.failed += 1
+      locations = summary.failed.map(&:first)
+      (locations.empty? ? [outcome.reason] : locations).each do |where|
+        tally.failures << "#{name} failure: #{where} seed #{summary.seed}"
+      end
+    end
+
+    def card_failed? = @trees["card"].failed.positive?
+
+    def counts_vary? = Report.counts_vary?(by_tree)
+
+    def lines
+      per_tree = @trees.flat_map do |name, tally|
+        ["#{name}: #{tally.passed} passed, #{tally.failed} failed, #{counts(name).join("/")} examples per run"] +
+          tally.failures
+      end
+      per_tree + Report.count_lines(by_tree)
+    end
+
+    # A card adds examples, so card against base is information; one tree changing its
+    # own count between runs is what truncation looks like, so that is a failure.
+    def self.counts_vary?(by_tree) = by_tree.values.any? { _1.size > 1 }
+
+    def self.count_lines(by_tree)
+      varying = by_tree.select { |_, counts| counts.size > 1 }
+      varying = varying.map { |name, counts| "example count varies in #{name}: #{counts.join("/")}" }
+      return varying unless varying.empty? && by_tree["card"] != by_tree["base"]
+
+      ["example count: card #{by_tree["card"].join("/")}, base #{by_tree["base"].join("/")}"]
+    end
+
+    private
+
+    def counts(name) = @trees[name].counts.uniq.sort
+
+    def by_tree = @trees.to_h { |name, _tally| [name, counts(name)] }
+  end
+
+  # Wires the guard, the load loop and the alternating rounds together.
+  class Main
+    DEFAULT_LOOP = 'while true; do TMPDIR="$HOME/tmp/lain/suiteload-bg" bundle exec parallel_rspec spec ' \
+                   '-n "${LAIN_SPEC_WORKERS:-12}" --test-options "--format progress" > /dev/null 2>&1; ' \
+                   'echo "load run exit $?" >> "$SUITE_LOAD_LOG"; done'
+
+    def initialize(opts, files, env: ENV, out: $stdout)
+      @opts = opts
+      @files = files
+      @env = env
+      @out = out
+    end
+
+    def call
+      guard.wait
+      report = Report.new
+      load_lines = with_load { rounds(report) }
+      (report.lines + load_lines).each { |line| @out.puts(line) }
+      report.card_failed? || report.counts_vary? ? 1 : 0
+    rescue Interrupt
+      130
+    rescue BusyBox, LoadDied => e
+      @out.puts(e.message)
+      e.is_a?(BusyBox) ? 3 : 1
+    end
+
+    private
+
+    def guard
+      Guard.new(command: @env.fetch("SUITE_LOAD_GUARD") { "#{__dir__}/box-state --guard" },
+                poll: Float(@env.fetch("SUITE_LOAD_POLL", 30)),
+                max_wait: Float(@env.fetch("SUITE_LOAD_MAX_WAIT", Float::INFINITY)), out: @out)
+    end
+
+    def with_load
+      Dir.mktmpdir("suite-load") do |dir|
+        @log = File.join(dir, "load.log")
+        @group = Group.spawn({ "SUITE_LOAD_LOG" => @log }, "sh", "-c", @env.fetch("SUITE_LOAD_LOOP", DEFAULT_LOOP),
+                             chdir: @opts.fetch(:load), %i[out err] => File::NULL)
+        sleep Float(@env.fetch("SUITE_LOAD_WARMUP", 20))
+        yield
+        load_summary
+      ensure
+        @group&.stop
+      end
+    end
+
+    def load_summary
+      exits = File.exist?(@log) ? File.readlines(@log).filter_map { _1[/^load run exit (\d+)/, 1] } : []
+      ["load: #{exits.size} runs, #{exits.count { _1 != "0" }} failed"]
+    end
+
+    def rounds(report)
+      runner = Runner.new(run_command: @env.fetch("SUITE_LOAD_RUN", "bundle exec rspec"),
+                          timeout: Float(@env.fetch("SUITE_LOAD_RUN_TIMEOUT", 900)), extra: ["--no-profile"])
+      @opts.fetch(:rounds).times do
+        %i[card base].shuffle.each { |name| report.record(name.to_s, runner.call(@opts.fetch(name), @files)) }
+        raise LoadDied, "load group exited; the proof ran without load" if @group.exited?
+      end
+    end
+  end
+
+  def self.parse(argv)
+    opts = {}
+    parser = OptionParser.new do |o|
+      %i[card base load].each { |k| o.on("--#{k} TREE") { |v| opts[k] = File.expand_path(v) } }
+      o.on("--rounds N", Integer) { |v| opts[:rounds] = v }
+    end
+    files = parser.parse(argv)
+    abort(parser.to_s) if files.empty? || %i[card base load rounds].any? { !opts.key?(_1) }
+    [opts, files]
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  # Handlers are set here because a backgrounded start inherits INT as ignored.
+  %w[INT TERM HUP].each { |sig| trap(sig) { raise Interrupt } }
+  $stdout.sync = true
+  opts, files = SuiteLoad.parse(ARGV)
+  exit SuiteLoad::Main.new(opts, files).call
+end
