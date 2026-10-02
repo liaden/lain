@@ -1348,7 +1348,7 @@ RSpec.describe Lain::Frontend::TTY do
       tmux = Lain::Frontend::TTY::TmuxMessage.new(env: { "TMUX" => "/tmp/tmux-1000/default,1,0" },
                                                   shell_out: lambda { |*argv, **|
                                                     shelled << argv
-                                                    instance_double(Mixlib::ShellOut, run_command: nil)
+                                                    instance_double(Lain::Shell::Out, run_command: nil)
                                                   },
                                                   background: ->(&work) { work.call })
       summoning = described_class.new(channel:, output:, input:, layers: -> { Lain::Mode::LayerSet.new([:notify]) },
@@ -1374,7 +1374,7 @@ RSpec.describe Lain::Frontend::TTY do
     let(:shell_out) do
       lambda do |*argv, **options|
         shelled << [argv, options]
-        instance_double(Mixlib::ShellOut, run_command: nil)
+        instance_double(Lain::Shell::Out, run_command: nil)
       end
     end
     let(:inline) { ->(&work) { work.call } }
@@ -1452,9 +1452,29 @@ RSpec.describe Lain::Frontend::TTY do
     end
 
     it "swallows a tmux that is missing, failing or too slow" do
-      failing = ->(*, **) { raise Mixlib::ShellOut::CommandTimeout, "tmux took too long" }
+      failing = ->(*, **) { raise Lain::Shell::Out::Timeout, "tmux took too long" }
 
       expect(message(shell: failing).call("a note")).to be_nil
+    end
+
+    it "spawns through Shell::Out by default, never Mixlib" do
+      Dir.mktmpdir do |dir|
+        record = File.join(dir, "argv")
+        bin = File.join(dir, "tmux")
+        File.write(bin, "#!/bin/sh\nprintf '%s' \"$1\" > '#{record}'\n")
+        File.chmod(0o755, bin)
+        allow(Mixlib::ShellOut).to receive(:new).and_raise("mixlib was used")
+
+        allow(Lain::Shell::Out).to receive(:new).and_wrap_original do |original, *argv, environment:, **options|
+          original.call(*argv, environment: environment.merge("PATH" => "#{dir}:#{ENV.fetch("PATH")}"), **options)
+        end
+        before = ENV.fetch("PATH")
+
+        Lain::Frontend::TTY::TmuxMessage.new(env: chat_env, background: inline).call("a note")
+
+        expect(ENV.fetch("PATH")).to eq(before)
+        expect(File.read(record)).to eq("display-message")
+      end
     end
   end
 

@@ -859,9 +859,9 @@ module Lain
         SESSION = %w[TMUX TMUX_PANE].freeze
 
         # @param env [#[], #slice] the chat process's environment
-        # @param shell_out [#call] builds the command, `Mixlib::ShellOut.new`'s shape
+        # @param shell_out [#call] builds the command, `Shell::Out.new`'s shape
         # @param background [#call] runs the block off the caller's stack
-        def initialize(env: ENV, shell_out: Mixlib::ShellOut.public_method(:new),
+        def initialize(env: ENV, shell_out: Shell::Out.public_method(:new),
                        background: Thread.public_method(:new))
           @env = env
           @shell_out = shell_out
