@@ -13,6 +13,15 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# One list for the save and both restores: the path set is part of a cache
+# entry's identity, so a restore naming a different set never hits.
+env:
+  BUILD_CACHE_PATHS: |
+    ~/.cargo/registry/index/
+    ~/.cargo/registry/cache/
+    ~/.cargo/git/db/
+    target/release/
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -32,12 +41,33 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Ruby & Rust
+        id: toolchain
         uses: oxidize-rb/actions/setup-ruby-and-rust@v1
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-          cargo-cache: true
+          # The action's own save runs before anything is built and then owns
+          # the key, so target/ was never cached; the steps below replace it.
+          cargo-cache: false
           rubygems: '4.0.3'
+      # Cargo's fingerprints decide what rebuilds; the key only scopes a
+      # restore to the image and Ruby the C objects and rb-sys bindings saw.
+      - name: Name the compiled-build cache
+        id: build-cache
+        run: echo "prefix=cargo-release-$ImageOS-ruby$(ruby -e 'print RUBY_VERSION')-rustc$(rustc -V | cut -d' ' -f2)-" >> "$GITHUB_OUTPUT"
+      - name: Restore the cargo registry and compiled target/
+        id: build-cache-restore
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.BUILD_CACHE_PATHS }}
+          key: ${{ steps.build-cache.outputs.prefix }}${{ steps.toolchain.outputs.cache-key }}
+          restore-keys: ${{ steps.build-cache.outputs.prefix }}
+      - name: Restore the spec runtime log
+        uses: actions/cache/restore@v5
+        with:
+          path: tmp/parallel_runtime_rspec.log
+          key: rspec-runtime-${{ github.sha }}
+          restore-keys: rspec-runtime-
       - name: Install the editor and multiplexer the suite drives
         uses: ./.github/actions/spec-binaries
       # `.envrc`'s 12 is a measurement taken on an 8-physical-core developer
@@ -66,6 +96,23 @@ jobs:
       # rubocop runs in the lint job so it is off this job's critical path.
       - name: Compile and run the parallel suite
         run: bundle exec rake compile pspec
+      # Saved on a red suite too, but only once the extension linked: an entry
+      # is immutable, so a half-built target/ would hold the key until evicted.
+      - name: Save the cargo registry and compiled target/
+        if: >-
+          !cancelled() && github.ref == 'refs/heads/main'
+          && steps.build-cache-restore.outputs.cache-hit != 'true'
+          && hashFiles('lib/lain/lain.so') != ''
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.BUILD_CACHE_PATHS }}
+          key: ${{ steps.build-cache.outputs.prefix }}${{ steps.toolchain.outputs.cache-key }}
+      - name: Save the spec runtime log
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: tmp/parallel_runtime_rspec.log
+          key: rspec-runtime-${{ github.sha }}
 
   lint:
     runs-on: ubuntu-latest
@@ -76,12 +123,23 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Ruby & Rust
+        id: toolchain
         uses: oxidize-rb/actions/setup-ruby-and-rust@v1
         with:
           ruby-version: '4.0.6'
           bundler-cache: true
-          cargo-cache: true
+          cargo-cache: false
           rubygems: '4.0.3'
+      - name: Name the compiled-build cache
+        id: build-cache
+        run: echo "prefix=cargo-release-$ImageOS-ruby$(ruby -e 'print RUBY_VERSION')-rustc$(rustc -V | cut -d' ' -f2)-" >> "$GITHUB_OUTPUT"
+      # Restore only: the build job is the one writer.
+      - name: Restore the cargo registry and compiled target/
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.BUILD_CACHE_PATHS }}
+          key: ${{ steps.build-cache.outputs.prefix }}${{ steps.toolchain.outputs.cache-key }}
+          restore-keys: ${{ steps.build-cache.outputs.prefix }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
