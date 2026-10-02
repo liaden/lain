@@ -1,7 +1,7 @@
 name: Install spec binaries
 description: >
-  The editor and multiplexer the suite actually drives, plus a loud assertion
-  that they arrived. Both CI jobs run the specs, so both need this.
+  The editor the suite actually drives, plus a loud assertion that it and the
+  image's own tmux and jq are really there.
 
 inputs:
   neovim-version:
@@ -16,15 +16,7 @@ inputs:
 runs:
   using: composite
   steps:
-    # tmux from apt is fine: Ubuntu 24.04 ships 3.4, and the only version-
-    # sensitive behaviour is `display-popup`, which needs >= 3.2. TmuxSurface
-    # detects that capability at runtime rather than parsing `tmux -V`, so a
-    # newer tmux needs no change here.
-    - name: Install tmux
-      shell: bash
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends tmux
+    # tmux comes from the base image; display-popup (>= 3.2) is detected at runtime, and the assert below catches an image that drops it.
 
     # NOT apt: Ubuntu 24.04's neovim is 0.9.x, several minors behind what a dev
     # box runs, and these specs talk to it over RPC. The upstream tarball keeps
@@ -38,9 +30,9 @@ runs:
         sudo tar -C /opt -xzf /tmp/nvim.tar.gz
         echo "/opt/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
 
-    # The step that earns the other two. Both suites SKIP silently when their
+    # The step that earns the install above. Both suites SKIP silently when their
     # binary is missing -- :nvim filters the tag out, and the tmux specs skip
-    # per example -- so a half-failed install does not redden anything; it just
+    # per example -- so a missing binary does not redden anything; it just
     # quietly stops testing the editor and the multiplexer, which is the exact
     # invisibility this whole arrangement exists to end. Assert instead.
     - name: Assert the suite's binaries are really here
