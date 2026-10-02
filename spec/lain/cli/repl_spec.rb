@@ -6,7 +6,6 @@ require "fileutils"
 require "json"
 require "pastel"
 require "pty"
-require "rbconfig"
 require "stringio"
 require "tempfile"
 require "timeout"
@@ -160,34 +159,52 @@ class ReplGoalTerminal
                    .run(nvim: nil, store: nil, session: nil, first_prompt: "/goal make the specs green")
   RUBY
 
-  LIB = File.expand_path("../../../lib", __dir__)
+  READY = "File.write(File.join(ARGV[0], 'ready'), ''); sleep 10"
+
+  # Opens pipes on the numbers the worker's dropped IOs held, then collects
+  # those IOs: a finalizer that still owned its number would close a pipe.
+  PIPES = <<~RUBY
+    pipes = Array.new(20) { IO.pipe }
+    GC.start
+    intact = begin
+      pipes.all? { |reader, writer| writer.write("x") && reader.read_nonblock(1) == "x" }
+    rescue SystemCallError, IOError
+      false
+    end
+    File.write(File.join(ARGV[0], "pipes"), intact.to_s)
+  RUBY
+
   CURSOR_QUERY = "\e[6n"
   CURSOR_REPORT = "\e[1;1R"
 
-  def initialize(dir, shape:, cap:, term:)
+  attr_reader :pid
+
+  def initialize(dir, shape:, cap:, term:, script: CHILD)
     @dir = dir
     @screen = +""
     @lock = Mutex.new
+    @output, slave = PTY.open
     env = { "TERM" => term, "INPUTRC" => File.join(dir, "no-inputrc") }
-    @output, @input, @pid = PTY.spawn(env, RbConfig.ruby, "-I", LIB, "-e", CHILD, dir, shape, cap.to_s)
+    @pid = ForkedChild.start(File.join(dir, "child.err")) { run_child(slave, env, script, [dir, shape, cap.to_s]) }
+    slave.close
     @output.winsize = [40, 200]
     @pump = Thread.new { pump }
   end
 
   def screen = @lock.synchronize { @screen.dup }
 
-  def type(bytes) = @input.write(bytes)
+  def type(bytes) = @output.write(bytes)
 
   def finish(iteration) = FileUtils.touch(File.join(@dir, "finish-#{iteration}"))
 
   def await(pattern, timeout: 20)
     waited_for(timeout) { screen.match?(pattern) }
-    raise "#{pattern.inspect} never drew; the screen was:\n#{screen}" unless screen.match?(pattern)
+    raise "#{pattern.inspect} never drew; the screen was:\n#{evidence}" unless screen.match?(pattern)
   end
 
   def await_dispatched(line, timeout: 20)
     waited_for(timeout) { dispatched.include?(line) }
-    raise "#{line.inspect} was never dispatched: #{dispatched.inspect}\n#{screen}" unless dispatched.include?(line)
+    raise "#{line.inspect} was never dispatched: #{dispatched.inspect}\n#{evidence}" unless dispatched.include?(line)
   end
 
   def iterations = records("goal_iteration").count
@@ -199,17 +216,67 @@ class ReplGoalTerminal
     File.exist?(path) ? File.readlines(path, chomp: true) : []
   end
 
+  def await_file(name, timeout: 20)
+    waited_for(timeout) { File.exist?(File.join(@dir, name)) }
+    raise "#{name} never appeared; the screen was:\n#{evidence}" unless File.exist?(File.join(@dir, name))
+  end
+
+  def signal(name) = Process.kill(name, @pid)
+
+  def exitstatus_and_termsig
+    _, status = Process.wait2(@pid)
+    @pid = nil
+    [status.exitstatus, status.termsig]
+  end
+
   def close
+    reap
+  ensure
+    @pump.join(2)
+    @output.close unless @output.closed?
+  end
+
+  private
+
+  def reap
+    return unless @pid
+
     Process.kill("KILL", @pid)
     Process.wait(@pid)
   rescue Errno::ESRCH, Errno::ECHILD
     nil
-  ensure
-    @pump.join(2)
-    [@input, @output].each { |io| io.close unless io.closed? }
   end
 
-  private
+  def evidence
+    path = File.join(@dir, "child.err")
+    File.exist?(path) ? "#{screen}\nthe child raised:\n#{File.read(path)}" : screen
+  end
+
+  # Forked from the worker, which already holds `lain`, rather than booting it
+  # again per example.
+  def run_child(slave, env, script, argv)
+    attach(slave)
+    ForkedChild.close_inherited
+    ENV.update(env)
+    regate_reline
+    ARGV.replace(argv)
+    ForkedChild.evaluate(script, "repl_goal_child")
+  end
+
+  # Opened after setsid, the slave becomes the child's controlling terminal.
+  def attach(slave)
+    Process.setsid
+    File.open(slave.path, "r+") { |tty| [$stdin, $stdout, $stderr].each { |io| io.reopen(tty) } }
+    $stdout.sync = true
+  end
+
+  # Reline picks its gate once, when it is required, so the child would keep
+  # the worker's ANSI gate and a `dumb` example would run the wrong path.
+  def regate_reline
+    Reline.send(:remove_const, :IOGate)
+    Reline.const_set(:IOGate, Reline::IO.decide_io_gate)
+    Reline.core.config.reset_variables
+  end
 
   def waited_for(timeout)
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
@@ -227,7 +294,7 @@ class ReplGoalTerminal
     loop do
       chunk = @output.readpartial(4096)
       @lock.synchronize { @screen << chunk }
-      @input.write(CURSOR_REPORT) if chunk.include?(CURSOR_QUERY)
+      @output.write(CURSOR_REPORT) if chunk.include?(CURSOR_QUERY)
     end
   rescue IOError, Errno::EIO
     nil
@@ -969,25 +1036,29 @@ RSpec.describe Lain::CLI::Repl do
     context "when the goal ends with a line still unfinished" do
       let(:cap) { 1 }
 
-      it "leaves the unfinished line for you>, where the human finishes it" do
+      it "leaves the unfinished line for you>, where the human finishes it, on Reline's ANSI gate" do
         typed_during(1, "hel")
         terminal.await(/you> /)
         terminal.type("lo\r")
         terminal.await_dispatched("hello")
 
-        expect(terminal.dispatched.last).to eq("hello")
+        expect([terminal.dispatched.last, terminal.screen.include?(ReplGoalTerminal::CURSOR_QUERY)])
+          .to eq(["hello", true])
       end
 
       context "with a dumb terminal" do
         let(:term) { "dumb" }
 
-        it "still leaves it for you>" do
+        # Only the ANSI gate asks where the cursor is, so a dumb child that asks
+        # is running the other path.
+        it "still leaves it for you>, on Reline's dumb gate" do
           typed_during(1, "hel")
           terminal.await(/you> /)
           terminal.type("lo\r")
           terminal.await_dispatched("hello")
 
-          expect(terminal.dispatched.last).to eq("hello")
+          expect([terminal.dispatched.last, terminal.screen.include?(ReplGoalTerminal::CURSOR_QUERY)])
+            .to eq(["hello", false])
         end
       end
     end
@@ -1036,6 +1107,121 @@ RSpec.describe Lain::CLI::Repl do
           expect(terminal.verdicts).to eq([%w[tty deny]])
           expect(terminal.iterations).to eq(2)
         end
+      end
+    end
+  end
+
+  # The terminal's child is a fork of this worker, so what it inherits is the
+  # subject: a descriptor, a trap or an at_exit hook of the worker's that
+  # survived into it would make the chat over the PTY a different process.
+  describe "the terminal's forked child", :seam do
+    def terminal_in(dir, script) = ReplGoalTerminal.new(dir, shape: "plain", cap: 1, term: "xterm", script:)
+
+    # Anonymous inodes are skipped: the child keeps the VM's own eventfd and
+    # epoll, and every anonymous inode reads back as the same link.
+    def descriptors(pid)
+      Dir.children("/proc/#{pid}/fd").map(&:to_i).select { |fd| fd > 2 }.filter_map do |fd|
+        target = File.readlink("/proc/#{pid}/fd/#{fd}")
+        target unless target.start_with?("anon_inode:")
+      rescue Errno::ENOENT
+        nil
+      end
+    end
+
+    it "forks from the worker, holding none of the worker's descriptors" do
+      Dir.mktmpdir do |dir|
+        File.open(__FILE__) do
+          terminal = terminal_in(dir, ReplGoalTerminal::READY)
+          terminal.await_file("ready")
+          forked = File.binread("/proc/#{terminal.pid}/cmdline") == File.binread("/proc/self/cmdline")
+
+          expect([forked, descriptors(terminal.pid) & descriptors(Process.pid)]).to eq([true, []])
+        ensure
+          terminal&.close
+        end
+      end
+    end
+
+    it "keeps its own descriptors working across a GC of the worker's dropped IOs" do
+      Dir.mktmpdir do |dir|
+        20.times { IO.pipe }
+        terminal = terminal_in(dir, ReplGoalTerminal::PIPES)
+
+        expect([terminal.exitstatus_and_termsig, File.read(File.join(dir, "pipes"))]).to eq([[0, nil], "true"])
+      ensure
+        terminal&.close
+      end
+    end
+
+    it "signals nothing once it has been reaped, since its pid may already be another process's" do
+      Dir.mktmpdir do |dir|
+        terminal = terminal_in(dir, "nil")
+        terminal.exitstatus_and_termsig
+        allow(Process).to receive(:kill).and_call_original
+
+        terminal.close
+
+        expect(Process).not_to have_received(:kill)
+      end
+    end
+
+    # An earlier spec in the same worker can leave the user's inputrc loaded.
+    it "reads its line with a fresh line editor, whatever inputrc the worker loaded" do
+      Dir.mktmpdir do |dir|
+        inputrc = File.join(dir, "worker-inputrc")
+        File.write(inputrc, "set editing-mode vi\n\"l\": ed-unassigned\n")
+
+        typed, = ForkedChild.in_a_worker_with_hooks(dir) do
+          Reline.core.config.read(inputrc)
+          Dir.mktmpdir(nil, dir) { |child| hello_typed_at_you(child) }
+        end
+
+        expect(typed).to eq("hello")
+      end
+    end
+
+    def hello_typed_at_you(dir)
+      terminal = ReplGoalTerminal.new(dir, shape: "plain", cap: 1, term: "xterm")
+      terminal.await(/ITERATION 1\b/)
+      terminal.finish(1)
+      terminal.await(/you> /)
+      terminal.type("hello\r")
+      terminal.await_dispatched("hello")
+      terminal.dispatched.last
+    ensure
+      terminal&.close
+    end
+
+    # Signalled before the script installs any trap, so only the fork's reset
+    # decides how those end.
+    def endings
+      { "finishes" => ["nil", nil], "exits 3" => ["exit 3", nil], "raises" => ["raise 'boom'", nil],
+        "raises where its error cannot be written" => ["Dir.mkdir(File.join(ARGV[0], 'child.err')); raise 'boom'", nil],
+        "TERM" => [ReplGoalTerminal::READY, "TERM"], "INT" => [ReplGoalTerminal::READY, "INT"] }
+    end
+
+    def ended(dir, (script, signal))
+      terminal = terminal_in(dir, script)
+      if signal
+        terminal.await_file("ready")
+        terminal.signal(signal)
+      end
+      terminal.exitstatus_and_termsig
+    ensure
+      terminal&.close
+    end
+
+    it "ends with its own status however it ends, running none of the worker's traps or at_exit hooks" do
+      Dir.mktmpdir do |dir|
+        statuses, ran = ForkedChild.in_a_worker_with_hooks(dir) do
+          endings.to_h { |name, ending| [name, Dir.mktmpdir(nil, dir) { |child| ended(child, ending) }] }
+        end
+
+        expect([statuses, ran]).to eq(
+          [{ "finishes" => [0, nil], "exits 3" => [3, nil], "raises" => [1, nil],
+             "raises where its error cannot be written" => [1, nil],
+             "TERM" => [nil, 15], "INT" => [nil, 2] }, false]
+        )
       end
     end
   end

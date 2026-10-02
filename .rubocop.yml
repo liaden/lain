@@ -510,10 +510,12 @@ RSpec/NestedGroups:
 
 # `stub_const` cannot express a constant's ABSENCE, and the example needs exactly
 # that: a host whose Ruby was built without Socket::AF_VSOCK. It removes and restores
-# the real constant in an ensure.
+# the real constant in an ensure. repl_spec's forked PTY child must rebuild
+# Reline::IOGate for its new terminal, which stub_const cannot do from a child.
 RSpec/RemoveConst:
   Exclude:
     - "spec/support_vsock_availability_spec.rb"
+    - "spec/lain/cli/repl_spec.rb"
 
 # `task build: :compile` adds a prerequisite to the `build` task bundler/gem_tasks
 # already defined and described. A `desc` here would retitle someone else's task.

@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "English"
 require "fileutils"
 require "json"
 
@@ -107,7 +106,9 @@ module InputPaneSocket
     "overflows its stack" => ["def deeper = deeper; deeper", nil],
     "runs out of memory" => ["raise NoMemoryError", nil],
     "TERM" => ["File.write(File.join(ARGV[0], ARGV[1]), ''); sleep 10", "TERM"],
-    "INT" => ["File.write(File.join(ARGV[0], ARGV[1]), ''); sleep 10", "INT"]
+    "INT" => ["File.write(File.join(ARGV[0], ARGV[1]), ''); sleep 10", "INT"],
+    "raises where its error cannot be written" =>
+      ["File.delete(File.join(ARGV[0], 'chat.err')); Dir.mkdir(File.join(ARGV[0], 'chat.err')); raise 'boom'", nil]
   }.freeze
 
   # Opens pipes on the numbers the worker's dropped IOs held, then collects
@@ -141,7 +142,7 @@ module InputPaneSocket
 
     # A chat process. Returns its pid; `bound` appears once it owns the socket.
     def chat(shape, script: CHILD)
-      pid = fork { run_chat(shape, script) }
+      pid = ForkedChild.start(File.join(@dir, "chat.err")) { run_chat(shape, script) }
       @chats << pid
       pid
     end
@@ -190,55 +191,15 @@ module InputPaneSocket
 
     # Forked from the worker, which already holds `lain`: the chat stands in for
     # the far end of the socket and the pane is the subject, so a second boot of
-    # the library buys no fidelity. The worker's traps and at_exit hooks are not
-    # this process's to run, so however the script ends, it ends in `exit!`.
+    # the library buys no fidelity.
     def run_chat(shape, script)
-      status = 1
-      reset_traps
       $stdin.reopen(File::NULL)
       $stdout.reopen(File.join(@dir, "chat.err"), "w")
       $stderr.reopen($stdout)
-      close_inherited
+      ForkedChild.close_inherited
       ENV.update(env)
       ARGV.replace([@dir, shape, @path])
-      status = chat_status(script)
-    ensure
-      File.write(File.join(@dir, "chat.err"), $ERROR_INFO.full_message, mode: "a") if $ERROR_INFO
-      exit!(status)
-    end
-
-    # PIPE stays ignored, as Ruby sets it at boot, so a write to a gone peer raises EPIPE.
-    def reset_traps
-      Signal.list.except("EXIT", "PIPE").each_key { |name| reset_trap(name) }
-    end
-
-    def reset_trap(name)
-      trap(name, "SYSTEM_DEFAULT")
-    rescue ArgumentError, Errno::EINVAL
-      nil
-    end
-
-    # A worker descriptor left open here keeps its far end alive: the pane's
-    # PTY master would outlive the worker's close. Each worker IO gives up its
-    # fd first, or its finalizer would later close a number the chat reused.
-    # IO.for_fd refuses the VM's own reserved descriptors, which stay.
-    def close_inherited
-      ObjectSpace.each_object(IO).reject { |io| io.closed? || [$stdin, $stdout, $stderr].include?(io) }
-                 .each { |io| io.autoclose = false }
-      Dir.children("/proc/self/fd").map(&:to_i).select { |fd| fd > 2 }.each { |number| close_fd(number) }
-    end
-
-    def close_fd(number)
-      IO.for_fd(number).close
-    rescue ArgumentError, Errno::EBADF
-      nil
-    end
-
-    def chat_status(script)
-      TOPLEVEL_BINDING.eval(script, "chat_child")
-      0
-    rescue SystemExit => e
-      e.status
+      ForkedChild.evaluate(script, "chat_child")
     end
 
     def parsed(line)
@@ -319,29 +280,15 @@ RSpec.describe "a chat fed by an input pane", :seam do
     [status.exitstatus, status.termsig]
   end
 
-  # The hook is registered in a throwaway fork of the worker, so none outlives
-  # the example; it fires only in a process that inherited it and ran it.
-  def in_a_worker_with_an_at_exit_hook(ran)
-    answer = File.join(dir, "answer.json")
-    pid = fork do
-      worker = Process.pid
-      at_exit { File.write(ran, "") unless Process.pid == worker }
-      File.write(answer, JSON.generate(yield))
-    ensure
-      exit!(0)
-    end
-    Process.wait(pid)
-    JSON.parse(File.read(answer))
-  end
-
   it "ends a forked chat with its own status however it ends, running none of the worker's at_exit hooks" do
-    ran = File.join(dir, "at_exit ran")
+    statuses, ran = ForkedChild.in_a_worker_with_hooks(dir) do
+      InputPaneSocket::ENDINGS.to_h { |name, ending| [name, ended(name, ending)] }
+    end
 
-    statuses = in_a_worker_with_an_at_exit_hook(ran) { InputPaneSocket::ENDINGS.to_h { |name, ending| [name, ended(name, ending)] } }
-
-    expect([statuses, File.exist?(ran)]).to eq(
+    expect([statuses, ran]).to eq(
       [{ "finishes" => [0, nil], "exits 3" => [3, nil], "overflows its stack" => [1, nil],
-         "runs out of memory" => [1, nil], "TERM" => [nil, 15], "INT" => [nil, 2] }, false]
+         "runs out of memory" => [1, nil], "TERM" => [nil, 15], "INT" => [nil, 2],
+         "raises where its error cannot be written" => [1, nil] }, false]
     )
   end
 
