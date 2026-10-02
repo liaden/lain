@@ -339,6 +339,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # (Neovim::TEARDOWN_GRACE); the worker exits itself once the offer settles.
   describe "teardown stays bounded when a bridged offer holds the worker" do
     it "returns from run within the teardown grace instead of blocking on the in-flight round trip" do
+      stub_const("Lain::Frontend::Neovim::TEARDOWN_GRACE", 0.2)
       parked = Thread::Queue.new
       gate = Thread::Queue.new
       blocking = Object.new
@@ -350,12 +351,14 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend = described_class.new(channel:, socket_path: @socket, journal:, resend_bridge: blocking)
 
       returned = false
+      stranded = Thread::Queue.new
       runner = Thread.new do
         frontend.run do
           push_request(payload)
           wait_until { request_json_lines }
           inspector.command("LainResend")
           parked.pop # the worker is now stranded inside the bridge's offer
+          stranded << :go
         end
         returned = true
       end
@@ -363,7 +366,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       # The worker is stranded in the round trip, yet teardown must not wait on
       # it unboundedly: run returns within the grace (plus slack), where an
       # unbounded join would still be blocked here.
-      completed = runner.join(Lain::Frontend::Neovim::TEARDOWN_GRACE + 4)
+      expect(stranded.pop(timeout: 10)).to eq(:go), "the worker never stranded inside the bridge's offer"
+      completed = runner.join(Lain::Frontend::Neovim::TEARDOWN_GRACE + 2)
       gate << :go # release the stranded worker so it exits cleanly
       expect(completed).not_to be_nil
       expect(returned).to be(true)
