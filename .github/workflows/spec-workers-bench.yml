@@ -1,0 +1,109 @@
+name: Spec workers bench
+
+# A measurement, not a gate: it decides main.yml's LAIN_SPEC_WORKERS line, so it
+# never runs on push.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: spec-workers-bench
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    name: ${{ matrix.workers }} workers, rep ${{ matrix.rep }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # rep first spreads runner-pool drift over time across all counts.
+      max-parallel: 4
+      matrix:
+        rep: [1, 2, 3]
+        workers: [4, 6, 8, 12]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Ruby & Rust
+        uses: oxidize-rb/actions/setup-ruby-and-rust@v1
+        with:
+          ruby-version: '.ruby-version'
+          bundler-cache: true
+          cargo-cache: true
+          rubygems: '4.0.3'
+      - name: Check the editor, tmux and jq
+        uses: ./.github/actions/spec-binaries
+      - name: Compile the Rust extension
+        run: bundle exec rake compile
+      # parallel_tests reports only the examples that survived, so a dead worker
+      # reads as a fast pass; the dry run is the count the suite must reach.
+      - name: Count the suite's examples
+        run: |
+          set -euo pipefail
+          expected=$(bundle exec rspec --dry-run --format progress | grep -oE '^[0-9]+ examples?' | tail -1 | cut -d' ' -f1)
+          echo "EXPECTED_EXAMPLES=$expected" >> "$GITHUB_ENV"
+      # No runtime log exists on a fresh runner, so every count packs by file
+      # size alike and only the worker count differs between jobs.
+      - name: Run the suite at ${{ matrix.workers }} workers
+        env:
+          LAIN_SPEC_WORKERS: ${{ matrix.workers }}
+        run: |
+          set +e
+          /usr/bin/time -v -o time.out bundle exec rake pspec > suite.out 2>&1
+          status=$?
+          set -e
+          examples=$(grep -oE '^[0-9]+ examples?' suite.out | tail -1 | cut -d' ' -f1)
+          failures=$(grep -oE '^[0-9]+ examples?, [0-9]+ failures?' suite.out | tail -1 | grep -oE '[0-9]+ failures?' | cut -d' ' -f1)
+          field() { grep -F "$1" time.out | sed 's/.*: //'; }
+          jq -n \
+            --argjson workers ${{ matrix.workers }} \
+            --argjson rep ${{ matrix.rep }} \
+            --argjson nproc "$(nproc)" \
+            --argjson status "$status" \
+            --argjson expected "${EXPECTED_EXAMPLES:-0}" \
+            --argjson examples "${examples:-0}" \
+            --argjson failures "${failures:-0}" \
+            --arg wall "$(field 'Elapsed (wall clock)')" \
+            --arg cpu "$(field 'Percent of CPU')" \
+            --arg user "$(field 'User time')" \
+            --arg sys "$(field 'System time')" \
+            --arg max_rss_kb "$(field 'Maximum resident')" \
+            '$ARGS.named | .wall_s = (.wall | split(":") | map(tonumber) | reduce .[] as $part (0; . * 60 + $part)) | del(.wall)' > result.json
+          cat result.json
+          if [ "${examples:-0}" -ne "${EXPECTED_EXAMPLES:-0}" ]; then
+            echo "::error::ran ${examples:-0} examples, the suite has ${EXPECTED_EXAMPLES:-0}: a worker died or the run truncated"
+            exit 1
+          fi
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-w${{ matrix.workers }}-r${{ matrix.rep }}
+          path: |
+            result.json
+            time.out
+            suite.out
+
+  report:
+    needs: bench
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bench-*
+      - name: Tabulate every run
+        run: |
+          set -euo pipefail
+          {
+            echo "| workers | rep | wall s | CPU | user s | sys s | max RSS KB | examples | expected | failures | exit |"
+            echo "|---|---|---|---|---|---|---|---|---|---|---|"
+            jq -rs 'sort_by(.workers, .rep)[]
+              | "| \(.workers) | \(.rep) | \(.wall_s) | \(.cpu) | \(.user) | \(.sys) | \(.max_rss_kb) | \(.examples) | \(.expected) | \(.failures) | \(.status) |"' \
+              bench-*/result.json
+            echo
+            echo "max RSS is the largest single process, not the sum over workers."
+          } >> "$GITHUB_STEP_SUMMARY"
