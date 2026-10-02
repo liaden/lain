@@ -730,6 +730,13 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   not reach the pane, but `new-window -e NAME=value` does — though `-e` can only SET, never unset,
   so it could not carry the recipe's `unset` preamble even if every surface grew the parameter.
 
+- **A parked warm child that loses its worker exits on its own.** `spec/support/warm_pool.rb` boots
+  children ahead of the examples that take them and parks each one polling its go file. A worker
+  killed mid-file (an OOM kill, a `kill -9`) runs no `after(:context)`, and a child started with
+  `PTY.spawn` sits in its own session, so no Ctrl-C reaches it: its spares would poll forever.
+  Each parked child compares `Process.ppid` against the `WARM_PPID` it was given and calls `exit!`
+  when its parent is gone; `spec/support_warm_pool_spec.rb` pins it.
+
 ## CI is a different box, and both of these were green here and red there
 
 Two examples went red on every GitHub runner while passing on every developer machine, for three
