@@ -210,6 +210,7 @@ module Lain
             @target = target
             @clock = clock
             @mutex = Mutex.new
+            @stopped = ConditionVariable.new
             @state = :waiting
             # A COUNT, not a flag: a nested {#receiving} would un-suspend on the
             # inner `ensure` while the outer delivery was still running.
@@ -344,6 +345,7 @@ module Lain
             @mutex.synchronize do
               fired = @state == :stalled
               @state = :finished
+              @stopped.signal
               fired
             end
           ensure
@@ -360,16 +362,17 @@ module Lain
             Thread.new do
               Thread.current.name = "#{THREAD_PREFIX} #{@target.object_id}.#{@owner.object_id}.#{object_id}"
               Thread.current.report_on_exception = false
-              sleep(poll_interval) while sweep
+              nil while sweep
             end
           end
 
-          # One look at the clock; answers whether to keep looking. Firing ends
-          # the loop by moving the state off `:waiting`, so the error is raised
-          # exactly once.
+          # Firing ends the loop by moving the state off `:waiting`, so the error
+          # is raised exactly once. A condition wait rather than a sleep, so the
+          # join in {#stop} does not cost a healthy stream the rest of a poll.
           def sweep
             @mutex.synchronize do
               fire if @state == :waiting && stalled?
+              @stopped.wait(@mutex, poll_interval) if @state == :waiting
               @state == :waiting
             end
           end

@@ -447,8 +447,8 @@ RSpec.describe "stalled-stream protection", :seam do
     # The join is load-bearing HERE and nowhere else, which an earlier version
     # of this example got wrong: on the STALLED path the monitor has already
     # fired and left its own loop, so there is nothing to join and removing the
-    # join is invisible. On a healthy stream the monitor is still asleep in
-    # `sleep(poll_interval)` when the body ends -- a grace of 5 clamps the poll
+    # join is invisible. On a healthy stream the monitor is still parked in its
+    # poll wait when the body ends -- a grace of 5 clamps the poll
     # to 0.5s and the body finishes well inside it -- so only `#watch`'s ensure
     # can have reaped it.
     #
@@ -464,6 +464,31 @@ RSpec.describe "stalled-stream protection", :seam do
       end
 
       expect(survivors).to be_empty
+    end
+
+    # A leaving request must not wait out the monitor's poll: grace 100 clamps
+    # the poll to 1.0s, and the body here is over in microseconds.
+    it "is woken by the stop rather than slept out" do
+      clock = clock_class.new(100)
+      seen_asleep = false
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      clock.watch(stream_env) do
+        clock.receiving { nil }
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+        Thread.pass until (seen_asleep = live_clock_threads.any? { |thread| thread.status == "sleep" }) ||
+                          Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      end
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      expect([seen_asleep, elapsed]).to match([true, be < 0.5])
+    end
+
+    it "returns a healthy streamed reply without waiting out a poll, at the shipped grace" do
+      outcome = nil
+      script = StreamingUpstream.script.chunk(alpha).chunk(done).close
+      StreamingUpstream.ndjson(script) { |up| outcome = stream_outcome(ollama_transport(up, stall: 30)) }
+
+      expect(outcome).to include(error: nil, seconds: be < 0.5)
     end
 
     # A different property, and worth its own line: a monitor that FIRED leaves
