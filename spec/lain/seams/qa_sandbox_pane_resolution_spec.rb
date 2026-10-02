@@ -278,9 +278,10 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
     journal = File.join(qa, "records", "journal.ndjson")
     File.write(journal, "{}\n")
     text = "sent-by-the-pane-resolution-spec"
-    # Short quiet/max windows: nothing is going to write to that journal, so the
-    # wait is pure overhead and its only job here is to terminate.
-    args = ["drive.sh", text, "3", "15"]
+    # A quiet window of 0 ends drive.sh at its first look: nothing is going to
+    # write to that journal, and the typed text's echo is covered by drive.sh's
+    # own 0.4s before Enter.
+    args = ["drive.sh", text, "0", "15"]
 
     expect(helper(*args, vars: { "LAIN_QA_JOURNAL" => journal }).last.exitstatus).to eq(2)
     expect(helper(*args, vars: { "LAIN_QA_JOURNAL" => journal,
@@ -303,7 +304,7 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
     journal = File.join(qa, "records", "journal.ndjson")
     File.write(journal, "{}\n")
     text = "sent-to-the-recorded-input-pane"
-    args = ["drive.sh", text, "3", "15"]
+    args = ["drive.sh", text, "0", "15"]
     vars = { "LAIN_QA_JOURNAL" => journal }
 
     # Ambiguous to the resolver, so what follows is the options answering.
