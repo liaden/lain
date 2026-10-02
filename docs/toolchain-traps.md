@@ -366,7 +366,11 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   (twice); and two in `plain_chat_prompt_guards_spec.rb`, `a plain chat's inline prompts over a
   real terminal a prompt the approval window decides ends its line with who decided it and how,
   and a y typed afterwards decides nothing` and `... Ctrl-C at human> offers stop, and s ends the
-  ask while the session carries on`, the second on the final count run.
+  ask while the session carries on`, the second on the final count run. Since 2026-10-02 that file
+  waits on events (the echo, a held note, a parked marker, PTY EOF) and takes its children from a
+  warm pool; 5 named 0.3s negative windows and the Ctrl-C readiness sleep remain, the last because
+  a Ctrl-C within about 30ms of `you>` drawing can be lost. Both names stay live: the first is a lib
+  race in the closing write, not a wait.
   The 62_approval examples (now retired, below) reddened twice more in the same run. One timing flake per hook run
   was the norm that day, so budget a retry per landing, and check a retry's red against this list
   by name before believing it.

@@ -39,9 +39,10 @@ module PlainChatPromptGuards
   CHILD = <<~'RUBY'
     require "lain"
 
-    dir = ARGV.fetch(0)
-    window = Float(ARGV.fetch(1))
-    shape = ARGV.fetch(2)
+    # Booted ahead of the example that takes it, and told which chat to run once
+    # an example claims it: see {WarmPool.parked}.
+    dir, window_arg, shape, grace = ARGV
+    window = Float(window_arg)
     journal_io = File.open(File.join(dir, "journal.ndjson"), "a").tap { |io| io.sync = true }
     queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: window)
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, pastel: Pastel.new(enabled: false),
@@ -61,7 +62,7 @@ module PlainChatPromptGuards
     end
     conductor = Lain::CLI::Conductor.new(tty:, chronicle:, supervisor:,
                                          signals: Lain::CLI::Signals.new, rail:,
-                                         grace: Float(ENV.fetch("LAIN_SPEC_GRACE", "30")))
+                                         grace: Float(grace))
     pump = Lain::Frontend::StdinPump.new(rail:, screen: tty)
     askers = Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human: askers.directory, questions: askers.questions)
@@ -103,6 +104,7 @@ module PlainChatPromptGuards
       def park
         @parked += 1
         command = @parked == 1 ? "rm -rf build" : "rm -rf build#{@parked}"
+        File.write(File.join(@dir, "parked"), "", mode: "a")
         @queue.call(Lain::Effect::ToolCall.new(tool_use_id: "call_#{@parked}", name: "bash",
                                                input: { "command" => command }), nil)
       end
@@ -191,17 +193,18 @@ module PlainChatPromptGuards
     CURSOR_QUERY = "\e[6n"
     CURSOR_REPORT = "\e[1;1R"
 
-    def initialize(dir, window:, shape:, term: "xterm", answers_cursor: true, grace: nil)
-      @dir = dir
+    def initialize(child:, window:, shape:, answers_cursor: true, grace: nil)
+      @child = child
+      @dir = child.dir
+      @output = child.reader
+      @input = child.writer
       @screen = +""
       @lock = Mutex.new
       @answers_cursor = answers_cursor
       @during_query = nil
-      env = { "TERM" => term, "INPUTRC" => File.join(dir, "no-inputrc") }
-      env["LAIN_SPEC_GRACE"] = grace.to_s if grace
-      @output, @input, @pid = PTY.spawn(env, RbConfig.ruby, "-I", LIB, "-e", CHILD, dir, window.to_s, shape)
-      @output.winsize = [40, 200]
       @pump = Thread.new { pump }
+      @output.winsize = [40, 200]
+      child.tell(@dir, window, shape, grace || 30)
     end
 
     def screen = @lock.synchronize { @screen.dup }
@@ -221,10 +224,38 @@ module PlainChatPromptGuards
     def typed = FileUtils.touch(File.join(@dir, "typed"))
 
     def await(pattern, timeout: 20)
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-      sleep(0.02) until screen.match?(pattern) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-      raise "#{pattern.inspect} never drew; the screen was:\n#{screen}" unless screen.match?(pattern)
+      wait_for(timeout:, what: pattern.inspect) { screen.match?(pattern) }
     end
+
+    # Fails with the screen, which a bare expect on a polled condition would not show.
+    def wait_for(timeout: 20, what: "the condition")
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      sleep(0.005) until yield || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      yield || raise("#{what} never held; the screen was:\n#{screen}")
+    end
+
+    # The `[y/N]` drawn again after the last line matching `note`: a line typed
+    # before that is held for the next read, not answered.
+    def await_asked_again_after(note)
+      wait_for(what: "#{note.inspect} then #{PlainChatPromptGuards::APPROVAL.inspect}") do
+        drawn = screen
+        at = drawn.rindex(note)
+        at && drawn[at..].match?(PlainChatPromptGuards::APPROVAL)
+      end
+    end
+
+    # The echo is the signal that the bytes reached the kernel's buffer.
+    def type_echoed(bytes)
+      before = screen.bytesize
+      type(bytes)
+      wait_for(what: "the echo of #{bytes.inspect}") { screen.bytesize >= before + bytes.bytesize }
+    end
+
+    # The chat has ended and the terminal has nothing more to say: EOF on the
+    # PTY is the whole window for "nothing is drawn after the close".
+    def closed?(timeout: 20) = @pump.join(timeout) ? true : false
+
+    def parked? = File.exist?(File.join(@dir, "parked"))
 
     def verdicts
       path = File.join(@dir, "journal.ndjson")
@@ -255,13 +286,8 @@ module PlainChatPromptGuards
     def text = screen.gsub(/\e\[[\d;?]*[A-Za-z]/, "").gsub(/\e[>=]/, "")
 
     def close
-      Process.kill("KILL", @pid)
-      Process.wait(@pid)
-    rescue Errno::ESRCH, Errno::ECHILD
-      nil
-    ensure
+      @child.reap
       @pump.join(2)
-      [@input, @output].each { |io| io.close unless io.closed? }
     end
 
     private
@@ -288,13 +314,16 @@ end
 
 RSpec.describe "a plain chat's inline prompts", :seam do
   describe "over a real terminal" do
+    warm_pool(:terminals) do |term|
+      WarmCockpit.terminal(prefix: "plain-chat", script: PlainChatPromptGuards::CHILD, term:, flags: [])
+    end
+
     around do |example|
-      Dir.mktmpdir do |dir|
-        @terminal = PlainChatPromptGuards::Terminal.new(dir, window:, shape:, term:, answers_cursor:, grace:)
-        example.run
-      ensure
-        @terminal&.close
-      end
+      @terminal = PlainChatPromptGuards::Terminal.new(child: terminals.take(term), window:, shape:,
+                                                      answers_cursor:, grace:)
+      example.run
+    ensure
+      @terminal&.close
     end
 
     let(:window) { 30 }
@@ -307,17 +336,23 @@ RSpec.describe "a plain chat's inline prompts", :seam do
     # Typed ahead on a terminal whose prompt the spec cannot wait for by sight.
     def typed_ahead_unseen(bytes)
       terminal.await(/DISPATCHING/)
-      terminal.type(bytes)
-      sleep(0.2)
+      terminal.type_echoed(bytes)
       terminal.typed
-      sleep(1.5)
+      terminal.await(/held as your next prompt: #{Regexp.escape(bytes.chomp)}/)
+    end
+
+    # The answer that proves nothing earlier was one: it is the only verdict.
+    def expect_denied_by_the_next_n
+      terminal.await_asked_again_after("held as your next prompt:")
+      terminal.type("n\r")
+      terminal.await(/SETTLED/)
+      expect(terminal.verdicts).to eq([%w[tty deny]])
     end
 
     # Type ahead while the first line dispatches, then let it park its call.
     def typed_ahead(bytes)
       terminal.await(/DISPATCHING/)
-      terminal.type(bytes)
-      sleep(0.2) # the bytes reach the kernel's buffer, echoed, before the call parks
+      terminal.type_echoed(bytes) # in the kernel's buffer before the call parks
       terminal.typed
       terminal.await(PlainChatPromptGuards::APPROVAL)
     end
@@ -325,10 +360,9 @@ RSpec.describe "a plain chat's inline prompts", :seam do
     describe "a line typed during dispatch" do
       it "does not answer the next approval, and is dispatched as the next prompt once the line settles" do
         typed_ahead("yes please\r")
-        sleep(0.5)
+        terminal.await(/held as your next prompt: yes please/)
 
         expect(terminal.verdicts).to be_empty # the prompt opened empty and waits
-        expect(terminal.screen).to include("held as your next prompt: yes please")
 
         terminal.type("n\r")
         terminal.await(/SETTLED/)
@@ -342,10 +376,9 @@ RSpec.describe "a plain chat's inline prompts", :seam do
     describe "a partial line typed before a prompt" do
       it "is not an answer, and is said to be discarded" do
         typed_ahead("y")
-        sleep(0.5)
+        terminal.await(/discarded: y/)
 
         expect(terminal.verdicts).to be_empty
-        expect(terminal.screen).to include("discarded: y")
       end
     end
 
@@ -359,6 +392,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         expect(terminal.verdicts).to be_empty
         expect(terminal.screen).to include("held as your next prompt: Say yes")
 
+        terminal.await_asked_again_after("held as your next prompt:")
         terminal.type("#{verdict}\r")
         terminal.await(/SETTLED/)
         terminal.await(/you> /)
@@ -367,7 +401,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       it "holds the whole line and asks again, when its end is typed after the prompt drew" do
         typed_ahead("Say ")
         terminal.type("yes\r")
-        sleep(0.5)
+        terminal.await(/held as your next prompt: Say yes/)
 
         split_line_answered_by("n")
 
@@ -377,13 +411,12 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
       it "holds the whole line and asks again, when its end is typed at a human's pace, unseen" do
         terminal.await(/DISPATCHING/)
-        terminal.type("Say ")
-        sleep(0.2)
+        terminal.type_echoed("Say ")
         terminal.typed
-        sleep(0.04)
+        sleep(0.04) # a human's pace between the halves is the scenario
         terminal.type("yes\r")
         terminal.await(PlainChatPromptGuards::APPROVAL)
-        sleep(0.5)
+        terminal.await(/held as your next prompt: Say yes/)
 
         split_line_answered_by("n")
 
@@ -403,15 +436,11 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         terminal.typed
         terminal.type("run the tests\ryes\r")
         terminal.await(PlainChatPromptGuards::APPROVAL)
-        sleep(0.5)
+        terminal.await(/held as your next prompt: yes/)
 
         expect(terminal.verdicts).to be_empty
-        expect(terminal.screen).to include("held as your next prompt: yes")
 
-        terminal.type("n\r")
-        terminal.await(/SETTLED/)
-
-        expect(terminal.verdicts).to eq([%w[tty deny]])
+        expect_denied_by_the_next_n
       end
     end
 
@@ -421,14 +450,12 @@ RSpec.describe "a plain chat's inline prompts", :seam do
     describe "a line typed while the prompt's read waits on the cursor query" do
       it "does not answer the [y/N]" do
         terminal.await(/DISPATCHING/)
-        sleep(0.1)
         terminal.type_during_next_query("yes\r")
         terminal.typed
         terminal.await(PlainChatPromptGuards::APPROVAL)
-        sleep(0.5)
+        terminal.await(/held as your next prompt: yes/)
 
-        expect(terminal.verdicts).to be_empty
-        expect(terminal.screen).to include("held as your next prompt: yes")
+        expect_denied_by_the_next_n
       end
 
       context "with a terminal that never answers the query" do
@@ -436,14 +463,13 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
         it "does not answer the [y/N] with a yes typed while the read waited it out" do
           terminal.await(/DISPATCHING/)
-          sleep(0.1)
           terminal.typed
-          sleep(0.1)
+          terminal.await(/\e\[6n/) # the query is out and nobody replies to it
           terminal.type("yes\r")
           terminal.await(PlainChatPromptGuards::APPROVAL)
-          sleep(1.0)
+          terminal.await(/held as your next prompt: yes/)
 
-          expect(terminal.verdicts).to be_empty
+          expect_denied_by_the_next_n
         end
       end
 
@@ -452,14 +478,12 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
         it "does not answer the question, which the line typed at human> then does" do
           terminal.await(/DISPATCHING/)
-          sleep(0.1)
           terminal.type_during_next_query("postgres\r")
           terminal.typed
           terminal.await(/human> /)
-          sleep(0.8)
+          terminal.await(/held as your next prompt: postgres/)
 
           expect(terminal.answer).to be_nil
-          expect(terminal.screen).to include("held as your next prompt: postgres")
 
           terminal.type("mysql\r")
           terminal.await(/SETTLED/)
@@ -476,13 +500,12 @@ RSpec.describe "a plain chat's inline prompts", :seam do
           terminal.await(/DISPATCHING/)
           terminal.typed
           terminal.await(/command> /)
-          sleep(0.3)
           terminal.type_during_next_query("yes\r")
           terminal.type("/approve\r")
-          sleep(1.5)
+          terminal.await(/held as your next prompt: yes/)
 
           expect(terminal.verdicts).to be_empty
-          expect(terminal.screen).to include("held as your next prompt: yes")
+          expect_denied_by_the_next_n
         end
       end
     end
@@ -496,14 +519,14 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         typed_ahead_unseen("yes\r")
 
         expect(terminal.verdicts).to be_empty
-        expect(terminal.screen).to include("held as your next prompt: yes")
+        expect_denied_by_the_next_n
       end
 
       it "holds a prompt typed during dispatch, rather than taking it as a denial" do
         typed_ahead_unseen("yes please\r")
 
         expect(terminal.verdicts).to be_empty
-        expect(terminal.screen).to include("held as your next prompt: yes please")
+        expect_denied_by_the_next_n
       end
     end
 
@@ -512,7 +535,6 @@ RSpec.describe "a plain chat's inline prompts", :seam do
     describe "an arrow key typed before a prompt" do
       it "is dropped, so the first n typed at the prompt answers it" do
         typed_ahead("\e[A")
-        sleep(0.3)
         terminal.type("n\r")
         terminal.await(/SETTLED/)
 
@@ -530,7 +552,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         terminal.await(/you> /)
 
         terminal.type("y\r")
-        sleep(0.5)
+        terminal.wait_for(what: "the y dispatched as a line") { terminal.dispatched.size == 2 }
 
         rows = terminal.screen.lines
         verdict_row = rows[rows.rindex { |row| row.match?(PlainChatPromptGuards::APPROVAL) } + 1]
@@ -550,7 +572,8 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       it "announces the call once human> closes, then draws the [y/N]" do
         terminal.typed
         terminal.await(/human> /)
-        sleep(0.8)
+        terminal.wait_for(what: "the call parked") { terminal.parked? }
+        sleep(0.3) # a negative window: an arrival printed over a live human> would land in it
         expect(terminal.screen).not_to include("asks to run bash")
 
         terminal.type("postgres\r")
@@ -570,7 +593,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         it "says, once human> closes, that the call was denied by timeout" do
           terminal.typed
           terminal.await(/human> /)
-          sleep(2.0)
+          terminal.wait_for(what: "the window to decide the call") { terminal.verdicts == [%w[timeout deny]] }
           terminal.type("postgres\r")
           terminal.await(/decided by timeout: denied/)
 
@@ -589,7 +612,6 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       it "draws the shutdown countdown" do
         terminal.typed
         terminal.await(/human> /)
-        sleep(0.3)
         terminal.type("\x03")
         terminal.await(/closing in \d+s/)
 
@@ -601,12 +623,13 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       it "offers stop, and s ends the ask while the session carries on" do
         terminal.typed
         terminal.await(/human> /)
-        sleep(0.3)
         terminal.type("\x03")
         terminal.await(/closing in \d+s/)
         countdown = terminal.text[terminal.text.rindex("closing in")..]
         terminal.type("s")
-        sleep(2.0)
+        terminal.wait_for(what: "the ask stopped") { terminal.records("run_interrupted").any? }
+        terminal.wait_for(what: "you> back") { terminal.text[terminal.text.rindex("closing in")..].include?("you> ") }
+        sleep(0.3) # a negative window: a chat that ends on s would write `exited` in it
 
         expect(countdown).to include("[s] stop this ask")
         expect(terminal.exited?).to be(false)
@@ -623,26 +646,23 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
       it "draws its [y/N] at once, and you> again after it is answered" do
         terminal.await(/you> /)
-        sleep(0.3)
         terminal.typed
         terminal.await(PlainChatPromptGuards::APPROVAL)
 
         terminal.type("n\r")
-        sleep(0.5)
-        prompts_after = terminal.screen[terminal.screen.rindex("approve bash(")..]
+        terminal.wait_for(what: "the denial") { terminal.verdicts == [%w[tty deny]] }
+        terminal.wait_for(what: "you> after the answer") { terminal.text.split("approve bash(").last.include?("you> ") }
 
         expect(terminal.verdicts).to eq([%w[tty deny]])
-        expect(prompts_after).to include("you> ")
         expect(terminal.dispatched).to be_empty
       end
 
       it "waits behind a you> the human has typed at, announced once that line is sent" do
         terminal.await(/you> /)
-        sleep(0.3)
-        terminal.type("half a thought")
-        sleep(0.2)
+        terminal.type_echoed("half a thought")
         terminal.typed
-        sleep(1.0)
+        terminal.wait_for(what: "the call parked") { terminal.parked? }
+        sleep(0.3) # a negative window: a prompt that preempted the typing would draw in it
         expect(terminal.screen).not_to match(PlainChatPromptGuards::APPROVAL)
 
         terminal.type("\r")
@@ -663,19 +683,18 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
       it "draws the second [y/N] as soon as the first is answered, with nothing typed, then you>" do
         terminal.await(/you> /)
-        sleep(0.3)
         terminal.typed
         terminal.await(PlainChatPromptGuards::APPROVAL)
-        sleep(0.3)
         terminal.type("n\r")
-        terminal.await(/rm -rf build2/, timeout: 5)
-        sleep(0.5)
+        terminal.await_asked_again_after("rm -rf build2")
         terminal.type("y\r")
-        sleep(1.0)
+        terminal.wait_for(what: "both decided") { terminal.verdicts.size == 2 }
+        terminal.wait_for(what: "you> after build2") do
+          terminal.text[terminal.text.rindex("rm -rf build2")..].include?("you> ")
+        end
 
         expect(terminal.verdicts).to eq([%w[tty deny], %w[tty approve]])
         expect(terminal.dispatched).to be_empty
-        expect(terminal.text[terminal.text.rindex("rm -rf build2")..]).to include("you> ")
       end
     end
 
@@ -687,17 +706,15 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
       it "is dispatched when you> returns, before the line typed next" do
         terminal.await(/you> /)
-        sleep(0.3)
         terminal.typed
         terminal.await(PlainChatPromptGuards::APPROVAL)
-        sleep(0.3)
         terminal.type("/goal off\r")
         terminal.await(%r{held as your next prompt: /goal off})
-        sleep(0.3)
+        terminal.await_asked_again_after("held as your next prompt: /goal off")
         terminal.type("n\r")
-        sleep(1.5)
+        terminal.wait_for(what: "the held line dispatched") { terminal.dispatched == ["/goal off"] }
         terminal.type("second line\r")
-        sleep(1.5)
+        terminal.wait_for(what: "the second line dispatched") { terminal.dispatched.size == 2 }
 
         expect(terminal.dispatched).to eq(["/goal off", "second line"])
       end
@@ -711,19 +728,16 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
       it "decides the call once, announces it once, and never contradicts the answer" do
         terminal.await(/you> /)
-        sleep(0.3)
-        terminal.type("/approve")
-        sleep(0.2)
+        terminal.type_echoed("/approve")
         terminal.typed
-        sleep(1.0)
+        terminal.wait_for(what: "the call parked") { terminal.parked? }
+        sleep(0.3) # a negative window: the watcher's own prompt must not draw over the typing
         terminal.type("\r")
         terminal.await(PlainChatPromptGuards::APPROVAL)
-        sleep(0.5)
         terminal.type("y\r")
         terminal.await(/bash: approved/)
-        sleep(0.5)
         terminal.type("n\r")
-        sleep(1.0)
+        terminal.wait_for(what: "the n dispatched as a line") { terminal.dispatched.size == 2 }
 
         expect(terminal.verdicts).to eq([%w[tty approve]])
         expect(arrivals.size).to eq(1)
@@ -741,18 +755,17 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
       it "draws the countdown, and c puts the [y/N] back, answerable" do
         terminal.await(/you> /)
-        sleep(0.3)
         terminal.typed
         terminal.await(PlainChatPromptGuards::APPROVAL)
-        sleep(0.3)
         terminal.type("\x03")
         terminal.await(/closing in \d+s/)
-        sleep(1.2)
         terminal.type("c")
-        sleep(1.5)
+        terminal.wait_for(what: "the [y/N] put back") do
+          terminal.text[terminal.text.rindex("closing in")..].include?("approve bash(")
+        end
         after_cancel = terminal.text[terminal.text.rindex("closing in")..]
         terminal.type("n\r")
-        sleep(1.0)
+        terminal.wait_for(what: "the denial") { terminal.verdicts == [%w[tty deny]] }
 
         expect(after_cancel).to include("approve bash(")
         expect(terminal.verdicts).to eq([%w[tty deny]])
@@ -767,14 +780,12 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
         it "ends the chat, reaps the parked call, and draws no prompt after the close" do
           terminal.await(/you> /)
-          sleep(0.3)
           terminal.typed
           terminal.await(PlainChatPromptGuards::APPROVAL)
-          sleep(0.3)
           terminal.type("\x03")
           terminal.await(/closing in \d+s/)
           drawn = terminal.text.scan("approve bash(").size
-          sleep(6.0)
+          terminal.wait_for(what: "the chat to close") { terminal.closed? }
 
           expect(terminal.exited?).to be(true)
           expect(terminal.verdicts).to eq([%w[abandoned deny]])
@@ -786,10 +797,8 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         # and that line went with the session.
         it "offers cancel and wait longer, and no respond-then-exit" do
           terminal.await(/you> /)
-          sleep(0.3)
           terminal.typed
           terminal.await(PlainChatPromptGuards::APPROVAL)
-          sleep(0.3)
           terminal.type("\x03")
           terminal.await(/closing in \d+s/)
 
@@ -806,24 +815,21 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       # drawn when it is handled.
       it "loses no Ctrl-C that lands as the [y/N] takes the terminal" do
         terminal.await(/you> /)
-        sleep(0.3)
+        sleep(0.3) # the chat is not ready for a Ctrl-C in the first ~30ms after you> draws; no signal says when it is
         terminal.typed
-        sleep(0.008)
+        sleep(0.008) # the race under test: the signal lands as the [y/N] takes the terminal
         terminal.type("\x03")
-        sleep(2.0)
-
         # Which of the two it is depends on whether `you>` was still the prompt
         # when the signal was handled; that it is one of them is the claim.
-        expect([terminal.text.match?(/closing in \d+s/), terminal.exited?]).to include(true)
+        expect(terminal.wait_for(what: "the countdown or the close") do
+          terminal.text.match?(/closing in \d+s/) || terminal.exited?
+        end).to be_truthy
       end
 
       it "still ends the chat on a Ctrl-C at the idle you> itself" do
         terminal.await(/you> /)
-        sleep(0.5)
         terminal.type("\x03")
-        sleep(1.5)
-
-        expect(terminal.exited?).to be(true)
+        expect(terminal.wait_for(what: "the chat to end") { terminal.exited? }).to be(true)
       end
     end
 
@@ -835,13 +841,13 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       let(:term) { "dumb" }
 
       it "does not preempt a you> the human is typing at, and never splits the line" do
-        sleep(2.0)
-        terminal.type("ye")
-        sleep(0.3)
+        terminal.await(/you> /)
+        terminal.type_echoed("ye")
         terminal.typed
-        sleep(1.5)
+        terminal.wait_for(what: "the call parked") { terminal.parked? }
+        sleep(0.3) # a negative window: a prompt that took the cooked read would split the line in it
         terminal.type("s\r")
-        sleep(1.5)
+        terminal.wait_for(what: "the line dispatched") { terminal.dispatched == ["yes"] }
 
         expect(terminal.text).not_to include("discarded: ye")
         expect(terminal.dispatched).to eq(["yes"])
@@ -866,10 +872,9 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
       it "still drains ahead of the [y/N] that /approve asks" do
         typed_ahead("/approve\rnot an answer\r")
-        sleep(0.5)
+        terminal.await(/held as your next prompt: not an answer/)
 
         expect(terminal.verdicts).to be_empty
-        expect(terminal.screen).to include("held as your next prompt: not an answer")
 
         terminal.type("n\r")
         terminal.await(/SETTLED/)
