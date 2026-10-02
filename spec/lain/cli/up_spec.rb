@@ -492,12 +492,37 @@ RSpec.describe Lain::CLI::Up do
         tmux("display-message", "-p", "-t", session_option(described_class::Panes::INPUT), '#{pane_height}').to_i
       end
 
+      def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      def client_height = tmux("list-clients", "-F", "\#{client_height}").to_i
+
+      # The hook's redistribution lands after the resize is reported.
+      def laid_out(rows, quiet: 0.25, limit: 10)
+        deadline = clock + limit
+        sleep(0.01) until client_height == rows || clock > deadline
+        raise "client never reached #{rows} rows in #{limit}s" unless client_height == rows
+
+        layout_quiet(quiet, deadline)
+      end
+
+      def layout_quiet(quiet, deadline)
+        last = nil
+        since = clock
+        until (now = clock) - since >= quiet || now > deadline
+          layout = tmux("display-message", "-p", "-t", session, "\#{window_layout}")
+          since = now unless layout == last
+          last = layout
+          sleep(0.02)
+        end
+        raise "layout still changing before the deadline, last #{last}" unless clock - since >= quiet
+      end
+
       # A real tmux CLIENT on a real pty, which is what `lain up` execs and
       # the only thing that reproduces the redistribution.
       def attached(rows)
         reader, writer, pid = PTY.spawn("tmux", "-L", socket, "attach", "-t", session)
         writer.winsize = [rows, 100]
-        sleep(1.5)
+        laid_out(rows)
         yield(writer)
       ensure
         Process.kill("TERM", pid) if pid
@@ -572,7 +597,7 @@ RSpec.describe Lain::CLI::Up do
           expect(input_pane_height).to be >= 6
           [40, 24, 60, 24].each do |rows|
             client.winsize = [rows, 100]
-            sleep(1.5)
+            laid_out(rows)
             expect(input_pane_height).to be >= 6
           end
         end
@@ -590,11 +615,11 @@ RSpec.describe Lain::CLI::Up do
 
         attached(40) do
           tmux("resize-pane", "-t", pane, "-y", "15")
-          sleep(1)
+          laid_out(40)
           expect(input_pane_height).to eq(15)
 
           tmux("resize-pane", "-t", pane, "-y", "3")
-          sleep(1)
+          laid_out(40)
           expect(input_pane_height).to eq(6)
         end
       end
