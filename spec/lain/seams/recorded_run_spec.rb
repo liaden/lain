@@ -328,12 +328,11 @@ end
 
 RSpec.describe "a whole recorded run", :seam, records: :ollama,
                                               vcr: { cassette_name: "ollama_run_tool_loop" } do
-  # ONE run per example, not one per file: a cassette is inserted per example and
-  # its interactions are consumed as they play, so a run shared across examples
-  # would be replayed from an exhausted file. Each example therefore drives the
-  # whole thing again -- three HTTP interactions, no network -- which is also what
-  # makes each of them a genuinely independent replay.
-  subject(:run) { T14RecordedRun.drive }
+  # ONE replay per file: the examples each read a different facet of the same run,
+  # and the first to ask drives the cassette inside its own insertion. The run
+  # is frozen so an example that mutated the shared run would raise rather than
+  # leak into the next one.
+  once(:run) { Ractor.make_shareable(T14RecordedRun.drive) }
 
   # {MODEL}, not the literal the cassette happens to hold: bump
   # `Provider::Ollama::DEFAULT_MODEL` and the run would ask for a new model while
