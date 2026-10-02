@@ -217,11 +217,12 @@ module Lain
       # asked by message as {Inbox} asks a question for its summary.
       #
       # It runs as a read is being stopped, where a raise -- the terminal gone --
-      # would replace the stop that is climbing.
+      # would replace the stop that is climbing; so the failure goes to the
+      # channel as a {PromptUnclosed} instead, and the stop carries on.
       def close_prompt(text)
         text.closed { |note| @notes.close_row(@theme.paint(:warning, note)) } if text.respond_to?(:closed)
-      rescue StandardError
-        nil
+      rescue StandardError => e
+        report_unclosed(e)
       end
 
       # A prompt waiting its turn behind another ({Intake#read}) is announced
@@ -234,8 +235,8 @@ module Lain
       # having no row to end. Guarded for {#close_prompt}'s reason.
       def drop_prompt(text)
         text.dropped { |note| render_warning(note) } if text.respond_to?(:dropped)
-      rescue StandardError
-        nil
+      rescue StandardError => e
+        report_unclosed(e)
       end
 
       # Whether a line editor holds the terminal for a prompt right now.
@@ -463,7 +464,25 @@ module Lain
       # idiom, which keeps each body within Metrics/ClassLength instead of
       # loosening it.
 
+      # So a verdict line missing from the screen has a reason somewhere.
+      PromptUnclosed = Data.define(:error_class, :message) do
+        def initialize(error_class:, message:)
+          super(error_class: error_class.to_s.dup.freeze, message: message.to_s.dup.freeze)
+        end
+
+        # @param error [StandardError]
+        # @return [PromptUnclosed]
+        def self.of(error) = new(error_class: error.class.name, message: error.message)
+      end
+
       private
+
+      # Offered, not pushed: the reader is unwinding, and the render thread that
+      # drains a full channel may have died with the terminal.
+      def report_unclosed(error)
+        @channel.offer(PromptUnclosed.of(error))
+        nil
+      end
 
       # The two collaborators a drawn prompt uses on either side of the pump's
       # read: compose the prompt string, durably record what was accepted.

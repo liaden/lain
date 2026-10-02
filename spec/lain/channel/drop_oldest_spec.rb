@@ -8,8 +8,25 @@ RSpec.describe Lain::Channel::DropOldest do
 
   it "satisfies the same duck as Channel" do
     channel = described_class.new(capacity: 4)
-    %i[push << pop drain close closed? size length capacity].each do |message|
+    %i[push << offer pop drain close closed? size length capacity].each do |message|
       expect(channel).to respond_to(message)
+    end
+  end
+
+  describe "#offer" do
+    it "enqueues as push does, never waiting, and answers the channel" do
+      channel = described_class.new(capacity: 1)
+
+      expect(channel.offer(:first)).to equal(channel)
+      expect(channel.offer(:second)).to equal(channel)
+      expect(channel.drain.last).to eq(:second)
+    end
+
+    it "drops the event on a closed channel rather than raising" do
+      channel = described_class.new(capacity: 1)
+      channel.close
+
+      expect(channel.offer(:event)).to be_nil
     end
   end
 

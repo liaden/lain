@@ -77,6 +77,35 @@ RSpec.describe Lain::Channel do
     end
   end
 
+  # For a producer that must never wait on the consumer: a diagnostic written
+  # while a read unwinds, where the consumer may be the thing that died.
+  describe "#offer" do
+    it "enqueues when there is room, and says so" do
+      channel = described_class.new(capacity: 1)
+
+      expect(channel.offer(:event)).to equal(channel)
+      expect(channel.drain).to eq([:event])
+    end
+
+    it "drops the event at once when the channel is full, and says so" do
+      channel = described_class.new(capacity: 1)
+      channel.push(:first)
+      offering = Thread.new { channel.offer(:second) }
+
+      expect(offering.join(1)).not_to be_nil
+      expect(offering.value).to be_nil
+      expect(channel.drain).to eq([:first])
+    ensure
+      offering&.kill
+    end
+
+    it "drops the event on a closed channel rather than raising" do
+      channel = described_class.new(capacity: 1).close
+
+      expect(channel.offer(:event)).to be_nil
+    end
+  end
+
   describe "#close" do
     it "wakes a blocked producer with ClosedQueueError instead of deadlocking" do
       channel = described_class.new(capacity: 1)
@@ -147,6 +176,10 @@ RSpec.describe Lain::Channel do
     it "absorbs pushes and returns itself, chainable like a real channel" do
       null = described_class.new
       expect(null.push(:event) << :another).to equal(null)
+    end
+
+    it "accepts an offer as it absorbs a push" do
+      expect(described_class.instance.offer(:event)).to equal(described_class.instance)
     end
 
     it "exposes one shared frozen instance for defaults" do

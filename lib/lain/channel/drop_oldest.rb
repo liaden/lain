@@ -77,6 +77,17 @@ module Lain
       end
       alias << push
 
+      # {Channel#offer}'s duck: {#push} never waits here, so only a closed
+      # channel drops the event.
+      #
+      # @param event [Object]
+      # @return [self, nil] self when the event was enqueued, nil when it was dropped
+      def offer(event)
+        push(event)
+      rescue ClosedQueueError
+        nil
+      end
+
       # Blocks until an event is available. A pending drop surfaces FIRST as a
       # {Lain::Telemetry::Dropped} marker; `nil` once closed and drained.
       #

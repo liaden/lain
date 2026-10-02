@@ -631,6 +631,86 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  # The closing line is written as a read is being stopped, so a raise there
+  # must not replace the stop; but a note that vanished in silence is how a
+  # missing verdict line went unexplained, so the failure is said on the channel.
+  describe "#close_prompt on a terminal that refuses the write" do
+    let(:refusing) do
+      Class.new(StringIO) do
+        def write(*) = raise(Errno::EIO, "the terminal hung up")
+        alias_method :print, :write
+        alias_method :puts, :write
+      end.new
+    end
+    let(:plain) { described_class.new(channel:, output: refusing, pastel: Pastel.new(enabled: false)) }
+    let(:rail) { Lain::Frontend::Intake.new(screen: plain) }
+    let(:closing) do
+      Class.new(String) do
+        def closed = yield("-- decided by timeout: denied")
+      end.new("[y/N] ")
+    end
+
+    def read_stopped_under_the_prompt
+      Sync do |task|
+        reading = task.async { rail.read(:approval, closing) }
+        task.yield
+        reading.stop
+        reading
+      end
+    end
+
+    it "puts the failure on the channel, naming the error" do
+      read_stopped_under_the_prompt
+
+      expect(channel.drain).to contain_exactly(
+        have_attributes(error_class: "Errno::EIO", message: a_string_including("the terminal hung up"))
+      )
+    end
+
+    it "still lets the read end as stopped, with its prompt withdrawn" do
+      reading = read_stopped_under_the_prompt
+
+      expect(reading).to be_cancelled
+      expect(rail.published.kind).to be_nil
+    end
+
+    # The consumer of a full channel may be the render thread the dead
+    # terminal just killed, so waiting for room would hang the unwinding read.
+    describe "when the channel is full and nobody drains it" do
+      let(:channel) { Lain::Channel.new(capacity: 1).push(:unrendered) }
+      let(:dropping) do
+        Class.new(String) do
+          def dropped = yield("! agent asks to run bash(\"ls\")  -- decided by timeout: denied")
+        end.new("[y/N] ")
+      end
+
+      def returns_promptly(&)
+        caller = Thread.new(&)
+        caller.join(1).nil? ? :blocked : :returned
+      ensure
+        caller&.kill
+      end
+
+      it "closes the prompt without waiting for room" do
+        expect(returns_promptly { plain.close_prompt(closing) }).to eq(:returned)
+      end
+
+      it "drops the prompt without waiting for room" do
+        expect(returns_promptly { plain.drop_prompt(dropping) }).to eq(:returned)
+      end
+    end
+
+    it "says on the channel why a prompt that never drew could not say how it was decided" do
+      dropping = Class.new(String) do
+        def dropped = yield("! agent asks to run bash(\"ls\")  -- decided by timeout: denied")
+      end
+
+      plain.drop_prompt(dropping.new("[y/N] "))
+
+      expect(channel.drain).to contain_exactly(have_attributes(error_class: "Errno::EIO"))
+    end
+  end
+
   # The countdown waits for the line editor to leave the terminal before it
   # draws and reads keys, so it asks whether a prompt is drawn right now.
   describe "#prompt_drawn?" do

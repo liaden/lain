@@ -96,6 +96,21 @@ module Lain
     end
     alias << push
 
+    # Enqueue an event only if that needs no wait, for a producer that must
+    # never block on the consumer: one writing a diagnostic as a read unwinds,
+    # where the consumer may be what just died. A full or closed channel DROPS
+    # the event rather than reporting it, since reporting would need the very
+    # room that is missing; the answer says which happened.
+    #
+    # @param event [Object] a structured event
+    # @return [self, nil] self when the event was enqueued, nil when it was dropped
+    def offer(event)
+      @queue.push(event, true)
+      self
+    rescue ThreadError, ClosedQueueError
+      nil
+    end
+
     # Remove and return the next event, blocking until one is available.
     #
     # @return [Object, nil] the next event, or `nil` once the channel is closed
@@ -143,6 +158,8 @@ module Lain
       # @return [self]
       def push(_event) = self
       alias << push
+
+      alias offer push
 
       # One shared frozen Null: it has no state, so every `journal:`/`channel:`
       # default reuses this eager constant rather than allocating a fresh no-op

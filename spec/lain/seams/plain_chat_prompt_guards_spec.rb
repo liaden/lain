@@ -554,9 +554,15 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         terminal.type("y\r")
         terminal.wait_for(what: "the y dispatched as a line") { terminal.dispatched.size == 2 }
 
-        rows = terminal.screen.lines
-        verdict_row = rows[rows.rindex { |row| row.match?(PlainChatPromptGuards::APPROVAL) } + 1]
-        expect(verdict_row).to include("-- decided by timeout: denied")
+        # Found by its words rather than as the row after the prompt: the
+        # fixture's SETTLED is a raw write past the writer lock, and when it
+        # lands first it ends the prompt's row itself.
+        rows = terminal.text.lines
+        prompt_row = rows.rindex { |row| row.match?(PlainChatPromptGuards::APPROVAL) }
+        verdict_row = rows.index { |row| row.include?("-- decided by timeout: denied") }
+        expect(verdict_row).to be > prompt_row
+        expect(rows[(prompt_row + 1)...verdict_row]).to all(match(/\A\s*\z/))
+        expect(rows[verdict_row].lstrip).to start_with("-- decided by timeout: denied")
         expect(terminal.verdicts).to eq([%w[timeout deny]])
         expect(terminal.dispatched).to eq(["run the tests", "y"])
       end

@@ -32,6 +32,7 @@ module Lain
         return ProviderRetry.new(event) if event.is_a?(Telemetry::ProviderRetry)
         return SnapshotDegraded.new(event) if event.is_a?(::Lain::Agent::SnapshotSlot::SnapshotDegraded)
         return SnapshotNarrowed.new(event) if event.is_a?(::Lain::Agent::SnapshotSlot::SnapshotNarrowed)
+        return PromptUnclosed.new(event) if event.is_a?(TTY::PromptUnclosed)
 
         nil
       end
@@ -68,6 +69,22 @@ module Lain
         # the other naming nothing.
         def styled_stream(theme)
           theme.paint(STREAM_TOKENS.fetch(@event.stream), @event.bytes)
+        end
+      end
+
+      # How a prompt was decided, unsaid because the terminal refused the line --
+      # on a prompt that drew or on one that never did -- said once it takes
+      # writes again. {SnapshotDegraded}'s shape and tokens.
+      class PromptUnclosed
+        def initialize(event) = @event = event
+
+        def line_shaped? = true
+
+        # @param theme [Frontend::Theme]
+        # @return [String] one attributed line: what went unsaid, and the error
+        def render(theme)
+          detail = "could not say how a prompt was decided (#{@event.error_class}: #{@event.message})"
+          "#{theme.paint(:label, "[prompt]")} #{theme.paint(:warning, detail)}"
         end
       end
     end

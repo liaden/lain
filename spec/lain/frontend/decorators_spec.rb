@@ -63,8 +63,34 @@ RSpec.describe Lain::Frontend::Decorators::ToolOutput do
       expect(Lain::Frontend::Decorators.for(retry_event)).to be_a(Lain::Frontend::Decorators::ProviderRetry)
     end
 
+    it "returns a decorator for a prompt whose closing line could not be written" do
+      unclosed = Lain::Frontend::TTY::PromptUnclosed.new(error_class: "Errno::EIO", message: "gone")
+
+      expect(Lain::Frontend::Decorators.for(unclosed)).to be_a(Lain::Frontend::Decorators::PromptUnclosed)
+    end
+
     it "returns nil for an event it does not render, the seam skipping it silently" do
       expect(Lain::Frontend::Decorators.for(Lain::Telemetry::Dropped.new(count: 1))).to be_nil
     end
+  end
+end
+
+RSpec.describe Lain::Frontend::Decorators::PromptUnclosed do
+  let(:theme) { Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false)) }
+  let(:unclosed) do
+    Lain::Frontend::TTY::PromptUnclosed.new(error_class: "Errno::EIO",
+                                            message: "Input/output error - the terminal hung up")
+  end
+
+  it "renders one attributed line saying what went unsaid about the prompt, and why" do
+    rendered = described_class.new(unclosed).render(theme)
+
+    expect(rendered).to start_with("[prompt] ").and include("Errno::EIO", "the terminal hung up")
+    expect(rendered).to include("could not say how a prompt was decided")
+    expect(rendered).not_to match(/[\r\n]/)
+  end
+
+  it "is line shaped, so the frontend ends its row" do
+    expect(described_class.new(unclosed)).to be_line_shaped
   end
 end

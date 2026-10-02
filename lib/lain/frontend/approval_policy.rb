@@ -196,7 +196,9 @@ module Lain
           reading.wait
         ensure
           letting_go&.stop
-          reading&.stop
+          # Stopping a task that has ended stops its children again, and the
+          # reader's own task beneath it may still be writing its closing line.
+          reading&.stop if reading&.running?
         end
       end
 

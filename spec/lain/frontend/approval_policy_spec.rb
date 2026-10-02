@@ -571,6 +571,98 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(approval.decision).to eq(:deny)
   end
 
+  # The conductor reads the `[y/N]` in a task of its own beneath this surface's,
+  # so the window closing stops the read twice: once as the stop climbs, and
+  # again as the outer task finishes. A closing line that waits for the writer
+  # lock yields in between, and the second stop used to land inside it.
+  describe "a window that closes while another fiber holds the writer" do
+    let(:note) { "-- decided by timeout: denied" }
+    let(:journal) { Lain::Journal.new(io: StringIO.new) }
+    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.2) }
+    let(:channel) { Lain::Channel.new }
+    let(:released) { Async::Queue.new }
+    # A terminal whose one marked write parks until the example lets it go:
+    # the writer lock held across the moment the window closes.
+    let(:screen) do
+      Class.new(StringIO) do
+        def initialize(released)
+          super()
+          @released = released
+        end
+
+        def print(*bytes)
+          @released.dequeue if bytes.join.include?("HOLD")
+          super
+        end
+      end.new(released)
+    end
+
+    def tty
+      @tty ||= Lain::Frontend::TTY.new(channel:, output: screen, pastel: Pastel.new(enabled: false),
+                                       history_path: File.join(@dir, "history"))
+    end
+
+    def rail = @rail ||= Lain::Frontend::Intake.new(screen: tty)
+
+    def policy
+      conductor = Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new,
+                                           signals: Lain::CLI::Signals.new, rail:)
+      described_class.new(pastel: Pastel.new(enabled: false), reader: ->(prompt) { conductor.read_reply(prompt) })
+    end
+
+    def gated = Lain::Effect::ToolCall.new(tool_use_id: "call_1", name: "bash", input: { "command" => "rm -rf build" })
+
+    # Taken once the `[y/N]` is published, since opening the read takes the
+    # writer too.
+    def holding_the_writer(task)
+      channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "tu_1", stream: :stdout, bytes: "HOLD\n"))
+      task.async do
+        raise "the [y/N] was never published" unless within(task, 5) { rail.published.kind == :approval }
+
+        tty.drain_and_render
+      end
+    end
+
+    # Whether the condition came true before the deadline, so a missed one
+    # reads as a failed expectation rather than a hang.
+    def within(task, seconds)
+      task.with_timeout(seconds) { task.sleep(0.01) until yield }
+      true
+    rescue Async::TimeoutError
+      false
+    end
+
+    def window_closed_under_a_held_writer
+      surface = policy
+      Sync do |task|
+        watcher = task.async { surface.watch(queue) }
+        holder = holding_the_writer(task)
+        task.with_timeout(5) { task.async { queue.call(gated, nil) }.wait }
+        let_the_writer_go(task, holder)
+      ensure
+        watcher&.stop
+      end
+    end
+
+    # Once the stop has reached the closing line, which waits on the writer.
+    def let_the_writer_go(task, holder)
+      within(task, 5) { rail.published.kind.nil? }
+      released.enqueue(true)
+      task.with_timeout(5) { holder.wait }
+      within(task, 2) { screen.string.include?(note) }
+    end
+
+    around do |example|
+      Dir.mktmpdir { |dir| (@dir = dir) && example.run }
+    end
+
+    it "still ends the prompt's line with the timeout's refusal" do
+      window_closed_under_a_held_writer
+
+      expect(screen.string).to include(note)
+    end
+  end
+
   # A `/command` typed at the drawn `[y/N]` was meant for the chat -- `/goal off`
   # while a goal's iteration waits on the call -- so the prompt says it does not
   # take one, and the terminal holds it for `you>` and asks again.

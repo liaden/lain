@@ -363,14 +363,12 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   cause, so it stays here);
   `Lain::Tools::Subagent async fan-out out-of-order completion lands in one ordered user turn
   gathers every result into ONE user message in tool_use order, however the children finish`
-  (twice); and two in `plain_chat_prompt_guards_spec.rb`, `a plain chat's inline prompts over a
-  real terminal a prompt the approval window decides ends its line with who decided it and how,
-  and a y typed afterwards decides nothing` and `... Ctrl-C at human> offers stop, and s ends the
-  ask while the session carries on`, the second on the final count run. Since 2026-10-02 that file
+  (twice); and `plain_chat_prompt_guards_spec.rb`'s `a plain chat's inline prompts over a real
+  terminal Ctrl-C at human> offers stop, and s ends the ask while the session carries on`, on the
+  final count run (its sibling there, "ends its line with who decided it and how", is retired below). Since 2026-10-02 that file
   waits on events (the echo, a held note, a parked marker, PTY EOF) and takes its children from a
   warm pool; 5 named 0.3s negative windows and the Ctrl-C readiness sleep remain, the last because
-  a Ctrl-C within about 30ms of `you>` drawing can be lost. Both names stay live: the first is a lib
-  race in the closing write, not a wait.
+  a Ctrl-C within about 30ms of `you>` drawing can be lost. The Ctrl-C name stays live.
   The 62_approval examples (now retired, below) reddened twice more in the same run. One timing flake per hook run
   was the norm that day, so budget a retry per landing, and check a retry's red against this list
   by name before believing it.
@@ -436,6 +434,16 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
     already drew. Under a 4-core load the old code failed 6 of 160, the fix none; under
     `bin/suite-load`, 30 rounds, the fix 0.
 
+  - 2026-10-02: `plain_chat_prompt_guards_spec.rb`'s `a plain chat's inline prompts over a real
+    terminal a prompt the approval window decides ends its line with who decided it and how, and a
+    y typed afterwards decides nothing`, red since 2026-09-20 under load. A lib race: the approval
+    reader runs nested under ApprovalPolicy's task, and when the window closed, the closing note
+    waiting on the writer lock was stopped twice more (as the outer task finished, and from
+    `read_until_decided`'s ensure) while Async's `defer_cancel` holds back only 1. The note died
+    mid-write and the error was swallowed. The reader's ensures now run under `defer_cancel`, only
+    a running reader is stopped, and a failed close reaches the channel as a rendered diagnostic.
+    Under `bin/suite-load`, 30 rounds: the old code failed it 2 times, the fix 0.
+
 - **The `:ollama` live suite has a KNOWN-RED example, and it predates this chunk.**
   `Lain::Provider::Ollama temperature-0 reproducibility produces identical text across three warm
   same-seed runs` (`spec/integration/provider/ollama_spec.rb`) fails on this box: three warm
@@ -475,10 +483,9 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   while the box was busy, so the assertion measured the load rather than the reap); **its sibling**
   `HeadlessEditor.start gives the editor back when the socket never appears and the editor ignores
   TERM`, seen later the same day and green 6/6 alone — **two of the six examples in that one file
-  wait on a wall clock, so treat the whole file as load-sensitive rather than these two names**; and
-  `a prompt the approval window decides ends its line with who decided it and how, and a y typed
-  afterwards decides nothing` in `plain_chat_prompt_guards_spec`, whose
-  `terminal.await(/decided by timeout: denied/)` never drew.
+  wait on a wall clock, so treat the whole file as load-sensitive rather than these two names**.
+  (A third, `plain_chat_prompt_guards_spec`'s "ends its line with who decided it and how", is retired
+  below: it was a lib race, not the clock.)
 
   Added 2026-09-20 on a **second** sighting — two agents, two runs, both under a sibling suite, and
   110/0 alone each time: `Lain::Frontend::TTY a note rendered while a prompt is drawn holds the note

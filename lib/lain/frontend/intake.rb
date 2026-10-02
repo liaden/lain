@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "async"
+
 module Lain
   module Frontend
     # The way a typed human line reaches a chat, and so the one place its record
@@ -231,8 +233,10 @@ module Lain
         asked = Prompt.new(kind:, text:, header:, keys:, generation: 0)
         kind == RECALLED ? recalled(held_line || answered(turn, asked, text)) : answered(turn, asked, text)
       ensure
-        leave(turn)
-        @screen.drop_prompt(text) if turn.waited && !turn.published
+        unwinding do
+          leave(turn)
+          @screen.drop_prompt(text) if turn.waited && !turn.published
+        end
       end
 
       private
@@ -265,8 +269,21 @@ module Lain
         end
         heard.lazy.grep(Heard).first.text
       ensure
-        withdraw(prompt)
-        @screen.close_prompt(text)
+        unwinding do
+          withdraw(prompt)
+          @screen.close_prompt(text)
+        end
+      end
+
+      # A reader is often stopped from a task of its own beneath the one being
+      # stopped ({CLI::Conductor#read_reply}), and that outer task stops it
+      # AGAIN as it finishes. A closing line that waits for the writer lock
+      # yields in between, and the second stop landed inside the write: the
+      # prompt's line never ended. Async defers one stop here, not two, which is
+      # why {ApprovalPolicy} stops its reader only while it is still running.
+      def unwinding(&block)
+        task = Async::Task.current?
+        task ? task.defer_cancel(&block) : yield
       end
 
       # A line the prompt cannot take is held. One that ENDED this prompt's
