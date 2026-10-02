@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module CLI
     # One object for every tmux surface a command reaches for: a `window`
@@ -33,7 +31,7 @@ module Lain
     # the first leaves a corpse where there would otherwise be nothing, the
     # second reads it.
     #
-    # Every tmux invocation goes through Mixlib::ShellOut with an ARGV array
+    # Every tmux invocation goes through {Shell::Out} with an ARGV array
     # -- the same discipline as {Up} -- so `command:` (a single opaque shell
     # string tmux hands to ITS OWN `$SHELL -c` inside the new pane, exactly
     # {Up}'s `chat_command`) never needs quoting against a shell on our side.
@@ -72,7 +70,7 @@ module Lain
       CLIENT_CONTROL_MODE_FORMAT = '#{client_control_mode}' # rubocop:disable Lint/InterpolationCheck
       PANE_DEATH_FORMAT = '#{pane_dead}:#{pane_dead_status}' # rubocop:disable Lint/InterpolationCheck
 
-      def initialize(socket: nil, shell_out_factory: Mixlib::ShellOut.public_method(:new))
+      def initialize(socket: nil, shell_out_factory: Shell::Out.public_method(:new))
         @socket = socket
         @shell_out_factory = shell_out_factory
       end
@@ -128,7 +126,7 @@ module Lain
       # the sense its one caller needs: a window merely gone is a clean exit
       # or a human who closed it, and journalling either as a death would put
       # a lie in the experiment record. `exitstatus` is asked with `&.`
-      # because Mixlib::ShellOut answers nil for a client killed by a signal,
+      # because Shell::Out answers nil for a client killed by a signal,
       # where `.zero?` would raise out of whatever queued work is asking.
       #
       # The death flag is destructured and dropped rather than sliced past:

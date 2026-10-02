@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "tmpdir"
 require "open3"
 
 # TmuxSurface -- one object opening windows, popups, and detached
@@ -445,6 +446,35 @@ RSpec.describe Lain::CLI::TmuxSurface do
 
     it "is the same exception Up raises, so one rescue clause covers both" do
       expect(described_class::TmuxUnavailable).to equal(Lain::CLI::Up::TmuxUnavailable)
+    end
+  end
+
+  describe "the default factory" do
+    around do |example|
+      Dir.mktmpdir("tmux-surface-spec") do |dir|
+        script = File.join(dir, "tmux")
+        File.write(script, "#!/bin/sh\necho \"$@\" > \"#{dir}/argv\"\nexit 0\n")
+        File.chmod(0o755, script)
+        @dir = dir
+        original = ENV.fetch("PATH")
+        ENV["PATH"] = "#{dir}:#{original}"
+        begin
+          example.run
+        ensure
+          ENV["PATH"] = original
+        end
+      end
+    end
+
+    it "runs tmux through Shell::Out, and the command still runs" do
+      allow(Mixlib::ShellOut).to receive(:new).and_call_original
+      allow(Lain::Shell::Out).to receive(:new).and_call_original
+
+      described_class.new(socket: "s").rename_window(target: "=w", name: "done")
+
+      expect(File.read(File.join(@dir, "argv")).strip).to eq("-L s rename-window -t =w done")
+      expect(Mixlib::ShellOut).not_to have_received(:new)
+      expect(Lain::Shell::Out).to have_received(:new).with("tmux", "-L", "s", "rename-window", "-t", "=w", "done")
     end
   end
 end
