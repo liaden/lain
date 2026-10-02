@@ -25,6 +25,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   around { |example| headless_editor("lain-nvim-approval-spec") { example.run } }
 
+  # A thread that outlives its example would raise into the next one.
+  after { Array(@owned_threads).each { |thread| thread.kill.join } }
+
   # The reason this block exists: the whole approval seam was built for
   # a Neovim surface -- {Lain::Frontend::ApprovalPolicy}'s own class comment
   # names it -- and nothing had ever written one, so a gated call parked the
@@ -135,7 +138,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
       frontend.run do |handle|
         with_parked_approval(handle, input: { "command" => long_command }, grace: 0.1) do
-          wait_until_editor { (approval_state["rows"] || 0).positive? }
+          wait_until_editor { approval_state&.dig("rows").to_i.positive? }
           lines = buffer_lines("lain://approval")
 
           # The rendered bytes are exactly what a hard, mid-token wrap always
@@ -172,6 +175,30 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
         Timeout.timeout(20) { settled.pop }
         raise "the approval consumer thread never stopped" unless worker.join(20)
+      end
+    end
+  end
+
+  describe "the helpers that poll for lain://approval" do
+    it "answers nil from every reader while the buffer does not exist yet" do
+      expect([approval_state, approval_calls, approval_call_index, call_for_row(1)]).to all(be_nil)
+    end
+
+    it "fails the example with the helper thread's own error, at once, when it dies" do
+      thread = thread_raising_into_owner { raise ArgumentError, "presser died" }
+
+      expect { Timeout.timeout(5) { Thread::Queue.new.pop } }.to raise_error(ArgumentError, "presser died")
+      thread.join
+    end
+
+    context "when the example that started the thread has ended", order: :defined do
+      it "starts a thread that would outlive it" do
+        expect(thread_raising_into_owner { sleep }).to be_alive
+      end
+
+      # Passes alone too, vacuously: it only bites when run after the example above.
+      it "leaves no such thread running" do
+        expect(Thread.list.select { |t| t.name == "raises_into_owner" }).to all(satisfy { |t| !t.alive? })
       end
     end
   end
@@ -218,7 +245,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       # describes: whatever the chat reads, nobody types, so the ONLY thing that
       # can settle this call is the editor.
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(60) }
-      presser = Thread.new do
+      presser = thread_raising_into_owner do
         wait_until_editor(timeout: 20) { buffer_lines("lain://approval").join.include?("pwd") }
         press("lain://approval", "y", cursor: [1, 0])
       end
@@ -261,7 +288,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         prompts << prompt
         Async::Task.current.sleep(60)
       end
-      presser = Thread.new do
+      presser = thread_raising_into_owner do
         approve_in_editor("pwd")
         approve_in_editor("whoami", after: "pwd")
       end
@@ -309,6 +336,18 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
+  # Raising into the owner fails the example with the real error instead of its Timeout.
+  def thread_raising_into_owner(owner: Thread.current)
+    thread = Thread.new do
+      yield
+    rescue StandardError => e
+      owner.raise(e)
+    end
+    thread.name = "raises_into_owner"
+    (@owned_threads ||= []) << thread
+    thread
+  end
+
   def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
 
   def approval_state
@@ -329,12 +368,18 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # lines embeds INDENT mid-token, so a reader wanting the command back reads
   # this variable rather than the buffer's own text. One entry per call, not
   # per row -- {#approval_call_index} is what resolves a row to its member.
-  def approval_calls
-    inspector.exec_lua("return vim.b[vim.fn.bufnr('lain://approval')].lain_approval_calls", [])
-  end
+  def approval_calls = approval_variable("lain_approval_calls")
 
-  def approval_call_index
-    inspector.exec_lua("return vim.b[vim.fn.bufnr('lain://approval')].lain_approval_call_index", [])
+  def approval_call_index = approval_variable("lain_approval_call_index")
+
+  # Nil until the buffer exists: a poll asks before the panel has drawn, and an
+  # unguarded `bufnr` of -1 raises in Lua instead of answering.
+  def approval_variable(name)
+    inspector.exec_lua(<<~LUA, [name])
+      local buf = vim.fn.bufnr("lain://approval")
+      if buf == -1 then return nil end
+      return vim.b[buf][...]
+    LUA
   end
 
   # The lua consumer's OWN resolution, `calls[call_index[row]]`, both
@@ -344,6 +389,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   def call_for_row(row)
     inspector.exec_lua(<<~LUA, [row])
       local buf = vim.fn.bufnr("lain://approval")
+      if buf == -1 then return nil end
       local index = vim.b[buf].lain_approval_call_index[...]
       return vim.b[buf].lain_approval_calls[index]
     LUA

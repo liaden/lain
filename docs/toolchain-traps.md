@@ -367,30 +367,11 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   real terminal a prompt the approval window decides ends its line with who decided it and how,
   and a y typed afterwards decides nothing` and `... Ctrl-C at human> offers stop, and s ends the
   ask while the session carries on`, the second on the final count run.
-  The 62_approval example below reddened twice more in the same run. One timing flake per hook run
+  The 62_approval examples (now retired, below) reddened twice more in the same run. One timing flake per hook run
   was the norm that day, so budget a retry per landing, and check a retry's red against this list
   by name before believing it.
 
-  Added 2026-08-28, and it is the one shape this ledger did not yet carry: two examples in
-  `spec/lain/frontend/neovim/runtime/62_approval_spec.rb`'s `answering a parked approval in the
-  editor, end to end` group fail
-  **in isolation** while the same file passes inside a full `pspec` run --
-  `resolves one unwrapped call per answerable row, in queue order, for two parked approvals` and
-  `carries the wrapped command unwrapped, with the rendered lines unchanged`. Measured at
-  `428d662b`: 1 failure on 3 of 3 solo runs of the file, a different example each time, against a
-  whole-suite run of the same tree at 0 failures. So the usual reflex is inverted here -- solo is
-  the unreliable reading and the suite is the trustworthy one, which is the opposite of what the
-  TMPDIR note above trains you to do. Do not take a red from
-  `rspec spec/lain/frontend/neovim/runtime/62_approval_spec.rb` as evidence of anything; re-run it
-  under the whole suite before believing it, and expect a `pspec` to trip it occasionally too.
-  (The group lived in `spec/lain/frontend/neovim_runtime_spec.rb` until 2026-09-14, when that file's
-  eighteen groups were split to one spec per runtime lua module. The two example NAMES are
-  unchanged, which is why this entry still finds them -- and that is the general rule rather than a
-  detail of this one entry: **a path in a flake entry is a convenience, not the key.** When a file
-  moves, repoint the path and keep the name. CLAUDE.md's "record a flaky spec by NAME, never by
-  line number" is what let this entry survive a split that moved every line in it.)
-
-  Added 2026-08-23: the entry above still under-describes this file. Two MORE of its examples have
+  Added 2026-08-23: the 2026-08-19 `worktree_handback_spec` entry still under-describes that file. Two MORE of its examples have
   been observed red and green on the same box within minutes, both in the `#continue refuses a
   resolution that is not one` describe block that no entry here names: `Lain::Isolation::Worktree::Handback
   #continue refuses a resolution that is not one can be retried, and concludes once the markers are
@@ -415,6 +396,18 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
     socket file before it listens, so a connect in that gap, from the spec or from lib's own
     `Socket.unix`, got `ECONNREFUSED`. `HeadlessEditor.start` now returns only once the editor
     accepts a connection, retrying a refusal until `WAIT`.
+
+  - 2026-10-02: 3 examples in `62_approval_spec.rb`: `... resolves one unwrapped call per
+    answerable row, in queue order, for two parked approvals` and `... carries the wrapped command
+    unwrapped, with the rendered lines unchanged` (red solo and in suites since 2026-08-28), and
+    `the repl's own wiring puts a parked approval in front of the human renders it in
+    lain://approval and answers it with y, with nobody having wired the view by hand`, never
+    recorded here. The helpers read `lain://approval` before the buffer existed (`Invalid buffer
+    id: -1`), and a presser thread that died left the example to wait out a 30s Timeout. The
+    helpers now answer nil until the buffer exists, inside a bounded poll, and the presser re-raises
+    into the example and is killed when it ends. Under `bin/suite-load`, 30 rounds: the old file
+    failed 6, the new one 0. A general rule from the old entry stands: a path in a flake entry is a
+    convenience, the NAME is the key, so when a file moves, repoint the path and keep the name.
 
 - **The `:ollama` live suite has a KNOWN-RED example, and it predates this chunk.**
   `Lain::Provider::Ollama temperature-0 reproducibility produces identical text across three warm
