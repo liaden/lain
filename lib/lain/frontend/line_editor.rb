@@ -118,6 +118,24 @@ module Lain
           ::Reline.pre_input_hook = previous
         end
 
+        # Reline installs its gate's default keys (history arrows, bracketed
+        # paste) only in the same lazy branch that reads inputrc, so any early
+        # read has to install them too or they are skipped for good.
+        #
+        # A gate default that begins with a byte lain binds alone (the emacs
+        # C-x C-x under lain's C-x) would make that byte a prefix, so it would
+        # wait out Reline's key-sequence timeout instead of firing; those are
+        # dropped. `claiming` names bytes about to be bound.
+        def load_inputrc(claiming: [])
+          config = ::Reline.core.config
+          return if config.loaded?
+
+          config.read
+          ::Reline.core.io_gate.set_default_key_bindings(
+            SinglesOnly.new(config, registry.claimed_bytes + claiming)
+          )
+        end
+
         # Register `handler` on `name`, a control key written the way a human
         # writes it ("C-g"). The handler is called with the whole buffer typed
         # so far and returns either replacement text or nil; see {Registry}.
@@ -204,7 +222,7 @@ module Lain
         # an editing mode would overwrite the mode lain was asked for, and for
         # the session's first prompt alone, which is worse than either answer
         # applied consistently. Read, never written.
-        config.read unless config.loaded?
+        self.class.load_inputrc
         @editing_mode.apply(config)
       end
 
@@ -219,6 +237,21 @@ module Lain
     end
 
     class LineEditor
+      # Hands a gate the config to install its defaults into, minus any
+      # multi-byte default whose first byte is one lain owns outright.
+      class SinglesOnly < SimpleDelegator
+        def initialize(config, owned)
+          super(config)
+          @owned = owned
+        end
+
+        def add_default_key_binding_by_keymap(keymap, keystroke, target)
+          return if keystroke.size > 1 && @owned.include?(keystroke.first)
+
+          __getobj__.add_default_key_binding_by_keymap(keymap, keystroke, target)
+        end
+      end
+
       # Wraps the frontend's warning seam so a notifier that itself fails can
       # never escape into Reline's input loop. There is nowhere left to report
       # a failure to report, and the prompt has to outlive both of them.
@@ -357,6 +390,7 @@ module Lain
           raise ArgumentError, "#{name}: a key action needs a handler" unless handler
 
           byte = byte_for(name)
+          LineEditor.load_inputrc(claiming: [byte])
           claim = claimed_by(byte)
           raise KeyTaken, "#{name} is already bound by #{claim}" if claim
 
@@ -370,6 +404,8 @@ module Lain
         end
 
         def bound?(name) = @handlers.key?(byte_for(name))
+
+        def claimed_bytes = @handlers.keys
 
         # Drops lain's handlers. It does NOT return the keys to Reline: the
         # keymap entry still routes to ACTION, where dispatch finds no handler
@@ -468,9 +504,8 @@ module Lain
         # actually be in force, which is not necessarily the one lain asked
         # for: an inputrc `set editing-mode vi` selects it before lain looks.
         def active_binding(byte)
-          config = ::Reline.core.config
-          config.read unless config.loaded?
-          config.key_bindings.get([byte])
+          LineEditor.load_inputrc
+          ::Reline.core.config.key_bindings.get([byte])
         end
 
         # See NOT_A_CLAIM for the bindings that read as taken and are not.

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "pty"
 require "reline"
 require "tmpdir"
 
@@ -893,6 +894,112 @@ RSpec.describe Lain::Frontend::LineEditor do
       allow(Reline::IOGate).to receive(:dumb?).and_return(true)
 
       expect(described_class.untouched?).to be(false)
+    end
+  end
+
+  # A real terminal, because the defect lives in the order of two reads that no
+  # double reproduces: the gate's default bindings (up arrow, bracketed paste)
+  # are installed only by Reline's own lazy inputrc read.
+  describe "#read on a real terminal" do
+    let(:child) do
+      <<~RUBY
+        require "lain"
+        Reline::HISTORY << "earlier"
+        Lain::Frontend::LineEditor.bind("C-g") { |_buffer| nil } if ARGV[1] == "bind_first"
+        if ARGV[1] == "timed_cx"
+          Lain::Frontend::LineEditor.bind("C-x") do |buffer|
+            File.write(ARGV[2], "\#{Process.clock_gettime(Process::CLOCK_MONOTONIC)}\n", mode: "a")
+            buffer
+          end
+        end
+        File.write(ARGV[0], Lain::Frontend::LineEditor.new.read("> ").inspect)
+      RUBY
+    end
+
+    def read_through_pty(term, keys, bind_first: false, mode: bind_first ? "bind_first" : "plain", **timing)
+      Dir.mktmpdir { |dir| drive_child(term, keys, dir, mode, **timing) }
+    end
+
+    # `settle` holds the final Enter back, so a key that waits on a timeout is
+    # seen waiting; `on_write` stamps the moment the keys go in.
+    def drive_child(term, keys, dir, mode, settle: 0, on_write: nil)
+      out = File.join(dir, "line")
+      reader, writer, pid = spawn_child(term, dir, out, mode)
+      drawn = Queue.new
+      answerer = answer_cursor_queries(reader, writer, drawn)
+      drawn.pop(timeout: 10) or raise "prompt never drew"
+      on_write&.call
+      writer.write(keys.delete_suffix("\r"))
+      sleep(settle)
+      writer.write("\r")
+      Process.wait(pid)
+      File.exist?(out) ? File.read(out) : nil
+    ensure
+      [reader, writer].each { |io| io&.close unless io&.closed? }
+      answerer&.join(2)
+    end
+
+    def spawn_child(term, dir, out, mode)
+      env = { "TERM" => term, "INPUTRC" => File.join(dir, "no-inputrc") }
+      PTY.spawn(env, RbConfig.ruby, "-W0", "-I", File.expand_path("../../../lib", __dir__),
+                "-e", child, out, mode, File.join(dir, "hits"))
+    end
+
+    def answer_cursor_queries(reader, writer, drawn)
+      Thread.new do
+        seen = +""
+        loop do
+          chunk = reader.readpartial(4096)
+          writer.write("\e[1;1R") if chunk.include?("\e[6n")
+          seen << chunk
+          drawn << true if seen.include?("> ") && drawn.empty?
+        end
+      rescue IOError, Errno::EIO
+        nil
+      end
+    end
+
+    it "recalls the previous line with the up arrow on the ANSI gate" do
+      expect(read_through_pty("xterm", "\e[A\r")).to eq('"earlier"')
+    end
+
+    it "takes a bracketed paste whole on the ANSI gate" do
+      expect(read_through_pty("xterm", "\e[200~one\ntwo\e[201~\r")).to eq('"one\ntwo"')
+    end
+
+    it "does both when a key was bound before the first read, as the frontend does at startup" do
+      expect(read_through_pty("xterm", "\e[A\r", bind_first: true)).to eq('"earlier"')
+      expect(read_through_pty("xterm", "\e[200~one\ntwo\e[201~\r", bind_first: true)).to eq('"one\ntwo"')
+    end
+
+    # The gate's emacs defaults include C-x C-x, which would turn lain's C-x
+    # into a prefix that waits out Reline's 500ms key-sequence timeout.
+    describe "lain's C-x against the gate's C-x C-x" do
+      def fire_times(keys)
+        Dir.mktmpdir do |dir|
+          started = nil
+          drive_child("xterm", "#{keys}\r", dir, "timed_cx", settle: 0.8, on_write: -> { started = clock })
+          [started, File.readlines(File.join(dir, "hits"), chomp: true).map(&:to_f)]
+        end
+      end
+
+      def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      it "fires C-x at once rather than after the key-sequence timeout" do
+        started, hits = fire_times("\x18")
+
+        expect(hits.first - started).to be < 0.3
+      end
+
+      it "fires twice for C-x C-x" do
+        _, hits = fire_times("\x18\x18")
+
+        expect(hits.size).to eq(2)
+      end
+    end
+
+    it "still reads a line on the dumb gate" do
+      expect(read_through_pty("dumb", "typed\r")).to eq('"typed"')
     end
   end
 end
