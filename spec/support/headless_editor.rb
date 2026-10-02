@@ -103,7 +103,7 @@ module HeadlessEditor
     end
   end
 
-  # Spawned and listening, or nothing.
+  # Spawned and accepting connections, or nothing.
   #
   # An `ensure` with a handover flag rather than a `rescue`, and both halves of
   # that matter. While this method is on the stack the CALLER's session local is
@@ -118,6 +118,7 @@ module HeadlessEditor
     session = Session.new(socket, spawn(*COMMAND, *args, "--listen", socket,
                                         **{ chdir:, out: File::NULL, err: File::NULL }.compact))
     Timeout.timeout(wait) { sleep 0.02 until File.exist?(socket) }
+    until_accepting(wait) { Socket.unix(socket).close }
     handed_over = true
     session
   ensure
@@ -128,9 +129,24 @@ module HeadlessEditor
   # than at the top of the file because `spec/support` is eager-loaded in every
   # one of the twelve workers, and a run that drives no editor should not pay
   # 47ms to load a client it never opens.
-  def self.connect(socket_path)
+  def self.connect(socket_path, within: WAIT)
     require "neovim"
-    Neovim.attach_unix(socket_path)
+    until_accepting(within) { Neovim.attach_unix(socket_path) }
+  end
+
+  # The socket FILE appears at bind, before listen, so waiting on the file alone
+  # returns a beat early and the first connect is refused. The refusal is
+  # re-raised at the deadline, so a socket that never listens still names its cause.
+  def self.until_accepting(within)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + within
+    begin
+      yield
+    rescue Errno::ECONNREFUSED
+      raise if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep Session::POLL
+      retry
+    end
   end
 
   # `SocketTmpdir::BASE` (`/tmp`), not `Dir.tmpdir`: that helper exists because a

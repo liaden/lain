@@ -349,11 +349,6 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   the run's example count drops by about 1,800 as well. Check the count against this name before
   reading it as a dead worker.
 
-  Added 2026-09-29, red once in a whole-suite run (seed 7814) and green 3 of 3 alone, failing at
-  `Socket.unix` on the headless editor's socket before the editor was listening: `Lain::Frontend::Neovim
-  lain://timeline reflects a turn commit does not touch lain://timeline for an event that names no
-  turn`.
-
   Added 2026-09-29, red once in a whole-suite run (seed 59509) and green 3 of 3 alone. It counts
   every descriptor in `/proc/self/fd`, so anything else live in the same worker process moves the
   count: `Lain::Agent the graph CoreGraph hands out by default runs to completion holding no file
@@ -411,6 +406,15 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   moving between examples. It builds its own repository under `Dir.mktmpdir` and never touches
   lain's own git admin dir, so the number of worktrees registered in this repo is NOT the cause:
   that hypothesis was tested and rejected 2026-08-23.
+
+  **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
+  as a regression, not as a known flake.
+  - 2026-10-02: `Lain::Frontend::Neovim lain://timeline reflects a turn commit does not touch
+    lain://timeline for an event that names no turn` (seed 7814), and the same shape seen in
+    `51_thread_spec`'s `restores a live diff with the folds the human was reading`. nvim creates its
+    socket file before it listens, so a connect in that gap, from the spec or from lib's own
+    `Socket.unix`, got `ECONNREFUSED`. `HeadlessEditor.start` now returns only once the editor
+    accepts a connection, retrying a refusal until `WAIT`.
 
 - **The `:ollama` live suite has a KNOWN-RED example, and it predates this chunk.**
   `Lain::Provider::Ollama temperature-0 reproducibility produces identical text across three warm

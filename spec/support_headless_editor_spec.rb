@@ -25,6 +25,23 @@ module HeadlessEditorSpecSupport
   RUBY
   File.chmod(0o755, SHIM)
 
+  # Binds the `--listen` socket, then listens 100ms later: the window a real
+  # editor leaves between the two, with the socket file already visible.
+  SLOW_DIR = SocketTmpdir.persistent("lain-headless-editor-slow-shim")
+  SLOW_SHIM = File.join(SLOW_DIR, "nvim")
+
+  File.write(SLOW_SHIM, <<~RUBY)
+    #!#{RbConfig.ruby}
+    require "socket"
+    path = ARGV.fetch(ARGV.index("--listen") + 1)
+    server = Socket.new(:UNIX, :STREAM)
+    server.bind(Socket.pack_sockaddr_un(path))
+    sleep 0.1
+    server.listen(5)
+    sleep 600
+  RUBY
+  File.chmod(0o755, SLOW_SHIM)
+
   # Stands in for `SpecWatchdog::Stuck`, which is `< Exception` precisely so that
   # nothing downstream can rescue it away. Reproducing that ancestry is the whole
   # point of the double below -- a `StandardError` would prove nothing.
@@ -70,6 +87,14 @@ RSpec.describe HeadlessEditor, :seam do
   ensure
     ENV["PATH"] = path
     ENV.delete("LAIN_HEADLESS_EDITOR_SPEC_IGNORE_TERM")
+  end
+
+  def with_slow_shim
+    path = ENV.fetch("PATH")
+    ENV["PATH"] = "#{HeadlessEditorSpecSupport::SLOW_DIR}:#{path}"
+    yield
+  ensure
+    ENV["PATH"] = path
   end
 
   def spare_socket(tag) = File.join(SocketTmpdir::BASE, "#{tag}-#{Process.pid}-#{SecureRandom.hex(6)}.sock")
@@ -139,6 +164,19 @@ RSpec.describe HeadlessEditor, :seam do
       expect(survivors(tag)).to be_empty
     end
 
+    # `start` returns only once the socket accepts, because a caller may reach it
+    # through a plain `Socket.unix` that no retry in this file covers.
+    it "returns only once the editor accepts connections" do
+      tag = "headless-editor-spec-slow-listen"
+      session = nil
+
+      with_slow_shim { session = described_class.start(tag) }
+
+      expect { Socket.unix(session.socket_path).close }.not_to raise_error
+    ensure
+      session&.reap
+    end
+
     # `rescue StandardError` would let this straight past, which is what made the
     # ancestry of the double above the point of the example rather than a detail.
     it "gives the editor back when an exception RSpec itself would never catch arrives during the wait" do
@@ -175,6 +213,53 @@ RSpec.describe HeadlessEditor, :seam do
       Kernel.srand(4242)
 
       expect(described_class.socket_path("headless-editor-spec-seeded")).not_to eq(first)
+    end
+  end
+
+  describe ".connect" do
+    # bind creates the socket file; only listen makes it accept, which is the
+    # window an editor leaves between the two.
+    def bound_socket(path)
+      Socket.new(:UNIX, :STREAM).tap { |sock| sock.bind(Socket.pack_sockaddr_un(path)) }
+    end
+
+    it "retries a socket file that exists before the server listens" do
+      path = described_class.socket_path("headless-editor-spec-connect")
+      server = bound_socket(path)
+      require "neovim"
+      listener = Thread.new do
+        sleep 0.05
+        server.listen(1)
+        server.accept
+      end
+
+      # The gem's own attach handshakes with a real editor, which a bare socket
+      # is not; the refusal it would raise is the real one, from the real connect.
+      attempts = 0
+      allow(Neovim).to receive(:attach_unix) do |target|
+        attempts += 1
+        UNIXSocket.new(target)
+      end
+
+      expect(described_class.connect(path)).to be_a(UNIXSocket)
+      expect(attempts).to be > 1
+    ensure
+      listener&.kill
+      server&.close
+      FileUtils.rm_f(path) if path
+    end
+
+    it "raises ECONNREFUSED once the deadline passes on a socket that never listens" do
+      path = described_class.socket_path("headless-editor-spec-refused")
+      server = bound_socket(path)
+
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      expect { described_class.connect(path, within: 0.1) }.to raise_error(Errno::ECONNREFUSED)
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be >= 0.1
+    ensure
+      server&.close
+      FileUtils.rm_f(path) if path
     end
   end
 end

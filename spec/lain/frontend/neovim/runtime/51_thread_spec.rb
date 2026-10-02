@@ -409,7 +409,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
   # deliberately -- an abandoned request on `@editor` leaves a response pending
   # there, which the `ensure` clearing the prompt would then read as its own.
   def round_trip(timeout: 5)
-    probe = Neovim.attach_unix(@socket)
+    probe = HeadlessEditor.connect(@socket)
     Timeout.timeout(timeout) { probe.session.request(:nvim_eval, "1 + 1") }
   rescue Timeout::Error
     :timed_out
@@ -458,7 +458,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
   # forever -- and abandoning it on `@editor` would leave a response pending
   # there that `clear_prompt`'s next read would collect as its own.
   def spoke?(before)
-    probe = Neovim.attach_unix(@socket)
+    probe = HeadlessEditor.connect(@socket)
     Timeout.timeout(0.3) { probe.exec_lua(ThreadFixture::MESSAGES, []).length > before.length }
   rescue Timeout::Error
     false
