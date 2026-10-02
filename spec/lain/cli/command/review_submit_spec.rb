@@ -110,6 +110,17 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
 
   def gh_calls = factory.argvs
 
+  it "spawns gh through Shell::Out when no factory is injected" do
+    allow(Lain::Shell::Out).to receive(:new) { |*argv, **options| factory.call(*argv, **options) }
+    allow(Mixlib::ShellOut).to receive(:new).and_raise("Mixlib::ShellOut used; the default factory is not Shell::Out")
+    note(path: "app.rb", side: :new, line: 42, text: "kaboom", revision: head_sha)
+    hold
+
+    described_class.new(outbox:, root: Dir.pwd).call("", env)
+
+    expect(gh_calls.size).to eq(1)
+  end
+
   describe "the review a finished round posts, end to end" do
     # THE example this card exists for: a round opened, annotated on both sides
     # of the diff, marked, verdicted, held, and posted -- with the whole payload

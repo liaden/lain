@@ -157,6 +157,18 @@ RSpec.describe Lain::CLI::Command::Review do
     end
   end
 
+  it "runs its git through Shell::Out when no factory is injected" do
+    allow(Lain::Shell::Out).to receive(:new).and_call_original
+    allow(Mixlib::ShellOut).to receive(:new).and_call_original
+    defaulted = described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new)
+
+    attached
+    defaulted.call("feature", env)
+
+    expect(Lain::Shell::Out).to have_received(:new).at_least(:once)
+    expect(Mixlib::ShellOut).not_to have_received(:new)
+  end
+
   def commit(dir, subject)
     git(dir, "add", "-A")
     git(dir, "commit", "-q", "-m", subject)

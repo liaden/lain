@@ -128,10 +128,10 @@ module Lain
         # an empty reason, which reads as "not ignored" and drops a true warning.
         UNNAMED = "an ignore rule this git would not name"
 
-        # `Mixlib::ShellOut` rather than backticks or Open3: already this
-        # project's subprocess runner ({Isolation::Worktree}), and it captures
-        # both streams, so nothing git says interleaves into a Journal or a TTY.
-        def initialize(root, shell_out_factory: Mixlib::ShellOut.public_method(:new))
+        # {Shell::Out} rather than backticks: it spawns without forking this
+        # process, and it captures both streams, so nothing git says
+        # interleaves into a Journal or a TTY.
+        def initialize(root, shell_out_factory: Lain::Shell::Out.public_method(:new))
           @root = root
           @shell_out_factory = shell_out_factory
         end

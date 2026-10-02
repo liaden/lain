@@ -168,6 +168,16 @@ RSpec.describe Lain::CLI::Review, :seam do
       expect(sources_journaled).to eq(["github_pr"])
     end
 
+    it "runs its git through Shell::Out when no factory is injected" do
+      allow(Lain::Shell::Out).to receive(:new).and_call_original
+      allow(Mixlib::ShellOut).to receive(:new).and_call_original
+
+      described_class.new(repo_root: @repo, paths:).present("feature")
+
+      expect(Lain::Shell::Out).to have_received(:new).with("git", any_args).at_least(:once)
+      expect(Mixlib::ShellOut).not_to have_received(:new)
+    end
+
     it "reads a branch name as a local branch, spawning no gh at all" do
       command.present("feature")
 

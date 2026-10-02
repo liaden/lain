@@ -163,7 +163,7 @@ module Lain
         # @param ledger [Lain::Sensitivity::Ledger] the run's ONE region ledger, so
         #   a note's anchor text journals a released region as released
         def initialize(outbox:, ledger:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
-                       shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                       shell_out_factory: Lain::Shell::Out.public_method(:new))
           @outbox = outbox
           @ledger = ledger
           @root = root

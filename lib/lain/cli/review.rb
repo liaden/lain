@@ -74,7 +74,7 @@ module Lain
       # @param shell_out_factory [#call] builds the subprocess runner, injected
       #   as {Forge::Gh} and both sources do
       def initialize(repo_root: Dir.pwd, paths: Paths.new, bounds: Lain::Review::Bounds.new,
-                     surface: nil, shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                     surface: nil, shell_out_factory: Lain::Shell::Out.public_method(:new))
         @paths = paths
         @bounds = bounds
         @surface = surface
