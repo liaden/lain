@@ -31,7 +31,7 @@ load File.expand_path("../../../exe/lain", __dir__)
 #   broken-tmux / no-nvim scenarios run on every machine regardless of what is
 #   actually installed there.
 #
-# A Mixlib::ShellOut double satisfying the one duck #run exercises:
+# A Shell::Out double satisfying the one duck #run exercises:
 # #run_command (a no-op -- the real one blocks until the child exits; this
 # object is already "done" the instant it's built) and #exitstatus/#stderr/
 # #stdout (nil-safe: most examples never set it). Defined at the top level
@@ -232,7 +232,7 @@ RSpec.describe Lain::CLI::Up do
     it "launches anyway when tmux will not say whether the pane died -- a diagnostic never fails `lain up`" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
       mute_probe = lambda do |*args|
-        args.include?("display-message") ? FakeShellOut.new(1, "no server running") : Mixlib::ShellOut.new(*args)
+        args.include?("display-message") ? FakeShellOut.new(1, "no server running") : Lain::Shell::Out.new(*args)
       end
 
       plan = described_class.new(session:, socket:, state_path:, chat_command: "exit 1",
@@ -258,7 +258,7 @@ RSpec.describe Lain::CLI::Up do
     it "leaves NO session behind when the pane command cannot be spawned" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
       sabotage = lambda do |*args|
-        real = Mixlib::ShellOut.new(*args)
+        real = Lain::Shell::Out.new(*args)
         args.include?("respawn-pane") ? FakeShellOut.new(1, "forced respawn-pane failure") : real
       end
 
@@ -277,7 +277,7 @@ RSpec.describe Lain::CLI::Up do
     it "lets the retry after a failed spawn create cleanly, rather than reattaching to a bare shell" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
       sabotage = lambda do |*args|
-        real = Mixlib::ShellOut.new(*args)
+        real = Lain::Shell::Out.new(*args)
         args.include?("respawn-pane") ? FakeShellOut.new(1, "forced respawn-pane failure") : real
       end
       expect do
@@ -323,7 +323,7 @@ RSpec.describe Lain::CLI::Up do
     # pane's SHELL does with the scrub is pinned separately, against a real `sh`.)
     it "creates for real, with a real pre-flight, even when LAIN_PREFLIGHT is exported", :seam do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
-      real_preflight = Lain::CLI::Up::ChatPreflight.new(shell_out_factory: Mixlib::ShellOut.public_method(:new),
+      real_preflight = Lain::CLI::Up::ChatPreflight.new(shell_out_factory: Lain::Shell::Out.public_method(:new),
                                                         cwd: @state_dir, executable: lain_exe)
 
       chat_args = ["--provider", "ollama", "--no-journal"]
@@ -1094,7 +1094,7 @@ RSpec.describe Lain::CLI::Up do
         FileUtils.mkdir_p(File.join(root, ".git"))
         with_env("XDG_STATE_HOME" => File.join(root, "state"), "HOME" => File.join(root, "home")) do
           write_config(root, "\nraise \"boom\"\n")
-          real = Lain::CLI::Up::ChatPreflight.new(shell_out_factory: Mixlib::ShellOut.public_method(:new),
+          real = Lain::CLI::Up::ChatPreflight.new(shell_out_factory: Lain::Shell::Out.public_method(:new),
                                                   cwd: root, executable: lain_exe)
 
           expect { real.call(["--epic", "demo", "--provider", "ollama", "--no-journal"]) }
@@ -1163,8 +1163,37 @@ RSpec.describe Lain::CLI::Up do
       run_up(calls, cwd: "/some/project")
 
       expect(preflight_call(calls).last)
-        .to eq(cwd: "/some/project", env: { Lain::CLI::ChatLaunch::PREFLIGHT_ENV => "1" },
+        .to eq(cwd: "/some/project", environment: { Lain::CLI::ChatLaunch::PREFLIGHT_ENV => "1" },
                timeout: described_class::ChatPreflight::TIMEOUT)
+    end
+
+    it "passes environment:, cwd: and timeout: to the default Shell::Out factory" do
+      calls = []
+      allow(Lain::Shell::Out).to receive(:new) do |*args|
+        calls << args
+        FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
+      end
+
+      described_class.new(session: "lain", state_path:, cwd: "/some/project").call
+
+      expect(preflight_call(calls).last)
+        .to eq(cwd: "/some/project", environment: { Lain::CLI::ChatLaunch::PREFLIGHT_ENV => "1" },
+               timeout: described_class::ChatPreflight::TIMEOUT)
+    end
+
+    it "warns and opens anyway when the check outlives its timeout" do
+      calls = []
+      hung = lambda do |*args|
+        calls << args
+        raise Lain::Shell::Out::Timeout, "chat took too long" if args.first == $PROGRAM_NAME
+
+        FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
+      end
+
+      report = described_class.new(session: "lain", state_path:, shell_out_factory: hung).call
+
+      expect(report.warnings.join).to include("chat took too long")
+      expect(calls.flatten).to include("new-session")
     end
 
     it "creates the session and spawns the chat pane as before when chat accepts the argv" do
@@ -2274,7 +2303,7 @@ end
 # `.from_options` is the flag -> contract translator, not a constructor a
 # caller parameterises, so it has no `shell_out_factory` seam. The spy goes on
 # what {Lain::CLI::Up#initialize}'s default reaches for instead:
-# `Mixlib::ShellOut.public_method(:new)` is resolved per construction, so a
+# `Lain::Shell::Out.public_method(:new)` is resolved per construction, so a
 # stub installed here IS the factory the Up ends up holding. That keeps these
 # examples driving the real translation rather than a hand-built Up, which
 # would prove nothing about the argument that produced it.
@@ -2284,7 +2313,7 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
 
   def tmux_calls(path:, **overrides)
     calls = []
-    allow(Mixlib::ShellOut).to receive(:new) do |*args|
+    allow(Lain::Shell::Out).to receive(:new) do |*args|
       calls << args
       FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
     end

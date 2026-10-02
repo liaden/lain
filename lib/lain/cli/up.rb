@@ -22,7 +22,7 @@ module Lain
     # a second `lain up` re-applies the same harmless option writes rather than
     # spawning a duplicate.
     #
-    # Every tmux invocation goes through Mixlib::ShellOut with an ARGV array,
+    # Every tmux invocation goes through Shell::Out with an ARGV array,
     # never a command string, so nothing here quotes against a shell of ours.
     # The ONE place a shell reappears is the `#(...)` job tmux embeds in
     # `status-right` and interprets with its OWN `$SHELL -c` at render time --
@@ -31,7 +31,7 @@ module Lain
       # tmux missing outright, or any tmux failure other than has-session's
       # expected "no session yet" nonzero. Named so the exe's Lain::Error to
       # Thor::Error mapping shows a clean message rather than a raw Errno or
-      # Mixlib backtrace on a demo machine.
+      # Shell::Out backtrace on a demo machine.
       class TmuxUnavailable < Error; end
 
       # A chat `lain up` will not open a session for, in chat's own words: the
@@ -228,7 +228,7 @@ module Lain
       # ClassLength cop wanted.
       class Tmux
         # @param socket [String, nil] tmux's `-L`; the default socket when nil
-        # @param shell_out_factory [#call] `Mixlib::ShellOut.new`, or a double
+        # @param shell_out_factory [#call] `Shell::Out.new`, or a double
         def initialize(socket:, shell_out_factory:)
           @socket = socket
           @shell_out_factory = shell_out_factory
@@ -423,12 +423,8 @@ module Lain
         # against a cold bootsnap cache (~3.6s to load lain) plus `--num-ctx`'s
         # own 2s probe.
         #
-        # It is not the whole wait: Mixlib escalates before it kills (TERM,
-        # wait, KILL) at a flat ~3.1s, so the overshoot is ADDITIVE rather than
-        # proportional. Measured against a TERM-ignoring child at three
-        # settings -- 3s to 6.1s, 8s to 11.3s, 15s to 18.2s -- which is what
-        # tells the two laws apart, where a single reading at 3s reads as
-        # "about double".
+        # It is not the whole wait: Shell::Out::GRACE (3.0s) separates TERM
+        # from KILL, so the overshoot is ADDITIVE rather than proportional.
         TIMEOUT = 15
 
         # What the child's stderr may spend on the operator's terminal. A
@@ -447,7 +443,7 @@ module Lain
         # deliver.
         FRAME = /\A\s*(from\s+)?\S+:\d+:in\s+('[^']*'|`[^']*'|\S+)(:[ \t]*)?/
 
-        # @param shell_out_factory [#call] `Mixlib::ShellOut.new`, or a double
+        # @param shell_out_factory [#call] `Shell::Out.new`, or a double
         # @param cwd [String] where the chat pane will run, so a project-shaped
         #   refusal (`--root`, `--cwd`, a skill that will not load) is decided
         #   against the directory `lain up PATH` named rather than the shell's
@@ -469,7 +465,7 @@ module Lain
         def call(chat_args)
           answer = @shell_out_factory.call(@executable, "chat", *chat_args,
                                            cwd: @cwd, timeout: TIMEOUT,
-                                           env: { ChatLaunch::PREFLIGHT_ENV => "1" })
+                                           environment: { ChatLaunch::PREFLIGHT_ENV => "1" })
           answer.run_command
           return [] if answer.exitstatus&.zero?
           # No status at all is a SIGNALLED child: neither a refusal nor an
@@ -477,7 +473,7 @@ module Lain
           return [unchecked("`lain chat` was killed before it could answer")] if answer.exitstatus.nil?
 
           raise ChatRefused, refusal(answer)
-        rescue Errno::ENOENT, Mixlib::ShellOut::CommandTimeout => e
+        rescue Errno::ENOENT, Shell::Out::Timeout => e
           [unchecked(e.message)]
         end
 
@@ -713,7 +709,7 @@ module Lain
       # call site -- and every subprocess `lain up` causes goes through an
       # object named for what it runs.
       class Binaries
-        # @param shell_out_factory [#call] `Mixlib::ShellOut.new`, or a double
+        # @param shell_out_factory [#call] `Shell::Out.new`, or a double
         def initialize(shell_out_factory:) = @shell_out_factory = shell_out_factory
 
         # @param binary [String] a command name, resolved against PATH
@@ -974,7 +970,7 @@ module Lain
                      chat_command: nil, input_command: nil, chat_args: [],
                      status_interval: Hud::DEFAULT_INTERVAL,
                      nvim: nil, paths: Paths.new,
-                     shell_out_factory: Mixlib::ShellOut.public_method(:new),
+                     shell_out_factory: Shell::Out.public_method(:new),
                      chat_preflight: ChatPreflight.new(shell_out_factory:, cwd:),
                      gc_schedule: GcSchedule.for(cwd:, paths:))
         @session = session
@@ -994,7 +990,7 @@ module Lain
 
       # @return [Report]
       # @raise [TmuxUnavailable] no tmux on PATH, or a real tmux failure --
-      #   never a bare Errno/Mixlib exception past this boundary.
+      #   never a bare Errno/Shell::Out exception past this boundary.
       def call
         # Per call, so a second launch through one Up reports only its own.
         @warnings = []
