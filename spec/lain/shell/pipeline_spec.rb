@@ -423,7 +423,7 @@ RSpec.describe Lain::Shell::Pipeline do
     it "quotes only what the capture retained of a flood before the kill" do
       flood = [["/bin/sh", "-c", "head -c 1000000 /dev/zero | tr '\\0' a; sleep 30"]]
 
-      expect { run(flood, timeout: 1, ceiling: 63) }
+      expect { run(flood, timeout: 0.5, ceiling: 63) }
         .to raise_error(described_class::Timeout) { |error| expect(error.message.count("a")).to be < 100 }
     end
 

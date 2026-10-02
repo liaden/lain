@@ -129,14 +129,14 @@ RSpec.describe Lain::Exec::Core do
     end
 
     it "raises Exec::Unenforced naming the timeout and the grace" do
-      expect { run(command: "sleep 9", with: mute, timeout: 1, grace: 0.1) }
+      expect { run(command: "sleep 9", with: mute, timeout: 0.2, grace: 0.1) }
         .to raise_error(Lain::Exec::Unenforced,
-                        "lain-core failed to enforce the 1s timeout within 0.1s grace -- " \
+                        "lain-core failed to enforce the 0.2s timeout within 0.1s grace -- " \
                         "no reply from the boundary")
     end
 
     it "is a Timeout, so one rescue still covers a caller that need not tell them apart" do
-      expect { run(command: "sleep 9", with: mute, timeout: 1, grace: 0.1) }
+      expect { run(command: "sleep 9", with: mute, timeout: 0.2, grace: 0.1) }
         .to raise_error(Lain::Exec::Timeout)
     end
   end

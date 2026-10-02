@@ -299,7 +299,7 @@ RSpec.describe Lain::Approval::Gate do
     # inside `Sync`/`Async` -- a later `ENV[]=` in this process changes
     # nothing already running, so proving the fix needs a fresh process
     # booted with it set, the way `bundle exec ruby -e` boots one.
-    it "arms no timer: a promise resolved a second later by a plain thread, nothing else pending, still lands" do
+    it "arms no timer: a promise resolved later by a plain thread, nothing else pending, still lands" do
       script = <<~RUBY
         require "lain"
         require "stringio"
@@ -309,7 +309,7 @@ RSpec.describe Lain::Approval::Gate do
                                         timeout: Lain::Approval::Gate::Window::Unbounded)
         artifact = Data.define(:digest, :gate_question).new(digest: "blake3:epoll", gate_question: "Approve?")
         reader, writer = IO.pipe
-        Thread.new { sleep 1; writer.write("go\\n") }
+        Thread.new { sleep 0.2; writer.write("go\\n") }
 
         asker = Object.new
         asker.define_singleton_method(:ask) do |_question|

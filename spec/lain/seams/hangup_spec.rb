@@ -45,7 +45,7 @@ module Hangup
 
     options = { provider: "anthropic", model: "claude-opus-4-8", max_tokens: 256, journal: true, btw: false,
                 nvim: false, windows: false, non_interactive: true, prompt: "spawn one", isolation: "worktree",
-                grace: 5 }
+                grace: 0.5 }
     launch.new(options).call { |_notice| nil }
   RUBY
 end

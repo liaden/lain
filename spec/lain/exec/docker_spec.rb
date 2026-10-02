@@ -172,6 +172,17 @@ RSpec.describe Lain::Exec::Docker do
 
   def name_flag(one_argv) = one_argv.each_cons(2).find { |flag, _| flag == "--name" }&.last
 
+  def running_containers = `docker ps --format '{{.ID}} {{.Names}}'`.split("\n").map(&:split)
+
+  # A container another spec process named `lain-<its pid>-...` is not this
+  # example's to answer for; one with any other name still counts, so a defect
+  # that loses the name is not filtered away.
+  def leaked_since(before)
+    (running_containers - before).reject do |_id, name|
+      (pid = name.to_s[/\Alain-(\d+)-/, 1]) && pid.to_i != Process.pid
+    end
+  end
+
   # A second recording double, independent of the `let(:inner)` above --
   # for the examples asking about TWO backends rather than about the one
   # `subject(:backend)` is built from.
@@ -836,16 +847,16 @@ RSpec.describe Lain::Exec::Docker do
     # relays TERM into it only while the client is still alive to relay it.
     #
     # Compared against the RUNNING SET before and after, rather than filtered
-    # by `lain-*`: a name this backend never assigned is exactly what the
+    # to `lain-*`: a name this backend never assigned is exactly what the
     # defect looked like, so a filter keyed on the fix would find nothing
-    # leaked and pass for the wrong reason.
+    # leaked and pass for the wrong reason. `leaked_since` drops only another
+    # process's own names, for the reason given there.
     it "leaves no container behind for a command that traps and outlives TERM" do
-      before_ids = `docker ps -q`.split("\n")
+      before = running_containers
 
       expect { run_real(%(sh -c "trap "" TERM; sleep 600"), timeout: 1) }.to raise_error(Lain::Exec::Timeout)
 
-      after_ids = `docker ps -q`.split("\n")
-      expect(after_ids - before_ids).to be_empty
+      expect(leaked_since(before)).to be_empty
     end
   end
 
@@ -904,7 +915,8 @@ RSpec.describe Lain::Exec::Docker do
     end
 
     it "raises within the cleanup deadline, names the container, and leaks no container" do
-      before_ids = `docker ps -q`.split("\n")
+      stub_const("Lain::Exec::Docker::Cleanup::DEADLINE", 0.5)
+      before = running_containers
       backend = described_class.new(project: @project)
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
@@ -918,13 +930,13 @@ RSpec.describe Lain::Exec::Docker do
 
       expect(error).to be_a(Lain::Exec::Timeout)
       expect(error.message).to match(/lain-.*may still be running/)
-      # Generous: the run's own timeout+grace, then Cleanup's own 5s budget,
-      # then ITS grace -- comfortably under a minute on a box this slow, and
-      # nowhere near what an UNBOUNDED wait on a black hole would look like.
+      # The example proves Cleanup's deadline bounds a black-holed host, not the
+      # 5s value, so the 0.5s stub proves the same in a tenth of the time. Generous:
+      # the run's own timeout+grace, the deadline, then ITS grace -- far under an
+      # UNBOUNDED wait on a black hole.
       expect(elapsed).to be < 30
 
-      after_ids = `docker ps -q`.split("\n")
-      expect(after_ids - before_ids).to be_empty
+      expect(leaked_since(before)).to be_empty
     end
   end
 end

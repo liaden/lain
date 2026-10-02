@@ -55,7 +55,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # A REAL queue, not a double: the claim is that N surfaces watch ONE queue
   # and a SIBLING fiber wakes the parked gated call, and only the real
   # park/decide path can show that.
-  let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.5) }
+  let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.3) }
   let(:auto_surface) { ApprovalSurfacesSpecSupport::SpySurface.new }
   # A REAL terminal over a StringIO, because a cockpit's chat announces a parked
   # call through the frontend's own one-line note, and what it printed is half

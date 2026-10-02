@@ -997,13 +997,13 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "measures at least as long as the terminal read actually takes" do
       slow = instance_double(IO, tty?: true)
       allow(slow).to receive(:gets) do
-        sleep 2
+        sleep 0.2
         "y\n"
       end
 
       command(gates: hands_off.merge("research" => "interactive"), input: slow).submit("research")
 
-      expect(gate_decisions.first["latency"]).to be >= 2
+      expect(gate_decisions.first["latency"]).to be >= 0.2
     end
 
     # Mentally revert to always answering `Approval::Gate::DEFAULT_TIMEOUT`

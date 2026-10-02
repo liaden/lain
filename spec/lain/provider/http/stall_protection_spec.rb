@@ -160,10 +160,10 @@ RSpec.describe "stalled-stream protection", :seam do
   describe "when stall protection is disabled" do
     # `nil` is the off switch, and it takes the middleware out of the stack
     # entirely rather than arming a clock that never fires. The dwell below is
-    # five graces, and what finally ends it is the request timeout -- exactly
-    # what ended it before this card existed.
+    # three graces, and what finally ends it is the request timeout -- exactly
+    # what ended it before stall protection existed.
     def disabled_outcome(upstream)
-      stream_outcome(ollama_transport(upstream, stall: nil, request_timeout: 1.5, max_retries: 0))
+      stream_outcome(ollama_transport(upstream, stall: nil, request_timeout: 0.9, max_retries: 0))
     end
 
     it "raises no stalled-stream error while the socket stays quiet" do
@@ -177,7 +177,7 @@ RSpec.describe "stalled-stream protection", :seam do
       outcome = nil
       StreamingUpstream.ndjson(stalls_after_two_chunks) { |up| outcome = disabled_outcome(up) }
 
-      expect(outcome[:seconds]).to be >= 1.5
+      expect(outcome[:seconds]).to be >= 0.9
     end
   end
 
