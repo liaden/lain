@@ -42,11 +42,11 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
   # Scrubbed exactly as the subject scrubs, so a pre-commit hook's
   # GIT_INDEX_FILE never points these calls at lain's own index.
   def shell(*args)
-    Mixlib::ShellOut.new("git", "-C", @repo, *args,
+    Lain::Shell::Out.new("git", "-C", @repo, *args,
                          environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command
   end
 
-  def git(*) = shell(*).tap(&:error!).stdout.strip
+  def git(*) = SeedRepo.git(@repo, *).stdout.strip
 
   def tip = git("rev-parse", "refs/heads/epic/demo")
 

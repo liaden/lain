@@ -17,9 +17,7 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
   end
 
   def run_git(*args)
-    shell = Mixlib::ShellOut.new("git", "-C", @dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout.strip
+    SeedRepo.git(@dir, *args).stdout.strip
   end
 
   describe "#symbolic_head" do
@@ -71,7 +69,7 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
     # Each of these STOPS on a conflict, so a nonzero status is the point of
     # the call rather than a failure of the example.
     def attempt(*args, **environment)
-      Mixlib::ShellOut.new("git", "-C", @dir, *args,
+      Lain::Shell::Out.new("git", "-C", @dir, *args,
                            environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(environment)).run_command
     end
 

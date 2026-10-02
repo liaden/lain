@@ -41,10 +41,7 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
   # env (a pre-commit hook) exactly as the backend is -- reusing the backend's
   # pinned scrub set rather than a parallel copy.
   def run_git(dir, *args)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
-                                 environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout
+    SeedRepo.git(dir, *args).stdout
   end
 
   def registered_worktrees = run_git(@repo_root, "worktree", "list", "--porcelain")
@@ -58,7 +55,7 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
   # Answers the shell rather than raising, for a git command the example
   # expects may be refused.
   def try_git(dir, *args)
-    Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+    Lain::Shell::Out.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
                     .run_command
   end
 

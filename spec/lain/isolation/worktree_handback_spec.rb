@@ -71,14 +71,11 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
   # env (a pre-commit hook) exactly as the subject is -- reusing the pinned
   # scrub set rather than a parallel copy.
   def run_git(dir, *args)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
-                                 environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout
+    SeedRepo.git(dir, *args).stdout
   end
 
   def try_git(dir, *args)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
+    shell = Lain::Shell::Out.new("git", "-C", dir, *args,
                                  environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
     shell.run_command
     shell
@@ -95,7 +92,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
   # produce on demand (a broken `commit`, a broken `merge --abort`) still gets
   # pinned. Everything else runs for real.
   def factory_failing(subcommand)
-    real = Mixlib::ShellOut.public_method(:new)
+    real = Lain::Shell::Out.public_method(:new)
     broken = Struct.new(:stdout, :stderr, :exitstatus) do
       def run_command = self
     end
@@ -108,7 +105,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
   # exhausted fd table, a killed spawn or a Ctrl-C mid-call actually looks like.
   # `factory_failing` above covers the other half (git ran and refused).
   def factory_raising(subcommand, error = Errno::EMFILE)
-    real = Mixlib::ShellOut.public_method(:new)
+    real = Lain::Shell::Out.public_method(:new)
     lambda do |*args, **kwargs|
       raise(error, "git #{subcommand}") if args.include?(subcommand)
 
@@ -315,7 +312,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
     # The belt under the braces: a merge that exits 0 without landing -- a hook,
     # a setting nobody has thought of yet -- must not read as `:merged`.
     it "answers failed, naming why, when git reports success but the worker's commit is not in the parent" do
-      real = Mixlib::ShellOut.public_method(:new)
+      real = Lain::Shell::Out.public_method(:new)
       done = Struct.new(:stdout, :stderr, :exitstatus) { def run_command = self }
       pretending = lambda do |*args, **kwargs|
         args.include?("merge") ? done.new("", "", 0) : real.call(*args, **kwargs)
@@ -1144,7 +1141,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       commit_in(lease.worker_env.cwd, "worker\n", "worker work")
       other = head_commit(@repo_root)
       ref = worker_ref("worker-1")
-      real = Mixlib::ShellOut.public_method(:new)
+      real = Lain::Shell::Out.public_method(:new)
       # A sibling writes the ref in the window between #target's read and the
       # update-ref about to be built.
       racing = lambda do |*args, **kwargs|

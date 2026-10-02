@@ -81,16 +81,13 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
   # inspecting the throwaway repo is hermetic under an ambient GIT_*-polluted
   # env (a pre-commit hook) exactly as the subject is.
   def run_git(dir, *args)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
-                                 environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout
+    SeedRepo.git(dir, *args).stdout
   end
 
   # For the git calls a fixture EXPECTS to fail -- a merge staged deliberately to
   # conflict, so the parent sits mid-merge from someone other than the subject.
   def try_git(dir, *args)
-    Mixlib::ShellOut.new("git", "-C", dir, *args,
+    Lain::Shell::Out.new("git", "-C", dir, *args,
                          environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command
   end
 
@@ -629,7 +626,7 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
     # Raises ONE git subcommand rather than exiting nonzero -- an exhausted fd
     # table, a killed spawn, a Ctrl-C mid-call.
     def raising_at(subcommand, error = Errno::EMFILE)
-      real = Mixlib::ShellOut.public_method(:new)
+      real = Lain::Shell::Out.public_method(:new)
       factory = lambda do |*args, **kwargs|
         raise(error, "git #{subcommand}") if args.include?(subcommand)
 
@@ -705,7 +702,7 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
       lease = clean_lease
       ref = Lain::Isolation::Worktree::Handback::Naming.new("worker-1").ref
       other = run_git(@repo_root, "rev-parse", "HEAD").strip
-      real = Mixlib::ShellOut.public_method(:new)
+      real = Lain::Shell::Out.public_method(:new)
       racing = lambda do |*args, **kwargs|
         run_git(@repo_root, "update-ref", ref, other) if args.include?("update-ref")
         real.call(*args, **kwargs)

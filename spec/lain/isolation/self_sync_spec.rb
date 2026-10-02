@@ -81,11 +81,16 @@ RSpec.describe Lain::Isolation::SelfSync, :seam do
   # Scrubbed exactly as the subject scrubs, so a pre-commit hook's
   # GIT_INDEX_FILE never points these calls at lain's own index.
   def shell(dir, *args, env: {})
-    Mixlib::ShellOut.new("git", "-C", dir, *args,
+    Lain::Shell::Out.new("git", "-C", dir, *args,
                          environment: env.merge(Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)).run_command
   end
 
-  def git(dir, *, env: {}) = shell(dir, *, env:).tap(&:error!).stdout.strip
+  def git(dir, *args, env: {})
+    result = shell(dir, *args, env:)
+    raise SeedRepo::GitFailed, "git #{args.join(" ")}: #{result.stderr}" unless result.exitstatus&.zero?
+
+    result.stdout.strip
+  end
 
   def commit(dir, file, body)
     File.write(File.join(dir, file), body)

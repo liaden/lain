@@ -48,13 +48,11 @@ RSpec.describe Lain::Isolation::Gc, :seam do
   # Scrubbed exactly as the subject scrubs, so a pre-commit hook's exported
   # GIT_INDEX_FILE cannot point these at lain's own index.
   def run_git(dir, *args)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout
+    SeedRepo.git(dir, *args).stdout
   end
 
   def try_git(dir, *args)
-    Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+    Lain::Shell::Out.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
                     .run_command
   end
 

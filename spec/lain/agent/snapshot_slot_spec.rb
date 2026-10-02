@@ -175,7 +175,7 @@ RSpec.describe Lain::Agent::SnapshotSlot do
 
     # git that fails on the calls `fails` names, `times` times, then works.
     def git_failing(on:, times: Float::INFINITY)
-      real = Mixlib::ShellOut.public_method(:new)
+      real = Lain::Shell::Out.public_method(:new)
       left = times
       lambda do |*argv, **options|
         failing = left.positive? && on.intersect?(argv)
