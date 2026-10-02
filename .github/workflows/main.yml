@@ -7,9 +7,16 @@ on:
 
   pull_request:
 
+# main is committed to directly, so every push's own result is the signal: a
+# per-sha group keeps main runs from being cancelled or dropped from the queue.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     name: Ruby ${{ matrix.ruby }}
     strategy:
       matrix:
@@ -56,12 +63,14 @@ jobs:
       # the same memory. Do not "restore consistency" with `- 1` here.
       - name: Size the parallel suite from the runner's own cores
         run: echo "LAIN_SPEC_WORKERS=$(nproc)" >> "$GITHUB_ENV"
-      - name: Run the default task
-        run: bundle exec rake
+      # rubocop runs in the lint job so it is off this job's critical path.
+      - name: Compile and run the parallel suite
+        run: bundle exec rake compile pspec
 
   lint:
     runs-on: ubuntu-latest
     name: pre-commit
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,8 +93,12 @@ jobs:
       # the skipped `ruby-checks` hook used to build on its way past.
       - name: Compile the Rust extension
         run: bundle exec rake compile
-      # `ruby-checks` is `build`'s job now that `default` runs the parallel
-      # suite; skipping it here is what stops CI running the suite twice.
+      # `ruby-checks` would run the suite a second time; rubocop, its other
+      # half, runs on its own below.
       - uses: pre-commit/action@v3.0.1
         env:
           SKIP: ruby-checks
+      # A failed hook above must not hide rubocop's own verdict.
+      - name: RuboCop
+        if: ${{ !cancelled() }}
+        run: bundle exec rubocop --parallel
