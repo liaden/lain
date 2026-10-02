@@ -205,6 +205,11 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
+  before do
+    stub_const("Lain::CLI::HumanReplies::CommandLine::TICK", 0.01)
+    stub_const("Lain::CLI::HumanReplies::IDLE_TICK", 0.01)
+  end
+
   let(:output) { StringIO.new }
   let(:tty) do
     Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
@@ -325,7 +330,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   # For the negative: run the surfaces for a fixed window and assert what did NOT
   # arrive. Running out the clock is the success here, so it cannot go through
   # `with_surfaces`, whose timeout is a failure.
-  def surfaces_settle(duration: 0.3)
+  def surfaces_settle(duration: 0.1)
     Sync do |task|
       surfaces = all_surfaces(task)
       begin
@@ -1878,7 +1883,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
     # The chat's surface alone, over the attention the conversation hands it, for
     # a fixed window: running out the clock is the success in most of these.
-    def line_for(duration: 0.3, &during)
+    def line_for(duration: 0.1, &during)
       Sync do |task|
         surfaces = replies.chat_surfaces(task, attention:)
         begin
@@ -1976,7 +1981,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     it "drains the inbox at /inbox, answering the oldest question listed" do
       typed_at_command_line("/inbox", "postgres")
 
-      line_for(duration: 0.5) { Sync { announced(ask_human, "which db?") } }
+      line_for(duration: 0.2) { Sync { announced(ask_human, "which db?") } }
 
       expect(ask_human.last_answer.body["answer"]).to include("postgres")
       expect(conductor).to have_received(:read_command).with(Lain::CLI::HumanReplies::CommandLine::PROMPT)
@@ -2041,7 +2046,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       typed_at_command_line
       session = nil
 
-      line_for(duration: 0.4) do |task|
+      line_for(duration: 0.15) do |task|
         session = replies.session_surfaces(task)
         Sync { announced(ask_human, "which db?") }
         pumped_until(task, reason: "the read opened") { @open_reads.positive? }
@@ -2083,7 +2088,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       line_for(duration: 0.1) do |task|
         outstanding
-        settle_for(task, 0.2)
+        settle_for(task, 0.1)
         reads_at_you = @reads
         prompting = false
         pumped_until(task, reason: "the read opened once you> closed") { @open_reads.positive? }
@@ -2107,7 +2112,7 @@ RSpec.describe Lain::CLI::HumanReplies do
         counting = true
         pumped_until(task, reason: "the read closed") { @open_reads.zero? }
         reads = @reads
-        settle_for(task, 0.2)
+        settle_for(task, 0.1)
         reads_while_counting = @reads - reads
       end
 
@@ -2122,7 +2127,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       line_for(duration: 0.1) do |task|
         outstanding
-        settle_for(task, 0.15)
+        settle_for(task, 0.1)
         counting = false
         pumped_until(task, reason: "the read opened after the cancel") { @open_reads.positive? }
       end
@@ -2793,9 +2798,12 @@ RSpec.describe Lain::CLI::HumanReplies do
         first = list(ask_human, "which db?")
         open_first
         list(other_asker, "deploy now?")
+        editor.push(["open", [2, stamp]])
+        with_surfaces { editor.refusals.any? }
 
         surfaces_settle
 
+        expect(editor.refusals).to contain_exactly(a_string_matching(/nobody has answered yet/))
         expect(nvim.opened.size).to eq(1)
         expect(question_view.digest).to eq(first.digest)
         expect(renderings.last.join("\n")).to include("which db?").and include("deploy now?")
