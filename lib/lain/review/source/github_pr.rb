@@ -154,7 +154,7 @@ module Lain
             return CombinedDiff.new(bytes: "".b, origin: refusal(shell)) if refused?(shell)
 
             CombinedDiff.new(bytes: shell.stdout.b.freeze, origin: DiffOrigin.served)
-          rescue Mixlib::ShellOut::CommandTimeout => e
+          rescue Shell::Out::Timeout, Mixlib::ShellOut::CommandTimeout => e
             CombinedDiff.new(bytes: "".b, origin: DiffOrigin.fallback(reason: "timeout", message: e.message))
           end
 
@@ -178,7 +178,7 @@ module Lain
           rescue JSON::ParserError => e
             raise UnknownRef, "gh answered a document this source cannot read for pull request " \
                               "#{@ref.inspect}: #{e.message}"
-          rescue Mixlib::ShellOut::CommandTimeout => e
+          rescue Shell::Out::Timeout, Mixlib::ShellOut::CommandTimeout => e
             raise UnknownRef, "gh did not answer about pull request #{@ref.inspect} within its " \
                               "bound, so its refs are unknown: #{e.message}"
           end
@@ -250,7 +250,7 @@ module Lain
         #   cannot resolve the one it names
         def initialize(pull_request:, repo_root: Dir.pwd, remote: "origin",
                        timeout: DEFAULT_TIMEOUT,
-                       shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                       shell_out_factory: Shell::Out.public_method(:new))
           @repo_root = File.expand_path(repo_root)
           @remote = remote.to_s
           @shell_out_factory = shell_out_factory

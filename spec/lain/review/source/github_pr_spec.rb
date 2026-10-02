@@ -22,6 +22,10 @@ module GithubPrFixture
   # The pull request number, and so the `refs/pull/N/head` the source fetches.
   NUMBER = 42
 
+  WITHOUT_HEAD = Concurrent::Map.new
+  TEMPLATES = Concurrent::Map.new
+  private_constant :WITHOUT_HEAD, :TEMPLATES
+
   # The same scrub the subject uses, so building the template is hermetic under
   # an ambient GIT_*-polluted env exactly as it is.
   SCRUB = Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB
@@ -38,13 +42,26 @@ module GithubPrFixture
   class << self
     # @param rich [Boolean] include the binary, unicode and merge shapes
     # @return [Shape] a directory to copy, never to mutate, and its constants
-    def at(rich:) = templates[rich] ||= build(rich)
+    def at(rich:) = TEMPLATES.compute_if_absent(rich) { build(rich) }
+
+    # @return [String] a directory to copy, never to mutate
+    def without_head_at(rich:)
+      WITHOUT_HEAD.compute_if_absent(rich) { build_without_head(at(rich:).dir) }
+    end
 
     private
 
-    # Process-wide, and safe without a lock for the reason the whole suite is:
-    # `parallel_tests` forks PROCESSES and one example runs at a time in each.
-    def templates = @templates ||= {} # rubocop:disable ThreadSafety/ClassInstanceVariable
+    # Built by `init` plus an explicit refspec rather than by `clone`, because a
+    # local-path clone HARDLINKS the whole object directory and would silently
+    # have every object already.
+    def build_without_head(origin)
+      dir = Dir.mktmpdir("lain-review-github-nohead-template")
+      at_exit { FileUtils.remove_entry(dir, true) }
+      git(dir, "init", "-q")
+      git(dir, "remote", "add", "origin", origin)
+      git(dir, "fetch", "-q", "--no-tags", "origin", "refs/heads/base:refs/heads/base")
+      dir
+    end
 
     def build(rich)
       dir = Dir.mktmpdir("lain-review-github-template")
@@ -113,8 +130,10 @@ module GithubPrFixture
     end
 
     def git(dir, *)
-      shell = Mixlib::ShellOut.new("git", "-C", dir, *, environment: SCRUB)
-      shell.run_command.error!
+      shell = Lain::Shell::Out.new("git", "-C", dir, *, environment: SCRUB)
+      shell.run_command
+      raise "git #{shell.stderr}" unless shell.exitstatus.zero?
+
       shell
     end
   end
@@ -152,9 +171,11 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
   # and the repo-local config the SeedRepo template carries keeps a developer's
   # `commit.gpgsign` out of the fixture.
   def run_git(dir, *args)
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
+    shell = Lain::Shell::Out.new("git", "-C", dir, *args,
                                  environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
+    shell.run_command
+    raise "git #{shell.stderr}" unless shell.exitstatus.zero?
+
     shell.stdout
   end
 
@@ -172,14 +193,11 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
   # rather than an init and a fetch, which is 2ms against 50.
   def local_repo_with_head = @repo = copy_of_the_template("local")
 
-  # And one that has never seen it. Built by `init` plus an explicit refspec
-  # rather than by `clone`, because a local-path clone HARDLINKS the whole
-  # object directory and would silently have every object already.
+  # And one that has never seen it, pointed at this example's own origin.
   def local_repo_without_head
     @repo = File.join(@root, "local")
-    run_git(@root, "init", "-q", @repo)
-    run_git(@repo, "remote", "add", "origin", origin)
-    run_git(@repo, "fetch", "-q", "--no-tags", "origin", "refs/heads/base:refs/heads/base")
+    FileUtils.cp_r(GithubPrFixture.without_head_at(rich:), @repo)
+    run_git(@repo, "remote", "set-url", "origin", origin)
   end
 
   # Read off the template rather than out of a copy. A copy IS the template's
@@ -204,7 +222,7 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
   end
 
   # A subprocess that could not run AT ALL, which is a different thing from one
-  # that ran and said no. `run_command` is where mixlib raises either way.
+  # that ran and said no. `run_command` is where a runner raises either way.
   def raising(error)
     Class.new do
       define_method(:run_command) { raise error }
@@ -232,7 +250,7 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
   def factory
     lambda do |*argv, **options|
       calls << argv
-      argv.first == "gh" ? gh_reply(argv) : Mixlib::ShellOut.new(*argv, **options)
+      argv.first == "gh" ? gh_reply(argv) : Lain::Shell::Out.new(*argv, **options)
     end
   end
 
@@ -559,7 +577,7 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     end
 
     it "falls back when gh does not answer within its bound" do
-      replies[:diff] = raising(Mixlib::ShellOut::CommandTimeout.new("gh took too long"))
+      replies[:diff] = raising(Lain::Shell::Out::Timeout.new("gh took too long"))
       source = build
       expect(source.diff).to eq(expected_diff)
       expect(source.diff_origin.reason).to eq("timeout")
@@ -581,7 +599,7 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     # stderr at all: a timeout carries the exception's own text. The scrub
     # therefore belongs to the VALUE, not only to the reading of a refusal.
     it "reports a journal-safe message when the timeout itself carries bad bytes" do
-      replies[:diff] = raising(Mixlib::ShellOut::CommandTimeout.new(+"timed out \xff"))
+      replies[:diff] = raising(Lain::Shell::Out::Timeout.new(+"timed out \xff"))
       origin = build.diff_origin
       expect(origin.message).to be_valid_encoding
       expect { JSON.generate(origin.to_h) }.not_to raise_error
@@ -631,8 +649,55 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     # The constructor documents UnknownRef, and a bounded call that runs out is
     # one of the ways it fails to resolve one.
     it "refuses as the port does when gh runs past its bound" do
+      replies[:view] = raising(Lain::Shell::Out::Timeout.new("gh took too long"))
+      expect { build }.to raise_error(Lain::Review::Source::UnknownRef, /took too long/)
+    end
+  end
+
+  # CLI::Review still injects Mixlib's factory, so its timeout must keep
+  # meaning what Shell::Out's does.
+  describe "a Mixlib runner injected by a caller" do
+    it "reports a view timeout as the port's refusal" do
+      local_repo_with_head
       replies[:view] = raising(Mixlib::ShellOut::CommandTimeout.new("gh took too long"))
       expect { build }.to raise_error(Lain::Review::Source::UnknownRef, /took too long/)
+    end
+
+    it "falls back on a diff timeout" do
+      local_repo_without_head
+      replies[:diff] = raising(Mixlib::ShellOut::CommandTimeout.new("gh took too long"))
+      source = build
+      expect(source.diff).to eq(expected_diff)
+      expect(source.diff_origin.reason).to eq("timeout")
+    end
+  end
+
+  describe "the default runner" do
+    before { local_repo_with_head }
+
+    # A gh that is a script on PATH, so nothing is faked in-process: what the
+    # example observes is which runner class the source built without being
+    # told one.
+    def with_gh_on_path
+      bin = File.join(@root, "bin")
+      FileUtils.mkdir_p(bin)
+      gh = File.join(bin, "gh")
+      File.write(gh, "#!/bin/sh\nprintf '%s' '#{JSON.generate(view_document)}'\n")
+      File.chmod(0o755, gh)
+      original = ENV.fetch("PATH")
+      ENV["PATH"] = "#{bin}:#{original}"
+      yield
+    ensure
+      ENV["PATH"] = original
+    end
+
+    it "spawns gh and git through Shell::Out rather than forking them" do
+      allow(Lain::Shell::Out).to receive(:new).and_call_original
+
+      with_gh_on_path { described_class.new(pull_request: number, repo_root: @repo) }
+
+      expect(Lain::Shell::Out).to have_received(:new).with("gh", "pr", "view", any_args)
+      expect(Lain::Shell::Out).to have_received(:new).with("git", "-C", @repo, any_args).at_least(:once)
     end
   end
 
