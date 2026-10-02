@@ -409,6 +409,12 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
     failed 6, the new one 0. A general rule from the old entry stands: a path in a flake entry is a
     convenience, the NAME is the key, so when a file moves, repoint the path and keep the name.
 
+  - 2026-10-02: `Lain::Supervisor tracking a one-shot task drops the row when the task is stopped,
+    and when it fails`, red on `main` under suite load and never recorded here before. The row
+    leaves from a task of its own, and a failing task yields again to log its unhandled-exception
+    warning before it finishes, so one `task.yield` could check before the row left. It now waits
+    until the registry is empty, bounded at 5s.
+
 - **The `:ollama` live suite has a KNOWN-RED example, and it predates this chunk.**
   `Lain::Provider::Ollama temperature-0 reproducibility produces identical text across three warm
   same-seed runs` (`spec/integration/provider/ollama_spec.rb`) fails on this box: three warm

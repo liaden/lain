@@ -647,6 +647,11 @@ RSpec.describe Lain::Supervisor do
       end
     end
 
+    # The row leaves from a task of its own, so how many reactor turns that takes is not the test's to count.
+    def rows_gone(task, supervisor)
+      task.with_timeout(5) { task.yield until supervisor.to_a.empty? }
+    end
+
     it "drops the row from live once the task ends by itself" do
       Sync do |task|
         supervisor = described_class.new.run(task)
@@ -654,7 +659,7 @@ RSpec.describe Lain::Supervisor do
 
         supervisor.track(finished, role: "diff_docent")
         finished.wait
-        task.yield
+        rows_gone(task, supervisor)
 
         expect(supervisor.to_a).to be_empty
       ensure
@@ -671,7 +676,24 @@ RSpec.describe Lain::Supervisor do
         supervisor.track(failed, role: "diff_docent")
 
         stopped.stop
-        task.yield
+        rows_gone(task, supervisor)
+
+        expect(supervisor.to_a).to be_empty
+      ensure
+        supervisor.stop
+      end
+    end
+
+    it "drops the row of a failing task that yields before it raises" do
+      Sync do |task|
+        supervisor = described_class.new.run(task)
+        failed = task.async(transient: true) do |child|
+          2.times { child.yield }
+          raise Lain::Error, "boom"
+        end
+        supervisor.track(failed, role: "diff_docent")
+
+        rows_gone(task, supervisor)
 
         expect(supervisor.to_a).to be_empty
       ensure
