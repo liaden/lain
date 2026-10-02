@@ -2,9 +2,6 @@
 
 require "fileutils"
 require "json"
-require "pty"
-require "rbconfig"
-require "tmpdir"
 
 # A line typed while an ask is in flight, end to end. Nothing is published then,
 # so nothing was reading: a `/stop` waited as typeahead until the ask was over.
@@ -15,9 +12,6 @@ require "tmpdir"
 #
 # The pane runs THE REPOSITORY'S `exe/lain`, as the sibling seams do.
 module TypedDuringAsk
-  LIB = File.expand_path("../../../lib", __dir__)
-  EXE = File.expand_path("../../../exe/lain", __dir__)
-
   # `looping` never returns on its own, so an ask that ends did so because it
   # was stopped; `held` returns once `done` exists and reports what the chat's
   # rail kept for its next prompt. `pump` is the same chat reading its own
@@ -71,32 +65,19 @@ module TypedDuringAsk
   class Cockpit
     attr_reader :dir
 
-    def initialize(dir)
-      @dir = dir
-      @path = File.join(dir, "input.sock")
+    def initialize(warm)
+      @warm = warm
+      @dir = warm.dir
       @screen = +""
       @lock = Mutex.new
-      @pids = []
-    end
-
-    def env
-      { "XDG_STATE_HOME" => File.join(@dir, "state"), "XDG_RUNTIME_DIR" => File.join(@dir, "run"),
-        "XDG_CONFIG_HOME" => File.join(@dir, "config"), "XDG_CACHE_HOME" => File.join(@dir, "cache"),
-        "TERM" => "xterm", "INPUTRC" => File.join(@dir, "no-inputrc") }
-    end
-
-    # A cockpit: the chat reads its socket, the pane is where the human types.
-    def cockpit(shape)
-      @pids << Process.spawn(env, RbConfig.ruby, "-I", LIB, "-e", CHILD, @dir, shape, @path,
-                             out: File.join(@dir, "chat.err"), err: %i[child out])
-      settles { File.exist?(File.join(@dir, "bound")) || nil }
-      attach(RbConfig.ruby, EXE, "input", "--socket", @path)
-      asking
     end
 
     # `--no-nvim`: the chat's own terminal is the one typed at.
-    def plain(shape)
-      attach(RbConfig.ruby, "-W0", "-I", LIB, "-e", CHILD, @dir, shape, @path)
+    def ask(shape)
+      @warm.release(shape)
+      @reader = @warm.reader
+      @writer = @warm.writer
+      @drain = Thread.new { drain }
       asking
     end
 
@@ -119,9 +100,8 @@ module TypedDuringAsk
     def finish_ask = FileUtils.touch(File.join(@dir, "done"))
 
     def close
-      @writer&.close
       @drain&.kill
-      @pids.each { |pid| reap(pid) }
+      @warm.reap
     end
 
     def settles(within: 20)
@@ -131,12 +111,6 @@ module TypedDuringAsk
     end
 
     private
-
-    def attach(*command)
-      @reader, @writer, pid = PTY.spawn(env, *command)
-      @pids << pid
-      @drain = Thread.new { drain }
-    end
 
     # Typed while the ask runs, so the ask has to be running: `go` is the line
     # that starts it, and it is typed only once `you>` is drawn.
@@ -162,25 +136,13 @@ module TypedDuringAsk
     rescue Errno::EIO, IOError
       nil
     end
-
-    def reap(pid)
-      Process.kill("KILL", pid)
-      Process.wait(pid)
-    rescue Errno::ESRCH, Errno::ECHILD
-      nil
-    end
   end
 end
 
 RSpec.describe "a line typed while an ask is in flight", :seam do
-  subject(:cockpit) { TypedDuringAsk::Cockpit.new(dir) }
+  subject(:cockpit) { TypedDuringAsk::Cockpit.new(warm) }
 
-  let(:dir) { Dir.mktmpdir("lain-typed-during-ask") }
-
-  after do
-    cockpit.close
-    FileUtils.remove_entry(dir)
-  end
+  after { cockpit.close }
 
   def held_after_the_ask
     cockpit.finish_ask
@@ -188,8 +150,14 @@ RSpec.describe "a line typed while an ask is in flight", :seam do
   end
 
   describe "in the input pane" do
+    warm_pool(:cockpits) do
+      WarmCockpit.pair(prefix: "lain-typed-during-ask", script: TypedDuringAsk::CHILD)
+    end
+
+    let(:warm) { cockpits.take }
+
     it "reaches the chat at once: /stop stops an ask that would never have ended" do
-      cockpit.cockpit("looping")
+      cockpit.ask("looping")
 
       cockpit.type("/stop\r")
 
@@ -198,7 +166,7 @@ RSpec.describe "a line typed while an ask is in flight", :seam do
     end
 
     it "is held for the chat's next prompt, once, in the order typed" do
-      cockpit.cockpit("held")
+      cockpit.ask("held")
 
       cockpit.type("/goal off\r")
       sleep(0.5)
@@ -212,8 +180,14 @@ RSpec.describe "a line typed while an ask is in flight", :seam do
   end
 
   describe "on the chat's own terminal" do
+    warm_pool(:terminals) do
+      WarmCockpit.terminal(prefix: "lain-typed-during-ask", script: TypedDuringAsk::CHILD)
+    end
+
+    let(:warm) { terminals.take }
+
     it "stops the ask when /stop and Enter are typed" do
-      cockpit.plain("looping_pump")
+      cockpit.ask("looping_pump")
 
       cockpit.type("/stop\r")
 
@@ -222,7 +196,7 @@ RSpec.describe "a line typed while an ask is in flight", :seam do
     end
 
     it "keeps a line typed mid-ask for the next prompt, once" do
-      cockpit.plain("held_pump")
+      cockpit.ask("held_pump")
 
       cockpit.type("hello\r")
       sleep(0.5)

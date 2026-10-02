@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require "json"
-require "rbconfig"
-require "tmpdir"
 
 # A chat killed while one of its tools runs has to come back. The tool round's
 # assistant turn is committed before the tool starts, and every record the round
@@ -15,8 +13,6 @@ require "tmpdir"
 # under a {Lain::CLI::Chronicle}, its Scribe, its request and turn middleware and
 # its memory decoration -- over a scripted model and the real `bash` tool.
 module CrashMidTool
-  LIB = File.expand_path("../../../lib", __dir__)
-
   # A third argument names a record type the child kills itself BEFORE writing,
   # which is how a kill lands between two writes no marker can separate.
   CHILD = <<~'RUBY'
@@ -51,11 +47,14 @@ module CrashMidTool
 end
 
 RSpec.describe "a session killed while a tool runs", :seam do
+  warm_pool(:chats) { WarmCockpit.chat(prefix: "crash-mid-tool", script: CrashMidTool::CHILD) }
+
   around do |example|
-    Dir.mktmpdir("crash-mid-tool") do |dir|
-      @dir = dir
-      example.run
-    end
+    @chat = chats.take
+    @dir = @chat.dir
+    example.run
+  ensure
+    @chat&.reap
   end
 
   let(:state_home) { File.join(@dir, "state") }
@@ -68,8 +67,8 @@ RSpec.describe "a session killed while a tool runs", :seam do
   def records = File.foreach(session_file).map { |line| JSON.parse(line) }
 
   def chat(*kill_before)
-    Process.spawn(RbConfig.ruby, "-I", CrashMidTool::LIB, "-e", CrashMidTool::CHILD, state_home, marker,
-                  *kill_before, out: File::NULL, err: stderr)
+    @chat.tell(state_home, marker, *kill_before)
+    @chat.chat
   end
 
   def await_bash(pid, timeout: 30)

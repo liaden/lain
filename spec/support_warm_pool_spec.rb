@@ -68,6 +68,15 @@ RSpec.describe WarmPool::Pool do
     expect { warm.take(:unlisted) }.to raise_error(KeyError, /unlisted.*\[:a\]/)
     expect(booted).to be_empty
   end
+
+  it "refuses a take beyond the expected count, naming the key, the count and the take, before booting" do
+    warm = described_class.new(expected: { a: 2 }) { |key| child_class.new(key, false).tap { |c| booted << c } }
+    2.times { warm.take(:a) }
+    booted_before = booted.size
+
+    expect { warm.take(:a) }.to raise_error(ArgumentError, /:a.*expected 2 times.*take 3/)
+    expect(booted.size).to eq(booted_before)
+  end
 end
 
 RSpec.describe WarmPool::Group do

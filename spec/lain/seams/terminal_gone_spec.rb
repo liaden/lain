@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "pty"
 require "socket"
 require "tmpdir"
@@ -75,24 +76,61 @@ module TerminalGone
       client.close
     end
   end
+
+  # A `lain chat` booted ahead of its example, already on its way to `you>`
+  # with a stand-in provider of its own, and the directory it runs in. What an
+  # example decides, the flags, is the key it is taken by.
+  class Warm
+    attr_reader :dir, :ollama, :output, :input
+    attr_accessor :pid
+
+    def self.boot(flags)
+      dir = File.realpath(Dir.mktmpdir("terminal-gone"))
+      ollama = ParkingOllama.new
+      env = { "XDG_STATE_HOME" => File.join(dir, "state"), "HOME" => dir, "TERM" => "xterm" }
+      output, input, pid = PTY.spawn(env, EXE, "chat", "--provider", "ollama", "--no-journal",
+                                     "--api-base", ollama.api_base, *flags, chdir: dir)
+      new(dir, ollama, output, input, pid)
+    end
+
+    def initialize(dir, ollama, output, input, pid)
+      @dir = dir
+      @ollama = ollama
+      @output = output
+      @input = input
+      @pid = pid
+    end
+
+    def reap
+      [output, input].reject(&:closed?).each(&:close)
+      kill if pid
+      ollama.close
+      FileUtils.rm_rf(dir)
+    end
+
+    private
+
+    def kill
+      Process.kill("KILL", pid)
+      Process.wait(pid)
+    rescue Errno::ESRCH, Errno::ECHILD
+      nil
+    end
+  end
 end
 
 RSpec.describe "a chat whose terminal is gone", :seam do
-  around do |example|
-    Dir.mktmpdir("terminal-gone") do |dir|
-      @dir = File.realpath(dir)
-      example.run
-    end
-  end
+  warm_pool(:chats, expected: { [] => 2, %w[--grace 60] => 1 }) { |flags| TerminalGone::Warm.boot(flags) }
 
   def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
-  let(:ollama) { TerminalGone::ParkingOllama.new }
+  let(:ollama) { @warm.ollama }
 
   def chat(*extra)
-    env = { "XDG_STATE_HOME" => File.join(@dir, "state"), "HOME" => @dir, "TERM" => "xterm" }
-    @output, @input, @pid = PTY.spawn(env, TerminalGone::EXE, "chat", "--provider", "ollama", "--no-journal",
-                                      "--api-base", ollama.api_base, *extra, chdir: @dir)
+    @warm = chats.take(extra)
+    @output = @warm.output
+    @input = @warm.input
+    @pid = @warm.pid
   end
 
   def await_prompt(timeout: 30)
@@ -116,23 +154,11 @@ RSpec.describe "a chat whose terminal is gone", :seam do
   def ends_within?(bound)
     deadline = monotonic + bound
     sleep(0.05) until (reaped = Process.waitpid(@pid, Process::WNOHANG)) || monotonic > deadline
-    @pid = nil if reaped
+    @warm.pid = @pid = nil if reaped
     !reaped.nil?
   end
 
-  def reap_leftover
-    Process.kill("KILL", @pid)
-    Process.wait(@pid)
-  rescue Errno::ESRCH, Errno::ECHILD
-    nil
-  end
-
-  after do
-    [@output, @input].compact.reject(&:closed?).each(&:close)
-    reap_leftover if @pid
-  ensure
-    ollama.close
-  end
+  after { @warm&.reap }
 
   it "ends at its prompt once the terminal is closed" do
     chat

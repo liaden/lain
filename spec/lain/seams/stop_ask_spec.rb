@@ -1,10 +1,6 @@
 # frozen_string_literal: true
 
-require "fileutils"
 require "json"
-require "pty"
-require "rbconfig"
-require "tmpdir"
 
 # Stopping an ask without ending the session, end to end: a chat process whose
 # ask never returns on its own, and a real `lain input` pane in a PTY joined to
@@ -17,9 +13,6 @@ require "tmpdir"
 # different program, and a pane spec that passed against it would say nothing
 # about this checkout.
 module StopAsk
-  LIB = File.expand_path("../../../lib", __dir__)
-  EXE = File.expand_path("../../../exe/lain", __dir__)
-
   # The chat: a real Chronicle over a real session file, a real Intake,
   # InputSocket and Conductor, and stdin closed so nothing on this side can
   # answer a prompt.
@@ -80,39 +73,24 @@ module StopAsk
 
   # One cockpit's two processes and the directory they meet in.
   class Cockpit
-    attr_reader :dir, :path
+    attr_reader :dir
 
-    def initialize(dir)
-      @dir = dir
-      @path = File.join(dir, "input.sock")
+    def initialize(warm)
+      @warm = warm
+      @dir = warm.dir
       @screen = +""
       @lock = Mutex.new
-      @chat = nil
     end
 
-    # `$HOME` is left alone deliberately: both children run under this runner's
-    # bundle, and a moved home is a bundler that cannot find its own gems.
-    def env
-      { "XDG_STATE_HOME" => File.join(@dir, "state"), "XDG_RUNTIME_DIR" => File.join(@dir, "run"),
-        "XDG_CONFIG_HOME" => File.join(@dir, "config"), "XDG_CACHE_HOME" => File.join(@dir, "cache"),
-        "TERM" => "xterm", "INPUTRC" => File.join(@dir, "no-inputrc") }
-    end
-
-    # The chat, then the pane, then the ask the pane is there to stop.
+    # Releases the parked chat with its shape, then types the line that starts the ask.
     def asking(shape)
-      @chat = Process.spawn(env, RbConfig.ruby, "-I", LIB, "-e", CHILD, @dir, shape, @path,
-                            out: File.join(@dir, "chat.err"), err: %i[child out])
-      settles { File.exist?(File.join(@dir, "bound")) || nil }
-      pane
+      @warm.release(shape)
+      @reader = @warm.reader
+      @writer = @warm.writer
+      @drain = Thread.new { drain }
       settles { screen.include?("you> ") || nil }
       type("go\r")
       settles { File.exist?(File.join(@dir, "asking")) || nil }
-      self
-    end
-
-    def pane
-      @reader, @writer, @pid = PTY.spawn(env, RbConfig.ruby, EXE, "input", "--socket", @path)
-      @drain = Thread.new { drain }
       self
     end
 
@@ -155,9 +133,8 @@ module StopAsk
     end
 
     def close
-      @writer&.close
       @drain&.kill
-      [@chat, @pid].each { |pid| reap(pid) }
+      @warm.reap
     end
 
     # Whatever the block answers once it stops answering nil, or nil at the
@@ -185,27 +162,17 @@ module StopAsk
     rescue Errno::EIO, IOError
       nil
     end
-
-    def reap(pid)
-      return if pid.nil?
-
-      Process.kill("KILL", pid)
-      Process.wait(pid)
-    rescue Errno::ESRCH, Errno::ECHILD
-      nil
-    end
   end
 end
 
 RSpec.describe "stopping a running ask from an input pane", :seam do
-  subject(:cockpit) { StopAsk::Cockpit.new(dir) }
-
-  let(:dir) { Dir.mktmpdir("lain-stop-ask-seam") }
-
-  after do
-    cockpit.close
-    FileUtils.remove_entry(dir)
+  warm_pool(:cockpits) do
+    WarmCockpit.pair(prefix: "lain-stop-ask-seam", script: StopAsk::CHILD)
   end
+
+  subject(:cockpit) { StopAsk::Cockpit.new(cockpits.take) }
+
+  after { cockpit.close }
 
   # The ask ended, and it said why: the outcome carries the stop rather than a
   # bare nil, and the file holds one run_interrupted naming it.

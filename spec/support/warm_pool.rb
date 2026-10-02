@@ -51,10 +51,15 @@ module WarmPool
       @boot = boot
       @left = expected.is_a?(Hash) ? expected.dup : { ALL => expected }
       @ready = {}
+      @taken = Hash.new(0)
     end
 
+    # Too high an `expected:` is harmless, drain reaps the spare; only too low raises.
     def take(key = nil)
       count = counter_for(key)
+      raise_unexpected(key, count) unless @left[count].positive?
+
+      @taken[count] += 1
       child = @ready.delete(key) || @boot.call(key)
       @ready[key] = @boot.call(key) if (@left[count] -= 1).positive?
       child
@@ -66,6 +71,12 @@ module WarmPool
     end
 
     private
+
+    def raise_unexpected(key, count)
+      subject = count.equal?(ALL) ? "a child" : key.inspect
+      raise ArgumentError, "#{subject} was expected #{@taken[count]} times and this is take #{@taken[count] + 1}: " \
+                           "raise `expected:`"
+    end
 
     def counter_for(key)
       return key if @left.key?(key)
