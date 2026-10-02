@@ -49,6 +49,25 @@ RSpec.describe SlowFiles do
     end
   end
 
+  describe ".named with option values" do
+    it "does not take an option's value for a path, and never raises" do
+      argv = ["--tag", "~seam", "--tag=slow", "-t", "slow", "-e", slow_file, "--pattern", "x", "-r", slow_file,
+              "#{slow_file}:12", slow_file, "~nobody/x"]
+
+      expect(described_class.named(argv, root:)).to eq([File.join(root, slow_file)])
+    end
+  end
+
+  describe "a run with an option value", :seam do
+    it "starts its examples under --tag '~seam'" do
+      expect(example_count(dry_run("--tag", "~seam", slow_file))).to be_positive
+    end
+
+    it "starts its examples under -e with a name" do
+      expect(example_count(dry_run("-e", "reaches the command", slow_file))).to be_positive
+    end
+  end
+
   describe "a bare local run", :seam do
     it "excludes the listed files and says how many were skipped and how to run them" do
       out, = Open3.capture2e({ "LAIN_SLOW" => nil }, "bundle", "exec", "rspec", slow_dir, "-e", "no such example",

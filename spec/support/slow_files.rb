@@ -82,12 +82,31 @@ module SlowFiles
     raise "SlowFiles::PATHS names files that no longer exist: #{gone.join(", ")}" unless gone.empty?
   end
 
+  # RSpec options whose next argument is a value, not a path; `--tag ~seam` would otherwise expand as a home directory.
+  VALUE_OPTIONS = %w[
+    -r --require -I -e --example -E --example-matches -t --tag -P --pattern --exclude-pattern -o --out -f --format
+    -O --options --default-path -s --seed --order
+    --failure-exit-code --error-exit-code --profile -p --drb-port --deprecation-out
+  ].to_set.freeze
+
   # parallel_rspec names every file it hands a worker, so this rule alone keeps pspec's count.
   def self.named(argv, root:)
-    argv.reject { |arg| arg.start_with?("-") }
-        .map { |arg| File.expand_path(arg, root) }
-        .select { |path| File.file?(path) }
+    candidates(argv).filter_map { |arg| expand(arg, root) }.select { |path| File.file?(path) }
   end
+
+  def self.candidates(argv)
+    argv.each_with_index
+        .reject { |arg, index| arg.start_with?("-") || (index.positive? && VALUE_OPTIONS.include?(argv[index - 1])) }
+        .map(&:first)
+  end
+
+  def self.expand(arg, root)
+    File.expand_path(arg, root)
+  rescue ArgumentError
+    nil
+  end
+
+  private_class_method :candidates, :expand
 
   def self.skipped(root:, argv: ARGV)
     asked = named(argv, root:)
