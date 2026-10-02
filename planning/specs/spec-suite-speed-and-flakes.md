@@ -216,7 +216,7 @@ flowchart LR
     T54 --> T56; T55 --> T56; T57; T58; T59
   end
   T42 --> T60; T56 --> T60; T59 --> T60
-  T14 --> T60; T15 --> T60; T16 --> T60; T17 --> T60; T49 --> T60; T51 --> T60; T52 --> T60; T62 --> T60
+  T14 --> T60; T15 --> T60; T16 --> T60; T17 --> T60; T49 --> T60; T51 --> T60; T52 --> T60; T62 --> T60; T63 --> T60
 ```
 
 T60 depends on every other card (T0 to T62); the graph shows the edges that order work.
@@ -541,7 +541,7 @@ Spec file: `spec/lain/frontend/neovim_request_spec.rb` (9 examples)
 **Stop and report if:**
 - The example reads the grace from somewhere other than the constant.
 
-### T10: child_worktree_approval_spec reads "parked" from the queue          [risk: low]
+### T10: child_worktree_approval_spec reads "parked" from the queue          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/lain/seams/child_worktree_approval_spec.rb` (`outcome` `:97-100`, `:257`)
@@ -567,7 +567,7 @@ Spec file: `spec/lain/seams/child_worktree_approval_spec.rb` (20 examples)
 **Stop and report if:**
 - Consuming the pending with `dequeue` changes the 3-in-sequence example's assertion.
 
-### T11: recorded_run_spec replays once per file          [risk: low]
+### T11: recorded_run_spec replays once per file          [risk: low] [x]
 
 **Depends on:** T13
 **Files:** `spec/lain/seams/recorded_run_spec.rb` (`subject(:run)` `:336`, header `:322-330`)
@@ -652,7 +652,7 @@ Spec file: `spec/support_warm_pool_spec.rb` (10 examples plus the PPID example)
 **Stop and report if:**
 - The pool needs state outside the example group instance.
 
-### T14: plain_chat_prompt_guards_spec on the pool, with event waits          [risk: medium]
+### T14: plain_chat_prompt_guards_spec on the pool, with event waits          [risk: medium] [x]
 
 **Depends on:** T13, T0
 **Files:** `spec/lain/seams/plain_chat_prompt_guards_spec.rb`
@@ -705,7 +705,7 @@ Spec file: `spec/lain/seams/input_pane_socket_spec.rb` (load proof: 20 rounds un
 - The forked child hangs on a lock copied from another worker thread (watchdog, Timeout, logger): fall back to a pooled exec child (T13) and report.
 - Closing inherited descriptors in the forked child breaks an assertion: report which descriptor the child needed.
 
-### T16: 4 small PTY seam specs on the pool          [risk: low]
+### T16: 4 small PTY seam specs on the pool          [risk: low] [x]
 
 **Depends on:** T13
 **Files:** `spec/lain/seams/stop_ask_spec.rb`, `spec/lain/seams/typed_during_ask_spec.rb`, `spec/lain/seams/terminal_gone_spec.rb`, `spec/lain/seams/crash_mid_tool_spec.rb`
@@ -799,7 +799,7 @@ Spec file: `spec/lain/cli/repl_spec.rb` (62 examples)
 - The forked child hangs on a lock copied from another worker thread (watchdog, Timeout, logger): fall back to a pooled exec child (T13) and report.
 - `RSpec/RemoveConst` fires on the Reline reset and no `.rubocop.yml` scope fits: report rather than disable inline.
 
-### T20: up_spec waits for the tmux layout to settle          [risk: low]
+### T20: up_spec waits for the tmux layout to settle          [risk: low] [x]
 
 **Depends on:** none
 **Files:** `spec/lain/cli/up_spec.rb` (`:500`, `:575`, `:593`, `:597`)
@@ -820,7 +820,7 @@ Spec file: `spec/lain/cli/up_spec.rb` (165 examples)
 **Stop and report if:**
 - The settle helper cannot be written without `break` or `next` inside the cop limits.
 
-### T21: tty_spec settles on a stronger signal          [risk: low]
+### T21: tty_spec settles on a stronger signal          [risk: low] [x]
 
 **Depends on:** T4, T0
 **Files:** `spec/lain/frontend/tty_spec.rb` (`settled`, `~:1470-1580`)
@@ -1091,7 +1091,7 @@ Spec file: `spec/lain/review/source/github_pr_spec.rb` (145 to 146 examples)
 **Stop and report if:**
 - An example asserts the Mixlib timeout class by name.
 
-### T30: The shadow git scope spawns through Shell::Out          [risk: medium]
+### T30: The shadow git scope spawns through Shell::Out          [risk: medium] [x]
 
 **Depends on:** T26
 **Files:** `lib/lain/workspace/snapshot/scope/shadow_git.rb` (`:115`), `lib/lain/workspace/snapshot/scope/shadow_git/repository.rb` (`:44`, rescue `:155`), `spec/lain/workspace/snapshot/scope/shadow_git_spec.rb`, `spec/lain/workspace/snapshot/scope/shadow_git/repository_spec.rb`
@@ -1112,7 +1112,7 @@ Spec file: both spec files (repository_spec 10 to 11 examples)
 **Stop and report if:**
 - `core.excludesFile` from the user's global config is no longer read (it is read on purpose).
 
-### T31: Forge spawns through Shell::Out          [risk: medium]
+### T31: Forge spawns through Shell::Out          [risk: medium] [x]
 
 **Depends on:** T26, T27
 **Files:** `lib/lain/forge/promotion.rb` (`:182`), `lib/lain/forge/gh.rb` (`:231`, `:330`, rescue `:333`), `lib/lain/forge/reconcile/world.rb` (`:15`), `spec/lain/forge/promotion_spec.rb`, `spec/lain/forge/gh_spec.rb`, `spec/lain/forge/gh_parity_spec.rb`, `spec/lain/forge/local_landing_spec.rb`
@@ -1138,7 +1138,7 @@ Spec file: the 4 spec files
 **Stop and report if:**
 - `gh` output differs because stdin is a pipe instead of the Mixlib default.
 
-### T32: Isolation spawns through Shell::Out          [risk: medium]
+### T32: Isolation spawns through Shell::Out          [risk: medium] [x]
 
 **Depends on:** T26
 **Files:** `lib/lain/isolation/compose.rb` (`:177`), `lib/lain/isolation/db_index.rb` (`:80`), `lib/lain/cli/isolation_backend.rb` (`:121`), `lib/lain/isolation/working_branch.rb` (`:350`), `lib/lain/isolation/spike.rb` (`:135`), `spec/lain/isolation/compose_spec.rb`, `spec/lain/isolation/db_index_spec.rb`, `spec/lain/cli/isolation_backend_spec.rb`, `spec/lain/isolation/working_branch_spec.rb`, `spec/lain/isolation/spike_spec.rb`
@@ -1164,7 +1164,7 @@ Spec file: the 5 spec files
 **Stop and report if:**
 - A lib site needs an option Shell::Out lacks.
 
-### T33: Review CLI spawns through Shell::Out          [risk: medium]
+### T33: Review CLI spawns through Shell::Out          [risk: medium] [x]
 
 **Depends on:** T26
 **Files:** `lib/lain/cli/review.rb` (`:77`), `lib/lain/cli/command/review.rb` (`:166`), `lib/lain/cli/command/review_submit.rb` (`:59`), `lib/lain/cli/epic.rb` (`:134`), `spec/lain/cli/review_spec.rb`, `spec/lain/cli/command/review_spec.rb`, `spec/lain/cli/command/review_submit_spec.rb`, `spec/lain/cli/epic_spec.rb`
@@ -1185,7 +1185,7 @@ Spec file: the 4 spec files
 **Stop and report if:**
 - A double is `instance_double(Mixlib::ShellOut)` with a method Shell::Out lacks.
 
-### T34: The test harness spawns through Shell::Out          [risk: low]
+### T34: The test harness spawns through Shell::Out          [risk: low] [x]
 
 **Depends on:** T26
 **Files:** `lib/lain/grader/test_harness.rb` (`:58`, `:100`, rescue `:120`), `spec/lain/grader/test_harness_spec.rb`
@@ -1227,7 +1227,7 @@ Spec file: `spec/lain/frontend/tty_spec.rb`
 **Stop and report if:**
 - `tty.rb:865`'s `rescue StandardError` hides a behaviour change.
 
-### T36: tmux_surface spawns through Shell::Out          [risk: low]
+### T36: tmux_surface spawns through Shell::Out          [risk: low] [x]
 
 **Depends on:** T26
 **Files:** `lib/lain/cli/tmux_surface.rb` (`:75`), `spec/lain/cli/tmux_surface_spec.rb`
@@ -1248,7 +1248,7 @@ Spec file: `spec/lain/cli/tmux_surface_spec.rb`
 **Stop and report if:**
 - A command relies on Mixlib's handling of a nil environment value.
 
-### T37: lain up spawns through Shell::Out, with no type check          [risk: medium]
+### T37: lain up spawns through Shell::Out, with no type check          [risk: medium] [x]
 
 **Depends on:** T26, T20
 **Files:** `lib/lain/cli/up.rb` (`:470-480`, `:977`), `spec/lain/cli/up_spec.rb` (`:235`, `:261`, `:280`, `:326`, `:1072`, `:2262`)
@@ -1271,7 +1271,7 @@ Do not port `Up.preflight_factory` from the branch; `up.rb:978` already passes t
 **Stop and report if:**
 - The preflight needs `live_stdout` or another Mixlib-only option.
 
-### T38: Isolation specs' git helpers use Shell::Out          [risk: low]
+### T38: Isolation specs' git helpers use Shell::Out          [risk: low] [x]
 
 **Depends on:** T27, T32
 **Files:** `spec/lain/isolation/worktree_handback_spec.rb`, `spec/lain/isolation/worker_handoff_spec.rb`, `spec/lain/isolation/landing_queue_spec.rb`, `spec/lain/isolation/gc_spec.rb`, `spec/lain/isolation/self_sync_spec.rb`, `spec/lain/isolation/worktree_spec.rb`, `spec/lain/isolation/checkout_spec.rb`, `spec/lain/agent/snapshot_slot_spec.rb`
@@ -1292,7 +1292,7 @@ Spec file: the 8 files
 **Stop and report if:**
 - A `real =` wrapper asserts on Mixlib's object.
 
-### T39: Epic-driver specs build from a seeded layout          [risk: low]
+### T39: Epic-driver specs build from a seeded layout          [risk: low] [x]
 
 **Depends on:** T27, T33
 **Files:** `spec/lain/cli/epic_driver/factory_spec.rb`, `spec/lain/cli/epic_driver/issue_actor_spec.rb`, `spec/lain/cli/epic_driver/issue_tests_spec.rb`
@@ -1313,7 +1313,7 @@ Spec file: the 3 files (47, 21, 13 examples)
 **Stop and report if:**
 - `Run::POLL` is read before the stub applies.
 
-### T40: wiring_spec builds against a throwaway project          [risk: low]
+### T40: wiring_spec builds against a throwaway project          [risk: low] [x]
 
 **Depends on:** T26
 **Files:** `spec/lain/cli/wiring_spec.rb`
@@ -1481,7 +1481,7 @@ Spec file: the 9 spec files
 **Stop and report if:**
 - Freezing the trees deeply costs more than the memo saves.
 
-### T46: Canonical returns already-canonical Arrays as they are          [risk: high]
+### T46: Canonical returns already-canonical Arrays as they are          [risk: high] [x]
 
 **Depends on:** none
 **Files:** `lib/lain/canonical.rb` (`:40-56`), `spec/lain/canonical_spec.rb`
@@ -1906,6 +1906,29 @@ Spec file: `spec/support_slow_files_spec.rb`
 - Excluding the tag changes the example count `rake pspec` reports.
 - An explicit file argument cannot be told apart from the default pattern inside RSpec's configuration.
 
+### T63: 62_approval_spec's second gated call is announced under load          [risk: medium]
+
+Added 2026-10-02 by the user's ruling after a landing went red on it.
+
+**Depends on:** T6
+**Files:** `spec/lain/frontend/neovim/runtime/62_approval_spec.rb`; any `lib/` file the cause is found in, with its spec
+**Reuse:** T6's `thread_raising_into_owner`; the failure in the T18 landing log (the presser's 20s `wait_until_editor` in `approve_in_editor` timed out with `lain://approval` open)
+**Shared-file wiring:** `docs/toolchain-traps.md`: record the example by name as seen and fixed, with the mechanism.
+**Reachable from:** spec-only unless the cause is in `lib/`
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the second gated call is announced and answered under load
+  Given the repl's own wiring with 2 gated calls, the first answered in the editor
+  When the example runs under bin/suite-load for 30 rounds
+  Then "announces the second gated call too, once the editor answered the first, and asks y/N about neither" never fails, and a cause that is late or missing fails by name
+```
+Spec file: `spec/lain/frontend/neovim/runtime/62_approval_spec.rb`
+
+**Stop and report if:**
+- The second approval never reaches `lain://approval` in a reproduction: the cause is in `lib/`; report the mechanism before fixing it.
+
 ### Phase F: baseline
 
 ### T60: Record the new baseline          [risk: low]
@@ -1982,3 +2005,35 @@ Prerequisite before T1: commit the uncommitted `bin/box-state` fix in the main c
 - T1 load proof: card 30 of 30, base 27 of 30. T1 landed `e589221d` (suite 21,584 examples, 0 failures). The "pane with no chat..." entry stays live: base failed it once, but no run reproduced its cause. The load loop's pspec runs failed in every proof (4 of 4, 1 of 1, 2 of 2); to look at before trusting a load proof's pressure as representative.
 - The load tree's suite run alone at `e589221d`: 21,584 examples, 0 failures, so its failures inside the proofs are contention, which is what a proof applies.
 - Checkpoint after wave 2: landed T1, T2, T6, T8, T27, T28, T29, T62. Next wave 3: T14, T20, T21, T30, T31, T32, T33, T46.
+- T14, T20, T21, T30, T31, T32, T33, T46 started (wave 3, worktrees at `a7fd397d`).
+- Landing order: T31 before T33 (T33 hands Forge::Gh a Shell::Out factory; T31 adds the Shell::Out::Timeout rescue there).
+- T32: the card's "example counts are unchanged" reads as baseline plus 1 runner example per file.
+- T31 scope: spec/lain/forge/reconcile/world_spec.rb and lib/lain/cli/epic_finish.rb added by the main session in review. T21: each wait now raises with the screen at its own deadline; only an example whose earlier waits succeed slowly can still reach the 30s watchdog, accepted.
+- T30 landed `b4d43ea9` (suite 21,586 examples, 0 failures).
+- T31 landed `7b3689da` (suite 21,589 examples, 0 failures).
+- T33 landed `6fe3eaa1`. Suite 21,593 examples, 1 failure: the ledger-named plain_chat "ends its line..." (T7), green alone. Its first run exposed a bug in T62's spec (a 1-example dry run read as 0), fixed alone in `27ea841b`.
+- T32 landed `59786c5b` (suite 21,598 examples, 0 failures).
+- T20 landed `a724e7fb` (suite 21,598 examples, 0 failures).
+- T14 review: plain_chat "ends its line with who decided it and how" (:551) fails on base 3 of 48 under 6 to 8 concurrent copies: [y/N] drawn, then SETTLED with no decision line. Evidence for T7, in the T14 worktree's tmp/probes (copy kept in the scratchpad).
+- T21 load proof: card 20 of 20 (115 examples), base 18 of 20. T21 landed `472cad2f` (suite 21,600 examples, 0 failures).
+- T7, T12, T34, T36, T37, T38, T39, T40 started (wave 4, worktrees at `472cad2f`), during T14's load proof; agents add load, which only makes the proof harsher on the card.
+- T37: the card said a preflight timeout raises ChatRefused; the code and ChatPreflight's own doc degrade it to a warning, which the review upheld.
+- Follow-up from T38's review: SeedRepo.git takes no env:, so self_sync_spec keeps an inline git that raises GitFailed; give SeedRepo.git an env: keyword in the T41 sweep.
+- T7: found the lib race (the closing note stopped twice more while waiting on the writer lock; defer_cancel defers 1 stop). The seam example still fails under load in a new shape: the fixture's raw SETTLED write ends the prompt's row first, so the note lands 1 row lower; that needs a change in plain_chat_prompt_guards_spec after T14 lands.
+- T14 load proof: card 19 of 20, base 20 of 20; the card's 1 failure is "ends its line with who decided it and how" (seed 52658), the lib race T7 fixes, outside T14's scope; accepted under the flake ruling. T14 landed `3026d21f` (suite 21,600 examples, 0 failures).
+- T46 landed `399067e7` (suite 21,604 examples, 0 failures). ARCHITECTURE.md: Canonical is Ruby; the ext box names BLAKE3 and the Rust canonical encoder the DAG uses.
+- T37 landed `e794dbc4` (suite 21,606 examples, 0 failures).
+- T38 landed `8e37e769` (suite 21,606 examples, 0 failures).
+- T39 landed `17578a78` (suite 21,606 examples, 0 failures).
+- T36 landed `fca1c8c6` (suite 21,607 examples, 0 failures).
+- T40 landed `617e5d55` (suite 21,607 examples, 0 failures).
+- T34 landed `a06229ff` (suite 21,608 examples, 0 failures).
+- T10, T11, T15, T16 started (wave 5, worktrees at `a06229ff`), during T12's load proof.
+- T16: the card's "boots on the critical path are 1 per file" reads as 1 per pool or key (terminal_gone and typed_during_ask have 2); accepted by the main session. T16's scope took in spec/support/warm_pool.rb: an over-taken key now raises.
+- T10 landed `1cf1bf57` (suite 21,610 examples, 0 failures).
+- T11 landed `594c567c` (suite 21,610 examples, 0 failures).
+- T16 landed `380aff10` (suite 21,611 examples, 0 failures).
+- From T7's proof on, proofs run with SUITE_LOAD_GUARD=true while implementers work: card and base alternate under the same extra load, so the comparison holds; the start guard otherwise waits for every agent's single rspec to end.
+- T17, T18, T19, T22, T23, T24 started (wave 6, worktrees at `380aff10`).
+- T24: the card's "4 TICK constants" is 2 in practice (Arrivals and QueueSurface are never built in human_replies_spec); a pre-existing vacuous negative window ("leaves an open set untouched") is fixed inside T24 by ruling.
+- User ruling 2026-10-02: a landing (T18) went red on a flake not in the ledger, 62_approval "announces the second gated call too..." (20s presser timeout under load, green alone). Fix it first, hold landings: T63 added.
