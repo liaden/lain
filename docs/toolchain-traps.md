@@ -311,6 +311,12 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   regression took a file from 32 examples to 22 while reporting a clean pass, and the truncation
   point moved with the seed. Under `parallel_rspec` that is indistinguishable from the OOM-kill
   shape above. Pass `debug: true` to any Thor `.start` in a spec, and check the example COUNT.
+- **A trap restored late by an unjoined thread truncates a run and blames the wrong example.** A
+  thread that installs its own INT handler and puts the old one back on its way out can outlive its
+  example if `after` kills it without joining. It then restores RSpec's SIGINT handler into the
+  middle of a LATER example, and a self-signal there stops the worker as if Ctrl-C had been typed:
+  the run ends early with a short count and one misleading failure, or none, so read the COUNT.
+  Join every thread that touches a trap, with a bound.
 - **An unbounded blocking `accept` in a spec helper hangs the file instead of reddening it.**
   `spec/lain/frontend/input_pane_spec.rb`'s `open_pane` called `server.accept` with no timeout: a
   pane that could not construct never connects, and the call blocks rather than raising, so the
@@ -342,13 +348,6 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   and the vsock harness's `VsockAvailability.available? leaks no descriptor across repeated
   probing`.
 
-  Added 2026-09-29, red in 2 whole-suite runs on different trees (seeds 38780 and 1410, the second
-  on a box with no other suite live) and green 3 of 3 alone: `Lain::Frontend::InputPane a signal
-  the human sends the pane goes to the chat rather than interrupting the pane`. It fails as an
-  `IO::TimeoutError` reading the chat's next frame, and the watchdog then cuts its worker short, so
-  the run's example count drops by about 1,800 as well. Check the count against this name before
-  reading it as a dead worker.
-
   Added 2026-09-29, red once in a whole-suite run (seed 59509) and green 3 of 3 alone. It counts
   every descriptor in `/proc/self/fd`, so anything else live in the same worker process moves the
   count: `Lain::Agent the graph CoreGraph hands out by default runs to completion holding no file
@@ -360,7 +359,8 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   `Lain::Frontend::TTY a note rendered while a prompt is drawn loses and repeats nothing typed
   while notes keep arriving, and prints them all as the prompt closes` (reddened twice);
   `Lain::Frontend::InputPane a pane with no chat to talk to says what it is waiting for without
-  claiming the screen, and leaves when told to` (twice);
+  claiming the screen, and leaves when told to` (twice; the 2026-10-02 join did not reproduce its
+  cause, so it stays here);
   `Lain::Tools::Subagent async fan-out out-of-order completion lands in one ordered user turn
   gathers every result into ONE user message in tool_use order, however the children finish`
   (twice); and two in `plain_chat_prompt_guards_spec.rb`, `a plain chat's inline prompts over a
@@ -414,6 +414,12 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
     leaves from a task of its own, and a failing task yields again to log its unhandled-exception
     warning before it finishes, so one `task.yield` could check before the row left. It now waits
     until the registry is empty, bounded at 5s.
+
+  - 2026-10-02: `Lain::Frontend::InputPane a signal the human sends the pane goes to the chat
+    rather than interrupting the pane` (seeds 38780 and 1410). `after` killed a pane thread without
+    joining it, so that thread put RSpec's SIGINT handler back late, inside a later example (see the
+    unjoined-thread trap above). `after` now joins it, with a bound. Under `bin/suite-load`, 30
+    rounds: the old file failed 3, the new one 0.
 
 - **The `:ollama` live suite has a KNOWN-RED example, and it predates this chunk.**
   `Lain::Provider::Ollama temperature-0 reproducibility produces identical text across three warm

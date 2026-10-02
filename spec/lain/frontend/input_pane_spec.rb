@@ -63,7 +63,8 @@ RSpec.describe Lain::Frontend::InputPane do
   before { server }
 
   after do
-    @running&.kill
+    raise("pane thread outlived its example") unless @running.nil? || @running.kill.join(5)
+
     server.close unless server.closed?
     pipe.each { |io| io.close unless io.closed? }
     FileUtils.remove_entry(dir)
@@ -77,6 +78,16 @@ RSpec.describe Lain::Frontend::InputPane do
     @running = Thread.new { pane.run }
     server.timeout = 5
     server.accept.tap { |chat| chat.timeout = 5 }
+  end
+
+  # A real signal, but only once the installed handler is the pane's own: a
+  # runner's non-Proc handler would otherwise turn the kill into a process exit.
+  def deliver(name)
+    handler = Signal.trap(name) { nil }
+    Signal.trap(name, handler)
+    raise "the pane's #{name} handler is #{handler.inspect}, not a Proc" unless handler.is_a?(Proc)
+
+    Process.kill(name, Process.pid)
   end
 
   def publish(chat, frame)
@@ -304,10 +315,42 @@ RSpec.describe Lain::Frontend::InputPane do
 
     after { pty.each { |io| io.close unless io.closed? } }
 
+    # Frames are handled in order on the pane's one reactor, so a frame after
+    # "unpublished" that has taken effect proves the withdrawal finished: the
+    # prompt's read is stopped and the idle reader is waiting on the keyboard.
     def unpublished(chat)
       publish(chat, { "generation" => 3 })
       say(chat, { "v" => "unpublished" })
-      sleep(0.2)
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      expect(settles { commands == ["idle"] || nil }).to be(true)
+    end
+
+    # What the idle reader found, recorded after the read and before its
+    # handling. The handling has no yield in it, so a frame sent after this
+    # returns is handled after the pane has taken the read.
+    def watch_idle_reads
+      reads = Queue.new
+      allow(Lain::Frontend::StdinPump::Typeahead).to receive(:new).and_wrap_original do |make, **opts|
+        make.call(**opts).tap do |typeahead|
+          allow(typeahead).to receive(:finished).and_wrap_original do |read, *args|
+            read.call(*args).tap { |typed| reads << typed if typed }
+          end
+        end
+      end
+      reads
+    end
+
+    # A "touch" report for the prompt drawn before the withdrawal may already be
+    # waiting, so silence is judged on the lines sent, not on the socket.
+    def sent_so_far(chat)
+      waiting = chat.read_nonblock(65_536, exception: false)
+      waiting.is_a?(String) ? waiting.lines.map { |line| JSON.parse(line) } : []
+    end
+
+    def taken(chat, reads)
+      reads.pop(timeout: 5) || raise("the idle reader read nothing")
+      say(chat, { "v" => "context", "commands" => ["taken"] })
+      expect(settles { commands == ["taken"] || nil }).to be(true)
     end
 
     it "sends a line the human finishes, with no generation, for the chat's rail to judge" do
@@ -340,10 +383,11 @@ RSpec.describe Lain::Frontend::InputPane do
     end
 
     it "joins a partial line ended by Ctrl-D to what is typed after it" do
+      reads = watch_idle_reads
       chat = open_pane
       unpublished(chat)
       keyboard.write("par\x04")
-      sleep(0.2)
+      taken(chat, reads)
 
       keyboard.write("tial\r")
 
@@ -358,7 +402,7 @@ RSpec.describe Lain::Frontend::InputPane do
       keyboard.write("c")
 
       expect(settles { reader.read_nonblock(1, exception: false).then { |key| key if key.is_a?(String) } }).to eq("c")
-      expect(chat.wait_readable(0)).to be_nil
+      expect(sent_so_far(chat).map { |frame| frame["v"] }).not_to include("line")
     end
 
     # Reline is stubbed: what is pinned is that the partial line reaches the
@@ -366,11 +410,14 @@ RSpec.describe Lain::Frontend::InputPane do
     it "hands a partial line to the prompt the chat then publishes" do
       ungot = []
       allow(Reline::IOGate).to receive(:ungetc) { |byte| ungot.unshift(byte) }
-      allow(Reline).to receive(:readmultiline) { "#{ungot.pack("C*")}tial" }
+      # A prompt read before the partial line is taken (generation 3, drawn
+      # while "unpublished" is still in flight) never answers: it is withdrawn.
+      allow(Reline).to receive(:readmultiline) { ungot.empty? ? sleep : "#{ungot.pack("C*")}tial" }
+      reads = watch_idle_reads
       chat = open_pane
       unpublished(chat)
       keyboard.write("par\x04")
-      sleep(0.2)
+      taken(chat, reads)
 
       publish(chat, { "generation" => 5 })
 
@@ -453,7 +500,7 @@ RSpec.describe Lain::Frontend::InputPane do
       settles { screen.string.include?("waiting for a lain chat on #{path}") || nil }
       painted = screen.string
 
-      Process.kill("TERM", Process.pid)
+      deliver("TERM")
 
       expect([@running.join(5)&.value, painted.include?("\e[?1049h")]).to eq([0, false])
     end
@@ -475,7 +522,7 @@ RSpec.describe Lain::Frontend::InputPane do
       publish(chat, {})
       settles { screen.string.include?("you> ") || nil }
 
-      Process.kill("INT", Process.pid)
+      deliver("INT")
 
       expect(next_frame(chat, of: "signal")).to eq({ "v" => "signal", "name" => "sigint" })
     end
