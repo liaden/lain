@@ -23,6 +23,17 @@ module Lain
     class NonFiniteFloat < Error; end
     class AmbiguousKey < Error; end
 
+    # Every Array this module has returned. Identity, not equality, and that is
+    # the soundness argument: an output is deeply frozen, so the object can
+    # never stop being canonical, while a frozen input merely LOOKING canonical
+    # (unsorted keys, a Symbol key) is not in here and is rebuilt. Arrays only,
+    # because that is where the reuse is (a turn's content blocks, a message
+    # list) and marking Hashes too cost 30% more on data never normalized
+    # twice. Weak, so it keeps nothing alive. A non-main Ractor cannot read a
+    # non-shareable constant, so it skips the set and always rebuilds.
+    PRODUCED = ObjectSpace::WeakMap.new
+    private_constant :PRODUCED
+
     class << self
       # The wire form of +value+: JSON-native types only, String keys, objects
       # sorted, deeply frozen. Callers that *store* content (Lain::Event) keep
@@ -33,7 +44,7 @@ module Lain
         when nil, true, false, Integer then value
         when Float then finite(value)
         when String, Symbol then -utf8(value.to_s)
-        when Array then value.map { |element| normalize(element) }.freeze
+        when Array then produced(value) { value.map { |element| normalize(element) }.freeze }
         when Hash then normalize_hash(value)
         else raise UnsupportedType, "cannot canonicalize #{value.class}"
         end
@@ -57,6 +68,18 @@ module Lain
       end
 
       private
+
+      # Re-normalizing is the common case on the render path: a turn's content
+      # is canonical from the moment it was committed, and every later digest,
+      # validation and pin re-walked it. Measured on 800 turn-shaped messages:
+      # 12,801 objects per call before, 0 on a hit. A miss costs about 12% more
+      # time on fresh data (10.2-10.5ms to 11.6ms) for the same allocations.
+      def produced(value)
+        return yield unless Ractor.main?
+        return value if PRODUCED.key?(value)
+
+        yield.tap { |result| PRODUCED[result] = true }
+      end
 
       # The house style is `each_with_object` over a hand-mutated accumulator;
       # this method is the documented exception, because it is the hottest

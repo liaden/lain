@@ -54,4 +54,47 @@ RSpec.describe Lain::Canonical do
       expect(described_class.digest({ "a" => 1 })).not_to eq(described_class.digest({ "a" => 2 }))
     end
   end
+
+  describe ".normalize of its own output" do
+    let(:canonical) { described_class.normalize([{ b: [{ z: 1, a: "x" }], a: 2 }]) }
+
+    # Net of the probe itself, which costs an object even around an empty block.
+    def allocations_during
+      probe = -> { GC.stat(:total_allocated_objects) }
+      empty = -probe.call + probe.call
+      before = probe.call
+      yield
+      probe.call - before - empty
+    end
+
+    it "returns the same object and allocates nothing" do
+      described_class.normalize(canonical)
+
+      expect(allocations_during { described_class.normalize(canonical) }).to eq(0)
+      expect(described_class.normalize(canonical)).to equal(canonical)
+    end
+
+    it "returns a canonical child unchanged when it sits inside new data" do
+      child = canonical.first.fetch("b")
+
+      expect(described_class.normalize({ "k" => child }).fetch("k")).to equal(child)
+    end
+
+    it "rebuilds data that only looks canonical into the full normalization's bytes" do
+      copy = canonical.dup
+      look_alikes = [[{ a: 1 }].freeze, [{ "b" => 1, "a" => 2 }.freeze].freeze, copy]
+
+      expect(look_alikes.map { |input| JSON.generate(described_class.normalize(input)) })
+        .to eq(['[{"a":1}]', '[{"a":2,"b":1}]', '[{"a":2,"b":[{"a":"x","z":1}]}]'])
+      expect(described_class.normalize(look_alikes.first).first.keys).to eq(["a"])
+      expect(described_class.normalize(copy)).not_to equal(copy)
+    end
+
+    it "gives a non-main Ractor the full normalization" do
+      input = [{ b: 1, a: [2] }]
+
+      expect(Ractor.new(described_class, input) { |canonical, value| canonical.normalize(value) }.value)
+        .to eq(described_class.normalize(input))
+    end
+  end
 end

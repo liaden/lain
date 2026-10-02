@@ -53,7 +53,7 @@ flowchart LR
   IN <-->|lines up, HUD frames down<br/>unix socket · one input rail| TTY
   TTY <-->|msgpack-RPC · unix socket<br/>runtime injected at attach| NVIM
   TTY -->|read-only journal tail| WATCH
-  TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust) · built<br/>pure · synchronous<br/>tracing → NDJSON · Canonical<br/>persistent DAG · BM25 · AST search"]
+  TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust) · built<br/>pure · synchronous<br/>tracing → NDJSON · BLAKE3 · Rust canonical encoder for the DAG<br/>persistent DAG · BM25 · AST search"]
   TTY -.->|msgpack-RPC · unix socket<br/>off default path · opt-in| CORE["crates/lain-core (Rust · tokio)<br/>out-of-process exec daemon<br/>bench exec-comparison arm"]
   TTY -->|HTTPS| ANTH["api.anthropic.com (default: vendored transport)"]
   TTY -->|HTTP| OLL["local Ollama (--provider ollama)"]
@@ -175,7 +175,10 @@ The sections below name the files behind each box.
 
 `Lain::Canonical` produces deterministic bytes: sorted keys, stable array order, BLAKE3 digest.
 Those bytes carry two invariants at once, event identity and prompt-cache stability. That is
-the "one function, two invariants" claim in `CLAUDE.md`.
+the "one function, two invariants" claim in `CLAUDE.md`. `Lain::Canonical` is Ruby; the Rust
+extension holds BLAKE3 and a separate canonical encoder the DAG uses. It keeps a weak,
+process-wide set of the Arrays it has returned, so normalizing one again hands back the same
+object without walking it; off the main Ractor it always normalizes in full.
 
 There is no standalone `Turn` class in the current tree. `Lain::Event` (`lib/lain/event.rb`)
 is a CloudEvents-shaped envelope with a closed `KINDS` set (`turn spawn message snapshot`).
