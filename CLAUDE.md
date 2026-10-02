@@ -52,6 +52,9 @@ LAIN_INTEGRATION=1 ANTHROPIC_API_KEY=sk-... bundle exec rspec   # :api_integrati
 bundle exec rake core:build && bundle exec rspec --tag core     # :core -- needs the daemon
 ```
 
+Spec git reads a spec-owned global config (`spec/support/isolated_git_config.rb`); a lib site that
+reads the user's config on purpose sets its own `GIT_CONFIG_GLOBAL` in its spec.
+
 Rules, with the evidence in [`docs/toolchain-traps.md`](docs/toolchain-traps.md):
 
 - **Do NOT use `~/.rubies/ruby-4.0.6`** — dead `$LOAD_PATH`, and forcing it with `RUBYLIB` is
