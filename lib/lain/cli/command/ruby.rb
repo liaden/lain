@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "irb"
-
 module Lain
   module CLI
     module Command
@@ -76,6 +74,8 @@ module Lain
         # byte itself; IRB owns every one, which is why output discipline holds.
         class Console
           def open(inspection)
+            # irb is a slow require that only this rare command needs.
+            require "irb"
             IRB.setup(nil, argv: []) unless IRB.initialized?
             workspace = IRB::WorkSpace.new(inspection.context)
             IRB::Irb.new(workspace, IRB::StdioInputMethod.new).run(IRB.conf)

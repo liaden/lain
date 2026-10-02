@@ -350,4 +350,17 @@ RSpec.describe Lain::Tools::WebFetch::Readable do
       expect(described_class.meta_charset("<p>plain</p>".b)).to be_nil
     end
   end
+
+  # A fresh ruby, because this process already has nokogiri loaded by the examples around it.
+  describe "loading the parser" do
+    it "stays unloaded after lain boots, and loads on the first parse and the first charset sniff" do
+      script = <<~RUBY
+        readable = Lain::Tools::WebFetch::Readable
+        puts $LOADED_FEATURES.grep(/nokogiri/).size
+        puts readable.call("<p>hi</p>", "https://e.com/", limit: 99)
+        puts readable.meta_charset(%(<meta charset="koi8-r">).b)
+      RUBY
+      expect(FreshRuby.run(script).lines(chomp: true)).to eq(%w[0 hi koi8-r])
+    end
+  end
 end

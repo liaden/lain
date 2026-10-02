@@ -180,7 +180,9 @@ scribbles into the chat pane the frontend is painting.
 **A file's path is what names its constant, and that is the only rule.** `lib/lain/foo/bar.rb`
 defines `Lain::Foo::Bar`; Zeitwerk finds it for that reason and no other. A new unit is a file at
 its mirrored path — nothing else to do, no index entry, no manifest line, nowhere to register it.
-External gem/stdlib requires stay in the leaf files that use them, documenting real dependencies.
+External gem/stdlib requires stay in the leaf files that use them, documenting real dependencies. A require
+inside a method is allowed for a heavy, rarely used gem (`irb`, `nokogiri`), with a spec on
+`$LOADED_FEATURES` that a fresh boot does not load it.
 
 **A `require_relative` anywhere under `lib/` is never correct.** `grep -rn require_relative lib/`
 returns 0 and stays 0 — a convention, not a gate: neither the suite nor `rubocop` nor pre-commit

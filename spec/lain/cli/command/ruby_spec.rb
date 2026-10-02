@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "irb"
 require "tmpdir"
 
 # /ruby's three arities over the live conversation's InspectionBinding.
@@ -104,6 +105,21 @@ RSpec.describe Lain::CLI::Command::Ruby do
         expect(io).to be(input_method)
       end
       expect(fake_irb).to have_received(:run)
+    end
+  end
+
+  describe "loading the console" do
+    it "leaves irb unloaded after lain boots" do
+      expect(FreshRuby.run('print $LOADED_FEATURES.grep(%r{/irb\.rb\z}).size')).to eq("0")
+    end
+
+    it "loads irb when the console opens" do
+      script = <<~RUBY
+        inspection = Lain::CLI::InspectionBinding.new(timeline: :tl, session: :s, supervisor: :sup, status: :st)
+        Lain::CLI::Command::Ruby::Console.new.open(inspection)
+        print "[opened:" + defined?(IRB).to_s + "]"
+      RUBY
+      expect(FreshRuby.run(script, stdin: "exit\n")).to include("[opened:constant]")
     end
   end
 end

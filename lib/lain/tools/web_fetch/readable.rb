@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "nokogiri"
 require "uri"
 
 module Lain
@@ -78,14 +77,20 @@ module Lain
           #
           # @param bytes [String] the undecoded body
           # @return [String, nil]
-          def meta_charset(bytes) = Nokogiri::HTML4(bytes.byteslice(0, 1024)).meta_encoding
+          def meta_charset(bytes) = nokogiri.HTML4(bytes.byteslice(0, 1024)).meta_encoding
 
           private
+
+          # Required here because only a web_fetch call needs the parser, and it is a slow require.
+          def nokogiri
+            require "nokogiri"
+            Nokogiri
+          end
 
           # The parser's limits are depth, attributes per element and errors
           # kept; only the first is about nesting, so only it says so.
           def parse(html)
-            Nokogiri::HTML5(html)
+            nokogiri.HTML5(html)
           rescue ArgumentError => e
             reason = if e.message.include?("depth") then "nests elements deeper than the HTML parser builds"
                      else "was refused by the HTML parser"
