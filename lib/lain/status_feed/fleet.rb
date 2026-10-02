@@ -65,6 +65,8 @@ module Lain
       # just failed, not the forty before it.
       ENDED_SHOWN = 8
 
+      NONE = [].freeze
+
       # @param clock [#call] answers the current Time; the row's start instant
       #   is stamped from it, and injectable so a spec never races a real clock
       def initialize(clock: -> { Time.now })
@@ -159,7 +161,7 @@ module Lain
       #   count, for `cache_deadline`'s reason -- an absolute instant lets a
       #   renderer tick locally, while a duration would make this struct differ
       #   from itself once a second and earn a write every time.
-      def tree = @tree ||= branches(nil, 0)
+      def tree = @tree ||= branches(children_by_owner, nil, 0)
 
       private
 
@@ -168,10 +170,14 @@ module Lain
       # Depth-first, arrival order within a level, so a child is drawn under the
       # parent it was spawned from. A member whose parent has been pruned is
       # reached as a root rather than lost.
-      def branches(parent, depth)
-        placed = @members.each_value.select { |member| owner(member) == parent }
-        placed.flat_map { |member| [member.published(depth), *branches(member.spawn, depth + 1)] }
+      def branches(by_owner, parent, depth)
+        by_owner.fetch(parent, NONE).flat_map do |member|
+          [member.published(depth), *branches(by_owner, member.spawn, depth + 1)]
+        end
       end
+
+      # One pass, not one scan per member.
+      def children_by_owner = @members.each_value.group_by { |member| owner(member) }
 
       def owner(member) = @members.key?(member.parent) ? member.parent : nil
 
@@ -223,11 +229,15 @@ module Lain
           @worker = nil
           @turns = 0
           @head = nil
+          @rows = nil
         end
 
         def running? = @state == RUNNING
 
-        def ended(state) = @state = state
+        def ended(state)
+          @state = state
+          @rows = nil
+        end
 
         # Only what the record carries: a turn record names no role and no
         # task, and taking its nils would erase what the dispatch record said.
@@ -237,12 +247,14 @@ module Lain
           @worker = record.worker unless record.worker.nil?
           @head = record.head unless record.head.nil?
           @turns = record.turns
+          @rows = nil
         end
 
+        # Memoised per depth: the iso8601 string dominated a rebuild's cost.
         def published(depth)
-          { "spawn" => @spawn, "role" => @role, "task" => @task, "worker" => @worker,
-            "state" => @state, "turns" => @turns, "depth" => depth,
-            "started" => @started.utc.iso8601 }.freeze
+          (@rows ||= {})[depth] ||= { "spawn" => @spawn, "role" => @role, "task" => @task, "worker" => @worker,
+                                      "state" => @state, "turns" => @turns, "depth" => depth,
+                                      "started" => @started.utc.iso8601 }.freeze
         end
       end
 

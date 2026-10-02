@@ -431,6 +431,75 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(fleet.tree).to eq([])
     end
 
+    describe "a nested fleet" do
+      def chain(fleet, depth)
+        head = "blake3:root"
+        Array.new(depth) do |level|
+          spawn_from("n#{level}", head).tap do |launch|
+            head = "blake3:t#{level}"
+            fleet.launched(launch)
+            fleet.progressed(progress(launch, turns: 1, head:))
+          end
+        end
+      end
+
+      it "roots a child whose parent was pruned, with every descendant one level shallower" do
+        fleet = described_class.new(clock: -> { now })
+        nested = chain(fleet, 4)
+        fleet.completed(completion(nested[1], id: "parent"))
+        fillers = Array.new(described_class::ENDED_SHOWN) do |index|
+          spawn_event("f#{index}").tap { |filler| fleet.launched(filler) }
+        end
+        fillers.each { |filler| fleet.completed(completion(filler, id: filler.digest)) }
+
+        rows = fleet.tree.select { |row| nested.map(&:digest).include?(row["spawn"]) }
+
+        expect(rows.map { |row| [row["spawn"], row["depth"]] })
+          .to eq([[nested[0].digest, 0], [nested[2].digest, 0], [nested[3].digest, 1]])
+      end
+
+      it "lists parents before their children at every depth, arrival order within a level" do
+        fleet = described_class.new(clock: -> { now })
+        nested = chain(fleet, 3)
+        sibling = spawn_from("sib", "blake3:other").tap { |s| fleet.launched(s) }
+
+        expect(fleet.tree.map { |row| [row["spawn"], row["depth"]] })
+          .to eq([[nested[0].digest, 0], [nested[1].digest, 1], [nested[2].digest, 2], [sibling.digest, 0]])
+      end
+    end
+
+    it "reads each member's parent at most twice, however many have spawned" do
+      fleet = described_class.new(clock: -> { now })
+      reads = 0
+      allow(described_class::Member).to receive(:new).and_wrap_original do |original, **attributes|
+        original.call(**attributes).tap do |member|
+          allow(member).to receive(:parent).and_wrap_original do |parent|
+            reads += 1
+            parent.call
+          end
+        end
+      end
+      500.times { |index| fleet.launched(spawn_from("m#{index}", "blake3:root-#{index}")) }
+
+      fleet.tree
+
+      expect(reads).to be <= 1000
+    end
+
+    it "republishes a member's row each time it changes" do
+      fleet = described_class.new(clock: -> { now })
+      launch = spawn_event("a")
+      fleet.launched(launch)
+      before = fleet.tree.first
+
+      fleet.progressed(progress(launch, role: "dev", turns: 2, head: "blake3:t2"))
+      progressed = fleet.tree.first
+      fleet.completed(completion(launch))
+
+      expect([before, progressed, fleet.tree.first].map { |row| row.values_at("state", "turns") })
+        .to eq([["running", 0], ["running", 2], ["done", 2]])
+    end
+
     # It is read from `StatusFeed#observed`, which runs on every event the tee
     # carries -- a bash tool's stdout included -- while the fold moves only on
     # a spawn, a completion or a progress record.
