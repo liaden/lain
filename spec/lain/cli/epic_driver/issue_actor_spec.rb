@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "tmpdir"
 
 # The chat's asker, as the earlier-branches question meets it: every question
@@ -52,11 +51,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     Dir.mktmpdir("lain-issue-actor") do |dir|
       @root = File.realpath(dir)
       FileUtils.mkdir_p(repo)
-      FileUtils.cp_r("#{SeedRepo.at({ "README" => "seed\n" })}/.", repo)
-      FileUtils.cp_r(File.join(layout_mini, "."), repo)
-      git(repo, "add", "-A")
-      git(repo, "commit", "-q", "-m", "layout_mini")
-      git(repo, "branch", "-M", "main")
+      SeedRepo.with_layout(layout_mini, into: repo)
       @epic = Lain::Isolation::WorkingBranch.epic("demo", repo_root: repo)
       advance_epic
       FileUtils.mkdir_p(paths.sessions_dir)
@@ -145,12 +140,17 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   # This spec's own git runs only inside the fixture's temp tree; the scrub is
   # for the hook's GIT_INDEX_FILE reason.
   def shell(dir, *args)
-    raise "refusing to run git outside the fixture: #{dir}" unless dir.start_with?("#{@root}/")
-
-    Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command
+    Lain::Shell::Out.new("git", "-C", inside_fixture(dir), *args,
+                         environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command
   end
 
-  def git(dir, *) = shell(dir, *).tap(&:error!).stdout.strip
+  def git(dir, *) = SeedRepo.git(inside_fixture(dir), *).stdout.strip
+
+  def inside_fixture(dir)
+    raise "refusing to run git outside the fixture: #{dir}" unless dir.start_with?("#{@root}/")
+
+    dir
+  end
 
   def ancestor?(dir, commit) = shell(dir, "merge-base", "--is-ancestor", commit, "HEAD").exitstatus.zero?
 

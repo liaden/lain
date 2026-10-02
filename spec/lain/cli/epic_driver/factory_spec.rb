@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "socket"
 require "tmpdir"
 
@@ -44,12 +43,11 @@ end
 class FactorySpecActors
   Launch = Data.define(:actor, :worker_id, :branch, :tests)
 
-  def initialize(fleet, log, repo, scrub, files: {}, idle: [], slug: "demo")
+  def initialize(fleet, log, repo, files: {}, idle: [], slug: "demo")
     @slug = slug
     @fleet = fleet
     @log = log
     @repo = repo
-    @scrub = scrub
     @files = files
     @idle = idle
   end
@@ -80,9 +78,7 @@ class FactorySpecActors
     git(dir, "rev-parse", "HEAD")
   end
 
-  def git(dir, *)
-    Mixlib::ShellOut.new("git", "-C", dir, *, environment: @scrub).run_command.tap(&:error!).stdout.strip
-  end
+  def git(dir, *) = SeedRepo.git(dir, *).stdout.strip
 end
 
 # What a chat seated in an epic can drive, built from the ONE mount the seat
@@ -93,15 +89,14 @@ end
 # and the checkout the landing queue merges in -- which is lain's own, never
 # the human's.
 RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
+  # A shortened grace: a gate wait looks every 10ms, not 100ms.
+  before { stub_const("Lain::CLI::EpicDriver::Run::POLL", 0.01) }
+
   around do |example|
     Dir.mktmpdir("lain-epic-factory") do |dir|
       @root = File.realpath(dir)
       FileUtils.mkdir_p(repo)
-      FileUtils.cp_r("#{SeedRepo.at({ "README" => "seed\n" })}/.", repo)
-      FileUtils.cp_r(File.join(layout_mini, "."), repo)
-      git(repo, "add", "-A")
-      git(repo, "commit", "-q", "-m", "layout")
-      git(repo, "branch", "-M", "main")
+      SeedRepo.with_layout(layout_mini, into: repo)
       FileUtils.mkdir_p(paths.sessions_dir)
       example.run
     end
@@ -121,12 +116,16 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   def home(slug = "demo") = Lain::Epic::Home.resolve(config:, paths:, root: repo, slug:)
 
   def shell(dir, *args)
-    raise "refusing to run git outside the fixture: #{dir}" unless dir.start_with?("#{@root}/")
-
-    Mixlib::ShellOut.new("git", "-C", dir, *args, environment: scrub).run_command
+    Lain::Shell::Out.new("git", "-C", inside_fixture(dir), *args, environment: scrub).run_command
   end
 
-  def git(dir, *) = shell(dir, *).tap(&:error!).stdout.strip
+  def git(dir, *) = SeedRepo.git(inside_fixture(dir), *).stdout.strip
+
+  def inside_fixture(dir)
+    raise "refusing to run git outside the fixture: #{dir}" unless dir.start_with?("#{@root}/")
+
+    dir
+  end
 
   def epic_branch = Lain::Isolation::WorkingBranch.epic("demo", repo_root: repo)
 
@@ -221,7 +220,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   # Actors that lease a real checkout each and commit in it -- the loop's own
   # collaborator, so a run driven over these is driven over real git.
   def scripted(files: {}, idle: [], slug: "demo")
-    ->(fleet) { FactorySpecActors.new(fleet, log, repo, scrub, files:, idle:, slug:) }
+    ->(fleet) { FactorySpecActors.new(fleet, log, repo, files:, idle:, slug:) }
   end
 
   # The loop, over real git, with scripted actors in real leased checkouts.
@@ -701,7 +700,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       write_epic([issue("a")])
       approve_plan("a")
       git(repo, "switch", "-q", "main")
-      factory = factory_over(mount, actors: ->(fleet) { FactorySpecActors.new(fleet, log, repo, scrub) },
+      factory = factory_over(mount, actors: ->(fleet) { FactorySpecActors.new(fleet, log, repo) },
                                     record: chronicle)
       path = File.join(paths.sessions_dir, "fixture.ndjson")
       File.write(path, File.read(path).then { |line| line[0, line.size / 2] })

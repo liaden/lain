@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "mixlib/shellout"
 require "tmpdir"
 
 # An issue's red step, in the checkout its actor holds: tests generated from the
@@ -15,10 +14,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     Dir.mktmpdir("lain-issue-tests") do |dir|
       @root = File.realpath(dir)
       FileUtils.mkdir_p(repo)
-      FileUtils.cp_r("#{SeedRepo.at({ "README" => "seed\n" })}/.", repo)
-      FileUtils.cp_r(File.join(layout_mini, "."), repo)
-      git(repo, "add", "-A")
-      git(repo, "commit", "-q", "-m", "layout_mini")
+      SeedRepo.with_layout(layout_mini, into: repo)
       git(repo, "worktree", "add", "-q", "-b", "lain/issue/demo/a", held)
       example.run
     end
@@ -86,12 +82,12 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
 
   # This spec's own git runs only inside the fixture's temp tree; the scrub is
   # for the hook's GIT_INDEX_FILE reason.
-  def git(dir, *args)
+  def git(dir, *) = SeedRepo.git(inside_fixture(dir), *).stdout.strip
+
+  def inside_fixture(dir)
     raise "refusing to run git outside the fixture: #{dir}" unless dir.start_with?("#{@root}/")
 
-    shell = Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-    shell.run_command.error!
-    shell.stdout.strip
+    dir
   end
 
   def mock(*responses) = Lain::Provider::Mock.new(responses:)
