@@ -253,6 +253,14 @@ at 184 and 76 — and exits non-zero, but **nothing gates on it**, deliberately:
 106MB and parses `spec/` twice, which is not a per-commit price. Raising a ceiling goes in its own
 commit, saying why.
 
+`bin/runtime-census` guards the suite's wall against re-growth, and nothing gates on it either.
+`--record` copies `tmp/parallel_runtime_rspec.log` into `tmp/runtime-census/` and keeps the last 3,
+refusing a partial log (one that misses a ceilinged file) because pspec truncates that file when it starts. With
+no flag it prints the slowest files and the simulated wall at 12 and 4 workers. `--check` exits 1
+unless 3 recorded logs each name every ceilinged file, when a named file is over its in-script ceiling in 2 of
+the 3, or when `LAIN_SLOW=1 rspec --dry-run` (about 30s) fails or counts fewer examples than the
+floor. Lower a ceiling when a speedup lands; raising one goes in its own commit, saying why.
+
 ## Committing
 
 Commit directly on `main`, in logical chunks, with terse high-signal messages. No trailers.

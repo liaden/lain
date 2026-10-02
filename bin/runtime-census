@@ -1,0 +1,156 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "open3"
+require "pathname"
+
+# Guards the spec suite's wall time against re-growth. `bin/spec-census` is the
+# shape: a worklist by default and a `--check` that can actually fail.
+#
+# Not a spec: one dry run costs ~30s, and nothing gates on it.
+module RuntimeCensus
+  REPO_ROOT = Pathname(__dir__).join("..").expand_path
+  SOURCE = REPO_ROOT.join("tmp/parallel_runtime_rspec.log")
+  RECORDS = REPO_ROOT.join("tmp/runtime-census")
+  KEEP = 3
+  TOP = 20
+  WORKER_COUNTS = [12, 4].freeze
+
+  # LAIN_SLOW=1 because a bare rspec skips the :slow files; the floor must count every example that exists.
+  DRY_RUN = { "LAIN_SLOW" => "1" }.freeze
+
+  # Seconds per file, seeded from a contended 2026-10-02 pspec log at 2x rounded up, for files at 8s or more.
+  # Lower one when a speedup lands; raising one is its own commit and says why.
+  CEILINGS = {
+    "spec/lain/seams/input_pane_socket_spec.rb" => 73,
+    "spec/lain/seams/plain_chat_prompt_guards_spec.rb" => 64,
+    "spec/lain/cli/up_spec.rb" => 62,
+    "spec/support_slow_files_spec.rb" => 60,
+    "spec/lain/seams/qa_sandbox_pane_resolution_spec.rb" => 43,
+    "spec/lain/frontend/stdin_pump_spec.rb" => 38,
+    "spec/lain/cli/command/review_spec.rb" => 36,
+    "spec/lain/review/deletability_spec.rb" => 31,
+    "spec/lain/cli/repl_spec.rb" => 31,
+    "spec/lain/suite_load_spec.rb" => 28,
+    "spec/lain/review/source/local_branch_spec.rb" => 27,
+    "spec/repo_as_fixture_spec.rb" => 23,
+    "spec/lain/frontend/tty_spec.rb" => 22,
+    "spec/lain/cli/epic_driver/factory_spec.rb" => 22,
+    "spec/lain/frontend/neovim/diff_mode_spec.rb" => 21,
+    "spec/lain/isolation/worktree_handback_spec.rb" => 20,
+    "spec/lain/project/root_defaults_spec.rb" => 20,
+    "spec/lain/isolation/worker_handoff_spec.rb" => 19,
+    "spec/lain/project_dir_spec.rb" => 17,
+    "spec/lain/frontend/neovim/runtime/51_thread_spec.rb" => 17,
+    "spec/lain/review/source/github_pr_spec.rb" => 17,
+    "spec/lain/cli/command/ruby_spec.rb" => 17
+  }.freeze
+
+  # Seeded at 21673 examples (2026-10-02), rounded down to leave room for a deleted spec.
+  EXAMPLE_FLOOR = 21_000
+
+  # One `path:seconds` line per spec file; rspec writes prose into the same file.
+  module Log
+    LINE = /\A(?<path>\S+_spec\.rb):(?<seconds>\d+(?:\.\d+)?)\z/
+
+    module_function
+
+    def parse(text)
+      text.lines.each_with_object(Hash.new(0.0)) do |line, seconds|
+        found = LINE.match(line.strip)
+        seconds[found[:path]] += Float(found[:seconds]) if found
+      end.to_h
+    end
+  end
+
+  # Longest-first onto the least-loaded worker: the packing parallel_tests does from a runtime log.
+  module Packing
+    module_function
+
+    def wall(seconds, workers)
+      loads = Array.new(workers, 0.0)
+      seconds.values.sort.reverse_each { |s| loads[loads.index(loads.min)] += s }
+      loads.max
+    end
+  end
+
+  class DryRunFailed < StandardError
+  end
+
+  module_function
+
+  # An empty or partial log (pspec truncates it on start) must not read as a pass.
+  def check(logs, ceilings: CEILINGS, floor: EXAMPLE_FLOOR, counter: method(:dry_run_count))
+    log_failures(logs, ceilings) + ceiling_failures(logs, ceilings) + floor_failures(counter, floor)
+  end
+
+  def complete?(seconds, ceilings) = ceilings.keys.all? { |path| seconds.key?(path) }
+
+  def log_failures(logs, ceilings)
+    usable = logs.count { |seconds| complete?(seconds, ceilings) }
+    return [] if usable == KEEP && logs.size == KEEP
+
+    ["need #{KEEP} recorded logs that each name every ceilinged file, found #{usable} of #{logs.size}"]
+  end
+
+  def ceiling_failures(logs, ceilings)
+    ceilings.filter_map do |path, ceiling|
+      over = logs.count { |seconds| seconds.fetch(path, 0.0) > ceiling }
+      "#{path} is over its #{ceiling}s ceiling in #{over} of #{logs.size} logs" if over >= 2
+    end
+  end
+
+  def floor_failures(counter, floor)
+    count = counter.call
+    count < floor ? ["rspec --dry-run counts #{count} examples, under the floor of #{floor}"] : []
+  rescue DryRunFailed => e
+    ["dry run failed: #{e.message}"]
+  end
+
+  def dry_run_count
+    out, status = Open3.capture2e(DRY_RUN, "bundle", "exec", "rspec", "--dry-run", chdir: REPO_ROOT.to_s)
+    raise DryRunFailed, "exit #{status.exitstatus}" unless status.success?
+
+    Integer(out[/^(\d+) examples?,/, 1] || raise(DryRunFailed, "no example count in the output"))
+  end
+
+  def recorded_logs = RECORDS.glob("*.log").sort
+
+  def record
+    abort("runtime-census: #{SOURCE} is missing; run rake pspec first") unless SOURCE.file?
+    seconds = Log.parse(SOURCE.read)
+    abort("runtime-census: #{SOURCE} has no path:seconds lines; not recording") if seconds.empty?
+    abort("runtime-census: #{SOURCE} lacks a ceilinged file; a partial log, not recording") unless complete?(seconds,
+                                                                                                             CEILINGS)
+    FileUtils.mkdir_p(RECORDS)
+    FileUtils.cp(SOURCE, RECORDS.join("#{Time.now.strftime("%Y%m%d-%H%M%S-%6N")}.log"))
+    Array(recorded_logs[0...-KEEP]).each(&:delete)
+  end
+
+  def report
+    newest = recorded_logs.last or abort("runtime-census: nothing recorded; run --record first")
+    seconds = Log.parse(newest.read)
+    puts "#{seconds.size} files, #{format("%.1f", seconds.values.sum)}s total (#{newest.basename})"
+    WORKER_COUNTS.each { |n| puts "simulated wall at #{n} workers: #{format("%.1f", Packing.wall(seconds, n))}s" }
+    seconds.max_by(TOP) { |_, s| s }.each { |path, s| puts format("%<seconds>8.1f  %<path>s", seconds: s, path:) }
+  end
+
+  def verify
+    failures = check(recorded_logs.map { |path| Log.parse(path.read) })
+    puts(failures.empty? ? "ok" : failures.map { |line| "FAIL #{line}" })
+    exit 1 if failures.any?
+  end
+
+  USAGE = "usage: bin/runtime-census [--record | --check]"
+  MODES = { nil => :report, "--record" => :record, "--check" => :verify }.freeze
+
+  def run(argv)
+    mode = MODES[argv.first] if argv.size <= 1
+    return warn(USAGE) || exit(2) unless mode
+
+    public_send(mode)
+  end
+end
+
+RuntimeCensus.run(ARGV) if $PROGRAM_NAME == __FILE__

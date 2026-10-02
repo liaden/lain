@@ -247,6 +247,7 @@ avoids at the top of the file.
 | `bin/with-ruby <ruby-bin-dir> <command...>` | no | the same command under a different Ruby build (a jemalloc one, say) with an identical environment |
 | `bin/suite-load --card <tree> --base <tree> --load <tree> --rounds N <spec files...>` | no | whether a spec change holds under real suite load: runs the files on the card and base trees, alternating in random order, while full `pspec` runs loop in a load tree; failures by location and seed, and a run with no examples, a summary missing, an example count that varies between rounds, or a dead load loop counts as a failure |
 | `bin/suite-redrate --card <tree> --base <tree> --rounds N` | no | how often a whole `rake pspec` fails on the card tree against the base, interleaved and padded; failures by name and the median wall |
+| `bin/runtime-census [--record\|--check]` | no | which spec files grew past their ceilings over the last 3 recorded pspec runtime logs (each must name every ceilinged file), and whether a `LAIN_SLOW=1` dry run still reaches the example floor |
 
 A result from any of them is one sample. Before calling a change faster, repeat both sides,
 interleaved, with the environment size varied between runs (Mytkowicz et al., "Producing Wrong
