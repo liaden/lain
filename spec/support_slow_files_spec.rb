@@ -20,7 +20,7 @@ RSpec.describe SlowFiles do
     out
   end
 
-  def example_count(out) = out[/^(\d+) examples,/, 1].to_i
+  def example_count(out) = out[/^(\d+) examples?,/, 1].to_i
 
   describe "the list" do
     it "names only files that exist" do
