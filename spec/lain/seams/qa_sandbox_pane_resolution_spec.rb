@@ -43,8 +43,13 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
   around do |example|
     example.run
   ensure
+    leaked = pane_tree_pids
     Open3.capture3({ "TMUX_TMPDIR" => @home.to_s }, "tmux", "-L", socket, "kill-server")
     FileUtils.remove_entry(@home) if @home && File.directory?(@home)
+    reap(leaked)
+    watched = leaked.select { |_, _, comm| comm == "nvim" } + Array(@stubborn)
+    survivors = survivors_of(watched)
+    raise "panes left processes behind: #{survivors}" unless survivors.empty?
   end
 
   # One variable keeps the whole fixture disposable: TMUX_TMPDIR puts the socket
@@ -58,6 +63,61 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
     raise "#{argv.first} failed (#{status.exitstatus}): #{err}#{out}" unless status.success?
 
     out
+  end
+
+  # Taken before kill-server: once the panes' shells die, an embed server that
+  # ignored the hangup is reparented to init and no longer traceable to a pane.
+  def pane_tree_pids
+    return [] unless @session
+
+    roots = sh!("tmux", "-L", socket, "list-panes", "-a", "-F", "\#{pane_pid}", env:).split.map(&:to_i)
+    children = process_children
+    walk = ->(pid) { [pid, *children.fetch(pid, []).flat_map { |(child, _)| walk.call(child) }] }
+    roots.flat_map(&walk).uniq.filter_map { |pid| identity(pid) }
+  rescue RuntimeError
+    []
+  end
+
+  def process_children = sh!("ps", "-eo", "pid=,ppid=").lines.map { |line| line.split.map(&:to_i) }.group_by(&:last)
+
+  # [pid, start time]: kill-server frees pids, and a reused one must not be signalled.
+  # The comm is cut at the last paren because it may itself contain spaces.
+  def identity(pid)
+    stat = File.read("/proc/#{pid}/stat")
+    [pid, stat[(stat.rindex(")") + 2)..].split[19], File.read("/proc/#{pid}/comm").strip]
+  rescue Errno::ENOENT, Errno::ESRCH
+    nil
+  end
+
+  def alive?(identities) = identities.select { |pid, start, _| identity(pid)&.at(1) == start }
+
+  # TERM is ignored by exactly the processes that leaked, so KILL follows a
+  # short grace; the wait is a shortened grace, not a poll for an event.
+  def reap(identities)
+    signal(identities, "TERM")
+    sleep 0.2
+    signal(identities, "KILL")
+  end
+
+  def signal(identities, name)
+    alive?(identities).map(&:first).each do |pid|
+      Process.kill(name, pid)
+    rescue Errno::ESRCH, Errno::EPERM
+      nil
+    end
+  end
+
+  # Event poll, ending at the first look with nothing alive; the 2s is only the
+  # deadline after which a survivor is reported, since a KILLed process can take
+  # a moment to be reaped by init.
+  def survivors_of(identities)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+    left = alive?(identities)
+    while left.any? && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+      sleep 0.05
+      left = alive?(identities)
+    end
+    left
   end
 
   def tmux(*argv) = sh!("tmux", "-L", socket, *argv, env:)
@@ -326,5 +386,23 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
     read, _err, read_status = helper("peek.sh", "20")
     expect(read_status).to be_success
     expect(read).to include(chat_marker)
+  end
+
+  it "leaves no process of the panes behind, even one that ignores TERM and HUP" do
+    skip "needs tmux and nvim" unless tooling?
+    ready = File.join(home, "stubborn-ready")
+    script = "%w[TERM HUP].each { |sig| trap(sig, %q(IGNORE)) }; " \
+             "File.write(%q(#{ready}), Process.pid.to_s); sleep 600"
+    # A grandchild of the pane's shell, so the tree walk is what finds it.
+    spawn("stubborn", "sh -c \"ruby -e '#{script}' & wait\"")
+    # Event: the file appears only once both traps are installed, so a teardown
+    # that merely beats the traps to it cannot pass for a kill.
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
+    until File.exist?(ready) && !File.empty?(ready)
+      raise "stubborn stub never installed its traps" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.1
+    end
+    @stubborn = [identity(File.read(ready).to_i)]
   end
 end

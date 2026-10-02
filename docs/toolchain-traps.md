@@ -764,6 +764,12 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   Each parked child compares `Process.ppid` against the `WARM_PPID` it was given and calls `exit!`
   when its parent is gone; `spec/support_warm_pool_spec.rb` pins it.
 
+- **A pane's `nvim --embed` that ignores TERM outlives the tmux server it ran under.** `kill-server`
+  signals the panes' shells, not their children, so an embed server reparented to init and lived
+  for hours, showing up in every later `SpecWatchdog` dump as a live editor. The
+  `qa_sandbox_pane_resolution_spec` teardown now collects each pane's process tree before
+  `kill-server`, then sends TERM, waits 0.2s, and sends KILL to what is left.
+
 ## CI is a different box, and both of these were green here and red there
 
 Two examples went red on every GitHub runner while passing on every developer machine, for three
