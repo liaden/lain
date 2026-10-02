@@ -1,6 +1,6 @@
 # Spec suite speed and flakes: land the measured fixes
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (T44 is Rust)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); T44 adds the Rust roster
@@ -2125,3 +2125,5 @@ Prerequisite before T1: commit the uncommitted `bin/box-state` fix in the main c
 - T65 landed `07ecf1cd` (suite 21,730 examples, 0 failures).
 - T42 landed `bbd57cf7` (suite 21,730 examples, 0 failures). Every card but T60 has landed.
 - T60: baseline at `tmp/profiling-2026-09-30/pass7/`: main 57.7s / 53.7s / 53.1s at 12 / 14 / 16 workers against the pre-plan tree's 116.2s / 101.4s / 103.5s; runs with a failure 0 of 15 against 9 of 15. 12 stays the default. The slow list is regenerated (29 files). T59's ceilings stay at their post-speedup seed until 3 quiet logs are recorded.
+- T60 landed `c457618a` (suite 21,730 examples, 0 failures).
+- Close-out: `bin/spec-census --check` read 201, 3 above the 198 limit. The 3 were `not_to raise_error` assertions added by this plan in the headless editor, slow files and warm pool support specs; `151114cc` makes each check a value, back to 198. `pspec` ran 3 times at 21,730 examples with 0 failures (about 56s each). `rubocop`, `cargo test` (296 passed), `cargo clippy`, `pre-commit run --all-files`, `comment-census --check-tickets`, `zeitwerk-census --check` and `runtime-census --check` (3 logs recorded) all pass. `grep -rli mixlib lib spec` matches only `spec/mixlib_free_lib_spec.rb`. Proof worktrees removed; worktrees and branches match the start. Owed: Integration checks 6 and 7 (the CI cache pass and the manual pass).
