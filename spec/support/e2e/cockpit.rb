@@ -18,6 +18,7 @@ module E2E
     BOOT_SECONDS = 45
     STOP_SECONDS = 10
     APPROVAL_BUFFER = "lain://approval"
+    INBOX_BUFFER = "lain://inbox"
     ROWS = 24
     COLUMNS = 220
     PANES = { chat: Lain::CLI::Up::Panes::CHAT, input: Lain::CLI::Up::Panes::INPUT,
@@ -70,6 +71,14 @@ module E2E
 
     def deny(line = 1) = answer("LainDeny", line)
 
+    # The question is named by its row in the listing, because :LainReply answers the set under the cursor.
+    def reply(text, question = 1)
+      window = await_inbox_window
+      editor.call_function("win_gotoid", [window])
+      editor.command(question.to_s)
+      editor.command("LainReply #{text}")
+    end
+
     # Only the descriptors are guaranteed to close; a step that raises skips the ones after it and
     # leaves the processes to the sandbox's reaper.
     def stop
@@ -99,6 +108,27 @@ module E2E
         window.positive? && editor.evaluate("getbufvar(bufnr('#{APPROVAL_BUFFER}'), 'lain_approval_calls', [])").any?
       end
       window
+    end
+
+    def await_inbox_window
+      window = 0
+      wait_until(timeout: BOOT_SECONDS, reason: "#{INBOX_BUFFER} in a window listing a question") do
+        window = inbox_window
+        window.positive? && inbox_lists_question?
+      end
+      window
+    end
+
+    # The buffer is created by its first rendering and may sit in no window until a gesture shows it.
+    def inbox_window
+      return 0 unless editor.evaluate("bufexists('#{INBOX_BUFFER}')").to_i.positive?
+
+      editor.command("sbuffer #{INBOX_BUFFER}") if editor.evaluate("bufwinid('#{INBOX_BUFFER}')").to_i.negative?
+      editor.evaluate("bufwinid('#{INBOX_BUFFER}')").to_i
+    end
+
+    def inbox_lists_question?
+      editor.evaluate("getbufline('#{INBOX_BUFFER}', 1, '$')") != Lain::Frontend::Neovim::InboxView::EMPTY
     end
 
     # Nothing reads the terminal otherwise, and a client whose writes block cannot hear the server go.

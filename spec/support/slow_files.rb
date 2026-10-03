@@ -11,6 +11,7 @@ module SlowFiles
 
   PATHS = %w[
     spec/e2e/cockpit_approval_spec.rb
+    spec/e2e/cockpit_question_spec.rb
     spec/e2e/fork_resume_spec.rb
     spec/e2e/session_passes_spec.rb
     spec/e2e/upstream_faults_spec.rb
