@@ -8,7 +8,9 @@ module E2E
   # itself and hands every other request to a handler, so a journey scripts only the turns.
   class Upstream
     HOST = "127.0.0.1"
-    PROBES = { "/api/ps" => { "models" => [] }, "/api/show" => {} }.freeze
+    PROBES = lambda do |request|
+      { "/api/ps" => ['{"models":[]}'], "/api/show" => ["{}"] }[request.path]&.then { |lines| Reply.new(lines:) }
+    end
 
     # The body ends cleanly after the last line, so a reply with no done line is a stream cut short.
     # hold keeps the connection open, with no body, until #release.
@@ -64,8 +66,8 @@ module E2E
       Thread.current.report_on_exception = false
       request = read(session)
       @lock.synchronize { @requests << request }
-      probe = @probes[request.path]
-      probe ? json(session, probe) : answer(session, @handler.call(request))
+      probe = @probes.call(request)
+      probe ? whole(session, probe) : answer(session, @handler.call(request))
     rescue Errno::EPIPE, Errno::ECONNRESET
       nil
     ensure
@@ -78,23 +80,18 @@ module E2E
       Request.new(verb: raw.verb, path: raw.path, body:)
     end
 
-    def json(session, hash)
-      body = JSON.generate(hash)
-      session.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: #{body.bytesize}\r\n" \
-                    "Connection: close\r\n\r\n#{body}")
-    end
-
     def answer(session, reply)
-      return refuse(session, reply) unless reply.status == 200
+      return whole(session, reply) unless reply.status == 200
 
       stream_headers(session)
       @released.pop if reply.hold
       emit(session, reply)
     end
 
-    def refuse(session, reply)
+    def whole(session, reply)
       body = reply.lines.join
-      session.write("HTTP/1.1 #{reply.status} Error\r\nContent-Type: application/json\r\n" \
+      reason = reply.status == 200 ? "OK" : "Error"
+      session.write("HTTP/1.1 #{reply.status} #{reason}\r\nContent-Type: application/json\r\n" \
                     "Content-Length: #{body.bytesize}\r\nConnection: close\r\n\r\n#{body}")
     end
 

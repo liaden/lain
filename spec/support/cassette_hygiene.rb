@@ -129,6 +129,15 @@ module CassetteHygiene
     text.is_a?(String) ? text.gsub(BLOB_PATH, BLOB_PLACEHOLDER) : text
   end
 
+  SIZE_LIMIT = 200_000
+  # A journey under e2e/ replays a thinking model's raw stream, about 120 bytes a token and 40 to
+  # 60 KB a call, and a recorded reply is never hand-edited.
+  SIZE_LIMITS = { "e2e" => 400_000 }.freeze
+
+  def self.size_limit(path) = SIZE_LIMITS.fetch(File.basename(File.dirname(path)), SIZE_LIMIT)
+
+  def self.oversized(paths) = paths.select { |path| File.size(path) > size_limit(path) }
+
   def self.findings_in(paths) = paths.flat_map { |path| findings(path) }
 
   # EVERY String in the parsed document is checked against the content shapes,

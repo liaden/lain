@@ -179,9 +179,9 @@ module T13RecordedOllama
 
   def cassette_dir = File.expand_path("../../fixtures/vcr_cassettes", __dir__)
 
-  # Every ollama cassette, not merely this card's three: the run-loop cassette
-  # lands in the same directory and is swept by the same guard.
-  def cassettes = Dir.glob(File.join(cassette_dir, "ollama_*.yml"))
+  # Every ollama cassette, the journeys' under e2e/ included: they are committed
+  # the same way and leak the same way.
+  def cassettes = Dir.glob(File.join(cassette_dir, "{ollama_*.yml,e2e/*.yml}"))
 end
 
 RSpec.describe Lain::Provider::Ollama, records: :ollama do
@@ -338,8 +338,6 @@ RSpec.describe "the committed ollama cassettes" do
   # Small enough that a human can open one and read it. The plan's own limit is
   # "a few hundred kilobytes"; this is the tripwire for drifting toward it.
   it "stay small enough to read" do
-    oversized = T13RecordedOllama.cassettes.select { |path| File.size(path) > 200_000 }
-
-    expect(oversized).to be_empty
+    expect(CassetteHygiene.oversized(T13RecordedOllama.cassettes)).to be_empty
   end
 end

@@ -114,6 +114,8 @@ module NetworkAccess
   end
   private_class_method :permitted?
 
+  def self.held?(uri) = permitted?(URI(uri.to_s))
+
   def self.hold(port)
     raise ArgumentError, "a loopback port must be an integer in #{PORTS}, got #{port.inspect}" unless port?(port)
 

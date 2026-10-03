@@ -112,6 +112,10 @@ module OllamaProbeStub
     local_bases.any? { |base| server_key(base) == candidate }
   end
 
+  # The e2e recorder forwards probes to the real server while it holds the port, and answering
+  # them here would write this stub's body into a committed cassette.
+  def self.held?(uri) = NetworkAccess.held?(uri)
+
   def self.server_key(uri_string)
     ::Lain::Provider::Admission::Endpoint.canonical(uri_string).split("://", 2).last.split("/", 2).first
   end
@@ -133,11 +137,15 @@ RSpec.configure do |config|
   # a local recording, or (now) an ordinary refusal for a non-local host.
   config.before do
     stub_request(:get, %r{/api/ps})
-      .with { |request| OllamaProbeStub.local?(request.uri) && !OllamaProbeStub.cassette_answers? }
+      .with do |request|
+        OllamaProbeStub.local?(request.uri) && !OllamaProbeStub.cassette_answers? &&
+          !OllamaProbeStub.held?(request.uri)
+      end
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: '{"models":[]}')
     stub_request(:post, %r{/api/show})
       .with do |request|
-        OllamaProbeStub.local?(request.uri) && !OllamaProbeStub.cassette_answers?(OllamaProbeStub::SHOW_PATH)
+        OllamaProbeStub.local?(request.uri) && !OllamaProbeStub.cassette_answers?(OllamaProbeStub::SHOW_PATH) &&
+          !OllamaProbeStub.held?(request.uri)
       end
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: "{}")
   end

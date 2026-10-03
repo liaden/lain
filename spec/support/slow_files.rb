@@ -11,6 +11,7 @@ module SlowFiles
 
   PATHS = %w[
     spec/e2e/upstream_faults_spec.rb
+    spec/e2e/wire_contract_spec.rb
     spec/lain/cli/command/ruby_spec.rb
     spec/lain/cli/epic_driver/factory_spec.rb
     spec/lain/cli/human_replies_spec.rb
