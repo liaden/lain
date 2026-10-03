@@ -359,9 +359,8 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   Added 2026-09-21, from ten hook-verified landings on a box with one core pinned by an unrelated
   job. Each of these reddened at least one pre-commit suite and then passed 3 of 3 serial runs of
-  its file:
-  `Lain::Frontend::TTY a note rendered while a prompt is drawn loses and repeats nothing typed
-  while notes keep arriving, and prints them all as the prompt closes` (reddened twice);
+  its file (a fourth, the TTY's "loses and repeats nothing typed while notes keep arriving", is
+  retired below):
   `Lain::Frontend::InputPane a pane with no chat to talk to says what it is waiting for without
   claiming the screen, and leaves when told to` (twice; the 2026-10-02 join did not reproduce its
   cause, so it stays here);
@@ -396,6 +395,13 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-03: `Lain::Frontend::TTY a note rendered while a prompt is drawn loses and repeats
+    nothing typed while notes keep arriving, and prints them all as the prompt closes` (red in a
+    hook suite, green alone). The spec wrote its `notes` file in place while the child polled for it
+    and read it at once, so the child could read it empty and raise `TypeError` on `Integer(nil)`.
+    A 0.2s pause between create and write reproduced it every time. The spec now writes a temp file
+    and renames it into place.
+
   - 2026-10-02: `Lain::Frontend::Neovim lain://timeline reflects a turn commit does not touch
     lain://timeline for an event that names no turn` (seed 7814), and the same shape seen in
     `51_thread_spec`'s `restores a live diff with the folds the human was reading`. nvim creates its

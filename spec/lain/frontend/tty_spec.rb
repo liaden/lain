@@ -1604,7 +1604,9 @@ RSpec.describe Lain::Frontend::TTY do
     end
 
     def notes(count, gap: 0.0)
-      File.write(File.join(@dir, "notes"), "#{count} #{gap}")
+      # The child polls for the file and reads it at once, so it must never see it half written.
+      File.write(File.join(@dir, "notes.part"), "#{count} #{gap}")
+      File.rename(File.join(@dir, "notes.part"), File.join(@dir, "notes"))
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
       noted = File.join(@dir, "noted")
       sleep(0.02) until File.exist?(noted) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
