@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "English"
 require "pathname"
 require "tmpdir"
 
@@ -378,8 +379,8 @@ class BootWithout
 
   def boot
     entry = File.join(@dir, "lib", "lain.rb")
-    output = IO.popen([RbConfig.ruby, "-e", %(require "#{entry}"; print "ok")], err: %i[child out], &:read)
-    Boot.new(ok: output.include?("ok"), output:)
+    output = IO.popen([RbConfig.ruby, "-e", %(require "#{entry}")], err: %i[child out], &:read)
+    Boot.new(ok: $CHILD_STATUS.success?, output:)
   end
 
   def remove = FileUtils.remove_entry(@dir)

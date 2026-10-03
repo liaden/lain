@@ -395,6 +395,12 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-03: `the deletion map booting without a capability does NOT load when a forced
+    dependent is left behind` (red in a hook suite, green alone). `BootWithout#boot` read any output
+    containing "ok" as a clean boot, and a failed boot's backtrace names its `Dir.mktmpdir` path,
+    whose random suffix held "ok" in 81 of 20,000 names. A forced "ok" in the name reproduced it
+    every time. The boot is now judged by the child's exit status.
+
   - 2026-10-03: `Lain::Frontend::TTY a note rendered while a prompt is drawn loses and repeats
     nothing typed while notes keep arriving, and prints them all as the prompt closes` (red in a
     hook suite, green alone). The spec wrote its `notes` file in place while the child polled for it
