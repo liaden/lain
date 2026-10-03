@@ -62,10 +62,21 @@ module E2E
 
     private
 
+    # A chat that exits before the pattern shows (a refused flag) will never print it, so waiting
+    # out the clock would only hide the refusal behind a timeout.
     def wait_for_screen(pattern, since: 0)
       wait_until(timeout: BOOT_SECONDS, reason: "#{pattern.inspect} on the screen") do
-        screen[since..].to_s.match?(pattern)
+        screen[since..].to_s.match?(pattern) || exited?
       end
+      return if screen[since..].to_s.match?(pattern)
+
+      raise "the chat exited #{@exit.inspect} before #{pattern.inspect}: #{screen.inspect}"
+    end
+
+    def exited?
+      @exit ||= Process.wait2(pid, Process::WNOHANG)&.last
+    rescue Errno::ECHILD
+      true
     end
 
     def drain

@@ -53,7 +53,7 @@ module E2E
 
     def self.re_record(path)
       journey = RSpec.current_example&.file_path&.delete_prefix("./") || "spec/e2e/<journey>_spec.rb"
-      "rm -f #{relative(path)} && LAIN_RECORD=ollama bundle exec rspec #{journey}"
+      "rm -f #{relative(path)} && LAIN_SPEC_BUDGET=900 LAIN_RECORD=ollama bundle exec rspec #{journey}"
     end
 
     # The parts of a request its reply depends on. The system prompt is left out on purpose, so a

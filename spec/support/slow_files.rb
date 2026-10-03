@@ -10,6 +10,7 @@ module SlowFiles
   THRESHOLD_SECONDS = 5
 
   PATHS = %w[
+    spec/e2e/fork_resume_spec.rb
     spec/e2e/upstream_faults_spec.rb
     spec/e2e/wire_contract_spec.rb
     spec/lain/cli/command/ruby_spec.rb

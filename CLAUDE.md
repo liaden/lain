@@ -242,7 +242,7 @@ defects have lived:
   against a spec-owned stand-in for ollama, under `spec/e2e/`: one file per journey, deliberately
   unmirrored like `spec/lain/seams/`. Each file goes in `spec/support/slow_files.rb` by hand, which
   is what makes a bare `rspec` skip it. Re-record a journey with
-  `rm -f spec/fixtures/vcr_cassettes/e2e/<cassette>.yml && LAIN_RECORD=ollama bundle exec rspec spec/e2e/<journey>_spec.rb`,
+  `rm -f spec/fixtures/vcr_cassettes/e2e/<cassette>.yml && LAIN_RECORD=ollama LAIN_SPEC_BUDGET=900 bundle exec rspec spec/e2e/<journey>_spec.rb`,
   where `<cassette>` is the name its spec passes to `E2E::Cassette.for`, against a loopback ollama
   serving `qwen3:4b` and `lfm2.5:latest`. `probes.yml` is shared and only gains entries for models
   it lacks; delete it to refresh every probe, and its `/api/ps` then records whatever models
