@@ -582,22 +582,21 @@ module Lain
         # lands in both a model-facing sentence and a journal line.
         def failure(error) = "#{error.class}: #{error.message.to_s[0, MAX_FAILURE_REASON]}"
 
-        # Why this summary cannot be delivered, or nil when it can. Five ways a
-        # second ask succeeds and still has nothing to deliver, each of which
-        # would otherwise be published UNDER A NOTE PROMISING A SUMMARY: an
-        # empty answer, a `:max_tokens` stop, a `:refusal`, a `:malformed` one,
-        # and a summary still over the ceiling. Three of them are the reason
-        # `stop_reason` is read at all -- a sentence cut off mid-word is
+        # Why this summary cannot be delivered, or nil when it can. Ways a second
+        # ask succeeds and still has nothing to deliver, each of which would
+        # otherwise be published UNDER A NOTE PROMISING A SUMMARY: an empty
+        # answer, any failing stop reason, and a summary still over the ceiling.
+        # The stop reason is read at all because a sentence cut off mid-word is
         # precisely the silent truncation this whole path exists to avoid, "I
         # decline." labelled as a summary tells the parent the decline IS the
         # answer it asked for, and a prose tool call so labelled hands the
-        # parent an envelope as though it were the child's findings.
+        # parent an envelope as though it were the child's findings. The
+        # response's own failure supplies the words, so a new failing reason
+        # floors without an edit here.
         def undeliverable(summary)
           text = summary.text
           return "it answered nothing when asked" if text.empty?
-          return "the summary stopped at the model's own token ceiling" if summary.stop_reason == StopReason::MAX_TOKENS
-          return "the child declined to summarize it" if summary.stop_reason == StopReason::REFUSAL
-          return "the summary was a tool call written as prose" if summary.stop_reason == StopReason::MALFORMED
+          return summary.failure.message if summary.failure
           return if bounds.admits?(text.bytesize)
 
           "the summary was #{text.bytesize} #{bounds.unit}, over the ceiling too"

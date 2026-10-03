@@ -102,6 +102,13 @@ RSpec.describe Lain::Response do
       expect(stopped(:malformed).failure.message).to include("said nothing at all")
     end
 
+    it "names a truncated stream and points at its journal record, keeping the partial text" do
+      failure = stopped(:truncated, text: "The answ").failure
+
+      expect(failure.message).to include("truncated stream", "truncated_stream journal record")
+      expect(failure.withholds_text?).to be(false)
+    end
+
     it "stays deeply frozen" do
       expect(Ractor.shareable?(stopped(:malformed).failure)).to be(true)
     end

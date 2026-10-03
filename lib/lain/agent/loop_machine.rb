@@ -51,6 +51,7 @@ module Lain
         event(:refusal) { transition awaiting_model: :failed }
         event(:unknown) { transition awaiting_model: :failed }
         event(:malformed) { transition awaiting_model: :failed }
+        event(:truncated) { transition awaiting_model: :failed }
 
         # The dual-ledger outer loop's stall->replan pair, purely ADDITIVE: both
         # move to or from the new `:stalled` state, so no previously legal move

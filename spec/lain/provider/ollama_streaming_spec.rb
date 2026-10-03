@@ -272,6 +272,23 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect(response.text).to eq("Hello, café")
     end
 
+    it "fails a stream cut off before its terminal frame as :truncated, keeping the partial text" do
+      response = described_class.new(transport: stream_transport([ndjson(stream_lines.first(2))]))
+                                .complete(request(stream: true))
+
+      expect(response.stop_reason).to eq(:truncated)
+      expect(response.text).to eq("Hello, café")
+    end
+
+    # A half-received turn must not act: the tool call may be the first of
+    # several the model meant to make.
+    it "fails a stream cut off after a tool call as :truncated, not :tool_use" do
+      response = described_class.new(transport: stream_transport([ndjson(stream_lines.first(3))]))
+                                .complete(request(stream: true))
+
+      expect(response.stop_reason).to eq(:truncated)
+    end
+
     it "derives :tool_use from the streamed tool_call despite done_reason stop" do
       response = described_class.new(transport: stream_transport([ndjson(stream_lines)]))
                                 .complete(request(stream: true))

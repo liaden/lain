@@ -4,12 +4,11 @@ require "json"
 
 # Whether the stream ever TERMINATED, and the record that says so.
 #
-# `#build_body` writes `"done" => true` unconditionally, because the
-# non-streaming body it has to match always carries one -- so a connection that
-# died mid-answer reassembles into a body byte-identical in shape to a complete
-# one, decoding to a nil `done_reason` and all-zero usage with the prose intact.
-# Nothing above the provider can tell that from a model that genuinely stopped
-# with no counts to report, which is how the failure was seen once and lost.
+# A connection that died mid-answer reassembles into a body with a nil
+# `done_reason` and all-zero usage with the prose intact, which a model that
+# genuinely stopped with no counts to report looks like too -- which is how the
+# failure was seen once and lost. `#build_body` therefore says `"done" => false`
+# for it, and the provider fails the turn as :truncated.
 #
 # This file pins the two halves of the fix: the assembler REPORTS what it saw in
 # ONE message (it takes no arguments and holds no channel, so it cannot emit),
@@ -45,6 +44,16 @@ RSpec.describe Lain::Provider::Ollama::StreamAssembler do
 
   def fed(lines)
     described_class.new.tap { |assembler| assembler.feed(ndjson(lines)) }
+  end
+
+  describe "#result, the body a stream reassembles into" do
+    it "says done for a stream whose terminal frame arrived" do
+      expect(fed(content_lines + [done_line]).result).to include("done" => true)
+    end
+
+    it "does not say done for a stream that never terminated, so the cut stays visible in the body" do
+      expect(fed(content_lines).result).to include("done" => false)
+    end
   end
 
   describe "#truncation, the reading a record is cut from" do

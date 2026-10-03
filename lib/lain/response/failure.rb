@@ -18,6 +18,8 @@ module Lain
 
     Failure::MESSAGES = { ::Lain::StopReason::MAX_TOKENS => "model hit max_tokens before finishing",
                           ::Lain::StopReason::REFUSAL => "model refused to continue",
+                          ::Lain::StopReason::TRUNCATED => "truncated stream: the connection ended before the model " \
+                                                           "finished (see its truncated_stream journal record)",
                           ::Lain::StopReason::UNKNOWN => "unrecognized stop_reason from provider" }.freeze
 
     # Malformed has no entry above: its message depends on the text, so it is

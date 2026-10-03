@@ -80,8 +80,11 @@ and from the status feed's `state.json` (path per `method.md`'s "Record before y
 `Provider::Ollama`'s stream assembler used to write `done: true` whether or not a terminal NDJSON
 frame ever arrived, so a connection that died mid-answer reassembled into a body
 shape-identical to a complete turn — `:unknown` stop reason, all-zero usage, prose intact — and
-nothing said so. A `Telemetry::TruncatedStream` record (journal type `truncated_stream`) now
-does: `kind` is `"unterminated"` (no terminal frame arrived at all — the prose is a fragment) or
+nothing said so. Two things say so now. A stream with no terminal frame carries `done: false` out of
+the assembler, the provider fails the turn as `:truncated`, and the pane draws `error: truncated
+stream: the connection ended before the model finished (see its truncated_stream journal record)`;
+that wins over a tool call in the cut stream, so a half-received turn never runs a tool. And a
+`Telemetry::TruncatedStream` record (journal type `truncated_stream`) names the shape: `kind` is `"unterminated"` (no terminal frame arrived at all — the prose is a fragment) or
 `"counts_absent"` (a terminal frame arrived, the prose is whole, but it carried no
 `prompt_eval_count`/`eval_count`), alongside `frames` (NDJSON objects ingested),
 `accumulated_bytes` (message bytes accumulated), `tool_calls` (tool-call frames in flight when
@@ -101,23 +104,23 @@ this way — the other is a rule about what does NOT get journaled, not a recipe
   `lib/lain/provider/http/configuration.rb:110`) it raises `"stalled stream: … with the connection
   still open"` (`lib/lain/provider/http/streaming/faraday_handlers.rb:396-399`) instead of ever
   reaching `note_truncated_stream` — the exact failure round 15 hit driving this shape.
-- **`kind: "unterminated"` is not drivable through the live path at all**, and "sever before ANY
-  frame carrying `done: true`" is not a recipe for it — it is a recipe for a clean retry, which
-  journals nothing. `:post` is retryable (`max_retries: 3`,
+- **`kind: "unterminated"` is drivable by ending the body cleanly with no `done` line.** Send a
+  few NDJSON lines, then the chunked terminator (a clean end of body), and nothing else. The chat
+  fails the turn as `:truncated`, draws the message above, and writes the record with `kind:
+  "unterminated"`. `spec/e2e/upstream_faults_spec.rb` drives exactly this through the real binary.
+  A **hard sever** (RST, or a FIN with no chunked terminator) is a different shape and writes no
+  record: `:post` is retryable (`max_retries: 3`,
   `lib/lain/provider/http/configuration.rb:111` — four attempts total, and not operator-tunable the
   way `stream_stall_timeout` is), and `RetryTap#retry_block` abandons the dying attempt and resets
   the assembler before the retry's first chunk lands
   (`lib/lain/provider/ollama/retry_tap.rb:111-119`, `lib/lain/provider/ollama/stream_assembler.rb:76-90`).
-  So a severed connection either gets retried into a clean completion — nothing to report — or every
-  attempt fails and `stream_body` raises before `note_truncated_stream` ever runs
-  (`lib/lain/provider/ollama.rb:446-453`). This is pinned as deliberate, not a gap:
-  `spec/lain/provider/ollama/stream_assembler_spec.rb:244-251` — *"A mid-stream sever is cleanly
+  So a hard-severed connection either gets retried into a clean completion — nothing to report — or
+  every attempt fails and `stream_body` raises (`error: end of file reached`) before
+  `note_truncated_stream` ever runs. That is pinned as deliberate:
+  `spec/lain/provider/ollama/stream_assembler_spec.rb` — *"A mid-stream sever is cleanly
   RETRIED, so the abandoned attempt is not the turn — a record for it is noise"* — asserts an empty
-  journal for exactly this shape, and `lib/lain/provider/ollama.rb:467-471` states the same rule
-  where the record is cut: *"a severed attempt that faraday-retry cleanly replaced has nothing left
-  here to record."* Round 15 confirmed it empirically driving this exact recipe: four attempts,
-  `end of file reached`, **no turn committed** — not a record withheld, but no record and no turn,
-  which is what "cleanly retried" means end to end.
+  journal for exactly this shape. Round 15 confirmed it empirically driving a severing proxy: four
+  attempts, `end of file reached`, **no turn committed**.
 
 **To confirm it:**
 

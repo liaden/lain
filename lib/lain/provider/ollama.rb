@@ -573,9 +573,10 @@ module Lain
       # channel, so the reading is made there and the record is cut here, where
       # the journal is.
       #
-      # It reports and does not repair: the body is handed on untouched, because
+      # It reports and does not repair: the body keeps its partial text, because
       # the failure this was built from was a content-bearing turn and losing
-      # the answer would be the worse defect.
+      # the answer would be the worse defect. The turn fails as :truncated
+      # from the `"done" => false` the assembler wrote into that body.
       #
       # Scoped to the attempt actually RETURNED. This assembler is the one whose
       # bytes reached the caller, and #reset zeroed its counters on every

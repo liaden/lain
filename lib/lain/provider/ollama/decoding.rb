@@ -190,13 +190,19 @@ module Lain
           JSON.parse(arguments)
         end
 
-        # Presence of tool_calls forces :tool_use -- done_reason stays "stop" on
-        # a tool turn. A prose envelope reads :malformed whatever done_reason
-        # says, since "stop" is exactly the lie it tells. Silence may not settle
-        # as an answer; every other reason is left saying what it said, because
-        # a spent ceiling and a connection that closed already name a cause a
-        # caller can act on.
+        # One reason per arm, in the order they win:
+        # - `"done" => false` is a stream that ended with no terminal frame,
+        #   which no wire reason can say. It wins over a tool call, because a
+        #   half-received turn must not act.
+        # - Presence of tool_calls forces :tool_use, since done_reason stays
+        #   "stop" on a tool turn.
+        # - A prose envelope reads :malformed whatever done_reason says, since
+        #   "stop" is exactly the lie it tells.
+        # - Silence may not settle as an answer.
+        # - Every other reason is left saying what it said, because a spent
+        #   ceiling already names a cause a caller can act on.
         def decode_stop_reason(body, message, envelope, silent)
+          return StopReason::TRUNCATED if body["done"] == false
           return StopReason::TOOL_USE unless Array(message["tool_calls"]).empty?
           return StopReason::MALFORMED unless envelope.nil?
 

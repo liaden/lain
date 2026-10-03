@@ -19,6 +19,10 @@ module Lain
   # {Agent::LoopMachine} declare one event per value in `ALL` and fire it
   # directly instead of falling through a `case`'s `else`.
   #
+  # `:truncated` is machine-only for the same reason: a stream that ended with
+  # no terminal frame carries no stop reason on the wire, so the provider that
+  # read the missing frame says it rather than letting it normalize to `:unknown`.
+  #
   # So two entry points. {.normalize} reads a WIRE value and can only ever
   # answer from `KNOWN` or `:unknown`, so no provider string spells its way into
   # a machine-only reason. {.admit} is what {Response} runs: a Symbol already in
@@ -37,9 +41,10 @@ module Lain
     REFUSAL = :refusal
     UNKNOWN = :unknown
     MALFORMED = :malformed
+    TRUNCATED = :truncated
 
     KNOWN = [END_TURN, TOOL_USE, MAX_TOKENS, STOP_SEQUENCE, PAUSE_TURN, REFUSAL].freeze
-    ALL = (KNOWN + [UNKNOWN, MALFORMED]).freeze
+    ALL = (KNOWN + [UNKNOWN, MALFORMED, TRUNCATED]).freeze
 
     def self.normalize(value)
       symbol = value&.to_sym

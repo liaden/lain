@@ -36,6 +36,11 @@ RSpec.describe Lain::StopReason do
       expect(described_class::KNOWN).not_to include(:malformed)
     end
 
+    it "routes a truncated stream, which only lain can read off a wire that said nothing" do
+      expect(described_class::ALL).to include(:truncated)
+      expect(described_class.normalize("truncated")).to eq(:unknown)
+    end
+
     it "does not let a wire value spell its way into a machine-only reason" do
       expect(described_class.normalize("malformed")).to eq(:unknown)
       expect(described_class.normalize(:malformed)).to eq(:unknown)

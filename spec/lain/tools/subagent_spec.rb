@@ -755,8 +755,18 @@ RSpec.describe Lain::Tools::Subagent do
       result = build_subagent(provider:).call({ "prompt" => "go" }, invocation)
 
       expect(result.content).not_to include("half a sen")
-      expect(result.content).to include("token ceiling")
+      expect(result.content).to include("hit max_tokens")
       expect(result.content).to include(ceiling.to_s)
+    end
+
+    it "floors a summary whose stream was cut off, whatever reason says so" do
+      provider = mock(text_response(oversized), text_response("half a sen", stop_reason: :truncated))
+
+      result = build_subagent(provider:).call({ "prompt" => "go" }, invocation)
+
+      expect(result.content).not_to include("summarized by the subagent itself")
+      expect(result.content).not_to include("half a sen")
+      expect(result.content).to include("truncated stream")
     end
 
     # A real Response, not a stand-in that answers only `text`: the members a
@@ -832,7 +842,7 @@ RSpec.describe Lain::Tools::Subagent do
       result = build_subagent(provider:).call({ "prompt" => "go" }, invocation)
 
       expect(result.content).not_to include("summarized by the subagent itself")
-      expect(result.content).to include("declined")
+      expect(result.content).to include("refused to continue")
       expect(result.content).to include(ceiling.to_s)
     end
 

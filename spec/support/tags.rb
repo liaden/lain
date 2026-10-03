@@ -180,6 +180,12 @@ RSpec.configure do |config|
   config.filter_run_excluding(:seam) unless SEAM_ENABLED
 end
 
+# :e2e names a level like :seam, and its cost is carried by :slow.
+RSpec.configure do |config|
+  config.define_derived_metadata(file_path: %r{/spec/e2e/}) { |meta| meta[:e2e] = true }
+  config.after(:example, :e2e) { E2E::Sandbox.reap_all! }
+end
+
 # :services specs provision a REAL Postgres for the DB-index isolation
 # strategy (spec/lain/isolation/db_index_spec.rb). They cost no money and touch
 # no network -- they shell out to createdb/dropdb against a local

@@ -238,6 +238,10 @@ defects have lived:
   `spec/lain/seams/` is for seams belonging to no single subject; one with an obvious subject
   stays at its mirror path and carries the tag. 2.5% of the suite but ~35% of a serial run —
   which is what makes `--tag '~seam'` a useful inner loop.
+- **`:e2e`** — this checkout's real `exe/lain` processes (plain chat, the `lain up` cockpit)
+  against a spec-owned stand-in for ollama, under `spec/e2e/`: one file per journey, deliberately
+  unmirrored like `spec/lain/seams/`. Each file goes in `spec/support/slow_files.rb` by hand, which
+  is what makes a bare `rspec` skip it.
 - **`:slow`** — a cost, not a kind: the spec files `spec/support/slow_files.rb` lists (its header
   holds the threshold and how to regenerate it), tagged by path, so no spec file carries it. A bare
   local `rspec` skips them and says how many; `LAIN_SLOW=1`, a file named by path, and `rake pspec` run them.

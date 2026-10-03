@@ -90,10 +90,9 @@ module Lain
         end
 
         # What this attempt's stream failed to report, and how far it got before
-        # it stopped -- or nil when it reported everything. #build_body writes
-        # `"done" => true` whatever happened (it has to, to match the
-        # non-streaming body), so this is the only place the difference
-        # survives.
+        # it stopped -- or nil when it reported everything. #build_body carries the
+        # same fact as `"done" => false` for the one reading that fails a turn,
+        # and this adds the detail a record needs.
         #
         # ONE message rather than a reader per field, because the caller's whole
         # errand is to cut a single record: four reads across two objects is the
@@ -237,7 +236,7 @@ module Lain
           message = { "role" => "assistant", "content" => @content }
           message["thinking"] = @thinking unless @thinking.empty?
           message["tool_calls"] = @tool_calls unless @tool_calls.empty?
-          { "model" => @model, "message" => message, "done" => true, "done_reason" => @done_reason,
+          { "model" => @model, "message" => message, "done" => @terminated, "done_reason" => @done_reason,
             "prompt_eval_count" => @prompt_eval_count, "eval_count" => @eval_count }
         end
       end

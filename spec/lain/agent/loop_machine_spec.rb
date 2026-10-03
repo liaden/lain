@@ -68,7 +68,7 @@ RSpec.describe Lain::Agent::LoopMachine do
              .flat_map { |branch| branch.state_requirements.map { |req| req[:to].values } }
              .flatten.include?(:failed)
       end
-      expect(failing.map(&:name)).to match_array(%i[max_tokens refusal unknown malformed])
+      expect(failing.map(&:name)).to match_array(%i[max_tokens refusal unknown malformed truncated])
     end
   end
 
