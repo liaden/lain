@@ -130,9 +130,9 @@ module CassetteHygiene
   end
 
   SIZE_LIMIT = 200_000
-  # A journey under e2e/ replays a thinking model's raw stream, about 120 bytes a token and 40 to
-  # 60 KB a call, and a recorded reply is never hand-edited.
-  SIZE_LIMITS = { "e2e" => 400_000 }.freeze
+  # A recorded reply is never hand-edited, and a thinking model's raw stream is large: a qwen3:4b
+  # consolidate pass once recorded a whole cassette of 568 to 627 KB.
+  SIZE_LIMITS = { "e2e" => 800_000 }.freeze
 
   def self.size_limit(path) = SIZE_LIMITS.fetch(File.basename(File.dirname(path)), SIZE_LIMIT)
 
