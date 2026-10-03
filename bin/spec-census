@@ -95,16 +95,6 @@ module SpecCensus
   #      class filter) wrapping a nested `expect` -- has zero occurrences in
   #      this suite today; a future ratchet should watch for that one
   #      specifically, not just any nesting.
-  #      The dominant source of `nested_expect` flags is a DIFFERENT, legitimate
-  #      idiom that happens to share this shape: `spec/support_matchers_spec.rb`
-  #      tests the custom matchers under `spec/support/matchers/` via
-  #      `expect { expect(x).to my_matcher }.to raise_error(RSpec::Expectations::ExpectationNotMetError, /msg/)`
-  #      -- RSpec's own recommended way to assert a matcher's failure message,
-  #      where the nesting is required, not a bug. That file carries its own
-  #      `aggregate_failures: false` (see its header comment) precisely because
-  #      aggregation would swallow the message this pattern needs to inspect --
-  #      which is a better mechanical discriminator than the shape of the outer
-  #      matcher, for whoever builds the next refinement.
   #
   # A WORKLIST, not a delete list. A planning-time crude grep found 352 raw
   # `not_to raise_error` occurrences across 183 files, of which roughly 127
@@ -404,12 +394,11 @@ module SpecCensus
     # `sole_raise_error`/`nested_expect` shapes, and each shape's own
     # read-this-first split. A named collaborator rather than six local
     # variables, so the methods that print from it take one argument, not six.
-    Buckets = Struct.new(:sole, :nested, :likely, :unclear, :idiom, :buggy) do
+    Buckets = Struct.new(:sole, :nested, :likely, :unclear) do
       def self.from(list)
         sole, nested = list.partition { |v| v.shape == :sole_raise_error }
         likely, unclear = sole.partition { |v| v.bang_call || v.raise_sibling }
-        idiom, buggy = nested.partition { |v| v.path.end_with?("support_matchers_spec.rb") }
-        new(sole, nested, likely, unclear, idiom, buggy)
+        new(sole, nested, likely, unclear)
       end
     end
 
@@ -449,11 +438,7 @@ module SpecCensus
       [
         section("sole_raise_error -- bang_call or raise_sibling detected: READ THESE FIRST", buckets.likely),
         section("sole_raise_error -- neither signal detected (still read before deleting)", buckets.unclear),
-        section(
-          "nested_expect -- spec/support_matchers_spec.rb (legitimate matcher-testing idiom, see module doc)",
-          buckets.idiom
-        ),
-        section("nested_expect -- elsewhere (misleading, not swallowed -- see module doc)", buckets.buggy)
+        section("nested_expect -- misleading, not swallowed (see module doc)", buckets.nested)
       ]
     end
 
@@ -490,8 +475,6 @@ module SpecCensus
     def nested_counts_block(buckets)
       <<~TEXT
         nested_expect:     #{pair(buckets.nested)}
-          spec/support_matchers_spec.rb (legitimate idiom):  #{pair(buckets.idiom)}
-          elsewhere (misleading, not swallowed):             #{pair(buckets.buggy)}
       TEXT
     end
 

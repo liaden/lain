@@ -229,7 +229,7 @@ end
 # lifts the config-level exclusion for the tag it names and no other, so an
 # example tagged `:vsock, :core` would stay excluded under `--tag vsock` -- and the
 # run would pass GREEN having executed nothing. That failure is silent, which is
-# why it is spelled out here and reproduced in spec/support_vsock_availability_spec.rb.
+# why it is spelled out here.
 #
 # When opted in but a precondition is missing, an example SKIPS (never fails),
 # mirroring :core -- and the message names WHICH precondition, because "no vsock"

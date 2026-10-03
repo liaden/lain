@@ -642,7 +642,7 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   now checks CPU time consumed against wall time and the box's own 1-minute load average, and a
   `Stuck` report leads with "STARVED, not necessarily stuck" instead of "This is a hang, not
   slowness" when the numbers say the process was never scheduled rather than genuinely wedged —
-  still loud, still dumps every thread, just honestly labelled. See `spec/support_watchdog_spec.rb`.
+  still loud, still dumps every thread, just honestly labelled.
 - **Never name a `.toml` explicitly on a `rubocop` command line.** `rubocop -a lib/lain/prompt/default.toml`
   parses it as Ruby and "corrects" it — it silently stripped `format = ` from the prompt format.
   A bare `bundle exec rubocop` (and so `pre-commit run --all-files`) is safe: the default
@@ -766,7 +766,7 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   killed mid-file (an OOM kill, a `kill -9`) runs no `after(:context)`, and a child started with
   `PTY.spawn` sits in its own session, so no Ctrl-C reaches it: its spares would poll forever.
   Each parked child compares `Process.ppid` against the `WARM_PPID` it was given and calls `exit!`
-  when its parent is gone; `spec/support_warm_pool_spec.rb` pins it.
+  when its parent is gone.
 
 - **A pane's `nvim --embed` that ignores TERM outlives the tmux server it ran under.** `kill-server`
   signals the panes' shells, not their children, so an embed server reparented to init and lived

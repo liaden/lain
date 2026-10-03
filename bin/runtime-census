@@ -26,7 +26,6 @@ module RuntimeCensus
     "spec/lain/seams/input_pane_socket_spec.rb" => 73,
     "spec/lain/seams/plain_chat_prompt_guards_spec.rb" => 64,
     "spec/lain/cli/up_spec.rb" => 62,
-    "spec/support_slow_files_spec.rb" => 60,
     "spec/lain/seams/qa_sandbox_pane_resolution_spec.rb" => 43,
     "spec/lain/frontend/stdin_pump_spec.rb" => 38,
     "spec/lain/cli/command/review_spec.rb" => 36,

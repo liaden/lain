@@ -251,7 +251,7 @@ RSpec.describe SpecCensus do
     let(:every_bucket) do
       [violation("spec/a_spec.rb", :sole_raise_error, bang_call: true, raise_sibling: false),
        violation("spec/b_spec.rb", :sole_raise_error, bang_call: false, raise_sibling: false),
-       violation("spec/support_matchers_spec.rb", :nested_expect),
+       violation("spec/d_spec.rb", :nested_expect),
        violation("spec/c_spec.rb", :nested_expect)]
     end
 
