@@ -223,6 +223,8 @@ Round 20 confirmed this on the wire from four forks (`num_predict` 4096, `num_ba
 `$LAIN_MAX_TOKENS` is refused at construction (`max_tokens must be positive, got 0`) before any
 request is built, so `num_predict` on the wire is never zero or absent.
 
+**Automated by** `spec/e2e/wire_contract_spec.rb`, "sends the launched options on every model call": a chat launched with `--num-batch 1024` puts `num_batch` 1024 and an integer `num_predict` in the `options` of every ollama request, a skill child's included. **Still needs a human:** the 2048 default with the knob unset, `extra={}` on another provider, the `session` and `request_sent` records' `extra`, and `truncate=false`.
+
 ## 7 — `--compact-strategy` resolves, and refuses, at LAUNCH
 
 Four names ship and they compose with `+`. All of this is settled while the `Backend` is built, so

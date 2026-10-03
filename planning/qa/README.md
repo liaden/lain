@@ -149,6 +149,27 @@ now reads DRIVABLE NOW — the config deny path, the auto-approving rule, the te
 `blocked on` sentence as history, never as licence to file the absence. (Its preamble, which called
 that chunk `draft` and unlanded, was corrected on 2026-09-14.)
 
+## Automated by `spec/e2e`
+
+Since 2026-10-03, `spec/e2e/` runs this checkout's real `exe/lain` (a plain chat, and a `lain up` cockpit with tmux and nvim) against a stand-in for ollama that replays recorded turns, or plays scripted ones, in `rake pspec` and the commit hook. Each section it drives carries an **Automated by** line naming the spec and its examples, and a **Still needs a human** half. That line is the list: this table only says where to look. A full round skips the automated half and always drives the human half; a round the user scopes to a named scenario or section drives it whole.
+
+| Section | Journey |
+|---|---|
+| `cockpit-surfaces` §0, check 2 (the input pane's floor) | `spec/e2e/cockpit_approval_spec.rb` |
+| `cockpit-surfaces` §0, stopping an ask | `spec/e2e/stop_while_busy_spec.rb` |
+| `cockpit-surfaces` §0, a line typed mid-ask (no human half) | `spec/e2e/stop_while_busy_spec.rb` |
+| `cockpit-surfaces` §5, approve and deny in nvim | `spec/e2e/cockpit_approval_spec.rb` |
+| `cockpit-surfaces` §5, a stopped ask takes its question | `spec/e2e/stop_while_busy_spec.rb` |
+| `cockpit-surfaces` §5b, answering in `lain://inbox` | `spec/e2e/cockpit_question_spec.rb` |
+| `failure-injection` §1b, `unterminated` | `spec/e2e/upstream_faults_spec.rb` |
+| `failure-injection` §5, a refused connection | `spec/e2e/upstream_faults_spec.rb` |
+| `failure-injection` §6, `/stop` at a parked ask | `spec/e2e/stop_while_busy_spec.rb` |
+| `session-and-window` §6, options on the wire | `spec/e2e/wire_contract_spec.rb` |
+| `repl-commands` §7, `/stop` and a held line mid-ask | `spec/e2e/stop_while_busy_spec.rb` |
+| `memory-and-dogfood` §4 and §5, the passes keep the session's model | `spec/e2e/session_passes_spec.rb` |
+
+3 journey checks mark no section in these files. `spec/e2e/fork_resume_spec.rb` covers `--fork` and `--resume` over a session with an answered child question, which `bowling-ruby.md` drives. `spec/e2e/two_cockpits_spec.rb` covers 2 cockpits on 1 machine, the `E325` case in `method.md`. And `spec/e2e/wire_contract_spec.rb`'s check that a skill child's calls carry the skill's model has no section to absorb: `subagents-and-backends.md` §2 never asks for it. Nothing that grades a model's output, needs a live model's timing or reads pane attributes is marked.
+
 ## What a full round drives, and in what order
 
 **A full round — the default when no scope is named — drives EVERY scenario in
@@ -165,6 +186,8 @@ Round 13 drove everything in one context at the user's explicit instruction and 
 `rails-blog`'s compaction act for the first time in the bench's history — which settled the question.
 **Nothing is deferred by convention any more. Dropping a scenario is a decision to name in the
 findings, with its reason.**
+The one exception is named: a full round skips the halves the suite drives, listed under
+"Automated by `spec/e2e`" above, and drives every human half.
 
 **The spine, and it goes first**, because everything else reads better once the loop is known good:
 `session-and-window` → `rust-cli` → **a SUBJECT with `cockpit-surfaces` piggybacked** →

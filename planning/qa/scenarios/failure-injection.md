@@ -122,6 +122,8 @@ this way — the other is a rule about what does NOT get journaled, not a recipe
   journal for exactly this shape. Round 15 confirmed it empirically driving a severing proxy: four
   attempts, `end of file reached`, **no turn committed**.
 
+**Automated by** `spec/e2e/upstream_faults_spec.rb`, "refuses a reply severed mid-stream by name, records it, and answers the next ask": the `unterminated` half, through the real binary, with the named refusal on screen, no backtrace, and the next ask answered. **Still needs a human:** `counts_absent` behind a severing proxy, the hard sever's retries, the `request_digest` join, and the prompt fold and `/rewind 1` below.
+
 **To confirm it:**
 
 ```bash
@@ -337,6 +339,8 @@ Count the real attempts with a counting TCP listener (`method.md`), then check t
 retry budget, so `1, 2, 3, 3` for four attempts is the regression and `1, 2, 3, 4` is the pass. See
 `session-and-window.md` §2 for the expected lines.
 
+**Automated by** `spec/e2e/upstream_faults_spec.rb`, "names an endpoint that refuses connections at the first ask, and writes no turn_usage": a refused connection on loopback is named, by its address, at the first ask and not at launch, with no backtrace and no `turn_usage`. **Still needs a human:** the unroutable address and its timing, the scheme-less typo, the withdrawn prompt against §1b's fold, and the attempt ordinals against a counting listener.
+
 ## 6 — Ctrl-C during a parked `ask_human`, and `/stop`
 
 This used to be a documented gap: signals were routed to a null handler outside an ordinary
@@ -360,6 +364,8 @@ human a verb**, so there is something to drive:
   `ask_human`: the journal holds a `questions_consumed` record naming the question, the HUD reads
   `inbox:0`, `lain://inbox` is empty and `/inbox` offers nothing. Any of the four still showing the
   question is C-1 back.
+
+**Automated by** `spec/e2e/stop_while_busy_spec.rb`, "consumes the question when an ask parked on it is stopped" and "stops an ask parked on an approval when /stop is typed, without running the call or closing the session": in a cockpit, `/stop` at a parked `ask_human` and at a parked approval journals `run_interrupted` with `reason: stopped` and brings back `you>`; at the approval it also writes no `session_closed`, and at the question it retires the question from the journal, the status feed and `lain://inbox`. **Still needs a human:** no `session_closed` after a stop at a parked `ask_human`, Ctrl-C and its countdown, `/stop` at a `--no-nvim` `human>` or `[y/N]`, the kept prompt folding into the next ask, the HUD's `inbox:0` and `/inbox` offering nothing.
 
 Still check that the journal parses afterwards — that was the old check and it is still the
 cheapest one. A `session_closed` beside the stop, or a session that has to be `--resume`d to

@@ -199,6 +199,8 @@ Then the live pass, local:
 lain consolidate <session> --provider ollama --model qwen3-coder:30b
 ```
 
+**Automated by** `spec/e2e/session_passes_spec.rb`, "records the session on a model that is not the default" and "runs #{pass} on the model and num_batch the session header recorded" (run once for consolidate): with no flags typed, a pass without `--dry-run` over a session with a completed lineage exits 0 and sends every model call on the header's model (`lfm2.5:latest`, not the default) and `num_batch`. **Still needs a human:** the dry run and its credential negative, the masked scaffold, the pass's own journal directory, the lineage list and the torn-session refusal, the 3 resolutions, the `writing memories` or `stored nothing` report, the read-back and author checks, and whether what the clerk wrote is any good.
+
 Check the three resolutions `lain consolidate` accepts — an explicit path, a bare filename, and a
 prefix — and confirm they are **not** `lain chat --resume`'s three, which are a different contract.
 A driver who assumes they are the same will file a false defect the first time a selector that
@@ -300,6 +302,8 @@ lain improvements --project <12-hex-char hash>
 lain improvements --project .                       # a path, resolved the same way
 lain improvements --kind nonsense                   # must refuse, naming the four kinds
 ```
+
+**Automated by** `spec/e2e/session_passes_spec.rb`, "runs #{pass} on the model and num_batch the session header recorded" (run once for improve): with no flags typed, `lain improve` over a recorded session exits 0 and sends every model call on the header's model and `num_batch`. **Still needs a human:** `--dry-run`, the `stored N notes` count against the file, every `lain improvements` filter, the cross-project read, the honest-empty path, and whether the notes are any good.
 
 The four kinds are `knob`, `bug`, `missing-feature`, `doc`. **Check the two `--project` spellings
 resolve to the same set** — a hash and a path that disagree means one of them is not being resolved

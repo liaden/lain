@@ -81,6 +81,8 @@ Checks:
    wc -c "$QA/records/idle-input-pane-$$.raw"                                  # must read 0
    ```
 
+   **Automated by** `spec/e2e/cockpit_approval_spec.rb`, "shows a fleet line above a you> line in an input pane at its floor height": a 24-row cockpit seats the input pane at its floor or above, with the fleet line above `you>`. **Still needs a human:** growing and shrinking the pane, the squeeze and restore, detach and reattach, the short-window stand-aside, the re-arm over an older binary's session, and the idle byte count.
+
 3. **The HUD is in the input pane, above the prompt, and it refreshes with no keypress.** Start
    an ask that runs for a while, type a few characters into the input pane without submitting,
    and watch the header change under your draft. That is the whole reason for the split: the
@@ -171,6 +173,8 @@ Either one must leave the prompt at `you>` **in the same session**: the journal 
 ask runs on the same chain. With nothing running, `/stop` answers *"no ask is running -- /stop at
 the prompt it parks on, or s at a countdown"* and changes nothing.
 
+**Automated by** `spec/e2e/stop_while_busy_spec.rb`, "stops an ask parked on an approval when /stop is typed, without running the call or closing the session" and "consumes the question when an ask parked on it is stopped": `/stop` typed in the input pane at a parked approval, and at a parked question, journals `run_interrupted` with `reason: stopped` and brings `you>` back; at the approval it also writes no `session_closed` and runs nothing. **Still needs a human:** no `session_closed` after a stop at a parked question, Ctrl-C and `s` at the countdown (no echo, no Enter), the degraded-window sentence, the countdown taking back its row, `/stop` with nothing running, and the next ask running on the same chain.
+
 **That is no longer the whole story once Supervisor-adopted actors are running at `you>`.** An
 adopted actor is a sibling of every ask, not a captive of one, so it keeps running with nothing
 parked at `you>` to answer for it: `/stop` typed there now reads the fleet and, if it finds any
@@ -189,6 +193,8 @@ arrived at the next `you>`). Start an ask that will run for 20 seconds or more, 
 **input pane** while it runs, and read the journal: `run_interrupted` with `reason: stopped` lands before
 the ask would have finished. Then type `hello` and Enter mid-ask: it is not lost and not doubled, and is
 the next prompt exactly once. **Catches C-2 returning:** `/stop` acting only after the ask ended.
+
+**Automated by** `spec/e2e/stop_while_busy_spec.rb`, "reaches the chat at once, before a model that never answers is released" and "holds lines typed mid-ask and sends them once each, in order, as the next prompts": a stand-in that holds the model open replaces the 20-second ask, and the journal and the requests it saw carry both checks. Nothing in this paragraph needs a human.
 
 **What wrong looks like:** a `session_closed` record beside the stop; the prompt coming back as a
 fresh session; `/stop` answered by the model as prose (the rail did not intercept it, which is
@@ -699,6 +705,8 @@ Force a gated call the approval rule does not approve — `ls -la` is enough, si
 | journal | `approval_pending` with `requester` |
 | journal | the `escalation` ladder — see below; it is the surface that says WHICH surface answered |
 
+**Automated by** `spec/e2e/cockpit_approval_spec.rb`, "runs the call in the project and journals an nvim approval", "clears the approval buffer and shows the model's final reply in the chat pane", "does not run the call and journals an nvim denial" and "tells the model the approval was denied": a gated `bash` call parks with `approvals_pending` in the status feed, `:LainApprove` runs it and `:LainDeny` does not, each journals 1 `approval_decision` with `surface: nvim`, and `lain://approval` goes back to `(no approvals pending)`. **Still needs a human:** the arrival line and the absent `[y/N]`, the `command>` table, the bell, 3 calls at once, the `escalation` and pairing reads, the requester name, the plain-chat guards and the long-command read below.
+
 Driven against the built binary 2026-09-14 (`main` at `70c0782f`, a `lain up` cockpit over a
 scratch git tree, local `qwen3-coder:30b`), verbatim from the chat pane:
 
@@ -944,6 +952,8 @@ digest, the HUD reads `inbox:0`, `lain://inbox` has no row, and `/inbox` offers 
 question retires exactly **once**, so count `questions_consumed` records naming it: 1, not 2. **Catches C-1
 returning:** any of the four surfaces still showing the question after the ask ended.
 
+**Automated by** `spec/e2e/stop_while_busy_spec.rb`, "consumes the question when an ask parked on it is stopped": after `/stop` the journal holds a `questions_consumed` with 1 digest, the status feed's `inbox_count` is 0 and `lain://inbox` has no row. **Still needs a human:** that the digest is the parked question's, the HUD's `inbox:0` read off the pane, `/inbox` offering nothing, Ctrl-C as the stop, and the answered question retiring once.
+
 ### The second queue consumer is gone, and the notifier with it
 
 **Retired, recorded so a driver who remembers it knows it was lifted on purpose.** Round 4's wedge
@@ -988,6 +998,8 @@ between. **What wrong looks like in the cockpit:** a prose line at `command>` re
 or a `human>` drawn in the chat pane at all. In the cockpit, steps 2–5 below are driven inside
 `/inbox`'s own drain, which owns the terminal for its line; step 1's `/status` is typed at
 `command>`. *(Prediction, not yet driven: `/inbox` typed at `command>` in a cockpit.)*
+
+**Automated by** `spec/e2e/cockpit_question_spec.rb`, "lists the parked question in lain://inbox and counts it in state.json", "journals the human's answer to the child's question", "leaves inbox_count and fleet at 0 and lain://inbox with no open question" and "reports none open in the chat pane when /inbox is typed in the input pane": a skill child on a second model parks a question, `:LainReply` on its `lain://inbox` row journals the answer, `state.json`, `lain://inbox` and `/inbox` come back empty, and `/inbox` typed at `you>` afterwards answers `(no questions pending)` in the chat pane. **Still needs a human:** the HUD's `inbox:N` read off the pane, no `human>` drawn in the chat pane at all, the arrival line, a prose line at `command>` held rather than taken as the answer, the prediction above, and the whole `--no-nvim` table below.
 
 Spawn a subagent (`method.md`, "Making a session with `message` and `child_turn` records") and wait
 for the prompt to become `human>`. Then, at that prompt, in order:

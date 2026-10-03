@@ -14,7 +14,7 @@ model server; both are scenario-independent, and this skill does not repeat them
 scenario in `planning/qa/scenarios/` and follow it.
 
 **The premise:** every defect this has found lived in a seam that had specs on both sides. The suite
-is ~14,000 examples and green; you are not looking for what it covers. You are looking for two real
+is green; you are not looking for what it covers. You are looking for two real
 components disagreeing with each other, and for the moments a human would be misled.
 
 ---
@@ -73,6 +73,14 @@ and say so.
 If the user named a scenario, use that. If they asked for a regression gate after a chunk, that is
 the cheap deterministic set above, and README says which to cut first if it will not fit — **that
 licence belongs to the scoped gate alone and never to a full round.**
+
+**Skip what the suite now drives, unless the user scopes it in.** A section carrying an
+**Automated by** line is driven by a `spec/e2e/` journey through the real binary in every
+`rake pspec` and commit hook; README's "Automated by `spec/e2e`" table lists them. A full round
+skips that half and drives the line's **Still needs a human** half as usual. A round the user scopes
+to a named scenario or section drives it whole, automated halves included: naming it is what scopes
+them in. Skipping the automated half is not a dropped scenario, but say in the coverage table that
+you relied on it.
 
 Do not block on the question: state the plan in one or two lines with its rough cost, and start.
 

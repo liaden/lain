@@ -598,6 +598,7 @@ the model cannot finish, typing `/goal off` **in the input pane** during iterati
 - `/stop` typed in the pane mid-ask stops the ask before it would have finished: `run_interrupted` with
   `reason: stopped` is journaled while the model is still generating. An ordinary line typed mid-ask
   (`hello`) is NOT dispatched then: it becomes the next prompt, **once** (not lost, not doubled).
+  **Automated by** `spec/e2e/stop_while_busy_spec.rb`, "reaches the chat at once, before a model that never answers is released" and "holds lines typed mid-ask and sends them once each, in order, as the next prompts": both checks in this bullet, in a cockpit, against a stand-in that holds the model open. **Still needs a human:** the PASS and A-1 checks above, which need a goal driving a live model.
 
 **Two accepted limits, recorded so a round does not file them:**
 
