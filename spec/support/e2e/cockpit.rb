@@ -17,6 +17,7 @@ module E2E
     SESSION = "e2e"
     BOOT_SECONDS = 45
     STOP_SECONDS = 10
+    HANGUP_GRACE_SECONDS = 2
     APPROVAL_BUFFER = "lain://approval"
     INBOX_BUFFER = "lain://inbox"
     ROWS = 24
@@ -30,24 +31,32 @@ module E2E
     # among cockpits that share a sandbox.
     # The default is a terminal's own: the input pane collapsed at every height below 50, so a
     # taller cockpit could not show it.
-    def self.start(sandbox, upstream, *chat_flags, rows: ROWS)
-      new(sandbox, "lain-e2e-#{SecureRandom.hex(4)}").tap { |cockpit| cockpit.launch(upstream.url, chat_flags, rows) }
+    def self.start(sandbox, upstream, *chat_flags, rows: ROWS, boot_seconds: BOOT_SECONDS)
+      new(sandbox, "lain-e2e-#{SecureRandom.hex(4)}").tap do |cockpit|
+        cockpit.launch(upstream.url, chat_flags, rows, boot_seconds)
+      end
     end
 
+    # The project key is lain's own, so the paths below are the ones the binary writes even when
+    # several projects share the sandbox's XDG tree.
     def initialize(sandbox, socket)
       @sandbox = sandbox
       @socket = socket
-      @session = SessionFile.in(sandbox)
+      @paths = Lain::Paths.new(env: sandbox.env)
+      @key = @paths.project_hash(sandbox.project.to_s)
+      @session = SessionFile.new(sandbox.state_home, project_key: @key)
     end
 
-    def launch(api_base, chat_flags, rows)
+    def launch(api_base, chat_flags, rows, boot_seconds = BOOT_SECONDS)
       @reader, @writer, @pid = PTY.spawn(@sandbox.env, EXE, "up", "--session", SESSION, "--socket", @socket,
                                          @sandbox.project.to_s, "--", *chat_flags, "--api-base", api_base,
                                          chdir: @sandbox.project.to_s, unsetenv_others: true)
       @writer.winsize = [rows, COLUMNS]
       @sandbox.track(@pid)
       @drain = drain(@reader)
-      await_prompt
+      await_prompt(boot_seconds)
+    rescue StandardError => e
+      raise "#{e.message}\neditor pane:\n#{abandon}"
     end
 
     # A line is sent only once the input pane shows it, so an Enter can never overtake its text.
@@ -82,15 +91,31 @@ module E2E
     # Only the descriptors are guaranteed to close; a step that raises skips the ones after it and
     # leaves the processes to the sandbox's reaper.
     def stop
+      return if @stopped
+
+      @stopped = true
       @editor&.shutdown
       tmux("kill-server")
       await_client
-      wait_until(timeout: STOP_SECONDS, reason: "the cockpit's processes gone") { processes_gone? }
+      await_processes_gone
     ensure
       close_terminal
     end
 
     private
+
+    # A process that ignores the server's hangup (an editor that is not running) is killed after a
+    # short grace, so a journey that already failed is not held past its budget.
+    def await_processes_gone
+      wait_until(timeout: HANGUP_GRACE_SECONDS, reason: "the cockpit's processes gone") { processes_gone? }
+    rescue RuntimeError
+      own_processes.each do |pid|
+        Process.kill("KILL", pid)
+      rescue StandardError
+        nil
+      end
+      wait_until(timeout: STOP_SECONDS, reason: "the cockpit's processes gone") { processes_gone? }
+    end
 
     def answer(command, line)
       window = await_approval_window
@@ -153,8 +178,20 @@ module E2E
       [@reader, @writer].each { |io| io.close unless io.closed? }
     end
 
-    def await_prompt
-      wait_until(timeout: BOOT_SECONDS, reason: "a you> line in the input pane") do
+    # What a launch that never reached its prompt leaves to read, taken before its processes go.
+    def abandon
+      capture(:editor).tap { stop_quietly }
+    end
+
+    # The launch's own failure is the one worth reporting; the reaper still names anything left behind.
+    def stop_quietly
+      stop
+    rescue StandardError
+      nil
+    end
+
+    def await_prompt(boot_seconds)
+      wait_until(timeout: boot_seconds, reason: "a you> line in the input pane") do
         !tmux("show-options", "-v", "-t", SESSION, PANES.fetch(:input)).empty? && capture(:input).include?("you>")
       end
     end
@@ -166,27 +203,22 @@ module E2E
       Open3.capture3(@sandbox.env, "tmux", "-L", @socket, *, unsetenv_others: true).first.strip
     end
 
-    def processes_gone?
-      Dir.glob("/proc/[0-9]*/cmdline").none? do |file|
-        File.read(file).include?(@sandbox.dir.to_s)
+    def processes_gone? = own_processes.empty?
+
+    def own_processes
+      Dir.glob("/proc/[0-9]*/cmdline").filter_map do |file|
+        file[/\d+/].to_i if File.read(file).then { |text| text.include?(@socket) || text.include?(@key) }
       rescue SystemCallError
-        false
+        nil
       end
     end
-
-    def sockets = Dir.glob(@sandbox.dir.join("run", "lain", "*.sock").to_s)
 
     def editor_socket
-      found = nil
-      wait_until(timeout: BOOT_SECONDS, reason: "an nvim socket") do
-        found = sockets.find { |path| File.basename(path).start_with?("nvim-") }
-      end
-      found
+      path = File.join(@paths.runtime_dir, "nvim-#{@key}.sock")
+      wait_until(timeout: BOOT_SECONDS, reason: "an nvim socket") { File.exist?(path) }
+      path
     end
 
-    def state_path
-      Dir.glob(@sandbox.state_home.join("lain", "status", "*", "state.json").to_s).first ||
-        raise("no state.json under #{@sandbox.state_home}")
-    end
+    def state_path = Lain::ProjectDir.new(root: @sandbox.project.to_s, paths: @paths).state_path
   end
 end

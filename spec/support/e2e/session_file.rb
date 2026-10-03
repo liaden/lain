@@ -10,8 +10,10 @@ module E2E
 
     def self.in(sandbox) = new(sandbox.state_home)
 
-    def initialize(state_home)
+    # A project key narrows the journal to that project's sessions, for sandboxes holding several.
+    def initialize(state_home, project_key: "*")
       @state_home = state_home
+      @project_key = project_key
     end
 
     def records(type = nil)
@@ -29,7 +31,7 @@ module E2E
 
     private
 
-    def paths = Dir.glob(@state_home.join("lain", "sessions", "*", "*.ndjson").to_s)
+    def paths = Dir.glob(@state_home.join("lain", "sessions", @project_key, "*.ndjson").to_s)
 
     # A record being written is a partial line, which the next poll reads whole.
     def parse(line)

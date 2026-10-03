@@ -9,14 +9,15 @@ module E2E
   # nothing the child does can reach the developer's own.
   class Sandbox
     BUNDLER_VARIABLES = %w[BUNDLE_GEMFILE RUBYOPT BUNDLE_BIN_PATH].freeze
+    DEFAULT_PROJECT = "proj"
     LIVE = Concurrent::Array.new
     private_constant :LIVE
 
     class << self
       # Short, because a tmux socket path inside it must fit the 108 bytes sockaddr_un allows.
-      def create(files: {}, share_state_with: nil)
+      def create(files: {}, share_state_with: nil, project: DEFAULT_PROJECT)
         root = share_state_with&.dir || Dir.mktmpdir("e2e", ENV.fetch("TMPDIR", nil))
-        sandbox = new(root, files:, owner: share_state_with.nil?)
+        sandbox = new(root, files:, owner: share_state_with.nil?, project:)
         LIVE << sandbox
         sandbox
       end
@@ -30,14 +31,14 @@ module E2E
 
     attr_reader :dir, :project
 
-    def initialize(root, files:, owner:)
+    def initialize(root, files:, owner:, project: DEFAULT_PROJECT)
       @dir = Pathname.new(File.realpath(root))
       @owner = owner
       @pids = []
       FileUtils.mkdir_p(%w[state config cache home].map { |name| @dir.join(name) })
       FileUtils.mkdir_p(@dir.join("run"), mode: 0o700)
-      @project = @dir.join("proj")
-      build_project(files) if owner
+      @project = @dir.join(project)
+      build_project(files) unless @project.exist?
     end
 
     def env

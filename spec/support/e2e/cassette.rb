@@ -164,8 +164,9 @@ module E2E
         end
       end
 
+      # Unplayed calls after a journey died are its consequence, so only a recorded mismatch is drift.
       def fail(error)
-        finish
+        finish unless mismatches.empty?
         raise error
       end
 
