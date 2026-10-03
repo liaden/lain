@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "pty"
-require "socket"
 require "tmpdir"
 
 # A chat whose terminal goes away must still end. The real `lain chat` from this
@@ -17,63 +16,23 @@ require "tmpdir"
 module TerminalGone
   EXE = File.expand_path("../../../exe/lain", __dir__)
 
-  # Answers every request but the chat itself with an empty JSON object; each
-  # chat request is held open and announced on `parked`.
-  class ParkingOllama
+  class Parking
     attr_reader :parked
 
     def initialize
-      @server = TCPServer.new("127.0.0.1", 0)
       @parked = Thread::Queue.new
-      @held = []
-      @thread = Thread.new { serve }
+      @upstream = E2E::Upstream.start(method(:hold))
     end
 
-    def api_base = "http://127.0.0.1:#{@server.addr[1]}"
+    def api_base = @upstream.url
 
-    def close
-      @server.close
-      @thread.join
-      @held.each { |client| client.close unless client.closed? }
-    end
+    def close = @upstream.stop
 
     private
 
-    def serve
-      loop { answer(@server.accept) }
-    rescue IOError, Errno::EBADF
-      nil
-    end
-
-    # A chat that ends mid-request leaves a broken pipe behind, which is its
-    # business, not a failure of the stand-in.
-    def answer(client)
-      respond(client)
-    rescue Errno::EPIPE, Errno::ECONNRESET
-      client.close
-    end
-
-    def respond(client)
-      request = client.gets.to_s
-      length = headers(client).fetch("content-length", "0").to_i
-      client.read(length)
-      request.start_with?("POST /api/chat") ? hold(client) : empty(client)
-    end
-
-    def headers(client)
-      lines = Enumerator.produce { client.gets }.take_while { |line| line && line != "\r\n" }
-      lines.to_h { |line| line.split(":", 2).then { |key, value| [key.downcase, value.strip] } }
-    end
-
-    def hold(client)
-      @held << client
+    def hold(_request)
       @parked << true
-    end
-
-    def empty(client)
-      client.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n" \
-                   "Connection: close\r\n\r\n{}")
-      client.close
+      E2E::Upstream::Reply.new(lines: [], hold: true)
     end
   end
 
@@ -86,7 +45,7 @@ module TerminalGone
 
     def self.boot(flags)
       dir = File.realpath(Dir.mktmpdir("terminal-gone"))
-      ollama = ParkingOllama.new
+      ollama = Parking.new
       env = { "XDG_STATE_HOME" => File.join(dir, "state"), "HOME" => dir, "TERM" => "xterm" }
       output, input, pid = PTY.spawn(env, EXE, "chat", "--provider", "ollama", "--no-journal",
                                      "--api-base", ollama.api_base, *flags, chdir: dir)
