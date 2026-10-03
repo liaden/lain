@@ -42,7 +42,7 @@ RSpec.describe "answering a subagent's question in a real cockpit", :e2e do
       wait_until(timeout: patience, reason: "the child finished") { finished?(cockpit) }
       wait_until(timeout: patience, reason: "inbox_count back at 0") { inbox_count(cockpit).zero? }
       wait_until(timeout: patience, reason: "fleet back at 0") { fleet_size(cockpit).zero? }
-      wait_until(timeout: patience, reason: "you> back in the input pane") { cockpit.capture(:input).include?("you>") }
+      wait_until(timeout: patience, reason: "you> as the input pane's last line") { cockpit.prompt_back? }
       cockpit.type("/inbox")
       wait_until(timeout: patience, reason: "/inbox answered in the chat pane") do
         cockpit.capture(:chat).include?("(no questions pending)")

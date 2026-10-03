@@ -14,6 +14,7 @@ module SlowFiles
     spec/e2e/cockpit_question_spec.rb
     spec/e2e/fork_resume_spec.rb
     spec/e2e/session_passes_spec.rb
+    spec/e2e/stop_while_busy_spec.rb
     spec/e2e/two_cockpits_spec.rb
     spec/e2e/upstream_faults_spec.rb
     spec/e2e/wire_contract_spec.rb

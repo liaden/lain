@@ -56,7 +56,7 @@ module E2E
       @drain = drain(@reader)
       await_prompt(boot_seconds)
     rescue StandardError => e
-      raise "#{e.message}\neditor pane:\n#{abandon}"
+      raise "#{e.message}\n#{abandon}"
     end
 
     # A line is sent only once the input pane shows it, so an Enter can never overtake its text.
@@ -67,6 +67,12 @@ module E2E
     end
 
     def capture(name) = tmux("capture-pane", "-p", "-t", pane(name))
+
+    # The pane keeps its history, so the first prompt's you> stays on screen: only its last line
+    # shows a prompt is back.
+    def prompt_back?
+      capture(:input).lines.map(&:rstrip).reject(&:empty?).last.to_s.start_with?("you>")
+    end
 
     def input_height = tmux("display-message", "-p", "-t", pane(:input), "\#{pane_height}").to_i
 
@@ -179,14 +185,24 @@ module E2E
     end
 
     # What a launch that never reached its prompt leaves to read, taken before its processes go.
+    # The client is ended first because it may not have started its tmux server yet, and a
+    # kill-server sent before that finds nothing to kill.
     def abandon
-      capture(:editor).tap { stop_quietly }
+      panes = %i[input editor].map { |name| "#{name} pane:\n#{capture(name)}" }.join("\n")
+      panes.tap { stop_quietly }
     end
 
     # The launch's own failure is the one worth reporting; the reaper still names anything left behind.
     def stop_quietly
+      end_client
       stop
     rescue StandardError
+      nil
+    end
+
+    def end_client
+      Process.kill("TERM", @pid)
+    rescue Errno::ESRCH
       nil
     end
 

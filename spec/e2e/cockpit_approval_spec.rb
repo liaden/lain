@@ -20,7 +20,16 @@ RSpec.describe "approving and denying a parked call in a real cockpit", :e2e do
 
   def approvals_cleared?(cockpit) = cockpit.state.fetch("approvals_pending", 1).zero?
 
-  def prompt_back?(cockpit) = cockpit.capture(:input).include?("you>")
+  def reply_tail(cockpit) = final_reply(cockpit).split.last(3).join(" ")
+
+  def reply_drawn?(cockpit) = cockpit.capture(:chat).squish.include?(reply_tail(cockpit))
+
+  def await_turn_drawn(cockpit)
+    wait_until(timeout: patience, reason: "an end_turn usage record") { turn_ended?(cockpit) }
+    wait_until(timeout: patience, reason: "approvals_pending back at 0") { approvals_cleared?(cockpit) }
+    wait_until(timeout: patience, reason: "you> as the input pane's last line") { cockpit.prompt_back? }
+    wait_until(timeout: patience, reason: "the final reply drawn in the chat pane") { reply_drawn?(cockpit) }
+  end
 
   # Drives one cockpit from the prompt to the last reply, answering the parked call with the given
   # gesture, and keeps what the examples then read once the cockpit is gone.
@@ -31,9 +40,7 @@ RSpec.describe "approving and denying a parked call in a real cockpit", :e2e do
       cockpit.type(prompt)
       wait_until(timeout: patience, reason: "a gated call parked in nvim") { parked?(cockpit) }
       cockpit.public_send(gesture)
-      wait_until(timeout: patience, reason: "an end_turn usage record") { turn_ended?(cockpit) }
-      wait_until(timeout: patience, reason: "approvals_pending back at 0") { approvals_cleared?(cockpit) }
-      wait_until(timeout: patience, reason: "you> back in the input pane") { prompt_back?(cockpit) }
+      await_turn_drawn(cockpit)
       observed(cockpit, sandbox, upstream, cassette)
     ensure
       cockpit&.stop
