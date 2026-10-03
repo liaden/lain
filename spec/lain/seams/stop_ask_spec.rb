@@ -17,16 +17,13 @@ module StopAsk
   # InputSocket and Conductor, and stdin closed so nothing on this side can
   # answer a prompt.
   #
-  # Two runaways, because the human reaches them differently. `parked` asks
-  # its approval again the moment it is answered, so there is always a prompt
-  # to type `/stop` at; `looping` answers nothing and publishes nothing, which
-  # is the automatically approved bash loop, and the only way in is the
-  # countdown a Ctrl-C opens.
+  # `looping` answers nothing and publishes nothing, which is the automatically
+  # approved bash loop, and the only way in is the countdown a Ctrl-C opens.
   CHILD = <<~RUBY
     require "lain"
     require "json"
 
-    dir, shape, path = ARGV.values_at(0, 1, 2)
+    dir, _shape, path = ARGV.values_at(0, 1, 2)
     $stdin.close
 
     out = File.open(File.join(dir, "chat.out"), "w").tap { |io| io.sync = true }
@@ -46,15 +43,7 @@ module StopAsk
     conductor = Lain::CLI::Conductor.new(tty:, chronicle:, signals: Lain::CLI::Signals.new, rail:, grace: 30,
                                          countdown: Lain::CLI::Conductor::RailCountdown.new(rail:))
 
-    runaway = {
-      "parked" => -> { Enumerator.produce { conductor.read_reply("[y/N] run bash? ") }.each { |answer| answer } },
-      "looping" => -> { Enumerator.produce { Async::Task.current.sleep(0.05) }.each { |tick| tick } },
-      "ask_human" => lambda {
-        asker = Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new),
-                                          observer: chronicle.observer, journal: chronicle.record_journal)
-        asker.call({ "question" => "which db?" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
-      }
-    }.fetch(shape)
+    runaway = -> { Enumerator.produce { Async::Task.current.sleep(0.05) }.each { |tick| tick } }
 
     File.write(File.join(dir, "bound"), "yes")
     conductor.guard do
@@ -82,9 +71,9 @@ module StopAsk
       @lock = Mutex.new
     end
 
-    # Releases the parked chat with its shape, then types the line that starts the ask.
-    def asking(shape)
-      @warm.release(shape)
+    # Releases the parked chat, then types the line that starts the ask.
+    def asking
+      @warm.release("looping")
       @reader = @warm.reader
       @writer = @warm.writer
       @drain = Thread.new { drain }
@@ -111,27 +100,6 @@ module StopAsk
       File.readlines(file).filter_map { |line| parsed(line) }.select { |record| record["type"] == type }
     end
 
-    # The session file folded the way the live views fold it: the HUD's count
-    # and lain://inbox each see the Q arrive, then every consumption record.
-    def inbox_after_replay
-      hud = Lain::StatusFeed::Inbox.new
-      view = Lain::Frontend::Neovim::InboxView.new
-      asked = records("message").map { |record| telemetry("Message", record) }.select { |m| m.to == "human" }
-      drawn = asked.map { |question| arrival(hud, view, question) }
-      drawn += records("questions_consumed").map { |record| consumption(hud, view, record) }
-      { hud: hud.pending_size, buffer: drawn.compact.last.grep(/which db/).size, asked: asked.size }
-    end
-
-    def arrival(hud, view, question)
-      hud.arrived(question)
-      view.update(question)
-    end
-
-    def consumption(hud, view, record)
-      hud.retire(record["digests"])
-      view.update(telemetry("QuestionsConsumed", record))
-    end
-
     def close
       @drain&.kill
       @warm.reap
@@ -146,10 +114,6 @@ module StopAsk
     end
 
     private
-
-    def telemetry(name, record)
-      Lain::Telemetry.const_get(name).new(**record.except("type", "at", "ts").transform_keys(&:to_sym))
-    end
 
     def parsed(line)
       JSON.parse(line)
@@ -188,18 +152,8 @@ RSpec.describe "stopping a running ask from an input pane", :seam do
     expect(cockpit.settles { cockpit.screen.scan("you> ").size > 1 || nil }).to be(true)
   end
 
-  it "stops the ask when /stop is typed at the prompt it parked on" do
-    cockpit.asking("parked")
-    cockpit.settles { cockpit.screen.include?("[y/N] run bash?") || nil }
-
-    cockpit.type("/stop\r")
-
-    expect_stop_recorded
-    expect_session_open
-  end
-
   it "offers stop at the countdown a Ctrl-C opens, and s stops the ask there" do
-    cockpit.asking("looping")
+    cockpit.asking
 
     cockpit.type("\x03")
     offered = cockpit.settles { cockpit.screen.include?("[s] stop this ask") || nil }
@@ -208,19 +162,5 @@ RSpec.describe "stopping a running ask from an input pane", :seam do
     expect(offered).to be(true)
     expect_stop_recorded
     expect_session_open
-  end
-
-  it "names the question consumed when the ask parked on ask_human is stopped" do
-    cockpit.asking("ask_human")
-
-    cockpit.type("\x03")
-    cockpit.settles { cockpit.screen.include?("[s] stop this ask") || nil }
-    cockpit.type("s")
-
-    expect_stop_recorded
-    consumed = cockpit.settles { cockpit.records("questions_consumed").first }
-    expect(consumed["digests"].size).to eq(1)
-    expect(consumed["turn"]).to be_nil
-    expect(cockpit.inbox_after_replay).to eq(hud: 0, buffer: 0, asked: 1)
   end
 end

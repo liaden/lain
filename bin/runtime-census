@@ -20,12 +20,14 @@ module RuntimeCensus
   # LAIN_SLOW=1 because a bare rspec skips the :slow files; the floor must count every example that exists.
   DRY_RUN = { "LAIN_SLOW" => "1" }.freeze
 
-  # Seconds per file, seeded from a contended 2026-10-02 pspec log at 2x rounded up, for files at 8s or more.
+  # Seconds per file, seeded from a contended 2026-10-02 pspec log at 2x rounded up, for files at 8s or more,
+  # plus every spec/e2e journey at 2x its 2026-10-03 pspec time, since a journey is a real process tree.
   # Lower one when a speedup lands; raising one is its own commit and says why.
   CEILINGS = {
     "spec/lain/seams/input_pane_socket_spec.rb" => 73,
     "spec/lain/seams/plain_chat_prompt_guards_spec.rb" => 64,
     "spec/lain/cli/up_spec.rb" => 62,
+    "spec/e2e/stop_while_busy_spec.rb" => 48,
     "spec/lain/seams/qa_sandbox_pane_resolution_spec.rb" => 43,
     "spec/lain/frontend/stdin_pump_spec.rb" => 38,
     "spec/lain/cli/command/review_spec.rb" => 36,
@@ -33,17 +35,24 @@ module RuntimeCensus
     "spec/lain/cli/repl_spec.rb" => 31,
     "spec/lain/suite_load_spec.rb" => 28,
     "spec/lain/review/source/local_branch_spec.rb" => 27,
+    "spec/e2e/upstream_faults_spec.rb" => 24,
     "spec/repo_as_fixture_spec.rb" => 23,
+    "spec/e2e/cockpit_approval_spec.rb" => 23,
+    "spec/e2e/two_cockpits_spec.rb" => 23,
     "spec/lain/frontend/tty_spec.rb" => 22,
     "spec/lain/cli/epic_driver/factory_spec.rb" => 22,
     "spec/lain/frontend/neovim/diff_mode_spec.rb" => 21,
+    "spec/e2e/fork_resume_spec.rb" => 21,
     "spec/lain/isolation/worktree_handback_spec.rb" => 20,
     "spec/lain/project/root_defaults_spec.rb" => 20,
     "spec/lain/isolation/worker_handoff_spec.rb" => 19,
     "spec/lain/project_dir_spec.rb" => 17,
     "spec/lain/frontend/neovim/runtime/51_thread_spec.rb" => 17,
     "spec/lain/review/source/github_pr_spec.rb" => 17,
-    "spec/lain/cli/command/ruby_spec.rb" => 17
+    "spec/lain/cli/command/ruby_spec.rb" => 17,
+    "spec/e2e/session_passes_spec.rb" => 14,
+    "spec/e2e/cockpit_question_spec.rb" => 12,
+    "spec/e2e/wire_contract_spec.rb" => 8
   }.freeze
 
   # Seeded at 21673 examples (2026-10-02), rounded down to leave room for a deleted spec.

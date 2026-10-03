@@ -5,32 +5,25 @@ require "json"
 
 # A line typed while an ask is in flight, end to end. Nothing is published then,
 # so nothing was reading: a `/stop` waited as typeahead until the ask was over.
-# Each shape here is a real chat process and a real terminal it is typed at --
-# the input pane in a PTY joined by a Unix socket, or the chat's own PTY with
-# `--no-nvim`'s stdin pump -- because the claim is about bytes reaching the rail
-# while the ask is still running.
-#
-# The pane runs THE REPOSITORY'S `exe/lain`, as the sibling seams do.
+# Each shape here is a real chat process and the real terminal it is typed at --
+# the chat's own PTY with `--no-nvim`'s stdin pump -- because the claim is about
+# bytes reaching the rail while the ask is still running.
 module TypedDuringAsk
   # `looping` never returns on its own, so an ask that ends did so because it
   # was stopped; `held` returns once `done` exists and reports what the chat's
-  # rail kept for its next prompt. `pump` is the same chat reading its own
-  # terminal instead of a socket.
+  # rail kept for its next prompt.
   CHILD = <<~RUBY
     require "lain"
     require "json"
 
-    dir, shape, path = ARGV.values_at(0, 1, 2)
-    out = File.open(File.join(dir, "chat.out"), "w").tap { |io| io.sync = true }
+    dir, shape = ARGV.values_at(0, 1)
     log = File.open(File.join(dir, "heard.ndjson"), "a").tap { |io| io.sync = true }
     session = File.join(dir, "session.ndjson")
-    pump = shape.end_with?("pump")
-    tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: pump ? $stdout : out,
+    tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: $stdout,
                                   pastel: Pastel.new(enabled: false), history_path: File.join(dir, "history"),
                                   state_path: File.join(dir, "state.json"))
     rail = Lain::Frontend::Intake.new(screen: tty)
-    producer = pump ? Lain::Frontend::StdinPump.new(rail:, screen: tty) : Lain::CLI::InputSocket.new(rail:, path:)
-    producer.bind unless pump
+    producer = Lain::Frontend::StdinPump.new(rail:, screen: tty)
     chronicle = Lain::CLI::Chronicle.new(
       journal: Lain::Journal.new(io: File.open(session, "ab").tap { |io| io.sync = true }), journal_path: session
     )
@@ -149,36 +142,6 @@ RSpec.describe "a line typed while an ask is in flight", :seam do
     cockpit.settles { cockpit.heard.find { |record| record.key?("held") } }["held"]
   end
 
-  describe "in the input pane" do
-    warm_pool(:cockpits) do
-      WarmCockpit.pair(prefix: "lain-typed-during-ask", script: TypedDuringAsk::CHILD)
-    end
-
-    let(:warm) { cockpits.take }
-
-    it "reaches the chat at once: /stop stops an ask that would never have ended" do
-      cockpit.ask("looping")
-
-      cockpit.type("/stop\r")
-
-      expect(cockpit.settles { cockpit.heard.first }).to eq({ "stopped" => true })
-      expect(cockpit.records("run_interrupted").map { |record| record["reason"] }).to eq(["stopped"])
-    end
-
-    it "is held for the chat's next prompt, once, in the order typed" do
-      cockpit.ask("held")
-
-      cockpit.type("/goal off\r")
-      sleep(0.5)
-      cockpit.type("hello\r")
-      sleep(0.5)
-      cockpit.type("one\rtwo\r")
-      sleep(0.5)
-
-      expect(held_after_the_ask).to eq(["/goal off", "hello", "one", "two"])
-    end
-  end
-
   describe "on the chat's own terminal" do
     warm_pool(:terminals) do
       WarmCockpit.terminal(prefix: "lain-typed-during-ask", script: TypedDuringAsk::CHILD)
@@ -187,7 +150,7 @@ RSpec.describe "a line typed while an ask is in flight", :seam do
     let(:warm) { terminals.take }
 
     it "stops the ask when /stop and Enter are typed" do
-      cockpit.ask("looping_pump")
+      cockpit.ask("looping")
 
       cockpit.type("/stop\r")
 
@@ -196,7 +159,7 @@ RSpec.describe "a line typed while an ask is in flight", :seam do
     end
 
     it "keeps a line typed mid-ask for the next prompt, once" do
-      cockpit.ask("held_pump")
+      cockpit.ask("held")
 
       cockpit.type("hello\r")
       sleep(0.5)
