@@ -127,9 +127,10 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
   cards, 2026-10-02): the measured fixes from `planning/spec-suite-solutions-research-2026-10.md`
   and the load flakes they exposed. Dev-box `rake pspec` median wall 116s to 58s at 12 workers,
   runs with a failure 9 of 15 to 0 of 15, and mixlib-shellout is gone from the bundle.
-- **End-to-end journeys.** `[in progress]` `planning/specs/e2e-journeys.md` (11 cards, 2026-10-03):
+- **End-to-end journeys.** `[done]` `planning/specs/e2e-journeys.md` (11 cards, 2026-10-03):
   the real `exe/lain` chat and `lain up` cockpit driven against a stand-in that replays ollama
-  cassettes, so `/manual-qa` rounds can skip the scenario sections the suite now drives.
+  cassettes, so `/manual-qa` rounds can skip the scenario sections the suite now drives. 8 journey
+  files, 38 examples, about 82s serial; `rake pspec` 21,642 examples at a 61 to 66s wall.
 
 **The bench — the deliverable — now exists.** For the first time the project can *compare strategies*:
 `DryReplay` re-renders a recorded Timeline byte-identically under one `Context` and yields a

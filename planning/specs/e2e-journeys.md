@@ -1,6 +1,6 @@
 # End-to-end journeys over the real binary
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -132,7 +132,7 @@ After T5, cards T6, T7 and T8 can run at the same time. T6 alone edits `spec/sup
 
 ## Tasks
 
-### T1: Drive a real plain chat against a scripted stand-in          [risk: medium]
+### T1: Drive a real plain chat against a scripted stand-in          [risk: medium] [landed 5f5c9b89]
 
 **Depends on:** none
 **Files:** `spec/support/e2e/sandbox.rb`, `spec/support/e2e/upstream.rb` (holds `E2E::Upstream` and the `E2E::Scripted` handler), `spec/support/e2e/session_file.rb`, `spec/support/e2e/plain_chat.rb`, `spec/e2e/upstream_faults_spec.rb`
@@ -220,7 +220,7 @@ end
 - Moving `HOME` breaks the child's bundler or Ruby boot. Report the error; do not fall back to the real `HOME` silently.
 - `spec/endpoint_env_isolation_spec.rb` fails because a helper writes `LAIN_*` into the parent's `ENV`.
 
-### T2: Replay and record a journey's model turns as a cassette          [risk: high]
+### T2: Replay and record a journey's model turns as a cassette          [risk: high] [landed 19288ef3]
 
 **Depends on:** T1
 **Files:** `spec/support/e2e/cassette.rb`, `spec/e2e/wire_contract_spec.rb`, `spec/fixtures/vcr_cassettes/e2e/probes.yml`, `spec/fixtures/vcr_cassettes/e2e/wire_contract.yml`, `spec/lain/provider/ollama_recorded_spec.rb` (the hygiene group's glob becomes `{ollama_*.yml,e2e/*.yml}`)
@@ -228,7 +228,7 @@ end
 **Shared-file wiring:** `spec/support/slow_files.rb`: add `spec/e2e/wire_contract_spec.rb`. `CLAUDE.md` Testing section: 1 line: re-record a journey with `rm spec/fixtures/vcr_cassettes/e2e/<name>.yml && LAIN_RECORD=ollama bundle exec rspec spec/e2e/<name>_spec.rb` against a loopback ollama serving `qwen3:4b` and `lfm2.5:latest`.
 **Reachable from:** `E2E::Cassette.for(name)` is the handler a journey passes to `E2E::Upstream.start`, with `E2E::Cassette.probes` as its probe source. It returns a `Replay`, or a `Recorder` when `LAIN_RECORD=ollama` and the file is absent.
 
-A journey cassette holds `/api/chat` interactions only. Probes come from `probes.yml`, 1 `/api/ps` and 1 `/api/show` per model, recorded on first use and answered on every probe call. `Replay` answers `/api/chat` in recorded order, matched on method and path, writing each recorded body back as chunked NDJSON split on newlines. Each recorded interaction carries a fingerprint of its request: the model, the sorted tool names, the sorted `options` keys, and the role and text of the last message. `Replay` still answers in order, and logs a named mismatch when a request's fingerprint differs from the one recorded, or when a request arrives after the cassette is exhausted. `Recorder` holds `NetworkAccess.permit_loopback` for the ollama port, forwards to `OLLAMA_API_BASE`, streams the answer back, and on `save` writes VCR 6 YAML through `CassetteHygiene.redact`, with `expires_at` and `created_at` replaced by a fixed placeholder. `DIR` resolves from `__dir__`.
+A journey cassette holds `/api/chat` interactions only. Probes come from `probes.yml`, 1 `/api/ps` and 1 `/api/show` per model, recorded on first use and answered on every probe call. `Replay` answers `/api/chat` in recorded order, matched on method and path, writing each recorded body back as chunked NDJSON split on newlines. Each recorded interaction carries a fingerprint of its request: the model, the sorted tool names, the sorted `options` keys, and the role and text of the last message. `Replay` still answers in order, and logs a named mismatch when a request's fingerprint differs from the one recorded, or when a request arrives after the cassette is exhausted. `Recorder` holds `NetworkAccess.permit_loopback` for the ollama port, forwards to `OLLAMA_API_BASE`, returns the answer, and on `save` writes VCR 6 YAML through `CassetteHygiene.redact`, with `expires_at` and `created_at` replaced by a fixed placeholder. `DIR` resolves from `__dir__`.
 
 The journey: a plain chat launched with `--model qwen3:4b --num-batch 1024 --seed 1 --temperature 0` in a project holding `NOTES.md` and a skill `.lain/skills/ask-lfm/skill.md` with `model: lfm2.5:latest`. The human asks for `NOTES.md` to be read, then invokes `@dev[/ask-lfm]`, then quits.
 
@@ -298,7 +298,7 @@ end
 - The last message's text differs between record and replay for a reason other than a lain change (a per-run value in a tool result). Report the field before widening the fingerprint.
 - `CassetteHygiene.findings_in` flags a recording and redaction cannot remove it without changing a request the fingerprint depends on.
 
-### T3: Run consolidate and improve over a recorded session with its profile          [risk: medium]
+### T3: Run consolidate and improve over a recorded session with its profile          [risk: medium] [landed 2dd3b310]
 
 **Depends on:** T2
 **Files:** `spec/e2e/session_passes_spec.rb`, `spec/fixtures/vcr_cassettes/e2e/session_passes.yml`
@@ -330,7 +330,7 @@ Spec file: `spec/e2e/session_passes_spec.rb`
 - A pass sends `num_batch` 2048 or a different model: the round 18 to 19 class of defect. Report it, do not weaken the assertion.
 - The card needs a change in `spec/support/e2e/`. Hand back the diff.
 
-### T4: Fork and resume a session whose subagent parked a question          [risk: medium]
+### T4: Fork and resume a session whose subagent parked a question          [risk: medium] [landed aa6b0ad9]
 
 **Depends on:** T2
 **Files:** `spec/e2e/fork_resume_spec.rb`, `spec/fixtures/vcr_cassettes/e2e/fork_resume.yml`, `spec/fixtures/vcr_cassettes/e2e/fork_resume_child_question.yml`
@@ -358,7 +358,7 @@ Spec file: `spec/e2e/fork_resume_spec.rb`
 - The fork or resume makes a model call at boot that the cassette lacks. Report which request.
 - The card needs a change in `spec/support/e2e/`. Hand back the diff.
 
-### T5: Approve and deny a parked call in a real cockpit          [risk: medium]
+### T5: Approve and deny a parked call in a real cockpit          [risk: medium] [landed 8f447b68]
 
 **Depends on:** T2
 **Files:** `spec/support/e2e/cockpit.rb`, `spec/e2e/cockpit_approval_spec.rb`, `spec/fixtures/vcr_cassettes/e2e/cockpit_approve.yml`, `spec/fixtures/vcr_cassettes/e2e/cockpit_deny.yml`
@@ -397,7 +397,7 @@ Spec file: `spec/e2e/cockpit_approval_spec.rb`
 ```ruby
 module E2E
   class Cockpit
-    def self.start(sandbox, upstream, *chat_flags) -> Cockpit   # own tmux socket; waits for you> in the input pane
+    def self.start(sandbox, upstream, *chat_flags, rows: 24) -> Cockpit   # own tmux socket; waits for you> in the input pane
     def type(line)                    # input pane: send-keys -l, wait until the pane shows it, Enter once
     def capture(pane) -> String       # :chat, :input, :editor
     def state -> Hash                 # state.json
@@ -405,7 +405,7 @@ module E2E
     def session -> SessionFile
     def approve(line = 1)
     def deny(line = 1)
-    def stop                          # kill this cockpit's server only, TERM up, unlink its sockets
+    def stop                          # kill this cockpit's server only, wait for up and its panes to exit
   end
 end
 ```
@@ -415,7 +415,7 @@ end
 - The cockpit needs a pane size or environment variable the recipe does not set.
 - The file runs over 20s under `rake pspec`; report the per-phase times before changing anything.
 
-### T6: Answer a subagent's question in a real cockpit          [risk: medium]
+### T6: Answer a subagent's question in a real cockpit          [risk: medium] [landed 554fac15]
 
 **Depends on:** T5
 **Files:** `spec/support/e2e/cockpit.rb` (adds the `reply` gesture only), `spec/e2e/cockpit_question_spec.rb`, `spec/fixtures/vcr_cassettes/e2e/cockpit_question.yml`
@@ -449,7 +449,7 @@ end
 - `lfm2.5:latest` will not call `ask_human` in the cockpit after 3 recording attempts. Report the prompts.
 - The change to `spec/support/e2e/cockpit.rb` grows beyond the `reply` method: T7 and T8 run beside this card.
 
-### T7: Stop an ask and hold typed lines while the model is busy          [risk: medium]
+### T7: Stop an ask and hold typed lines while the model is busy          [risk: medium] [landed 95a6092d]
 
 **Depends on:** T5
 **Files:** `spec/e2e/stop_while_busy_spec.rb`
@@ -490,7 +490,7 @@ Spec file: `spec/e2e/stop_while_busy_spec.rb`
 - `stop_ask_spec.rb` example 3's fields (1 digest, no turn, inbox hud 0, buffer 0, asked 1) have no outside-visible equivalent. Report which, so T9 keeps that example.
 - The card needs to edit `spec/support/e2e/cockpit.rb`. Hand back the diff.
 
-### T8: Run two cockpits on one machine          [risk: medium]
+### T8: Run two cockpits on one machine          [risk: medium] [landed 16ea6bd2]
 
 **Depends on:** T5
 **Files:** `spec/e2e/two_cockpits_spec.rb`, `spec/fixtures/vcr_cassettes/e2e/two_cockpits_a.yml`, `spec/fixtures/vcr_cassettes/e2e/two_cockpits_b.yml`
@@ -523,7 +523,7 @@ Spec file: `spec/e2e/two_cockpits_spec.rb`
 - The same-project case comes up: round 13's shared status feed (2 processes, 1 project) has no recorded fix. Do not add that example; report it as a candidate finding.
 - The card needs to edit `spec/support/e2e/cockpit.rb`. Hand back the diff.
 
-### T9: Delete the seam examples the cockpit journeys reproduce          [risk: medium]
+### T9: Delete the seam examples the cockpit journeys reproduce          [risk: medium] [landed a5767c10]
 
 **Depends on:** T7
 **Files:** `spec/lain/seams/stop_ask_spec.rb` (remove examples 1 and 3; delete the file only if T7 also reproduced example 2, the Ctrl-C countdown, which it does not plan to), `spec/lain/seams/typed_during_ask_spec.rb` (remove the "in the input pane" group and its now-unused helpers), `spec/lain/cli/up_spec.rb` (remove the "lain up, under a real terminal" group at line 2886)
@@ -557,7 +557,7 @@ Spec file: the commands named in each scenario.
 - T7 reported an example it could not reproduce. Keep that example.
 - Removing the `up_spec.rb` group leaves a helper only it used. Remove the helper in the same commit.
 
-### T10: Run terminal_gone's chat against the shared stand-in          [risk: low]
+### T10: Run terminal_gone's chat against the shared stand-in          [risk: low] [landed 45a5becc]
 
 **Depends on:** T1
 **Files:** `spec/lain/seams/terminal_gone_spec.rb`
@@ -628,3 +628,61 @@ After the last card lands:
 - 2026-10-03 start. Base `main` at `c2606a82`. Worktrees: only the main checkout. Branches besides main: `flake/review`, `spike/combined`, `spike/combined2` (left alone).
 - Hooks: pre-commit runs file hygiene, shellcheck, the cargo checks on Rust changes, `bundle exec rake compile check` on any Ruby or Rust change (`rake pspec` plus rubocop, about 70s), `yard-lint --staged`, `bin/lint-gherkin-docs` on staged plan docs, the price freshness lint; commit-msg runs `bin/lint-commit-msg`. The suite cannot run beside another suite (shared `TMPDIR`), so cards land in windows.
 - Grounding re-checked: HEAD equals the checked SHA; `spec/e2e/` and `spec/support/e2e/` absent; ollama serves `qwen3:4b` and `lfm2.5:latest`.
+- T1 started (worktree `tmp/worktrees/T1` at `19c82872`).
+- T1 stop: a severed stream writes `truncated_stream` but the screen says only "unrecognized stop_reason from provider". User ruled 2026-10-03: fix lib inside T1 (a named failure message, with its unit spec); the strict assertion stays.
+- T1 implemented with a new `:truncated` stop reason in lib; review raised to high depth because the card now changes production code.
+- T1 review 1: APPROVE-WITH-FIXES, substantive. Fixing should-fix 1 to 9 and nits 1 to 10 (truncated wins over tool_use; subagent floors on any failure; failure-injection 1b updated). Out of scope, for the user: a truncated turn's partial text is committed and resent as a complete assistant turn (same under `:unknown`); 1 of 17 runs drew no retried answer after a FIN mid-body, not reproduced.
+- T1 review 2: APPROVE-WITH-FIXES, 1 mechanical fix (screen tail nil on a short screen), applied.
+- T1 first hook run red on 1 of 21,616: tty_spec "loses and repeats nothing typed while notes keep arriving", green alone, a known flake. Cause: the spec wrote its notes file in place while the child polled and read it, so the child read it empty. User ruled to fix it first; landed `e0479601`, red with a 0.2s pause injected, green after the rename fix.
+- T1 landed `5f5c9b89`. Worktree and branch removed.
+- T2 and T10 started (worktrees at `5f5c9b89`).
+- T10 review: APPROVE-WITH-FIXES, mechanical (unused reader, dead require, a WHAT comment). Runtime-log seconds to be read after landing; the plan's before figure is 6.4s.
+- T10 landed `45a5becc`. `terminal_gone_spec.rb` in `tmp/parallel_runtime_rspec.log`: 6.4s before (plan figure), 6.18s after; 3 examples before and after. Worktree and branch removed.
+- T2 implemented: recorded first attempt, replays offline. Its agent ran `pre-commit run --files`, which fired a full pspec beside the T10 hook run (16 failures, no evidence either way). Cassette 173 KB for 3 calls against the hygiene 200,000-byte limit; main session ruled that a recorded request stores its fingerprint, not its full body.
+- T2: requests stored as fingerprints, cassette 117,530 bytes; replies are 97% and a 6-call journey is about 270 KB. Main session accepted a 400,000-byte limit for `e2e/` cassettes in `cassette_hygiene.rb` (recorded replies may not be edited, so the limit is the only lever).
+- T2 review 1: REQUEST-CHANGES. Blocker: recording a probe never reached ollama (the suite's probe stub answered first, then scrub raised FrozenError). Should-fix: a refused first call timed out instead of naming the stale cassette; the size-limit example was a spec of a support helper (my ask, withdrawn). Noted: a re-record churns the whole cassette because qwen3's thinking stream differs run to run.
+- T2 review 2: APPROVE-WITH-FIXES. Recording reaches ollama; a failed recording must write nothing (fix 16), plus 2 nits. Buffering accepted: the card's "streams the answer back" now reads "returns the answer". The card also edits `spec/support/ollama_probe.rb`, `once_per_file.rb` and `network_access.rb`, outside its Files list, for the probe blocker.
+- T2 first hook run red: 17 of 21,625 across 13 unrelated files, all 17 green alone, load average 34 (Steam starting, a long-running python job). User ruled: treat as contention, wait for a quiet box, commit again.
+- T2 landed `19288ef3` on a quiet box (load 3.5). Worktree and branch removed.
+- T3, T4, T5 started (worktrees at `19288ef3`).
+- T4 implemented: 1 cassette (87,864 bytes), about 9.2s. `--fork` resolves only parent turn digests, so the journey sends a plain parent turn first and forks there; the panel judges whether that hides a defect. Recording needs `LAIN_SPEC_BUDGET=600`; added to the CLAUDE.md re-record command with T4's wiring.
+- T3 stopped: \`session_passes.yml\` records at 568 to 627 KB (consolidate thinks 2,800+ tokens), over the 400,000 e2e cap; both passes carried \`qwen3:4b\` and \`num_batch\` 1024. User ruled: raise the e2e cap to 800,000, landed with T3. Recording needs \`LAIN_SPEC_BUDGET=900\`; the CLAUDE.md command (with T4) and the \`Cassette::Missing\` message (T4 fix) both say 900.
+- T4 review 1: APPROVE-WITH-FIXES, substantive. The extra parent turn is correct: the child's \`spawned_from\` is the fork digest. Should-fix: examples 2 and 3 could not fail (assert the \`resumed_from\` header), fork and resume share one failure, \`/quit\` can race the child, the \`Missing\` message lacks the budget.
+- T3 review 1: REQUEST-CHANGES. Blocker: \`qwen3:4b\` is \`Provider::Ollama::DEFAULT_MODEL\`, so dropping the header's model stayed green; \`num_batch\` 1024 is proven. User ruled: T3 records on \`lfm2.5:latest\` and asserts the header's model. Other journeys stay on \`qwen3:4b\`.
+- T4 review 2: APPROVE-WITH-FIXES. A refused fork made all 3 examples wait out the watchdog; T4 fixes \`spec/support/e2e/plain_chat.rb\` to stop waiting once the chat has exited (scope change, ruled in the main session; no other in-flight card touches it).
+- T5 implemented: \`E2E::Cockpit\`, 7 examples, about 9s serial, cassettes 90,710 and 115,651 bytes. \`lain up\` ends as a tmux client that survives kill-server and ignores TERM; the panel judges whether that is a defect.
+- T4 landed `aa6b0ad9`. Worktree and branch removed.
+- T3 review 2: APPROVE-WITH-FIXES, 1 mechanical (cap comment as a past measurement), applied. Recorded on `lfm2.5:latest`, cassette 83,489 bytes; the 800,000 cap stays as ruled.
+- T5 review 1: REQUEST-CHANGES. Blocker: at 50 rows the input-pane height check cannot fail (up_spec's group checks below 50), so T9 may not delete that group until the approve journey runs smaller. The surviving `up` client was a test defect: the cockpit never drained the PTY master, so the client blocked writing to a full terminal; drained, it exits in 0.10s.
+- T3 landed `2dd3b310`. Worktree and branch removed.
+- T5 review 2: APPROVE-WITH-FIXES, mechanical. The cockpit boots at 24 rows by default (`rows:`), so the height check fails with SEAT_INPUT disabled; `stop` leaves socket cleanup to nvim, the input pane and the sandbox. Card interface amended to match.
+- T5 landed `8f447b68`; `cockpit_approval_spec.rb` 10.8s under pspec (limit 20s). Worktree and branch removed.
+- T6, T7, T8 started (worktrees at `8f447b68`).
+- T6 implemented: cassette 26,692 bytes, 5 examples, about 8 to 9s; `/inbox` answers in the chat pane. T8 implemented: 2 cassettes (34,217 and 104,226 bytes), 5 examples, 9 to 20s; `E2E::Cockpit` could not run 2 cockpits from one sandbox, so T8 used a spec-local subclass while T6 holds cockpit.rb; its suggested cockpit.rb diff lands with T8 after T6.
+- T6 review 2: APPROVE (1 nit left unapplied). T7 implemented: 4 examples, about 18s, red by 3 lib mutations; the in-process {stopped, closed} outcome is proxied by run_interrupted plus no session_closed; stop_ask example 2 (Ctrl-C countdown) is kept. Flagged: 1 of about 60 runs failed inside `Cockpit.start`, not reproduced; the T7 panel investigates.
+- T6 landed `554fac15`. Worktree and branch removed. pspec seconds: cockpit_approval 10.2, fork_resume 10.4, upstream_faults 10.7, cockpit_question 5.5, session_passes 5.7, wire_contract 5.4.
+- T8 review 1: REQUEST-CHANGES. Blocker: the E325 example passed with NO_SWAPFILE removed, because nvim raises E325 only when the other editor's buffer is dirty. T8's worktree fast-forwarded to `554fac15`; the two-cockpit support moves into `Cockpit` and `Sandbox` (scope change, no other in-flight card touches them). Time 13 to 16s, about 1.5s of wall at 12 workers.
+- T7 review 1: REQUEST-CHANGES. Blockers: the you> return checks cannot fail (the first prompt's you> stays on the pane); the held-lines example passes with the hold bypassed. Proxy ruling: no session_closed equals closed=>false, but run_interrupted is weaker than stopped=>true; T7 asserts Shutdown::STOPPED's text, else T9 keeps the old examples. Boot flake not reproduced in about 200 boots; `Cockpit.start` leaks processes when launch raises, and `cockpit_approval_spec`'s prompt_back? has the same always-true you> check. Those 2 support fixes go to T7 after T8 lands (T8 holds cockpit.rb).
+- T7 review fixes applied (spec only): last-line you> check, 4 held notes and 1 chat request before release, Shutdown::STOPPED asserted in 3 examples; each mutant red. For T9: keep stop_ask example 3 (a Ctrl-C stop of an ask parked on ask_human has no e2e) and the typed_during_ask burst-split example ("one\rtwo\r"), or log the loss.
+- T8 review 2: APPROVE-WITH-FIXES (1+1 timeout swallowed by the neovim gem's loop; `Replay#fail` reported every early failure as Stale, hiding the E325 pane text). Found: `cockpit_approval_spec` on main is red 4 of 12 under 4 parallel copies, a capture race (it reads the chat pane once after an always-true you> check); the fix goes to T7 with the Cockpit.start leak fix.
+- T8 landed `16ea6bd2`; two_cockpits 9.8s under pspec. Worktree and branch removed. Candidate finding for the user: under the NO_SWAPFILE mutant, B's `lain chat` and `lain input` panes outlived tmux kill-server while nvim was blocked on E325; `Cockpit#stop` now KILLs survivors after 2s.
+- T7 review 2: APPROVE-WITH-FIXES. All 7 mutants red; start-leak probe green at 4 failure points; cockpit_approval 32 of 32 at 4 parallel copies. T9 deletes stop_ask examples 1 and 3 (log that 3 stopped via Ctrl-C, the journey types /stop) and typed_during_ask's "reaches the chat at once" and "is held" examples (2 lines at once is covered at input_pane_spec.rb:380); T9 keeps stop_ask example 2 and the "on the chat's own terminal" group. Last fix: cockpit_question_spec's you> check uses prompt_back?.
+- T7 first hook run red on 1 of 21,649: deletability_spec "does NOT load when a forced dependent is left behind", green alone. Cause: `BootWithout#boot` read any output containing "ok" as a clean boot, and a failed boot's backtrace names its mktmpdir path, whose suffix held "ok" in 81 of 20,000 names. User ruled to fix it first; landed `c93da81b`, red with a forced "ok" name, green after judging by exit status.
+- T7 landed `95a6092d`; stop_while_busy 23.7s under pspec. Worktree and branch removed. The T9 mapping is in the scratchpad copy of `.handback-T7.md` and in the T7 review 2 log line above.
+- T9 started (worktree at `95a6092d`).
+- T9 implemented: 7 examples removed (21,649 to 21,642 in LAIN_SLOW=1 dry runs); removed examples 18.63s against 35.16s for the replacing journeys, under the 3x stop. The 2-lines-at-once coverage is input_pane_spec.rb:380 ("sends a pasted pair of lines as two lines, in order, once each"). Flagged: up_spec's terminal group asserted at 60, 40 and 24 rows, the journey runs 24 only. runtime-census ceilings applied in the T9 worktree, all 8 e2e files included per the card.
+- T9 review: APPROVE-WITH-FIXES, mechanical. Every removed assertion is covered (3 lib mutants red on old and new). The 60 and 40 row cases need nothing kept: 40 is the same shrink as 24, and 60 stayed green with seating disabled. Accepted loss: a Ctrl-C stop of an ask parked on ask_human no longer runs end to end. runtime-census: upstream_faults ceiling 24; `--check` reads "0 of 3" until 3 fresh pspec logs are recorded (integration check 6). User asked for low CPU while gaming: reviews run niced and serial, hook commits use `LAIN_SPEC_WORKERS=4 nice -n 19`, integration pspec loops wait.
+- T9 landed `a5767c10` (hook at 4 workers, niced). Worktree and branch removed.
+- T11 started (worktree at `a5767c10`).
+- T11 review: APPROVE-WITH-FIXES, mechanical plus 1 ruling. Main session ruled from the card: a full manual-qa round skips automated halves, a round scoped to a named scenario runs it whole. Follow-ups, not in this plan: a durable check that each "automated by" citation still names a real example (the check script lives only in the scratchpad); marks for fork_resume and two_cockpits in bowling-ruby.md and method.md.
+- T11 landed `6d2a1ee2` (docs only; hook skipped the suite). Citation check against the main checkout: 49 checks, all passed. Worktree and branch removed.
+- Checkpoint: all 11 cards landed. Integration checks remain.
+- Integration checks, 2026-10-03 on a quiet box (fresh boot, load 0.5):
+  1-2. `rake pspec` 4 times at 12 workers: 21,642 examples, 0 failures, 13 pending each run; walls 61, 63, 66 and 61s. 21,642 equals T9's post-deletion dry-run count (21,603 at plan time, plus the journeys and the T1 and T2 lib and support specs, minus T9's 7).
+  3. A bare `rspec --dry-run` counts 20,093 and filters every `spec/e2e` file out.
+  4. Serial `LAIN_SLOW=1 rspec` per journey, 38 examples, 0 failures: cockpit_approval 11.1s, cockpit_question 6.2s, fork_resume 10.9s, session_passes 7.5s, stop_while_busy 19.6s, two_cockpits 9.9s, upstream_faults 11.6s, wire_contract 5.6s.
+  5. rubocop: 1,834 files, no offenses. `comment-census --check-tickets`, `zeitwerk-census --check` exit 0. `spec-census --check`: assertions 184 (at the ceiling), lib_reach 57 (ceiling 76, could be lowered).
+  6. `runtime-census --record` after 3 runs, then `--check`: ok. Simulated wall at 12 workers 51.8s; slowest file input_pane_socket 36.3s; slowest e2e file stop_while_busy 21.9s.
+  7. Re-record proof: ollama started from `/mnt/nvme/opt/ollama-env.sh` (the box had rebooted). `cockpit_approve.yml` deleted and recorded with `LAIN_RECORD=ollama LAIN_SPEC_BUDGET=900` (6 examples, 0 failures, 18.5s, 84,813 bytes), replayed offline green (8.5s), the hygiene group green against it, then the committed cassette restored.
+  8. Owed by the user: 1 `/manual-qa` round scoped to `cockpit-surfaces`.
+- Close-out: worktrees and branches match the start of the run (main checkout; `flake/review`, `spike/combined`, `spike/combined2`). Status done.
