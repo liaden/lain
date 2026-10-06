@@ -1,27 +1,26 @@
 # frozen_string_literal: true
 
-# Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/configuration.rb.
-# Dropped every option this slice has no code left to serve: the model-registry
-# ones, the moderation/image/transcription ones, and the
-# logger/instrumenter/log-level family, whose global-Logger and
-# ActiveSupport::Notifications seams this slice replaces with injected
-# `Sink`/instrumenter arguments -- leaving nothing for a Configuration *option*
-# to point at.
-#
-# `register_provider_options` and the dynamic `option` DSL are kept exactly:
-# they are what lets a future provider register `<slug>_api_key` /
-# `<slug>_api_base` without this class knowing the names in advance.
-#
-# Upstream's custom `log_regexp_timeout=` setter warned through the global
-# logger on Ruby versions predating `Regexp.timeout=`. Dead code on the 4.0.6
-# floor this project requires, and otherwise the one call in this file reaching
-# a global logger, so it is the plain generated setter here.
-
 module Lain
   class Provider
     module HTTP
       # Dynamic, provider-extensible configuration for the HTTP transport.
       class Configuration
+        # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/configuration.rb.
+        # Dropped every option this slice has no code left to serve: the model-registry
+        # ones, the moderation/image/transcription ones, and the
+        # logger/instrumenter/log-level family, whose global-Logger and
+        # ActiveSupport::Notifications seams this slice replaces with injected
+        # `Sink`/instrumenter arguments -- leaving nothing for a Configuration *option*
+        # to point at.
+        #
+        # `register_provider_options` and the dynamic `option` DSL are kept exactly:
+        # they are what lets a future provider register `<slug>_api_key` /
+        # `<slug>_api_base` without this class knowing the names in advance.
+        #
+        # Upstream's custom `log_regexp_timeout=` setter warned through the global
+        # logger on Ruby versions predating `Regexp.timeout=`. Dead code on the 4.0.6
+        # floor this project requires, and otherwise the one call in this file reaching
+        # a global logger, so it is the plain generated setter here.
         class << self
           # Declare a single configuration option.
           def option(key, default = nil)
@@ -90,7 +89,7 @@ module Lain
         #
         # `LAIN_CONNECT_TIMEOUT=0` restores the old behaviour exactly: no
         # separate number, so Faraday derives one again.
-        option :connect_timeout, -> { ENV.fetch("LAIN_CONNECT_TIMEOUT", 5) }
+        option :connect_timeout, -> { env_seconds("LAIN_CONNECT_TIMEOUT", 5) }
         # The INTER-CHUNK grace: the longest silence tolerated between body
         # chunks once a stream has started emitting. nil disables the check.
         #
@@ -107,7 +106,7 @@ module Lain
         # Unlike `request_timeout`, which fires only when the server never
         # answered, this knob can end a WORKING generation -- so it needs an off
         # switch an operator can reach, and `=0` is it.
-        option :stream_stall_timeout, -> { ENV.fetch("LAIN_STREAM_STALL_TIMEOUT", 30) }
+        option :stream_stall_timeout, -> { env_seconds("LAIN_STREAM_STALL_TIMEOUT", 30) }
         option :max_retries, 3
         option :retry_interval, 0.1
         option :retry_backoff_factor, 2
@@ -178,6 +177,13 @@ module Lain
         end
 
         private
+
+        # An exported-but-empty variable is how a shell "unsets" one; reading it
+        # as the off switch would silently disable the budget.
+        def env_seconds(name, default)
+          value = ENV.fetch(name, nil)
+          Blankness.blank?(value) ? default : value
+        end
 
         def positive_seconds(value, knob, off_switch)
           return nil if value.nil? || (value.is_a?(String) && value.strip.empty?)

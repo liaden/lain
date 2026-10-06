@@ -206,6 +206,22 @@ RSpec.describe "the connect budget", :seam do
       expect([connection.options.open_timeout, connection.options.timeout]).to eq([nil, 300])
     end
 
+    it "reads an empty LAIN_CONNECT_TIMEOUT as unset, so the default holds" do
+      budget = with_env("LAIN_CONNECT_TIMEOUT" => "") do
+        Lain::Provider::HTTP::Configuration.new.connect_timeout
+      end
+
+      expect(budget).to eq(5)
+    end
+
+    it "reads zero there as no separate connect budget" do
+      budget = with_env("LAIN_CONNECT_TIMEOUT" => "0") do
+        Lain::Provider::HTTP::Configuration.new.connect_timeout
+      end
+
+      expect(budget).to be_nil
+    end
+
     it "refuses a budget that is not a number, where a human is still looking" do
       config = Lain::Provider::HTTP::Configuration.new
       config.connect_timeout = 12

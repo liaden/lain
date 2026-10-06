@@ -235,6 +235,14 @@ RSpec.describe "stalled-stream protection", :seam do
       expect(graces).to eq(7.0)
     end
 
+    it "reads an empty LAIN_STREAM_STALL_TIMEOUT as unset, so the default holds" do
+      grace = with_env("LAIN_STREAM_STALL_TIMEOUT" => "") do
+        Lain::Provider::HTTP::Configuration.new.stream_stall_timeout
+      end
+
+      expect(grace).to eq(30)
+    end
+
     it "reads zero there as the off switch" do
       disabled = with_env("LAIN_STREAM_STALL_TIMEOUT" => "0") do
         Lain::Provider::HTTP::Configuration.new.stream_stall_timeout
