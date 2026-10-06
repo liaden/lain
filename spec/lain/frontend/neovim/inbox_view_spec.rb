@@ -1267,6 +1267,19 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
         expect(drawn).to eq(["(no questions pending)"])
         expect(questions_in(drawn)).to eq(inbox_count).and eq(0)
       end
+
+      # Scenario: a re-asked question is pending after the first was consumed
+      it "lists both again when the gate asks the same question after its window closed" do
+        Sync do |task|
+          asked(task, timeout: 0.05).wait
+          gate = deciding(task, timeout: 5)
+          task.yield until asker.pending?
+
+          expect(questions_in(drawn)).to eq(inbox_count).and eq(1)
+          asker.reply("approve", asker.last_question.digest)
+          gate.wait
+        end
+      end
     end
 
     # The tripwire for the day that gap could re-open: every Telemetry record

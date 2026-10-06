@@ -555,6 +555,32 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       expect(journal.records.first.digests).to eq([IssueActorSpecAsker::Named.new.digest])
     end
 
+    context "when the chat's real asker puts the question" do
+      def retired_by(store)
+        journal = IssueActorSpecJournal.new
+        asker = Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:))
+        Sync { earlier(asker, journal:, timeout: 0.05).call(resumed: false) }
+        journal.records.flat_map(&:digests)
+      end
+
+      it "journals the same question digest when the run is repeated over a fresh Store" do
+        owned_branch("a")
+
+        first, rerun = Array.new(2) { retired_by(Lain::Store.new) }
+
+        expect(rerun).to eq(first).and have_attributes(size: 1)
+      end
+
+      it "asks a question of its own when a relaunch asks again over the same Store" do
+        owned_branch("a")
+        store = Lain::Store.new
+
+        first, again = Array.new(2) { retired_by(store) }
+
+        expect(again).not_to eq(first)
+      end
+    end
+
     it "says in its question that delete removes every earlier branch it lists" do
       %w[a b].each { |id| owned_branch(id) }
       asker = IssueActorSpecAsker.new("keep")

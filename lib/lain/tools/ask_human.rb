@@ -77,6 +77,13 @@ module Lain
       # an asker the same way.
       ASKED_BY = "asked_by"
 
+      # An unchanged chain asking the same text again would otherwise write
+      # the event a reader already retired, so the second asking never listed.
+      # Counted rather than random so a re-run journals the same
+      # digests, and off the Store rather than per asker so a fresh asker over
+      # the same Store does not restart at 0.
+      ASKING = "asking"
+
       # What a human's own reply may cost the context it lands in, and what an
       # overrun is put back to them as. Its own object because measuring an
       # answer and reading what a human's next line MEANS are one
@@ -950,7 +957,7 @@ module Lain
       def emit_question(announcement)
         parent = parent_timeline
         own_question = write_message(parent, from: identity(parent), to: @to,
-                                             body: emitted_body(announcement),
+                                             body: emitted_body(announcement, parent.store),
                                              causal_parents: [parent.head_digest].compact)
         @last_question = @parent.escalate(own_question) { |**hop| write_message(parent, **hop) }
         @last_question.digest
@@ -1001,9 +1008,19 @@ module Lain
       # reaches nothing the frozen set holds, and `from_body` reads only the
       # keys it owns, so a richer body still rebuilds exactly the set that was
       # asked. This is the event, not the schema -- the tools block is untouched.
-      def emitted_body(announcement)
+      def emitted_body(announcement, store)
         body = announcement.set.to_body.merge("question" => announcement.summary)
-        Blankness.blank?(@agent) ? body : body.merge(ASKED_BY => @agent)
+        body = body.merge(ASKED_BY => @agent) unless Blankness.blank?(@agent)
+        body.merge(ASKING => prior_askings(body, store))
+      end
+
+      # Every hop of a relay re-writes one body, so the Store holds one payload
+      # per asking however far it travelled. The cost is one digest computed and
+      # looked up per earlier asking of this body, never a walk of the Store.
+      # Nothing between this probe and the payload's put may yield, or two
+      # askers over one Store could take the same count.
+      def prior_askings(body, store)
+        (0..).find { |asking| !store.key?(Event::Payload.new(kind: :message, body: body.merge(ASKING => asking)).digest) }
       end
 
       # Causal-only -- no `render_parent` -- so it never enters a render chain.

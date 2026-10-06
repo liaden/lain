@@ -142,6 +142,21 @@ RSpec.describe Lain::StatusFeed::Inbox do
     end
   end
 
+  describe "a question asked again after its first asking was retired" do
+    it "lists the second asking" do
+      inbox = described_class.new(store:)
+      asker = Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:))
+      first = Sync { asker.ask("Approve it?").tap { |pending| asker.withdraw(pending) } }
+      inbox.arrived(asker.last_question)
+      inbox.retire([first.digest])
+
+      Sync { asker.ask("Approve it?") }
+      inbox.arrived(asker.last_question)
+
+      expect(inbox.pending_size).to eq(1)
+    end
+  end
+
   describe "#committed" do
     it "retires the questions the committed head's chain cites -- the live chat's carrier (F76)" do
       inbox = described_class.new(store:)

@@ -1496,4 +1496,97 @@ RSpec.describe Lain::Tools::AskHuman do
       end
     end
   end
+
+  # An unchanged chain asking the same text again used to write the same
+  # event, so a reader that had already retired the first asking never listed
+  # the second. The count is read off the Store rather than kept per asker, so
+  # a fresh asker over the same Store still counts, and a re-run over a fresh
+  # Store journals the same digests.
+  describe "each asking of a question" do
+    def asked_twice(asker)
+      Sync do
+        Array.new(2) do
+          asker.withdraw(asker.ask("which port?"))
+          asker.last_question
+        end
+      end
+    end
+
+    it "is a question of its own when the same text is asked twice on an unchanged chain" do
+      first, second = asked_twice(tool)
+
+      expect(second.digest).not_to eq(first.digest)
+      expect([first, second].map { |question| question.body.fetch("asking") }).to eq([0, 1])
+      expect(Ractor.shareable?(second)).to be(true)
+    end
+
+    it "counts the askings the Store holds, not the ones this asker made" do
+      fresh = described_class.new(parent:)
+
+      Sync do
+        tool.withdraw(tool.ask("which port?"))
+        fresh.ask("which port?")
+      end
+
+      expect(fresh.last_question.body.fetch("asking")).to eq(1)
+    end
+
+    it "journals the same digests when the same session runs again over a fresh Store" do
+      digests = Array.new(2) do
+        rerun = Lain::Timeline.empty(store: Lain::Store.new)
+                              .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+        asked_twice(described_class.new(parent: rerun)).map(&:digest)
+      end
+
+      expect(digests.last).to eq(digests.first)
+      expect(digests.first.uniq.size).to eq(2)
+    end
+
+    describe "relayed past the parent and handed back" do
+      let(:grandparent) do
+        Lain::Timeline.empty(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
+      end
+      let(:relaying) do
+        described_class::Parent.new(read: parent, to: Lain::Event::ChainWriter.correlation_of(grandparent),
+                                    escalation: [described_class::HUMAN])
+      end
+      let(:seen) { [] }
+      let(:relayed) do
+        asker = nil
+        asker = described_class.new(parent: relaying, observer: seen.method(:push),
+                                    notify: lambda { |text|
+                                      if text.is_a?(described_class::Handback)
+                                        asker.reply(described_class::Ceiling::CONFIRMATION,
+                                                    asker.last_question.digest)
+                                      end
+                                    })
+      end
+
+      def questions = seen.select { |event| event.body.key?("questions") }
+
+      def handed_back
+        Sync do |task|
+          run = task.async { relayed.call({ "question" => "which file?" }, invocation) }
+          relayed.reply("x" * (described_class::Ceiling::BOUND.limit + 1), relayed.last_question.digest)
+          run.wait
+        end
+      end
+
+      it "carries one body on every hop, and the handback asks nothing new" do
+        handed_back
+
+        expect(questions.size).to eq(2)
+        expect(questions.map(&:payload_digest).uniq.size).to eq(1)
+        expect(questions.map { |hop| hop.body.fetch("asking") }).to eq([0, 0])
+      end
+
+      it "counts a relayed asking once, however many hops it took" do
+        handed_back
+        handed_back
+
+        expect(questions.map { |hop| hop.body.fetch("asking") }).to eq([0, 0, 1, 1])
+      end
+    end
+  end
 end
