@@ -108,13 +108,22 @@ module Lain
     # @param lineages [Enumerable<Bench::Session::Lineages::Lineage>]
     # @return [Array<Outcome>] one per lineage, in the order they were recorded
     def call(lineages)
-      lineages.map { |lineage| spawn_clerk(Scaffold.new(lineage)) }
+      lineages.map { |lineage| journal_lineage(Scaffold.new(lineage)) }
     end
 
     private
 
     # A reader, not `@recorder`, so the keyword shorthand reads at its senders.
     attr_reader :recorder
+
+    def journal_lineage(scaffold)
+      spawn_clerk(scaffold).tap do |outcome|
+        @journal << Telemetry::ConsolidationLineage.new(
+          spawn: outcome.spawn, spawned_from: scaffold.spawned_from, turn_count: scaffold.turn_count,
+          wrote: outcome.wrote, failure: outcome.failure
+        )
+      end
+    end
 
     def spawn_clerk(scaffold)
       view = own_view(scaffold.spawn)
@@ -199,6 +208,8 @@ module Lain
       def spawn = lineage.spawn.digest
 
       def turn_count = lineage.child_turns.size
+
+      def spawned_from = lineage.spawned_from
 
       def render
         <<~PROMPT

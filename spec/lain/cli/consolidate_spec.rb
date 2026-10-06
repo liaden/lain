@@ -229,6 +229,25 @@ RSpec.describe Lain::CLI::Consolidate do
     end
   end
 
+  describe "the pass journal names every lineage it worked" do
+    it "holds one consolidation_lineage record per lineage, naming its outcome" do
+      malformed = text_response("<function=x/>", stop_reason: :malformed)
+      provider = Lain::Provider::Mock.new(
+        responses: [tool_response(memory_write("login-ttl", "the token TTL was zero")), text_response("A done"),
+                    malformed, malformed]
+      )
+
+      expect { cli(provider).report }.to raise_error(Lain::CLI::Consolidate::PassFailed)
+
+      expect(journaled("consolidation_lineage")).to match(
+        [a_hash_including("spawn" => spawn_a, "spawned_from" => lineages.first.spawned_from,
+                          "turn_count" => lineages.first.child_turns.size, "wrote" => true, "failure" => nil),
+         a_hash_including("spawn" => spawn_b, "wrote" => false,
+                          "failure" => a_hash_including("stop_reason" => "malformed"))]
+      )
+    end
+  end
+
   # The pass is not a chat, so its record is not a session: it lands in its own
   # kind beside `sessions`, keyed by project, and a reader listing this
   # project's chats never finds a clerk pass among them.
