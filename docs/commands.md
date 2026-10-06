@@ -104,9 +104,8 @@ inside that derivation. The background is
 for.** Those two are exact complements by construction — both ask one predicate which messages
 carry a tool block — so together they partition a span rather than fighting over it. Any *other*
 pairing may not: `summarizing` and `elide` each claim the whole span, so `elide+summarizing`
-resolves happily and then refuses at the first compacting turn, naming both operands and the
-overlapping indices. The union is commutative; the order you write the two names in is not a
-setting.
+is refused at launch, naming both strategies and suggesting `elide-tools+summarize-conversation`.
+The union is commutative; the order you write the two names in is not a setting.
 
 **Unset carries no Thor default, on purpose.** A default would materialize the key, so the code that
 reads the flag could never tell "no strategy was named" from "someone named the default" — and the

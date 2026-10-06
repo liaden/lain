@@ -299,19 +299,26 @@ RSpec.describe Lain::CLI::CompactionStrategy do
         .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /unknown part "" in --compact-strategy ""/)
     end
 
-    # Deliberately weaker than "refused before any run begins":
-    # `Base#|` only CONSTRUCTS, and Overlap is raised inside
-    # {Lain::Compaction::Strategy::Composed#propose_ranges}, which needs the
-    # messages and the span this resolver does not have. A static "claims the
-    # whole span" declaration would let the refusal move here; that is a design
-    # decision for its own card (composed_spec.rb:141 pins the position).
-    it "constructs two whole-span strategies happily and raises Overlap at the first compaction" do
-      strategy = resolve("elide+summarizing", tier: tier_factory, journal: [])
+    it "refuses two whole-span strategies at resolve, naming both and the partitioning pair" do
+      expect { resolve("elide+summarizing", tier: tier_factory, journal: []) }
+        .to raise_error(Lain::CLI::CompactionStrategy::Unknown,
+                        /"elide" and "summarizing".*elide-tools\+summarize-conversation/)
+    end
+
+    it "refuses the whole-span pair in either order and without a tier" do
+      expect { resolve("summarizing+elide") }
+        .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /"summarizing" and "elide"/)
+    end
+
+    it "refuses a whole-span strategy named twice, since it overlaps itself" do
+      expect { resolve("elide+elide") }
+        .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /"elide" and "elide" each claim the whole span/)
+    end
+
+    it "still builds the partitioning pair as a composition" do
+      strategy = resolve("elide-tools+summarize-conversation", tier: tier_factory, journal: [])
 
       expect(strategy).to be_a(Lain::Compaction::Strategy::Composed)
-      expect { strategy.ranges(mixed, span: whole) }
-        .to raise_error(Lain::Compaction::Strategy::Composed::Overlap,
-                        /Strategy::Elide and .*Strategy::Summarizing both propose/)
     end
   end
 
