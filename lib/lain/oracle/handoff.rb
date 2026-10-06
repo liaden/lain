@@ -89,7 +89,7 @@ module Lain
       # one a chain simply has nothing for, a session with no pins -- prints no
       # heading over nothing.
       SECTIONS = { document: "The previous state document, whole:",
-                   held: "Earlier summaries of this conversation, oldest first:",
+                   held: "Earlier in this conversation, oldest first:",
                    span: "The conversation since, one line per turn:",
                    pins: "Turns the human pinned, which stay verbatim and need no restating:" }.freeze
 
@@ -150,7 +150,8 @@ module Lain
       #
       # @param document [String, nil] the state the last handoff wrote, if any,
       #   exactly as its cut recorded it
-      # @param held [Array<Hash>] the replacements the cuts that hold rendered
+      # @param held [Array<Hash>] the history before the newest cut, oldest
+      #   first: each held replacement, and each turn no cut covered in its place
       # @param span [Array<Hash>] the turns no held cut has collapsed
       # @param pins [Array<Hash>] the pinned turns, which stay verbatim
       # @param budget [Integer] bytes of slot text, from {.budget_for} against

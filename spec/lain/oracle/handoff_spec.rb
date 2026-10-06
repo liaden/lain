@@ -161,6 +161,14 @@ RSpec.describe Lain::Oracle::Handoff do
       expect(question[:span]).to start_with(described_class::SECTIONS.fetch(:span))
     end
 
+    # The earlier slot carries verbatim turns no cut covered beside the
+    # summaries, so its heading must not call every line a summary.
+    it "heads the earlier slot as history in order, not as summaries alone" do
+      question = slots(held: [text_turn(1, "use SQLite"), text_turn(2, "a summary of what followed")])
+
+      expect(question[:held].lines.first).not_to include("summaries")
+    end
+
     # A heading over nothing tells the model there were pins, or summaries,
     # and then shows it none.
     it "prints no heading over a slot it had nothing for" do

@@ -78,6 +78,46 @@ module HandoffSeam
     end
   end
 
+  # A chat whose opening directive is answered by one tool round and whose
+  # conversational stretches the span summarizer answers, so an advance under
+  # elide-tools+summarize-conversation collapses everything after the directive
+  # and leaves it, a run of one, verbatim below the cut. The prompt carrying
+  # {OVERSIZED} fits only once a handoff document is in the render.
+  class Directed < Recorded
+    DIRECTIVE = "use SQLite, never PostgreSQL"
+    OVERSIZED = "OVERSIZED"
+
+    # The refusal is keyed on {OVERSIZED} alone, so there is no switch to take.
+    def initialize = super(refusing: false)
+
+    def complete(request)
+      @requests << request
+      text = Lain::Canonical.dump(request.messages)
+      return summary if text.include?("no longer fits its context window")
+      return span_summary if text.include?("are about to be replaced, in a later prompt")
+      raise refusal if text.include?(OVERSIZED) && !text.include?("finish the parser")
+
+      request.messages.size == 1 ? probe : settled
+    end
+
+    private
+
+    def probe
+      Lain::Response.new(content: [{ "type" => "tool_use", "id" => "call-1", "name" => "probe", "input" => {} }],
+                         stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2))
+    end
+
+    def settled
+      Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }], stop_reason: :end_turn,
+                         usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2))
+    end
+
+    def span_summary
+      Lain::Response.new(content: [{ "type" => "text", "text" => JSON.generate("summary" => "a summarized stretch") }],
+                         stop_reason: :end_turn, usage: Lain::Usage.new(input_tokens: 30, output_tokens: 5))
+    end
+  end
+
   # A tier whose reply no decoder can read: the local endpoint answering prose
   # where the schema was asked for, which is the failure the `oracle_failed`
   # record exists to name.
@@ -299,6 +339,43 @@ RSpec.describe "a handoff when no cut can make room", :seam do
 
       expect(text).to include(HandoffSeam::MARKER)
       expect(text).not_to include("finish the parser")
+    end
+  end
+
+  # The turn no cut covers is the one the handoff most needs to see: a lone
+  # human directive left verbatim below the advance is replaced by the
+  # document all the same.
+  describe "a directive below an advance" do
+    let(:provider) { HandoffSeam::Directed.new }
+
+    def directed
+      span_tier = lambda do |definition|
+        Lain::Oracle::Model.new(definition:, provider:, model: "qwen3:4b", max_tokens: 512)
+      end
+      strategy = Lain::CLI::CompactionStrategy.resolve("elide-tools+summarize-conversation", tier: span_tier, journal:)
+      Lain::Compaction::Source.new(
+        need: Lain::Compaction::Need.new(byte_threshold: 1),
+        cold: Lain::Compaction::Cold.new(cache_profile: Lain::CacheProfile::NO_CACHING, journal:),
+        hard_cap: 1, keep_last: 2, journal:, strategy:,
+        fallback: Lain::Compaction::Source::Fallback.new(tier: method(:handoff_tier)),
+        context_window: Lain::ContextWindow.new(windows: { "qwen3" => 8192 })
+      )
+    end
+
+    def summarizer_text
+      asked = provider.requests.map { |request| rendered_text(request) }
+      asked.reverse.find { |text| text.include?("no longer fits its context window") }
+    end
+
+    it "shows the summarizer the directive the handoff replaces" do
+      chat = agent(directed)
+      chat.ask(HandoffSeam::Directed::DIRECTIVE)
+      2.times { |index| chat.ask("follow-up #{index}") }
+
+      chat.ask("#{HandoffSeam::Directed::OVERSIZED} so what is left to do?")
+
+      expect(of_type("compaction_cut").map { |cut| cut["kind"] }).to include("advance", "handoff")
+      expect(summarizer_text).to include(HandoffSeam::Directed::DIRECTIVE)
     end
   end
 

@@ -168,6 +168,51 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
     end
   end
 
+  # A strategy that leaves a lone opening turn verbatim, as elide-tools beside
+  # summarize-conversation does, puts a human turn below the newest cut that no
+  # cut replaced. The handoff replaces it all the same, so it has to be shown.
+  describe "the question a handoff asks" do
+    let(:directive) { "use SQLite, never PostgreSQL" }
+
+    def text(value) = [{ "type" => "text", "text" => value }]
+
+    def chain
+      [["user", text(directive)], ["assistant", text("collapsed reply")], ["user", text("collapsed follow-up")],
+       ["assistant", [{ "type" => "tool_use", "id" => "call-1", "name" => "probe", "input" => {} }]],
+       ["user", [{ "type" => "tool_result", "tool_use_id" => "call-1", "content" => "probed" }]],
+       ["assistant", text("probed it")], ["user", text("the ask")]]
+        .inject(Lain::Timeline.empty) { |line, (role, content)| line.commit(role:, content:) }
+    end
+
+    def advanced_over_one_to_two(line)
+      session.record_compaction_cut(
+        Lain::Telemetry::CompactionCut.new(
+          digest: line.to_a[2].digest, head: Lain::Event.stands_on(line.head), strategy: arm, kind: "advance",
+          parent: nil, supersedes: [], plan_step_completions: 0,
+          collapses: [{ "span" => [line.to_a[1].digest, line.to_a[2].digest], "content" => text("the replacement") }]
+        )
+      )
+      line
+    end
+
+    def question = on(advanced_over_one_to_two(chain)).handoff(pins: Lain::Context::PinnedMessages::NONE).question
+
+    it "shows a lone first turn below the newest cut in its place, before the summary of what followed it" do
+      earlier = question[:held]
+
+      expect(earlier).to include(directive)
+      expect(earlier.index(directive)).to be < earlier.index("the replacement")
+      expect(question[:span]).not_to include(directive)
+    end
+
+    it "shows a turn inside a held collapse once, as its replacement" do
+      shown = question.values.join
+
+      expect(shown.scan("the replacement").size).to eq(1)
+      expect(shown).not_to include("collapsed reply", "collapsed follow-up")
+    end
+  end
+
   describe "a collapse over the cuts it holds" do
     # Two advances, at 6 and at 8 turns, so two cuts hold on the longer chain.
     def two_advances

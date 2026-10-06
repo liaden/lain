@@ -419,6 +419,12 @@ began and the later ranges collapsing to empty content — and replayed like one
 renders what the live run sent. `--compact-fallback` chooses between it and `Fallback::None`, and
 a chain that has handed off does not regain the `keep_last` tail by advancing past it.
 
+The summarizer sees every turn in its range that no held cut covers. That set is read off the held
+cuts' spans, not off the newest cut's position, because a strategy may leave a lone human turn
+verbatim beside collapsed stretches (the opening one included), and the handoff replaces that turn
+too. The turn is shown in its place among the earlier summaries, oldest first, so a directive a
+later stretch overrode never reads as the newest word.
+
 `Compaction::Prepared` (`lib/lain/compaction/prepared.rb`) is the third policy, separate from
 both: what happens across repeated **idle ticks**. Idle time is a series of ticks, so a naive
 compact-on-idle would re-run and re-pay the summarizer once per tick at an unchanged head. The

@@ -93,6 +93,11 @@ module Lain
         end
         private_class_method :holds?, :lineage
 
+        # @param at [Hash{String=>Integer}] each turn's digest to its index
+        # @param span [Array(String, String)] a collapse's first and last digest
+        # @return [Range] the indices that collapse covers
+        def self.indices(at, span) = at.fetch(span.first)..at.fetch(span.last)
+
         def initialize(session:, timeline:, walk:, derived:, arm:, lineage:, at:)
           @session = session
           @timeline = timeline
@@ -151,7 +156,7 @@ module Lain
         def handoff(pins:, budget: Oracle::Handoff.budget_for(ContextWindow::CONSERVATIVE_FALLBACK))
           ranges = handoff_ranges(pins)
           Handoff.new(ranges:,
-                      question: Oracle::Handoff.question(document: previous_document, held: replacements,
+                      question: Oracle::Handoff.question(document: previous_document, held: earlier(ranges),
                                                          span: uncollapsed(ranges), budget:,
                                                          pins: at_indices(pins.indices_in(@walk.messages))))
         end
@@ -295,16 +300,29 @@ module Lain
           content.is_a?(Array) ? content.grep(Hash) : []
         end
 
-        # What the cuts that hold already replaced, as messages -- the
-        # summarizer's input is earlier replacements, which is the whole reason
-        # a handoff's own input fits.
+        # In source order, an uncovered turn in its own place: a directive a later stretch overrode
+        # must not read as the newest word.
+        def earlier(ranges)
+          handed = ranges.flat_map(&:to_a).to_set
+          covered = @seam.collapses.flat_map { |collapse| covering(collapse).to_a }.to_set
+          starts = replacements.to_h { |collapse| [covering(collapse).first, replacement(collapse)] }
+          (0...@floor).filter_map do |index|
+            starts.fetch(index) { @walk.messages.fetch(index) if handed.include?(index) && !covered.include?(index) }
+          end
+        end
+
+        def covering(collapse) = self.class.indices(@at, collapse.fetch("span"))
+
+        def replacement(collapse) = { "role" => Derivation::REPLACEMENT_ROLE, "content" => collapse.fetch("content") }
+
+        # What the cuts that hold already replaced, less the document, which
+        # the question carries whole in a slot of its own.
         def replacements
           document_cut = document_of_cut
           shown = @held.flat_map do |cut|
             cut.address == document_cut&.address ? without_document(cut.collapses) : cut.collapses
           end
           shown.reject { |collapse| collapse.fetch("content").empty? }
-               .map { |collapse| { "role" => Derivation::REPLACEMENT_ROLE, "content" => collapse.fetch("content") } }
         end
 
         # The first collapse with content is where {#hand_off} put the document.
@@ -317,8 +335,8 @@ module Lain
 
         def document_of_cut = @held.reverse.find { |cut| cut.kind == HANDOFF }
 
-        # The turns a handoff would collapse that no held cut has already: what
-        # the question has to be shown in full, stubs and all.
+        # The turns a handoff would collapse past the newest cut: what the
+        # question has to be shown in full, stubs and all.
         def uncollapsed(ranges) = at_indices(ranges.flat_map(&:to_a).select { |index| index >= @floor })
 
         def at_indices(indices) = indices.map { |index| @walk.messages.fetch(index) }
@@ -453,7 +471,7 @@ module Lain
             end.first
           end
 
-          def indices(span) = @at.fetch(span.first)..@at.fetch(span.last)
+          def indices(span) = HeldCut.indices(@at, span)
 
           def retained(indices)
             indices.map { |index| Piece.new(range: index..index, message: @walk.messages.fetch(index), collapse: nil) }
