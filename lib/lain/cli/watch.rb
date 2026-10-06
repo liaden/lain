@@ -42,6 +42,7 @@ module Lain
         raise Error, "selector must be a spawn-digest prefix, got #{selector.inspect}" if selector.to_s.empty?
 
         @selector = selector
+        @noticed = false
         @sink = sink
         @path = path
         @paths = paths
@@ -83,9 +84,19 @@ module Lain
       #
       # @return [Boolean] whether session_closed arrived
       def follow(io)
-        tail = Tail.new(io, wait: -> { @sleeper.call(POLL_SECONDS) },
+        tail = Tail.new(io, wait: -> { wait_for_more },
                             writing: -> { @writer.verdict(@probe) != :dead })
         Journal.records(tail).any? { |record| closed_by?(record) }
+      end
+
+      # A live file with no match is indistinguishable from a quiet actor until
+      # the session closes.
+      def wait_for_more
+        unless @filter.anchored? || @noticed
+          @noticed = true
+          @sink.puts("no spawn matched selector #{@selector.inspect} yet (still watching)")
+        end
+        @sleeper.call(POLL_SECONDS)
       end
 
       # One parsed record: learn the writer from the header as it passes, render

@@ -348,6 +348,48 @@ RSpec.describe Lain::CLI::Watch do
     end
   end
 
+  describe "a selector matching nothing yet on a live session" do
+    let(:notice) { 'no spawn matched selector "beef" yet (still watching)' }
+    let(:beef_digest) { "beef#{s_spawn_digest[4..]}" }
+
+    def watch_with_polls(path, polls)
+      sleeper = lambda do |_seconds|
+        step = polls.shift
+        raise "watch polled again after the closer landed" if step.nil?
+
+        step.call
+      end
+      described_class.new(selector: "beef", path:, sink: output, paths:, sleeper:)
+    end
+
+    it "says so exactly once across repeated polls, before the session closes" do
+      path = write_journal(opening_records)
+      polls = [-> {}, -> {}, -> { append_journal(path, [closed_record]) }]
+      watch_with_polls(path, polls).run
+
+      expect(output.string.scan(notice).size).to eq(1)
+      expect(output.string.index(notice)).to be < output.string.index("no spawn matched selector \"beef\" in")
+    end
+
+    it "still follows the lineage once a matching spawn is appended" do
+      path = write_journal(opening_records)
+      reply = message_record(digest: "5fff#{s_reply_digest[4..]}", from: beef_digest, to: parent_correlation,
+                             text: "BEEF-RESULT", causal_parents: [beef_digest])
+      polls = [-> { append_journal(path, [spawn_record(digest: beef_digest), reply, closed_record]) }]
+
+      expect(watch_with_polls(path, polls).run).to eq(0)
+      expect(output.string).to include(notice, "BEEF-RESULT")
+    end
+
+    it "stays silent when the selector matched before the first wait" do
+      path = write_journal(opening_records + [spawn_record(digest: beef_digest)])
+      polls = [-> { append_journal(path, [closed_record]) }]
+      watch_with_polls(path, polls).run
+
+      expect(output.string).not_to include(notice)
+    end
+  end
+
   describe "read-only by construction" do
     subject(:watch) { described_class.new(selector:, path:, sink: output, paths:) }
 
