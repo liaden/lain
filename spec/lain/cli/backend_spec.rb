@@ -1500,6 +1500,35 @@ RSpec.describe Lain::CLI::Backend do
           .to raise_error(Lain::CLI::Backend::UnknownFallback, /--compact-fallback.*handoff, none/m)
       end
 
+      describe "#refuse_compaction_flags!" do
+        it "refuses a non-positive --compact-keep naming the flag and value" do
+          expect { compacting_backend(compact_keep: -1).refuse_compaction_flags! }
+            .to raise_error(Lain::CLI::Backend::InvalidKeep, /--compact-keep -1/)
+        end
+
+        it "refuses an overlapping --compact-strategy" do
+          expect { compacting_backend(compact_strategy: "elide+summarizing").refuse_compaction_flags! }
+            .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /--compact-strategy/)
+        end
+
+        it "judges a strategy by its spelling alone: no key needed, no summarizer provider built" do
+          backend = compacting_backend(compact_strategy: "summarizing")
+          allow(backend).to receive(:summarizer_provider).and_raise("a provider was built")
+
+          with_env("ANTHROPIC_API_KEY" => nil) do
+            expect { backend.refuse_compaction_flags! }.not_to raise_error
+            expect { compacting_backend(compact_strategy: "elide+summarizing").refuse_compaction_flags! }
+              .to raise_error(Lain::CLI::CompactionStrategy::Unknown)
+          end
+        end
+
+        it "accepts a valid keep and strategy, and ignores both under --no-compact" do
+          expect { compacting_backend(compact_keep: 3, compact_strategy: "elide").refuse_compaction_flags! }
+            .not_to raise_error
+          expect { compacting_backend(compact: false, compact_keep: 0).refuse_compaction_flags! }.not_to raise_error
+        end
+      end
+
       it "records the arm in the session header's compaction section" do
         expect(compacting_backend(compact_fallback: "none").compaction_header)
           .to eq("compact_fallback" => "none")

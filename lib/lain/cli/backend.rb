@@ -114,6 +114,10 @@ module Lain
       # should have been kept.
       class UnknownFallback < Error; end
 
+      # A `--compact-keep` that {Compaction.validate_keep_last} refuses, said in
+      # the flag's name: its own ArgumentError names no flag.
+      class InvalidKeep < Error; end
+
       # {Compaction::Scheduler} prices EVERY compacting turn, and the bench's
       # shared {PriceBook} raises on a model it has no list price for -- right
       # for a cost bench, fatal here, where it would turn the first compaction
@@ -526,6 +530,18 @@ module Lain
         name
       end
 
+      # Refuses `--compact-keep` and `--compact-strategy` by name while nothing
+      # is on disk; both otherwise surface only when the first compaction builds.
+      #
+      # @raise [InvalidKeep]
+      # @raise [CompactionStrategy::Unknown]
+      def refuse_compaction_flags!
+        return unless compaction?
+
+        refuse_keep! if @compaction.keep
+        refuse_strategy_spelling! if @compaction.strategy
+      end
+
       # The compaction section of the session header: the arm this run was handed, said
       # or inherited, so a resume can render under it and a bench can group runs by it. Only a
       # set field is written -- an unset flag is not "the default", it is the
@@ -573,6 +589,21 @@ module Lain
       def spawn_policy(role_name) = Role::Catalog.fetch(role_name).spawn_policy
 
       private
+
+      def refuse_keep!
+        Compaction.validate_keep_last(@compaction.keep)
+      rescue ArgumentError, TypeError
+        raise InvalidKeep, "--compact-keep #{@compaction.keep.inspect} must be a positive integer"
+      end
+
+      # A tier that only satisfies the resolver's duck: the spelling is judged
+      # without a key, a provider or a journal, all of which come later.
+      SPELLING_ONLY_TIER = Data.define(:ask, :model, :usage).new(nil, nil, nil)
+      private_constant :SPELLING_ONLY_TIER
+
+      def refuse_strategy_spelling!
+        CompactionStrategy.resolve(@compaction.strategy, tier: ->(_definition) { SPELLING_ONLY_TIER })
+      end
 
       def num_ctx_request = @num_ctx_request ||= NumCtx.new(backend: self, value: run_profile.num_ctx)
 

@@ -162,6 +162,23 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
+  describe "a refused compaction flag" do
+    {
+      "--compact-keep 0" => [{ compact_keep: 0 }, /--compact-keep 0/],
+      "--compact-keep -1" => [{ compact_keep: -1 }, /--compact-keep -1/],
+      "--compact-strategy elide+summarizing" => [{ compact_strategy: "elide+summarizing" },
+                                                 /--compact-strategy "elide\+summarizing"/]
+    }.each do |flag, (options, message)|
+      it "refuses #{flag} by name before any journal is opened" do
+        chronicle_factory = spy("chronicle_factory")
+        instance = launch({ journal: true, provider: "ollama", **options }, chronicle_factory:)
+
+        expect { instance.call { |_notice| nil } }.to raise_error(Lain::Error, message)
+        expect(chronicle_factory).not_to have_received(:call)
+      end
+    end
+  end
+
   describe "--windows" do
     # `lain up`'s pre-flight runs from the operator's OWN shell, never from
     # inside the tmux session the pane it is about to create belongs to, so

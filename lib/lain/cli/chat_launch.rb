@@ -107,6 +107,7 @@ module Lain
         # at construction: the probe behind it would make #preflight ask a
         # server, which is the one thing that method promises it never does.
         backend.num_ctx
+        backend.refuse_compaction_flags!
         resumed = resumed_run(backend)
         resolve_project!
         schedule_gc
