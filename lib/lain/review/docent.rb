@@ -814,7 +814,7 @@ module Lain
     end
 
     class Docent
-      Brief = Data.define(:anchor, :hunk, :base_ref, :head_ref, :dossier, :question)
+      Brief = Data.define(:anchor, :hunk, :shown_line, :base_ref, :head_ref, :dossier, :question)
 
       # Everything the child sees, and nothing else. A pure value with one
       # rendering, which is what makes {#key} mean something: two records
@@ -857,7 +857,9 @@ module Lain
         # @param question [String] the human's own words
         # @return [Brief]
         def self.of(conversation, changeset:, dossier:, question:)
-          new(anchor: conversation.anchor, hunk: conversation.hunk, base_ref: changeset.base_ref,
+          anchor = conversation.anchor
+          shown = changeset.projected_line(anchor.side, anchor.path, anchor.line)
+          new(anchor:, hunk: conversation.hunk, shown_line: shown, base_ref: changeset.base_ref,
               head_ref: changeset.head_ref, dossier:, question:)
         end
 
@@ -878,11 +880,25 @@ module Lain
         end
 
         def where
-          "#{anchor.path}, #{anchor.side} side, line #{anchor.line}#{in_heading}\n" \
+          "#{anchor.path}, #{anchor.side} side, line #{shown_line}#{in_heading}#{quoted}\n" \
             "base #{base_ref}, head #{head_ref}"
         end
 
         def in_heading = hunk.heading.empty? ? "" : ", in #{hunk.heading}"
+
+        # Read from the hunk, which is the projected text, never from the buffer
+        # the human asked in: that one still holds the bytes a mask hides.
+        def quoted
+          text = numbered_lines.to_h[shown_line]
+          text.nil? ? "" : ": #{text}"
+        end
+
+        def numbered_lines
+          marker, number = anchor.side == :old ? ["-", hunk.old_start] : ["+", hunk.new_start]
+          hunk.lines.select { |line| line.start_with?(" ", marker) }.each_with_index.map do |line, offset|
+            [number + offset, line[1..]]
+          end
+        end
 
         def patch = [header, *hunk.lines].join("\n")
 

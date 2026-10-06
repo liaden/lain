@@ -414,6 +414,30 @@ RSpec.describe Lain::Review::Docent do
       expect(prompts.first).to include("CODE_LINE")
     end
 
+    it "tells the child the line the projection shows, quoting the placeholder and no key bytes" do
+      answerer, prompts = recording_answerer
+      subject = docent(answerer:)
+      subject.open(surveyed(4, id: "a-where-inside"))
+
+      Sync { subject.ask("a-where-inside", "what is this?").task.wait }
+
+      where = prompts.first[/# Where it is\n\n(.*)/, 1]
+      expect(where).to include("line 1").and include("<redacted:1>")
+      expect(prompts.first).not_to include("QUJDREVG")
+    end
+
+    it "tells the child the shown line of code below the region, not the raw one" do
+      answerer, prompts = recording_answerer
+      subject = docent(answerer:)
+      subject.open(surveyed(8, id: "a-where-below"))
+
+      Sync { subject.ask("a-where-below", "why?").task.wait }
+
+      where = prompts.first[/# Where it is\n\n(.*)/, 1]
+      expect(where).to include("line 3").and include("CODE_LINE")
+      expect(where).not_to include("line 8")
+    end
+
     it "keeps the anchor at the raw line the human named" do
       answerer, = recording_answerer
       subject = docent(answerer:)
@@ -435,6 +459,26 @@ RSpec.describe Lain::Review::Docent do
       Sync { subject.ask("a-git", "why?").task.wait }
       expect(prompts.first).to include("+forty two").and include("+FORTY ONE")
       expect(prompts.first).not_to include("EIGHTY ONE")
+    end
+
+    it "quotes the asked line under where it is" do
+      answerer, prompts = recording_answerer
+      subject = docent(answerer:)
+      subject.open(anchor(line: 42, id: "a-quote"))
+
+      Sync { subject.ask("a-quote", "why?").task.wait }
+
+      expect(prompts.first[/# Where it is\n\n(.*)/, 1]).to include("line 42").and include("forty two")
+    end
+
+    it "quotes an old-side line from the old numbering" do
+      answerer, prompts = recording_answerer
+      subject = docent(answerer:)
+      subject.open(anchor(side: :old, line: 81, id: "a-old-quote"))
+
+      Sync { subject.ask("a-old-quote", "why?").task.wait }
+
+      expect(prompts.first[/# Where it is\n\n(.*)/, 1]).to include("line 81").and include("eighty one")
     end
   end
 
