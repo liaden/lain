@@ -1405,3 +1405,37 @@ fallback rather than redesigning mid-run.
   different `--session` names.
 - **Each `$QA` helper prints `mise WARN missing: postgres@15.1`** (from `env.sh`'s `mise env` eval);
   filter it, and do not read it as a finding.
+
+## Round 21 (2026-10-04): what 4 forks at a time taught the process
+
+- **4 concurrent forks held** where 9 got the runner OOM-killed: load stayed under 3 and `dmesg` was
+  clean over 8 forks in 2 waves. Keep the cap, and start `rails-blog` in the first wave.
+- **A fork can run out of turns.** Fork `g` (`survey`, `epic-tier`, `ollama-cloud-arm`) stopped at its
+  200-turn limit inside `epic-tier` and had to be resumed. Give a fork at most 2 heavy scenarios, and have
+  it write `$QA/records/fork-report.md` as it goes so a stop loses nothing.
+- **`session-and-window` §6's 1024 row re-keys the shared runner** to `-b 1024` for as long as nobody
+  else sends a request. Send that row to a capturing listener that does not forward.
+- **`pkill -f` and `ps | grep '[x]' | xargs kill` both self-matched again.** Look up the pid in one
+  call and kill it in a second one.
+- **In a plain chat, wait on journal records, not on a `you>` or `human>` last line.** A stale `human>`
+  satisfied the wait and a prompt was lost (round 21's C-1 is why it can be stale).
+- **zsh `VAR=$x` with `x` empty exports an empty variable**, which is not the same as unset (it is how
+  C-4 turned up). Loops over defaults must `unset`.
+- **`tmux new-window` with no target lands in the cockpit's session** once `lain up` has run. Target
+  `bootstrap:<window>` or a pane id.
+- **`reply.sh` prints `focus failed` while a review or epic tab is open**, because `bufwinid` searches
+  only the current tab. `:sbuffer lain://inbox`, `:1`, `:LainReply` works.
+- **An approval helper must match `[y/N]` at line end and join wrapped lines first**, or it re-fires on
+  the answered line and types a stray `n` at `you>`.
+- **Under a redirected HOME, `--exec docker` (podman here) needs `HOME=/home/tara`** on the chat's
+  launch line, or it sees no images.
+- **Probe a stop with a timestamped side effect** (`sleep 20 && touch x`). The journal alone records a
+  finished command as `running` (round 21's A-2).
+- **A one-shot child parked on `ask_human` holds its lease indefinitely**, which makes a cheap live
+  lease for collision and SIGHUP checks.
+- **`bench arms` on this model ends tasks on a prose tool call before any reaches the ceiling** (round
+  21's M-1), so a live drive of the ceiling cell needs M-1 fixed or a scripted provider.
+- **Worth promoting into `qa-sandbox.sh`:** fork `c`'s `sever.rb` (one proxy with pass, counts_absent,
+  unterminated, hold, rst and gone modes, at `~/tmp/lain-qa-2026-10-04-c/`), round 20's `settle.sh`
+  (accepting `you> <carried text>` as settled), and fork `g`'s `gatekeeper.sh` (logs the full text of
+  every call it approves, at `~/tmp/lain-qa-2026-10-04-g/records/`).

@@ -299,6 +299,13 @@ discharged, and git history is the archive: `git log --diff-filter=D --stat -- p
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
 
+- [`../qa-findings-round21-2026-10-04.md`](../qa-findings-round21-2026-10-04.md): round 21, a full
+  round over all eighteen scenarios in 8 forks, at most 4 at once, plus `bench-arms` driven alone.
+  **Every scenario driven; none dropped.** Round 20's HIGHs hold fixed (the symlink read, the decaying
+  handoff, and `bench arms` now reports with no leaked worktree). **Two new HIGH:** closing any input
+  pane ends the chat (B-1, caused by round 20's HUP fix), and a handoff drops human turns kept below
+  the newest held cut (Fh-1). `s` at the countdown does not kill a running `bash` (A-2/H-2, two forks).
+
 - [`../qa-findings-round19-2026-09-21.md`](../qa-findings-round19-2026-09-21.md) — round 19, a full
   round over all eighteen scenarios in ten contexts (the spine plus nine parallel forks with their
   own sandboxes). **Every scenario driven; none dropped.**
