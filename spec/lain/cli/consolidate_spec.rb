@@ -315,6 +315,17 @@ RSpec.describe Lain::CLI::Consolidate do
       expect(Lain::Memory::Manifest.new(fresh.index).lines.join("\n")).to include("login-ttl", "retry-bound")
     end
 
+    it "skips a row it cannot read and says so in the report" do
+      store = Lain::Memory::ProjectStore.new(project_dir:)
+      store.append(Lain::Memory::Item.new(id: "legacy", description: "d", body: "old body"))
+      File.binwrite(store.path, File.binread(store.path).sub("old body", "old \xff body".b))
+      provider = Lain::Provider::Mock.new(responses: [text_response("clerked A"), text_response("clerked B")])
+
+      report = from_options(provider:).report
+
+      expect(report).to include("#{store.path}:1", "legacy", "clerked A")
+    end
+
     it "stamps the clerk's rows with the lineage's spawn digest" do
       provider = Lain::Provider::Mock.new(responses: [
                                             tool_response(memory_write("login-ttl", "the token TTL was zero")),

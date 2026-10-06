@@ -146,6 +146,7 @@ module Lain
         @interval = interval
         @told_after = [(patience / interval.to_f).ceil, 1].max
         @notice = notice
+        @unreadable = Set.new
       end
 
       # @return [String] the append-only file, whether or not it exists yet
@@ -218,7 +219,7 @@ module Lain
       def held
         return [] unless File.exist?(path)
 
-        File.readlines(path, chomp: true).filter_map { |line| item_from(line) }
+        File.readlines(path, chomp: true).each_with_index.filter_map { |line, index| item_from(line, index + 1) }
       end
 
       # TWO DIFFERENT CLAIMS, and only one of them is damage worth refusing
@@ -237,15 +238,31 @@ module Lain
       # under still REFUSES: those bytes make a false claim about their own
       # content, which is editing rather than damage, and a manifest would
       # otherwise render it as fact.
-      def item_from(line)
+      #
+      # A row with invalid UTF-8 cannot be addressed, so it is skipped by name: it was a whole entry worth repairing.
+      def item_from(line, number)
         record = JSON.parse(line)
-        item = Item.new(id: record.fetch("id"), description: record.fetch("description"),
-                        body: record.fetch("body"), author: Author.from(record["author"]))
-        return item if item.digest == record.fetch("digest")
+        item = item_of(record, number)
+        return item if item.nil? || item.digest == record.fetch("digest")
 
         raise Corrupt, "#{path} holds an entry recorded as #{record.fetch("digest")} whose content " \
                        "addresses #{item.digest}; the project's memory has been edited under its own digest"
       rescue JSON::ParserError, KeyError, ArgumentError, TypeError
+        nil
+      end
+
+      def item_of(record, number)
+        Item.new(id: record.fetch("id"), description: record.fetch("description"),
+                 body: record.fetch("body"), author: Author.from(record["author"]))
+      rescue Declarative::Types::CoercionError
+        skipped(record, number)
+      end
+
+      def skipped(record, number)
+        id = record["id"]
+        named = id.is_a?(String) && id.valid_encoding? ? " (id #{id.inspect})" : ""
+        text = "#{path}:#{number}#{named} is not valid UTF-8 and was skipped"
+        @notice.call(text) if @unreadable.add?(text)
         nil
       end
 

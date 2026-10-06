@@ -94,6 +94,39 @@ RSpec.describe Lain::Memory::ProjectStore do
       expect { store.load }.to raise_error(described_class::Corrupt, /has been edited/)
     end
 
+    describe "a row whose bytes are not valid UTF-8" do
+      let(:told) { [] }
+      let(:store) { described_class.new(project_dir:, notice: told.method(:<<)) }
+
+      def with_bad_second_row
+        %w[first second].each { |id| store.append(item(id)) }
+        File.binwrite(store.path, File.binread(store.path).sub("body of second", "body \xff of second".b))
+        store.append(item("third"))
+      end
+
+      it "loads the other rows" do
+        with_bad_second_row
+
+        expect(store.load.items.map(&:id)).to eq(%w[first third])
+      end
+
+      it "tells the human once, naming the store line and the row's id" do
+        with_bad_second_row
+        store.load
+
+        expect(told.size).to eq(1)
+        expect(told.first).to include("#{store.path}:2", "second")
+      end
+
+      it "names the line alone when the id itself cannot be read" do
+        store.append(item("first"))
+        File.binwrite(store.path, File.binread(store.path).sub("first", "fi\xffrst".b))
+        store.load
+
+        expect(told.first).to include("#{store.path}:1")
+      end
+    end
+
     # THE SHAPE A CRASH REALLY MAKES: a fragment with NO trailing newline, since
     # that byte is the one the writer never reached. The Journal's readers skip
     # what does not parse, and a project whose only copy of its memory is

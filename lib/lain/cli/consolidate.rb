@@ -75,17 +75,19 @@ module Lain
         mismatches = Resume::MismatchNotices.new(path:)
         resolved = profile.over(mismatches.recorded_profile)
         Backend.validated(resolved.provider)
-        new(path:, profile: resolved, project_dir:,
-            notices: mismatches.call(profile: resolved, model: resolved.model),
+        notices = mismatches.call(profile: resolved, model: resolved.model)
+        new(path:, profile: resolved, project_dir:, notices:,
             consolidation: lambda { |journal|
               backend = Backend.new(options, profile: resolved, root: project_dir.root)
-              clerk_over(backend, journal, project_dir)
+              clerk_over(backend, journal, project_dir, notices)
             })
       end
 
-      def self.clerk_over(backend, journal, project_dir)
+      # Skipped-row notices join the report's notices because only the frontend may print.
+      def self.clerk_over(backend, journal, project_dir, notices)
+        store = Memory::ProjectStore.new(project_dir:, notice: notices.method(:<<))
         Lain::Consolidation.new(provider: backend.provider, journal:,
-                                recorder: Memory::ProjectStore.new(project_dir:).view,
+                                recorder: store.view,
                                 context: backend.context, slots: backend.slots)
       end
       private_class_method :clerk_over
