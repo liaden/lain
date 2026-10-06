@@ -240,7 +240,7 @@ run --compact-strategy ''                                    # an unset shell va
 run --compact-strategy 'elide-tools+'                        # a trailing separator
 run --compact-strategy '+elide'                              # a leading one
 run --compact-strategy 'elide-tools+summarize-conversation'  # the recommended pair: must LAUNCH
-run --compact-strategy 'elide+summarizing'                   # legal to spell, refuses later -- see below
+run --compact-strategy 'elide+summarizing'                   # refused at launch -- see below
 ```
 
 Verified against the built binary 2026-08-18 (with `--prompt hi`, which the refusal precedes) — exit
@@ -259,10 +259,11 @@ Three things to read carefully, because each is a place a driver files the wrong
   was typed is a regression, not a cosmetic difference.
 - **The refusal must list all four names.** The set grew this chunk; a refusal still naming only
   `["summarizing", "elide"]` means the registry and the resolver have drifted apart.
-- **`elide+summarizing` is SUPPOSED to launch.** Both claim the whole span, so it raises `Overlap`
-  at the first compacting turn instead — refusing at resolve time is a design decision nobody has
-  taken. A launch-time refusal here would be the *unexpected* result. (Reaching the actual raise
-  needs volume: `rails-blog.md`.)
+- **`elide+summarizing` is refused at launch** (round 21). Both claim the whole span, so the refusal
+  names both and points at the pair that partitions it: `--compact-strategy "elide+summarizing":
+  "elide" and "summarizing" each claim the whole span and would overlap; compose
+  elide-tools+summarize-conversation instead, which partition it`. A pair that launches and then
+  fails every ask is the round-21 finding back.
 
 ### 7a — `--compact-fallback`, and what happens when no cut can make room
 

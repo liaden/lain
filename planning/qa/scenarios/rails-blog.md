@@ -127,9 +127,8 @@ unanswered call, is F89 back. **Already-damaged journals are not healed** (the c
 
 That pair is the one to reach for because the two strategies are **exact complements by
 construction** — both ask one predicate which messages carry a tool block — so they partition a span
-instead of fighting over it. Any other pairing may not; `elide+summarizing` resolves happily and then
-raises `Overlap` at the first compacting turn, which is a legitimate thing to drive here once,
-deliberately, since this is the only scenario that reaches a compacting turn at all.
+instead of fighting over it. Any other pairing may not, and a pair that both claim the whole span (`elide+summarizing`) is
+refused at launch; `session-and-window.md` drives that refusal.
 
 **Why the tool results must be large, measured rather than assumed.** The elide half writes a
 per-message attestation of about **230 bytes** — role, digest, byte count. Over `"ok"`-sized tool
@@ -240,9 +239,9 @@ driven — this is integration check 7 of the discharging chunk)*:
   room with /rewind past the turn that grew it, /unpin a pinned turn, or a narrower read.` — with one
   `window_pressure` record (`kind: over_window`, `source: ollama`, `prompt_tokens`,
   `window_tokens`) and `run_interrupted` carrying `reason: over_window`. When the refused render
-  left something droppable **and compaction can shrink it**, the tail reads `. Make room with
-  compaction (that count is now the reading it measures), /rewind, /unpin a pinned turn, or a narrower
-  read` instead *(prediction, not yet driven)*, and the refused count becomes the reading compaction fires
+  left something droppable **and compaction can shrink it**, the tail reads `. Compaction runs by
+  itself and measures that count from here on, so make room with /rewind past the turn that grew it,
+  /unpin a pinned turn, or a narrower read` instead *(prediction, not yet driven)*, and the refused count becomes the reading compaction fires
   on. When the derivation reported `would_not_shrink` the refusal must **not** advise compaction (round 20's
   RB-3, below). Round 17's F90
   was the opposite: a 330 KB request silently truncated to 16,386 tokens, read as 50% then 16%
@@ -278,8 +277,9 @@ driven — this is integration check 7 of the discharging chunk)*:
   without a handoff and every over-window ask was refused (13 in a row). Launch with `--compact-keep 4
   --no-nvim --compact-strategy elide-tools+summarize-conversation --num-ctx 32768`, then send 2 asks that
   each carry a 45 KB filler prompt. **PASS:** the second is answered, with one `compaction_cut` of
-  `"kind": "handoff"`. **Catches RB-3 returning:** an ask refused with `Make room with compaction` and no
-  `compaction_cut` after it.
+  `"kind": "handoff"`. **Catches RB-3 returning:** an ask refused with `Compaction runs by itself` and no
+  `compaction_cut` after it. When the re-render could not shrink, the tail reads `Nothing older can be
+  compacted yet` and must not advise compaction.
 
   **The handoff document keeps its state across generations** (round 20's RB-1: the summarizer was fed the
   previous document cut to ~200 characters, so generation 3 read "No progress made"). Drive 3 handoffs in

@@ -238,6 +238,15 @@ chat write `suite` (author chat). Run `lain consolidate` over a lineage whose cl
 - the clerk **may** rewrite an id it authored (a second `lain consolidate` refining `lineage-a`), and the chat
   may correct a clerk item, which is then stored with `author: chat` (the human has taken it over).
 
+**A clerk sees and replaces only what its own spawn wrote** (round 21's E-1 and E-6). Run `lain consolidate`
+over 2 lineages, `a` and `b`, after a chat has written `suite`. Then:
+
+- clerk `b`'s `memory_write` to an id clerk `a` wrote is refused, the same as one to `suite`;
+- each clerk's `<workspace>` manifest lists only the items its own spawn wrote, never `suite` or the other
+  lineage's;
+- a clerk's `memory_read suite` answers that there is no such memory, not the human's body. A clerk that
+  can read the chat's items again, or replace another lineage's, is E-1 back.
+
 Read the store directly beside the read-back, so a failure says which half broke:
 
 ```bash
