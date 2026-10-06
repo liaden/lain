@@ -475,7 +475,33 @@ RSpec.describe "plugin/tmux" do
 
     let(:socket) { "lain-spec-#{Process.pid}-#{object_id}" }
 
-    after { system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL) }
+    # kill-server returns before the panes' processes are gone, and a pane
+    # shell's startup hooks (mise) keep writing into the exported
+    # XDG_STATE_HOME, so the temp dir's removal would race them (ENOTEMPTY)
+    # on a loaded box. A pane shell leads a session, which its children keep
+    # even when they leave its process group.
+    after { stop_server_and_panes if tmux_present? }
+
+    def stop_server_and_panes
+      sessions = tmux("list-panes", "-a", "-F", "\#{pane_pid}").split.map(&:to_i)
+      system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL)
+      sessions.each { |sid| wait_for_session_exit(sid) }
+    end
+
+    def wait_for_session_exit(sid)
+      deadline = Time.now + 10
+      sleep(0.02) while Time.now < deadline && session_alive?(sid)
+      raise "pane session #{sid} outlived its tmux server" if session_alive?(sid)
+    end
+
+    def session_alive?(sid)
+      Dir.glob("/proc/[0-9]*/stat").any? do |stat|
+        state, _ppid, _pgrp, session = File.read(stat).rpartition(")").last.split
+        session.to_i == sid && state != "Z"
+      rescue Errno::ENOENT, Errno::ESRCH
+        false
+      end
+    end
 
     def tmux(*args) = Open3.capture2("tmux", "-L", socket, *args).first.strip
 
