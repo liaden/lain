@@ -136,6 +136,7 @@ module InputPaneSocket
       @screen = +""
       @lock = Mutex.new
       @chats = []
+      @spent = []
     end
 
     def env = WarmCockpit.env(@dir, "LAIN_SPEC_GRACE" => "30")
@@ -148,7 +149,18 @@ module InputPaneSocket
     end
 
     def watch_screen
-      @drain ||= Thread.new { drain }
+      @drain ||= Thread.new { drain(@warm.reader) }
+      self
+    end
+
+    def pane = @warm.pid
+
+    # How a human gets their keyboard back after closing a pane.
+    def respawn_pane
+      @drain&.kill&.join(1)
+      @spent << @warm
+      @warm = WarmCockpit::Booted.new(@dir, nil, *WarmCockpit.pane_in(@dir, env))
+      @drain = Thread.new { drain(@warm.reader) }
       self
     end
 
@@ -168,7 +180,7 @@ module InputPaneSocket
     def close
       @drain&.kill&.join(1)
       @chats.each { |pid| reap(pid) }
-      @warm.reap
+      [*@spent, @warm].each(&:reap)
     end
 
     # A chat that died first answers false at once, so the example fails with
@@ -208,8 +220,8 @@ module InputPaneSocket
       nil
     end
 
-    def drain
-      Enumerator.produce { @warm.reader.readpartial(4096) }.each { |bytes| @lock.synchronize { @screen << bytes } }
+    def drain(reader)
+      Enumerator.produce { reader.readpartial(4096) }.each { |bytes| @lock.synchronize { @screen << bytes } }
     rescue Errno::EIO, IOError
       nil
     end
@@ -498,6 +510,22 @@ RSpec.describe "a chat fed by an input pane", :seam do
 
     expect(cockpit.settles { cockpit.heard.find { |record| record["heard"] == "after the restart" } })
       .to eq({ "heard" => "after the restart" })
+  end
+
+  # HUP is what tmux sends a pane it kills, and the chat is not the pane's to end.
+  it "ends only the pane on HUP, and the chat answers a line from a respawned pane" do
+    cockpit_at("lines")
+    chat = cockpit.chats.first
+
+    Process.kill("HUP", cockpit.pane)
+    ended = cockpit.settles(within: 5) { Process.wait2(cockpit.pane, Process::WNOHANG)&.last }
+    running = Process.waitpid(chat, Process::WNOHANG).nil?
+    drawn = cockpit.screen.scan("you> ").size
+    cockpit.respawn_pane.settles(within: 10) { cockpit.screen.scan("you> ").size > drawn || nil }
+    cockpit.type("from the new pane\r")
+    heard = cockpit.settles(within: 10) { cockpit.heard.find { |record| record["heard"] == "from the new pane" } }
+
+    expect([ended&.exitstatus, running, heard]).to eq([0, true, { "heard" => "from the new pane" }])
   end
 
   it "refuses a second chat on one path, naming it" do

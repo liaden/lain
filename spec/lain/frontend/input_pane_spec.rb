@@ -524,7 +524,35 @@ RSpec.describe Lain::Frontend::InputPane do
 
       deliver("INT")
 
-      expect(next_frame(chat, of: "signal")).to eq({ "v" => "signal", "name" => "sigint" })
+      expect([next_frame(chat, of: "signal"), @running.join(0.2)]).to eq([{ "v" => "signal", "name" => "sigint" }, nil])
+    end
+  end
+
+  describe "a signal that closes the pane" do
+    around do |example|
+      saved = Lain::CLI::Signals::MAP.keys.to_h { |name| [name, Signal.trap(name) { nil }] }
+      example.run
+    ensure
+      saved.each { |name, handler| Signal.trap(name, handler) }
+    end
+
+    # What a pane sent before it went, read only once it has gone: a pane still
+    # running would hold the read open until the chat's own timeout.
+    def sent_before_exit(chat)
+      exited = @running.join(2)&.value
+      [exited, exited ? chat.read.lines.map { |line| JSON.parse(line)["v"] }.include?("signal") : nil]
+    end
+
+    %w[TERM HUP].each do |name|
+      it "ends only the pane on #{name}, sending the chat no signal frame" do
+        chat = open_pane
+        publish(chat, {})
+        settles { screen.string.include?("you> ") || nil }
+
+        deliver(name)
+
+        expect(sent_before_exit(chat)).to eq([0, false])
+      end
     end
   end
 

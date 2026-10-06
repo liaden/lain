@@ -216,7 +216,9 @@ waiting for the next change.
 
 The pane draws the chat's HUD above the prompt and refreshes it without a keypress, completes
 `/command` names, and shows the mode's layer lighters beside the prompt. It holds no agent, so
-Ctrl-C and `/stop` there travel to the chat's own rail rather than being answered locally.
+Ctrl-C, Ctrl-\ and `/stop` there travel to the chat's own rail rather than being answered locally.
+HUP and TERM end only the pane: closing or killing it leaves the chat running, and a new
+`lain input` on the same socket picks the chat back up.
 
 ### lain sessions
 

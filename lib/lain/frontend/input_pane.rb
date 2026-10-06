@@ -39,7 +39,8 @@ module Lain
     # pane's own trap as it does with nothing to type at.
     #
     # A stream that simply ends is the chat restarting, and the pane reconnects
-    # to the same path. Only the chat's `closed` goodbye ends the pane.
+    # to the same path. Only the chat's `closed` goodbye, or a HUP or TERM sent
+    # to the pane itself, ends the pane.
     class InputPane
       # The layers this surface acts on, asked for by name: `vi` chooses the
       # editor's keymap and `notify` rings an arrival. Enumerated rather than
@@ -128,13 +129,23 @@ module Lain
       private
 
       # A signal the pane's traps or its line editor recorded. With a chat to
-      # carry it to, it goes there -- the run a Ctrl-C means is the chat's, and
-      # nothing here is interrupted. With NO chat, the human is interrupting the
-      # only thing in front of them, which is this pane, and it ends.
+      # carry it to, a Ctrl-C or Ctrl-\ goes there -- the run it means is the
+      # chat's, and nothing here is interrupted. HUP and TERM are not the human
+      # at the keyboard: they are tmux or a `kill` closing THIS pane, and
+      # forwarded they ended the chat the pane was only typing into. With NO
+      # chat, every signal is the human interrupting the only thing in front of
+      # them, which is this pane.
       def signal(name)
-        return @quit = true if @client.nil?
+        return quit if name == :sigterm || @client.nil?
 
         emit(@client, { "v" => "signal", "name" => name.to_s })
+      end
+
+      # The connection is closed under the read rather than waited out, so the
+      # frame loop unwinds through its own IOError rescue at once.
+      def quit
+        @quit = true
+        close_quietly(@client)
       end
 
       # The first connection, and the one line said while waiting for it.
@@ -162,13 +173,14 @@ module Lain
       end
 
       # One connection's life. A frame stream that ends without a goodbye is the
-      # chat going away, which is not this pane's cue to -- but a human who
-      # signalled while nothing was connected is.
+      # chat going away, which is not this pane's cue to -- but a pane told to
+      # quit is, whether or not a chat was connected when it was told.
       def attached(task)
         client = @client ||= connected(task)
         return :quit if client.nil?
 
-        serving(task, client)
+        farewell = serving(task, client)
+        @quit ? :quit : farewell
       ensure
         stop_drawing
         @client = nil

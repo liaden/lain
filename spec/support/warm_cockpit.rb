@@ -72,7 +72,11 @@ module WarmCockpit
 
     private
 
+    # A child the example already waited for is gone, and its pid may be
+    # someone else's by now: only one still unwaited is killed.
     def kill(child)
+      return unless Process.waitpid(child, Process::WNOHANG).nil?
+
       Process.kill("KILL", child)
       Process.wait(child)
     rescue Errno::ESRCH, Errno::ECHILD
