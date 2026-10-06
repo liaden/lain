@@ -46,6 +46,19 @@ module Lain
       # the newest turns do not get.
       LINE_CHARS = 200
 
+      # The most of the budget one human turn may take whole: its line is
+      # offered whole only while it is at most this fraction of the question.
+      # At the conservative window that is 964 bytes, which holds a typed
+      # paragraph, measured at about 800 bytes, while a pasted log is cut to
+      # its line and leaves the rest of the budget to the work. The
+      # share scales with the window, so a larger one keeps longer turns whole.
+      WHOLE_SHARE = 8
+
+      # The key that marks a message in the earlier slot as a held
+      # replacement. A replacement is a user text turn, the same shape as the
+      # human's own words, and only this tells the question which is which.
+      SUMMARY = "summary"
+
       # The lowest bytes-per-token ever measured on a real request here: a
       # digit-heavy line, where such a tokenizer spends a token per digit,
       # against 3.26 for ordinary source and 3.33 for prose
@@ -147,6 +160,9 @@ module Lain
       # compressed and are the only account of history nothing else carries;
       # then the uncollapsed span; then the pins, which the render keeps
       # verbatim anyway, so naming them is a courtesy rather than the content.
+      # What every slot leaves then makes whole lines out of cut ones: the
+      # span's first, since it is the work in progress, then the earlier
+      # slot's, where an opening request would otherwise stay cut.
       #
       # @param document [String, nil] the state the last handoff wrote, if any,
       #   exactly as its cut recorded it
@@ -165,6 +181,7 @@ module Lain
         taken = SECTIONS.except(:document).zip([held, span, pins])
                         .to_h { |(slot, heading), messages| [slot, left.take(messages, heading:)] }
         taken[:span] = left.widen(taken.fetch(:span))
+        taken[:held] = left.widen(taken.fetch(:held))
         { document: whole }.merge(taken.transform_values(&:to_s))
       end
 
@@ -186,6 +203,14 @@ module Lain
       # @return [String]
       def whole(message)
         "#{message.fetch("role")}: #{blocks(message).map { |block| flatten(stub(block)) }.join(" ")}"
+      end
+
+      # A user turn of nothing but text, unless it is marked {SUMMARY}.
+      #
+      # @param message [Hash] a canonical-normalized projection
+      # @return [Boolean]
+      def human?(message)
+        message.fetch("role") == "user" && !message[SUMMARY] && blocks(message).all? { |block| block["type"] == "text" }
       end
 
       # {Context::Conversation#blocks}' reading and its reasoning: a bare String
@@ -229,15 +254,18 @@ module Lain
       # outlives one slot, and three module functions sharing it would be three
       # functions sharing a global.
       #
-      # Within a slot the NEWEST turns are the ones that survive: what a reader
-      # needs to carry the work on is what just happened, and a budget spent
-      # oldest-first would hand back the opening of a conversation and drop the
-      # part being worked on. What survives is rendered oldest first even so,
-      # because that is how a conversation reads.
+      # Within a slot the human's own turns are bought first, then the rest,
+      # and within each the NEWEST survive. The human's words are what the work
+      # is for, and a directive lost to forty tool stubs is the one thing the
+      # handoff cannot recover; among turns of a kind, a budget spent
+      # oldest-first would hand back the opening and drop the part being worked
+      # on. What survives is rendered oldest first even so, because that is
+      # how a conversation reads.
       class Budget
-        # One slot as {Budget#take} afforded it: lines and messages are newest
-        # first, and the notice is already paid for.
-        Section = Data.define(:heading, :notice, :lines, :messages) do
+        # One slot as {Budget#take} afforded it: lines, messages and their
+        # source positions in the order the budget bought them, and the notice
+        # already paid for.
+        Section = Data.define(:heading, :notice, :lines, :messages, :positions) do
           # The heading, then the lines oldest first under the notice; "" when
           # nothing fits or there was nothing to say, because a heading over
           # nothing is worse than silence.
@@ -246,44 +274,44 @@ module Lain
           def to_s
             return "" if lines.empty?
 
-            "#{heading}\n\n#{[notice, *lines.reverse].compact.join("\n")}\n"
+            "#{heading}\n\n#{[notice, *in_source_order].compact.join("\n")}\n"
           end
+
+          private
+
+          def in_source_order = lines.zip(positions).sort_by(&:last).map(&:first)
         end
 
-        ELIDED = "[%<count>d earlier turn(s) elided: they did not fit this question]"
+        ELIDED = "[%<count>d turn(s) elided: they did not fit this question]"
 
         def initialize(bytes)
           @left = bytes
+          @whole_at_most = bytes / WHOLE_SHARE
         end
 
         # @param messages [Array<Hash>] canonical-normalized projections
         # @param heading [String] what this section is called
-        # @return [Section] the lines that fit, newest first, with the notice
-        #   for those that did not
+        # @return [Section] the lines that fit, in the order they were
+        #   bought, with the notice for those that did not
         def take(messages, heading:)
-          newest = messages.reverse
-          lines = newest.map { |message| Handoff.line(message) }
-          afforded = affordable(lines, heading)
-          return Section.new(heading:, notice: nil, lines: [], messages: []) if afforded.empty?
+          order = priority(messages)
+          afforded = affordable(order.map { |position| forms(messages.fetch(position)) }, heading)
+          return Section.new(heading:, notice: nil, lines: [], messages: [], positions: []) if afforded.empty?
 
           charge(afforded.last.last + heading.bytesize + 2)
-          Section.new(heading:, notice: notice(lines.size - afforded.size), lines: afforded.map(&:first),
-                      messages: newest.first(afforded.size))
+          bought(heading, messages, order, afforded)
         end
 
-        # The turns of a section, newest first, bought back whole out of what
-        # every slot left AFTER it was afforded at cut length. A second pass
-        # and never part of {#take}, so it cannot spend room another slot or
-        # the elided notice was owed.
+        # The turns of a section, in the order {#take} bought them, made whole
+        # out of what every slot left AFTER it was afforded at cut length. A
+        # second pass and never part of {#take}, so it cannot spend room
+        # another slot or the elided notice was owed.
         #
         # @param section [Section]
         # @return [Section]
         def widen(section)
-          wholes = section.messages.map { |message| Handoff.whole(message) }
-          extra = upgrade_costs(section.lines, wholes)
-          count = extra.take_while { |sum| sum <= @left }.size
-          charge(extra.fetch(count - 1)) if count.positive?
-          section.with(lines: wholes.first(count) + section.lines.drop(count))
+          section.with(lines: section.lines.zip(section.messages)
+                                     .map { |short, message| upgraded(short, Handoff.whole(message)) })
         end
 
         # A section that is never cut, for the one thing the question must not
@@ -301,18 +329,41 @@ module Lain
 
         private
 
-        # Cumulative, like {#running}, for the same `take_while`.
-        def upgrade_costs(shorts, wholes)
-          shorts.zip(wholes).map { |short, whole| whole.bytesize - short.bytesize }
-                .inject([]) { |sums, cost| sums + [(sums.last || 0) + cost] }
+        def bought(heading, messages, order, afforded)
+          kept = order.first(afforded.size)
+          Section.new(heading:, notice: notice(order.size - afforded.size), lines: afforded.map(&:first),
+                      messages: messages.values_at(*kept), positions: kept)
+        end
+
+        def priority(messages)
+          messages.each_index.sort_by { |position| [Handoff.human?(messages.fetch(position)) ? 0 : 1, -position] }
+        end
+
+        # Per line rather than a prefix, so one newer line too large to make
+        # whole does not keep an older one that fits from being made whole.
+        def upgraded(short, whole)
+          cost = whole.bytesize - short.bytesize
+          return short if cost > @left
+
+          charge(cost)
+          whole
         end
 
         # The heading and its blank line are reserved with the notice, for the
         # notice's reason: a section's own furniture is part of what the budget
         # bounds, or the bound is only about the lines inside it.
-        def affordable(lines, heading)
-          room = @left - reserve(lines.size) - heading.bytesize - 2
-          lines.zip(running(lines)).take_while { |_, total| total <= room }
+        def affordable(choices, heading)
+          room = @left - reserve(choices.size) - heading.bytesize - 2
+          priced(choices, room).take_while(&:first)
+        end
+
+        # Whole before cut, so a directive stays whole while it fits rather
+        # than only if room is left over once every tool stub was bought. Past
+        # {WHOLE_SHARE} it is offered cut only: a pasted log is a human turn too.
+        def forms(message)
+          short = Handoff.line(message)
+          whole = Handoff.whole(message)
+          Handoff.human?(message) && whole.bytesize <= @whole_at_most ? [whole, short] : [short]
         end
 
         # What could not be said, said once -- and charged, when there is room
@@ -338,11 +389,15 @@ module Lain
         # one would have written.
         def reserve(count) = count.zero? ? 0 : format(ELIDED, count:).bytesize + 1
 
-        # The cumulative cost of taking each line AND every line before it, so
-        # the cut is a `take_while` over a plain comparison rather than a fold
-        # with a flag in it.
-        def running(lines)
-          lines.inject([]) { |totals, line| totals + [(totals.last || 0) + line.bytesize + 1] }
+        # Each turn's first form that fits beside every turn before it, with
+        # the running cost; nil where none fits, so the cut is a `take_while`
+        # rather than a fold with a flag in it.
+        def priced(choices, room)
+          choices.inject([]) do |bought, forms|
+            spent = bought.last&.last || 0
+            line = forms.find { |form| spent + form.bytesize + 1 <= room }
+            bought + [[line, spent + (line ? line.bytesize + 1 : 0)]]
+          end
         end
       end
     end

@@ -205,6 +205,48 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
       expect(question[:span]).not_to include(directive)
     end
 
+    # Both are user text turns; only the mark lets the question buy the
+    # human's words ahead of the summaries after them when the budget binds.
+    describe "under a binding budget" do
+      let(:directive) { "use SQLite, never PostgreSQL, #{"and keep every post in it " * 16}".strip }
+      let(:summaries) { 14 }
+
+      def chain
+        replies = (1..summaries).flat_map do |index|
+          [["assistant", text("reply #{index}")], ["user", text("more #{index}")]]
+        end
+        [["user", text(directive)], *replies, ["assistant", text("probed it")], ["user", text("the ask")]]
+          .inject(Lain::Timeline.empty) { |line, (role, content)| line.commit(role:, content:) }
+      end
+
+      def summarized(turns)
+        (1..summaries).map do |index|
+          { "span" => [turns[(2 * index) - 1].digest, turns[2 * index].digest],
+            "content" => text("summary #{index}: #{"s" * 500}") }
+        end
+      end
+
+      def advanced_over_the_replies(line)
+        turns = line.to_a
+        session.record_compaction_cut(
+          Lain::Telemetry::CompactionCut.new(
+            digest: turns[2 * summaries].digest, head: Lain::Event.stands_on(line.head), strategy: arm,
+            kind: "advance", parent: nil, supersedes: [], plan_step_completions: 0, collapses: summarized(turns)
+          )
+        )
+        line
+      end
+
+      it "keeps the directive whole ahead of the summaries that followed it" do
+        budget = Lain::Oracle::Handoff.budget_for(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+        earlier = on(advanced_over_the_replies(chain))
+                  .handoff(pins: Lain::Context::PinnedMessages::NONE, budget:).question[:held]
+
+        expect(earlier).to include("summary 14: ").and include("bytes in full")
+        expect(earlier).to include("user: #{directive}\n")
+      end
+    end
+
     it "shows a turn inside a held collapse once, as its replacement" do
       shown = question.values.join
 

@@ -2871,7 +2871,7 @@ RSpec.describe Lain::Compaction::Source do
         refused_render(handing_off(keep_last: 500), line)
 
         expect(bytes(question)).to be <= budget
-        expect(question[:span]).to include("earlier turn(s) elided")
+        expect(question[:span]).to include("turn(s) elided")
       end
 
       it "stays inside the budget for one pathological turn" do

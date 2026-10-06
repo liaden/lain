@@ -313,7 +313,10 @@ module Lain
 
         def covering(collapse) = self.class.indices(@at, collapse.fetch("span"))
 
-        def replacement(collapse) = { "role" => Derivation::REPLACEMENT_ROLE, "content" => collapse.fetch("content") }
+        def replacement(collapse)
+          { "role" => Derivation::REPLACEMENT_ROLE, "content" => collapse.fetch("content"),
+            Oracle::Handoff::SUMMARY => true }
+        end
 
         # What the cuts that hold already replaced, less the document, which
         # the question carries whole in a slot of its own.

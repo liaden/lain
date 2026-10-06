@@ -120,9 +120,8 @@ RSpec.describe Lain::Oracle::Handoff do
 
     def served_window = 32_768
 
-    def text_turn(index, body)
-      { "role" => index.odd? ? "user" : "assistant",
-        "content" => [{ "type" => "text", "text" => body }] }
+    def text_turn(index, body, role: index.odd? ? "user" : "assistant")
+      { "role" => role, "content" => [{ "type" => "text", "text" => body }] }
     end
 
     def slots(held: [], span: [], pins: [], document: nil, window: nil)
@@ -132,8 +131,12 @@ RSpec.describe Lain::Oracle::Handoff do
 
     def total(question) = question.values.sum(&:bytesize)
 
+    # The assistant's, so "the newest survive" is not confounded with the
+    # human's turns being bought first.
     def prose(count)
-      (1..count).map { |index| text_turn(index, "turn #{index}: #{"the lazy dog slept through it. " * 30}") }
+      (1..count).map do |index|
+        text_turn(index, "turn #{index}: #{"the lazy dog slept through it. " * 30}", role: "assistant")
+      end
     end
 
     # What the whole request costs at the WORST density ever measured, which
@@ -217,7 +220,9 @@ RSpec.describe Lain::Oracle::Handoff do
     end
 
     describe "turns since the last handoff" do
-      def turns(count, size) = (1..count).map { |index| text_turn(index, "turn #{index}: #{"w" * size}") }
+      def turns(count, size)
+        (1..count).map { |index| text_turn(index, "turn #{index}: #{"w" * size}", role: "assistant") }
+      end
 
       it "appear whole while the budget holds" do
         span = turns(3, 900)
@@ -257,6 +262,23 @@ RSpec.describe Lain::Oracle::Handoff do
 
       # Widening spends only what every slot has left after it was afforded at
       # cut length, so it can never take the room the notice was reserved.
+      # Widening is per line: a newer line too large to make whole does not
+      # stop an older, smaller one that fits.
+      it "widens an older line whose upgrade fits past a newer one whose upgrade does not" do
+        span = [text_turn(1, "turn 1: #{"w" * 300}", role: "assistant"),
+                text_turn(2, "turn 2: #{"w" * 3_000}", role: "assistant")]
+        heading = described_class::SECTIONS.fetch(:span)
+        stubs = span.sum { |turn| described_class.line(turn).bytesize + 1 }
+        older = described_class.whole(span.first).bytesize - described_class.line(span.first).bytesize
+        budget = heading.bytesize + 2 + stubs + older
+
+        question = described_class.question(held: [], span:, pins: [], budget:)
+
+        expect(question[:span]).to include("turn 1: #{"w" * 300}\n")
+        expect(question[:span]).not_to include("w" * 3_000)
+        expect(total(question)).to eq(budget)
+      end
+
       it "never lose turns without saying so, however the leftover falls" do
         rng = Random.new(1)
         silent = Array.new(300) do
@@ -320,14 +342,14 @@ RSpec.describe Lain::Oracle::Handoff do
         .to be > slots(span:, window: fallback_window)[:span].lines.size
     end
 
-    # The newest turns are the ones that survive: what a reader needs to carry
+    # Among turns of one kind the newest survive: what a reader needs to carry
     # the work on is what just happened, not the opening of the conversation.
     it "keeps the newest turns and says how many earlier ones went" do
       rendered = slots(span: prose(400))[:span]
 
       expect(rendered).to include("turn 400:")
       expect(rendered).not_to include("turn 1:")
-      expect(rendered.lines[2]).to match(/\A\[\d+ earlier turn\(s\) elided/)
+      expect(rendered.lines[2]).to match(/\A\[\d+ turn\(s\) elided/)
     end
 
     # The pathological shape: one turn so large that even its single line
@@ -358,6 +380,105 @@ RSpec.describe Lain::Oracle::Handoff do
       expect(question[:held]).not_to include("elided")
       expect(question[:span]).to include("elided")
       expect(total(question)).to be <= described_class.budget_for(served_window)
+    end
+
+    # The human's own words are the one account of what the work is for, and
+    # a tool turn is the cheapest thing to lose: its result is already a stub.
+    describe "the human's turns" do
+      def human(body) = { "role" => "user", "content" => [{ "type" => "text", "text" => body }] }
+
+      def tool_pairs(count)
+        (1..count).flat_map do |index|
+          [{ "role" => "assistant",
+             "content" => [{ "type" => "tool_use", "id" => "tu_#{index}", "name" => "read_file", "input" => {} }] },
+           { "role" => "user",
+             "content" => [{ "type" => "tool_result", "tool_use_id" => "tu_#{index}", "content" => "x" * 4096 }] }]
+        end
+      end
+
+      def elided(rendered) = rendered[/\[(\d+) turn\(s\) elided/, 1].to_i
+
+      it "keeps the oldest directive whole under a binding budget and elides the older tool turns first" do
+        directive = "build the blog: #{"posts, comments and tags. " * 24}"
+        span = [human(directive), *tool_pairs(200)]
+
+        rendered = slots(span:)[:span]
+
+        expect(rendered).to include("user: #{directive.strip}")
+        expect(rendered).to include("tu_200,")
+        expect(rendered).not_to include("tu_1,")
+        expect(elided(rendered)).to be_positive
+        expect(total(slots(span:))).to be <= described_class.budget_for(fallback_window)
+      end
+
+      it "shows a human turn in the earlier slot whole while the budget has room for it" do
+        directive = "the opening request: #{"keep every post in SQLite, never in memory. " * 10}"
+        held = [human(directive), text_turn(2, "a summary of what followed")]
+
+        question = slots(held:, span: [text_turn(1, "and now the comments")], window: served_window)
+
+        expect(directive.length).to be > described_class::LINE_CHARS
+        expect(question[:held]).to include("user: #{directive.strip}")
+        expect(question[:held]).not_to include("bytes in full")
+      end
+
+      it "keeps the newest human turns when they alone exceed the budget, and counts what it elided" do
+        humans = (1..60).map { |index| human("ask #{index}: #{"w" * 900}") }
+        span = [*humans, *tool_pairs(5)]
+
+        rendered = slots(span:)[:span]
+        shown = rendered.lines.count { |line| line.start_with?("user: ask") }
+
+        expect(rendered).to include("ask 60: ")
+        expect(rendered).not_to include("ask 1: ")
+        expect(rendered).not_to include("tu_5")
+        expect(elided(rendered)).to eq(span.size - shown)
+      end
+
+      def summary(body) = human(body).merge(described_class::SUMMARY => true)
+
+      # A held replacement is a user text turn too; marked, it waits behind
+      # the human's words instead of being bought whole ahead of them.
+      it "keeps an earlier directive whole ahead of the newer summaries marked as such" do
+        directive = "the opening request: #{"keep every post in SQLite, never in memory. " * 10}"
+        held = [human(directive), *(1..20).map { |index| summary("summary #{index}: #{"s" * 600}") }]
+
+        question = slots(held:)
+
+        expect(question[:held]).to include("user: #{directive.strip}")
+        expect(question[:held]).to include("summary 20: ")
+        expect(total(question)).to be <= described_class.budget_for(fallback_window)
+      end
+
+      # A pasted log is a human turn too, and bought whole it would crowd out
+      # the work the handoff is meant to carry on.
+      it "cuts a pasted blob to its line rather than buying it whole" do
+        paste = "here is the log:\n#{"E, [2026] ERROR boom\n" * 1500}"
+        span = [human("build the blog"), *tool_pairs(150), human(paste), *tool_pairs(150).map(&:dup)]
+
+        rendered = slots(span:, window: served_window)[:span]
+
+        expect(rendered).to include("#{paste.bytesize} bytes in full")
+        expect(rendered).to include("user: build the blog")
+        expect(elided(rendered)).to be < 100
+      end
+
+      # Exact to the byte: a human turn is offered whole while its line is at
+      # most an eighth of the budget, and cut one byte past that.
+      it "offers a human turn whole at exactly the bound, and cut one byte under it" do
+        directive = "build the blog: #{"posts, comments and tags. " * 24}"
+        span = [human(directive), *tool_pairs(200)]
+        whole = described_class.whole(human(directive))
+        bound = whole.bytesize * described_class::WHOLE_SHARE
+
+        at = described_class.question(held: [], span:, pins: [], budget: bound)
+        under = described_class.question(held: [], span:, pins: [], budget: bound - 1)
+
+        expect(at[:span]).to include("#{whole}\n")
+        expect(total(at)).to be <= bound
+        expect(under[:span]).not_to include("#{whole}\n")
+        expect(under[:span]).to include("#{directive.bytesize} bytes in full")
+      end
     end
 
     it "elides nothing, and says nothing, when everything fits" do
