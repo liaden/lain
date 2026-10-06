@@ -99,6 +99,60 @@ RSpec.describe Lain::Provider::Ollama::Decoding do
     end
   end
 
+  describe "a tool call cut off by the token ceiling" do
+    let(:cut) { "<tool_call>\n<function=list_files" }
+    let(:truncated) { body(content: "Checking.\n#{cut}", done_reason: "length") }
+
+    it "keeps max_tokens and drops the cut tail from the text" do
+      response = decode(truncated)
+
+      expect(response).to stop_with(Lain::StopReason::MAX_TOKENS)
+      expect(response.text).to eq("Checking.")
+    end
+
+    it "journals one cut_tool_call record quoting the tail" do
+      expect(records(truncated)).to eq(
+        [Lain::Telemetry::MalformedResponse.new(kind: :cut_tool_call, model: "qwen3:4b", excerpt: cut)]
+      )
+    end
+
+    it "leaves ordinary prose at the ceiling whole and unrecorded" do
+      prose = body(content: "Start with the Gemfile and then", done_reason: "length")
+
+      expect(decode(prose).text).to eq("Start with the Gemfile and then")
+      expect(records(prose)).to be_empty
+    end
+
+    it "leaves a function= quoted mid-sentence at the ceiling as prose" do
+      quoted = body(content: "see <function= syntax", done_reason: "length")
+
+      expect(decode(quoted).text).to eq("see <function= syntax")
+      expect(records(quoted)).to be_empty
+    end
+
+    it "records a cut that opens at the start of the text, with nothing kept" do
+      bare = body(content: cut, done_reason: "length")
+      response = decode(bare)
+
+      expect(response.content).to be_empty
+      expect(response).to stop_with(Lain::StopReason::MAX_TOKENS)
+      expect(records(bare).map(&:kind)).to eq([:cut_tool_call])
+    end
+
+    it "records the cut envelope that follows a closed one" do
+      closed = "<tool_call>\n<function=bash>\n</function>\n</tool_call>\nthen\n#{cut}"
+      two = body(content: closed, done_reason: "length")
+
+      expect(records(two).map(&:excerpt)).to eq([cut])
+    end
+
+    it "does not read an unclosed envelope as cut when the model stopped on its own" do
+      stopped = body(content: "Checking.\n#{cut}", done_reason: "stop")
+
+      expect(records(stopped).map(&:kind)).not_to include(:cut_tool_call)
+    end
+  end
+
   # The override is keyed on the reason the decode ARRIVES AT, never on the
   # wire string that suggested it. `StopReason.normalize` admits the whole of
   # `KNOWN`, so an ollama-compatible server answering `"end_turn"` or

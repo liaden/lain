@@ -93,6 +93,11 @@ module Lain
           #{NOTHING_AFTER_IT}\z                      # and nothing said after it
         }mx
 
+        # An envelope opened and never closed, to the end of the text: what a
+        # tool call looks like when the token ceiling lands inside it. A bare
+        # `<function=` counts only at a line start, so prose quoting one is not cut.
+        CUT_TOOL_CALL = %r{(?:<tool_call>|^<function=)(?!.*</function>).*\z}m
+
         # The reasons {Agent::LoopMachine} settles a run on as an ANSWER. A turn
         # that said nothing may not reach one, whatever the wire spelled: the
         # test is the reason the decode arrives at, because `StopReason.normalize`
@@ -106,12 +111,34 @@ module Lain
           message = body["message"] || {}
           envelope = prose_tool_call(message)
           silent = said_nothing?(message)
-          response = Response.new(id: nil, model: body["model"], content: decode_content(message),
+          cut = cut_tool_call(body, message, envelope)
+          response = Response.new(id: nil, model: body["model"], content: decode_content(without_cut(message, cut)),
                                   stop_reason: decode_stop_reason(body, message, envelope, silent),
                                   usage: build_usage(body), raw: body)
           note_prose_tool_call(body, envelope) unless envelope.nil?
           note_empty_answer(body) if silent
+          note_cut_tool_call(body, cut) unless cut.nil?
           response
+        end
+
+        # A call the ceiling cut cannot be executed or repaired, and left in the
+        # text it would be replayed to the model as something it said.
+        def cut_tool_call(body, message, envelope)
+          return nil unless envelope.nil? && body["done_reason"] == "length" && Array(message["tool_calls"]).empty?
+
+          CUT_TOOL_CALL.match(message["content"].to_s)
+        end
+
+        def without_cut(message, cut)
+          return message if cut.nil?
+
+          message.merge("content" => cut.pre_match.rstrip)
+        end
+
+        # The stop reason stays :max_tokens, so the record is the only place the
+        # cut call is named.
+        def note_cut_tool_call(body, cut)
+          @journal << Telemetry::MalformedResponse.new(kind: :cut_tool_call, model: body["model"], excerpt: cut[0])
         end
 
         # The witness for a turn that decoded perfectly and asked for nothing. A

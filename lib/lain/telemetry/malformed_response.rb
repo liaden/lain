@@ -40,15 +40,21 @@ module Lain
         attribute :kind
         attribute :tool_name
         attribute :excerpt
-        validates :kind, inclusion: { in: %i[prose_tool_call empty_answer],
-                                      message: "must be one of prose_tool_call, empty_answer, got %<value>s" }
-        validates :tool_name, presence: { message: "must name the tool the envelope named, got nil" }, if: :quoting?
+        validates :kind, inclusion: { in: %i[prose_tool_call empty_answer cut_tool_call],
+                                      message: "must be one of prose_tool_call, empty_answer, cut_tool_call, " \
+                                               "got %<value>s" }
+        validates :tool_name, presence: { message: "must name the tool the envelope named, got nil" },
+                              if: :prose_tool_call?
         validates :excerpt, presence: { message: "must carry the text the reading was made from, got nil" },
                             if: :quoting?
 
         private
 
-        def quoting? = kind == :prose_tool_call
+        def prose_tool_call? = kind == :prose_tool_call
+
+        # A cut call owes its quote but not a tool name: the ceiling may land
+        # before the name is written.
+        def quoting? = %i[prose_tool_call cut_tool_call].include?(kind)
       end
     end
 
@@ -74,6 +80,10 @@ module Lain
     # own token ceiling keeps the wire's `:max_tokens`, because a spent ceiling
     # and a model that chose to stop want different answers from a caller. The
     # record is still written, so the silence is on the file either way.
+    #
+    # A third kind, `:cut_tool_call`, is the exception to the stop reason too: the
+    # token ceiling landed inside an envelope, the turn keeps `:max_tokens`, the
+    # cut tail is quoted here and left off the chain.
     #
     # This is the one consumer point a further producer plugs into -- a new
     # `kind` here, the same stop reason there.

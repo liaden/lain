@@ -80,6 +80,19 @@ RSpec.describe Lain::Telemetry::MalformedResponse do
       .to raise_error(ArgumentError, /excerpt must carry the text the reading was made from/)
   end
 
+  describe "a cut tool call" do
+    subject(:cut) { described_class.new(kind: :cut_tool_call, model: "qwen3:4b", excerpt: "<tool_call>\n<function=li") }
+
+    it "quotes the tail without naming a tool, because the cut may precede the name" do
+      expect(cut).to have_attributes(kind: :cut_tool_call, tool_name: nil, excerpt: "<tool_call>\n<function=li")
+    end
+
+    it "owes its quote" do
+      expect { described_class.new(kind: :cut_tool_call, model: "m") }
+        .to raise_error(ArgumentError, /excerpt must carry the text the reading was made from/)
+    end
+  end
+
   # The second kind, and the reason `kind` was an open place rather than a
   # decoration. Here the finding IS an absence: there is no tool the turn named
   # and no text to quote it from, so demanding either would make the record
