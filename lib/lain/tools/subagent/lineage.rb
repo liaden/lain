@@ -63,12 +63,15 @@ module Lain
         # A named `lane` closes the part of it two issues' actors meet: each
         # issue's writer counts from 1 over the chat's one head, and the lane
         # is what their spawns then differ by. The run's own lane writes none.
+        # A one-shot in a named lane is adopted too, with no lifecycle mark: a
+        # retry of the same work from the same head is a new attempt the fleet
+        # has not retired. The run's own lane keeps the twin ruling above.
         def spawn(parent, prompt:, lifecycle: nil)
           head = parent.head_digest
           body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
                    "only" => @policy.only, "spawned_from" => head, "task" => Canonical.digest(prompt) }
           body["unattended"] = true if @policy.unattended
-          body.merge!(adopted(head, lifecycle, body, parent.store)) unless lifecycle.nil?
+          body.merge!(adopted(head, lifecycle, body, parent.store)) if adoptable?(lifecycle)
           put(parent, kind: :spawn, from: correlation_of(parent), to: nil,
                       causal_parents: [head].compact, body:)
         end
@@ -184,8 +187,10 @@ module Lain
           Enumerator.produce { marks_for(head, lifecycle) }.find { |marks| !recorded?(store, body.merge(marks)) }
         end
 
+        def adoptable?(lifecycle) = !lifecycle.nil? || !@lane.empty?
+
         def marks_for(head, lifecycle)
-          marks = { "adoption" => next_adoption(head), "lifecycle" => lifecycle }
+          marks = { "adoption" => next_adoption(head), "lifecycle" => lifecycle }.compact
           @lane.empty? ? marks : marks.merge("lane" => @lane)
         end
 

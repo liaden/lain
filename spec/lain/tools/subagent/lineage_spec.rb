@@ -187,11 +187,31 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       expect(a.body["lane"]).to eq("issue.demo.a")
     end
 
-    it "writes no lane for the run's own unnamed lane, nor for a one-shot" do
+    it "writes no lane for the run's own unnamed lane" do
       expect(described_class.new(policy:).spawn(parent, prompt: "go", lifecycle: "launched").body)
         .not_to have_key("lane")
-      expect(described_class.new(policy:, lane: "issue.demo.a").spawn(parent, prompt: "go").body)
-        .not_to have_key("lane")
+    end
+
+    it "names its lane in a one-shot's spawn, with no lifecycle mark" do
+      body = described_class.new(policy:, lane: "issue.demo.a").spawn(parent, prompt: "go").body
+
+      expect(body).to include("lane" => "issue.demo.a", "adoption" => 1)
+      expect(body).not_to have_key("lifecycle")
+    end
+
+    # A retry is a second writer over the same head and Store; the work and
+    # head are identical, so only the Store's holding of attempt 1 separates it.
+    it "gives a retried one-shot in a lane an address the shared store does not already hold" do
+      first = described_class.new(policy:, lane: "issue.demo.a").spawn(parent, prompt: "go")
+      retry_spawn = described_class.new(policy:, lane: "issue.demo.a").spawn(parent, prompt: "go")
+
+      expect(retry_spawn.digest).not_to eq(first.digest)
+    end
+
+    it "leaves identical one-shots on the run's own empty lane sharing one address across writers" do
+      first = described_class.new(policy:).spawn(parent, prompt: "go")
+
+      expect(described_class.new(policy:).spawn(parent, prompt: "go").digest).to eq(first.digest)
     end
 
     # A relaunch builds a second writer over the same head and the same shared

@@ -240,6 +240,21 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(fleet.digests).to eq([relaunch.digest])
     end
 
+    it "lists a retried one-shot in a lane as running after its first attempt ended" do
+      store = Lain::Store.new
+      head = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      policy = Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
+      fleet = described_class.new
+      first = Lain::Tools::Subagent::Lineage.new(policy:, lane: "issue.demo.a").spawn(head, prompt: "go")
+      fleet.launched(first)
+      fleet.completed(message_event("stopped", body: { "lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED },
+                                               causal_parents: [first.digest]))
+      relaunch = Lain::Tools::Subagent::Lineage.new(policy:, lane: "issue.demo.a").spawn(head, prompt: "go")
+      fleet.launched(relaunch)
+
+      expect(fleet.digests).to eq([relaunch.digest])
+    end
+
     # A child that hit its ceiling never answers, and its completion says so. A
     # fleet that waited for an answer would count it running for the rest of
     # the session.
