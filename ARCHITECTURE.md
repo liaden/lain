@@ -1004,6 +1004,9 @@ the Thor flag declarations and the `Lain::Error` to `Thor::Error` mapping.
 - **`HumanReplies`** is the `ask_human` reply surface: a TTY drain loop plus, when `--nvim` is
   attached, an `:LainReply` consumer reading the editor's command inbox. `AskHuman`
   (`lib/lain/tools/ask_human.rb`), built with a `notify:` seam, is the tool both surfaces resolve.
+  A `human>` read watches the set it asks about through `AskHuman::Directory#awaiting?`, so a withdrawn
+  question closes its read: a stopped ask hands the human `you>` back rather than leaving a read
+  that takes the next prompt as an answer to nothing.
 
 ### One input rail, and one reader of stdin
 

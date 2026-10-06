@@ -643,6 +643,54 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         expect(terminal.records("run_interrupted").map { |record| record["reason"] }).to eq(["stopped"])
         expect(terminal.records("session_closed")).to be_empty
       end
+
+      # The stopped ask withdrew its question, so the `human>` read for it has
+      # nothing left to answer: a line typed next belongs to `you>`.
+      def await_you_after_the_stop
+        terminal.wait_for(what: "the ask stopped") { terminal.records("run_interrupted").any? }
+        terminal.wait_for(what: "the dispatch to settle") { terminal.text.include?("SETTLED") }
+        terminal.wait_for(what: "you> drawn after the stop") do
+          terminal.text[terminal.text.rindex("SETTLED")..].include?("you> ")
+        end
+      end
+
+      {
+        "/stop at human>" => ->(terminal) { terminal.type("/stop\r") },
+        "Ctrl-C then s" => lambda do |terminal|
+          terminal.type("\x03")
+          terminal.await(/closing in \d+s/)
+          terminal.type("s")
+        end
+      }.each do |how, stop|
+        it "gives you> back after #{how}, and dispatches the next line typed" do
+          terminal.typed
+          terminal.await(/human> /)
+          stop.call(terminal)
+          await_you_after_the_stop
+          terminal.type("raven\r")
+          terminal.wait_for(what: "raven dispatched") { terminal.dispatched.include?("raven") }
+
+          expect(terminal.dispatched).to eq(["ask supervised", "raven"])
+          expect(terminal.answer).to be_nil
+          expect(terminal.text).not_to include("held as your next prompt: raven")
+        end
+      end
+
+      it "keeps the human> read for a question still awaited after Ctrl-C then c" do
+        terminal.typed
+        terminal.await(/human> /)
+        terminal.type("\x03")
+        terminal.await(/closing in \d+s/)
+        terminal.type("c")
+        terminal.wait_for(what: "human> put back") do
+          terminal.text[terminal.text.rindex("closing in")..].include?("human> ")
+        end
+        terminal.type("yes\r")
+        terminal.await(/SETTLED/)
+
+        expect(terminal.answer).to include("yes")
+        expect(terminal.records("run_interrupted")).to be_empty
+      end
     end
 
     # A plain chat at rest sits at `you>`, and a fleet actor's call would

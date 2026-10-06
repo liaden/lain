@@ -1089,46 +1089,98 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # Fix B: a Ctrl-C stops the answer loop mid-question, and the SAME unwind
-  # abandons the set inside AskHuman. An item that survives that is a line
-  # offering a question nothing is waiting on -- the live way a human answers
-  # a ghost.
-  #
-  # The review re-decided which of the two mistakes to make here, and the reason
-  # is that {HumanReplies} cannot tell the two apart: a stopped surface holding
-  # an unanswered item looks identical whether the set was withdrawn under it
-  # (this group) or is still parked waiting for an answer (the group above). It
-  # now KEEPS the item either way, because destroying a live question is silent
-  # and permanent -- the asker waits forever, `pending?` reads false and no
-  # `/inbox` can reach it -- where keeping a dead one costs exactly one further
-  # arrival note and is then refused and retired. The ghost does not list
-  # forever; the second example here is what pins that.
+  # A stopped ask withdraws its set in the same unwind that ends it, and the
+  # `human>` open for that set has nothing left to answer. Left open, it took
+  # the human's next prompt as an answer to nothing, so the read watches the
+  # set it asks about and closes when nobody awaits it any more.
   describe "a run interrupted while a question is outstanding" do
-    it "keeps the item it was holding, and refuses a later answer for it with something actionable" do
+    it "closes the human> read and lets the item go, and still refuses a late answer as stale" do
       asked = nil
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
 
       Sync do |task|
         surfaces = replies.chat_surfaces(task)
-        # The tool's own dispatch asks, which announces: the arrival reaches
-        # the queue by the same path a real run's does.
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
         pumped_until(task) { output.string.include?("which db?") }
         asked = ask_human.last_question
         run.stop # the sync gate unwinds: the set is withdrawn
-        surfaces.each(&:stop) # and the loop holding its inbox line is stopped with it
+        pumped_until(task) { output.string.include?(Lain::CLI::HumanReplies::AnswerLoop::WITHDRAWN) }
+        surfaces.each(&:stop)
       end
 
-      expect(ask_human.pending?).to be(false)
-      expect(replies.pending?).to be(true)
+      expect(replies.pending?).to be(false)
+      expect(output.string).not_to include(Lain::CLI::HumanReplies::AnswerLoop::ANSWERED_ELSEWHERE)
       expect { directory.reply("too late", asked.digest) }
         .to raise_error(Lain::Tools::AskHuman::NoPendingQuestion, /inbox line offering it is stale/)
     end
 
-    # A ghost is served ONCE by the answer loop: the next surface takes it off
-    # the queue, the human types, the directory refuses it as stale, and the
-    # ensure retires it. `/inbox` never offers one at all, because a drain only
-    # lists sets an asker still awaits.
+    it "ends the read it opened, and draws no human> for the withdrawn question again" do
+      reads = 0
+      closed = false
+      allow(conductor).to receive(:read_reply) do
+        reads += 1
+        Async::Task.current.sleep(30)
+      ensure
+        closed = true
+      end
+
+      Sync do |task|
+        surfaces = replies.chat_surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task) { reads == 1 }
+        run.stop
+        pumped_until(task) { closed }
+        settle_for(task, 0.3)
+        surfaces.each(&:stop)
+      end
+
+      expect(reads).to eq(1)
+    end
+
+    # The read must not close on a guess: a set still awaited across several
+    # watches keeps its `human>`, and the line typed there answers it.
+    it "keeps the read for a question still awaited, and delivers the line typed there" do
+      allow(conductor).to receive(:read_reply) do
+        Async::Task.current.sleep(0.3)
+        "yes"
+      end
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).not_to include(Lain::CLI::HumanReplies::AnswerLoop::WITHDRAWN)
+      expect(ask_human.last_answer.body["answer"]).to include("yes")
+    end
+
+    # An answer handed back re-opens the same set under the same name, so it
+    # is awaited again: a watch left running past the delivery would poll it
+    # for the rest of the session, and settle that later read as withdrawn.
+    it "stops watching the set once the line typed there is delivered" do
+      looks = 0
+      allow(directory).to receive(:awaiting?) do
+        looks += 1
+        true
+      end
+      allow(conductor).to receive(:read_reply) do
+        Async::Task.current.sleep(0.05)
+        "postgres"
+      end
+
+      Sync do |task|
+        announced(ask_human, "which db?")
+        surfaces = replies.chat_surfaces(task)
+        pumped_until(task) { ask_human.last_answer }
+        delivered = looks
+        settle_for(task, 0.1)
+        surfaces.each(&:stop)
+
+        expect(looks).to eq(delivered)
+      end
+    end
+
+    # A surface stopped in the same instant as the ask has no watch left to
+    # close its read, so the item goes back on the queue. `/inbox` never offers
+    # it, because a drain only lists sets an asker still awaits.
     it "lets a ghost go when /inbox finds its wait already ended" do
       strand_a_ghost
       allow(conductor).to receive(:read_reply).and_return("too late")
@@ -1154,8 +1206,22 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(output.string[already_printed..]).not_to include("which db?")
     end
 
-    # Withdraw a set under a parked reader -- the Ctrl-C shape the example above
-    # covers -- and leave the re-queued GHOST on the queue for a drain to find.
+    # And the next surface to dequeue the ghost closes its read on the first
+    # watch, rather than waiting for a line nobody owes it.
+    it "closes the ghost's read on the next surface without waiting for a line" do
+      strand_a_ghost
+
+      Sync do |task|
+        later = replies.chat_surfaces(task)
+        pumped_until(task) { output.string.include?(Lain::CLI::HumanReplies::AnswerLoop::WITHDRAWN) }
+        later.each(&:stop)
+      end
+
+      expect(replies.pending?).to be(false)
+    end
+
+    # Withdraw a set under a parked reader and stop the surface in the same
+    # instant, leaving the re-queued GHOST on the queue for a drain to find.
     def strand_a_ghost
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
       Sync { |task| withdraw_under_reader(task) }
@@ -1169,45 +1235,21 @@ RSpec.describe Lain::CLI::HumanReplies do
       surfaces.each(&:stop) # and the LINE ends under the parked reader
     end
 
-    it "serves that ghost once more and then lets it go" do
-      allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
-
-      Sync do |task|
-        surfaces = replies.chat_surfaces(task)
-        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
-        pumped_until(task) { output.string.include?("which db?") }
-        run.stop
-        surfaces.each(&:stop)
-
-        allow(conductor).to receive(:read_reply).and_return("too late")
-        later = replies.chat_surfaces(task)
-        pumped_until(task) { output.string.include?("inbox line offering it is stale") }
-        later.each(&:stop)
-      end
-
-      expect(replies.pending?).to be(false)
-    end
-
-    # The panel's probe, promoted: the stop lands while the human is TYPING,
-    # so the read returns normally into a set that no longer exists. The
-    # refusal is right and the human is told -- but the line it refuses must
-    # not survive, or every later `/inbox` lists a question that can only ever
-    # refuse. The `ensure` retires on EVERY exit for exactly this: the shape
-    # the interrupt example above drives is one of several, and a conditional
-    # ensure covers only the one somebody thought of.
-    it "retires the line when the set is withdrawn while the human is still typing" do
-      reading = false
+    # The stop lands in the same instant as the human's line, so the read
+    # returns normally into a set that no longer exists, before any watch can
+    # see it go. The refusal is right and the human is told -- but the line it
+    # refuses must not survive, or every later `/inbox` lists a question that
+    # can only ever refuse.
+    it "retires the line when the set is withdrawn as the human's line arrives" do
+      run = nil
       allow(conductor).to receive(:read_reply) do
-        reading = true
-        Async::Task.current.sleep(0.2)
+        run.stop # the sync gate unwinds UNDER the reader: the set is withdrawn
         "postgres"
       end
 
       Sync do |task|
         surfaces = replies.chat_surfaces(task)
         run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
-        pumped_until(task) { reading }
-        run.stop # the sync gate unwinds UNDER the reader: the set is withdrawn
         pumped_until(task) { output.string.include?("stale") }
         surfaces.each(&:stop)
       end

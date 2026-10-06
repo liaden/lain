@@ -765,11 +765,11 @@ module Lain
       # that nobody is waiting for its answer any more -- the posture
       # {#awaited} already takes when a stop is raised at its park.
       #
-      # So a withdrawal retires nothing from an inbox: every reader folding the
-      # record goes on listing the Q until something names it consumed. For
-      # this tool's own call that is the commit delivering the answer; a caller
-      # with no such commit names it itself, as {Approval::Gate} does on the
-      # journal its verdict went to.
+      # So a withdrawal retires nothing from the RECORD: every reader folding it
+      # goes on listing the Q until something names it consumed. For this
+      # tool's own call that is the commit delivering the answer; a caller with
+      # no such commit names it itself, as {Approval::Gate} does on the journal
+      # its verdict went to. Live surfaces ask {#awaiting?}.
       #
       # NAMED, never inferred, exactly as {#reply} names the set it answers: a
       # stale handle must not release a set asked after it. A set that was

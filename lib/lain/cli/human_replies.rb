@@ -310,11 +310,14 @@ module Lain
       # a reply surface never builds one. Memoized because it REMEMBERS which
       # arrivals it has announced.
       #
-      # `resolve:` is a MESSAGE rather than this object: the loop owes an answer
-      # one call, and handing over `self` would let it reach everything.
+      # `resolve:` and `withdrawn:` are MESSAGES rather than this object: the
+      # loop owes each one call, and handing over `self` would let it reach
+      # everything.
       def answers
         @answers ||= AnswerLoop.new(questions: @questions, inbox: @inbox, tty: @tty, reply: @reply,
-                                    resolve: method(:resolve_reply), reads: @reads)
+                                    resolve: method(:resolve_reply), reads: @reads,
+                                    awaited: ->(digest) { @ask_human.awaiting?(digest) },
+                                    withdrawn: method(:settled))
       end
 
       # {#answers}' cockpit counterpart. `drain:` is `/inbox`, which a cockpit
@@ -559,15 +562,20 @@ module Lain
         # another surface, so the next thing printed does not land beside it.
         ANSWERED_ELSEWHERE = "(human> closed -- answered elsewhere)"
 
+        WITHDRAWN = "(human> closed -- the ask waiting on it was stopped)"
+
         # `reads:` is where each `human>` is raced against its set being settled
-        # by another surface.
-        def initialize(questions:, inbox:, tty:, reply:, resolve:, reads:)
+        # by another surface. `awaited:` answers whether a set still has a caller
+        # parked on it, and `withdrawn:` settles one that does not.
+        def initialize(questions:, inbox:, tty:, reply:, resolve:, reads:, awaited:, withdrawn:)
           @questions = questions
           @inbox = inbox
           @tty = tty
           @reply = reply
           @resolve = resolve
           @reads = reads
+          @awaited = awaited
+          @withdrawn = withdrawn
           @announced = Set.new
         end
 
@@ -589,24 +597,17 @@ module Lain
         # and the asker stayed parked forever with no error and no journal line.
         # It goes back on the queue instead.
         #
-        # A set WITHDRAWN under a parked reader is re-queued too, which is the
-        # priced cost of the rule. The REPLY SEAM does not expose the
-        # distinction, though somebody holds it: `Registration#holds?` answers
-        # whether the NAME is registered, which stays true across a withdrawal
-        # -- measured true both before and after `AskHuman#perform`'s unwind,
-        # because `Outstanding#abandon` clears the asker and never touches the
-        # registration's map.
+        # A set that dies while its read is open ends the exchange SETTLED,
+        # never re-queued: {HumanReplies#settled} stops the read. Answered on
+        # another surface, that settle comes from the answer; WITHDRAWN -- its
+        # ask stopped -- it comes from {#watched}, which asks `awaiting?` rather
+        # than `holds?`, since a withdrawn NAME stays registered. Left open, a
+        # withdrawn read took the human's next prompt as an answer to nothing.
         #
-        # It is the right default even with that query in hand, because the two
-        # mistakes are not symmetric: re-queueing a dead set costs one refusal
-        # the human is told about, where retiring a live one parks the asker
-        # forever with `#pending?` false and nothing able to reach it.
-        #
-        # A set ANSWERED on another surface while its read is open is the one
-        # dead set this loop does know about: {HumanReplies#settled} stops that
-        # read, and the exchange ends settled. Re-queued, it came back as a
-        # `human>` under every later line, since no human types into a prompt
-        # for a question they have already answered.
+        # A surface stopped in the same instant as the ask has no watch left,
+        # and re-queues the set like any unwind. That is the right default:
+        # re-queueing a dead set costs the next surface one watch, where
+        # retiring a live one parks the asker forever with `#pending?` false.
         def serve(item)
           settled = exchange(item)
         ensure
@@ -644,19 +645,35 @@ module Lain
         def exchange(item)
           @inbox << item
           announce(item)
-          heard = @reads.race(item.digest) { @reply.for(item) }
-          heard.equal?(OpenReads::SETTLED) ? closed_elsewhere : resolved(*heard)
+          heard, withdrawn = watched(item.digest) { @reads.race(item.digest) { @reply.for(item) } }
+          heard.equal?(OpenReads::SETTLED) ? closed(withdrawn) : resolved(*heard)
           true
         rescue StandardError => e
           @tty.render_error(e.message)
           true
         end
 
+        # The watch is stopped before an answer is delivered, because a
+        # delivered answer also ends the wait and is not a withdrawal.
+        def watched(digest)
+          watch = Async::Task.current.async { withdraw_when_unawaited(digest) }
+          [yield, watch.completed?]
+        ensure
+          watch&.stop
+        end
+
+        # A tick BEFORE the first look: the watch starts ahead of the read, and
+        # a settle that finds no read open has nothing to close.
+        def withdraw_when_unawaited(digest)
+          Enumerator.produce { Async::Task.current.sleep(CommandLine::TICK) }.find { !@awaited.call(digest) }
+          @withdrawn.call(digest)
+        end
+
         def resolved(answer, answered) = @resolve.call(answer, answered.digest)
 
         # Private on the terminal, reached as {HumanReplies#command_line} reaches
         # it: the frontend's one-line note.
-        def closed_elsewhere = @tty.method(:render_warning).call(ANSWERED_ELSEWHERE)
+        def closed(withdrawn) = @tty.method(:render_warning).call(withdrawn ? WITHDRAWN : ANSWERED_ELSEWHERE)
 
         # An ARRIVAL is announced ONCE, however often the item is served: a
         # re-queued item is dequeued again, and "this just arrived" is false by
