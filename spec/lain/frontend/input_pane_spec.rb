@@ -353,6 +353,71 @@ RSpec.describe Lain::Frontend::InputPane do
       expect(settles { commands == ["taken"] || nil }).to be(true)
     end
 
+    it "redraws a changed header over its own rows and returns the cursor, without touching the input row" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1\nrow a" })
+      settles { screen.string.include?("row a") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:1\nrow a" })
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      settles { commands == ["idle"] || nil }
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:2\nrow b" })
+
+      expect(settles { screen.string.include?("row b") ? screen.string : nil })
+        .to eq("\e7\e[2A\r\e[Kfleet:2\n\r\e[Krow b\n\e8")
+    end
+
+    it "leaves a header of a different row count for the next prompt, as it cannot see its input row" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:1" })
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      settles { commands == ["idle"] || nil }
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:2\nrow b" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+
+      expect(screen.string).to eq("")
+    end
+
+    it "draws nothing over the rows once a line was sent, since the cursor left the input row" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:1" })
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      settles { commands == ["idle"] || nil }
+      keyboard.write("/stop\r")
+      next_frame(chat, of: "line")
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:2" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+
+      expect(screen.string).to eq("")
+    end
+
+    it "redraws nothing for an unchanged header" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:1" })
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      settles { commands == ["idle"] || nil }
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:1" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+
+      expect(screen.string).to eq("")
+    end
+
     it "sends a line the human finishes, with no generation, for the chat's rail to judge" do
       chat = open_pane
       unpublished(chat)

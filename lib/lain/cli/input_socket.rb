@@ -390,7 +390,7 @@ module Lain
       # the same event to a line editor, and one frame cannot arrive half-applied.
       def drawn
         prompt = @rail.published
-        return { "v" => "unpublished" } if prompt.kind.nil?
+        return { "v" => "unpublished", "header" => asked(@header, "").to_s } if prompt.kind.nil?
 
         { "v" => "prompt", "kind" => prompt.kind.to_s, "text" => prompt.text.to_s,
           "header" => asked(@header, "").to_s, "keys" => prompt.keys.transform_values(&:to_s),

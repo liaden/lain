@@ -219,6 +219,9 @@ The pane draws the chat's HUD above the prompt and refreshes it without a keypre
 Ctrl-C, Ctrl-\ and `/stop` there travel to the chat's own rail rather than being answered locally.
 HUP and TERM end only the pane: closing or killing it leaves the chat running, and a new
 `lain input` on the same socket picks the chat back up.
+While an ask runs, the input pane's header rows update in place; redraws stop once a line is
+sent, until the next prompt draws the header, and a header that gains or loses rows waits for the
+next prompt too. A typed line that wraps past the pane width can misplace an in-place redraw.
 
 ### lain sessions
 

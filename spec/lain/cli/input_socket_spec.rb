@@ -243,6 +243,22 @@ RSpec.describe Lain::CLI::InputSocket do
       expect([again["generation"], again["header"]]).to eq([first["generation"], "fleet:2 inbox:1"])
     end
 
+    it "tells a pane with nothing published the current header, as the header changes" do
+      client = connect
+      first = next_frame(client, of: "unpublished")
+      hud.replace("fleet:3 inbox:0")
+      expect([first["header"], next_frame(client, of: "unpublished")["header"]])
+        .to eq(["fleet:0 inbox:0", "fleet:3 inbox:0"])
+    end
+
+    it "sends nothing more while the header stays the same" do
+      client = connect
+      next_frame(client, of: "unpublished")
+      settles(within: 0.5) { nil }
+      client.timeout = 0.3
+      expect { client.gets }.to raise_error(IO::TimeoutError)
+    end
+
     it "carries the countdown's keys so the pane can offer them" do
       client = connect
       publish(:countdown, "closing in 30s", keys: { "c" => :cancel })

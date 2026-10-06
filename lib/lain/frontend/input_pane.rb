@@ -83,9 +83,9 @@ module Lain
         @geometry = geometry
         @rail = Intake.new(screen: tty)
         @drawn = NOTHING_DRAWN
-        @reported = nil
-        @client = nil
-        @quit = @idle = false
+        @reported = @client = nil
+        @quit = @idle = @settled = false
+        @shown = @wanted = ""
         @pump = StdinPump::Idle
         @relay = Relay.new
         @rail.route(@relay)
@@ -226,7 +226,7 @@ module Lain
       def received(task, client, frame)
         case frame["v"]
         when "prompt" then prompted(task, client, frame)
-        when "unpublished" then idle(task, client)
+        when "unpublished" then idle(task, client, frame["header"].to_s)
         when "context" then @commands.replace(Array(frame["commands"]))
         when "closed" then :closed
         end
@@ -234,12 +234,27 @@ module Lain
 
       # The read that was open is withdrawn so the terminal stays cooked: only
       # a cooked one hands over a finished line with no editor to open.
-      def idle(task, client)
-        return if @idle
+      def idle(task, client, header)
+        @wanted = header
+        return restyled if @idle
 
+        @shown = @drawn["header"].to_s
         stop_drawing
         @idle = true
         @drawing = task.async { unprompted(client) }
+      end
+
+      # The header rows sit a known distance above the input row, so they are
+      # rewritten in place between a saved and a restored cursor and whatever
+      # the human has typed stays where it is: cooked mode gives the pane no way
+      # to read that row back. A header of another row count would move the
+      # input row, so it waits for the next prompt, which draws it whole.
+      def restyled
+        rows = @wanted.split("\n")
+        return if !@settled || rows.empty? || @wanted == @shown || rows.size != @shown.split("\n").size
+
+        @shown = @wanted
+        @tty.print_prompt("\e7\e[#{rows.size}A#{rows.map { |row| "#{CLEAR_ROW}#{row}\n" }.join}\e8")
       end
 
       # The withdrawn read unwinds on the pump's fiber after this one starts,
@@ -255,6 +270,8 @@ module Lain
         # Not held means the read would not let go; waiting anyway risks the
         # lost wakeup, while not waiting would drop every line for certain.
         @pump.exclusively do
+          @settled = true
+          restyled
           typeahead.listen(kept: -> { @carried || StdinPump::Typeahead::NOTHING }) { |typed| sent(client, typed) }
         end
       end
@@ -262,6 +279,9 @@ module Lain
       # A partial line, one ended by Ctrl-D, waits for the rest of it.
       def sent(client, typed)
         typed.lines.each { |line| emit(client, { "v" => "line", "text" => line, "generation" => 0 }) }
+        # A finished line's echoed newline moved the cursor off the input row, so
+        # the rows above are no longer a known distance away.
+        @shown = "" if typed.lines.any?
         @carried = typed
       end
 
@@ -353,7 +373,7 @@ module Lain
         @drawing = nil
         @pump.keep(@carried.partial) if @carried
         @carried = nil
-        @idle = false
+        @idle = @settled = false
         @drawn = NOTHING_DRAWN
       end
 
