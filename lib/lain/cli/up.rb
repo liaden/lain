@@ -88,6 +88,8 @@ module Lain
       # the active one is the pane the human types in, by design.
       # rubocop:disable-next Lint/InterpolationCheck
       PANE_ID = '#{pane_id}'
+      # rubocop:disable-next Lint/InterpolationCheck
+      SESSION_NAME = '#{session_name}'
 
       # Rows for the input pane. It is the human's whole surface -- the chat's
       # HUD line, the prompt under it, and room for a countdown rail or a
@@ -354,6 +356,22 @@ module Lain
         # upgrades with a cockpit open keeps a one-row input pane until they
         # kill the session, and `lain up` is the command they would reach for.
         def rearm = enforce(chat: option(CHAT), input: option(INPUT))
+
+        # A `lain input` started in a pane lain did not make (the old one was
+        # killed and the human split a new one) takes the slot over, but never
+        # from a pane that is still alive, and never into a session `lain up`
+        # did not build.
+        #
+        # @param pane_id [String] the pane the new `lain input` runs in
+        # @return [String, nil] why nothing was adopted, or nil
+        def adopt_input(pane_id)
+          return "no cockpit recorded in tmux session #{@session}; input pane not adopted" if option(INPUT).empty?
+          return if live.include?(option(INPUT))
+
+          @tmux.act("set-option", "-t", @session, INPUT, pane_id)
+          rearm
+          nil
+        end
 
         # {NO_EDITOR} and an unset option are both the empty string, which
         # `list-panes` can never answer with -- so a window with no editor
@@ -941,6 +959,25 @@ module Lain
       # @raise [Flags::SocketWithoutCockpit]
       def self.from_options(options, chat_args:, path: nil)
         new(chat_args:, **Flags.new(options).to_h, **Workdir.option(path))
+      end
+
+      # Adopts `pane_id` as its own session's input pane. The session is asked
+      # of tmux for that pane, because `lain input --socket` carries no session
+      # name and a guessed one could land in an unrelated session.
+      #
+      # @param pane_id [String]
+      # @param socket [String, nil] tmux's `-L`; nil lets tmux follow $TMUX
+      # @param shell_out_factory [#call] `Shell::Out.new`, or a double
+      # @return [String, nil] why nothing was adopted, or nil
+      def self.adopt_input(pane_id, socket: nil, shell_out_factory: Shell::Out.public_method(:new))
+        tmux = Tmux.new(socket:, shell_out_factory:)
+        answer = tmux.run("display-message", "-p", "-t", pane_id, SESSION_NAME)
+        session = answer.stdout.strip
+        unless answer.exitstatus&.zero? && !session.empty?
+          return "pane #{pane_id} is not in a tmux session; input pane not adopted"
+        end
+
+        Panes.new(tmux:, session:, window: "#{session}:#{CHAT_WINDOW}").adopt_input(pane_id)
       end
 
       # The cockpit switch is `nvim:`: nil is off, "" derives the plugin's

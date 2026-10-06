@@ -555,6 +555,56 @@ RSpec.describe Lain::CLI::Up do
           .to eq(ids)
       end
 
+      describe "adopting a replacement input pane" do
+        let(:up) do
+          described_class.new(session:, socket:, state_path:, chat_command: "sleep 30", chat_preflight: no_preflight)
+        end
+
+        def new_pane(target = "#{session}:chat")
+          tmux("split-window", "-d", "-P", "-F", "\#{pane_id}", "-t", target, "sleep 30")
+        end
+
+        def adopt(pane) = described_class.adopt_input(pane, socket:)
+
+        before do
+          write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
+          up.call
+        end
+
+        it "records the new pane in its own session and aims the floor hook at it" do
+          tmux("kill-pane", "-t", session_option(described_class::Panes::INPUT))
+          replacement = new_pane
+
+          expect(adopt(replacement)).to be_nil
+          expect(session_option(described_class::Panes::INPUT)).to eq(replacement)
+          expect(seating_hook).to include("resize-pane -t #{replacement}")
+        end
+
+        it "leaves a live recorded pane alone" do
+          recorded = session_option(described_class::Panes::INPUT)
+
+          adopt(new_pane)
+
+          expect(session_option(described_class::Panes::INPUT)).to eq(recorded)
+        end
+
+        it "records nothing in a session with no cockpit, and says why" do
+          tmux("new-session", "-d", "-s", "bare", "sleep 30")
+
+          expect(adopt(new_pane("bare"))).to match(/no cockpit.*bare/)
+          expect(tmux("show-options", "-v", "-t", "bare", described_class::Panes::INPUT)).to eq("")
+        end
+
+        it "never touches an unrelated session named chat" do
+          tmux("new-session", "-d", "-s", "chat", "sleep 30")
+          tmux("kill-pane", "-t", session_option(described_class::Panes::INPUT))
+
+          adopt(new_pane)
+
+          expect(tmux("show-options", "-v", "-t", "chat", described_class::Panes::INPUT)).to eq("")
+        end
+      end
+
       it "leaves the cursor in the pane the human types at, not in the transcript" do
         lay_out(nvim: nil)
 
