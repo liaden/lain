@@ -50,7 +50,7 @@ module Lain
           agent = spawn_seam.call(journal:, worker_env: lease.worker_env)
           # The ask's own value is dropped: the settled Timeline is read off the
           # agent, which is also where a multi-turn run would leave it.
-          elapsed, = @instrument.timed { agent.ask(task) }
+          elapsed, = @instrument.timed { agent.ask!(task) }
           # PRICE BEFORE GRADING, as its own statement. `Instrument#price` DRAINS
           # the journal, so this ordering is what keeps a journaling grader's own
           # spend out of the arm's cost -- and inside `Run.new`'s argument list

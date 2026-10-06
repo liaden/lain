@@ -97,8 +97,8 @@ module Lain
       end
       private_constant :Unmeasured
 
-      CeilingFailure = Data.define(:index)
-      private_constant :CeilingFailure
+      TaskFailure = Data.define(:index, :reason)
+      private_constant :TaskFailure
 
       CEILING_REASON = "ceiling"
       private_constant :CEILING_REASON
@@ -110,12 +110,20 @@ module Lain
       # stopped there has no graded trajectory to fold, and a missing figure
       # averaged in as zero would read as a cheap success; the cell says so
       # instead, and only that arm's cell does.
-      Failed = Data.define(:total, :indexes) do
+      Failed = Data.define(:total, :failures) do
         def refuses? = false
 
         def row(name, _fmt)
-          label = "#{indexes.size == 1 ? "task" : "tasks"} #{indexes.join(", ")}"
-          [name, "#{indexes.size} of #{total}", *(["failed: #{CEILING_REASON} (#{label})"] * 4)]
+          [name, "#{failures.size} of #{total}", *(["failed: #{reasons}"] * 4)]
+        end
+
+        private
+
+        def reasons
+          failures.group_by(&:reason).map do |reason, group|
+            indexes = group.map(&:index)
+            "#{reason} (#{indexes.size == 1 ? "task" : "tasks"} #{indexes.join(", ")})"
+          end.join("; ")
         end
       end
       private_constant :Failed
@@ -192,15 +200,19 @@ module Lain
       def run_task(arm, task, number)
         arm.run(task, spawn_seam: @spawn_seam, isolation: @isolation, grader: @grader)
       rescue Agent::Budget::Exceeded => e
-        journal_failure(task, number, e)
-        CeilingFailure.new(index: number)
+        journal_failure(task, number, "at the ceiling", e)
+        TaskFailure.new(index: number, reason: CEILING_REASON)
+      rescue Response::Failed => e
+        reason = e.failure.stop_reason.to_s
+        journal_failure(task, number, reason, e)
+        TaskFailure.new(index: number, reason:)
       end
 
       # The arm never handed back a Timeline, so the task's own prompt is the
       # only thing left to address the failed grade by.
-      def journal_failure(task, number, error)
+      def journal_failure(task, number, where, error)
         @journal << Telemetry::GradeRecord.new(grader: self.class.name, score: 0.0, pass: false,
-                                               why: "task #{number} failed at the ceiling: #{error.message}",
+                                               why: "task #{number} failed #{where}: #{error.message}",
                                                subject_digest: Canonical.digest(task))
       end
 
@@ -218,8 +230,8 @@ module Lain
       # {Ledger#initialize} each refuse in writing. So an arm whose price
       # {Compare::Run} could not name answers with that {Compare::Unpriced}.
       def fold(runs, spec)
-        failed = runs.grep(CeilingFailure)
-        return Failed.new(total: runs.size, indexes: failed.map(&:index)) if failed.any?
+        failed = runs.grep(TaskFailure)
+        return Failed.new(total: runs.size, failures: failed) if failed.any?
 
         values = runs.map { |run| value_of(run, spec.fetch(:of)) }
         return Unmeasured.new(n: values.size) if spec.fetch(:optional, false) && values.all?(&:zero?)

@@ -512,6 +512,77 @@ RSpec.describe Lain::Arm::Driver do
     end
   end
 
+  describe "#report — a malformed stop" do
+    let(:journal) { Lain::Channel.new }
+    let(:metrics) { ["grader score", "total tokens", "wall-time (s)", "cost (USD)", "cache write tokens"] }
+    let(:malformed_seam) { seam_answering(:malformed, "<function=x>") }
+    let(:arms) { [Lain::Arm::SingleThread.new(name: "prose")] }
+
+    def seam_answering(stop_reason, text)
+      lambda do |journal:, timeline: nil, base_timeline: nil, workspace: Lain::Workspace.empty, **|
+        Lain::Agent.new(
+          provider: Lain::Provider::Mock.new(responses: [text_response(text, stop_reason:)]),
+          toolset: Lain::Toolset.new([]),
+          context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 256),
+          timeline: base_timeline || timeline, workspace:, journal:
+        )
+      end
+    end
+
+    def report_with(arm_list, seam, **)
+      described_class.new(arm_list, tasks:, spawn_seam: seam, grader:, journal:, **).report
+    end
+
+    it "names the failure in every metric row of the arm" do
+      report = report_with([arms.first], malformed_seam)
+
+      expect(metrics.map { |metric| row_for(report, metric, "prose") })
+        .to all(include("2 of 2", "failed: malformed (tasks 1, 2)"))
+    end
+
+    it "still prints a sibling arm's distributions" do
+      sibling = DriverSpecSupport::FixedCacheArm.new(name: "steady", cache_creation_input_tokens: 5)
+      report = report_with([arms.first, sibling], malformed_seam)
+
+      expect(row_for(report, "grader score", "steady")).to include("1.000")
+    end
+
+    it "journals a failing grade whose why names malformed, for each task" do
+      report_with([arms.first], malformed_seam)
+      failed = journal.drain.grep(Lain::Telemetry::GradeRecord).reject(&:pass)
+
+      expect(failed.map(&:why)).to match([/task 1 failed malformed: /, /task 2 failed malformed: /])
+    end
+
+    it "names both reasons, each with its task numbers, in a mixed run" do
+      mixed = Class.new(Lain::Arm) do
+        def run(task, **)
+          raise Lain::Agent::Budget::Exceeded, "ceiling" if task == "procedural task"
+
+          failure = Lain::Response::Failure.new(stop_reason: :malformed, message: "malformed response")
+          raise Lain::Response::Failed, failure
+        end
+      end
+
+      report = report_with([mixed.new(name: "mixed")], malformed_seam)
+
+      expect(row_for(report, "grader score", "mixed")).to include("failed: ceiling (task 1); malformed (task 2)")
+    end
+
+    it "grades a worker's malformed stop as a named failed worker, not a failed cell" do
+      orchestrator = Lain::Arm::OrchestratorWorker.new(name: "orchestrator-worker")
+      graded = nil
+      watcher = Class.new(Lain::Arm) do
+        define_method(:run) { |*args, **opts| graded = orchestrator.run(*args, **opts) }
+      end
+      report = report_with([watcher.new(name: "orchestrator-worker")], malformed_seam)
+
+      expect(row_for(report, "grader score", "orchestrator-worker")).not_to include("failed")
+      expect(report).not_to include("<function=x>")
+      expect(graded.timeline.to_a.last.content.first["text"]).to include("[failed] malformed")
+    end
+  end
+
   # The Driver threads ONE seam into every arm it was handed, so the arms it can
   # compare are exactly the arms that seam can spawn for. Driving the topology
   # with the widest spawn tail is what makes that real: {Arm::OrchestratorWorker}

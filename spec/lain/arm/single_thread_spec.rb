@@ -35,6 +35,24 @@ RSpec.describe Lain::Arm::SingleThread do
     end
   end
 
+  describe "#run — a malformed stop" do
+    let(:malformed_seam) do
+      lambda do |journal:, **|
+        Lain::Agent.new(
+          provider: Lain::Provider::Mock.new(responses: [text_response("<function=x>", stop_reason: :malformed)]),
+          toolset: Lain::Toolset.new([]),
+          context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 256),
+          journal:
+        )
+      end
+    end
+
+    it "raises the named failure instead of grading the envelope" do
+      expect { arm.run("please echo hi", spawn_seam: malformed_seam, grader:) }
+        .to raise_error(Lain::Response::Failed, /malformed/)
+    end
+  end
+
   describe "#run — the graded control run" do
     subject(:run) { arm.run("please echo hi", spawn_seam:, grader:) }
 

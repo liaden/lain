@@ -67,7 +67,7 @@ module Lain
         leased(isolation:) do |lease|
           journal = @journal_factory.call
           agent = spawn_seam.call(journal:, worker_env: lease.worker_env)
-          elapsed, = @instrument.timed { agent.ask(task) }
+          elapsed, = @instrument.timed { agent.ask!(task) }
           # Priced BEFORE grading and as its own statement: `#price` DRAINS the
           # journal, so a judge that journals anything of its own would otherwise
           # land in this arm's cost.

@@ -160,7 +160,8 @@ module Lain
         planner.dispatch!
         agent = spawn_seam.call(journal:, workspace: workspace_for(control.ledger), timeline: control.timeline,
                                 worker_env: lease.worker_env)
-        response = agent.ask(task)
+        # refusing, not ask!: the progress reader takes the Response, not its text
+        response = Response::Failed.refusing(agent.ask(task))
         advanced = control.advance(
           timeline: agent.timeline,
           ledger: @progress.call(ledger: control.ledger, response:, timeline: agent.timeline)

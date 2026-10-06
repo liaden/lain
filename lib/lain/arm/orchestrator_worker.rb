@@ -133,8 +133,8 @@ module Lain
         journal = Channel.new
         agent = spawn_seam.call(journal:, base_timeline: Timeline.empty(store: lead.store),
                                 worker_env: lease.worker_env, spawned_from: lead.head_digest)
-        response = agent.ask(subtask)
-        Synthesis::Result.ok(head_digest: agent.timeline.head_digest, text: response.text,
+        text = agent.ask!(subtask)
+        Synthesis::Result.ok(head_digest: agent.timeline.head_digest, text:,
                              usage_records: drain(journal))
       rescue StandardError => e
         Synthesis::Result.failed(error: e.message, usage_records: drain(journal))

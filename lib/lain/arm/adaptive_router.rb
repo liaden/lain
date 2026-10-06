@@ -109,7 +109,7 @@ module Lain
       def graded_run(task, spawn_seam:, grader:, journal:, routed:, lease:)
         agent = spawn_seam.call(journal:, model: routed.model, template: routed.template,
                                 worker_env: lease.worker_env)
-        elapsed, = @instrument.timed { agent.ask(task) }
+        elapsed, = @instrument.timed { agent.ask!(task) }
         # Price BEFORE grading -- see {SingleThread#run}: `#price` drains, and
         # inside an argument list evaluation order would reverse the two.
         ledger = @instrument.price(journal)
