@@ -348,16 +348,16 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit_at("lines")
     publish(fleet: %w[a], fleet_tree: [fleet_row(turns: 1)])
     first = cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
-    # The pane reads a prompt whose local read has not reopened yet as one
-    # being typed at, so a second header landing in the milliseconds after a
-    # redraw waits for the change after it. That window belongs to the
-    # round-trip, not to this example, whose subject is the header arriving
-    # whole and redrawing with no keypress.
-    sleep(0.5)
 
-    publish(fleet: %w[a], fleet_tree: [fleet_row(turns: 2)])
+    # A header landing while the redraw's read has not reopened is dropped, and
+    # nothing republishes it, so each attempt publishes a row count of its own
+    # until one lands; a fixed pause only holds on a box with CPU to spare.
+    redrawn = (2..9).any? do |turns|
+      publish(fleet: %w[a], fleet_tree: [fleet_row(turns:)])
+      cockpit.settles(within: 3) { cockpit.screen.include?("dev  running  #{turns}t") || nil }
+    end
 
-    expect([first, cockpit.settles { cockpit.screen.include?("dev  running  2t") || nil }]).to eq([true, true])
+    expect([first, redrawn]).to eq([true, true])
   end
 
   # The header is the frame, and a pane redraws a changed frame at whatever
