@@ -576,8 +576,10 @@ module Lain
           .git-credentials .npmrc .pypirc .gitconfig rclone.conf terraform.tfstate *.tfvars *_history
           .vault-token application_default_credentials.json passwords.txt]
         .map { |name| Rule.named(name, level: :gated, reason: :credential) },
-      *%w[.pgpass .authinfo .msmtprc .fetchmailrc .htpasswd .vault_pass .vault-password]
+      *%w[.pgpass .authinfo .msmtprc .fetchmailrc .htpasswd .vault_pass .vault-password .s3cfg .dockercfg]
         .map { |name| Rule.named(name, level: :gated, reason: :credential, variants: true) },
+      # Not `variants:`, whose stem strip would read the AWS SDK's `boto3` as `.boto`.
+      *%w[.boto .boto.* .boto~].map { |name| Rule.named(name, level: :gated, reason: :credential) },
       # A private key copied out of `.ssh`, which is where the DENIED rule
       # reaches. Gated rather than denied because outside `.ssh` the name is
       # ambiguous enough that a denial nobody can lift would be the wrong error.

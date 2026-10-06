@@ -478,6 +478,15 @@ RSpec.describe Lain::Sensitivity do
       expect(levels(names).values).to all(eq(:gated))
     end
 
+    it "gates the cloud-tool credential files and their backups" do
+      expect(levels(%w[.s3cfg .boto .dockercfg .s3cfg.bak .boto.old]).values).to all(eq(:gated))
+    end
+
+    it "leaves the AWS SDK's boto names ordinary while .boto stays gated" do
+      expect(levels(%w[boto boto3 .boto3 site-packages/boto3]).values).to all(eq(:ordinary))
+      expect(levels(%w[.boto .boto.bak]).values).to all(eq(:gated))
+    end
+
     it "keeps numbered and doubled backups denied or gated" do
       expect(levels(%w[.netrc.1 .netrc.~1~ .netrc.bak~]).values).to all(eq(:denied))
       expect(levels(%w[.pgpass.1 .pgpass.~2~ .pgpass.old~]).values).to all(eq(:gated))
@@ -891,7 +900,7 @@ RSpec.describe Lain::Sensitivity do
 
     it "counts *.bak against the kube backups entry and the backup spelling of each variant store" do
       expect { Lain::Sensitivity::Rules.from({ "exempt" => ["*.bak"] }) }
-        .to raise_error(Lain::Config::Refusal, %r{lifts 8 .*"\.pgpass".*"~/\.kube/config\*"})
+        .to raise_error(Lain::Config::Refusal, %r{lifts 10 .*"\.pgpass".*"~/\.kube/config\*"})
     end
 
     it "lifts exactly one entry with the obvious exemption for each credential store the first table missed" do
