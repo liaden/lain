@@ -129,6 +129,41 @@ RSpec.describe Lain::Bench::ArmTasks do
     end
   end
 
+  describe "#load!" do
+    def write_fixture(body)
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "tasks.yml")
+        File.write(path, body)
+        yield path
+      end
+    end
+
+    it "raises MalformedTask on a YAML syntax error rather than leaking Psych" do
+      write_fixture("tasks: [unclosed\n") do |path|
+        expect { described_class.new(fixture_path: path).load! }
+          .to raise_error(described_class::MalformedTask, /#{Regexp.escape(path)}/)
+      end
+    end
+
+    it "raises MalformedTask when the top level is a list" do
+      write_fixture("- a\n- b\n") do |path|
+        expect { described_class.new(fixture_path: path).load! }
+          .to raise_error(described_class::MalformedTask, /mapping/)
+      end
+    end
+
+    it "raises MissingFixture for a path with no file" do
+      expect { described_class.new(fixture_path: fixture_path("does-not-exist")).load! }
+        .to raise_error(described_class::MissingFixture)
+    end
+
+    it "returns itself once the committed fixture reads" do
+      suite = described_class.new(fixture_path: fixture_path("tasks"))
+
+      expect(suite.load!).to be(suite)
+    end
+  end
+
   describe "duplicate task ids within one fixture refuse namedly" do
     it "raises MalformedTask naming the duplicate id, rather than silently keeping both" do
       expect { described_class.new(fixture_path: fixture_path("duplicate_id")).to_a }

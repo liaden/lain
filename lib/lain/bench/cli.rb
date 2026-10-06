@@ -228,7 +228,7 @@ module Lain
         # Ctrl-C before the first grade would otherwise leave nil.
         graded = []
         refuse_unisolated_writes!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:, flag: isolating_flag)
-        suite = ArmTasks.new(fixture_path:)
+        suite = preflighted_suite(fixture_path, isolation:, journal:)
         # Named rather than inlined, because the header's `model:` has to be THE
         # seam's own answer -- a second resolution off `backend` could disagree
         # with what actually ran. The ROSTER reads the same answer: the routing
@@ -438,6 +438,14 @@ module Lain
         raise Refusal, "--isolation #{isolation} leases workers and has no journal to record them in" if journal.nil?
 
         { isolation:, journal: }
+      end
+
+      # Everything that can refuse for free, before the provider or the journal
+      # is touched; the journal check stays ahead of the name check.
+      def preflighted_suite(fixture_path, isolation:, journal:)
+        lease_options(isolation:, journal:)
+        Lain::CLI::IsolationBackend.known!(isolation) unless isolation.nil?
+        ArmTasks.new(fixture_path:).load!
       end
 
       # Named once, so the commands that can offer it quote one sentence and the

@@ -580,6 +580,47 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
+  describe "#arms_report refuses before any record is written" do
+    let(:journal) { Lain::Channel.new }
+    let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }, root: Dir.pwd) }
+
+    def refusal(fixture, isolation: "none")
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "tasks.yml")
+        File.write(path, fixture) if fixture
+        allow(backend).to receive(:provider)
+        begin
+          cli.arms_report(fixture_path: path, backend:, journal:, isolation:, tools: Lain::Bench::Harness::NO_TOOLS)
+        rescue Lain::Error => e
+          e
+        end
+      end
+    end
+
+    def untouched? = journal.drain.empty? && !have_received(:provider).matches?(backend)
+
+    it "for a missing fixture" do
+      expect(refusal(nil)).to be_a(Lain::Bench::ArmTasks::MissingFixture).and(have_attributes(message: /tasks\.yml/))
+      expect(untouched?).to be(true)
+    end
+
+    it "for a fixture with a YAML syntax error" do
+      expect(refusal("tasks: [unclosed\n")).to be_a(Lain::Bench::ArmTasks::MalformedTask)
+      expect(untouched?).to be(true)
+    end
+
+    it "for a fixture whose top level is a list" do
+      expect(refusal("- a\n")).to be_a(Lain::Bench::ArmTasks::MalformedTask).and(have_attributes(message: /mapping/))
+      expect(untouched?).to be(true)
+    end
+
+    it "for an unknown isolation name, without resolving any backend" do
+      expect(refusal("tasks: []\n", isolation: "docker2"))
+        .to be_a(Lain::CLI::IsolationBackend::Unknown).and(have_attributes(message: /docker2/))
+      expect(untouched?).to be(true)
+    end
+  end
+
   # Ctrl-C reaching a live arm comparison mid-run: the money already spent on
   # the runs that finished must not be thrown away with the report that would
   # have summarized every arm, so an interrupt answers with the table so far.

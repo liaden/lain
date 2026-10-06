@@ -72,6 +72,15 @@ module Lain
       # mean?"
       DEFAULT = "none"
 
+      # Name check only: resolving a backend can lease or create things.
+      # @return [String] the name
+      # @raise [Unknown] on a name outside {BACKENDS}
+      def self.known!(name)
+        return name if BACKENDS.include?(name)
+
+        raise Unknown, "unknown isolation backend #{name.inspect}, expected one of #{BACKENDS.inspect}"
+      end
+
       # @return [#acquire] the resolved, decorated backend
       def self.resolve(...) = new(...).backend
 
@@ -147,9 +156,7 @@ module Lain
       # Validated once, so the mapping above only ever sees a name already
       # known to be in {BACKENDS}.
       def backend_name
-        return @name if BACKENDS.include?(@name)
-
-        raise Unknown, "unknown isolation backend #{@name.inspect}, expected one of #{BACKENDS.inspect}"
+        self.class.known!(@name)
       end
 
       def worktree

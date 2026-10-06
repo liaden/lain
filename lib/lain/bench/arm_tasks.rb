@@ -96,6 +96,14 @@ module Lain
       # @return [Array<Task>] the genuinely-independent-parallel side
       def parallel = select { |task| task.category == :parallel }
 
+      # Forces the read, so a bad fixture refuses at the door instead of at the first task.
+      # @return [self]
+      # @raise [MissingFixture, MalformedTask]
+      def load!
+        tasks
+        self
+      end
+
       private
 
       def tasks
@@ -107,9 +115,17 @@ module Lain
       # located {MalformedTask} rather than this one leaking a bare,
       # path-less `KeyError`.
       def raw_tasks
-        YAML.safe_load_file(existing!(@fixture_path)).fetch("tasks")
+        document = YAML.safe_load_file(existing!(@fixture_path))
+        unless document.is_a?(Hash)
+          raise MalformedTask,
+                "arm fixture at #{@fixture_path} is not a mapping at the top level"
+        end
+
+        document.fetch("tasks")
       rescue KeyError
         raise MalformedTask, "arm fixture at #{@fixture_path} is missing the top-level `tasks:` key"
+      rescue Psych::Exception => e
+        raise MalformedTask, "arm fixture at #{@fixture_path} is not valid YAML: #{e.message}"
       end
 
       # Ids are lookup keys everywhere downstream, so a silent duplicate would
