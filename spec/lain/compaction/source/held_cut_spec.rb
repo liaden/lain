@@ -344,4 +344,32 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
       expect(on(longer).seam.collapses).to eq(cut.collapses + advanced.collapses)
     end
   end
+
+  describe ".ask_index" do
+    def text(body) = { "role" => "user", "content" => [{ "type" => "text", "text" => body }] }
+
+    def use(id)
+      { "role" => "assistant", "content" => [{ "type" => "tool_use", "id" => id, "name" => "read", "input" => {} }] }
+    end
+
+    def result(id)
+      { "role" => "user", "content" => [{ "type" => "tool_result", "tool_use_id" => id, "content" => "ok" }] }
+    end
+
+    it "names the newest user message made only of text, past the tool rounds that followed it" do
+      messages = [text("an earlier ask"), text("the running ask"), use("a"), result("a"), use("b"), result("b")]
+
+      expect(held_cut.ask_index(messages)).to eq(1)
+    end
+
+    it "does not take a user message that also carries a tool_result for the ask" do
+      mixed = { "role" => "user", "content" => [*result("a")["content"], { "type" => "text", "text" => "and also" }] }
+
+      expect(held_cut.ask_index([text("the ask"), use("a"), mixed])).to eq(0)
+    end
+
+    it "is nil on a chain with no ask at all" do
+      expect(held_cut.ask_index([use("a"), result("a")])).to be_nil
+    end
+  end
 end

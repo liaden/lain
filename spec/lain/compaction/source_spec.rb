@@ -2133,6 +2133,120 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
+  describe "the running ask's prompt" do
+    let(:session) { recording_session }
+    let(:keep_last) { 4 }
+    let(:prompt) { ask("refactor the parser, #{"and keep every test green " * 12}".strip) }
+
+    def cuts = records.select { |record| record["type"] == "compaction_cut" }
+
+    def ask(text) = { "role" => "user", "content" => [{ "type" => "text", "text" => text }] }
+
+    def rounds(from, count)
+      (from...(from + count)).flat_map do |index|
+        [{ "role" => "assistant",
+           "content" => [{ "type" => "tool_use", "id" => "call-#{index}", "name" => "read",
+                           "input" => { "n" => index } }] },
+         { "role" => "user",
+           "content" => [{ "type" => "tool_result", "tool_use_id" => "call-#{index}",
+                           "content" => tool_body(index) }] }]
+      end
+    end
+
+    def committed(messages, onto: Lain::Timeline.empty(store: Lain::Store.new))
+      messages.inject(onto) { |line, message| line.commit(role: message["role"], content: message["content"]) }
+    end
+
+    def forcing = source(need: build_need(byte_threshold: 100), hard_cap: 100)
+
+    def stepping = source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1)
+
+    def step(built, line)
+      complete_a_step(session, session.plan_step_completions + 1)
+      render(context_for(built, line), line).messages
+    end
+
+    def tool_uses(messages)
+      messages.flat_map { |message| message["content"] }.select { |block| block["type"] == "tool_use" }.pluck("id")
+    end
+
+    it "keeps the prompt verbatim through an advance cut that collapses the tool rounds before it" do
+      line = committed([prompt, *rounds(1, 6)])
+
+      messages = render(context_for(forcing, line), line).messages
+
+      expect(cuts.map { |record| record["kind"] }).to eq(%w[advance])
+      expect(messages.first).to eq(prompt)
+      expect(tool_uses(messages)).to eq(%w[call-5 call-6])
+    end
+
+    def answered(answer, prompt, from, count)
+      [{ "role" => "assistant", "content" => [block(answer)] }, prompt, *rounds(from, count)]
+    end
+
+    # A collapse re-writes only the stretch from the first held range on, so
+    # the session's opening prompt, which no cut ever covered, stays verbatim
+    # until a handoff; a later ended ask's prompt sits inside the stretch and
+    # is folded.
+    it "keeps an ended ask's prompt through the next advance, and a collapse folds only one inside the stretch" do
+      built = stepping
+      first = committed([prompt, *rounds(1, 6)])
+      step(built, first)
+      second = committed(answered(50, ask("now the lexer"), 7, 4), onto: first)
+      advanced = step(built, second)
+      third = committed(answered(51, ask("now the docs"), 11, 2), onto: second)
+      before = step(built, third)
+
+      collapsed = step(built, third)
+
+      expect(cuts.map { |record| record["kind"] }).to eq(%w[advance advance advance collapse])
+      expect(advanced).to include(prompt)
+      expect(before).to include(ask("now the lexer"))
+      expect(collapsed.first).to eq(prompt)
+      expect(collapsed).not_to include(ask("now the lexer"))
+      expect(collapsed).to include(ask("now the docs"))
+    end
+
+    # The pin keeps an ended prompt out of its advance's span, but when it was
+    # the last droppable message that cut's floor stops below it, and the next
+    # advance's span starts there.
+    it "folds an ended ask's prompt at the next advance when it was the last droppable message at its own" do
+      built = stepping
+      first = committed([prompt, *rounds(1, 6)])
+      step(built, first)
+      second = committed(answered(50, ask("now the lexer"), 7, 2), onto: first)
+      at_its_advance = step(built, second)
+      third = committed(answered(51, ask("now the docs"), 11, 2), onto: second)
+
+      after_the_next = step(built, third)
+
+      expect(cuts.map { |record| record["kind"] }).to eq(%w[advance advance advance])
+      expect(at_its_advance).to include(ask("now the lexer"))
+      expect(after_the_next).not_to include(ask("now the lexer"))
+    end
+
+    # Pins match by content, so a byte-identical earlier prompt is kept with
+    # the running one: both are the human's own words.
+    it "keeps an earlier prompt byte-identical to the running one as well" do
+      line = committed([ask("continue"), { "role" => "assistant", "content" => [block(1)] }, ask("continue"),
+                        *rounds(1, 6)])
+
+      messages = render(context_for(forcing, line), line).messages
+
+      expect(cuts.size).to eq(1)
+      expect(messages.count { |message| message == ask("continue") }).to eq(2)
+    end
+
+    it "journals nothing droppable when the prompt is all an ask could drop" do
+      line = committed([prompt, *rounds(1, 2)])
+
+      context_for(forcing, line)
+
+      expect(decisions.last).to include("nothing_droppable" => true, "compacted" => false)
+      expect(cuts).to be_empty
+    end
+  end
+
   # The fallback. {Compaction::Derivation} validates its own projection and
   # RAISES rather than shipping a chain the Messages API would reject, so the
   # turn renders uncompacted -- which is the right answer once and the
@@ -2597,6 +2711,45 @@ RSpec.describe Lain::Compaction::Source do
       expect(refused_render(built, line)).to be(true)
       expect(cuts.map { |record| record["kind"] }).to eq(["handoff"])
       expect(session.compaction_cuts.size).to eq(1)
+    end
+
+    # The handoff keeps the ask itself, by position; it is shown only the
+    # session's own pins, so the running ask is not restated as a pin and an
+    # earlier byte-identical prompt is handed off like any other turn.
+    describe "the running ask, which the handoff keeps by position" do
+      let(:keep_last) { 40 }
+
+      def ask(text) = { "role" => "user", "content" => [{ "type" => "text", "text" => text }] }
+
+      # The running prompt is "continue", and so is an earlier one.
+      def continuing
+        tool = [{ "role" => "assistant",
+                  "content" => [{ "type" => "tool_use", "id" => "call-4", "name" => "read",
+                                  "input" => { "n" => 4 } }] },
+                { "role" => "user",
+                  "content" => [{ "type" => "tool_result", "tool_use_id" => "call-4", "content" => tool_body(4) }] }]
+        [ask("continue"), { "role" => "assistant", "content" => [block(2)] }, ask("continue"), *tool]
+          .inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, message|
+            line.commit(role: message["role"], content: message["content"])
+          end
+      end
+
+      it "does not list the running ask under the question's pins" do
+        refused_render(handing_off, asking_timeline)
+
+        expect(oracle.asks.last.values.join).not_to include(Lain::Oracle::Handoff::SECTIONS[:pins])
+      end
+
+      it "keeps only the running prompt, not an earlier byte-identical one" do
+        built = handing_off
+        line = continuing
+
+        refused_render(built, line)
+        messages = render(context_for(built, line), line).messages
+
+        expect(cuts.map { |record| record["kind"] }).to eq(["handoff"])
+        expect(messages.count { |message| message == ask("continue") }).to eq(1)
+      end
     end
 
     describe "what an operator is told about a stall" do

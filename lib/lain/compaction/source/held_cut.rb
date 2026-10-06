@@ -93,6 +93,31 @@ module Lain
         end
         private_class_method :holds?, :lineage
 
+        # The human's own question on this chain: the last user turn of plain
+        # text. Retained by every cut, because the turns after it exist to ANSWER
+        # it -- a handoff replacing it with a document describing it loses the
+        # ask it was fired to keep, and an advance collapsing it mid-ask leaves
+        # the model working a task nobody stated.
+        #
+        # @param messages [Array<Hash>] a chain's projected messages
+        # @return [Integer, nil] the ask's index, or nil when no user turn is plain text
+        def self.ask_index(messages)
+          messages.each_index.reverse_each.find do |index|
+            message = messages.fetch(index)
+            message.fetch("role") == "user" && blocks(message).all? { |block| block["type"] == "text" }
+          end
+        end
+
+        # {Context::Conversation#blocks}' reading: a bare String content is a
+        # shape the API accepts and carries no blocks, rather than raising.
+        #
+        # @param message [Hash] one projected message
+        # @return [Array<Hash>] its content blocks
+        def self.blocks(message)
+          content = message.fetch("content")
+          content.is_a?(Array) ? content.grep(Hash) : []
+        end
+
         # @param at [Hash{String=>Integer}] each turn's digest to its index
         # @param span [Array(String, String)] a collapse's first and last digest
         # @return [Range] the indices that collapse covers
@@ -280,25 +305,9 @@ module Lain
           last - 1
         end
 
-        # The human's own question on this chain: the last user turn of plain
-        # text. Retained, because a handoff exists to ANSWER it -- replacing it
-        # with a document describing it is how the fallback loses the ask it
-        # was fired to keep.
-        def ask_index
-          @walk.messages.each_index.reverse_each.find do |index|
-            message = @walk.messages.fetch(index)
-            message.fetch("role") == "user" && blocks(message).all? { |block| block["type"] == "text" }
-          end
-        end
+        def ask_index = self.class.ask_index(@walk.messages)
 
-        def carries?(message, type) = blocks(message).any? { |block| block["type"] == type }
-
-        # {Context::Conversation#blocks}' reading: a bare String content is a
-        # shape the API accepts and carries no blocks, rather than raising.
-        def blocks(message)
-          content = message.fetch("content")
-          content.is_a?(Array) ? content.grep(Hash) : []
-        end
+        def carries?(message, type) = self.class.blocks(message).any? { |block| block["type"] == type }
 
         # In source order, an uncovered turn in its own place: a directive a later stretch overrode
         # must not read as the newest word.

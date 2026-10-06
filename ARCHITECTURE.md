@@ -405,6 +405,8 @@ superseding them all. Readers fold the superseded cuts out; a `collapse` that wo
 declined and journaled as `would_not_shrink` like any other; and replay refuses a `collapse`
 naming an address its file lacks. A pin placed inside a range a held cut already collapsed still
 does not bring that turn back, and that one remains an open decision.
+Every cut keeps the running ask's prompt as well. Once that ask ends, a later cut may fold the
+prompt, and a prompt that sits before the first held range stays verbatim until a handoff.
 
 **When no cut can make room at all, the fallback is a handoff.** `Compaction::Source::Fallback`
 (`lib/lain/compaction/source/fallback.rb`) fires only after a provider has refused a prompt whole

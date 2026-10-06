@@ -499,7 +499,7 @@ module Lain
         held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
         return false unless stuck?(held_cut)
 
-        committed = @fallback.call(held_cut, pins: pinned(held_cut.walk, session))
+        committed = @fallback.call(held_cut, pins: session_pinned(held_cut.walk, session))
         # Latched, never assigned: a later attempt that could make no room does
         # not unsay a handoff that really happened. The history it replaced is
         # still replaced, and the refusal's words have to go on saying so.
@@ -562,12 +562,24 @@ module Lain
       # or an old session file's pin from before that pairing existed. The
       # counterpart need not be pinned itself; it only needs to be somewhere
       # on the very chain this turn renders.
-      def pinned(walk, session)
-        Context::PinnedMessages.new(
-          walk.turns.zip(walk.messages).filter_map { |turn, message| message if session.pinned?(turn.digest) },
-          candidates: walk.messages
-        )
+      #
+      # The running ask's prompt joins the session's pins here, so every
+      # advance and collapse keeps it: a long ask's tool rounds can push its
+      # prompt past keep_last, and a summary of the task is not the task. Once
+      # its ask ends a later cut may fold it. A handoff takes the session's
+      # pins alone, because it keeps the ask by position, and pinning it by
+      # content too would also keep every earlier prompt with the same bytes.
+      def pinned(walk, session) = pin_set(walk, session_pins(walk, session) + running_ask(walk))
+
+      def session_pinned(walk, session) = pin_set(walk, session_pins(walk, session))
+
+      def pin_set(walk, messages) = Context::PinnedMessages.new(messages, candidates: walk.messages)
+
+      def session_pins(walk, session)
+        walk.turns.zip(walk.messages).filter_map { |turn, message| message if session.pinned?(turn.digest) }
       end
+
+      def running_ask(walk) = Array(HeldCut.ask_index(walk.messages)).map { |index| walk.messages.fetch(index) }
 
       # Is a compaction warranted at all? Emptiness is asked for with `#empty?`,
       # never a zero byte count: an empty Head measures 2, the bytes of `"[]"`.
