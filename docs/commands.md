@@ -103,8 +103,8 @@ inside that derivation. The background is
 **Two strategies compose with `+`, and `elide-tools+summarize-conversation` is the pair to reach
 for.** Those two are exact complements by construction — both ask one predicate which messages
 carry a tool block — so together they partition a span rather than fighting over it. Any *other*
-pairing may not: `summarizing` and `elide` each claim the whole span, so `elide+summarizing`
-is refused at launch, naming both strategies and suggesting `elide-tools+summarize-conversation`.
+composition overlaps and is refused at launch (for example `elide+summarize-conversation` or
+`elide+elide-tools`), naming the flag value and suggesting `elide-tools+summarize-conversation`.
 The union is commutative; the order you write the two names in is not a setting.
 
 **Unset carries no Thor default, on purpose.** A default would materialize the key, so the code that

@@ -261,10 +261,10 @@ RSpec.describe Lain::CLI::CompactionStrategy do
     # {Lain::Compaction::Strategy::SummarizeConversation}'s own doc: "Two
     # strategies, one oracle, one journal." Two wraps would journal one span's
     # answer under two oracles and double what a resume has to reconcile.
-    it "calls the tier factory once for a composition holding two oracle-backed leaves" do
+    it "calls the tier factory once for the partitioning pair" do
       calls = []
 
-      resolve("summarizing+summarize-conversation", tier: tier_factory(calls:), journal: [])
+      resolve("elide-tools+summarize-conversation", tier: tier_factory(calls:), journal: [])
 
       expect(calls.size).to eq(1)
     end
@@ -299,20 +299,27 @@ RSpec.describe Lain::CLI::CompactionStrategy do
         .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /unknown part "" in --compact-strategy ""/)
     end
 
-    it "refuses two whole-span strategies at resolve, naming both and the partitioning pair" do
+    it "refuses an overlapping pair at resolve, naming it and the partitioning pair" do
       expect { resolve("elide+summarizing", tier: tier_factory, journal: []) }
         .to raise_error(Lain::CLI::CompactionStrategy::Unknown,
-                        /"elide" and "summarizing".*elide-tools\+summarize-conversation/)
+                        /"elide\+summarizing".*elide-tools\+summarize-conversation/)
     end
 
-    it "refuses the whole-span pair in either order and without a tier" do
+    it "refuses an overlapping pair in either order and without a tier" do
       expect { resolve("summarizing+elide") }
-        .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /"summarizing" and "elide"/)
+        .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /"summarizing\+elide"/)
     end
 
-    it "refuses a whole-span strategy named twice, since it overlaps itself" do
-      expect { resolve("elide+elide") }
-        .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /"elide" and "elide" each claim the whole span/)
+    [
+      "summarizing+elide-tools", "elide+summarize-conversation", "summarizing+summarize-conversation",
+      "elide+elide-tools", "elide-tools+elide-tools", "summarize-conversation+elide-tools+elide",
+      "elide+elide"
+    ].each do |name|
+      it "refuses #{name.inspect} by name, pointing at the one composable pair" do
+        expect { resolve(name, tier: tier_factory, journal: []) }
+          .to raise_error(Lain::CLI::CompactionStrategy::Unknown,
+                          /#{Regexp.escape(name.inspect)}.*elide-tools\+summarize-conversation/)
+      end
     end
 
     it "still builds the partitioning pair as a composition" do

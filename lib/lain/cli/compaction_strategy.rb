@@ -26,8 +26,9 @@ module Lain
     #
     # THE COMPOSITION IS ONLY AS DISJOINT AS ITS PARTS. {Composed} raises
     # `Overlap` from `#propose_ranges`, which needs the messages and the span,
-    # and this resolver has neither -- so it refuses by NAME instead: two parts
-    # from {WHOLE_SPAN} are refused here as {Unknown}, before a session opens.
+    # and this resolver has neither -- so it refuses by NAME instead: any
+    # composition but {PARTITIONING_PAIR} is refused here as {Unknown}, before
+    # a session opens.
     # `elide-tools` and `summarize-conversation` are the pair disjoint by
     # construction: both route their selection through {Compaction::ToolMessages},
     # so they are exact complements rather than two spellings that happen to agree.
@@ -104,8 +105,8 @@ module Lain
       # {SEPARATOR}, and the compositions over it are not enumerable.
       STRATEGIES = %w[summarizing elide summarize-conversation elide-tools].freeze
 
-      # The strategies that claim the whole span, so any two of them overlap.
-      WHOLE_SPAN = %w[summarizing elide].freeze
+      # The only composition that partitions a span instead of overlapping it.
+      PARTITIONING_PAIR = %w[elide-tools summarize-conversation].freeze
 
       # What joins two strategy names into one composition. See the class doc
       # for why `+` rather than `|` or `,`, and for what a composition means.
@@ -160,7 +161,7 @@ module Lain
       #
       # @return [Compaction::Strategy::Base] the resolved strategy
       # @raise [Unknown] on any part outside {STRATEGIES}, including an empty
-      #   one, or on two parts that both claim the whole span
+      #   one, or on any composition other than the partitioning pair
       # @raise [Error] a name in {STRATEGIES} with no matching branch below
       #   (a bug in this class, not a bad flag)
       # @raise [Error] resolving an oracle-backed part with no `tier:`
@@ -196,12 +197,10 @@ module Lain
       def strategy_names = split_name.map { |part| validated(part) }.tap { |names| refuse_overlap(names) }
 
       def refuse_overlap(names)
-        claimed = names.select { |name| WHOLE_SPAN.include?(name) }
-        return if claimed.size < 2
+        return if names.one? || names.sort == PARTITIONING_PAIR.sort
 
-        raise Unknown, "--compact-strategy #{@name.inspect}: #{claimed.map(&:inspect).join(" and ")} each claim " \
-                       "the whole span and would overlap; compose elide-tools#{SEPARATOR}summarize-conversation " \
-                       "instead, which partition it"
+        raise Unknown, "--compact-strategy #{@name.inspect} would overlap; the one composable pair is " \
+                       "#{PARTITIONING_PAIR.join(SEPARATOR)}, in either order"
       end
 
       # Split with a NEGATIVE limit, so the empty parts survive: plain
