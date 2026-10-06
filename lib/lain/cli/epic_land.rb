@@ -19,6 +19,9 @@ module Lain
     class EpicLand
       USAGE = "lain epic land ISSUE_ID [SLUG]"
 
+      Factory = EpicDriver::Factory
+      private_constant :Factory
+
       # `root:` defaults to the RESOLVED project's, for {CLI::Epic#initialize}'s
       # reason: this command asks that object which epic a bare invocation means.
       #
@@ -101,27 +104,49 @@ module Lain
       # {CLI::EpicSubmit}'s bracket: a Journal that created its file and wrote
       # no record removes it on close, so a refusal leaves no trace on disk.
       def wired(epic_slug)
+        base = Lain::Isolation::WorkingBranch.new("epic/#{epic_slug}", repo_root: @root, git: checkout)
+        stand = landing_checkout(epic_slug, base)
+        begin
+          journaled { |journal| yield landing(epic_slug, journal, base, stand.root) }
+        ensure
+          stand.release
+        end
+      end
+
+      def journaled
         journal = Journal.open(paths: @paths)
         begin
-          yield landing(epic_slug, journal)
+          yield journal
         ensure
           journal.close
         end
       end
 
-      def landing(epic_slug, journal)
-        base = Lain::Isolation::WorkingBranch.new("epic/#{epic_slug}", repo_root: @root, git: checkout)
+      # The queue merges only in a checkout standing on the epic's branch. A
+      # parent on another branch is not ours to switch, so lain lands from its
+      # own checkout, the one an epic run cuts.
+      def landing_checkout(epic_slug, base)
+        return Factory::LandingCheckout::InPlace.new(root: @root) if base.current_in?(checkout)
+
+        Factory::LandingCheckout.new(
+          repo_root: @root, path: File.join(IsolationBackend.worktree_root(@root, paths: @paths),
+                                            Factory::LANDING, epic_slug),
+          branch: base, shell_out_factory: @shell_out_factory
+        ).cut
+      end
+
+      def landing(epic_slug, journal, base, root)
         Lain::Forge::LocalLanding.new(
-          epic_slug:, repo_root: @root, base:, approvals:,
+          epic_slug:, repo_root: root, base:, approvals:,
           plan: ->(issue) { submit.ensure_plan_approved!(issue, epic_slug) },
           progress: -> { @epics.progress(epic_slug) }, scribe: Lain::Epic::Scribe.new(epic_slug:, journal:),
-          queue: queue(base, journal), layout: Config.test_layout(root: @root), landings: -> { landings.to_a },
+          queue: queue(base, journal, root), layout: Config.test_layout(root: @root), landings: -> { landings.to_a },
           shell_out_factory: @shell_out_factory
         )
       end
 
-      def queue(base, journal)
-        Lain::Isolation::LandingQueue.new(repo_root: @root, base:, journal:, retries: @config.isolation.rebase_retries,
+      def queue(base, journal, root)
+        Lain::Isolation::LandingQueue.new(repo_root: root, base:, journal:, retries: @config.isolation.rebase_retries,
                                           strategy: Lain::Isolation::MergeStrategy.from(@config.isolation),
                                           notice: @notice, shell_out_factory: @shell_out_factory)
       end

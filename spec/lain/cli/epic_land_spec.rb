@@ -209,6 +209,74 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
     end
   end
 
+  # The parent checkout stands on main, as a human's chat usually does, and
+  # lain's own checkout of epic/demo is where the landing merges.
+  describe "landing with the parent checkout on another branch" do
+    def landings_path = File.join(Lain::CLI::IsolationBackend.worktree_root(root, paths:), "landings", "demo")
+
+    def landing_branch = Lain::Isolation::WorkingBranch.epic("demo", repo_root: root)
+
+    def held_by_landings(&)
+      git("switch", "-q", "main")
+      Lain::CLI::EpicDriver::Factory::LandingCheckout.new(repo_root: root, path: landings_path, branch: landing_branch)
+                                                     .cut.tap(&)
+    end
+
+    def lock_listed? = git("worktree", "list", "--porcelain").include?("locked")
+
+    it "lands from landings/demo, leaves the parent on main, and releases the checkout" do
+      sha = worker("a", "README" => "a's work\n")
+      session(plan_approval("a"), implementation_approval("a", sha))
+      held_by_landings { expect(lock_listed?).to be(true) }
+
+      output = command.land("a", "demo")
+
+      expect(contains?(sha)).to be(true)
+      expect(git("symbolic-ref", "HEAD")).to eq("refs/heads/main")
+      expect(output).to include("landed a at #{sha} onto epic/demo")
+      expect(lock_listed?).to be(false)
+    end
+
+    it "cuts the checkout itself when none stands yet" do
+      sha = worker("a", "README" => "a's work\n")
+      session(plan_approval("a"), implementation_approval("a", sha))
+      git("switch", "-q", "main")
+
+      command.land("a", "demo")
+
+      expect(contains?(sha)).to be(true)
+      expect(lock_listed?).to be(false)
+    end
+
+    it "refuses naming the holder when a live holder has landings/demo, and never advises a switch" do
+      sha = worker("a", "README" => "a's work\n")
+      session(plan_approval("a"), implementation_approval("a", sha))
+      held_by_landings(&:release)
+      fixture = File.join(sessions_dir, "fixture.ndjson")
+      git("worktree", "lock", "--reason", "somebody else's run", landings_path)
+      before = tip
+
+      expect { command.land("a", "demo") }.to raise_error(Lain::Error) { |error|
+        expect(error.message).to include("somebody else's run")
+        expect(error.message).not_to include("git switch")
+      }
+      expect(tip).to eq(before)
+      expect(Dir.glob(File.join(sessions_dir, "*.ndjson")) - [fixture]).to be_empty
+    end
+
+    it "releases the checkout when the merge stops on a conflict" do
+      sha = worker("a", "README" => "a's work\n")
+      session(plan_approval("a"), implementation_approval("a", sha))
+      commit("README" => "a rival edit\n")
+      git("switch", "-q", "main")
+
+      command.land("a", "demo")
+
+      expect(contains?(sha)).to be(false)
+      expect(lock_listed?).to be(false)
+    end
+  end
+
   describe "a commit epic/demo already holds" do
     it "is refused when no landing of the issue put it there, and the issue stays in flight" do
       sha = worker("a", "README" => "a's work\n")
