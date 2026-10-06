@@ -1966,6 +1966,10 @@ XDG path relative, which put machine state back inside the user's repository)
    (`planning/qa-findings-round21-2026-10-04.md`) over every finding rated LOW-MED or higher, code
    fixes only. 36 cards, panel-reviewed; the manual QA pass the plan names is still owed.
 
+52. **Planned (2026-10-06)**: `planning/specs/qa-round-22-fixes.md`, the QA round-22 discharge
+   (`planning/qa-findings-round22-2026-10-06.md`) over every finding rated LOW-MED or higher, plus the
+   forks' scenario corrections. 28 cards, panel-reviewed.
+
 ## Map of the documents
 
 - **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
