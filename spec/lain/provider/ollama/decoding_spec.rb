@@ -146,10 +146,156 @@ RSpec.describe Lain::Provider::Ollama::Decoding do
       expect(records(two).map(&:excerpt)).to eq([cut])
     end
 
-    it "does not read an unclosed envelope as cut when the model stopped on its own" do
-      stopped = body(content: "Checking.\n#{cut}", done_reason: "stop")
+    it "strips a cut that follows complete calls, and the calls still run" do
+      calls = %w[read_file grep glob].map { |name| { "function" => { "name" => name, "arguments" => {} } } }
+      after_calls = body(content: "Reading.\n<tool_call>\n<function=bash", tool_calls: calls, done_reason: "length")
+      response = decode(after_calls)
 
-      expect(records(stopped).map(&:kind)).not_to include(:cut_tool_call)
+      expect(response.tool_uses.map(&:name)).to eq(%w[read_file grep glob])
+      expect(response).to stop_with(Lain::StopReason::TOOL_USE)
+      expect(response.text).to eq("Reading.")
+      expect(records(after_calls).map(&:kind)).to eq([:cut_tool_call])
+    end
+  end
+
+  # A model that stops on its own just after opening a call has written markup
+  # no parser will act on, and left in the text it is replayed as speech.
+  describe "a bare tool_call opener at a normal stop" do
+    let(:trailing) { body(content: "42.\n<tool_call>") }
+
+    it "keeps the answer, drops the opener, and still settles as an answer" do
+      response = decode(trailing)
+
+      expect(response.text).to eq("42.")
+      expect(response).to stop_with(Lain::StopReason::END_TURN)
+    end
+
+    it "journals one bare_tool_call record quoting the opener" do
+      expect(records(trailing)).to eq(
+        [Lain::Telemetry::MalformedResponse.new(kind: :bare_tool_call, model: "qwen3:4b", excerpt: "<tool_call>")]
+      )
+    end
+
+    it "drops an opener the model began naming a function in" do
+      named = body(content: "Checking.\n<tool_call>\n<function=list_files")
+
+      expect(decode(named).text).to eq("Checking.")
+      expect(records(named).map(&:kind)).to eq([:bare_tool_call])
+    end
+
+    it "judges silence on what is left, so markup alone is an empty answer" do
+      alone = body(content: "<tool_call>")
+      response = decode(alone)
+
+      expect(response.content).to be_empty
+      expect(response).to stop_with(Lain::StopReason::MALFORMED)
+      expect(response.failure.message).to eq(Lain::Response::Failure::SILENT)
+      expect(response.malformed).to eq(:empty_answer)
+      expect(records(alone).map(&:kind)).to eq(%i[bare_tool_call empty_answer])
+    end
+
+    # The shape QA caught, and most of the leaks the recorded corpus holds.
+    it "drops an opener written on the answer's own line" do
+      same_line = body(content: "42.<tool_call>")
+
+      expect(decode(same_line).text).to eq("42.")
+      expect(records(same_line).map(&:excerpt)).to eq(["<tool_call>"])
+    end
+
+    it "drops every opener repeated at the end, under one record" do
+      repeated = body(content: "x\n<tool_call>\n<tool_call>")
+
+      expect(decode(repeated).text).to eq("x")
+      expect(records(repeated).map(&:kind)).to eq([:bare_tool_call])
+    end
+
+    it "drops an envelope begun with arguments and never closed, and records it" do
+      unclosed = body(content: "Ok.\n<tool_call>\n<function=bash>\n<parameter=command>\nls")
+
+      expect(decode(unclosed).text).to eq("Ok.")
+      expect(records(unclosed)).to eq(
+        [Lain::Telemetry::MalformedResponse.new(kind: :bare_tool_call, model: "qwen3:4b",
+                                                excerpt: "<tool_call>\n<function=bash>\n<parameter=command>\nls")]
+      )
+    end
+
+    # Recorded verbatim in shape: the opener on the prose's own line, a hyphenated name.
+    it "drops an unclosed envelope opened at the end of a line of prose" do
+      mid_line = body(content: "Final assessment:<tool_call>\n<function=qa-answer>\n{\"verdict\": 1}\n</parameter>")
+
+      expect(decode(mid_line).text).to eq("Final assessment:")
+      expect(records(mid_line).map(&:kind)).to eq([:bare_tool_call])
+    end
+
+    it "drops an envelope that ends at a closed parameter" do
+      closed = body(content: "Ok.\n<function=bash>\n<parameter=command>ls</parameter>")
+
+      expect(decode(closed).text).to eq("Ok.")
+    end
+
+    # An answer ABOUT the envelope format ends in prose or a fence, never in
+    # argument markup, and every word of it is the answer.
+    {
+      "an example the model talked past" =>
+        "Example:\n<function=bash>\n<parameter=command>ls</parameter>\n\nThat is the format.",
+      "a line-start mention of the opener" => "Write the opener as\n<function=name> then arguments, and close it.",
+      "a fenced example" => "Example:\n```\n<function=bash>\n<parameter=command>ls\n```\nThat is the format."
+    }.each do |shape, prose|
+      it "keeps the whole of #{shape}" do
+        expect(decode(body(content: prose)).text).to eq(prose)
+        expect(records(body(content: prose))).to be_empty
+      end
+    end
+
+    it "leaves a line-start tool_call tag the model talked past alone" do
+      talked_past = body(content: "Calls look like:\n<tool_call>\nand the parser reads them.")
+
+      expect(decode(talked_past).text).to eq("Calls look like:\n<tool_call>\nand the parser reads them.")
+      expect(records(talked_past)).to be_empty
+    end
+
+    it "leaves a tool_call tag discussed mid-answer alone" do
+      discussed = body(content: "Wrap it in a <tool_call> tag and the parser reads it.")
+
+      expect(decode(discussed).text).to eq("Wrap it in a <tool_call> tag and the parser reads it.")
+      expect(records(discussed)).to be_empty
+    end
+  end
+
+  # Left in the text, the envelope is replayed to the model as something it
+  # said and teaches it the very shape that failed.
+  describe "a tool call written as prose" do
+    let(:envelope) { "<tool_call>\n<function=bash>\n<parameter=command>\nls\n</parameter>\n</function>\n</tool_call>" }
+
+    it "withholds the envelope and names the kind on the response" do
+      response = decode(body(content: "Listing.\n#{envelope}"))
+
+      expect(response).to stop_with(Lain::StopReason::MALFORMED)
+      expect(response.malformed).to eq(:prose_tool_call)
+      expect(response.text).to eq("Listing.")
+    end
+
+    it "withholds every opener the envelope was written under" do
+      response = decode(body(content: "Listing.\n<tool_call>\n#{envelope}"))
+
+      expect(response.text).to eq("Listing.")
+    end
+
+    it "says the call was withheld when the envelope was all the model wrote" do
+      response = decode(body(content: envelope))
+
+      expect(response.text).to eq("(a tool call written as text was withheld)")
+      expect(response.failure.message).to eq(Lain::Response::Failure::PROSE_CALL)
+    end
+
+    it "keeps a text block beside the thinking, so the turn is never thinking alone" do
+      response = decode(body(content: envelope, thinking: "I should list the files"))
+
+      expect(response.content.map { |block| block["type"] }).to eq(%w[thinking text])
+    end
+
+    it "quotes the envelope it withheld" do
+      expect(records(body(content: envelope)).map(&:excerpt)).to all(include("<function=bash>"))
     end
   end
 

@@ -98,6 +98,29 @@ module Lain
         # `<function=` counts only at a line start, so prose quoting one is not cut.
         CUT_TOOL_CALL = %r{(?:<tool_call>|^<function=)(?!.*</function>).*\z}m
 
+        # Narrower than a cut, because at a stop the rest of the text was the
+        # answer: openers with at most a name and nothing after them, or a
+        # named envelope never closed whose TAIL is still argument markup. An
+        # answer about the format ends in prose or a fence, and keeps every word.
+        # The name admits a hyphen, unlike a prose call's, because nothing here
+        # is failed for it.
+        STOPPED_TOOL_CALL = %r{
+          (?:<tool_call>#{NOTHING_AFTER_IT})+(?:^<function=[a-z0-9_-]*>?)?#{NOTHING_AFTER_IT}\z
+          | (?:<tool_call>#{NOTHING_AFTER_IT})?^<function=[a-z][a-z0-9_-]*>(?!.*</function>)
+            (?:.*</parameter>#{NOTHING_AFTER_IT}                 # ends at a closed argument
+             | .*<parameter=(?:(?!</parameter>|```).)*)\z       # or inside an open one
+        }mx
+
+        # Without it a withheld envelope leaves its own opener behind as the answer.
+        TRAILING_OPENER = /(?:<tool_call>#{NOTHING_AFTER_IT})+\z/
+
+        # Markup the decode stripped, and which reading found it.
+        Stray = Data.define(:kind, :markup)
+
+        # Stands in for a prose call that was the whole of the text, so the turn
+        # still has a text block and never reaches the chain as thinking alone.
+        WITHHELD_CALL = "(a tool call written as text was withheld)"
+
         # The reasons {Agent::LoopMachine} settles a run on as an ANSWER. A turn
         # that said nothing may not reach one, whatever the wire spelled: the
         # test is the reason the decode arrives at, because `StopReason.normalize`
@@ -110,35 +133,58 @@ module Lain
         def build_response(body)
           message = body["message"] || {}
           envelope = prose_tool_call(message)
-          silent = said_nothing?(message)
-          cut = cut_tool_call(body, message, envelope)
-          response = Response.new(id: nil, model: body["model"], content: decode_content(without_cut(message, cut)),
+          stray = stray_markup(body, message, envelope)
+          spoken = withheld(without_stray(message, stray), envelope)
+          silent = said_nothing?(heard(message, spoken, stray))
+          response = Response.new(id: nil, model: body["model"], content: decode_content(spoken),
                                   stop_reason: decode_stop_reason(body, message, envelope, silent),
-                                  usage: build_usage(body), raw: body)
+                                  usage: build_usage(body), raw: body, malformed: finding(envelope, silent, stray))
           note_prose_tool_call(body, envelope) unless envelope.nil?
+          note_stray_markup(body, stray) unless stray.nil?
           note_empty_answer(body) if silent
-          note_cut_tool_call(body, cut) unless cut.nil?
           response
         end
 
-        # A call the ceiling cut cannot be executed or repaired, and left in the
-        # text it would be replayed to the model as something it said.
-        def cut_tool_call(body, message, envelope)
-          return nil unless envelope.nil? && body["done_reason"] == "length" && Array(message["tool_calls"]).empty?
+        # Markup no parser will act on, and left in the text it would be
+        # replayed to the model as something it said.
+        def stray_markup(body, message, envelope)
+          return nil unless envelope.nil?
 
-          CUT_TOOL_CALL.match(message["content"].to_s)
+          cut = body["done_reason"] == "length"
+          markup = (cut ? CUT_TOOL_CALL : STOPPED_TOOL_CALL).match(message["content"].to_s)
+          markup && Stray.new(kind: cut ? :cut_tool_call : :bare_tool_call, markup:)
         end
 
-        def without_cut(message, cut)
-          return message if cut.nil?
+        # A cut call was speech the ceiling stopped, so silence is judged with
+        # it; markup at a stop said nothing, so silence is judged without it.
+        def heard(message, spoken, stray) = stray&.kind == :cut_tool_call ? message : spoken
 
-          message.merge("content" => cut.pre_match.rstrip)
+        def without_stray(message, stray)
+          return message if stray.nil?
+
+          message.merge("content" => stray.markup.pre_match.rstrip)
         end
 
-        # The stop reason stays :max_tokens, so the record is the only place the
-        # cut call is named.
-        def note_cut_tool_call(body, cut)
-          @journal << Telemetry::MalformedResponse.new(kind: :cut_tool_call, model: body["model"], excerpt: cut[0])
+        def withheld(message, envelope)
+          return message if envelope.nil?
+
+          said = envelope.pre_match.sub(TRAILING_OPENER, "").rstrip
+          message.merge("content" => Blankness.blank?(said) ? WITHHELD_CALL : said)
+        end
+
+        # The one kind the Response carries, so a reader of a stripped text can
+        # still tell a withheld call from silence.
+        def finding(envelope, silent, stray)
+          return :prose_tool_call unless envelope.nil?
+
+          silent ? :empty_answer : stray&.kind
+        end
+
+        # A cut call keeps :max_tokens and a bare opener keeps the wire's reason,
+        # so the record is the only place either is named.
+        def note_stray_markup(body, stray)
+          @journal << Telemetry::MalformedResponse.new(kind: stray.kind, model: body["model"],
+                                                       excerpt: stray.markup[0])
         end
 
         # The witness for a turn that decoded perfectly and asked for nothing. A

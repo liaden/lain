@@ -40,9 +40,9 @@ module Lain
         attribute :kind
         attribute :tool_name
         attribute :excerpt
-        validates :kind, inclusion: { in: %i[prose_tool_call empty_answer cut_tool_call],
-                                      message: "must be one of prose_tool_call, empty_answer, cut_tool_call, " \
-                                               "got %<value>s" }
+        KINDS = %i[prose_tool_call empty_answer cut_tool_call bare_tool_call].freeze
+
+        validates :kind, inclusion: { in: KINDS, message: "must be one of #{KINDS.join(", ")}, got %<value>s" }
         validates :tool_name, presence: { message: "must name the tool the envelope named, got nil" },
                               if: :prose_tool_call?
         validates :excerpt, presence: { message: "must carry the text the reading was made from, got nil" },
@@ -52,9 +52,9 @@ module Lain
 
         def prose_tool_call? = kind == :prose_tool_call
 
-        # A cut call owes its quote but not a tool name: the ceiling may land
-        # before the name is written.
-        def quoting? = %i[prose_tool_call cut_tool_call].include?(kind)
+        # A cut call or a stopped one owes its quote but not a tool name: the
+        # name may never have been written.
+        def quoting? = %i[prose_tool_call cut_tool_call bare_tool_call].include?(kind)
       end
     end
 
@@ -83,7 +83,9 @@ module Lain
     #
     # A third kind, `:cut_tool_call`, is the exception to the stop reason too: the
     # token ceiling landed inside an envelope, the turn keeps `:max_tokens`, the
-    # cut tail is quoted here and left off the chain.
+    # cut tail is quoted here and left off the chain. A fourth, `:bare_tool_call`,
+    # is its sibling at a normal stop: a call the model opened and stopped
+    # without closing, stripped from the text while the wire's reason stands.
     #
     # This is the one consumer point a further producer plugs into -- a new
     # `kind` here, the same stop reason there.

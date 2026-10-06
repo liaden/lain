@@ -354,15 +354,16 @@ RSpec.describe Lain::Provider::Ollama do
       expect(record["excerpt"]).to include("rails new . --minimal --force")
     end
 
-    # Refused, not rewritten: the text and the absence of tool_uses are exactly
-    # what the model sent; only the reading of the stop changes.
-    it "reads the turn as malformed while leaving its text and its missing tool_uses as the model sent them" do
+    # Refused, and the envelope withheld: nothing is executed, and the markup
+    # never reaches the chain to be replayed as something the model said.
+    it "reads the turn as malformed, keeps the prose before the envelope, and withholds the envelope" do
       provider = described_class.new(transport: transport_sync(prose_body(prose_call)))
 
       response = provider.complete(request)
 
-      expect(response.text).to eq(prose_call)
+      expect(response.text).to eq(prose_call[/\A.*?(?=\n\n<function=)/m])
       expect(response).to stop_with(Lain::StopReason::MALFORMED)
+      expect(response.malformed).to eq(:prose_tool_call)
       expect(response.tool_uses).to be_empty
     end
 
@@ -395,6 +396,34 @@ RSpec.describe Lain::Provider::Ollama do
         expect(failure.message).to include("malformed")
         expect(failure.message).not_to include("unrecognized")
         expect(io).to include_journal_record("malformed_response", kind: "prose_tool_call", tool_name: "bash")
+      end
+
+      # The chain is what every later render and derivation reads, so the
+      # check is made there and not on the Response.
+      describe "over a reply that was a prose call and nothing else" do
+        let(:envelope) { "<function=bash>\n<parameter=command>\nls\n</parameter>\n</function>\n</tool_call>" }
+        let(:agent) { agent_over(prose_body(envelope), Lain::Journal.new(io: StringIO.new)) }
+        let(:messages) do
+          agent.ask("list the files")
+          agent.context.render(timeline: agent.timeline, toolset: agent.toolset).messages
+        end
+
+        it "renders no tool-call markup into the next request" do
+          expect(JSON.generate(messages)).not_to include("<function=", "<tool_call>", "</tool_call>")
+        end
+
+        it "renders a conversation the Messages API check accepts" do
+          expect(Lain::Context::Conversation.new(messages)).to be_valid
+        end
+
+        it "derives over the turn without refusal and without markup" do
+          agent.ask("list the files")
+          derivation = Lain::Compaction::Derivation.new(strategy: Lain::Compaction::Strategy::Identity.new,
+                                                        keep_last: 1)
+          derived = derivation.derive(agent.timeline)
+
+          expect(JSON.generate(derived.to_a.map(&:content))).not_to include("<function=", "<tool_call>")
+        end
       end
 
       it "settles an ordinary answer normally and journals no malformed_response" do
@@ -475,7 +504,7 @@ RSpec.describe Lain::Provider::Ollama do
     it "decodes a prose tool call over the default Null journal with no guard" do
       provider = described_class.new(transport: transport_sync(prose_body(prose_call)))
 
-      expect(provider.complete(request).text).to eq(prose_call)
+      expect(provider.complete(request)).to stop_with(Lain::StopReason::MALFORMED)
     end
   end
 

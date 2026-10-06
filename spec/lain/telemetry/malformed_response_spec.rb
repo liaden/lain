@@ -93,6 +93,25 @@ RSpec.describe Lain::Telemetry::MalformedResponse do
     end
   end
 
+  describe "a bare tool call opener" do
+    subject(:bare) { described_class.new(kind: :bare_tool_call, model: "qwen3:4b", excerpt: "<tool_call>") }
+
+    it "quotes the markup it stripped without naming a tool" do
+      expect(bare).to have_attributes(kind: :bare_tool_call, tool_name: nil, excerpt: "<tool_call>")
+    end
+
+    it "owes its quote" do
+      expect { described_class.new(kind: :bare_tool_call, model: "m") }
+        .to raise_error(ArgumentError, /excerpt must carry the text the reading was made from/)
+    end
+
+    it "reads back from a replayed journal line" do
+      line = JSON.parse(JSON.generate(bare.to_journal))
+
+      expect(described_class.new(kind: line["kind"], model: line["model"], excerpt: line["excerpt"])).to eq(bare)
+    end
+  end
+
   # The second kind, and the reason `kind` was an open place rather than a
   # decoration. Here the finding IS an absence: there is no tool the turn named
   # and no text to quote it from, so demanding either would make the record
