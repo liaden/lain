@@ -200,6 +200,35 @@ RSpec.describe Lain::CLI::Consolidate do
     end
   end
 
+  describe "a clerk that loops past the ceiling" do
+    def backend_for(provider) = instance_double(Lain::CLI::Backend, provider:, context:, slots:)
+
+    def looping = tool_response(["tu_loop", "memory_read", { "id" => "login-ttl" }])
+
+    let(:provider) do
+      ceiling = Lain::Agent::Budget::DEFAULT_MAX_ITERATIONS
+      Lain::Provider::Mock.new(responses: [tool_response(memory_write("login-ttl", "the token TTL was zero")),
+                                           *Array.new(ceiling - 1) { looping }, text_response("B done")])
+    end
+
+    def report
+      allow(Lain::CLI::Backend).to receive(:new).and_return(backend_for(provider))
+      described_class.from_options({ max_tokens: 64 }, selector: "s1", profile: anthropic, paths:, project_dir:).report
+    end
+
+    it "reports the next lineage's answer and reads the looping one as failed at the ceiling" do
+      expect { report }.to raise_error(Lain::CLI::Consolidate::PassFailed) { |error|
+        expect(error.message).to include("lineage #{spawn_a}: failed", "ceiling", "lineage #{spawn_b}: B done")
+      }
+    end
+
+    it "keeps the memory the looping clerk wrote before the ceiling" do
+      expect { report }.to raise_error(Lain::CLI::Consolidate::PassFailed)
+
+      expect(Lain::Memory::ProjectStore.new(project_dir:).view.fetch("login-ttl").body).to eq("the token TTL was zero")
+    end
+  end
+
   # The pass is not a chat, so its record is not a session: it lands in its own
   # kind beside `sessions`, keyed by project, and a reader listing this
   # project's chats never finds a clerk pass among them.

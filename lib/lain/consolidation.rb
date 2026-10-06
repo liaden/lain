@@ -28,6 +28,9 @@ module Lain
   class Consolidation
     ROLE = :court_clerk
 
+    # The name a ceiling stop goes by elsewhere (Agent::StopReason::RULES, Arm::Driver).
+    CEILING = :ceiling
+
     # `spawn` is the evidence a memory cites: the digest of the lineage's
     # `:spawn`, the address `lain watch` and the fleet already know it by. Twin
     # spawns of one prompt from one head share it even when they answer apart.
@@ -45,7 +48,9 @@ module Lain
     #
     # `failure` is the {Response::Failure} of a clerk whose answer was a failed
     # stop, nil otherwise; its `result` is then nil, since the text of a failed
-    # stop is not an answer.
+    # stop is not an answer. A clerk that hit its loop or token ceiling gets a
+    # failure of stop reason `:ceiling`, since the ceiling raises rather than
+    # answers and carries no {Response::Failure} of its own.
     Outcome = Data.define(:spawn, :result, :wrote, :failure) do
       def failed? = !failure.nil?
     end
@@ -117,7 +122,13 @@ module Lain
       result = build_clerk(scaffold, view).ask!(scaffold.render)
       Outcome.new(spawn: scaffold.spawn, result:, wrote: view.root != root_before, failure: nil)
     rescue Response::Failed => e
-      Outcome.new(spawn: scaffold.spawn, result: nil, wrote: view.root != root_before, failure: e.failure)
+      failed_outcome(scaffold, view, root_before, e.failure)
+    rescue Agent::Budget::Exceeded => e
+      failed_outcome(scaffold, view, root_before, Response::Failure.new(stop_reason: CEILING, message: e.message))
+    end
+
+    def failed_outcome(scaffold, view, root_before, failure)
+      Outcome.new(spawn: scaffold.spawn, result: nil, wrote: view.root != root_before, failure:)
     end
 
     # The point of this class is the last argument: a tool-phase guard stack the
