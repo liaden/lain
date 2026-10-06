@@ -84,7 +84,7 @@ module Lain
         @rail = Intake.new(screen: tty)
         @drawn = NOTHING_DRAWN
         @reported = @client = nil
-        @quit = @idle = @settled = false
+        @quit = @idle = @settled = @answered = false
         @shown = @wanted = ""
         @pump = StdinPump::Idle
         @relay = Relay.new
@@ -238,7 +238,7 @@ module Lain
         @wanted = header
         return restyled if @idle
 
-        @shown = @drawn["header"].to_s
+        @shown = @answered ? "" : @drawn["header"].to_s
         stop_drawing
         @idle = true
         @drawing = task.async { unprompted(client) }
@@ -319,6 +319,7 @@ module Lain
         @geometry.painted
         stop_drawing
         @drawn = frame
+        @answered = false
         @reported = nil
         @drawing = task.async { drawn(client, frame) }
       end
@@ -344,6 +345,8 @@ module Lain
 
         over_the_prompt(frame["header"])
         line = @rail.read(frame["kind"].to_sym, frame["text"].to_s, header: frame["header"].to_s)
+        # The answer's echoed newline moved the cursor off the input row.
+        @answered = !line.nil?
         emit(client, line.nil? ? { "v" => "eof" } : answer(line, frame))
       end
 

@@ -402,6 +402,27 @@ RSpec.describe Lain::Frontend::InputPane do
       expect(screen.string).to eq("")
     end
 
+    it "draws nothing over an answered approval's echo, and draws the header whole at the next prompt" do
+      # A real pty read of the answer timed out here, so the echo itself is not exercised.
+      allow(Reline).to receive(:readmultiline).and_return("y", nil)
+      chat = open_pane
+      publish(chat, { "kind" => "human", "text" => "[y/N] run bash? ", "generation" => 7,
+                      "header" => "fleet:1\nrow a" })
+      next_frame(chat, of: "line")
+      say(chat, { "v" => "unpublished", "header" => "fleet:1\nrow a" })
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      settles { commands == ["idle"] || nil }
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:2\nrow b" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+      expect(screen.string).to eq("")
+
+      publish(chat, { "generation" => 8, "header" => "fleet:2\nrow b" })
+      expect(settles { screen.string.include?("row b") ? screen.string : nil }).to eq("\r\e[Kfleet:2\nrow b\n")
+    end
+
     it "redraws nothing for an unchanged header" do
       chat = open_pane
       publish(chat, { "generation" => 3, "header" => "fleet:1" })
