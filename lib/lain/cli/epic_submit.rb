@@ -380,12 +380,16 @@ module Lain
       #   by name
       # @param brief [#call, nil] the adjudicated gate's spike prompt, from the
       #   artifact ({Adjudication::Brief}); nil means not wired, as above
+      # @param spike_journal [Adjudication::Destination] where the pair's provider
+      #   writes its own records; pointed at the decision's journal for the
+      #   length of each decision, and the one the pair was built over
       # @param epics [CLI::Epic] answers WHICH epic a bare invocation means.
       #   Asked rather than reimplemented: two spellings of "the sole epic in the
       #   home" would disagree without either of them raising.
       def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                      input: nil, output: nil, asker: Prompt.on(input:, output:), journal: nil, role_spawn: nil,
-                     brief: nil, epics: Epic.new(root:, paths:, config:))
+                     brief: nil, spike_journal: Adjudication::Destination.new,
+                     epics: Epic.new(root:, paths:, config:))
         @root = root
         @paths = paths
         @config = config
@@ -394,6 +398,7 @@ module Lain
         @journal = journal ? Lent.new(journal) : Owned.new(paths)
         @role_spawn = role_spawn
         @brief = brief
+        @spike_journal = spike_journal
         @epics = epics
       end
 
@@ -420,8 +425,9 @@ module Lain
       def self.from_options(options, input:, output:, profile: RunProfile.from_options(options),
                             root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                             backend: -> { Backend.new(options, profile:, root:) })
-        pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: guard)
-        new(root:, paths:, config:, input:, output:, role_spawn: pair.role_spawn, brief: pair.brief)
+        spike_journal = Adjudication::Destination.new
+        pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: guard, journal: spike_journal)
+        new(root:, paths:, config:, input:, output:, role_spawn: pair.role_spawn, brief: pair.brief, spike_journal:)
       end
 
       # The pair's children borrow no chat's guard, so this command builds
@@ -472,7 +478,9 @@ module Lain
         required = artifacts.required(stage)
         records = journals.to_a
         @journal.hold do |journal|
-          settled(stage, submission, required, records, ReadBack.new(journal, dir: @paths.sessions_dir))
+          @spike_journal.within(journal) do
+            settled(stage, submission, required, records, ReadBack.new(journal, dir: @paths.sessions_dir))
+          end
         end
       end
 
@@ -619,14 +627,38 @@ module Lain
         #   every path, adjudicated or not: out of chat no guard reaches a child
         #   unless it is handed in here, and a default would be how one went
         #   without in silence.
+        # @param journal [#<<] where the provider's own records land (a malformed
+        #   answer, a wait); the backend's run journal is unbound out of chat, so
+        #   without this a spike's failure message points at a record never written
         # @return [Pair]
-        def self.pair(config:, paths:, root:, backend:, tool_middleware:)
+        def self.pair(config:, paths:, root:, backend:, tool_middleware:, journal: Channel::Null.instance)
           return NONE unless wanted?(config)
 
           built = backend.call
-          spawner = new(provider: built.provider, context_factory: -> { built.context }, slots: built.slots,
+          spawner = new(provider: built.provider(journal:), context_factory: -> { built.context }, slots: built.slots,
                         tool_middleware:, attachments: Lain::Attachment::Store.for(root:, paths:))
           Pair.new(role_spawn: spawner.role_spawn, brief: Brief.new(config:, paths:, root:))
+        end
+
+        # The decision's journal, resolved per RECORD: the provider is built
+        # before any decision opens its journal, so it is handed this and the
+        # command points it at the journal for the length of one decision.
+        # Not thread-safe, because decisions in `epic submit` run sequentially.
+        class Destination
+          def initialize = @target = Channel::Null.instance
+
+          def <<(event)
+            @target << event
+            self
+          end
+
+          def within(journal)
+            outer = @target
+            @target = journal
+            yield
+          ensure
+            @target = outer
+          end
         end
 
         # `attachments` is REQUIRED for `tool_middleware`'s reason: out of chat no

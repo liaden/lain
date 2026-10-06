@@ -225,9 +225,9 @@ RSpec.describe "A child's tools run behind its parent's guard", :seam do
 
     # The three things the adjudication pair reads off a backend.
     def adjudicating_backend
-      Data.define(:provider, :context, :slots)
-          .new(provider:, context: Lain::Context.new(model: "judge", max_tokens: 256),
-               slots: Lain::Prompt::Slots.load(root:))
+      wire = provider
+      Data.define(:context, :slots) { define_method(:provider) { |**| wire } }
+          .new(context: Lain::Context.new(model: "judge", max_tokens: 256), slots: Lain::Prompt::Slots.load(root:))
     end
 
     before do

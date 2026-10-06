@@ -20,8 +20,11 @@ module EpicSubmitSpecSupport
     def call(role, _context_mode, _prompt) = Lain::Tool::Result.ok(@answers.fetch(role))
   end
 
-  # The three things the adjudication pair reads off a backend.
-  FakeBackend = Data.define(:provider, :context, :slots)
+  # The three things the adjudication pair reads off a backend; `provider` is
+  # asked for with the journal its own records should land in.
+  FakeBackend = Data.define(:wire, :context, :slots) do
+    def provider(**) = wire
+  end
 end
 
 # `lain epic submit` is the one verb that puts an epic's artifact in front of a
@@ -619,7 +622,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     def real_backend(*answers)
       EpicSubmitSpecSupport::FakeBackend.new(
-        provider: Lain::Provider::Mock.new(responses: answers.map { |answer| text_response(answer) }),
+        wire: Lain::Provider::Mock.new(responses: answers.map { |answer| text_response(answer) }),
         context: Lain::Context.new(model: "judge", max_tokens: 256), slots: Lain::Prompt::Slots.load(root:)
       )
     end
@@ -665,6 +668,25 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(chat).to have_been_requested.at_least_twice
       expect(a_request(:post, "http://localhost:11434/api/chat")
                .with { |req| JSON.parse(req.body).dig("options", "num_batch") != 2048 }).not_to have_been_made
+    end
+
+    it "journals a failed spike's malformed_response into the decision journal" do
+      prose = "Looking.\n<function=read_file>\n<parameter=path>\nepic.md\n</parameter>\n</function>\n</tool_call>"
+      stub_request(:post, "http://localhost:11434/api/chat")
+        .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
+                   body: "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+                                          "message" => { "role" => "assistant", "content" => prose })}\n")
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      options = Thor::Options.new(LainCLI::Epic.commands.fetch("submit").options).parse(%w[--provider ollama])
+
+      described_class.from_options(options, profile: LainCLI::ModelFlags.profile(options), input: tty,
+                                            output: StringIO.new, root:, paths:, config: config(adjudicating))
+                     .submit("research")
+
+      malformed = journal_records.select { |record| record["type"] == "malformed_response" }
+      expect(malformed.map { |record| record["kind"] }).to include("prose_tool_call")
+      note = journal_records.find { |record| record["type"] == "gate_evidence" }.fetch("reason")
+      expect(note).to include("see its malformed_response journal record")
     end
 
     it "builds no backend when every stage is interactive" do
@@ -1289,7 +1311,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     def spike_backend(*answers)
       EpicSubmitSpecSupport::FakeBackend.new(
-        provider: Lain::Provider::Mock.new(responses: answers.map { |answer| text_response(answer) }),
+        wire: Lain::Provider::Mock.new(responses: answers.map { |answer| text_response(answer) }),
         context: Lain::Context.new(model: "judge", max_tokens: 256), slots: Lain::Prompt::Slots.load(root:)
       )
     end
