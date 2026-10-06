@@ -830,6 +830,35 @@ RSpec.describe Lain::Tools::WebFetch do
       expect(contacted).to be_empty
     end
 
+    # A bare name is expanded by the resolver's search list, so it can land on
+    # a host inside the network the fetch runs in.
+    it "refuses a single-label host, with or without the root dot" do
+      results = ["http://metadata/", "http://instance-data/", "http://metadata./"].map { |url| tool.call({ url: }, nil) }
+
+      expect(results).to all(be_error)
+      expect(results.map(&:content)).to all(include("single-label"))
+      expect(contacted).to be_empty
+    end
+
+    it "refuses a redirect hop to a single-label host without resolving it" do
+      hops = []
+      connection = WebFetchStubConnection.new do |url|
+        hops << url
+        WebFetchStubResponse.new(status: 302, headers: { "location" => "http://metadata/" }, body: "")
+      end
+      result = described_class.new(connection:).call({ url: "https://example.com" }, nil)
+
+      expect(result).to be_error
+      expect(hops).to eq(["https://example.com"])
+    end
+
+    it "refuses a single-label host that a configured allowlist names" do
+      narrowed = described_class.new(connection: recording, allowlist: %w[metadata])
+
+      expect(narrowed.call({ url: "http://metadata/" }, nil)).to be_error
+      expect(contacted).to be_empty
+    end
+
     it "still permits an ordinary public host" do
       expect(tool.call({ url: "https://example.com/x" }, nil)).to be_ok
       expect(contacted).to eq(["https://example.com/x"])

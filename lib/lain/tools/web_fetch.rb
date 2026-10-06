@@ -219,7 +219,7 @@ module Lain
             return blocked_range(host, address) if address
             return ambiguous(host) if ADDRESS_SHAPED.match?(name)
 
-            blocked_name(host, name)
+            blocked_name(host, name) || single_label(host, name)
           end
 
           private
@@ -241,6 +241,14 @@ module Lain
           def blocked_name(host, name)
             reserved = NAMES.find { |word| name == word || name.end_with?(".#{word}") }
             "web_fetch: host #{host.inspect} is a blocked internal name (#{reserved})" if reserved
+          end
+
+          # The resolver's search list expands a bare name, so it can land inside
+          # the network; an IPv6 literal never reaches here, address_of took it.
+          def single_label(host, name)
+            return if name.include?(".")
+
+            "web_fetch: host #{host.inspect} is a single-label name the resolver search list could map inward"
           end
 
           def ambiguous(host)
