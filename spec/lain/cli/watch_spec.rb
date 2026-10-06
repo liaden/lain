@@ -142,42 +142,51 @@ RSpec.describe Lain::CLI::Watch do
     end
   end
 
-  # A one-shot's completion carries a terminal lifecycle mark now, and this
-  # view prefixes any mark it finds -- so an operator tailing a one-shot reads
-  # "(stopped) <result>" where the line used to be bare. That is the same
-  # shape an actor's farewell already rendered in, which is the point, but a
-  # line an operator reads is not allowed to change unpinned: nothing else in
-  # this file renders a `result` body at all.
+  # A one-shot that answered and one that was killed both write the "stopped"
+  # mark; the line has to say which, since the operator reads it to decide
+  # whether work came back.
   describe "a one-shot child's completion" do
     subject(:watch) { described_class.new(selector:, path:, sink: output, paths:) }
 
-    # The BODY comes from the real writer rather than being spelled out here,
-    # unlike every other record in this file: what this example is about is
-    # that what {Tools::Subagent::Lineage#message} writes today renders with a
-    # mark, so a hand-written body would pin the renderer and miss the change.
-    # Only the chaining fields are synthetic, so it reaches the watched spawn.
-    let(:completion_body) do
-      policy = Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
-      lineage = Lain::Tools::Subagent::Lineage.new(policy:)
-      child = Lain::Timeline.empty(store: parent_chain.store)
-                            .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
-      lineage.message(parent_chain, lineage.spawn(parent_chain, prompt: "go"), child,
-                      Data.define(:text).new(text: "child answer")).body
+    let(:policy) { Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []) }
+    let(:lineage) { Lain::Tools::Subagent::Lineage.new(policy:) }
+    let(:child) do
+      Lain::Timeline.empty(store: parent_chain.store)
+                    .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
     end
+    let(:spawned) { lineage.spawn(parent_chain, prompt: "go") }
+    let!(:path) { write_journal(opening_records + [completion_for(completion_body), closed_record]) }
 
-    let(:completion) do
+    def completion_for(body)
       Lain::Telemetry::Message.new(
         digest: "5fff#{s_reply_digest[4..]}", kind: :message, from: s_spawn_digest,
-        to: parent_correlation, payload: completion_body,
+        to: parent_correlation, payload: body,
         causal_parents: [s_spawn_digest], correlation: parent_correlation
       ).to_journal
     end
-    let!(:path) { write_journal(opening_records + [completion, closed_record]) }
 
-    it "renders the result behind its terminal mark" do
-      watch.run
+    context "when it answered" do
+      let(:completion_body) do
+        lineage.message(parent_chain, spawned, child, Data.define(:text).new(text: "child answer")).body
+      end
 
-      expect(output.string).to include("(stopped) child answer")
+      it "reads done behind the result" do
+        watch.run
+
+        expect(output.string).to include("(done) child answer")
+      end
+    end
+
+    context "when it was stopped before answering" do
+      let(:completion_body) do
+        lineage.ended(parent_chain, spawned, child, lifecycle: "stopped").body
+      end
+
+      it "reads stopped with nothing after it" do
+        watch.run
+
+        expect(output.string).to match(/\(stopped\)\n/)
+      end
     end
   end
 

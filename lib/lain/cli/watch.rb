@@ -234,6 +234,9 @@ module Lain
         # The digest-prefix width the inspect idiom shows (see Event#inspect).
         SHORT = 19
 
+        Body = Data.define(:body)
+        private_constant :Body
+
         # @param record [Hash{String=>Object}] one admitted message record
         # @return [Array<String>] attributed lines, one per body line
         def lines(record)
@@ -251,7 +254,7 @@ module Lain
           payload = record["payload"]
           return "" unless payload.is_a?(Hash)
 
-          decorated(text_for(record["kind"].to_s, payload), payload["lifecycle"])
+          decorated(text_for(record["kind"].to_s, payload), lifecycle_of(payload))
         end
 
         # `text` is what {Tools::Subagent::Lineage#note} carries, `result`
@@ -264,7 +267,17 @@ module Lain
         # The lifecycle marker, when present, is the transition a reader keys
         # on -- surfaced, never parsed away.
         def decorated(text, lifecycle)
-          lifecycle.nil? ? text.to_s : "(#{lifecycle}) #{text}"
+          return text.to_s if lifecycle.nil?
+
+          ["(#{lifecycle})", text].reject { |part| part.to_s.empty? }.join(" ")
+        end
+
+        # A one-shot that answered writes the same "stopped" mark a killed one
+        # does; only the answer tells them apart.
+        def lifecycle_of(payload)
+          mark = payload["lifecycle"]
+          answered = StatusFeed::SpawnLifecycle.new(Body.new(payload)).finished?
+          answered && mark == StatusFeed::SpawnLifecycle::STOPPED ? "done" : mark
         end
 
         def spawn_note(payload)

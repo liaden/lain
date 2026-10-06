@@ -62,6 +62,9 @@ module Lain
       # Appended to a window's title when its actor's lineage closes.
       DONE_MARK = "[done]"
 
+      # Appended instead when a one-shot was stopped before it answered.
+      STOPPED_MARK = "[stopped]"
+
       # Appended instead when the lineage closed on a child that raised, so a
       # window over a child that hit its ceiling does not read as work that
       # came back.
@@ -425,8 +428,18 @@ module Lain
 
         digest = Array(record.causal_parents).find { |parent| @windows.key?(parent) }
         released = digest && @windows.delete(digest)
-        mark = lifecycle.failed? ? FAILED_MARK : DONE_MARK
+        mark = close_mark(record, lifecycle)
         @pump.enqueue(Pump::Mark.new(target: window_target(released), title: "#{released} #{mark}")) if released
+      end
+
+      # An actor's farewell carries text and a one-shot's answer carries a
+      # result; a "stopped" with neither is a one-shot that was killed.
+      def close_mark(record, lifecycle)
+        return FAILED_MARK if lifecycle.failed?
+
+        body = record.respond_to?(:body) ? record.body : record.payload
+        unanswered = lifecycle.terminal? && !lifecycle.finished? && !body.to_h.key?("text")
+        unanswered ? STOPPED_MARK : DONE_MARK
       end
 
       def turn_boundary

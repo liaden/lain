@@ -144,6 +144,20 @@ RSpec.describe Lain::CLI::FleetWindows do
       expect(recorded.flatten).not_to include("kill-window")
     end
 
+    it "marks the window stopped on a one-shot killed before it answered" do
+      killed = Lain::Telemetry::Message.new(
+        digest: "blake3:dead111122223333", kind: :message, from: spawn_digest, to: parent,
+        payload: { "lifecycle" => "stopped", "final" => "blake3:f1na" },
+        causal_parents: [spawn_digest, "blake3:f1na"], correlation: spawn_digest
+      )
+      fleet << spawn_record
+      fleet << killed
+      fleet.drain_pending
+
+      expect(rename_argvs).to eq([["tmux", "rename-window", "-t", "=researcher-5aaa1111",
+                                   "researcher-5aaa1111 [stopped]"]])
+    end
+
     it "marks the window done on a one-shot's result message too" do
       fleet << spawn_record
       fleet << result_record
