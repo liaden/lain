@@ -1962,6 +1962,10 @@ XDG path relative, which put machine state back inside the user's repository)
    (`planning/qa-findings-round20-2026-09-29.md`) over every finding rated LOW-MED or higher, plus
    `.lain/config.toml` replaced by a trust-gated `.lain/config.rb` (H-3). 39 cards, panel-reviewed.
 
+51. **Planned (2026-10-05)**: `planning/specs/qa-round-21-fixes.md`, the QA round-21 discharge
+   (`planning/qa-findings-round21-2026-10-04.md`) over every finding rated LOW-MED or higher, code
+   fixes only. 36 cards, panel-reviewed.
+
 ## Map of the documents
 
 - **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
