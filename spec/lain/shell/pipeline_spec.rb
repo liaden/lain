@@ -514,6 +514,68 @@ RSpec.describe Lain::Shell::Pipeline do
     end
   end
 
+  it "signals nothing when the command finished before any stop" do
+    allow(Process).to receive(:kill).and_call_original
+
+    expect(run([%w[true]]).exit_status).to eq(0)
+    expect(Process).not_to have_received(:kill)
+  end
+
+  # A stop is `Async::Stop`, an Exception rather than a StandardError, and it
+  # arrives at the countdown's `s` while the command is mid-pump.
+  describe "a stop from outside" do
+    # The kernel's own list, so the spec names the stage's group without
+    # reaching into how the runner spawned it.
+    def children = Dir["/proc/self/task/*/children"].flat_map { |path| File.read(path).split.map(&:to_i) }
+
+    def group_gone?(group)
+      Process.kill(0, -group)
+      false
+    rescue Errno::ESRCH
+      true
+    end
+
+    def groups_of_stopped(term, runner:, after:, again: nil)
+      capture = Lain::Exec::Capture::Bounded.new(ceiling: 63)
+      before = children
+      Sync do |parent|
+        task = parent.async { runner.call(term, cwd: Dir.pwd, env: {}, timeout: 30, capture:) }
+        sleep after
+        groups = children - before
+        task.stop
+        if again
+          sleep again
+          task.stop
+        end
+        task.wait
+        groups
+      end
+    end
+
+    it "kills a stopped term-arm command's group and unwinds promptly" do
+      started = monotonic
+
+      groups = groups_of_stopped([%w[sleep 20]], runner: described_class.new(grace: 0.1), after: 0.3)
+
+      expect(monotonic - started).to be < 2
+      expect(groups).to contain_exactly(be_an(Integer))
+      expect(group_gone?(groups.first)).to be(true)
+    end
+
+    it "still kills the group when a second stop lands during the grace wait" do
+      Dir.mktmpdir do |dir|
+        script = stubborn(dir, "stubborn", "exec sleep 8")
+        started = monotonic
+
+        groups = groups_of_stopped([[script]], runner: described_class.new(grace: 1.0), after: 0.3, again: 0.2)
+
+        expect(monotonic - started).to be < 0.3 + 1.0 + 1
+        expect(groups).to contain_exactly(be_an(Integer))
+        expect(group_gone?(groups.first)).to be(true)
+      end
+    end
+  end
+
   it "is a frozen value, so one instance serves every call" do
     expect(pipeline).to be_frozen
   end

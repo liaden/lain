@@ -219,8 +219,8 @@ module Lain
       #   an Array of Arrays (a bare String, nil) raises `NoMethodError`, loudly,
       #   because that is a caller's bug rather than a model's input.
       # @raise [Timeout] when the deadline passes, after the groups are killed
-      # @raise [StandardError] whatever a caller's sink raises mid-pump, after
-      #   the groups are killed -- see {Run#collect}
+      # @raise [Exception] whatever a caller's sink raises mid-pump, or a stop,
+      #   after the groups are killed -- see {Run#collect}
       def call(term, cwd:, env:, timeout:, capture:)
         refusals = Refusals.new(term:, cwd:, env:).causes
         return refuse(refusals.first, capture) unless refusals.empty?
@@ -413,13 +413,15 @@ module Lain
         # closed raises IOError mid-pump -- and letting that escape means
         # Open3's ensure joins wait threads with NO deadline, so a 2-second
         # timeout was measured still blocked at 8 seconds on a 30-second stage.
-        # The kill has to happen INSIDE the block for the same reason.
+        # The kill has to happen INSIDE the block for the same reason. Exception,
+        # not StandardError, because a stop is `Async::Stop`: a command stopped
+        # at the countdown otherwise ran on and had its side effects anyway.
         def collect(streams, threads)
           pump(streams, threads)
         rescue Timeout
           terminate(threads)
           raise Timeout, @capture.report
-        rescue StandardError
+        rescue Exception # rubocop:disable Lint/RescueException
           terminate(threads)
           raise
         end
@@ -494,11 +496,14 @@ module Lain
         # One grace for every stage together, ending early once no stage's group
         # has a member left. The KILL then goes to every group whatever became
         # of its leader: a leader that died on TERM says nothing about a child in
-        # its group that ignores it.
+        # its group that ignores it. The KILL is an ensure because a second stop
+        # lands in the grace's sleep, and Open3's join would then wait on a stage
+        # that ignores TERM.
         def terminate(threads)
           signal(threads, "TERM")
           grace_ends = clock + @grace
           sleep(POLL) while clock < grace_ends && threads.any? { |thread| populated?(thread.pid) }
+        ensure
           signal(threads, "KILL")
         end
 

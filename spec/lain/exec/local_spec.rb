@@ -302,4 +302,29 @@ RSpec.describe Lain::Exec::Local do
       end.to raise_error(Lain::Exec::Timeout)
     end
   end
+
+  # A stop is not a deadline, but it has to end the command just as surely: the
+  # side effect a stopped command was about to have must never land. A control
+  # with the same delay proves that moment passed, so no fixed margin has to
+  # cover a loaded box.
+  describe "a stop" do
+    it "leaves no side effect from a String command stopped before it got there" do
+      Dir.mktmpdir do |dir|
+        local = described_class.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1))
+        control = Process.spawn("/bin/sh", "-c", "sleep 0.5 && touch control.txt", chdir: dir)
+
+        Sync do |parent|
+          task = parent.async { local.call(command: "sleep 0.5 && touch z.txt", cwd: dir, env: ENV.to_h, timeout: 30) }
+          sleep 0.15
+          task.stop
+          task.wait
+        end
+        Process.wait(control)
+        sleep 0.2
+
+        expect(File).to exist(File.join(dir, "control.txt"))
+        expect(File).not_to exist(File.join(dir, "z.txt"))
+      end
+    end
+  end
 end
