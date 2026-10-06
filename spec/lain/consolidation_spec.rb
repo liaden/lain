@@ -64,6 +64,21 @@ RSpec.describe Lain::Consolidation do
     blocks.select { |block| block["type"] == "tool_result" }.map { |block| block["content"].to_s }.join("\n")
   end
 
+  describe "a clerk whose answer is a failed stop" do
+    it "reports the lineage as failed, with no result, and keeps the lineage that answered" do
+      provider = Lain::Provider::Mock.new(responses: [
+                                            text_response("<function=memory_write>", stop_reason: :malformed),
+                                            text_response("B done")
+                                          ])
+
+      failed, answered = consolidation(provider).call(lineages)
+
+      expect(failed).to have_attributes(spawn: spawn_a, result: nil, wrote: false, failed?: true,
+                                        failure: have_attributes(stop_reason: :malformed))
+      expect(answered).to have_attributes(spawn: spawn_b, result: "B done", failed?: false, failure: nil)
+    end
+  end
+
   describe "each completed lineage gets one clerk pass" do
     it "spawns one clerk per lineage, lands one memory each, and each names its lineage spawn" do
       provider = Lain::Provider::Mock.new(responses: [

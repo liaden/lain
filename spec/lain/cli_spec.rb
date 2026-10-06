@@ -838,6 +838,26 @@ RSpec.describe LainCLI do
     end
   end
 
+  describe "consolidate when a clerk's answer fails" do
+    around { |example| Dir.mktmpdir("lain-consolidate-failed") { |dir| (@dir = dir) && example.run } }
+
+    it "refuses with the whole report, so the exit status is non-zero" do
+      session = RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_a", "subagent", { "prompt" => "look" }]), text_response("done")],
+        child_responses: [text_response("found it")]
+      ).run
+      path = File.join(@dir, "s1.ndjson")
+      session.write(path)
+      provider = Lain::Provider::Mock.new(responses: [text_response("<function=x>", stop_reason: :malformed)])
+      context = Lain::Context.new(model: "m", max_tokens: 64)
+      backend = instance_double(Lain::CLI::Backend, provider:, context:, slots: Lain::Prompt::Slots.load(root: @dir))
+      allow(Lain::CLI::Backend).to receive(:new).and_return(backend)
+
+      expect { described_class.start(["consolidate", path, "--provider", "anthropic"], debug: true) }
+        .to raise_error(Thor::Error, /failed \(malformed\)/)
+    end
+  end
+
   # One flag band for every command that asks a model, so a knob a chat honours
   # cannot be one another command silently drops.
   describe "the model flag band on every model-calling command" do

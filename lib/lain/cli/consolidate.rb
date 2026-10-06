@@ -35,6 +35,11 @@ module Lain
     # the flag it came from. A dry run opens no journal and touches no memory
     # store for the same reason it builds no provider.
     class Consolidate
+      # A pass in which a clerk's answer failed. The exe turns a {Lain::Error}
+      # into a refusal and exit status 1, and the message is the whole report so
+      # the lineages that answered are still read.
+      class PassFailed < Lain::Error; end
+
       # The segment under `$XDG_STATE_HOME/lain` this pass's journals live in.
       JOURNAL_KIND = "consolidation"
 
@@ -106,9 +111,15 @@ module Lain
       # Run one court_clerk pass per completed subagent lineage.
       #
       # @return [String]
+      # @raise [PassFailed] carrying the whole report, when any clerk's answer
+      #   was a failed stop
       # @raise [Bench::Session::Corrupt] naming the file and its damage
       def report
-        journaled { |journal| said(rendered(@consolidation.call(journal).call(lineages))) }
+        outcomes = journaled { |journal| @consolidation.call(journal).call(lineages) }
+        text = said(rendered(outcomes))
+        raise PassFailed, text if outcomes.any?(&:failed?)
+
+        text
       end
 
       # What the pass WOULD send, and on what, spawning nothing: the scaffolds
@@ -131,7 +142,13 @@ module Lain
       def rendered(outcomes)
         return "consolidate: no completed subagent lineages found." if outcomes.empty?
 
-        [summary(outcomes), *outcomes.map { |outcome| "  - lineage #{outcome.spawn}: #{outcome.result}" }].join("\n")
+        [summary(outcomes), *outcomes.map { |outcome| "  - lineage #{outcome.spawn}: #{answer(outcome)}" }].join("\n")
+      end
+
+      def answer(outcome)
+        return outcome.result unless outcome.failed?
+
+        "failed (#{outcome.failure.stop_reason}): #{outcome.failure.message}"
       end
 
       # A pass that clerked lineages and a pass that clerked lineages AND wrote

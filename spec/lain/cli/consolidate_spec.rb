@@ -163,6 +163,43 @@ RSpec.describe Lain::CLI::Consolidate do
     end
   end
 
+  describe "a clerk whose answer failed" do
+    let(:envelope) { "<function=memory_write>{\"id\":\"x\"}</function>" }
+
+    def malformed = text_response(envelope, stop_reason: :malformed)
+
+    it "names the lineage as failed, without the envelope, and refuses with a non-zero status" do
+      provider = Lain::Provider::Mock.new(responses: [malformed, malformed])
+
+      expect { cli(provider).report }.to raise_error(Lain::CLI::Consolidate::PassFailed) { |error|
+        expect(error.message).to include("lineage #{spawn_a}: failed (malformed)")
+        expect(error.message).not_to include(envelope)
+      }
+    end
+
+    it "still prints a lineage that answered, with its result, beside the failed one" do
+      provider = Lain::Provider::Mock.new(responses: [malformed, text_response("B done")])
+
+      expect { cli(provider).report }.to raise_error(Lain::CLI::Consolidate::PassFailed) { |error|
+        expect(error.message).to include("lineage #{spawn_a}: failed (malformed)", "lineage #{spawn_b}: B done")
+      }
+    end
+
+    it "keeps the pass's journal when a lineage failed" do
+      provider = Lain::Provider::Mock.new(responses: [malformed, text_response("B done")])
+
+      expect { cli(provider).report }.to raise_error(Lain::CLI::Consolidate::PassFailed)
+
+      expect(journaled("turn_usage")).not_to be_empty
+    end
+
+    it "reports a pass of answers as a plain String, as before" do
+      provider = Lain::Provider::Mock.new(responses: [text_response("A done"), text_response("B done")])
+
+      expect(cli(provider).report).to include("A done", "B done")
+    end
+  end
+
   # The pass is not a chat, so its record is not a session: it lands in its own
   # kind beside `sessions`, keyed by project, and a reader listing this
   # project's chats never finds a clerk pass among them.

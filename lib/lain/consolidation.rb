@@ -42,7 +42,13 @@ module Lain
     # lineage ran resolves to what it started at -- `wrote: false` -- even
     # though the append-only store durably gained both writes: nothing a later
     # reader of project memory can observe moved.
-    Outcome = Data.define(:spawn, :result, :wrote)
+    #
+    # `failure` is the {Response::Failure} of a clerk whose answer was a failed
+    # stop, nil otherwise; its `result` is then nil, since the text of a failed
+    # stop is not an answer.
+    Outcome = Data.define(:spawn, :result, :wrote, :failure) do
+      def failed? = !failure.nil?
+    end
 
     # Every spawn collaborator is REQUIRED, so a forgotten one is a loud
     # ArgumentError at the wiring site rather than a nil checked one spawn later.
@@ -108,8 +114,10 @@ module Lain
     def spawn_clerk(scaffold)
       view = own_view(scaffold.spawn)
       root_before = view.root
-      result = build_clerk(scaffold, view).ask(scaffold.render).text
-      Outcome.new(spawn: scaffold.spawn, result:, wrote: view.root != root_before)
+      result = build_clerk(scaffold, view).ask!(scaffold.render)
+      Outcome.new(spawn: scaffold.spawn, result:, wrote: view.root != root_before, failure: nil)
+    rescue Response::Failed => e
+      Outcome.new(spawn: scaffold.spawn, result: nil, wrote: view.root != root_before, failure: e.failure)
     end
 
     # The point of this class is the last argument: a tool-phase guard stack the
@@ -170,7 +178,6 @@ module Lain
     # Reopened rather than nested in a `Data.define ... do` block: a constant or
     # nested class declared inside that block scopes to the enclosing module, not
     # the Data class.
-
     WriteThrough = Data.define(:recorder) do
       def append(item) = recorder.write(item)
     end
