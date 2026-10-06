@@ -218,7 +218,7 @@ RSpec.describe Lain::Sensitivity do
 
     it "still requires a whole segment, so a neighbouring name is not the subtree" do
       expect(classify("#{home}/.gnupg-backup/x")).to be_ordinary
-      expect(classify("#{home}/.password-store-old")).to be_ordinary
+      expect(classify("#{home}/.password-store-old")).not_to be_denied
     end
 
     # The ruling drew this line explicitly: the argument for anchoring was about
@@ -459,6 +459,119 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  describe "gated by a name or a directory that names a secret" do
+    ["password.txt", "Password.TXT", "secrets/prod", ".secrets/x", "my-secrets/x", "credentials/x", "private/x",
+     "auth/x", "api_key.txt", "secrets.toml"].each do |path|
+      it "gates #{path}" do
+        expect(classify(path)).to have_attributes(level: :gated, reason: :credential)
+      end
+    end
+
+    ["AUTHORS", "README", "lib/session.rb", "lib/auth/token.rb", "token.ts", "tokenizer.json", "compass.yml",
+     "spec/fixtures/sessions/a.ndjson"].each do |path|
+      it "leaves #{path} ordinary" do
+        expect(classify(path)).to be_ordinary
+      end
+    end
+
+    it "reads api and key as a word only when they sit side by side" do
+      expect(classify("api-docs/key.txt")).to be_ordinary
+      expect(classify("docs/api-key.json")).to be_gated
+      expect(classify("docs/APIKey.json")).to be_gated
+    end
+
+    it "leaves a markdown doc ordinary whatever its name or directory says" do
+      %w[secrets.md planning/qa/scenarios/secret-boundary.md docs/private/notes.md].each do |path|
+        expect(classify(path)).to be_ordinary, path
+      end
+      expect([classify("secrets.toml"), classify("password.txt")]).to all(be_gated)
+    end
+
+    it "gates a data file under a secret-named directory whatever its own name" do
+      expect(classify("config/secrets/database.yml")).to be_gated
+      expect(classify("config/secrets/loader.rb")).to be_ordinary
+    end
+
+    context "with a project rooted under a directory that names a secret" do
+      let(:root) { "/home/u/private/app" }
+      let(:rooted) { described_class.new(home:, cwd: root, root:) }
+
+      it "does not count an ancestor of the root" do
+        expect(%w[README Gemfile.lock config/database.yml].map { |path| rooted.classify(path) }).to all(be_ordinary)
+      end
+
+      it "still counts a directory below the root" do
+        expect(rooted.classify("private/notes.txt")).to be_gated
+      end
+    end
+
+    it "leaves a root that names a secret ordinary, however the path reaches it" do
+      root = "/srv/private"
+      at_root = described_class.new(home:, cwd: root, root:)
+      below = described_class.new(home:, cwd: "#{root}/app", root:)
+
+      expect([at_root.classify("."), at_root.classify("app/.."), below.classify(".."), below.classify(root)])
+        .to all(be_ordinary)
+    end
+
+    it "counts from the cwd when there is no root" do
+      under = described_class.new(home:, cwd: "/srv/secrets/app")
+
+      expect(under.classify("notes.txt")).to be_ordinary
+      expect(under.classify("secrets/notes.txt")).to be_gated
+    end
+
+    # Paid on every classify of every path a tool names, so the ordinary data
+    # path through the rule must cost nothing to ask.
+    it "asks the name rule about a data path without allocating" do
+      rule = described_class::GATED.grep(described_class::NameRule).first
+      anchors = Lain::Sensitivity::Anchors.new(home:, root: cwd)
+      path = "#{cwd}/spec/fixtures/vcr_cassettes/e2e/plain_chat_journey.yml"
+      rule.matches?(path, anchors)
+      probe = -> { GC.stat(:total_allocated_objects) }
+      empty = -probe.call + probe.call
+      before = probe.call
+      rule.matches?(path, anchors)
+
+      expect(probe.call - before - empty).to eq(0)
+    end
+
+    context "when the call runs in a checkout outside the root" do
+      let(:root) { "/home/u/app" }
+      let(:checkout) { "/home/u/.local/state/lain/worktrees/abc/w1" }
+      let(:rooted) { described_class.new(home:, cwd: root, root:) }
+
+      it "reads directory names below the call's cwd as well" do
+        expect(rooted.classify("#{checkout}/secrets/prod.yml")).to be_ordinary
+        expect(rooted.classify("#{checkout}/secrets/prod.yml", within: checkout))
+          .to have_attributes(level: :gated, reason: :credential)
+        expect(rooted.classify("#{checkout}/README", within: checkout)).to be_ordinary
+      end
+
+      it "never counts an ancestor of the call's cwd, nor a cwd that holds the root" do
+        private_checkout = "/srv/private/w1"
+
+        expect(rooted.classify("#{private_checkout}/README", within: private_checkout)).to be_ordinary
+        expect(rooted.classify(private_checkout, within: private_checkout)).to be_ordinary
+        expect(rooted.classify("#{root}/README", within: "/home")).to be_ordinary
+        expect(described_class.new(home:, cwd: "/home/u/private/app", root: "/home/u/private/app")
+          .classify("/home/u/private/app/README", within: "/")).to be_ordinary
+      end
+
+      it "leaves an exemption standing in the checkout" do
+        rules = Lain::Sensitivity::Rules.from({ "exempt" => ["prod.yml"] })
+        exempting = described_class.new(home:, cwd: root, root:, rules:)
+
+        expect(exempting.classify("#{checkout}/secrets/prod.yml", within: checkout)).to be_exempt
+      end
+    end
+
+    it "reads only the name of a file outside the root" do
+      expect(classify("/etc/app/token.json")).to be_gated
+      expect(classify("/etc/secrets/app.conf")).to be_ordinary
+    end
+  end
+
   describe "credential file variants, recognised by name" do
     def levels(names) = names.to_h { |name| [name, classify("#{home}/#{name}").level] }
 
@@ -563,8 +676,8 @@ RSpec.describe Lain::Sensitivity do
     end
 
     it "gates a pattern the config added at the gated strength" do
-      rules = Lain::Sensitivity::Rules.from({ "gated" => ["*.private"] })
-      verdict = described_class.new(home:, cwd:, rules:).classify("keys/team.private")
+      rules = Lain::Sensitivity::Rules.from({ "gated" => ["*.sealed"] })
+      verdict = described_class.new(home:, cwd:, rules:).classify("keys/team.sealed")
 
       expect(verdict).to be_gated
       expect(verdict.reason).to eq(:configured)
@@ -914,6 +1027,44 @@ RSpec.describe Lain::Sensitivity do
       end
     end
 
+    it "counts a basename glob that lifts a name-gated file and another entry, and refuses it" do
+      expect { Lain::Sensitivity::Rules.from({ "exempt" => ["*.txt"] }) }
+        .to raise_error(Lain::Config::Refusal, /lifts 2 .*"passwords\.txt"/)
+    end
+
+    it "counts an exemption of one name-gated file against the name rule alone, and lifts it" do
+      probe = Lain::Sensitivity::Rules::PROBE
+      exemption = Lain::Sensitivity::Rules.from({ "exempt" => ["password.txt"] }).exempt.first
+      lifting = described_class::GATED.select { |gated| exemption.lifts?(gated, probe) }
+
+      expect(lifting.map(&:class)).to eq([described_class::NameRule])
+      expect(described_class.new(home:, cwd:, rules: Lain::Sensitivity::Rules.from({ "exempt" => ["password.txt"] }))
+        .classify("password.txt")).to have_attributes(level: :ordinary, reason: :exempt)
+    end
+
+    it "counts an exemption of a file under a secret-named directory against the name rule" do
+      expect { Lain::Sensitivity::Rules.from({ "exempt" => ["*.yml"] }) }
+        .to raise_error(Lain::Config::Refusal, /lifts 2 .*"secrets\.y\*ml"/)
+    end
+
+    it "counts every exemption that lifts a name-gated data file against the name rule" do
+      probe = Lain::Sensitivity::Rules::PROBE
+      name_rule = described_class::GATED.grep(described_class::NameRule)
+      %w[*.csv *s.csv notes.txt secrets.toml *.ini].each do |pattern|
+        exemption = Lain::Sensitivity::Rules.from({ "exempt" => [pattern] }).exempt.first
+
+        expect(described_class::GATED.select { |gated| exemption.lifts?(gated, probe) }).to eq(name_rule), pattern
+      end
+    end
+
+    it "refuses an extension glob that lifts the name rule and a credential entry" do
+      { "*.toml" => %r{lifts 2 .*"\.cargo/credentials\.toml"}, "*.tfvars" => /lifts 2 .*"\*\.tfvars"/ }
+        .each do |pattern, message|
+          expect { Lain::Sensitivity::Rules.from({ "exempt" => [pattern] }) }
+            .to raise_error(Lain::Config::Refusal, message)
+        end
+    end
+
     it "does not refuse an ordinary name for colliding with the probe's own placeholder" do
       expect { Lain::Sensitivity::Rules.from({ "exempt" => %w[sample file x] }) }.not_to raise_error
     end
@@ -1242,7 +1393,7 @@ RSpec.describe Lain::Sensitivity do
     # The asymmetry is deliberate: a process may legitimately sit at /, but a
     # HOME of / is a misconfiguration that disables the table.
     it "accepts / as a cwd, which home may not be" do
-      expect(described_class.new(home:, cwd: "/").classify("etc/passwd")).to be_ordinary
+      expect(described_class.new(home:, cwd: "/").classify("etc/hosts")).to be_ordinary
     end
   end
 

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
 require "tmpdir"
 
 # Kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
@@ -106,6 +107,44 @@ RSpec.describe Lain::Approval::PathGate do
       landing = File.join(@worker, ".env.local")
       expect(oracle.asks).to eq([{ path: "readme2.txt -> #{landing}".inspect, tool: "read_file", region_count: "0" }])
       expect([settled.approved?, settled.surface]).to eq([true, Lain::Approval::SecretSurface::SURFACE])
+    end
+  end
+
+  # `/mode plan` started in a subdirectory runs in a spike that mirrors it, so
+  # the gate parks a read under a secret-named directory of the checkout, and
+  # the surface judging it must count from the checkout as the gate did.
+  describe "a read in a checkout, from a cwd below it" do
+    around do |example|
+      Dir.mktmpdir("lain-path-gate-checkout") do |dir|
+        base = File.realpath(dir)
+        @root = File.join(base, "app")
+        @checkout = File.join(base, "spikes", "w1")
+        FileUtils.mkdir_p([@root, File.join(@checkout, "sub"), File.join(@checkout, "secrets")])
+        File.write(File.join(@checkout, "secrets", "prod.yml"), "hunter2\n")
+        example.run
+      end
+    end
+
+    let(:sensitivity) { Lain::Sensitivity.new(home: "/home/tester", cwd: @root, root: @root) }
+    let(:worker_env) { Lain::WorkerEnv.new(cwd: File.join(@checkout, "sub"), env: {}, checkout: @checkout) }
+    let(:session) { Lain::Session.new(worker_env:) }
+
+    def claimed?(path)
+      read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
+      surface = Lain::Approval::SecretSurface.new(oracle: PathGateSpecSupport::ApprovingOracle.new, threshold: 0.9,
+                                                  journal: [], path_gate: gate)
+      queue = Lain::Approval::Queue.new(journal: [], timeout: 0.5)
+      Sync do |task|
+        parked = task.async { queue.adjudicate(read, session) }
+        pending = task.with_timeout(1) { queue.dequeue }
+        surface.claims?(pending).tap { pending.deny(surface: "spec") }
+      ensure
+        parked&.stop
+      end
+    end
+
+    it "is claimed by the secret surface, written absolutely or relatively" do
+      expect(["#{@checkout}/secrets/prod.yml", "../secrets/prod.yml"].map { |path| claimed?(path) }).to all(be(true))
     end
   end
 

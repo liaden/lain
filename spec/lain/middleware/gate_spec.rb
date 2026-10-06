@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
+require "tmpdir"
+
 # A policy that records every call it was asked about and answers a fixed
 # verdict. Being ASKED is what "gated" means, so the examples read that off
 # the record rather than inferring it from a refusal's wording.
@@ -347,6 +350,33 @@ RSpec.describe Lain::Middleware::Gate do
 
       expect(result).to have_attributes(is_error: true, content: /denied/)
       expect(reached).to be_empty
+    end
+
+    # `/mode plan` started in a subdirectory runs in a spike that mirrors it,
+    # so directory names count from the checkout, not from the cwd below it.
+    it "gates a file under a secret-named directory of the checkout, from a cwd below it", :seam do
+      Dir.mktmpdir("lain-gate-checkout") do |dir|
+        base = File.realpath(dir)
+        root = File.join(base, "app")
+        checkout = File.join(base, "spikes", "w1")
+        FileUtils.mkdir_p([root, File.join(checkout, "sub"), File.join(checkout, "secrets")])
+        File.write(File.join(checkout, "secrets", "prod.yml"), "hunter2\n")
+        File.write(File.join(checkout, "README"), "plain\n")
+        classifier = Lain::Sensitivity.new(home: "/home/tester", cwd: root, root:)
+        guarded = Lain::Sensitivity::Policy.new(sensitivity: classifier)
+        worker_env = Lain::WorkerEnv.new(cwd: File.join(checkout, "sub"), env: {}, checkout:)
+        context = Lain::Session.new(worker_env:)
+        asked = lambda do |path|
+          approval = spy
+          gate = described_class.new(policy: approval, sensitivity: guarded)
+          through(gate, tool_call("read_file", { "path" => path }), tool: shipped.fetch("read_file"), context:)
+          approval.asked.any?
+        end
+
+        paths = ["#{checkout}/secrets/prod.yml", "../secrets/prod.yml", "../README"]
+
+        expect(paths.map(&asked)).to eq([true, true, false])
+      end
     end
 
     it "leaves an ordinary path to pass downstream untouched" do

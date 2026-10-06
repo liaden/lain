@@ -51,7 +51,7 @@ module Lain
       # frozen instance for {Policy::Null}'s reason: a fresh one per default
       # would make two otherwise identical guards compare unequal.
       class Null
-        def sift(rows) = Sifted.new(kept: rows.to_a, withheld: [])
+        def sift(rows, **) = Sifted.new(kept: rows.to_a, withheld: [])
 
         INSTANCE = new.freeze
 
@@ -76,9 +76,11 @@ module Lain
       # @param rows [Enumerable<String>] the result's rows, in the tool's order
       # @yieldparam row [String] one row
       # @yieldreturn [Array<String>] every path that row could name
+      # @param within [String, nil] the call's own cwd, passed on to a
+      #   classifier that reads directory names below it
       # @return [Sifted]
-      def sift(rows)
-        judged = rows.map { |row| [row, verdict_for(yield(row))] }
+      def sift(rows, within: nil)
+        judged = rows.map { |row| [row, verdict_for(yield(row), within)] }
         kept, hidden = judged.partition { |_row, verdict| verdict.nil? }
         Sifted.new(kept: kept.map(&:first), withheld: hidden.map(&:last))
       end
@@ -88,8 +90,13 @@ module Lain
       # The first reading of this row that is not ordinary, and nil when every
       # reading is. Lazy, so an early sensitive reading stops the walk -- and so
       # the verdict reported is the first one found rather than the last.
-      def verdict_for(readings)
-        readings.lazy.map { @sensitivity.classify(_1) }.find { !_1.ordinary? }
+      def verdict_for(readings, within)
+        readings.lazy.map { classify(_1, within) }.find { !_1.ordinary? }
+      end
+
+      # Only a cwd is passed on, so a classifier that takes none still serves.
+      def classify(reading, within)
+        within ? @sensitivity.classify(reading, within:) : @sensitivity.classify(reading)
       end
     end
   end

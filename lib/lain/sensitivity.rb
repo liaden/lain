@@ -100,11 +100,23 @@ module Lain
       def explanation = EXPLANATIONS.fetch(reason)
     end
 
+    Anchors = Data.define(:home, :root, :base)
+
     # The two directories a rule's `under` can be anchored on: the injected
     # home, and the project root a config names paths from. `root` is nil for
     # a classifier given none, which {Sensitivity#initialize} allows only while
-    # no rule anchors there.
-    Anchors = Data.define(:home, :root)
+    # no rule anchors there. `base` is where {NameRule} starts reading
+    # directory names: the root, or the cwd when there is none.
+    class Anchors
+      # Derived once here, since every classify reads it, and held beside the
+      # members so {#with} derives it anew rather than carrying a stale one.
+      attr_reader :base_prefix
+
+      def initialize(home:, root:, base: root)
+        @base_prefix = base && "#{base.chomp(File::SEPARATOR)}#{File::SEPARATOR}".freeze
+        super
+      end
+    end
 
     # The spellings a credential file's name takes once a backup, an editor or a
     # port from another platform has touched it.
@@ -289,6 +301,62 @@ module Lain
       end
 
       def excepted?(base) = !except.nil? && File.fnmatch?(except, base, EXCEPT_GLOB)
+    end
+
+    # A file, or a directory below the root, whose name says it holds a secret:
+    # `password.txt`, `secrets/prod`, `.secrets/x`. Whole words in any case,
+    # which no {Rule} can say: `inside` is one literal segment and `name` a
+    # case-sensitive glob. Whole words because a substring also catches
+    # `AUTHORS` and `tokenizer.json`.
+    #
+    # Only below the base, because a path is absolute by the time it is judged
+    # and a project rooted under `~/private/` would otherwise gate every file
+    # it holds. A path outside the base is judged by its own name alone.
+    #
+    # Source files and markdown are excepted by extension: `auth.py` and
+    # `lib/auth/token.rb` name the code that handles a secret, and a doc about
+    # one is prose. Data files are not.
+    class NameRule
+      WORDS = %w[password passwords passwd secret secrets token tokens credential credentials apikey private
+                 auth].freeze
+      # Asked of the name as it stands rather than of a split copy, because
+      # every classify pays for it: a word is bounded by anything but a letter
+      # or a digit, and `api key` is one word across a separator within a name.
+      WORD = %r{(?<![A-Za-z0-9])(?:#{WORDS.join("|")}|api[^A-Za-z0-9/]+key)(?![A-Za-z0-9])}i
+      EXCEPTED = /\.(?:rb|py|ts|tsx|js|jsx|go|rs|java|kt|c|h|cc|cpp|sh|lua|ex|exs|swift|md)\z/i
+      # Every word in every data extension, and a few files under a named
+      # directory, so an exemption that lifts any of them is counted here.
+      DATA = %w[txt toml yml yaml json env tfvars csv ini conf cfg xml properties].freeze
+      SPECIMENS = [*[*WORDS, "api_key"].product(DATA), *%w[secrets/config secrets/notes secrets/prod].product(DATA)]
+                  .map { |name, extension| "#{name}.#{extension}".freeze }.freeze
+      LABEL = "a name or directory naming a secret"
+      VERDICT = Verdict.new(level: :gated, reason: :credential)
+      SLASH = File::SEPARATOR.ord
+
+      def credential? = true
+      def verdict = VERDICT
+      def label = LABEL
+
+      # @param anchors [Anchors] whose base the specimens sit under
+      # @return [Array<String>]
+      def samples(anchors) = SPECIMENS.map { |specimen| "#{anchors.base_prefix}#{specimen}" }
+
+      # @param path [String] already lexically normalized and home-rewritten
+      # @param anchors [Anchors] whose base the directory names are read below
+      def matches?(path, anchors)
+        prefix = anchors.base_prefix
+        return false if path.match?(EXCEPTED) || covers?(path, prefix)
+
+        path.match?(WORD, path.start_with?(prefix) ? prefix.length : path.rindex(File::SEPARATOR) + 1)
+      end
+
+      private
+
+      # The base itself or one of its ancestors, whose names are where the
+      # project sits rather than what it holds.
+      def covers?(path, prefix)
+        prefix.start_with?(path) && (path == File::SEPARATOR || prefix.getbyte(path.bytesize) == SLASH)
+      end
     end
 
     Rules = Data.define(:denied, :gated, :exempt)
@@ -559,6 +627,8 @@ module Lain
       Rule.homed("", name: "key4.db", level: :denied, reason: :protected)
     ].freeze
 
+    NAME = NameRule.new.freeze
+
     # Worth asking about. A spurious match here costs one prompt, so these are
     # the half that widens.
     #
@@ -635,7 +705,8 @@ module Lain
       # the table rather than a considered position. Anchored on the `.git`
       # SEGMENT, on {Rule.within}'s shape, because a bare `config` basename is a
       # plausible name in any checkout.
-      Rule.within(".git", name: "config", level: :gated, reason: :credential)
+      Rule.within(".git", name: "config", level: :gated, reason: :credential),
+      NAME
     ].freeze
 
     # The project's own Ruby, which a later launch evaluates. The trust digest
@@ -712,7 +783,8 @@ module Lain
       @home = anchor(:home, home)
       @cwd = anchor(:cwd, cwd)
       self.class.check!(home: @home)
-      @anchors = Anchors.new(home: @home, root: project_root(root, rules))
+      anchored_root = project_root(root, rules)
+      @anchors = Anchors.new(home: @home, root: anchored_root, base: anchored_root || @cwd)
 
       @rules = [*DENIED, *project_ruby(@anchors), *rules.denied, *rules.exempt.map(&:exactly), *CREDENTIALS,
                 *rules.exempt.select(&:homed?), *PERSONAL, *rules.gated, ORDINARY].freeze
@@ -720,9 +792,12 @@ module Lain
     end
 
     # @param path [String, Pathname] a path as it was written, not as it resolves
+    # @param within [String, nil] the call's own cwd. A leased worker or
+    #   `/mode plan` runs in a checkout outside the root, and directory names
+    #   below it count as they do below the root.
     # @return [Verdict] never nil
     # @raise [ArgumentError] when `path` is not path-shaped at all -- see {#text!}
-    def classify(path) = verdict_for(text!(path))
+    def classify(path, within: nil) = verdict_for(text!(path), within)
 
     def denied?(path) = classify(path).denied?
     def gated?(path) = classify(path).gated?
@@ -744,17 +819,32 @@ module Lain
       converted.is_a?(String) ? converted : nil
     end
 
-    def verdict_for(path)
+    def verdict_for(path, within)
       return MALFORMED unless Sensitivity.readable?(path)
 
       clean = lexical(path)
-
-      @rules.find { |rule| rule.matches?(clean, @anchors) }.verdict
+      verdict = @rules.find { |rule| rule.matches?(clean, @anchors) }.verdict
+      verdict.reason == ORDINARY.reason && named_within?(clean, within) ? NAME.verdict : verdict
     rescue ArgumentError, EncodingError
       # Defence in depth, {Approval::Risk::OutsideRoot}'s posture: `readable?`
       # takes the two inputs we know of, and unresolvable is exactly the case
       # that must not be waved through.
       MALFORMED
+    end
+
+    def named_within?(clean, within)
+      checkout = within && checkout_anchors(within)
+      !checkout.nil? && NAME.matches?(clean, checkout)
+    end
+
+    # Only a cwd outside the base adds one: below it, its names are already
+    # read, and at or above it, they are where the project sits.
+    def checkout_anchors(within)
+      cwd = anchor(:within, within)
+      prefix = @anchors.base_prefix
+      return nil if "#{cwd.chomp(ROOT)}#{ROOT}".start_with?(prefix) || prefix.start_with?("#{cwd.chomp(ROOT)}#{ROOT}")
+
+      @anchors.with(base: cwd)
     end
 
     def project_ruby(anchors) = anchors.root.nil? ? [] : [PROJECT_RUBY]

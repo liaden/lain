@@ -787,6 +787,12 @@ The split is forced by *when the answer is available*: a path classifier can ans
 is opened, a region detector cannot until it has the bytes. So there are three places, and
 tier-1 `read_file`/`grep`/`glob`/`list_files` check nothing themselves.
 
+A file, or a directory below the root, whose name names a secret (whole words, any case: password,
+passwd, secret, token, credential, api key, private, auth) is gated for every reader; code and
+markdown files are excepted. With no root the base is cwd, and a call that runs in a checkout outside
+the root (a leased worker, `/mode plan`) also counts the names below that checkout. An
+ancestor of a base never counts, and an exemption that lifts a name is counted against the rule.
+
 `Policy` judges a path twice before the call runs: as the call wrote it, and where it lands
 (`Landing.of`, resolved against the call's own worker cwd, so a worktree or `/mode plan` moves the
 base with it), and the stricter verdict wins. A link's name says nothing about what it opens, so

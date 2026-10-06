@@ -54,7 +54,7 @@ module Lain
       def gated?(pending)
         effect = Effect::ToolCall.new(tool_use_id: pending.tool_use_id, name: pending.tool.to_s, input: pending.input)
         cwd = pending.cwd
-        @policy.gates?(effect, cwd:) && @policy.denial(effect, cwd:).nil?
+        @policy.gates?(effect, cwd:, within: pending.within) && @policy.denial(effect, cwd:).nil?
       end
 
       def shown(path, cwd)

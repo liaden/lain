@@ -638,10 +638,11 @@ RSpec.describe Lain::Approval::ComposedTerm do
   # Measured: `cat password.txt` holding a bare `hunter2` was approved, since
   # no region detector fires on a value with no assignment around it. The name
   # is the only signal, and on a source file it says nothing about the bytes.
-  describe "a file whose name hints at a secret" do
-    it "abstains on a data file whose name carries the hint" do
+  describe "a file or directory whose name names a secret" do
+    it "abstains on a data file whose name, or a directory's below the root, names a secret" do
       in_tree do |root, home|
-        names = %w[password.txt secret.txt token.txt api_key.txt credentials vault-pass.txt]
+        names = %w[password.txt Password.TXT secret.txt token.txt api_key.txt credentials secrets/prod.yml
+                   private/notes.txt]
         names.each { |name| on_disk(root, name, "hunter2\n") }
         commands = names.map { |name| "cat #{name}" }
         expect_allowed_by_the_verdict(*commands)
@@ -651,9 +652,18 @@ RSpec.describe Lain::Approval::ComposedTerm do
       end
     end
 
-    it "still approves a source file whose name carries the hint" do
+    it "abstains on an ordinary name that lands on a file whose name names a secret" do
       in_tree do |root, home|
-        names = %w[session.rb auth.py token.ts session.sh]
+        on_disk(root, "password.txt", "hunter2\n")
+        File.symlink(File.join(root, "password.txt"), File.join(root, "readme.txt"))
+
+        expect(rule_for(home, root).decide(call_of("cat readme.txt", cwd: root))).to be_nil
+      end
+    end
+
+    it "still approves a source file whose name or directory names one" do
+      in_tree do |root, home|
+        names = %w[session.rb auth.py token.ts session.sh auth/token.rb]
         names.each { |name| on_disk(root, name, "x = 1\n") }
 
         rule = rule_for(home, root)
@@ -661,16 +671,26 @@ RSpec.describe Lain::Approval::ComposedTerm do
       end
     end
 
-    it "leaves a pattern or a flag that names a hint word as it was" do
+    it "approves a name the rule reads by substring no longer" do
+      in_tree do |root, home|
+        names = %w[AUTHORS tokenizer.json compass.yml]
+        names.each { |name| on_disk(root, name, "plain\n") }
+
+        rule = rule_for(home, root)
+        expect(names.map { |name| rule.decide(call_of("cat #{name}", cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    # The classifier judges every word as a name, so a pattern spelled as a
+    # secret word asks a human: one prompt, the gated tier's price.
+    it "approves a pattern that is no secret word, and abstains on one that is" do
       in_tree do |root, home|
         on_disk(root, "lib/app.rb", "puts 1\n")
-        on_disk(root, "lib/notes.txt", "plain\n")
-
         commands = ["grep session lib/", "grep --regexp=token lib/"]
         expect_allowed_by_the_verdict(*commands)
 
         rule = rule_for(home, root)
-        expect(commands.map { |command| rule.decide(call_of(command, cwd: root)) }).to all(be_allow)
+        expect(commands.map { |command| rule.decide(call_of(command, cwd: root)) }).to match([be_allow, be_nil])
       end
     end
   end

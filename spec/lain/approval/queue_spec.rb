@@ -118,6 +118,24 @@ RSpec.describe Lain::Approval::Queue do
       end
     end
 
+    # A checkout may mirror a subdirectory, so where directory names start
+    # counting is the checkout and not the cwd below it.
+    it "records the session's checkout as the base, and its cwd when it has none" do
+      leased = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/w/co/sub", env: {}, checkout: "/w/co"))
+      plain = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/srv/worker", env: {}))
+
+      within = [leased, plain].map do |session|
+        Sync do |task|
+          task.async { queue.call(tool_call, session) }
+          pending = queue.dequeue
+          pending.deny(surface: "spec")
+          pending.respond_to?(:within) ? pending.within : nil
+        end
+      end
+
+      expect(within).to eq(["/w/co", "/srv/worker"])
+    end
+
     it "parks the fiber, not the reactor: a sibling fiber proceeds while the call waits" do
       log = []
       gate = gate_over([])
@@ -773,7 +791,7 @@ RSpec.describe Lain::Approval::Queue do
     it "takes no ledger, so `decide` has nothing to release into" do
       expect(described_class::Pending.instance_method(:initialize).parameters)
         .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key outstanding], %i[key humans_only],
-                %i[key cwd]])
+                %i[key cwd], %i[key within]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

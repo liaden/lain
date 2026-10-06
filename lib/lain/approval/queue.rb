@@ -120,7 +120,8 @@ module Lain
       # is normal operation, so the loser's answer is a quiet no-op here and NOT
       # the coordination bug {Promise::AlreadyResolved} names.
       class Pending
-        attr_reader :requester, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd
+        attr_reader :requester, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd,
+                    :within
 
         # Defaulting here is NOT the ledger's no-default rule bent: a defaulted
         # LEDGER lets a forgotten injection become a second ledger whose
@@ -140,11 +141,13 @@ module Lain
         #
         # `cwd` is where the parked call's relative path resolves, so a surface
         # judging that path lands it where the gate did; absent, it is the
-        # process's, as for a call made with no session.
+        # process's, as for a call made with no session. `within` is where the
+        # gate counted directory names from, see {Sensitivity::Policy.base_of}.
         def initialize(effect:, requester:, clock:, outstanding: Outstanding::NONE, humans_only: false,
-                       cwd: ::Lain::Session.cwd_of(nil))
+                       cwd: ::Lain::Session.cwd_of(nil), within: cwd)
           @humans_only = humans_only == true
           @cwd = cwd
+          @within = within
           @tool = effect.name
           @tool_use_id = effect.tool_use_id
           @input = effect.input
@@ -327,7 +330,8 @@ module Lain
       def admit(effect, context, outstanding)
         pending = Pending.new(effect:, requester: Queue.requester_for(context, @requester), clock: @clock,
                               outstanding:, humans_only: Escalation.barred?(context),
-                              cwd: ::Lain::Session.cwd_of(context))
+                              cwd: ::Lain::Session.cwd_of(context),
+                              within: ::Lain::Sensitivity::Policy.base_of(context))
         record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }
         @parked << pending
         @arrivals.enqueue(pending)

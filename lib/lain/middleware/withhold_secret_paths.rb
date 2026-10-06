@@ -252,10 +252,11 @@ module Lain
       # path reading out of a sentence that merely happens to be one line long
       # (see {Rows}).
       def reported(carried, effect, shape, content)
-        target = base(effect, ::Lain::Session.cwd_of(carried.fetch(:context)))
+        context = carried.fetch(:context)
+        target = base(effect, ::Lain::Session.cwd_of(context))
         return carried if shape.no_rows?(effect, content, target)
 
-        sifted = sift(shape, content, target)
+        sifted = sift(shape, content, target, ::Lain::Sensitivity::Policy.base_of(context))
         return carried unless sifted.any?
 
         carried.merge(result: Tool::Result.ok([*sifted.kept, line(sifted, shape)].join(ROW)))
@@ -266,8 +267,8 @@ module Lain
                          reasons: sifted.reasons.join(REASONS))
       end
 
-      def sift(shape, content, base)
-        @filter.sift(rows(content)) { |row| readings(shape, row).map { reading(_1, base) } }
+      def sift(shape, content, base, within)
+        @filter.sift(rows(content), within:) { |row| readings(shape, row).map { reading(_1, base) } }
       end
 
       # Split as BYTES and read back as UTF-8, because a text split raises on

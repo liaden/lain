@@ -88,10 +88,10 @@ module Lain
     # MEASURED before it existed: a PKCS#8 key in `ops_readme.txt`, a hardlink
     # to a key in `~/.ssh`, a 0600 `deploy_key` and `.vault-token` were each
     # printed to the model with nobody asked, while `read_file` of the same
-    # bytes masked them. Predicate 4 can only ever judge the name. So an
-    # existing regular file must be readable by everyone, fit the bounded scan
-    # (64 KiB), carry no region, and not be a non-source file whose name hints
-    # at a secret; {CLI::Wiring::BoardBuild::Classifiers::Content}
+    # bytes masked them. Predicate 4 can only ever judge the name, a word or a
+    # directory that names a secret included. So an existing regular file must
+    # be readable by everyone, fit the bounded scan (64 KiB), and carry no
+    # region; {CLI::Wiring::BoardBuild::Classifiers::Content}
     # holds the mechanics. It too lives outside {Sensitivity}, for the same
     # reason.
     #

@@ -40,9 +40,9 @@ module SensitivityPolicySpecSupport
       @asked = []
     end
 
-    def classify(path)
+    def classify(path, **)
       @asked << path
-      @inner.classify(path)
+      @inner.classify(path, **)
     end
   end
 end
@@ -436,6 +436,61 @@ RSpec.describe Lain::Sensitivity::Policy do
 
       expect(policy.gates?(call("read_file", { "path" => gated }), cwd:)).to be(true)
       expect(sift(policy.filter, gated).withheld.map(&:reason)).to eq([:credential])
+    end
+
+    it "gates and withholds a file whose name names a secret, on one table" do
+      Dir.mktmpdir("lain-policy-name") do |dir|
+        root = File.realpath(dir)
+        File.write(File.join(root, "password.txt"), "hunter2\n")
+        named = described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:))
+        rows = Dir.children(root).map { |name| File.join(root, name) }
+
+        expect(named.gates?(call("read_file", { "path" => "password.txt" }), cwd: root)).to be(true)
+        expect(named.filter.sift(rows) { |row| [row] })
+          .to have_attributes(kept: [], withheld: [have_attributes(reason: :credential)])
+      end
+    end
+
+    # A leased worker and `/mode plan` run in a checkout outside the root, so
+    # the call's cwd is a base too, for the gate, the listing and bash alike.
+    it "agrees with bash in a checkout outside the root", :seam do
+      Dir.mktmpdir("lain-policy-checkout") do |dir|
+        base = File.realpath(dir)
+        home = File.join(base, "home")
+        root = File.join(home, "app")
+        checkout = File.join(home, ".local", "state", "lain", "worktrees", "abc", "w1")
+        FileUtils.mkdir_p([root, File.join(home, ".ssh")])
+        secret = File.join(checkout, "secrets", "prod.yml")
+        FileUtils.mkdir_p(File.dirname(secret))
+        File.write(secret, "hunter2\n")
+        File.chmod(0o644, secret)
+        project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+        paths = Lain::Paths.new(env: { "HOME" => home })
+        table = Lain::CLI::Wiring::BoardBuild.rules(project:)
+        board = Lain::CLI::Wiring::BoardBuild.policy(project:, paths:, table:)
+        factory = Lain::CLI::Wiring::BoardBuild.classifiers(project:, paths:, table:)
+        sub = File.join(checkout, "sub")
+        FileUtils.mkdir_p(sub)
+
+        { checkout => "secrets/prod.yml", sub => "../secrets/prod.yml" }.each do |cwd, relative|
+          worker = factory.for(Lain::WorkerEnv.new(cwd:, env: {}, checkout:))
+          bash = Lain::Approval::Rule::Call.for(tool: Lain::Tools::Bash.new(verdict: Lain::Shell::Verdict.new),
+                                                input: { "command" => "cat #{relative}", "cwd" => cwd })
+
+          [secret, relative].each do |path|
+            expect(board.gates?(call("read_file", { "path" => path }), cwd:, within: checkout)).to be(true), path
+          end
+          expect(board.filter.sift([secret], within: checkout) { |row| [row] }.kept).to be_empty
+          expect(Lain::Approval::ComposedTerm.new(sensitivity: worker).decide(bash)).to be_nil
+        end
+      end
+    end
+
+    it "takes a session's checkout as the base, and its cwd when it has none" do
+      leased = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/w/co/sub", env: {}, checkout: "/w/co"))
+      plain = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/w/app", env: {}))
+
+      expect([described_class.base_of(leased), described_class.base_of(plain)]).to eq(["/w/co", "/w/app"])
     end
 
     it "keeps a row the gate would let through" do

@@ -155,7 +155,7 @@ module Lain
           freeze
         end
 
-        def classify(row) = @policy.judge(row, cwd: File::SEPARATOR)
+        def classify(row, within: nil) = @policy.judge(row, cwd: within || File::SEPARATOR)
       end
 
       # A message rather than a reader handing the classifier out, so a
@@ -170,23 +170,37 @@ module Lain
       #
       # @param path [String] as the call wrote it
       # @param cwd [String] absolute; what the tool resolves a relative path against
+      # @param within [String] absolute; where directory names start counting
+      #   outside the root, see {.base_of}
       # @return [Sensitivity::Verdict]
-      def judge(path, cwd:)
-        literal = @sensitivity.classify(path)
+      def judge(path, cwd:, within: cwd)
+        literal = @sensitivity.classify(path, within:)
         return literal if literal.denied?
 
-        strictest([literal, *landed(path, cwd)])
+        strictest([literal, *landed(path, cwd, within)])
+      end
+
+      # A leased worker or a `/mode plan` spike runs in a checkout that may
+      # mirror a subdirectory, so the checkout is the base and not the cwd
+      # below it: the names between them count as they do below the root.
+      #
+      # @param context [Session, #worker_env, nil] as a middleware env carries it
+      # @return [String] the checkout, or the cwd for a session without one
+      def self.base_of(context)
+        checkout = context.respond_to?(:worker_env) ? context.worker_env.checkout : nil
+        checkout || ::Lain::Session.cwd_of(context)
       end
 
       # @param effect [Lain::Effect] any effect at all; the question is total
       #   over the vocabulary, so no caller guards on kind first
       # @param cwd [String] absolute; the call's own base, see {Session.cwd_of}
+      # @param within [String] absolute; see {.base_of}
       # @return [Boolean]
-      def gates?(effect, cwd:)
+      def gates?(effect, cwd:, within: cwd)
         return false unless effect.tool_call?
 
         path = path_in(effect)
-        !path.nil? && !judge(path, cwd:).ordinary?
+        !path.nil? && !judge(path, cwd:, within:).ordinary?
       end
 
       # The DENIAL half of the same question, for {Middleware::Sensitivity},
@@ -234,18 +248,18 @@ module Lain
       # Resolved as {WorkerEnv#resolve} resolves it, so the landing judged is the
       # file the tool then opens. A spelling equal to the name already judged is
       # skipped: every listing row is absolute, and most land on themselves.
-      def landed(path, cwd)
+      def landed(path, cwd, within)
         named = File.expand_path(path, cwd)
         judged = path.start_with?(File::SEPARATOR) ? named : nil
-        Landing.of(named, cwd:, **@anchors).reject { _1 == judged }.map { @sensitivity.classify(_1) }
+        Landing.of(named, cwd:, **@anchors).reject { _1 == judged }.map { @sensitivity.classify(_1, within:) }
       rescue Landing::Dangling
-        [MALFORMED, *eventually(named, cwd)]
+        [MALFORMED, *eventually(named, cwd, within)]
       rescue SystemCallError, ArgumentError, EncodingError
         [MALFORMED]
       end
 
-      def eventually(named, cwd)
-        Landing.eventual(named, cwd:, **@anchors).map { @sensitivity.classify(_1) }
+      def eventually(named, cwd, within)
+        Landing.eventual(named, cwd:, **@anchors).map { @sensitivity.classify(_1, within:) }
       rescue Landing::Dangling, SystemCallError, ArgumentError, EncodingError
         []
       end

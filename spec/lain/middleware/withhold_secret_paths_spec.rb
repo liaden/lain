@@ -11,7 +11,7 @@ module WithholdSpecSupport
   # The message names the listing it was handed, which is exactly what must not
   # reach the model -- so the rescue may report the CLASS and nothing else.
   class RaisingFilter
-    def sift(rows)
+    def sift(rows, **)
       raise IOError, "sift died on #{rows.inspect}"
     end
   end
@@ -158,6 +158,46 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
 
       expect(shown).not_to include("PRIVATE KEY")
       expect(shown).to include("PUBLIC KEY", "1 match withheld (protected)")
+    end
+  end
+
+  # A leased worker's checkout sits outside the root the classifier was built
+  # on, so the row is judged below the call's own cwd as well.
+  describe "a listing in a checkout outside the root" do
+    let(:sensitivity) { Lain::Sensitivity.new(home:, cwd: root, root:) }
+    let(:filter) { Lain::Sensitivity::Policy.new(sensitivity:, home:, root:).filter }
+    let(:root) { File.join(dir, "app").tap { |made| FileUtils.mkdir_p(made) } }
+    let(:checkout) { File.join(dir, "worktrees", "w1") }
+    let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:)) }
+
+    before do
+      write("worktrees/w1/secrets/prod.yml", "hunter2\n")
+      write("worktrees/w1/README", "plain\n")
+    end
+
+    it "withholds a row under a directory that names a secret, and keeps the rest" do
+      shown = content(list(checkout, recursive: true))
+
+      expect(shown).not_to include("prod.yml")
+      expect(shown).to include("README", "withheld (credential)")
+    end
+
+    # `/mode plan` started in a subdirectory runs in a spike that mirrors it,
+    # so the checkout is the base, not the cwd below it.
+    context "with the cwd below the checkout" do
+      let(:session) do
+        Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: File.join(checkout, "sub"), env: {}, checkout:))
+      end
+
+      before { write("worktrees/w1/sub/plain.txt", "hunter2\n") }
+
+      it "withholds the row from list_files and grep alike" do
+        listed = content(list(checkout, recursive: true))
+        grepped = content(grep("hunter2", path: checkout))
+
+        expect([listed, grepped]).to all(satisfy { |shown| !shown.include?("prod.yml") })
+        expect(grepped).to include("plain.txt")
+      end
     end
   end
 

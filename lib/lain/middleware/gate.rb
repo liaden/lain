@@ -174,7 +174,8 @@ module Lain
       # path in an input nothing will read.
       def judged?(effect, tool, context)
         tool.held? &&
-          (tool.requires_approval? || @sensitivity.gates?(effect, cwd: ::Lain::Session.cwd_of(context)))
+          (tool.requires_approval? || @sensitivity.gates?(effect, cwd: ::Lain::Session.cwd_of(context),
+                                                                  within: ::Lain::Sensitivity::Policy.base_of(context)))
       end
     end
   end

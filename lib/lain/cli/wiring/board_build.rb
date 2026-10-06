@@ -367,9 +367,8 @@ module Lain
           #
           # A regular file is admitted only when its owner left it readable by
           # everyone, which the tools that write a credential decline to do, and
-          # when its bytes carry no region `read_file` would have masked. Nor is
-          # one whose name, typed or landed on, matches the region detector's
-          # name hint, unless its extension marks it as source. A word
+          # when its bytes carry no region `read_file` would have masked. What
+          # its name says is the classifier's question, asked before this one. A word
           # naming nothing on disk, or a directory, has no bytes to ask about.
           # Only a word the confinement contains is ever opened, so no file
           # outside the root is read to answer, and anything else that exists --
@@ -387,11 +386,6 @@ module Lain
             # non-blocking, so a FIFO swapped in cannot hold the open.
             OPEN_FLAGS = File::RDONLY | File::NONBLOCK | File::NOFOLLOW
 
-            # A bare `hunter2` in `password.txt` carries no region, so the name
-            # is the only signal; on source it names the code, not its bytes.
-            SOURCE_EXTENSIONS = %w[.rb .rake .erb .py .js .jsx .ts .tsx .go .rs .lua .c .h .cc .hpp .java .kt
-                                   .swift .sh .ex .php .cs .sql .html .css .toml .md .rst].freeze
-
             # @param confinement [Confinement] the same call's root answer
             def initialize(confinement)
               @confinement = confinement
@@ -406,17 +400,9 @@ module Lain
               path = @confinement.landing_of(word)
               return true if !File.exist?(path) || File.directory?(path)
 
-              File.file?(path) && !hinted?(word, path) && File.open(path, OPEN_FLAGS) { |file| unsealed?(file) }
+              File.file?(path) && File.open(path, OPEN_FLAGS) { |file| unsealed?(file) }
             rescue StandardError
               false
-            end
-
-            def hinted?(*paths)
-              paths.any? do |path|
-                name = File.basename(path)
-                name.match?(Lain::Sensitivity::Regions::NAME_HINT) &&
-                  !SOURCE_EXTENSIONS.include?(File.extname(name).downcase)
-              end
             end
 
             # The descriptor is asked again, because the path can be swapped
