@@ -97,6 +97,15 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string).to end_with(described_class::ALTERNATE_SCREEN_OFF)
     end
 
+    it "leaves the screen alone when told not to draw an alternate one" do
+      Dir.mktmpdir do |dir|
+        described_class.new(channel:, output:, history_path: File.join(dir, "history"),
+                            alternate_screen: false).run { channel.close }
+      end
+
+      expect(output.string).not_to include(described_class::ALTERNATE_SCREEN_ON, described_class::ALTERNATE_SCREEN_OFF)
+    end
+
     it "restores the main screen even when the yielded block raises" do
       expect { tty.run { raise "boom" } }.to raise_error("boom")
 

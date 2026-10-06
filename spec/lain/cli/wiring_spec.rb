@@ -2330,8 +2330,9 @@ RSpec.describe Lain::CLI::Wiring do
         said = []
         screen = StringIO.new
         Dir.mktmpdir do |dir|
-          factory = lambda do |channel:, **|
-            Lain::Frontend::TTY.new(channel:, output: screen, history_path: File.join(dir, "history"))
+          factory = lambda do |channel:, alternate_screen: true, **|
+            Lain::Frontend::TTY.new(channel:, output: screen, history_path: File.join(dir, "history"),
+                                    alternate_screen:)
           end
           wiring = described_class.new(options:, chronicle:, status_feed:, stdin:,
                                        tty_factory: factory, conductor_opener:)
@@ -2345,9 +2346,20 @@ RSpec.describe Lain::CLI::Wiring do
         stdin = StringIO.new("quit\n")
         allow(stdin).to receive(:tty?).and_return(true)
 
-        _said, screen = run_resumed(stdin:, options: { grace: 5, non_interactive: true })
+        _said, screen = run_resumed(stdin:, options: { grace: 5 })
 
         expect(screen.index(mismatch)).to be > screen.index(Lain::Frontend::TTY::ALTERNATE_SCREEN_ON)
+      end
+
+      it "draws no alternate screen under --non-interactive, and says a notice once" do
+        stdin = StringIO.new("quit\n")
+        allow(stdin).to receive(:tty?).and_return(true)
+
+        said, screen = run_resumed(stdin:, options: { grace: 5, non_interactive: true })
+
+        expect(screen).not_to include(Lain::Frontend::TTY::ALTERNATE_SCREEN_ON)
+        expect(said.count(mismatch)).to eq(1)
+        expect(screen).not_to include(mismatch)
       end
 
       it "says a notice once to the notice block when there is no terminal" do

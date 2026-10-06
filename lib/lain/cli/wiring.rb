@@ -419,9 +419,11 @@ module Lain
       def open_terminal(agent, notice, startup)
         @tty_factory.call(channel:, input: Lain::Frontend::StdinPump.keys(@stdin),
                           prompt_renderer: prompt_renderer(agent, notice),
-                          layers: @switchboard.mode_switch.method(:layers)).then do |tty|
+                          layers: @switchboard.mode_switch.method(:layers),
+                          alternate_screen: attended?).then do |tty|
           @human_line = tty.method(:render_summons)
-          Lain::Frontend::StdinPump.terminal?(@stdin) ? ScreenNotices.new(tty, startup) : tty
+          notices_on_screen = attended? && Lain::Frontend::StdinPump.terminal?(@stdin)
+          notices_on_screen ? ScreenNotices.new(tty, startup) : tty
         end
       end
 

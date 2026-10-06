@@ -102,14 +102,17 @@ module Lain
       #   spec completes against a fixture tree rather than the real cwd.
       #   Only the sources are injectable, not the {Completion} around them:
       #   the theme and the screen are this class's to hand over
+      # @param alternate_screen [Boolean] whether {#run} draws on the terminal's
+      #   alternate screen; false leaves the answer in the scrollback on exit
       def initialize(channel:, output: $stdout, input: NoKeys, pastel: Pastel.new(enabled: output.tty?),
                      theme: Theme.new(pastel:), prompt_renderer: PromptComposer::Null.new,
                      history_path: File.join(Paths.new.state_home, "history"),
                      clock: RunClock::MONOTONIC,
                      state_path: ProjectDir.new.state_path,
                      wall_clock: -> { Time.now }, layers: NO_LAYERS, tmux: TmuxMessage.new,
-                     completion_sources: Completion::Sources.new)
+                     completion_sources: Completion::Sources.new, alternate_screen: true)
         @channel = channel
+        @alternate_screen = alternate_screen
         @output = output
         @pastel = pastel
         @theme = theme
@@ -146,7 +149,7 @@ module Lain
       # it mutates process-global Reline state, and this is the moment lain is
       # entitled to it -- the terminal is ours from here.
       def run
-        enter_alternate_screen
+        enter_alternate_screen if @alternate_screen
         Completion.install(@completion, notify: method(:render_warning))
         renderer = Thread.new { render_until_closed }
         yield self
@@ -157,7 +160,7 @@ module Lain
         # screen flips back: a block that raised mid-countdown must never
         # leave the terminal raw (see Countdown's window lifecycle).
         @countdown.stop
-        exit_alternate_screen
+        exit_alternate_screen if @alternate_screen
       end
 
       # The prompt as the line editor is handed it: {Warmth}'s cache glyph -- a
