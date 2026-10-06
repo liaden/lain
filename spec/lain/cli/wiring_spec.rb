@@ -1283,10 +1283,10 @@ RSpec.describe Lain::CLI::Wiring do
     # once the first turn's big tool_result is behind the trailing window: the
     # opening exchange alone is small enough that Source#shrinks? refuses the
     # rewrite. The settle between them is what makes the eager fire observable.
-    def converse(agent)
+    def converse(agent, eager_fires: true)
       Sync do |task|
         agent.ask("read it")
-        settle(task, backend.eager, Lain::Canonical.digest(File.read(big_file)))
+        settle(task, backend.eager, Lain::Canonical.digest(File.read(big_file))) if eager_fires
         agent.ask("now summarize what you saw")
       end
     end
@@ -1395,7 +1395,7 @@ RSpec.describe Lain::CLI::Wiring do
       let(:compaction_options) { super().merge(compact_strategy: "elide-tools") }
 
       it "journals the arm the operator named on every compaction it performs" do
-        converse(wire_agent)
+        converse(wire_agent, eager_fires: false)
 
         accounting = journal.events.grep(Lain::Telemetry::Compaction)
         expect(accounting).not_to be_empty

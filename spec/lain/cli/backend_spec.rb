@@ -1227,6 +1227,52 @@ RSpec.describe Lain::CLI::Backend do
       expect(compacting_backend(compact: false).tool_observer).to be_a(Lain::Agent::ToolRunner::Observer::Null)
     end
 
+    it "observes nothing when a strategy replaced the eager tier" do
+      backend = compacting_backend(compact_strategy: "elide-tools+summarize-conversation")
+
+      expect(backend.tool_observer).to be_a(Lain::Agent::ToolRunner::Observer::Null)
+    end
+
+    it "keeps the eager tier when compaction is on with no strategy" do
+      expect(compacting_backend.tool_observer).to be_a(Lain::Compaction::SummaryObserver)
+    end
+
+    # The Null answer alone would pass on a Null that merely lacked the fire, so the
+    # oracle is the witness: it must be asked for the control run and not for a strategy run.
+    def oracle_asks_for(backend)
+      oracle = double("summary oracle", ask: double(await: "summary")) # rubocop:disable RSpec/VerifiedDoubles
+      allow(backend).to receive(:summary_oracle).and_return(oracle)
+      block = { "type" => "tool_result", "tool_use_id" => "tu_1", "content" => "x" * 40_000 }
+      Sync { backend.tool_observer.observe(block, "read_file") }
+      oracle
+    end
+
+    it "asks no Summarize oracle for a 40 KB result under a strategy" do
+      oracle = oracle_asks_for(compacting_backend(compact_strategy: "elide-tools+summarize-conversation"))
+
+      expect(oracle).not_to have_received(:ask)
+    end
+
+    it "asks the Summarize oracle for the same result with no strategy" do
+      expect(oracle_asks_for(compacting_backend)).to have_received(:ask).once
+    end
+
+    it "asks no Summarize oracle on a resume that inherits a strategy" do
+      recorded = Lain::CLI::CompactionProfile.from_header("compact_strategy" => "elide")
+      backend = described_class.new({ provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64 },
+                                    compaction: Lain::CLI::CompactionProfile::UNSET.over(recorded), root: Dir.pwd)
+
+      expect(oracle_asks_for(backend)).not_to have_received(:ask)
+    end
+
+    it "skips the eager tier on a resume that inherits a recorded strategy" do
+      recorded = Lain::CLI::CompactionProfile.from_header("compact_strategy" => "elide")
+      backend = described_class.new({ provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64 },
+                                    compaction: Lain::CLI::CompactionProfile::UNSET.over(recorded), root: Dir.pwd)
+
+      expect(backend.tool_observer).to be_a(Lain::Agent::ToolRunner::Observer::Null)
+    end
+
     # Cold's accumulated warmth and the Eager's fired summaries are run
     # state: a factory rebuilt per call resets both, silently, every turn.
     it "builds the source, the eager, and the observer once per run" do

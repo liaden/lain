@@ -489,9 +489,9 @@ module Lain
 
       # The post-dispatch observer {Agent::ToolRunner} fires eager summaries
       # through, over the run's ONE {Oracle::Eager} -- the store
-      # {#pipeline_source} snapshots.
+      # {#pipeline_source} snapshots. Null under a named strategy, which replaces the eager tier.
       def tool_observer
-        @tool_observer ||= if compaction?
+        @tool_observer ||= if compaction? && @compaction.strategy.nil?
                              Compaction::SummaryObserver.new(eager:)
                            else
                              Agent::ToolRunner::Observer::Null.new
