@@ -2343,8 +2343,9 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       it "draws a notice after the alternate screen opens, where the human can still see it" do
-        stdin = StringIO.new("quit\n")
+        stdin = StringIO.new
         allow(stdin).to receive(:tty?).and_return(true)
+        allow(Reline).to receive(:readmultiline).and_return("quit")
 
         _said, screen = run_resumed(stdin:, options: { grace: 5 })
 
