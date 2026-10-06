@@ -76,9 +76,10 @@ RSpec.describe Lain::Agent do
 
       # normalize closes the open enum to :unknown, which has its own event, so
       # firing lands in :failed rather than blowing up on a missing bang method.
-      expect { a.ask("hi") }.not_to raise_error
+      response = nil
+      expect { response = a.ask("hi") }.not_to raise_error
       expect(a.state).to eq(:failed)
-      expect(a.failure_reason).to include("unrecognized")
+      expect(response.failure.message).to include("unrecognized")
     end
   end
 
@@ -98,7 +99,7 @@ RSpec.describe Lain::Agent do
 
     # The companion guard: the event-totality loop above proves every StopReason
     # fires SOMEWHERE, but a new reason correctly wired to a :failed-targeting
-    # event would still leave @failure_reason silently nil unless Response::Failure::MESSAGES
+    # event would still leave Response#failure silently nil unless Response::Failure::MESSAGES
     # grew an entry. Derive the failing events from the machine itself so this
     # cannot drift either way -- a missing diagnostic fails, and so does a stale
     # entry for an event that no longer fails.

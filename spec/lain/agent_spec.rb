@@ -287,6 +287,23 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  describe "#ask!" do
+    it "raises a named failure on a malformed stop, and leaves the agent failed" do
+      a = agent(Lain::Response.new(content: [{ "type" => "text", "text" => "<tool_call>\n<function=bash>" }],
+                                   stop_reason: :malformed))
+
+      expect { a.ask!("hi") }.to raise_error(Lain::Response::Failed, /malformed/) { |error|
+        expect(error.failure).to eq(Lain::Response::Failure.new(stop_reason: :malformed,
+                                                                message: Lain::Response::Failure::PROSE_CALL))
+      }
+      expect(a).to be_failed
+    end
+
+    it "returns the answer's text on end_turn" do
+      expect(agent(text_response("hello")).ask!("hi")).to eq("hello")
+    end
+  end
+
   # ---- correctness gates ----------------------------------------------------
   #
   # Gates 1-7 are verified provider-agnostically by the shared "a Lain::Provider"
@@ -662,25 +679,25 @@ RSpec.describe Lain::Agent do
 
     it "fails on refusal, recording why" do
       a = agent(text_response("", stop_reason: :refusal))
-      a.ask("hi")
+      response = a.ask("hi")
       expect(a).to be_failed
-      expect(a.failure_reason).to include("refused")
+      expect(response.failure.message).to include("refused")
     end
 
     it "fails on max_tokens" do
       a = agent(text_response("", stop_reason: :max_tokens))
-      a.ask("hi")
+      response = a.ask("hi")
       expect(a).to be_failed
-      expect(a.failure_reason).to include("max_tokens")
+      expect(response.failure.message).to include("max_tokens")
     end
 
     # The wire enums are non-exhaustive. An unrecognized value must fail loudly,
     # not fall through a `case` and quietly do nothing.
     it "fails on an unrecognized stop_reason" do
       a = agent(Lain::Response.new(content: [], stop_reason: "something_new_in_2027"))
-      a.ask("hi")
+      response = a.ask("hi")
       expect(a).to be_failed
-      expect(a.failure_reason).to include("unrecognized")
+      expect(response.failure.message).to include("unrecognized")
     end
 
     # The one failing reason no wire ever sends: a provider's reading that a
@@ -690,9 +707,9 @@ RSpec.describe Lain::Agent do
     # that is where the evidence for which reading it was lives.
     it "fails on malformed, pointing at the journal record that holds the evidence" do
       a = agent(Lain::Response.new(content: [], stop_reason: :malformed))
-      a.ask("hi")
+      response = a.ask("hi")
       expect(a).to be_failed
-      expect(a.failure_reason).to include("malformed_response journal record")
+      expect(response.failure.message).to include("malformed_response journal record")
     end
 
     # A server-side tool is mid-flight; resend and let it continue.

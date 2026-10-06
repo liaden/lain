@@ -605,6 +605,12 @@ the next ask. `Agent#prompted` cuts one user turn carrying both texts from the s
 parent rather than stacking a second prompt, and the chat says so, naming `/rewind 1` as the way
 to leave the earlier one out.
 
+**A caller that wants text uses `Agent#ask!`**, which raises `Response::Failed` (a `Lain::Error`
+carrying the `Response::Failure` the pane prints) on any failed stop rather than returning a prose
+tool call or a cut-off sentence as the answer; an actor runs the same check through
+`Response::Failed.refusing` and dies with a `failed` note. It is a failed answer, not a stopped ask,
+so nothing records it as torn.
+
 **The `tool_use` turn settles before any tool runs.** `Middleware.settles!` refuses a turn-phase
 stack whose members answer only `#call`, and `Agent#account` calls `turn_middleware.settle` — so
 `Middleware::JournalTurns` writes the turn to the session file — before the usage record and

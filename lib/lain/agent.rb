@@ -81,7 +81,7 @@ module Lain
     # edited Request through this reader rather than threading its own handle
     # through construction.
     attr_reader :timeline, :toolset, :context, :workspace, :session,
-                :iterations, :failure_reason, :budget, :request_override, :dispatch_lock
+                :iterations, :budget, :request_override, :dispatch_lock
 
     delegate :usage, to: :accounting
 
@@ -244,6 +244,14 @@ module Lain
       end
     end
 
+    # {#ask} for a caller that wants the answer's text, and must not take a
+    # failed stop's text for it.
+    #
+    # @param prompt [String] the prompt
+    # @return [String] the answer's text
+    # @raise [Response::Failed] when the answer is a failed stop
+    def ask!(prompt, **) = Response::Failed.refusing(ask(prompt, **)).text
+
     # Drive the machine from its current Timeline. Separated from {#ask} so a
     # rewound or forked Timeline can be resumed without inventing a user turn.
     #
@@ -392,7 +400,6 @@ module Lain
     # ceiling is a different policy needing its own name and refusal
     # ({CLI::GoalDriver::Run} is what one looks like).
     def run_loop(on_stream_started)
-      @failure_reason = nil
       @iterations = 0
 
       loop do
@@ -595,7 +602,6 @@ module Lain
     def transition(response)
       __send__(:"#{response.stop_reason}!")
       perform_tools(response) if awaiting_tools?
-      @failure_reason = response.failure&.message if failed?
       done? || failed? ? :settled : :continue
     end
 

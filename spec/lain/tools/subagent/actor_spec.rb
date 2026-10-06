@@ -61,4 +61,51 @@ RSpec.describe Lain::Tools::Subagent::Actor do
       expect(spawn.fetch("payload")).to include("task" => Lain::Canonical.digest("watch the build"), "adoption" => 1)
     end
   end
+
+  # A tool call written as prose is the provider's envelope, not the child's
+  # findings, so it must never reach the parent as a settled answer.
+  describe "a child whose answer is a prose tool call" do
+    let(:envelope) { "<tool_call>\n<function=bash>\n<parameter=command>ls" }
+    let(:tool) do
+      prose = Lain::Response.new(content: [{ "type" => "text", "text" => envelope }], stop_reason: :malformed)
+      CoreGraph.subagent(provider: CoreGraph.provider(prose), parent:,
+                         journal: session_file, observer: scribe, mode: :actor)
+    end
+
+    def lifecycles = records.filter_map { |record| record.dig("payload", "lifecycle") if record["type"] == "message" }
+
+    def failed_note = records.find { |record| record.dig("payload", "lifecycle") == "failed" }
+
+    def run_to_failure
+      Sync do |task|
+        supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+        actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
+        expect { actor.settle }.to raise_error(Lain::Response::Failed, /malformed/)
+        expect(actor).to be_dead
+      ensure
+        supervisor&.stop
+      end
+    end
+
+    it "tells the parent a failure naming malformed, and the child's completion reads failed" do
+      run_to_failure
+
+      expect(failed_note.dig("payload", "text")).to include("malformed")
+      expect(lifecycles).not_to include("settled")
+    end
+
+    it "tells the parent the failure's words alone, never the envelope or the child's chain" do
+      run_to_failure
+
+      expect(failed_note.dig("payload", "text")).to eq(Lain::Response::Failure::PROSE_CALL)
+    end
+
+    # A farewell after the failure would mark the spawn stopped, and the fleet
+    # row would read stopped for a child that failed.
+    it "ends its trail at failed, through the supervisor's teardown" do
+      run_to_failure
+
+      expect(lifecycles).to eq(%w[launched failed])
+    end
+  end
 end

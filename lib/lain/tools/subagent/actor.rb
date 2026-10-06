@@ -83,7 +83,7 @@ module Lain
         def launch(prompt)
           # "launched" marks the actor path ONLY, and brings the adoption
           # ordinal that separates twins launched on the same work.
-          @spawn = @lineage.spawn(@parent, prompt:, lifecycle: "launched")
+          @spawn = @lineage.spawn(@parent, prompt:, lifecycle: StatusFeed::SpawnLifecycle::LAUNCHED)
           @address = @spawn.digest
           @parent_correlation = @lineage.correlation_of(@parent)
           @task = Async::Task.current.async { run(prompt) }
@@ -133,7 +133,8 @@ module Lain
         # me" a supervisor consults.
         def dead? = stopped? || !@failure.nil?
 
-        # Land a final attributed :message, then cancel the fiber.
+        # Land a final attributed :message, unless a failed turn already told
+        # the parent one, then cancel the fiber.
         # `Async::Task#stop` raises `Async::Stop` at the fiber's parked await,
         # so its unwinding runs and the child Timeline is left WHOLE rather than
         # torn mid-commit, and `#wait` lets that cancellation settle before
@@ -149,7 +150,7 @@ module Lain
           return @farewell if @stopped
 
           @stopped = true
-          @farewell = reply("actor stopped", lifecycle: "stopped")
+          @farewell ||= reply("actor stopped", lifecycle: StatusFeed::SpawnLifecycle::STOPPED)
           @task.stop
           @task.wait
           @farewell
@@ -192,8 +193,17 @@ module Lain
         # needs it MORE: a note's text is folded into the parent's render by
         # {Context::Mailbox} every turn until a commit consumes it, so an
         # unbounded reply here is unbounded in a context nothing can compact.
+        #
+        # A failed stop is told to the parent in the failure's words, never its
+        # text, and still raises, so the actor is dead as after any failed turn.
+        # That note is the farewell: a stop after it would mark the spawn
+        # stopped, and the fleet would read a failed child as a stopped one.
         def process(prompt)
-          reply(@answer.bounded(@agent, @agent.ask(prompt), journal: @journal).text, lifecycle: "settled")
+          answer = Response::Failed.refusing(@agent.ask(prompt))
+          reply(@answer.bounded(@agent, answer, journal: @journal).text, lifecycle: StatusFeed::SpawnLifecycle::SETTLED)
+        rescue Response::Failed => e
+          @farewell = reply(e.message, lifecycle: StatusFeed::SpawnLifecycle::FAILED)
+          raise
         end
 
         # actor -> parent, naming the spawn and the child's head among its

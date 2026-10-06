@@ -389,11 +389,11 @@ RSpec.describe Lain::Provider::Ollama do
         io = StringIO.new
         agent = agent_over(prose_body(prose_call), Lain::Journal.new(io:))
 
-        agent.ask("build the blog")
+        failure = agent.ask("build the blog").failure
 
         expect(agent.state).to eq(:failed)
-        expect(agent.failure_reason).to include("malformed")
-        expect(agent.failure_reason).not_to include("unrecognized")
+        expect(failure.message).to include("malformed")
+        expect(failure.message).not_to include("unrecognized")
         expect(io).to include_journal_record("malformed_response", kind: "prose_tool_call", tool_name: "bash")
       end
 
@@ -540,10 +540,10 @@ RSpec.describe Lain::Provider::Ollama do
                               context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64, stream: false),
                               timeline: Lain::Timeline.empty)
 
-      agent.ask("summarize the Gemfile")
+      failure = agent.ask("summarize the Gemfile").failure
 
       expect(agent.state).to eq(:failed)
-      expect(agent.failure_reason).to include("malformed_response journal record")
+      expect(failure.message).to include("malformed_response journal record")
       expect(io).to include_journal_record("malformed_response", kind: "empty_answer", model: "qwen3:4b")
     end
   end
