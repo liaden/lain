@@ -58,6 +58,7 @@ module Lain
       # @return [Rewrites]
       def self.from_journal(entries)
         chains = Journal.records(entries, type: "request_sent")
+                        .select { |record| Telemetry::RequestSent.agent?(record) }
                         .reject { |record| record["prefix_digests"].nil? }
                         .map { |record| [record["prefix_chain_version"], record["prefix_digests"]] }
         new(chains:)

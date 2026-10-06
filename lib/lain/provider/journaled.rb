@@ -50,9 +50,11 @@ module Lain
       #   default {Middleware::JournalRequests} and {Oracle::Recorded::Journaling}
       #   take. Pass a late-binding forwarder where the run's destination is not
       #   known at construction ({CLI::Backend::Summarizer::RunJournal}).
-      def initialize(provider:, journal: Channel::Null.instance)
+      # @param requester [Symbol] who the request is journaled as sent by
+      def initialize(provider:, journal: Channel::Null.instance, requester: :agent)
         @inner = provider
         @journal = journal
+        @requester = requester
         freeze
       end
 
@@ -71,7 +73,7 @@ module Lain
       # @param request [Lain::Request]
       # @return [Lain::Response] the wrapped provider's own, untouched
       def complete(request, **)
-        @journal << Telemetry::RequestSent.from(request)
+        @journal << Telemetry::RequestSent.from(request, requester: @requester)
         @inner.complete(request, **)
       end
 

@@ -698,7 +698,7 @@ module Lain
       def handoff_oracle = @handoff_oracle ||= journaling(Oracle::Handoff.definition)
 
       def journaling(definition)
-        provider = Provider::Journaled.new(provider: summarizer_provider, journal: run_journal)
+        provider = Provider::Journaled.new(provider: summarizer_provider, journal: run_journal, requester: :handoff)
         tier = Oracle::Model.new(definition:, provider:, model: summarizer_model,
                                  max_tokens: summarizer_max_tokens, extra: summarizer_options)
         Oracle::Recorded::Journaling.new(inner: tier, definition:, journal: run_journal)

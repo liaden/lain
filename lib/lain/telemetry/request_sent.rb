@@ -35,12 +35,17 @@ module Lain
     # absence IS the signal and nil is a value rather than a missing Null
     # Object.
     #
+    # `requester` names who sent the request (agent, summarizer, handoff,
+    # secret_oracle) so readers that pair a request with the agent's own usage
+    # can skip the rest; nil is an older record and reads as the agent.
+    #
     # `prefix_chain_version` names the chain's FORMAT; nil covers both a nil
     # chain and the unversioned chains in older journals. {Bench::Rewrites}
     # compares chains only within one format -- the formats' digests never
     # agree, so an unversioned reader would misread the migration itself as a
     # rewrite.
-    RequestSent = Data.define(:digest, :payload, :stream, :extra, :prefix_digests, :prefix_chain_version) do
+    RequestSent = Data.define(:digest, :payload, :stream, :extra, :prefix_digests, :prefix_chain_version,
+                              :requester) do
       include Journalable
 
       # The journaling constructor: every field is read off a live {Request},
@@ -48,11 +53,19 @@ module Lain
       # and skips the deep re-walk of the full message history the keyword
       # constructor performs on arbitrary input -- one normalize pass per
       # payload, the only remaining walk being the digest's own.
-      def self.from(request)
+      def self.from(request, requester: nil)
         new(digest: request.digest, payload: request.cache_payload, stream: request.stream,
             extra: request.extra, prefix_digests: request.prefix_digests,
-            prefix_chain_version: Request::PREFIX_CHAIN_VERSION, normalized: true)
+            prefix_chain_version: Request::PREFIX_CHAIN_VERSION, requester:, normalized: true)
       end
+
+      # A journaled record with no requester predates the field and was the
+      # agent's, so nil reads as the agent.
+      def self.agent?(record) = record["requester"].nil? || record["requester"] == "agent"
+
+      # An unset requester is left off the line so the agent's own records stay
+      # byte-identical to the journals written before the field existed.
+      def to_journal = requester.nil? ? super.except("requester") : super
 
       # `normalized: true` is a trust assertion, not an optimization hint: the
       # caller vouches that payload and extra are ALREADY canonical wire form
@@ -61,7 +74,7 @@ module Lain
       # chain is normalized regardless: it arrives as small fresh Arrays that
       # still need freezing, at O(markers) cost.
       def initialize(digest:, payload:, stream:, extra:, prefix_digests: nil, prefix_chain_version: nil,
-                     normalized: false)
+                     requester: nil, normalized: false)
         Carriers::RequestSent.check!(stream:)
 
         super(
@@ -70,7 +83,8 @@ module Lain
           stream:,
           extra: normalized ? extra : Canonical.normalize(extra),
           prefix_digests: Canonical.normalize(prefix_digests),
-          prefix_chain_version:
+          prefix_chain_version:,
+          requester: requester&.to_s
         )
       end
     end

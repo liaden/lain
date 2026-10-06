@@ -176,7 +176,12 @@ module Lain
       end
 
       def relevant_records
-        @records.each_with_index.select { |record, _i| RELEVANT_TYPES.include?(record["type"].to_s) }
+        @records.each_with_index.select { |record, _i| relevant?(record) }
+      end
+
+      def relevant?(record)
+        RELEVANT_TYPES.include?(record["type"].to_s) &&
+          (record["type"].to_s != REQUEST_SENT_TYPE || Telemetry::RequestSent.agent?(record))
       end
 
       def superseded_after?(index)

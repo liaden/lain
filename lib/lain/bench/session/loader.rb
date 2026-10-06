@@ -278,7 +278,9 @@ module Lain
                                             context_factory: @context_factory, resolve: @resolve)
         end
 
-        def baseline = RequestReplay.new(records: of_type("request_sent")).baseline
+        def baseline
+          RequestReplay.new(records: of_type("request_sent").select { |r| Telemetry::RequestSent.agent?(r) }).baseline
+        end
 
         def degraded
           Capability::DegradedSet.new(

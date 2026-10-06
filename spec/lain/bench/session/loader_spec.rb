@@ -43,6 +43,19 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(recording.baseline).to eq(provider.requests)
     end
 
+    it "leaves a summarizer's request out of the baseline" do
+      lines = entries.to_a
+      sent = JSON.parse(lines.find { |line| line.include?('"request_sent"') })
+      lines << "#{JSON.generate(sent.merge("requester" => "summarizer"))}\n"
+      expect(described_class.new(lines).recording.baseline).to eq(provider.requests)
+    end
+
+    it "counts a request_sent with no requester as the agent's" do
+      lines = entries.to_a
+      expect(lines.join).not_to include("requester")
+      expect(described_class.new(lines).recording.baseline).to eq(provider.requests)
+    end
+
     it "rebuilds a toolset answering the recorded schema and the recorded context inputs" do
       rebuilt = recording
       expect(rebuilt.toolset.to_schema).to eq(toolset.to_schema)

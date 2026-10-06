@@ -48,7 +48,8 @@ module Lain
         # the record is cut from the Request the provider was actually handed.
         def tier(definition)
           provider = Provider::Journaled.new(provider: @backend.summarizer_provider(queue: false),
-                                             journal: RunJournal.new(@backend))
+                                             journal: RunJournal.new(@backend),
+                                             requester: :summarizer)
           Oracle::Model.new(definition:, provider:, model: @backend.summarizer_model,
                             max_tokens: @backend.summarizer_max_tokens, extra: @backend.summarizer_options)
         end

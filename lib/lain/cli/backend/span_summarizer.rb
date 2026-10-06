@@ -119,7 +119,8 @@ module Lain
         # and keeps a reordering from silently binding Channel::Null for the
         # run.
         def tier(definition)
-          provider = Provider::Journaled.new(provider: @backend.summarizer_provider, journal: @backend.journal)
+          provider = Provider::Journaled.new(provider: @backend.summarizer_provider, journal: @backend.journal,
+                                             requester: :summarizer)
           Oracle::Model.new(definition:, provider:, model: @backend.summarizer_model,
                             max_tokens: @backend.summarizer_max_tokens, extra: @backend.summarizer_options)
         end

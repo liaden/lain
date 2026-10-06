@@ -51,6 +51,14 @@ RSpec.describe Lain::Provider::Journaled do
       expect(sent.prefix_digests).not_to be_empty
     end
 
+    it "journals the requester it was built with, the agent by default" do
+      provider.complete(request)
+      described_class.new(provider: Lain::Provider::Mock.new(responses: [reply]), journal:,
+                          requester: :summarizer).complete(request)
+
+      expect(records.map(&:requester)).to eq(%w[agent summarizer])
+    end
+
     it "hands the inner provider's response straight back, untouched" do
       expect(provider.complete(request)).to equal(reply)
     end

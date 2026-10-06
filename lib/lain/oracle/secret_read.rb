@@ -173,7 +173,8 @@ module Lain
       # @return [Oracle::Recorded::Journaling]
       def self.tier(model: Provider::Ollama::DEFAULT_MODEL, journal: Channel::Null::INSTANCE, options: {})
         oracle = definition(tier: :model)
-        provider = Provider::Journaled.new(provider: Provider::Ollama.new, journal:)
+        provider = Provider::Journaled.new(provider: Provider::Ollama.new, journal:,
+                                           requester: :secret_oracle)
         Recorded::Journaling.new(definition: oracle, journal:,
                                  inner: Model.new(definition: oracle, provider:, model:, extra: options))
       end

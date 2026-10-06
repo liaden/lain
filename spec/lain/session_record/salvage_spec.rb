@@ -67,6 +67,16 @@ RSpec.describe Lain::SessionRecord::Salvage do
       expect(outcome.response.usage).to eq(canned.usage)
     end
 
+    it "targets the agent's request when a summarizer's was journaled after it" do
+      digest = spool(canned)
+      summarizer = request_sent("blake3:summarizer").merge("requester" => "summarizer")
+
+      outcome = described_class.new(entries: [request_sent(digest), summarizer], frames:, timeline:).call
+
+      expect(outcome).to be_recovered
+      expect(outcome.request_digest).to eq(digest)
+    end
+
     # The recovered turn's spend is the whole reason this class exists, and it
     # was the third hand-written copy of the same four-key decode. One decoder
     # now, so a key cannot drift only on the path nobody was watching.

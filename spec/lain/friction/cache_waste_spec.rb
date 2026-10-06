@@ -220,6 +220,24 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
+  describe "a summarizer's request journaled between a request and its own usage" do
+    let(:summarizer) do
+      request_sent([[0, "blake3:other"]], model: "claude-haiku-4-5").merge("requester" => "summarizer")
+    end
+
+    it "pairs the usage to the agent's request, not the summarizer's" do
+      waste = described_class.from_journal([request_sent([[0, "blake3:a"]]), summarizer, turn_usage(creation: 10)])
+
+      expect(waste.calls.map(&:chain)).to eq([[[0, "blake3:a"]]])
+      expect(waste.refused_usages).to eq(0)
+    end
+
+    it "reads a request with no requester as the agent's" do
+      expect(described_class.from_journal([request_sent([[0, "blake3:a"]]), turn_usage(creation: 10)]).calls.size)
+        .to eq(1)
+    end
+  end
+
   describe "a model with no price" do
     subject(:waste) do
       described_class.from_journal(

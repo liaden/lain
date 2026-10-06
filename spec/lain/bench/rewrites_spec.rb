@@ -23,6 +23,14 @@ RSpec.describe Lain::Bench::Rewrites do
   end
 
   describe ".from_journal" do
+    it "ignores a non-agent request between two agent requests, so its empty chain cannot mask a rewrite" do
+      first = [[-1, "blake3:sys"], [0, "blake3:a"]]
+      second = [[-1, "blake3:sys"], [0, "blake3:a-EDITED"]]
+      oracle = record([]).merge("requester" => "summarizer")
+
+      expect(described_class.from_journal([record(first), oracle, record(second)]).count).to eq(1)
+    end
+
     it "reports the rewrite count, each rewrite's depth, and the digests either side of the divergence" do
       before = [[-1, "blake3:sys"], [0, "blake3:msg0"], [3, "blake3:msg3"]]
       after = [[-1, "blake3:sys"], [0, "blake3:msg0-EDITED"], [3, "blake3:msg3-EDITED"]]
