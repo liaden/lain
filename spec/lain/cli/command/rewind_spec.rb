@@ -81,6 +81,29 @@ RSpec.describe Lain::CLI::Command::Rewind do
     end
   end
 
+  describe "the line after a landing" do
+    it "names the stranded prompt and says the next line is appended to it" do
+      expect(command.call("1", env)).to match(/stranded prompt.*next line is appended to it/i)
+    end
+
+    context "when the landing is a tool_result turn" do
+      let(:provider) do
+        Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "ping" }]),
+                                             text_response("done")])
+      end
+      let(:agent) do
+        Lain::Agent.new(provider:, toolset:, context:).tap do |built|
+          built.ask("use the tool")
+          chronicle.catch_up(built.timeline)
+        end
+      end
+
+      it "is the plain rewound line" do
+        expect(command.call("1", env)).to match(/\Arewound 1 turn: \S+ -> \S+\z/)
+      end
+    end
+  end
+
   describe "/rewind <digest> (resolution rules against this session's own chain)" do
     it "resolves a hex prefix to the recorded turn and rewinds to it" do
       target = agent.timeline.rewind(3).head_digest

@@ -60,7 +60,13 @@ module Lain
           to = from.rewind(count)
           env.chronicle.rewound(to: to.head_digest)
           env.agent.rewind(count)
-          rendered(count, from:, to:)
+          rendered(count, from:, to:) + stranded_note(to.head)
+        end
+
+        def stranded_note(head)
+          return "" unless Event.stranded_prompt?(head)
+
+          "\nthe head is now a stranded prompt; the next line is appended to it"
         end
 
         # A run in flight settles onto the Timeline it captured and hands that

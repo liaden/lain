@@ -311,6 +311,31 @@ RSpec.describe Lain::Event do
     end
   end
 
+  describe ".stranded_prompt?" do
+    it "answers true for a user turn whose every block is text" do
+      expect(described_class.stranded_prompt?(described_class.turn(role: :user, content: block("hi")))).to be(true)
+    end
+
+    it "answers false for no event at all, rather than raising" do
+      expect(described_class.stranded_prompt?(nil)).to be(false)
+    end
+
+    it "answers false for a user turn carrying a tool result" do
+      results = [{ "type" => "tool_result", "tool_use_id" => "tu_1", "content" => "ok" }]
+      expect(described_class.stranded_prompt?(described_class.turn(role: :user, content: results))).to be(false)
+    end
+
+    it "answers false for a user turn mixing text with a tool result" do
+      mixed = block("hi") + [{ "type" => "tool_result", "tool_use_id" => "tu_1", "content" => "ok" }]
+      expect(described_class.stranded_prompt?(described_class.turn(role: :user, content: mixed))).to be(false)
+    end
+
+    it "answers false for an assistant text turn" do
+      expect(described_class.stranded_prompt?(described_class.turn(role: :assistant,
+                                                                   content: block("hi")))).to be(false)
+    end
+  end
+
   # AC: payloads are content-addressed, never inline in the envelope.
   describe Lain::Event::Payload do
     it "is content-addressed and kind-tagged" do

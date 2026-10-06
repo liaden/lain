@@ -101,6 +101,13 @@ module Lain
         event.content.any? { |block| block.is_a?(Hash) && block["type"] == "tool_use" }
     end
 
+    # Text a human asked that nothing answered, so the next ask folds into it.
+    # A head of tool results is not one: folding it would put an answer to the
+    # model's calls in the human's mouth.
+    def self.stranded_prompt?(event)
+      !event.nil? && event.role == "user" && event.content.all? { |block| block["type"] == "text" }
+    end
+
     def initialize(kind:, payload_digest: nil, body: nil, carried_payload: nil, from: nil, to: nil,
                    render_parent: nil, causal_parents: [], correlation: nil)
       @kind = self.class.normalize_kind(kind)

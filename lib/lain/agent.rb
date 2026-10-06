@@ -367,17 +367,10 @@ module Lain
 
     def prompted(prompt, on_fold)
       head = @timeline.head
-      return @timeline.commit(role: :user, content: prompt) unless stranded_prompt?(head)
+      return @timeline.commit(role: :user, content: prompt) unless Event.stranded_prompt?(head)
 
       @timeline.checkout(head.parent).commit(role: :user, content: head.content + prompt)
                .tap { |folded| on_fold.call(@timeline, folded) }
-    end
-
-    # Text a human asked that nothing answered. A head of tool results is not
-    # one: folding it would put an answer to the model's calls in the human's
-    # mouth.
-    def stranded_prompt?(head)
-      !head.nil? && head.role == "user" && head.content.all? { |block| block["type"] == "text" }
     end
 
     # The repair every stranded head gets, through the one mint every repair
