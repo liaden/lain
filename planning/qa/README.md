@@ -299,6 +299,12 @@ discharged, and git history is the archive: `git log --diff-filter=D --stat -- p
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
 
+- [`../qa-findings-round22-2026-10-06.md`](../qa-findings-round22-2026-10-06.md): round 22, a full
+  round over all 18 scenarios in 9 forks, at most 4 at once, wound down by the user before the live `bench-arms`
+  runs, `secret-boundary` §6 and `rails-blog` §5's `/model` switch. **Two new HIGH:** an advance cut summarizes the
+  running ask's own prompt (F-6), and a changeset docent sends an unreleased credential raw (D-4). The secret-name
+  check lives only in `ComposedTerm`, so `read_file` and the survey still release `password.txt` (S-1).
+
 - [`../qa-findings-round21-2026-10-04.md`](../qa-findings-round21-2026-10-04.md): round 21, a full
   round over all eighteen scenarios in 8 forks, at most 4 at once, plus `bench-arms` driven alone.
   **Every scenario driven; none dropped.** Round 20's HIGHs hold fixed (the symlink read, the decaying

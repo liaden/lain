@@ -1439,3 +1439,26 @@ fallback rather than redesigning mid-run.
   unterminated, hold, rst and gone modes, at `~/tmp/lain-qa-2026-10-04-c/`), round 20's `settle.sh`
   (accepting `you> <carried text>` as settled), and fork `g`'s `gatekeeper.sh` (logs the full text of
   every call it approves, at `~/tmp/lain-qa-2026-10-04-g/records/`).
+
+## Round 22 (2026-10-06): what 9 forks and a wind-down taught the process
+
+- **Pass `--model qwen3-coder:30b` on every launch.** With none, `.envrc` resolved `qwen3:4b`, which would evict
+  the shared runner.
+- **Never attach to a headless cockpit with a stdin that can close.** util-linux `script` turns its stdin EOF into
+  a typed Ctrl-D, tmux delivers it to the active input pane, and the input pane's EOF ends the chat. Round 22 filed
+  this as a lain defect before a control (stdin held open by a pipe) withdrew it.
+- **A gate that approves by command shape must refuse anything that daemonises** (`rails server -d`, `puma -d`,
+  `nohup`, a trailing `&`). Round 17 learned this and round 22 repeated it: a puma ran on :3000 for an hour after
+  the fork's close-out said no server had started. Take `ss -ltnp` over the round's ports in each fork's own close-out.
+- **A gatekeeper matches each parked row on its own full text, and refuses an elided row.** Fork `g`'s first
+  version joined rows and approved 2 calls the buffer had cut off. `~/tmp/lain-qa-2026-10-06-g/records/gatekeeper.rb`
+  is the corrected one and is worth promoting into `qa-sandbox.sh`.
+- **`drive.sh` refuses only while an approval is parked.** With a question parked, the next prompt goes in as a held
+  line; check `lain://inbox` too.
+- **Paste with `tmux paste-buffer -p` and no trailing newline**, or a multi-line file becomes 1 prompt per line.
+- **With `env.sh` sourced, `git status` loses the operator's global excludes.** Run the repo negative with
+  `env -u XDG_CONFIG_HOME`.
+- **Kill podman's `catatonit` pause processes at close-out** (`XDG_RUNTIME_DIR` names the sandbox). 2 from round 21
+  were still alive 2 days later. Leave the operator's own (runtime `/run/user/1000`).
+- **2 scenarios per fork is the ceiling.** Forks `a` and `b` hit the 200-turn limit; a fork waiting on a live epic
+  run spends about 1 turn per gated call.
