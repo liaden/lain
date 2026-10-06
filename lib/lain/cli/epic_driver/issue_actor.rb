@@ -363,7 +363,7 @@ module Lain
           held = nil
           actor = @supervisor.adopt(role: ROLE, worker_id: lane) do |worker_env|
             held = cut(worker_env, issue.id)
-            red = @tests.call(criteria, worker_env, subject:, level:, since: held.from)
+            red = @tests.call(criteria, worker_env, subject:, level:, since: held.from, lane:)
             spawner(worker_env, held.branch, lane).launch_actor(brief(issue, held, red), worker_env:)
           end
           Launch.new(actor:, worker_id: lane, branch: held.branch.name, tests: red)

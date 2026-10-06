@@ -290,6 +290,20 @@ RSpec.describe Lain::Skill::RoleSpawn do
       expect(spawn.within(Lain::WorkerEnv.default).seam.isolation.lane).to eq(lane)
     end
 
+    it "lends a lane of its own when told one, so a retry's children differ from the first attempt's" do
+      spawn = seam(provider: mock(text_response("unused")), isolation: Lain::Isolation::Leases.new(backend:))
+      lent = spawn.within(Lain::WorkerEnv.default, lane: "issue.demo.a.2")
+
+      expect(lent.seam.isolation.lane).to eq(Lain::Isolation::Leases::Lane.named("issue.demo.a.2"))
+    end
+
+    it "refuses a lane name git would not accept in a ref" do
+      spawn = seam(provider: mock(text_response("unused")))
+
+      expect { spawn.within(Lain::WorkerEnv.default, lane: "bad lane~") }
+        .to raise_error(Lain::Isolation::Leases::Lane::Refused)
+    end
+
     it "leaves the seam it was built over leasing as it did" do
       spawn = watched(provider: mock(text_response("unused")))
 

@@ -62,9 +62,13 @@ module Lain
       # member is unchanged, so they run behind the same guard and gate.
       #
       # @param worker_env [WorkerEnv] the held checkout's environment
+      # @param lane [String, nil] a lane name of its own for the lent children,
+      #   so a retry's one-shot spawns do not share the failed attempt's
+      #   address; the caller's lane when nil
       # @return [RoleSpawn]
-      def within(worker_env)
-        self.class.new(seam: @seam.with(isolation: lent(worker_env)), toolset: @toolset, slots: @slots,
+      # @raise [Isolation::Leases::Lane::Refused] when git would not accept the name
+      def within(worker_env, lane: nil)
+        self.class.new(seam: @seam.with(isolation: lent(worker_env, lane)), toolset: @toolset, slots: @slots,
                        max_depth: @max_depth)
       end
 
@@ -83,8 +87,9 @@ module Lain
       # The caller's own lane travels with the lease it lends, so a lent
       # child's spawn says which issue it served rather than reading as the
       # run's own unnamed lane.
-      def lent(worker_env)
-        Isolation::Leases::InPlace.new(worker_env:, lane: @seam.isolation.lane)
+      def lent(worker_env, lane)
+        lane = lane.nil? ? @seam.isolation.lane : Isolation::Leases::Lane.named(lane)
+        Isolation::Leases::InPlace.new(worker_env:, lane:)
       end
 
       # Everything the CALL decides: the role's policy, persona and child name,

@@ -76,6 +76,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
       end
     RUBY
   end
+  let(:spawned) { [] }
+  let(:parent) { Lain::Timeline.empty(store: Lain::Store.new) }
 
   def repo = File.join(@root, "repo")
   def held = File.join(@root, "issue-a")
@@ -109,18 +111,18 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
 
   def role_spawn(provider)
     Lain::Skill::RoleSpawn.new(provider:, context_factory: -> { Lain::Context.new(model: "child", max_tokens: 256) },
-                               toolset: union, parent: Lain::Timeline.empty(store: Lain::Store.new), slots:,
+                               toolset: union, parent:, slots:, observer: spawned.method(:push),
                                tool_middleware: ToolRegistry::UNGUARDED)
   end
 
   # The layout is the PROJECT's, resolved from the repository root the held
   # checkout was cut from -- never from the checkout, which a gitignored
   # config never reaches.
-  def step(provider, harness: rspec, since: git(repo, "rev-parse", "HEAD"))
+  def step(provider, harness: rspec, since: git(repo, "rev-parse", "HEAD"), lane: "issue.demo.a.1")
     layout = Lain::Config.test_layout(root: repo)
     described_class.new(renderer:, role_spawn: role_spawn(provider), layout:, harness:,
                         test_layout: Lain::Middleware::GuardTestLayout::Run.new(layout:, root: repo))
-                   .call(criteria, worker_env, subject: "app/models/order.rb", since:)
+                   .call(criteria, worker_env, subject: "app/models/order.rb", since:, lane:)
   end
 
   # What an earlier run's red step left on a kept branch: the tests, committed
@@ -197,7 +199,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
       described_class.new(renderer:, role_spawn: guarded_spawn, layout: Lain::Config.test_layout(root: repo),
                           test_layout: run, harness: rspec)
                      .call(criteria, worker_env, subject: "app/models/order/hello.rb",
-                                                 since: git(repo, "rev-parse", "HEAD"))
+                                                 since: git(repo, "rev-parse", "HEAD"), lane: "issue.demo.a.1")
     end
 
     it "declares its target to the run, so the guarded write lands and counts as generated" do
@@ -207,6 +209,19 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
       expect(result.record).to have_attributes(target: nested, generated?: true)
       expect(journal.map(&:class)).to include(Lain::Telemetry::TestLayoutDeferred)
     end
+  end
+
+  # A retry's child spawns from the same head over the same Store; only the
+  # attempt's lane tells its :spawn from the failed attempt's.
+  it "gives a retried red step a :spawn address the failed attempt's did not hold" do
+    expect { step(mock(text_response("no tests"), text_response("no tests")), lane: "issue.demo.a.1") }
+      .to raise_error(Lain::Error)
+
+    step(writing(target, red), lane: "issue.demo.a.2")
+
+    digests = spawned.select { |event| event.kind == :spawn }.map(&:digest)
+    expect(digests.size).to eq(2)
+    expect(digests.uniq.size).to eq(2)
   end
 
   it "refuses tests that pass before any work is done, and commits nothing" do

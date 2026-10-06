@@ -1324,13 +1324,15 @@ module Lain
         #   past it is one an earlier run of this issue made
         # @param level [String, nil] a level the layout declares; its default
         #   level when nil
+        # @param lane [String] the attempt's lane, so a retried step's test_engineer
+        #   spawn is not the failed attempt's
         # @return [Red]
         # @raise [Error] when the project declares no test layout, or declares
         #   no level whose tests mirror their sources; when the test_engineer
         #   child leaves no tests the layout accepts; when the subject's tests
         #   already pass before any work is done, or a carried commit's no
         #   longer fail; or when git refuses the failing tests' commit
-        def call(criteria, worker_env, subject:, since:, level: nil)
+        def call(criteria, worker_env, subject:, since:, lane:, level: nil)
           guard = Lain::TestLayout::Guard.new(layout: declared, root: worker_env.cwd)
           level ||= default_level(guard.layout)
           target = guard.layout.mapping.test_path(subject, level:)
@@ -1338,7 +1340,7 @@ module Lain
           return carry(criteria, worker_env, target, carried) unless carried.nil?
 
           @test_layout.declare(root: worker_env.cwd, path: target)
-          record = generated(criteria, worker_env, guard, subject:, level:)
+          record = generated(criteria, worker_env, guard, subject:, level:, lane:)
           Red.new(record:, run: failing(record, worker_env), sha: commit(worker_env.cwd, record))
         end
 
@@ -1360,9 +1362,10 @@ module Lain
                        "no level to generate the issue's tests at"
         end
 
-        def generated(criteria, worker_env, guard, subject:, level:)
-          record = Lain::Gherkin::TestGeneration.new(renderer: @renderer, role_spawn: @role_spawn.within(worker_env),
-                                                     guard:).call(criteria, subject:, level:)
+        def generated(criteria, worker_env, guard, subject:, level:, lane:)
+          lent = @role_spawn.within(worker_env, lane:)
+          record = Lain::Gherkin::TestGeneration.new(renderer: @renderer, role_spawn: lent, guard:)
+                                                .call(criteria, subject:, level:)
           return record if record.generated?
 
           raise Error, "the test_engineer child #{ungenerated(record)}, so nothing was committed"
