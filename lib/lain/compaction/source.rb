@@ -330,6 +330,24 @@ module Lain
           @sink = sink
           @stalled = false
           @droppable = false
+          @made_room_for = nil
+          @rendering = nil
+        end
+
+        # Keyed to the chain's head so a render of another chain on a shared Source cannot take it.
+        #
+        # @param head_digest [String, nil] the head of the chain the handoff covered
+        # @return [self]
+        def room_made!(head_digest)
+          @made_room_for = head_digest
+          self
+        end
+
+        # @param head_digest [String, nil] the head of the chain about to be recorded
+        # @return [self]
+        def rendering(head_digest)
+          @rendering = head_digest
+          self
         end
 
         # @return [Boolean] whether the last recorded decision had a head to
@@ -341,7 +359,9 @@ module Lain
         def record(diagnosis)
           @journal << diagnosis.decision
           @droppable = !diagnosis.decision.nothing_droppable && !diagnosis.decision.would_not_shrink
-          stalled = diagnosis.stalled?
+          quiet = !@made_room_for.nil? && @made_room_for == @rendering
+          @made_room_for = nil if quiet
+          stalled = diagnosis.stalled? && !quiet
           @sink.puts(diagnosis.line) if stalled && !@stalled
           @stalled = stalled
           self
@@ -484,6 +504,7 @@ module Lain
         # not unsay a handoff that really happened. The history it replaced is
         # still replaced, and the refusal's words have to go on saying so.
         @handed_off ||= committed
+        @reporting.room_made!(timeline.head_digest) if committed
         committed
       end
 
@@ -501,6 +522,7 @@ module Lain
       # @return [Context] `base` itself, or a copy carrying this turn's pipeline
       def context_for(base:, timeline:, usage:, session:)
         observe_idle
+        @reporting.rendering(timeline.head_digest)
         held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
         decide(base:, held_cut:, usage:, session:, pins: pinned(held_cut.walk, session))
       end

@@ -2599,6 +2599,51 @@ RSpec.describe Lain::Compaction::Source do
       expect(session.compaction_cuts.size).to eq(1)
     end
 
+    describe "what an operator is told about a stall" do
+      let(:surface) { RecordingChannel.new }
+
+      def sink = Lain::Sink::IOAdapter.new(surface, tool_use_id: "spec:compaction", stream: :stderr)
+
+      def reported = surface.events.grep(Lain::Telemetry::ToolOutput).map(&:bytes)
+
+      def warranted_handoff
+        handing_off(need: build_need(approaching_ratio: 0.9), context_window: window_book(8_192), sink:)
+      end
+
+      it "prints no stall line on the render a handoff just made room for" do
+        line = timeline
+        built = warranted_handoff
+        refused_render(built, line)
+
+        context_for(built, line, usage: 7_500)
+
+        expect(reported).to be_empty
+        expect(decisions.last).to include("compacted" => false, "nothing_droppable" => true)
+      end
+
+      it "still says the stall of another chain rendered between the handoff and its re-render" do
+        line = timeline
+        built = warranted_handoff
+        refused_render(built, line)
+
+        context_for(built, timeline(4), usage: 7_500)
+
+        expect(reported.join).to include("nothing is droppable")
+      end
+
+      it "still says a later stall that no handoff preceded" do
+        line = timeline
+        built = warranted_handoff
+        refused_render(built, line)
+        context_for(built, line, usage: 7_500)
+        context_for(built, line, usage: 10)
+
+        context_for(built, line, usage: 7_500)
+
+        expect(reported.join).to include("nothing is droppable")
+      end
+    end
+
     it "asks the summarizer exactly once" do
       built = handing_off
       refused_render(built, timeline)
