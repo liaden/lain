@@ -46,6 +46,10 @@ module Lain
       # the newest turns do not get.
       LINE_CHARS = 200
 
+      # How much of a large tool result's first line its stub keeps: enough for
+      # an exit status or an error name, too little to carry the body.
+      FIRST_LINE_CHARS = 80
+
       # The most of the budget one human turn may take whole: its line is
       # offered whole only while it is at most this fraction of the question.
       # At the conservative window that is 964 bytes, which holds a typed
@@ -193,7 +197,7 @@ module Lain
       # @param message [Hash] a canonical-normalized projection
       # @return [String]
       def line(message)
-        "#{message.fetch("role")}: #{blocks(message).map { |block| cut(stub(block)) }.join(" ")}"
+        "#{message.fetch("role")}: #{blocks(message).map { |block| shortened(block) }.join(" ")}"
       end
 
       # The same line with no block cut: what a turn costs when the budget can
@@ -228,12 +232,29 @@ module Lain
         case block["type"]
         when "text" then block["text"].to_s
         when "tool_use" then "[calls #{block["name"]}]"
-        when "tool_result" then "[result for #{block["tool_use_id"]}, #{Canonical.dump(block["content"]).bytesize} " \
-                                "bytes, elided]"
+        when "tool_result" then outcome(block)
         else "[#{block["type"]}]"
         end
       end
       private_class_method :stub
+
+      # The stub bounds itself; cutting it again would clip a short result kept whole.
+      def shortened(block) = block["type"] == "tool_result" ? flatten(stub(block)) : cut(stub(block))
+      private_class_method :shortened
+
+      # A red test run is `is_error: false` by design, so its first line is the only verdict.
+      def outcome(block)
+        text = result_text(block["content"])
+        label = "#{"error " if block["is_error"]}result for #{block["tool_use_id"]}"
+        return "[#{label}: #{text}]" if text.length <= LINE_CHARS
+
+        first = text.lines.map(&:strip).find(&:present?).to_s[0, FIRST_LINE_CHARS]
+        "[#{label}, #{text.bytesize} bytes, starts: #{first}]"
+      end
+      private_class_method :outcome
+
+      def result_text(content) = content.is_a?(String) ? content : Canonical.dump(content)
+      private_class_method :result_text
 
       def flatten(text) = text.gsub(/\s+/, " ")
       private_class_method :flatten

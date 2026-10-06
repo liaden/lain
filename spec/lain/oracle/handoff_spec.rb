@@ -81,6 +81,45 @@ RSpec.describe Lain::Oracle::Handoff do
       expect(line.lines.size).to eq(1)
     end
 
+    describe "a tool result's outcome" do
+      def result_turn(content, is_error: false)
+        { "role" => "user",
+          "content" => [{ "type" => "tool_result", "tool_use_id" => "tu_9", "content" => content,
+                          "is_error" => is_error }] }
+      end
+
+      it "reads a denied call as an error that was denied" do
+        line = described_class.line(result_turn("approval denied", is_error: true))
+
+        expect(line).to include("error").and include("denied")
+      end
+
+      it "reads a red test run as its first line and its size, not its body" do
+        body = "exit status: 1\n#{"F" * 4096}"
+
+        line = described_class.line(result_turn(body))
+
+        expect(line).to include("exit status: 1").and include("#{body.bytesize} bytes")
+        expect(line).not_to include("F" * 100)
+      end
+
+      it "reads the first non-blank line of a large result that opens with blank lines" do
+        line = described_class.line(result_turn("\n\nFAIL\n#{"a" * 500}"))
+
+        expect(line).to include("starts: FAIL")
+      end
+
+      it "keeps a result of at most LINE_CHARS characters whole" do
+        body = "y" * described_class::LINE_CHARS
+
+        expect(described_class.line(result_turn(body))).to include(body)
+      end
+
+      it "keeps a short result whole in the uncut form too" do
+        expect(described_class.whole(result_turn("3 files changed"))).to include("3 files changed")
+      end
+    end
+
     it "names a tool call by the tool it called" do
       call = { "role" => "assistant",
                "content" => [{ "type" => "tool_use", "id" => "tu_1", "name" => "read_file", "input" => {} }] }
