@@ -261,6 +261,7 @@ module Lain
       def answered(turn, asked, text)
         turn.published = true
         prompt = publish(asked)
+        text.drawn if text.respond_to?(:drawn)
         heard = Enumerator.produce do
           judged = judge(prompt, text, @inbound.pop)
           judged = back_from_aside(turn, prompt) if judged.equal?(STEPPED_ASIDE)

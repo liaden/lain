@@ -111,6 +111,10 @@ module Lain
         # `you>` and asks again ({Intake#read}), so it still decides nothing.
         def takes?(line) = !line.lstrip.start_with?(COMMAND)
 
+        # Told by the {Intake} when this prompt is drawn, which is when the
+        # call's approval window starts running.
+        def drawn = @pending.drawn
+
         # What the {Intake} publishes this prompt as: an answer a run waits on.
         def kind = :approval
 

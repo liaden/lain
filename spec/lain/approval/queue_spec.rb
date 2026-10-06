@@ -521,6 +521,49 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
+  describe "a pending that was drawn after it parked" do
+    let(:queue) { described_class.new(journal:, timeout: 0.3) }
+
+    def elapsed_until_settled(draw_at:)
+      Sync do |task|
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        run = task.async { queue.adjudicate(tool_call, nil) }
+        pending = queue.dequeue
+        task.async do
+          task.sleep(draw_at)
+          pending.drawn
+        end
+        [run.wait, Process.clock_gettime(Process::CLOCK_MONOTONIC) - started]
+      end
+    end
+
+    it "gets its whole window from the moment it was drawn" do
+      pending, elapsed = elapsed_until_settled(draw_at: 0.2)
+
+      expect([pending.surface, elapsed]).to match([described_class::TIMEOUT_SURFACE, be >= 0.49])
+    end
+
+    it "keeps the window from the park for a pending nobody drew" do
+      pending, elapsed = elapsed_until_settled(draw_at: 5)
+
+      expect([pending.surface, elapsed]).to match([described_class::TIMEOUT_SURFACE, be_between(0.3, 4)])
+    end
+
+    it "is still decided by an answer inside the extended window" do
+      verdict = Sync do |task|
+        run = task.async { queue.adjudicate(tool_call, nil) }
+        pending = queue.dequeue
+        task.sleep(0.1)
+        pending.drawn
+        task.sleep(0.15)
+        pending.approve(surface: "tty")
+        run.wait
+      end
+
+      expect(verdict).to have_attributes(surface: "tty", decision: :approve)
+    end
+  end
+
   # The Conductor#supervise grace/Ctrl-C path stops the gated fiber while it is
   # parked. An asked-and-abandoned approval must not linger: no leak in the
   # pending list, no ghost delivered to a surface (a human prompted to approve

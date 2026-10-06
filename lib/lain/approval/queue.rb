@@ -183,6 +183,13 @@ module Lain
 
         def humans_only? = @humans_only
 
+        # A surface that asks one call at a time says when this one reached the
+        # front, and the queue's window then runs from there, not from the park.
+        def drawn = @drawn ||= @clock.call
+
+        # @return [Numeric, nil] the clock reading at the first {#drawn}
+        def drawn_at = @drawn
+
         # The path this call's input names, read from the table
         # {Sensitivity::Policy} classifies by, and only a String: a value the
         # policy would coerce is one no surface is shown.
@@ -388,10 +395,14 @@ module Lain
       # The expired window IS a decision, routed through the same single-shot
       # {Pending#decide}, so a surface that answered in the same tick still wins
       # and a later answer is a no-op.
-      def await_decision(pending)
-        Async::Task.current.with_timeout(@timeout) { pending.await }
+      #
+      # A pending drawn after it parked is owed the rest of a whole window from
+      # the draw, so a call queued behind a slow answer is not denied unasked.
+      def await_decision(pending, window = @timeout)
+        Async::Task.current.with_timeout(window) { pending.await }
       rescue Async::TimeoutError
-        pending.deny(surface: TIMEOUT_SURFACE)
+        left = pending.drawn_at ? pending.drawn_at + @timeout - @clock.call : 0
+        left.positive? ? await_decision(pending, left) : pending.deny(surface: TIMEOUT_SURFACE)
       end
     end
   end

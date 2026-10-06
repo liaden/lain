@@ -272,6 +272,63 @@ RSpec.describe Lain::Frontend::Intake do
     end
   end
 
+  describe "a prompt that answers `drawn`" do
+    let(:asked) do
+      Class.new(String) do
+        def initialize(text)
+          super
+          @drawn = 0
+        end
+
+        def drawn = @drawn += 1
+        def drawn_times = @drawn
+      end
+    end
+
+    it "is told once its prompt is published, not while it waits behind another" do
+      waiting = asked.new("[y/N] ")
+      told_while_waiting = nil
+
+      Sync do |task|
+        question = task.async { rail.read(:human, "human> ") }
+        pumped_until(task) { rail.published.kind == :human }
+        reading = task.async { rail.read(:approval, waiting) }
+        settle_for(task, 0.02)
+        told_while_waiting = waiting.drawn_times
+        reading.stop
+        question.stop
+      end
+
+      expect(told_while_waiting).to eq(0)
+    end
+
+    it "is told when it becomes the head and is drawn" do
+      prompt = asked.new("[y/N] ")
+
+      Sync do |task|
+        answered_when_published(task) { "y" }
+        rail.read(:approval, prompt)
+      end
+
+      expect(prompt.drawn_times).to eq(1)
+    end
+
+    it "starts the call's clock through the real approval prompt" do
+      pending = Lain::Approval::Queue::Pending.new(
+        effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: {}),
+        requester: "agent", clock: -> { 0 }
+      )
+      prompt = Lain::Frontend::ApprovalPolicy::Asked.new("[y/N] ", pending)
+
+      Sync do |task|
+        answered_when_published(task) { "y" }
+        rail.read(:approval, prompt)
+      end
+
+      expect(pending.drawn_at).to eq(0)
+    end
+  end
+
   describe "several readers" do
     it "publishes their prompts one at a time, in the order they asked" do
       kinds = []
