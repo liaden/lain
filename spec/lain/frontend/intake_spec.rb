@@ -408,6 +408,34 @@ RSpec.describe Lain::Frontend::Intake do
       expect(screen.said.count([:queued, "[y/N] "])).to eq(1)
     end
 
+    # Three calls parked at once: the head draws, and each of the others is
+    # announced by name, however alike the calls read. Reads the Intake directly,
+    # not through ApprovalPolicy#read_until_decided, which only wraps this call.
+    it "announces every other call parked behind the one drawn" do
+      notes = []
+      summons = Class.new do
+        define_method(:queue_prompt) { |text| text.queued { |note| notes << note } }
+        def close_prompt(_text) = nil
+        def drop_prompt(_text) = nil
+      end.new
+      summoning = described_class.new(screen: summons)
+      prompts = %w[tu_1 tu_2 tu_3].map do |id|
+        pending = Lain::Approval::Queue::Pending.new(
+          effect: Lain::Effect::ToolCall.new(tool_use_id: id, name: "read_file", input: { "path" => id }),
+          requester: "agent", clock: -> { 0 }
+        )
+        Lain::Frontend::ApprovalPolicy::Asked.new("[y/N] ", pending)
+      end
+
+      Sync do |task|
+        readers = prompts.map { |prompt| task.async { summoning.read(:approval, prompt) } }
+        pumped_until(task) { notes.size == 2 }
+        readers.each(&:stop)
+      end
+
+      expect(notes).to match([include("tu_2"), include("tu_3")])
+    end
+
     it "tells the screen nothing was dropped for a reader whose prompt was published" do
       Sync do |task|
         answered_when_published(task) { "n" }
