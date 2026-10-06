@@ -417,6 +417,9 @@ module Lain
       # cleaned path, so a glob character, a `.` or `..` segment, or an empty
       # one names a directory no cleaned path ever has.
       GLOB_METACHARACTERS = /[*?\[{]/
+
+      # An unescaped `[` with no `]` after it.
+      UNCLOSED_BRACKET = /(?<!\\)(?:\\\\)*\[(?:[^\]\\]|\\.)*\z/
       UNCLEAN_SEGMENTS = ["", ".", ".."].freeze
       LITERAL = "can never match: an anchored pattern is a literal, clean path -- no glob, no empty, " \
                 "`.` or `..` segment"
@@ -519,8 +522,13 @@ module Lain
         raise malformed(key, pattern, "must be matchable text", path:) unless Sensitivity.readable?(pattern)
         raise malformed(key, pattern, "must not be blank", path:) if pattern.strip.empty?
         raise malformed(key, pattern, "matches everything", path:) if unbounded?(key, pattern)
+        raise malformed(key, pattern, "an unclosed [", path:) if unclosed_bracket?(pattern)
         raise malformed(key, pattern, LITERAL, path:) if unmatchable_home?(pattern) || unmatchable_root?(pattern)
       end
+
+      # `File.fnmatch?` reads an unclosed `[` as matching nothing, so the rule
+      # would sit in the config and never fire.
+      def self.unclosed_bracket?(pattern) = pattern.match?(UNCLOSED_BRACKET)
 
       def self.unmatchable_home?(pattern)
         return false unless pattern.start_with?(HOME)
@@ -566,7 +574,7 @@ module Lain
 
       private_class_method :compile, :rule, :located, :rooted, :literal, :lifted_by, :wholesale,
                            :lifts_project_ruby?, :check!, :unbounded?, :unmatchable_home?, :unmatchable_root?,
-                           :unclean?, :not_a_list
+                           :unclean?, :not_a_list, :unclosed_bracket?
 
       # Validated in the constructor too, {Config::Answers}' precedent: a value
       # built by hand carries rules that never came through {.from}.

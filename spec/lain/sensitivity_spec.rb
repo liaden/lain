@@ -1132,6 +1132,18 @@ RSpec.describe Lain::Sensitivity do
         .to raise_error(Lain::Config::Refusal, /home-anchored.*project-anchored/)
     end
 
+    %w[gated exempt].product(%w[\[abc \[]).each do |key, pattern|
+      it "refuses an unclosed bracket in #{key}: #{pattern.inspect}, naming the key, pattern and line" do
+        shown = Regexp.escape(pattern.inspect)
+        expect { described_class.from({ key => [pattern] }, path: "/p/.lain/config.rb:3") }
+          .to raise_error(Lain::Config::Refusal, /config\.rb:3.*#{key} an unclosed \[: #{shown}/)
+      end
+    end
+
+    it "accepts a closed bracket and an escaped one" do
+      expect { described_class.from({ "gated" => ["[ab]c", "a\\[b"] }) }.not_to raise_error
+    end
+
     it "names the config file in a refusal when it was given one" do
       expect { described_class.from({ "denied" => "x" }, path: "/etc/lain.toml") }
         .to raise_error(Lain::Config::Refusal, %r{\A/etc/lain\.toml: })
