@@ -206,7 +206,7 @@ module Lain
         review = session_review
         sink = Improvement::Sink.new(session: review.session, paths: @paths)
         journaled do |journal|
-          result = build_improver(sink, @backend.call, journal).ask(review.prompt).text
+          result = answer(build_improver(sink, @backend.call, journal), review.prompt, sink)
           said("improve: ran a harness_improver pass over session #{review.session}, #{stored(sink)}\n#{result}")
         end
       end
@@ -223,6 +223,15 @@ module Lain
       end
 
       private
+
+      # Thor prints only the message, so the stored count has to ride in it.
+      def answer(improver, prompt, sink)
+        improver.ask!(prompt)
+      rescue Agent::Budget::Exceeded => e
+        raise Lain::Error, "improve: stopped at the ceiling, #{stored(sink)} (#{e.message})"
+      rescue Response::Failed => e
+        raise Lain::Error, "improve: #{e.message}, #{stored(sink)}"
+      end
 
       def stored(sink)
         return "stored nothing" if sink.appended.zero?

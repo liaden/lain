@@ -211,6 +211,39 @@ RSpec.describe Lain::CLI::Improve do
     end
   end
 
+  describe "a pass that does not finish still says what it stored" do
+    it "names the ceiling and the stored count when the loop runs past it" do
+      stores = [tool_response(improvement_write("k1", "first note")),
+                tool_response(improvement_write("k2", "second note", kind: "doc"))]
+      loops = Array.new(30) { |i| tool_response(improvement_write("r#{i}", "", kind: "knob")) }
+      provider = Lain::Provider::Mock.new(responses: stores + loops)
+
+      expect { improve(provider).report }
+        .to raise_error(Lain::Error, /stopped at the ceiling, stored 2 notes.*ceiling is \d+/) do |error|
+        expect(error.cause).to be_a(Lain::Agent::Budget::Exceeded)
+      end
+    end
+
+    it "keeps the notes it stored before the ceiling" do
+      loops = Array.new(30) { |i| tool_response(improvement_write("r#{i}", "", kind: "knob")) }
+      provider = Lain::Provider::Mock.new(responses: [tool_response(improvement_write("k1", "kept")), *loops])
+
+      expect { improve(provider).report }.to raise_error(Lain::Error)
+      expect(written_improvements.map { |record| record["note"] }).to eq(["kept"])
+    end
+
+    it "names the failure and the stored count for a prose tool call, not the envelope" do
+      prose = text_response("<tool_call>{\"name\":\"x\"}</tool_call>", stop_reason: :malformed)
+      provider = Lain::Provider::Mock.new(responses: [tool_response(improvement_write("k1", "a note")), prose])
+
+      expect { improve(provider).report }.to raise_error(Lain::Error) do |error|
+        expect(error.message).to include("stored 1 note")
+        expect(error.message).not_to include("tool_call>")
+        expect(error.cause).to be_a(Lain::Response::Failed)
+      end
+    end
+  end
+
   describe "the improver cannot write memories" do
     # A named capability the union can hold, without wiring the recorder-bearing
     # real tools (role_spec's idiom).
