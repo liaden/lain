@@ -459,6 +459,35 @@ RSpec.describe Lain::Frontend::InputPane do
       expect(next_frame(chat, of: "line")["text"]).to eq("partial")
     end
 
+    it "does not send a line of 4095 bytes, and says the terminal cut it" do
+      reads = watch_idle_reads
+      chat = open_pane
+      unpublished(chat)
+      keyboard.write("#{"a" * 4095}\r")
+      taken(chat, reads)
+
+      expect(sent_so_far(chat).map { |frame| frame["v"] }).not_to include("line")
+      expect(screen.string).to include("cut by the terminal").and include("idle prompt")
+    end
+
+    it "sends a line of 4094 bytes, one under the cut" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("#{"a" * 4094}\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("a" * 4094)
+    end
+
+    it "sends a line of 200 bytes as it always has" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("#{"a" * 200}\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("a" * 200)
+    end
+
     it "leaves a raw terminal's bytes alone, since they are a countdown's keys" do
       chat = open_pane
       unpublished(chat)

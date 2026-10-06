@@ -748,6 +748,50 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
   end
 
+  describe "a line typed mid-ask that the terminal's line buffer may have cut" do
+    let(:pipe) { IO.pipe }
+    let(:console) do
+      Class.new do
+        def initialize(io) = @io = io
+        def tty? = true
+        def echo? = true
+        def read_nonblock(*args, **opts) = @io.read_nonblock(*args, **opts)
+        def wait_readable = @io.wait_readable
+      end.new(pipe.first)
+    end
+
+    after { pipe.each(&:close) }
+
+    def typed_mid_ask(text)
+      pumped(console) do |pump|
+        pipe.last.write("#{text}\r")
+        Async::Task.current.sleep(0.2)
+        pump.sweep
+      end
+    end
+
+    it "does not hold a line of 4095 bytes, and says the terminal cut it and to paste it at the idle prompt" do
+      typed_mid_ask("a" * 4095)
+
+      expect(rail.take_held).to be_nil
+      expect(output.string).to include("cut by the terminal").and include("idle prompt")
+    end
+
+    it "holds a line of 4094 bytes, one under the cut" do
+      typed_mid_ask("a" * 4094)
+
+      expect(rail.take_held).to eq("a" * 4094)
+      expect(output.string).not_to include("cut by the terminal")
+    end
+
+    it "holds a line of 200 bytes as typeahead and says nothing" do
+      typed_mid_ask("a" * 200)
+
+      expect(rail.take_held).to eq("a" * 200)
+      expect(output.string).not_to include("cut by the terminal")
+    end
+  end
+
   describe "#keep" do
     it "hands a partial line to the next sweep, which joins it to the rest" do
       allow(Lain::Frontend::LineEditor).to receive(:typed_ahead).and_return("ial\r")

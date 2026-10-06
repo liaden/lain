@@ -66,6 +66,10 @@ module Lain
       # How often the wait looks again.
       HOLD_POLL = 0.01
 
+      # A cooked terminal's 4096-byte line buffer keeps 4095 content bytes and drops the rest without a word.
+      CUT_AT = 4095
+      CUT_NOTICE = "a line that long was cut by the terminal, so it was not kept; paste it at the idle prompt"
+
       # No read open at a prompt that answers nothing, so nothing is untouched.
       NOT_EDITING = Draw.new(Intake::Unpublished, nil).freeze
       private_constant :Draw, :NOT_EDITING
@@ -74,6 +78,13 @@ module Lain
 
       # The process's stdin, named here so no other file on the chat path does.
       def self.process_input = $stdin
+
+      # A cut line would otherwise travel on as a different prompt than the one typed.
+      def self.uncut(lines, screen)
+        cut, kept = lines.partition { |line| line.bytesize >= CUT_AT }
+        screen.render_warning(CUT_NOTICE) if cut.any?
+        kept
+      end
 
       def self.terminal?(input) = input.respond_to?(:tty?) && input.tty?
 
@@ -238,10 +249,12 @@ module Lain
       # a `command>` takes it for its own line, an answer holds it. Holding it
       # here would send a `/approve` typed just ahead of a parked call to `you>`.
       def forwarded(typed)
-        lifted, others = typed.lines.partition { |line| @rail.lifts?(Intake::Line.new(text: line, generation: 0)) }
+        lifted, others = whole(typed.lines).partition { |line| @rail.lifts?(Intake::Line.new(text: line, generation: 0)) }
         lifted.each { |line| @rail << Intake::Line.new(text: line, generation: Intake::Unpublished.generation) }
         @unfinished = Typeahead.pending(others, typed.partial)
       end
+
+      def whole(lines) = StdinPump.uncut(lines, @screen)
 
       def serve(prompt)
         return @rail << Intake::Eof.new if @ended
