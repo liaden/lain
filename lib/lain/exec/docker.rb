@@ -129,6 +129,7 @@ module Lain
       #   its container asked to stop directly -- the message names the
       #   container when that asking could not be confirmed within its own
       #   bounded deadline
+      # @raise [Async::Stop] re-raised unchanged once the container has been asked to stop
       # @raise [Unsupported] when handed a PIPED term
       def call(command:, cwd:, env:, timeout:, stdout_sink: Sink::Null.new, stderr_sink: Sink::Null.new)
         crossing = crossing(env)
@@ -137,6 +138,10 @@ module Lain
                    timeout:, stdout_sink:, stderr_sink:)
       rescue Timeout => e
         raise Timeout, with_cleanup_note(name, e.message)
+      rescue Async::Stop
+        # `--rm` was measured not to fire when the client dies while PID 1 ignores TERM.
+        @cleanup.call(name)
+        raise
       end
 
       private
@@ -148,7 +153,8 @@ module Lain
       # container that trapped or outlived the TERM keeps running with nobody
       # left to signal it. So the named container is asked to stop directly,
       # through the same backend the client itself ran through, and the
-      # message says so when that asking could not be confirmed.
+      # message says so when that asking could not be confirmed. A stop of the
+      # calling task takes the same path, minus the message: it re-raises as is.
       def with_cleanup_note(name, message)
         return message if @cleanup.call(name)
 

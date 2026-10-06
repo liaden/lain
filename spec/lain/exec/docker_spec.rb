@@ -755,6 +755,23 @@ RSpec.describe Lain::Exec::Docker do
       expect(inner.commands.map { |call| call[:argv][1] }).to eq(%w[run kill rm])
     end
 
+    it "removes the container and re-raises the stop unchanged when the task is stopped" do
+      inner = timing_out_inner
+      stop = Async::Stop.new
+      inner.define_singleton_method(:call) do |command:, **|
+        @commands << { argv: command.first }
+        raise stop if command.first[1] == "run"
+
+        Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+      end
+      backend = described_class.new(project:, exec: inner, prober: ->(_timeout) {})
+
+      expect { run_on(backend) }.to(raise_error { |error| expect(error).to be(stop) })
+
+      run_argv, kill_argv, rm_argv = inner.commands.map { |call| call[:argv] }
+      expect([kill_argv, rm_argv]).to eq([%W[docker kill #{name_in(run_argv)}], %W[docker rm -f #{name_in(run_argv)}]])
+    end
+
     # Bounded by a deadline of cleanup's OWN: a caller's generous timeout must
     # not license an unbounded wait on the way OUT of a call that already
     # timed out.
