@@ -635,6 +635,46 @@ RSpec.describe Lain::Approval::ComposedTerm do
     end
   end
 
+  # Measured: `cat password.txt` holding a bare `hunter2` was approved, since
+  # no region detector fires on a value with no assignment around it. The name
+  # is the only signal, and on a source file it says nothing about the bytes.
+  describe "a file whose name hints at a secret" do
+    it "abstains on a data file whose name carries the hint" do
+      in_tree do |root, home|
+        names = %w[password.txt secret.txt token.txt api_key.txt credentials vault-pass.txt]
+        names.each { |name| on_disk(root, name, "hunter2\n") }
+        commands = names.map { |name| "cat #{name}" }
+        expect_allowed_by_the_verdict(*commands)
+
+        rule = rule_for(home, root)
+        expect(commands.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * names.size)
+      end
+    end
+
+    it "still approves a source file whose name carries the hint" do
+      in_tree do |root, home|
+        names = %w[session.rb auth.py token.ts session.sh]
+        names.each { |name| on_disk(root, name, "x = 1\n") }
+
+        rule = rule_for(home, root)
+        expect(names.map { |name| rule.decide(call_of("cat #{name}", cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    it "leaves a pattern or a flag that names a hint word as it was" do
+      in_tree do |root, home|
+        on_disk(root, "lib/app.rb", "puts 1\n")
+        on_disk(root, "lib/notes.txt", "plain\n")
+
+        commands = ["grep session lib/", "grep --regexp=token lib/"]
+        expect_allowed_by_the_verdict(*commands)
+
+        rule = rule_for(home, root)
+        expect(commands.map { |command| rule.decide(call_of(command, cwd: root)) }).to all(be_allow)
+      end
+    end
+  end
+
   # The classifier reads the NAME it was given, by contract, and the root
   # predicate asks only WHERE a word lands -- so a link whose target is inside
   # the root satisfies both while pointing at a file the classifier would have

@@ -90,7 +90,8 @@ module Lain
     # printed to the model with nobody asked, while `read_file` of the same
     # bytes masked them. Predicate 4 can only ever judge the name. So an
     # existing regular file must be readable by everyone, fit the bounded scan
-    # (64 KiB), and carry no region; {CLI::Wiring::BoardBuild::Classifiers::Content}
+    # (64 KiB), carry no region, and not be a non-source file whose name hints
+    # at a secret; {CLI::Wiring::BoardBuild::Classifiers::Content}
     # holds the mechanics. It too lives outside {Sensitivity}, for the same
     # reason.
     #

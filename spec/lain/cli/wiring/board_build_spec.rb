@@ -1012,6 +1012,40 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         end
       end
 
+      it "refuses a data file whose name hints at a secret, and admits a source file that does" do
+        in_tree do |root, home|
+          sources = %w[lib/session.rb lib/auth.py lib/Token.RB]
+          [*sources, "password.txt", "credentials"].each { |name| put(root, name, "hunter2\n") }
+          factory = confined_factory(home, root)
+
+          expect(%w[password.txt credentials].map { |word| factory.content(nil).admits?(word) }).to all(be(false))
+          expect(sources.map { |word| factory.content(nil).admits?(word) }).to all(be(true))
+        end
+      end
+
+      it "reads the hint off the name typed as well as the file it lands on" do
+        in_tree do |root, home|
+          put(root, "notes.txt", "hunter2\n")
+          put(root, "password.txt", "hunter2\n")
+          File.symlink(File.join(root, "notes.txt"), File.join(root, "vault-pass.txt"))
+          File.symlink(File.join(root, "password.txt"), File.join(root, "readme.txt"))
+          factory = confined_factory(home, root)
+
+          expect(%w[vault-pass.txt readme.txt].map { |word| factory.content(nil).admits?(word) }).to all(be(false))
+        end
+      end
+
+      # The hint is read off a file's name, so a word naming nothing is never
+      # judged by it: `grep session lib/` stays a search.
+      it "admits a hinted word that names nothing, and a hinted directory" do
+        in_tree do |root, home|
+          FileUtils.mkdir_p(File.join(root, "secrets"))
+          factory = confined_factory(home, root)
+
+          expect(%w[session --author=token secrets].map { |word| factory.content(nil).admits?(word) }).to all(be(true))
+        end
+      end
+
       # A word that names nothing on disk -- a flag, a pattern, a file not yet
       # there -- has no bytes to ask about; and `grep -n foo lib` reads no
       # directory as content.
