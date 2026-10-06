@@ -382,6 +382,30 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
+    it "forgets the thread anchors a settled round held" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+          inspector.exec_lua("_G.__lain.set_thread(...)",
+                             [{ "id" => "t-1", "path" => "a.rb", "side" => "new", "line" => 1 }, ["hi"]])
+          settle_round
+
+          expect(inspector.exec_lua(<<~LUA, [])).to eq([])
+            local held = {}
+            for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+              local marks = vim.api.nvim_buf_get_extmarks(buf, vim.api.nvim_create_namespace("lain_thread_anchors"), 0, -1, {})
+              if vim.b[buf].lain_thread_anchors ~= nil or #marks > 0 then table.insert(held, buf) end
+            end
+            return held
+          LUA
+        end
+      end
+    end
+
     # The one that matters: the INTERLEAVING, not the endpoints. A
     # stamp that was never withdrawn would pass an endpoint assertion and prove
     # nothing about `unstamp`; a stamp re-acquired from anywhere but the round's

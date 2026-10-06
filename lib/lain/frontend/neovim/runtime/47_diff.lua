@@ -867,4 +867,5 @@ function _G.__lain.review_settled()
     review_diff.forget_round(buf)
   end
   _G.__lain.review_notes_forget()
+  _G.__lain.review_threads_forget()
 end

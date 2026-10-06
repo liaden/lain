@@ -964,6 +964,42 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     end
   end
 
+  # Settling forgets the round's claims, but the new side is a real file buffer
+  # that survives it, and the same revision would otherwise vouch for its marks.
+  describe "a settled review" do
+    def settle = lua("_G.__lain.review_settled()")
+
+    it "does not bring a thread back when the same changeset is reopened" do
+      open_counter
+      set_thread(anchor(id: "a-20", line: 20), ["twenty"])
+      new_buf = buf_in(slots["new"])
+      settle
+      open_counter
+      enter(slots["new"])
+
+      move_to(20)
+
+      expect(buffer_var(buf_in(slots["old"]), "lain_thread_anchor")).to be_nil
+      expect(held_anchors(new_buf)).to be_nil
+      expect(anchor_marks(new_buf)).to be_empty
+    end
+
+    it "opens no old thread when the file is surveyed again" do
+      lua("_G.__lain.set_review(...)", [["[ ] docs/counter.txt"], 1, ["new"]])
+      lua("_G.__lain.open_changeset(...)", ["docs/counter.txt", [], 1, revisions])
+      set_thread(anchor(id: "a-20", line: 20), ["twenty"])
+      new_buf = buf_in(slots["new"])
+      settle
+      lua("_G.__lain.open_changeset(...)", ["docs/counter.txt", [], 1, revisions])
+      enter(slots["new"])
+
+      move_to(20)
+
+      expect(held_anchors(new_buf)).to be_nil
+      expect(anchor_marks(new_buf)).to be_empty
+    end
+  end
+
   describe "thread buffers the human has wiped" do
     def five_threads
       (1..5).map do |i|

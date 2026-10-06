@@ -773,3 +773,14 @@ define("LainThread", function()
   vim.api.nvim_win_set_buf(win, held.buf)
   vim.api.nvim_set_current_win(win)
 end)
+
+-- Settling ends the round, but the new side is a real file buffer that outlives
+-- it, and the same revision would keep vouching for its marks in the next round.
+function _G.__lain.review_threads_forget()
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      vim.api.nvim_buf_clear_namespace(buf, review_thread.NAMESPACE, 0, -1)
+      vim.b[buf].lain_thread_anchors = nil
+    end
+  end
+end
