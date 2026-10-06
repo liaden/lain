@@ -19,8 +19,9 @@ module Lain
     # Afterwards the call compares the target with what was there before the
     # spawn and asks the layout guard about it, so a result says both whether
     # the child did the work and whether the work sits where the guard will
-    # accept it. The layout also names the framework, so no detection lives
-    # here.
+    # accept it. The target is judged as declared, since it may be a new file
+    # inside a module whose own test lives elsewhere. The layout also names
+    # the framework, so no detection lives here.
     class TestGeneration
       SKILL = :"gherkin-tests"
       private_constant :SKILL
@@ -88,7 +89,7 @@ module Lain
         before = digest(target)
         result = @role_spawn.call(:test_engineer, :fresh, prompt(mechanical, subject, level, target))
         Record.new(result:, criteria_digest: criteria.digest, rubric_scenarios:, target:, before:,
-                   after: digest(target), verdict: @guard.check_file(target))
+                   after: digest(target), verdict: @guard.check_file(target, declared: target))
       end
 
       private

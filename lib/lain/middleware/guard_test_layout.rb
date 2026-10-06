@@ -53,7 +53,25 @@ module Lain
           @root = root
           @guards = {}
           @absence_noted = false
+          @declarations = Hash.new(EMPTY)
         end
+
+        # A test target the driver set for a new source file in a checkout, so
+        # that checkout's guard reads the file there as new rather than as a
+        # split sibling. Lanes are fibers, and nothing yields between the read
+        # and the store, so two lanes cannot interleave here.
+        #
+        # @param root [String] the checkout the target is relative to
+        # @param path [String] the target, relative to that checkout
+        # @return [void]
+        def declare(root:, path:)
+          key = resolved(root)
+          @declarations[key] = (@declarations[key] + [path.dup.freeze]).uniq.freeze
+        end
+
+        # @param checkout [String] a root, in either spelling
+        # @return [Array<String>] the targets declared there, frozen
+        def declared(checkout) = @declarations[resolved(checkout)]
 
         def guard = guard_for(root)
 
@@ -82,6 +100,11 @@ module Lain
         end
 
         private
+
+        EMPTY = [].freeze
+        private_constant :EMPTY
+
+        def resolved(checkout) = File.exist?(checkout) ? File.realpath(checkout) : File.expand_path(checkout)
 
         def remember(checkout, guard)
           kept = @guards.keys - [root]
@@ -149,7 +172,8 @@ module Lain
         path = Session.normalize_path(field(effect.input, PATH_INPUT), cwd: session.worker_env.cwd)
         guard = guard_at(path)
         content = GUARDED_TOOLS.fetch(effect.name)
-        content ? guard.check(path, field(effect.input, content).to_s) : guard.check_path(path)
+        declared = @run.declared(guard.root)
+        content ? guard.check(path, field(effect.input, content).to_s, declared:) : guard.check_path(path, declared:)
       rescue StandardError
         raise Unjudged
       end

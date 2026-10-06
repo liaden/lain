@@ -117,8 +117,9 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
   # checkout was cut from -- never from the checkout, which a gitignored
   # config never reaches.
   def step(provider, harness: rspec, since: git(repo, "rev-parse", "HEAD"))
-    described_class.new(renderer:, role_spawn: role_spawn(provider), layout: Lain::Config.test_layout(root: repo),
-                        harness:)
+    layout = Lain::Config.test_layout(root: repo)
+    described_class.new(renderer:, role_spawn: role_spawn(provider), layout:, harness:,
+                        test_layout: Lain::Middleware::GuardTestLayout::Run.new(layout:, root: repo))
                    .call(criteria, worker_env, subject: "app/models/order.rb", since:)
   end
 
@@ -165,6 +166,47 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     result = step(writing(target, red))
 
     expect(git(held, "show", "--name-only", "--format=", result.sha).split("\n")).to eq([target])
+  end
+
+  # The child writes behind the board's layout guard, which reads the target
+  # IssueTests declared to the run they share. Without that declaration a new
+  # file inside an existing module reads as a split sibling of the module's test.
+  describe "a new file inside an existing module, behind the board's layout guard" do
+    let(:nested) { "spec/unit/models/order/hello_spec.rb" }
+    let(:run) { Lain::Middleware::GuardTestLayout::Run.new(layout: Lain::Config.test_layout(root: repo), root: repo) }
+    let(:journal) { [] }
+    let(:greeting) do
+      "require_relative \"../../../../app/models/order\"\n\nRSpec.describe Order do\n  " \
+        "it(\"greets\") { expect(Order.new).to respond_to(:hello) }\nend\n"
+    end
+
+    def guarded(env)
+      Lain::Middleware::Stack.new([Lain::Middleware::GuardTestLayout.new(run:, roots: run.roots_for(env), journal:),
+                                   Lain::Middleware::Sensitivity.new,
+                                   Lain::Middleware::Gate.new(policy: Lain::Middleware::Gate::ApproveAll.new)])
+    end
+
+    def guarded_spawn
+      Lain::Skill::RoleSpawn.new(provider: writing(nested, greeting),
+                                 context_factory: -> { Lain::Context.new(model: "child", max_tokens: 256) },
+                                 toolset: union, parent: Lain::Timeline.empty(store: Lain::Store.new), slots:,
+                                 tool_middleware: method(:guarded))
+    end
+
+    def nested_step
+      described_class.new(renderer:, role_spawn: guarded_spawn, layout: Lain::Config.test_layout(root: repo),
+                          test_layout: run, harness: rspec)
+                     .call(criteria, worker_env, subject: "app/models/order/hello.rb",
+                                                 since: git(repo, "rev-parse", "HEAD"))
+    end
+
+    it "declares its target to the run, so the guarded write lands and counts as generated" do
+      result = nested_step
+
+      expect(run.declared(held)).to eq([nested])
+      expect(result.record).to have_attributes(target: nested, generated?: true)
+      expect(journal.map(&:class)).to include(Lain::Telemetry::TestLayoutDeferred)
+    end
   end
 
   it "refuses tests that pass before any work is done, and commits nothing" do

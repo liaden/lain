@@ -188,6 +188,57 @@ RSpec.describe Lain::Middleware::GuardTestLayout do
     end
   end
 
+  # The epic driver sets each issue's test target before its child writes,
+  # and declares it, per checkout, to the run every child's guard shares.
+  describe "a target the driver declared" do
+    let(:declared) { "spec/unit/models/order/hello_spec.rb" }
+
+    def checkout_copy(dir)
+      FileUtils.cp_r("spec/fixtures/projects/layout_mini/.", dir)
+      FileUtils.mkdir_p(File.join(dir, "spec", "unit", "models", "order"))
+      File.realpath(dir)
+    end
+
+    def in_dir(dir) = Lain::Session.new(worker_env: Lain::WorkerEnv.default.with(cwd: dir))
+
+    before { FileUtils.mkdir_p(File.join(root, "spec", "unit", "models", "order")) }
+
+    it "accepts a test describing the module a new file extends, as deferred no_source" do
+      run.declare(root:, path: declared)
+
+      result = through(guard, write_call(declared, describing("Order")))
+
+      expect(result.is_error).to be(false)
+      expect(File.exist?(File.join(root, declared))).to be(true)
+      expect(records("test_layout_deferred").map(&:path)).to eq([declared])
+    end
+
+    it "still refuses an undeclared split sibling as elsewhere, naming the right path" do
+      run.declare(root:, path: declared)
+
+      result = through(guard, write_call("spec/unit/models/order_extra_spec.rb", describing("Order")))
+
+      expect(result.content).to include("spec/unit/models/order_spec.rb")
+      expect(records("test_layout_refused").map(&:rule)).to eq([:elsewhere])
+    end
+
+    it "judges a write in another lane's checkout without this lane's declaration" do
+      Dir.mktmpdir("lain-lane-a") do |a|
+        Dir.mktmpdir("lain-lane-b") do |b|
+          lane_a = checkout_copy(a)
+          lane_b = checkout_copy(b)
+          run.declare(root: lane_a, path: declared)
+          child_b = described_class.new(run:, roots: [root, lane_b], journal:)
+
+          result = through(child_b, write_call(declared, describing("Order")), context: in_dir(lane_b))
+
+          expect(result.is_error).to be(true)
+          expect(records("test_layout_refused").map(&:rule)).to eq([:elsewhere])
+        end
+      end
+    end
+  end
+
   describe described_class::Run do
     def env_at(cwd, checkout: nil) = Lain::WorkerEnv.default.with(cwd:, checkout:)
 
@@ -210,6 +261,26 @@ RSpec.describe Lain::Middleware::GuardTestLayout do
 
         expect(run.roots_for(env_at(dir))).to eq([root])
         expect(run.roots_for(env_at(File.join(root, "app")))).to eq([root])
+      end
+    end
+
+    it "keeps a declaration under the root's resolved path, whichever spelling declared it" do
+      Dir.mktmpdir do |dir|
+        link = File.join(dir, "link")
+        File.symlink(root, link)
+        run.declare(root: link, path: "spec/unit/models/order/hello_spec.rb")
+
+        expect(run.declared(root)).to eq(["spec/unit/models/order/hello_spec.rb"])
+        expect(run.declared(dir)).to be_empty
+      end
+    end
+
+    it "keeps every target a root is declared, once each, and none of another root's" do
+      Dir.mktmpdir do |other|
+        %w[a b a].each { |name| run.declare(root:, path: "spec/unit/models/order/#{name}_spec.rb") }
+        run.declare(root: other, path: "spec/unit/models/order/c_spec.rb")
+
+        expect(run.declared(root)).to eq(%w[spec/unit/models/order/a_spec.rb spec/unit/models/order/b_spec.rb])
       end
     end
 

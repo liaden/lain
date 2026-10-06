@@ -683,6 +683,12 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(toolset_build.role_spawn).to be_a(Lain::Skill::RoleSpawn)
     end
 
+    # The epic driver declares its test targets to the one layout run every
+    # child's guard reads, so it has to be the board's own.
+    it "hands out the board's test layout run" do
+      expect(build_with({}, switchboard: -> { switchboard }).test_layout).to be(switchboard.test_layout)
+    end
+
     # Built whatever the flags say: the surface answers to the live
     # auto_approve layer, which `--auto-approve` merely starts on.
     it "wires an AutoSurface without --auto-approve, disengaged until the board's layer comes on" do

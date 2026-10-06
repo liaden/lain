@@ -616,7 +616,8 @@ module Lain
         end
 
         def issue_tests(layout)
-          IssueTests.new(renderer: @library.renderer, role_spawn: @toolset_build.role_spawn, layout:)
+          IssueTests.new(renderer: @library.renderer, role_spawn: @toolset_build.role_spawn, layout:,
+                         test_layout: @toolset_build.test_layout)
         end
 
         # The orchestrator's own children lease here, cut from the ISSUE's
@@ -1299,13 +1300,17 @@ module Lain
         #   test_engineer child is lent the held checkout rather than leasing one
         # @param layout [TestLayout] the project's, resolved from its root: the
         #   held checkout is cut by git and carries no gitignored config
+        # @param test_layout [Middleware::GuardTestLayout::Run] the run every
+        #   child's layout guard shares, told the target before the child writes
         # @param harness [#call] `root -> #run`, the suite runner over a checkout
         # @param shell_out_factory [#call] builds the git subprocess runner
-        def initialize(renderer:, role_spawn:, layout:, harness: Lain::Grader::TestHarness.public_method(:new),
+        def initialize(renderer:, role_spawn:, layout:, test_layout:,
+                       harness: Lain::Grader::TestHarness.public_method(:new),
                        shell_out_factory: Lain::Shell::Out.public_method(:new))
           @renderer = renderer
           @role_spawn = role_spawn
           @layout = layout
+          @test_layout = test_layout
           @harness = harness
           @shell_out_factory = shell_out_factory
         end
@@ -1331,6 +1336,7 @@ module Lain
           carried = earlier(worker_env.cwd, target, criteria.digest, since)
           return carry(criteria, worker_env, target, carried) unless carried.nil?
 
+          @test_layout.declare(root: worker_env.cwd, path: target)
           record = generated(criteria, worker_env, guard, subject:, level:)
           Red.new(record:, run: failing(record, worker_env), sha: commit(worker_env.cwd, record))
         end

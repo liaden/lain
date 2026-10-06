@@ -81,6 +81,17 @@ module Lain
 
         def at_home? = readings.any? { |reading| reading.path == home }
 
+        # A declared target is a new file inside the described constant's
+        # namespace: its source does not exist yet and sits beneath the file
+        # that defines the constant. Read by path, as the index reads, so no
+        # inflection decides what a namespace is called.
+        def unwritten?(declared) = declared.include?(path) && readings.none?(&:exists?) && beneath_home?
+
+        def beneath_home?
+          namespace = "#{home.delete_suffix(File.extname(home))}/"
+          readings.any? { |reading| reading.path.start_with?(namespace) }
+        end
+
         def absent
           missing = readings.reject(&:exists?).map(&:path)
           missing.empty? ? "" : " (#{missing.join(" and ")} does not exist)"
@@ -188,14 +199,15 @@ module Lain
         # @param path [String] the test file, relative to the root
         # @param constants [Array<String>] what its top-level describes name
         # @param level [String] the level it claims
+        # @param declared [Array<String>] targets the driver set, relative to the root
         # @return [Verdict]
-        def call(path, constants, level)
+        def call(path, constants, level, declared: [])
           readings = @mapping.sources_for(path).map { |source| @index.constants_in(source) }
           broken = readings.find(&:unparseable?)
           return unparsed(path, broken) if broken
 
           homes = constants.to_h { |constant| [constant, home_of(constant, readings)] }
-          unresolved(path, homes, readings) || settle(placement(path, homes, level, readings))
+          unresolved(path, homes, readings) || settle(placement(path, homes, level, readings), declared)
         end
 
         private
@@ -221,9 +233,10 @@ module Lain
           mirror ? mirror.path : @index.definitions_of(constant).first
         end
 
-        def settle(placement)
+        def settle(placement, declared)
           path = placement.path
           return Verdict.of(path, :passed, :mirrors, "#{path} mirrors #{placement.home}") if placement.placed?
+          return Guard.unwritten(path, placement.readings.map(&:path)) if placement.unwritten?(declared)
 
           Verdict.of(path, :refused, placement.rule, placement.to_s, expected: placement.expected)
         end
@@ -249,6 +262,14 @@ module Lain
         end
       end
 
+      # @param path [String] a declared target
+      # @param sources [Array<String>] what it mirrors, none of which exists
+      # @return [Verdict]
+      def self.unwritten(path, sources)
+        Verdict.of(path, :refused, :no_source,
+                   "#{path} is a declared target, and #{sources.join(" or ")}, which it mirrors, does not exist yet")
+      end
+
       attr_reader :layout, :root
 
       # The root is resolved through any symlink, and both spellings are
@@ -270,34 +291,47 @@ module Lain
         freeze
       end
 
+      # A declared target is a test path the driver set for a new source file.
+      # Describing a constant defined elsewhere, it is refused `:no_source`
+      # rather than `:elsewhere` while its own source does not exist and sits
+      # beneath the file that defines the constant, since a new file inside
+      # an existing module reads exactly like a split sibling.
+      #
       # @param path [String] relative to the root, or absolute inside it
       # @param content [String] the test file's whole content
+      # @param declared [String, Array<String>, nil] declared targets
       # @return [Verdict]
-      def check(path, content)
+      def check(path, content, declared: nil)
         relative = relative(path)
-        screen(relative) { |level| content_verdict(relative, level, content) }
+        screen(relative) { |level| content_verdict(relative, level, content, targets(declared)) }
       end
 
       # The path rules alone, for a write whose resulting content is not in
       # hand: the file is a test under a mirrored root and its source exists.
+      # @param path [String] relative to the root, or absolute inside it
+      # @param declared [String, Array<String>, nil] declared targets, as on {#check}
       # @return [Verdict]
-      def check_path(path)
+      def check_path(path, declared: nil)
         relative = relative(path)
-        screen(relative) { |level| path_verdict(relative, level) }
+        screen(relative) { |level| path_verdict(relative, level, targets(declared)) }
       end
 
       # {#check} over the file as it is on disk, refused `:missing` when it is
       # not there.
+      # @param path [String] relative to the root, or absolute inside it
+      # @param declared [String, Array<String>, nil] declared targets, as on {#check}
       # @return [Verdict]
-      def check_file(path)
+      def check_file(path, declared: nil)
         relative = relative(path)
         full = File.expand_path(relative, @root)
         return Verdict.of(relative, :refused, :missing, "#{relative} does not exist") unless File.file?(full)
 
-        check(relative, File.read(full))
+        check(relative, File.read(full), declared:)
       end
 
       private
+
+      def targets(declared) = Array(declared).map { |path| relative(path) }
 
       def relative(path)
         full = File.expand_path(path, @root)
@@ -328,37 +362,38 @@ module Lain
       # a name that is not there. A loaded table cannot get here -- it is
       # refused while ambiguous -- but {TestLayout::None} and a hand-built
       # layout can, and this read used to be an unguarded `.name`.
-      def content_verdict(path, level, content)
+      def content_verdict(path, level, content, declared)
         against = level || @mapping.default_level
-        return path_verdict(path, level) unless @layout.preset.describes && against
+        return path_verdict(path, level, declared) unless @layout.preset.describes && against
 
-        verdict = described(path, against.name, @reader.read(content))
+        verdict = described(path, against.name, @reader.read(content), declared)
         level ? verdict : strayed(path, verdict)
       end
 
-      def path_verdict(path, level) = level ? mirrored(path) : strayed(path)
+      def path_verdict(path, level, declared) = level ? mirrored(path, declared) : strayed(path)
 
       def strayed(path, advice = nil)
         reason = "#{path} is in the test tree under no level root, where the runner still collects it"
         Verdict.of(path, :refused, :stray, advice ? "#{reason}: #{advice.reason}" : reason, expected: advice&.expected)
       end
 
-      def mirrored(path)
+      def mirrored(path, declared)
         sources = @mapping.sources_for(path)
         present = sources.find { |source| File.file?(File.join(@root, source)) }
         return Verdict.of(path, :passed, :mirrors, "#{path} mirrors #{present}") if present
+        return Guard.unwritten(path, sources) if declared.include?(path)
 
         Verdict.of(path, :refused, :no_source, "#{path} mirrors #{sources.join(" or ")}, which does not exist")
       end
 
-      def described(path, level, spec)
+      def described(path, level, spec, declared)
         unless spec.parsed?
           return Verdict.of(path, :refused, :unparseable, "#{path} could not be parsed: #{spec.error}")
         end
         return undescribed(path, spec) unless spec.described?
         return mixed(path, spec.tags) if spec.tags.size > 1
 
-        @placer.call(path, spec.subjects, spec.tags.first || level)
+        @placer.call(path, spec.subjects, spec.tags.first || level, declared:)
       end
 
       def undescribed(path, spec)

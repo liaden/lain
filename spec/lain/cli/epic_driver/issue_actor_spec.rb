@@ -201,8 +201,10 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   end
 
   def red_step(renderer)
-    Lain::CLI::EpicDriver::IssueTests.new(renderer:, role_spawn: build.role_spawn,
-                                          layout: Lain::Config.test_layout(root: repo), harness: failing)
+    layout = Lain::Config.test_layout(root: repo)
+    Lain::CLI::EpicDriver::IssueTests.new(renderer:, role_spawn: build.role_spawn, layout:, harness: failing,
+                                          test_layout: Lain::Middleware::GuardTestLayout::Run.new(layout:,
+                                                                                                  root: repo))
   end
 
   def child_lanes = described_class::Lanes.new(root: File.join(@root, "children"), role_spawn: build.role_spawn)

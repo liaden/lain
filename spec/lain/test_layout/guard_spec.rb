@@ -68,6 +68,76 @@ RSpec.describe Lain::TestLayout::Guard do
     end
   end
 
+  # A new file inside an existing module describes a constant its own mirror
+  # does not define yet, which reads exactly like a split sibling. Only the
+  # driver's declaration of the target tells the two apart.
+  describe "a target the driver declared" do
+    let(:declared) { "spec/unit/models/order/hello_spec.rb" }
+
+    it "is :no_source, not :elsewhere, while the source it mirrors does not exist" do
+      verdict = guard.check(declared, spec_for("Order"), declared:)
+
+      expect(verdict).to have_attributes(outcome: :refused, rule: :no_source, expected: nil)
+      expect(verdict.reason).to include(declared, "app/models/order/hello.rb")
+    end
+
+    it "is :elsewhere when nothing declared it" do
+      expect(guard.check(declared, spec_for("Order")).rule).to eq(:elsewhere)
+    end
+
+    it "leaves an undeclared split sibling refused as elsewhere, naming the right path" do
+      verdict = guard.check("spec/unit/models/order_extra_spec.rb", spec_for("Order"), declared: [declared])
+
+      expect([verdict.rule, verdict.expected]).to eq([:elsewhere, "spec/unit/models/order_spec.rb"])
+    end
+
+    # The new file opens a namespace inside the described constant's own file,
+    # so only a constant whose file the target's source sits beneath is its
+    # module; any other constant defined elsewhere is still a misplaced test.
+    it "stays :elsewhere describing a constant whose file the new source does not sit beneath" do
+      verdicts = %w[CLI::Backend OrderRecord].map { |constant| guard.check(declared, spec_for(constant), declared:) }
+
+      expect(verdicts.map(&:rule)).to eq(%i[elsewhere elsewhere])
+    end
+
+    it "stays :elsewhere at a declared target outside the described constant's namespace" do
+      outside = "spec/unit/cli/greeter_spec.rb"
+
+      expect(guard.check(outside, spec_for("Order"), declared: outside).rule).to eq(:elsewhere)
+    end
+
+    it "stays :elsewhere at a declared nested target whose source exists without defining the constant" do
+      with_copy do |root|
+        FileUtils.mkdir_p(File.join(root, "app/models/order"))
+        File.write(File.join(root, "app/models/order/hello.rb"), "module Greeting\nend\n")
+
+        expect(guard_over(root).check(declared, spec_for("Order"), declared:).rule).to eq(:elsewhere)
+      end
+    end
+
+    it "admits nothing at a declared target whose mirrored source exists" do
+      verdict = guard.check("spec/unit/models/records_spec.rb", spec_for("Order"),
+                            declared: "spec/unit/models/records_spec.rb")
+
+      expect(verdict.rule).to eq(:elsewhere)
+    end
+
+    it "is taken by #check_path, which judges the path alone" do
+      expect(guard.check_path(declared, declared:))
+        .to have_attributes(rule: :no_source, reason: include("declared target"))
+    end
+
+    it "is taken by #check_file, over the file on disk" do
+      with_copy do |root|
+        FileUtils.mkdir_p(File.join(root, "spec/unit/models/order"))
+        File.write(File.join(root, declared), spec_for("Order"))
+
+        expect(guard_over(root).check_file(declared, declared:))
+          .to have_attributes(rule: :no_source, reason: include("declared target"))
+      end
+    end
+  end
+
   # rspec and parallel_rspec collect `spec/**/*_spec.rb`, so moving a refused
   # sibling out from under the level roots would otherwise escape the guard
   # while still running in the suite.

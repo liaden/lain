@@ -206,10 +206,18 @@ module Lain
           @epic = epic
           @askers = askers
           @usage = usage
+          @switchboard = switchboard
           @auto_approve = AutoApproveLayer.new(board: switchboard)
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:,
                              isolation:, handback:)
         end
+
+        # The board's layout run, read when asked because the board is built
+        # after this build. The epic driver declares its test targets to it,
+        # so the guard in every child's stack sees them.
+        #
+        # @return [Lain::Middleware::GuardTestLayout::Run]
+        def test_layout = @switchboard.call.guard_inputs.test_layout
 
         # The run's toolset: the capability floor, plus the child seams and the
         # main-agent-only tools.

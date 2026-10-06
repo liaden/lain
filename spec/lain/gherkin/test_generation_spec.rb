@@ -148,6 +148,17 @@ RSpec.describe Lain::Gherkin::TestGeneration do
       expect(record.verdict.rule).to eq(:no_source)
     end
 
+    # The target is the generation's own declaration, so a new file inside an
+    # existing module is not mistaken for a split sibling of the module's test.
+    it "counts a test at its own target, describing the module the new file extends, as generated" do
+      nested = "spec/unit/models/order/hello_spec.rb"
+      record = generation(child_writing(nested => "RSpec.describe Order do\nend\n"))
+               .call(criteria, subject: "app/models/order/hello.rb", level: "unit")
+
+      expect(record).to have_attributes(target: nested, created?: true, generated?: true)
+      expect(record.verdict.rule).to eq(:no_source)
+    end
+
     it "does not count a target written with the wrong subject, and carries the guard's refusal" do
       record = generate(child_writing(target => "RSpec.describe OrderRecord do\nend\n"))
 
