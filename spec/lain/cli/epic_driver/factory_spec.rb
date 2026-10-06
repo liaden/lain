@@ -792,6 +792,19 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(journaled_decisions.map { |decision| decision["stage"] }).not_to include("implementation")
     end
 
+    it "runs the red step with the declared preset when the checkout has no Gemfile" do
+      ignore_config
+      write_epic([issue("a")])
+      approve_plan("a")
+      git(repo, "switch", "-q", "main")
+
+      result = factory_over(mount, record: chronicle, asker: FactorySpecAsker.new("delete")).run(width: 1)
+
+      expect(git(repo, "show", "--name-only", "--format=", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.a.1").ref).split("\n"))
+        .to eq([target])
+      expect(result.to_s).not_to include("no test framework detected")
+    end
+
     # What an earlier run of issue a left: its lain-owned branch, cut at main
     # and carrying a commit of its own.
     def earlier_branch

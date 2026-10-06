@@ -71,6 +71,22 @@ module Lain
           matched.first.framework if matched.one?
         end
 
+        # The adapter builder for a framework a project DECLARED, so no file has
+        # to betray it: a checkout without a Gemfile is still an rspec project.
+        # @param name [String] a framework name, as a test layout's preset names it
+        # @return [#call] `root -> adapter`
+        # @raise [Error] naming the framework when no probe has an adapter for it
+        def self.for(name)
+          probe = PROBES.find { |candidate| candidate.framework == name }
+          unless probe
+            raise Error,
+                  "no adapter for test framework #{name}: not one of #{PROBES.map(&:framework).join(", ")}"
+          end
+          raise Error, "the #{name} adapter is not implemented yet" if probe.build.nil?
+
+          probe.build
+        end
+
         def self.choose(root, matched)
           # Detection could not single out a framework: nothing matched, more than
           # one did, or the one that matched has no adapter written yet. It names

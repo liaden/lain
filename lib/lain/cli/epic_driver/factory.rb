@@ -1302,16 +1302,17 @@ module Lain
         #   held checkout is cut by git and carries no gitignored config
         # @param test_layout [Middleware::GuardTestLayout::Run] the run every
         #   child's layout guard shares, told the target before the child writes
-        # @param harness [#call] `root -> #run`, the suite runner over a checkout
+        # @param harness [#call, nil] `root -> #run`, the suite runner over a checkout;
+        #   nil runs the layout's declared preset, never one detected from files
         # @param shell_out_factory [#call] builds the git subprocess runner
         def initialize(renderer:, role_spawn:, layout:, test_layout:,
-                       harness: Lain::Grader::TestHarness.public_method(:new),
+                       harness: nil,
                        shell_out_factory: Lain::Shell::Out.public_method(:new))
           @renderer = renderer
           @role_spawn = role_spawn
           @layout = layout
           @test_layout = test_layout
-          @harness = harness
+          @harness = harness || method(:declared_harness)
           @shell_out_factory = shell_out_factory
         end
 
@@ -1417,6 +1418,11 @@ module Lain
         def branch_of(worker_env)
           Lain::Isolation::Checkout.new(worker_env.cwd, shell_out_factory: @shell_out_factory)
                                    .symbolic_head.delete_prefix("refs/heads/")
+        end
+
+        def declared_harness(root)
+          adapter = Lain::Grader::TestHarness::Adapter.for(@layout.preset.name).call(root)
+          Lain::Grader::TestHarness.new(root, adapter:)
         end
 
         def ran(target, worker_env) = @harness.call(worker_env.cwd).run(worker_env, paths: [target])
