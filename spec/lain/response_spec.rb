@@ -102,6 +102,37 @@ RSpec.describe Lain::Response do
       expect(stopped(:malformed).failure.message).to include("said nothing at all")
     end
 
+    it "keeps a prose call a prose call when its text was stripped" do
+      response = described_class.new(content: [], stop_reason: :malformed, malformed: :prose_tool_call)
+
+      expect(response.failure.message).to eq(Lain::Response::Failure::PROSE_CALL)
+    end
+
+    it "keeps silence silent when the decoder found nothing to name" do
+      response = described_class.new(content: [], stop_reason: :malformed, malformed: :empty_answer)
+
+      expect(response.failure.message).to eq(Lain::Response::Failure::SILENT)
+    end
+
+    it "reads a malformed reply that said something as a prose call whatever kind the decoder named" do
+      response = described_class.new(content: [{ "type" => "text", "text" => "hi" }],
+                                     stop_reason: :malformed, malformed: :cut_tool_call)
+
+      expect(response.failure.message).to eq(Lain::Response::Failure::PROSE_CALL)
+    end
+
+    it "reports no failure for a finding on a reply that is not malformed" do
+      response = described_class.new(content: [], stop_reason: :tool_use, malformed: :cut_tool_call)
+
+      expect(response.failure).to be_nil
+    end
+
+    it "stays shareable with a malformed kind" do
+      response = described_class.new(content: [], stop_reason: :malformed, malformed: :prose_tool_call)
+
+      expect(Ractor.shareable?(response)).to be(true)
+    end
+
     it "names a truncated stream and points at its journal record, keeping the partial text" do
       failure = stopped(:truncated, text: "The answ").failure
 

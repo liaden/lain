@@ -11,15 +11,16 @@ module Lain
   #
   # `raw` carries the provider's own object for debugging and is deliberately not
   # part of #digest.
-  Response = Data.define(:id, :model, :content, :stop_reason, :usage, :raw) do
-    def initialize(content:, stop_reason:, id: nil, model: nil, usage: Usage.zero, raw: nil)
+  Response = Data.define(:id, :model, :content, :stop_reason, :usage, :raw, :malformed) do
+    def initialize(content:, stop_reason:, id: nil, model: nil, usage: Usage.zero, raw: nil, malformed: nil)
       super(
         id: id&.to_s&.freeze,
         model: model&.to_s&.freeze,
         content: Canonical.normalize(content),
         stop_reason: StopReason.admit(stop_reason),
         usage:,
-        raw:
+        raw:,
+        malformed:
       )
     end
 
@@ -67,9 +68,15 @@ module Lain
     def failure_message
       return Response::Failure::MESSAGES[stop_reason] unless stop_reason == StopReason::MALFORMED
 
-      text.empty? ? Response::Failure::SILENT : Response::Failure::PROSE_CALL
+      prose_call? ? Response::Failure::PROSE_CALL : Response::Failure::SILENT
     end
     private :failure_message
+
+    # The decoder's kind outlives a stripped text, which is what `text.empty?` alone could not tell from silence.
+    def prose_call?
+      malformed == :prose_tool_call || !text.empty?
+    end
+    private :prose_call?
 
     # Counts blocks rather than #tool_uses, which would allocate a lens per block
     # to reach a number, on the very path something has already gone wrong on.
