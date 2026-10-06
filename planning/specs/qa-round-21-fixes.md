@@ -1,6 +1,6 @@
 # QA round 21 fixes: a stop that stops, a handoff that keeps the human, and a failed answer that says so
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -515,7 +515,13 @@ Spec file: `spec/lain/compaction/source/held_cut_spec.rb`, `spec/lain/seams/hand
 Scenario: a binding budget keeps the oldest human turn
   Given a question whose turns exceed the budget and whose oldest turn is the human's directive
   When Budget#take selects turns
-  Then the directive is kept whole and older tool turns are elided first, with the "[N earlier turn(s) elided]" notice
+  Then the directive is kept whole and older tool turns are elided first, with the "[N turn(s) elided]" notice
+
+Scenario: a human turn in the earlier slot is not cut short while budget remains
+  Given a handoff whose earlier slot holds a human turn over 200 characters
+  And the budget has room for it
+  When the question renders
+  Then that human turn appears whole in the earlier slot, not cut at 200 characters
 
 Scenario: human turns alone over budget are cut newest-kept
   Given human text turns that alone exceed the budget
@@ -1373,3 +1379,100 @@ Ruby panel, verdict APPROVE-WITH-FIXES, no blocker. What it changed:
   windows and implementers run single spec files only.
 - Plan fix at start: T7's 2 `Scenario Outline` blocks rewritten as `Scenario` blocks; the gherkin hook
   refuses outlines.
+- T1, T4, T5, T7, T9, T25 started (6 at a time: 15GB RAM).
+- T7 handed back; T8 started.
+- T8 handed back; T6 started.
+- T25 handed back (scope: project_store.rb @raise doc fix, approved in main session); T33 started.
+- T5 handed back; T22 started.
+- T6 handed back; T14 started. User ruling: Sonnet for low and medium cards and their reviews, Opus only for high.
+- T9, T22 handed back; T23 started.
+- T33 stopped on its 3rd stop condition; main session chose a public ToolsetBuild#test_layout (toolset_build.rb and its spec join T33's Files). T1, T14 handed back.
+- T15, T16 started.
+- T22 landed 53228d8f.
+- T9 review: REQUEST-CHANGES (slot order); oracle/handoff.rb and its spec move into T9's scope. T15, T16, T23 under review.
+- T7 landed 64de0b59. T8 approved on 2nd review.
+- T6 landed 4434f0e2.
+- T8 landed b8b0f0a8.
+- T16 landed 58672e1e.
+- T25 landed d884c6f2.
+- T9 landed b8e4ab3c.
+- T14 landed 121bb316.
+- T15 landed 84adc3a5.
+- T28 landed efece2cf.
+- T29 landed 579ed4ea.
+- T24 landed 4d3f16c6.
+- T5 landed 3c4c6a0e.
+- T35 landed c848b304.
+- T31 landed 6dd64fdb.
+- T23 landed 4e0ed5d7.
+- T1 landed 8ce8403c.
+- T33 landed 5e23ab97.
+- T30 landed 17631fd0.
+- T34 landed 72d2a3e9.
+- T10 landed 5e72c0a2.
+- T36 landed 25d40f67.
+- T12 landed ad5b9844.
+- T11 landed 659655b5.
+- T13 landed e1db5bd8.
+- FLAKE1 landed f63da501.
+- T4 landed df6a44a3.
+- T17 landed 4717252b.
+- T27 landed 3446ba6d.
+- T20 landed 1384d250.
+- T18 landed 98d409d7.
+- T19 landed 298ed6c8.
+- T2 landed 1bed48bc.
+- T32 landed b602d1b8.
+- T21 landed c9d80af5.
+- T26 landed 1a006f50.
+- T3 landed d7394b7d.
+
+**Decisions made in the main session during the run:**
+
+- T33: a public `ToolsetBuild#test_layout` over the board thunk it already held (its stop condition
+  fired); `toolset_build.rb` and its spec joined T33's Files.
+- T12: retry an over-window ask only when the re-render's digest differs from the refused one; a
+  refusal after a re-render that could not shrink says "Nothing older can be compacted yet".
+- T9 and T10: an uncovered turn below the floor is shown in its place, oldest first; HeldCut marks its
+  summaries so Handoff spends on human turns first in every slot, whole when under an eighth of the
+  budget; the notice reads "[N turn(s) elided]". T10's card gained a 3rd scenario (amended above).
+- T18: a worker's failed stop in `OrchestratorWorker#settle` is a named failed worker (the arm's
+  design); an arm's own failed ask is a failed cell.
+- T21: a clerk at the ceiling fails its lineage as `Consolidation::CEILING` (`:ceiling`), the name the
+  rest of `lib/` uses.
+- T13: the "a handoff made room" quiet flag is keyed to the chain head it was set for.
+- T2: A-1's cause is in the pane. `InputPane#idle` armed the idle `Typeahead#listen` stdin wait before
+  the withdrawn Reline read had put the terminal back cooked. Under io-event's URing selector, a stdin
+  wait loses its wakeup when the terminal mode changes while it is pending, so the cooked line sat
+  readable and no `/stop` reached the chat. Fix: `#unprompted` takes `@pump.exclusively` first, and
+  Reline restores cooked mode inside that lock.
+- A flake fix landed between cards: `spec/plugin/tmux_plugin_spec.rb` waits for a pane's processes
+  before its scratch dir is removed (`f63da501`).
+
+**Open, for the human:**
+
+- T4: a half-typed `human>` line is discarded when its ask is stopped from another surface (an approval
+  window closing, a stop from outside). The card is silent; this is the implementer's ruling.
+
+**Follow-ups found in review, out of this plan's scope:**
+
+- `StdinPump#with_line_reader` keeps `Typeahead#listen`'s wait armed outside `@terminal` while a sweep
+  runs a raw spell, so under URing a `/stop` in plain chat during a standing goal may go unheard
+  (same class as T2, unconfirmed end to end).
+- The one-shot subagent path (`subagent.rb` `refusing_malformed`) still hands back a max_tokens,
+  refusal or truncated answer as finished text, while an actor now fails on it. One policy wanted.
+- Killing a tmux pane closes the PTY before HUP; the input pane then exits with `Errno::EIO` in
+  `TTY#exit_alternate_screen` (the chat survives).
+- minitest and cargo epics have no red-step adapter (they failed before T34 too, now with a clearer
+  message).
+- A typed line that wraps past the input pane's width can misplace T3's in-place header redraw
+  (documented in `docs/commands.md`).
+- T32's asking count costs one digest per earlier asking of a body (quadratic in repeats; 2000 repeats
+  take about 48s); `ChainWriter` addressing is repeated in `ask_human.rb` and `lineage.rb`.
+
+**Close-out, 2026-10-06, at `d7394b7d`, with nothing else running:** all 36 cards landed. `rake pspec`
+gave 21,821 examples, 0 failures, 13 pending in 65s. `rubocop`, `pre-commit run --all-files`,
+`comment-census --check-tickets` and `--check-load-order`, `zeitwerk-census --check` and
+`spec-census --check` are clean (`lib_reach` fell to 57 against a ceiling of 76). `require_relative` and
+`failure_reason` under `lib/` both count 0. `git worktree list` and the branches match the start. The
+manual QA pass in Integration checks item 6 is still owed.
