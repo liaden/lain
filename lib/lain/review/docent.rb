@@ -111,10 +111,9 @@ module Lain
       # as a rendering glitch, and this one has to say that a question was taken.
       PENDING = "(thinking -- the answer will replace this line)"
 
-      # What a question the session ended under is settled to. An answer nobody
-      # is left to compute is not an answer, and saying so is what stops a
-      # replayed thread reading as permanently thinking.
-      ABANDONED = "the session ended before this was answered"
+      # A stop and a session ending reach the docent the same way, so the words
+      # claim neither; saying so stops a thread reading as permanently thinking.
+      ABANDONED = "this was stopped before it was answered"
 
       # An id no thread is open at. It names BOTH ways that happens, because they
       # are indistinguishable from the editor's side and call for the same fix:
@@ -581,14 +580,22 @@ module Lain
         # docent replaying it renders a thread that is permanently thinking, and
         # refuses the human's re-ask as a duplicate of it.
         #
-        # In memory and on the record ONLY: this runs while a stopped task is
-        # unwinding, and a render is a round trip that would suspend a fiber
-        # which may not suspend again. The next {Docent#open} renders it.
+        # The record comes first and the render is best-effort: a view that is
+        # closing or gone must not break the unwind of a stopped task, and the
+        # next {Docent#open} renders the settled thread anyway.
         def abandon
           return unless @conversation.pending?(@question)
 
           @journal << DocentAbandoned.new(anchor_id: @conversation.anchor.id, question: @question)
           settle(SPEAKER_LAIN, ABANDONED, :abandoned)
+          show_abandoned
+        end
+
+        def show_abandoned
+          render
+        rescue StandardError, ScriptError => e
+          @journal << DocentViewFailed.new(anchor_id: @conversation.anchor.id, question: @question,
+                                           reason: e.message.presence || e.class.name)
         end
 
         def settle(speaker, text, state) = @conversation.settle(@question, speaker:, text:, state:)
@@ -1074,6 +1081,35 @@ module Lain
       class DocentAbandoned
         # See {DocentAsked::JOURNAL_TYPE}.
         JOURNAL_TYPE = "docent_abandoned"
+      end
+
+      DocentViewFailed = Data.define(:anchor_id, :question, :reason) do
+        include Telemetry::Journalable
+        include Declarative
+
+        declare do
+          attribute :anchor_id
+          attribute :question
+          attribute :reason
+          validates :anchor_id, presence: { message: Wire.refusal("must name the thread the view failed on") }
+          validates :question, presence: { message: Wire.refusal("must carry the question it was drawing") }
+          validates :reason, presence: { message: Wire.refusal("must say why the view failed") }
+        end
+
+        def initialize(anchor_id:, question:, reason:)
+          values = { anchor_id: Wire.token(anchor_id), question: Wire.text(question), reason: Wire.text(reason) }
+          self.class.check!(**values)
+
+          super(**values)
+        end
+      end
+
+      # A thread pane that could not draw a settled question while its task
+      # unwound. Its own type so the swallowed error leaves a trace without
+      # being counted as an answer or a refusal.
+      class DocentViewFailed
+        # See {DocentAsked::JOURNAL_TYPE}.
+        JOURNAL_TYPE = "docent_view_failed"
       end
     end
   end

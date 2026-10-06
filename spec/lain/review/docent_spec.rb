@@ -963,6 +963,80 @@ RSpec.describe Lain::Review::Docent do
       expect(prompts.size).to eq(1)
     end
 
+    it "replaces the thinking line at once when the answer is stopped, with no re-ask" do
+      slow = lambda do |_prompt|
+        Async::Task.current.sleep(2)
+        Lain::Tool::Result.ok("the late answer")
+      end
+      prompts = []
+      counting = ->(prompt) { prompts << prompt and slow.call(prompt) }
+
+      Sync do |task|
+        subject = docent(answerer: counting)
+        subject.open(anchor)
+        asked = subject.ask("a-42", "why this way?")
+        task.yield
+        expect(view.text).to include(described_class::PENDING)
+        asked.task.stop
+      end
+
+      expect(view.text).to include("this was stopped before it was answered")
+      expect(view.text).not_to include(described_class::PENDING)
+      expect(prompts.size).to eq(1)
+    end
+
+    it "journals the view failure after the abandonment, and the stop does not re-raise it" do
+      slow = lambda do |_prompt|
+        Async::Task.current.sleep(2)
+        Lain::Tool::Result.ok("the late answer")
+      end
+      stopped_text = described_class::ABANDONED
+      closing = RecordingThreadPane.new
+      closing.define_singleton_method(:show) do |anchor, entries = []|
+        raise IOError, "editor closed" if entries.last&.text == stopped_text
+
+        super(anchor, entries)
+      end
+
+      Sync do |task|
+        subject = described_class.new(changeset:, view: closing, answerer: slow, journal:)
+        subject.open(anchor)
+        asked = subject.ask("a-42", "why this way?")
+        task.yield
+        asked.task.stop
+      end
+
+      expect(closing.last_entries.last.text).to eq(described_class::PENDING)
+      expect(journal.map(&:journal_type)).to eq(%w[docent_asked docent_abandoned docent_view_failed])
+      expect(journal.last.reason).to eq("editor closed")
+    end
+
+    it "names the error class in the view failure when its message is empty" do
+      slow = lambda do |_prompt|
+        Async::Task.current.sleep(2)
+        Lain::Tool::Result.ok("the late answer")
+      end
+      stopped_text = described_class::ABANDONED
+      closing = RecordingThreadPane.new
+      closing.define_singleton_method(:show) do |anchor, entries = []|
+        raise IOError, "" if entries.last&.text == stopped_text
+
+        super(anchor, entries)
+      end
+
+      Sync do |task|
+        subject = described_class.new(changeset:, view: closing, answerer: slow, journal:)
+        subject.open(anchor)
+        asked = subject.ask("a-42", "why this way?")
+        task.yield
+        asked.task.stop
+      end
+
+      expect(closing.last_entries.last.text).to eq(described_class::PENDING)
+      expect(journal.map(&:journal_type)).to eq(%w[docent_asked docent_abandoned docent_view_failed])
+      expect(journal.last.reason).to eq("IOError")
+    end
+
     # The duplicate refusal says the answer is in the pane. After a provider
     # fell over the pane holds a refusal, not an answer, and a retry then is
     # exactly the case where a repeat is a genuinely different ask -- it was
