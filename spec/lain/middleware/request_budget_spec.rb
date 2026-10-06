@@ -129,7 +129,7 @@ RSpec.describe Lain::Middleware::RequestBudget do
       message = refused(big).message
 
       expect(message.lines.size).to eq(1)
-      expect(message).to include("12011", "8192", "compaction", "/rewind", "/unpin", "narrower")
+      expect(message).to include("12011", "8192", "/rewind", "/unpin", "narrower")
     end
 
     # When the render that was refused left nothing older for compaction to
@@ -179,10 +179,26 @@ RSpec.describe Lain::Middleware::RequestBudget do
       end
     end
 
-    it "offers compaction first when the render left something to drop" do
-      message = refused(big).message
+    # Compaction runs by itself, and by the time these words are read the
+    # Agent has already re-rendered against the refused count or found the
+    # render unchanged. No command compacts on demand, so it is no move.
+    it "names no compaction move when the render left something to drop" do
+      message = refused(big).tap(&:withdrawn!).message
 
-      expect(message.index("compaction")).to be < message.index("/rewind")
+      expect(message).not_to match(/make room with compaction/i)
+      expect(message).to include("withdrawn", "/rewind", "/unpin", "narrower")
+      expect(message.lines.size).to eq(1)
+    end
+
+    # The Agent renders again before the refusal is read, and that render can
+    # find what looked droppable will not shrink. The words follow the source
+    # as it stands when they are read, like the withdrawal clause does.
+    it "words the moves from what the source says when the message is read, not when it was raised" do
+      error = refused(big)
+      allow(compaction).to receive(:droppable?).and_return(false)
+
+      expect(error.message).to include("Nothing older can be compacted yet")
+      expect(error.message).not_to include("Compaction runs by itself")
     end
 
     it "does not offer a larger context when the history is what overflowed" do

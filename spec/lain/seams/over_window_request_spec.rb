@@ -206,7 +206,9 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
       refusal = ask.attempt("DOES-NOT-FIT")
 
       expect(refusal).to be_a(Lain::Middleware::RequestBudget::OverWindow)
-      expect(refusal.message).to include("9000", "8192", "compaction", "/rewind", "/unpin", "narrower")
+      expect(refusal.message).to include("9000", "8192", "Nothing older can be compacted yet", "/rewind", "/unpin",
+                                         "narrower")
+      expect(refusal.message).not_to include("Compaction runs by itself")
       expect(journaled("window_pressure"))
         .to contain_exactly(include("kind" => "over_window", "source" => "ollama", "prompt_tokens" => 9_000,
                                     "window_tokens" => 8192, "request_digest" => be_a(String)))
@@ -252,17 +254,17 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
   # that could not be sent -- where a refusal yielding no reading left it
   # measuring the last answered turn, and every later prompt was refused.
   describe "the next render" do
-    it "compacts against the refused prompt's exact count" do
+    # The refused ask renders again on that count before it gives up, so the
+    # compaction lands inside it and the next ask renders past it.
+    it "compacts against the refused prompt's exact count, inside the refused ask" do
       _, ask = chat
       ask.attempt(prose("FIRST-MARKER", 12_000))
       ask.attempt(prose("SECOND-MARKER", 12_000))
       ask.attempt("DOES-NOT-FIT")
 
+      expect(journaled("compaction_decision").last)
+        .to include("compacted" => true, "used_tokens" => 9_000, "signals" => include("approaching_window"))
       expect(ask.attempt("ping").text).to eq("settled")
-
-      decisions = journaled("compaction_decision")
-      expect(decisions.last).to include("compacted" => true, "used_tokens" => 9_000,
-                                        "signals" => include("approaching_window"))
       expect(JSON.generate(chat_bodies.last["messages"])).not_to include("FIRST-MARKER")
     end
 

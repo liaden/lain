@@ -36,12 +36,16 @@ module Lain
       #
       # Its words are finished when they are READ, not when it is raised:
       # whether the prompt was withdrawn is the {Agent}'s decision, made after
-      # this raised. The withdrawal CLAUSE rides the same keyword the rest of
+      # this raised, and so is the re-render that can find what looked
+      # droppable will not shrink, which is why the moves are asked for at
+      # the reading too. The withdrawal CLAUSE rides the same keyword the rest of
       # the wording does, because a child's ask withdraws its prompt exactly as
       # a chat's does and yet has nobody to tell: the chain it was taken off
       # ended with the child.
       class OverWindow < Lain::Error
         include Lain::WindowExceeded
+
+        NO_MOVES = -> { "" }
 
         # The clause is `@withdrawal`, never `@withdrawn`: {Lain::Withdrawal}
         # owns that ivar as its flag, and a String in it reads as "not
@@ -49,44 +53,31 @@ module Lain
         #
         # @param refused [String] the line up to the point a withdrawal is said
         # @param withdrawal [String] what a withdrawal is said with, if anything
-        # @param moves [String] the rest of the line
+        # @param moves [#call] answers the rest of the line, asked at each reading
         # @param figures [Hash] the {Lain::WindowExceeded} figures
-        def initialize(refused = nil, withdrawal: "", moves: "", **figures)
+        def initialize(refused = nil, withdrawal: "", moves: NO_MOVES, **figures)
           @withdrawal = withdrawal
           @moves = moves
           super(refused, **figures)
         end
 
-        def to_s = "#{super}#{@withdrawal if withdrawn?}#{@moves}"
+        def to_s = "#{super}#{@withdrawal if withdrawn?}#{@moves.call}"
       end
 
       REFUSED = "not answered: %<source>s refused %<subject>s at %<prompt>d tokens against the %<window>d-token " \
                 "context it loaded, so no model saw it"
+
+      # Said instead of either of {Ask::MOVES}, once a handoff has already replaced the history
+      # with a state document: offering compaction there names a move that has
+      # been made, and the turns a /rewind would reach are the ones still here.
+      HANDED_OFF = ". The history before this ask was already replaced by a handoff state document, so make room " \
+                   "with /rewind past the turn that grew it, /unpin a pinned turn, or a narrower read"
 
       # `compaction:` is an ingredient of the DEFAULT voice and of nothing else:
       # it is what an {Ask} consults, so a caller naming its own voice has
       # already answered the question this keyword asks. Nothing in lib/ writes
       # both -- a chat writes `compaction:`, a spawn writes `voice:`.
       #
-      # The moves, by whether the refused render left compaction anything to
-      # drop. Offered over an empty head, compaction is the one move that
-      # cannot happen, and every later prompt would be refused the same way.
-      MOVES = {
-        true => ". Make room with compaction (that count is now the reading it measures), /rewind, /unpin a " \
-                "pinned turn, or a narrower read",
-        false => ". Nothing older can be compacted yet, so make room with /rewind past the turn that grew it, " \
-                 "/unpin a pinned turn, or a narrower read"
-      }.freeze
-
-      # Said instead of either, once a handoff has already replaced the history
-      # with a state document: offering compaction there names a move that has
-      # been made, and the turns a /rewind would reach are the ones still here.
-      HANDED_OFF = ". The history before this ask was already replaced by a handoff state document, so make room " \
-                   "with /rewind past the turn that grew it, /unpin a pinned turn, or a narrower read"
-
-      LARGER_CONTEXT = "; the system prompt and tools alone come to about %<fixed>d tokens, so start with a " \
-                       "larger --num-ctx"
-
       # @param journal [#<<] where window_pressure records land; the run's
       #   record journal in a chat, and the Null channel by default
       # @param compaction [#droppable?, #handed_off?] the run's per-turn Context
@@ -109,7 +100,7 @@ module Lain
         @journal << pressure(e, request, env.fetch(:stands_on))
         raise OverWindow.new(format(REFUSED, subject: @voice.subject, source: e.source, prompt: e.prompt_tokens,
                                              window: e.window_tokens),
-                             withdrawal: @voice.withdrawal, moves: @voice.moves(e, request),
+                             withdrawal: @voice.withdrawal, moves: -> { @voice.moves(e, request) },
                              prompt_tokens: e.prompt_tokens, window_tokens: e.window_tokens, source: e.source,
                              model: request.model)
       end
@@ -132,11 +123,13 @@ module Lain
         WITHDRAWAL = ", and it was withdrawn"
 
         # The moves, by whether the refused render left compaction anything to
-        # drop. Offered over an empty head, compaction is the one move that
-        # cannot happen, and every later prompt would be refused the same way.
+        # drop. Neither offers compaction as a move, because no command
+        # compacts on demand: with something droppable {Agent} has already
+        # rendered again with the refused count as compaction's reading, or
+        # found that render unchanged, before a human reads this.
         MOVES = {
-          true => ". Make room with compaction (that count is now the reading it measures), /rewind, /unpin a " \
-                  "pinned turn, or a narrower read",
+          true => ". Compaction runs by itself and measures that count from here on, so make room with /rewind " \
+                  "past the turn that grew it, /unpin a pinned turn, or a narrower read",
           false => ". Nothing older can be compacted yet, so make room with /rewind past the turn that grew it, " \
                    "/unpin a pinned turn, or a narrower read"
         }.freeze

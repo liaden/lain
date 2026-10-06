@@ -118,6 +118,23 @@ module HandoffSeam
     end
   end
 
+  # A chat whose oldest exchange carries {MARKER} and is droppable past a
+  # short keep_last: the runner takes it while the chat is short and refuses
+  # the first render long enough to need compaction, until compaction has
+  # taken the marker out of the prompt.
+  class Compactable < Recorded
+    def initialize = super(refusing: false)
+
+    def complete(request)
+      @requests << request
+      text = Lain::Canonical.dump(request.messages)
+      raise refusal if text.include?(MARKER) && request.messages.size >= REFUSES_AT
+
+      Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }], stop_reason: :end_turn,
+                         usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2))
+    end
+  end
+
   # A tier whose reply no decoder can read: the local endpoint answering prose
   # where the schema was asked for, which is the failure the `oracle_failed`
   # record exists to name.
@@ -376,6 +393,28 @@ RSpec.describe "a handoff when no cut can make room", :seam do
 
       expect(of_type("compaction_cut").map { |cut| cut["kind"] }).to include("advance", "handoff")
       expect(summarizer_text).to include(HandoffSeam::Directed::DIRECTIVE)
+    end
+  end
+
+  # A refused render that left something droppable compacts on the retry
+  # inside the same ask: the refusal's count is the reading the re-render
+  # measures, and that is what fires the compaction.
+  describe "a refused render with something droppable" do
+    let(:provider) { HandoffSeam::Compactable.new }
+
+    def compactable = source(fallback: Lain::Compaction::Source::Fallback::None, keep_last: 2)
+
+    it "compacts on a second render and answers the ask, with no handoff" do
+      chat = agent(compactable)
+      chat.ask("#{HandoffSeam::MARKER} the first question: #{"the lazy dog slept. " * 20}")
+      chat.ask("a second question")
+      sent = provider.requests.size
+
+      answer = chat.ask("so what is left to do?")
+      expect(answer.text).to eq("settled")
+      expect(provider.requests.size - sent).to eq(2)
+      expect(rendered_text(provider.requests.last)).not_to include(HandoffSeam::MARKER)
+      expect(of_type("compaction_cut").map { |cut| cut["kind"] }).to eq(["advance"])
     end
   end
 

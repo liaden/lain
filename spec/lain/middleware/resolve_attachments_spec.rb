@@ -246,7 +246,7 @@ RSpec.describe Lain::Middleware::ResolveAttachments, :seam do
   # store on every later request, whole, for as long as the turn that refers to
   # them survives. The visible consequence is a wrong instruction: after a window
   # refusal the images caused, {Middleware::RequestBudget::Ask}'s moves still
-  # tell the human "Make room with compaction", over an estimate whose
+  # tell the human "Compaction runs by itself", over an estimate whose
   # denominator excluded the bytes that overflowed. Relief comes from `/rewind`
   # or from a fresh chat, not from compaction. Not this card's defect -- the
   # measures are bytes-based and an image is not bytes-shaped, which

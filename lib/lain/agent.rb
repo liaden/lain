@@ -47,6 +47,11 @@ module Lain
     NO_FOLD = ->(_stranded, _folded) {}
     private_constant :NO_FOLD
 
+    # An over-window refusal and the digest of the request it refused, carried
+    # into the retry so a render that comes out the same is never sent.
+    RefusedRender = Data.define(:error, :digest)
+    private_constant :RefusedRender
+
     # Each of the three objects the loop drives, paired with the legacy
     # keywords that BUILD it when it is not injected: the clash table
     # {#refuse_double_wiring} consults. Four of these are {Instrumentation}
@@ -612,26 +617,57 @@ module Lain
       attempt(Event.stands_on(@timeline.head), on_stream_started)
     end
 
-    # ONE retry, and only where a handoff just made room: the refusal carries
-    # the provider's exact count, which is the first honest measurement this
-    # run has of a prompt that does not fit, and a fallback that could not use
-    # it would be a fallback that never fires. A SECOND refusal is the ask
-    # failing -- there is nothing further to replace -- and it withdraws and is
-    # worded like any other over-window refusal.
+    # A retry only where something can make room, and each way of making it
+    # at most once: the refusal carries the provider's exact count, which is
+    # the first honest measurement this run has of a prompt that does not fit,
+    # and a fallback that could not use it would be a fallback that never
+    # fires. A refusal with no way left is the ask failing, and it withdraws
+    # and is worded like any other over-window refusal.
     #
-    # The retry re-RENDERS rather than re-sending: the handoff committed a cut,
-    # and it is the next render through {#render_request} that holds it.
-    # {RequestOverride#deliver} restores a consumed one-shot on a raise, so an
-    # edited dispatch is re-sent rather than lost here.
-    def attempt(stands_on, on_stream_started, fallback: true)
+    # Every retry re-RENDERS rather than re-sending: a handoff committed a cut,
+    # and an ordinary compaction now measures the refused count as its reading,
+    # and either way it is the next render through {#render_request} that
+    # holds the room. {RequestOverride#deliver} restores a consumed one-shot on
+    # a raise, so an edited dispatch is re-sent rather than lost here.
+    #
+    # A retry whose render comes out byte for byte the refused request is not
+    # sent: the earlier refusal stands as this ask's answer. Something
+    # droppable does not promise the next render drops it -- a guessed window
+    # withholds the signal and the floor refuses a rewrite that would not
+    # shrink -- and the same bytes would buy only the same refusal. The
+    # render that was not sent has still journaled its compaction decision,
+    # a record of a render no provider saw; that is accepted, because the
+    # decision is the only place the reason it came out unchanged is read.
+    def attempt(stands_on, on_stream_started, spent: [], refused: nil)
+      sent = nil
       @request_override.deliver(render: -> { render_request }) do |request|
+        raise refused.error if refused&.digest == request.digest
+
+        sent = request.digest
         model_caller.call(request, on_stream_started:, stands_on:)
       end
     rescue WindowExceeded => e
-      accounting.observe_refusal(prompt_tokens: e.prompt_tokens, head: stands_on)
-      raise unless fallback && handed_off
+      raise if e.equal?(refused&.error)
 
-      attempt(stands_on, on_stream_started, fallback: false)
+      retry_refused(e, sent, stands_on, on_stream_started, spent)
+    end
+
+    def retry_refused(error, sent, stands_on, on_stream_started, spent)
+      accounting.observe_refusal(prompt_tokens: error.prompt_tokens, head: stands_on)
+      room = room_after(spent)
+      raise error unless room
+
+      attempt(stands_on, on_stream_started, spent: [*spent, room], refused: RefusedRender.new(error:, digest: sent))
+    end
+
+    # A handoff is asked first because the source commits one only when an
+    # ordinary compaction has nothing left to offer, so the two never both
+    # answer. The compaction retry is only ever the first retry: once a
+    # handoff has replaced the history there is nothing older for it to drop.
+    def room_after(spent)
+      return :handoff if !spent.include?(:handoff) && handed_off
+
+      :compaction if spent.empty? && @instrumentation.pipeline_source.droppable?
     end
 
     # Asks the run's compaction source for room and answers whether it made

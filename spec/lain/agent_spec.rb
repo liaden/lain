@@ -35,27 +35,52 @@ module A1PipelineSources
     end
   end
 
-  # The handoff fallback's seam, reduced to the two messages the Agent sends
-  # it. `answers` is what each #handoff call reports, so an example can script
+  # The handoff fallback's seam, reduced to the messages the Agent sends it.
+  # `answers` is what each #handoff call reports, so an example can script
   # "room was made" and "nothing could be done" in one run; the calls are kept
-  # so the timeline and session it was handed can be asserted.
+  # so the timeline and session it was handed can be asserted. `droppable:`
+  # is what the refused render left for an ordinary compaction to drop.
+  # A render changes the way the real source's does: once per committed
+  # handoff, and once more when `compacts:` and a reading arrives to measure,
+  # which is the refusal's count on a first ask.
   class HandingOff
     attr_reader :calls
 
-    def initialize(*answers)
+    def initialize(*answers, droppable: false, compacts: droppable)
       @answers = answers
+      @droppable = droppable
+      @compacts = compacts
+      @committed = 0
       @calls = []
     end
 
-    def context_for(base:, **) = base
+    def context_for(base:, usage:, **)
+      generation = @committed + (@compacts && usage ? 1 : 0)
+      generation.zero? ? base : base.with_pipeline(Rewritten.new(generation))
+    end
 
-    def droppable? = false
+    def droppable? = @droppable
 
-    def handed_off? = @calls.any?
+    def handed_off? = @committed.positive?
 
     def handoff(**rest)
       @calls << rest
-      @answers.fetch(@calls.size - 1, false)
+      @answers.fetch(@calls.size - 1, false).tap { |made| @committed += 1 if made }
+    end
+  end
+
+  # Whatever a cut or a compaction leaves the render, reduced to one fact: the
+  # oldest message reads differently each generation, so no two renders match.
+  class Rewritten < Lain::Context::Combinator
+    def initialize(generation)
+      super()
+      @generation = generation
+      freeze
+    end
+
+    def call(messages)
+      oldest, *rest = messages
+      [oldest.merge("content" => [{ "type" => "text", "text" => "rewritten #{@generation}" }]), *rest]
     end
   end
 
@@ -1219,6 +1244,75 @@ RSpec.describe Lain::Agent do
         expect { a.ask("hi") }.to raise_error(refusal_class)
 
         expect(a.occupancy(context_window: book)).to eq(9001.fdiv(8192))
+      end
+    end
+
+    # A refused render that left something droppable is worth one more
+    # render: the refusal's count is now the reading compaction measures, so
+    # the next render compacts by itself, inside this ask rather than the
+    # next one.
+    describe "when an ordinary compaction can make room" do
+      def counting(*outcomes)
+        Class.new do
+          attr_reader :sent
+
+          define_method(:initialize) do |list|
+            @list = list
+            @sent = 0
+          end
+          define_method(:complete) do |_request|
+            @sent += 1
+            outcome = @list.shift || raise("script exhausted")
+            outcome.is_a?(Exception) ? raise(outcome) : outcome
+          end
+        end.new(outcomes)
+      end
+
+      def agent_with(source, *outcomes)
+        provider = counting(*outcomes)
+        [described_class.new(provider:, toolset:, context:, pipeline_source: source), provider]
+      end
+
+      it "re-renders once and answers the ask, with 2 requests sent" do
+        a, provider = agent_with(A1PipelineSources::HandingOff.new(false, droppable: true),
+                                 refusal, text_response("answered"))
+
+        expect(a.ask("a prompt that does not fit").text).to eq("answered")
+        expect(provider.sent).to eq(2)
+        expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant])
+      end
+
+      it "hands off on the re-render's refusal and answers the ask" do
+        source = A1PipelineSources::HandingOff.new(false, true, droppable: true)
+        a, provider = agent_with(source, refusal, refusal, text_response("answered"))
+
+        expect(a.ask("a prompt that does not fit").text).to eq("answered")
+        expect(provider.sent).to eq(3)
+        expect(source.calls.size).to eq(2)
+      end
+
+      it "raises the refusal when the re-render is refused and no handoff can be made" do
+        a, provider = agent_with(A1PipelineSources::HandingOff.new(droppable: true),
+                                 refusal, refusal, text_response("never sent"))
+
+        expect { a.ask("a prompt that does not fit") }.to raise_error(refusal_class)
+        expect(provider.sent).to eq(2)
+        expect(a.timeline.to_a).to be_empty
+      end
+
+      # Something droppable says nothing about whether the next render drops
+      # it: a guessed window withholds the signal, and a floor refuses a
+      # rewrite that would not shrink. Sending the same bytes again buys only
+      # the same refusal.
+      it "sends nothing more when the re-render comes out byte for byte the refused request" do
+        refused = refusal
+        a, provider = agent_with(A1PipelineSources::HandingOff.new(droppable: true, compacts: false),
+                                 refused, text_response("never sent"))
+
+        expect { a.ask("a prompt that does not fit") }.to raise_error(refused)
+        expect(provider.sent).to eq(1)
+        expect(refused).to be_withdrawn
+        expect(a.timeline.to_a).to be_empty
       end
     end
 

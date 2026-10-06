@@ -120,7 +120,7 @@ RSpec.describe Lain::Review::Critique do
     Lain::Middleware::RequestBudget::OverWindow.new(
       "not answered: ollama refused the diff_critic child's task at 41000 tokens against the " \
       "32768-token context it loaded, so no model saw it",
-      moves: ". Hand it less to read.", prompt_tokens: 41_000, window_tokens: 32_768, source: "ollama",
+      moves: -> { ". Hand it less to read." }, prompt_tokens: 41_000, window_tokens: 32_768, source: "ollama",
       model: "critic-model"
     )
   end
