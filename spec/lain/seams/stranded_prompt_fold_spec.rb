@@ -239,9 +239,9 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
     expect(loaded.head_digest).to eq(agent.timeline.head_digest)
   end
 
-  # A /rewind onto a prompt that WAS answered leaves the same head shape, so
-  # the next ask folds it too, and the notice says only what is true of both.
-  it "folds after /rewind onto an answered prompt, with a notice that claims no failure" do
+  # A /rewind that would land on an answered prompt goes one turn further, so
+  # the next line starts a fresh ask and nothing folds.
+  it "starts a fresh ask after /rewind past an answered prompt, with no fold notice" do
     agent, ask = chat
     say(agent, ask, "hello")
     say(agent, ask, "tell me a joke")
@@ -251,9 +251,10 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
 
     say(agent, ask, "a different question")
 
-    expect(agent.timeline.to_a[-2].content.map { |block| block["text"] })
-      .to eq(["tell me a joke", "a different question"])
-    expect(warnings).to contain_exactly(%r{no answer on this chain.*/rewind 1})
+    texts = agent.timeline.to_a.map { |turn| turn.content.map { |block| block["text"] } }
+    expect(texts[-2]).to eq(["a different question"])
+    expect(texts.flatten).not_to include("tell me a joke")
+    expect(warnings).to be_empty
     expect(loaded.head_digest).to eq(agent.timeline.head_digest)
   end
 end

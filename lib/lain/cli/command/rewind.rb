@@ -32,9 +32,10 @@ module Lain
           typed = ["/rewind", args.to_s.strip].reject(&:empty?).join(" ")
           exclusively(env, typed) do
             from = env.timeline
-            count = count_for(args.to_s.strip, from)
+            asked = count_for(args.to_s.strip, from)
+            count = past_stranded(asked, from)
             settled_target!(count, from, typed)
-            moved(env, count, from:)
+            moved(env, count, from:, dropped: from.ancestors.to_a[asked])
           end
         end
 
@@ -55,18 +56,28 @@ module Lain
         # is to change what "current" means, so a live re-read here is one
         # statement-reorder away from catching up on the ALREADY-SHORTENED chain
         # instead of the one being moved away from.
-        def moved(env, count, from:)
+        def moved(env, count, from:, dropped:)
           env.chronicle.catch_up(from)
           to = from.rewind(count)
           env.chronicle.rewound(to: to.head_digest)
           env.agent.rewind(count)
-          rendered(count, from:, to:) + stranded_note(to.head)
+          rendered(count, from:, to:) + dropped_note(dropped)
         end
 
-        def stranded_note(head)
-          return "" unless Event.stranded_prompt?(head)
+        # A stranded head would fold the next line into a prompt whose answer
+        # was just rewound away, replaying its side effects.
+        def past_stranded(count, timeline)
+          Event.stranded_prompt?(timeline.ancestors.to_a[count]) ? count + 1 : count
+        end
 
-          "\nthe head is now a stranded prompt; the next line is appended to it"
+        def dropped_note(event)
+          return "" unless Event.stranded_prompt?(event)
+
+          "\n1 more turn was dropped so the head is not a stranded prompt: #{quote(event)}"
+        end
+
+        def quote(event)
+          event.content.map { |block| block["text"] }.join(" ")[0, 60].inspect
         end
 
         # A run in flight settles onto the Timeline it captured and hands that

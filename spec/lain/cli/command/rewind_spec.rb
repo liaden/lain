@@ -57,8 +57,8 @@ RSpec.describe Lain::CLI::Command::Rewind do
       expect(text).to be_a(String).and include("rewound")
     end
 
-    it "defaults to one turn on a bare /rewind" do
-      target = agent.timeline.rewind(1).head_digest
+    it "defaults to one turn on a bare /rewind, past a stranded prompt it would land on" do
+      target = agent.timeline.rewind(2).head_digest
 
       command.call("", env)
 
@@ -82,8 +82,57 @@ RSpec.describe Lain::CLI::Command::Rewind do
   end
 
   describe "the line after a landing" do
-    it "names the stranded prompt and says the next line is appended to it" do
-      expect(command.call("1", env)).to match(/stranded prompt.*next line is appended to it/i)
+    it "lands on the stranded prompt's parent instead, and says so" do
+      stranded = agent.timeline.rewind(1).head
+      parent = agent.timeline.rewind(2).head_digest
+
+      text = command.call("1", env)
+
+      expect(agent.timeline.head_digest).to eq(parent)
+      expect(text).to include("1 more turn was dropped", stranded.content.first["text"])
+    end
+
+    context "when the stranded prompt is the first turn" do
+      it "lands on the empty session" do
+        command.call("3", env)
+
+        expect(agent.timeline).to be_empty
+      end
+    end
+
+    context "when the stranded prompt follows a tool round" do
+      let(:provider) do
+        Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "ping" }]),
+                                             text_response("done"), text_response("beta done"),
+                                             text_response("fresh")])
+      end
+      let(:agent) do
+        Lain::Agent.new(provider:, toolset:, context:).tap do |built|
+          built.ask("write a.txt alpha")
+          built.ask("write a.txt beta")
+          chronicle.catch_up(built.timeline)
+        end
+      end
+
+      it "quotes the first 60 characters, drops the prompt, and the next ask starts fresh" do
+        prompt = "write a.txt alpha"
+        digest = agent.timeline.ancestor_digests.last
+
+        text = command.call(digest, env)
+        agent.ask("fresh")
+
+        expect(text).to include("1 more turn was dropped", prompt)
+        expect(JSON.generate(provider.requests.last.messages)).not_to include(prompt)
+      end
+    end
+
+    it "quotes only the first 60 characters of a long prompt" do
+      long = "x" * 80
+      agent.ask(long)
+      text = command.call("1", env)
+
+      expect(text).to include("x" * 60)
+      expect(text).not_to include("x" * 61)
     end
 
     context "when the landing is a tool_result turn" do
@@ -106,7 +155,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
 
   describe "/rewind <digest> (resolution rules against this session's own chain)" do
     it "resolves a hex prefix to the recorded turn and rewinds to it" do
-      target = agent.timeline.rewind(3).head_digest
+      target = agent.timeline.rewind(2).head_digest
 
       command.call(hex(target)[0, 12], env)
 
@@ -115,7 +164,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
     end
 
     it "accepts the full blake3:-schemed digest too" do
-      target = agent.timeline.rewind(1).head_digest
+      target = agent.timeline.rewind(2).head_digest
 
       command.call(target, env)
 
@@ -196,11 +245,10 @@ RSpec.describe Lain::CLI::Command::Rewind do
       end
     end
 
-    it "still allows rewinding PAST the whole tool exchange" do
+    it "still allows rewinding PAST the whole tool exchange, to the empty session" do
       command.call("3", env)
 
-      expect(agent.timeline.head.role).to eq("user")
-      expect(agent.timeline.length).to eq(1)
+      expect(agent.timeline).to be_empty
     end
   end
 
