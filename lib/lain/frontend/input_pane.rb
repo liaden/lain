@@ -242,11 +242,21 @@ module Lain
         @drawing = task.async { unprompted(client) }
       end
 
+      # The withdrawn read unwinds on the pump's fiber after this one starts,
+      # and under the io_uring selector a stdin wait loses its wakeup when the
+      # terminal's mode changes while it is pending: the line sat cooked and
+      # readable and no `/stop` reached the chat. Reline puts the terminal back
+      # cooked inside the pump's terminal lock, so taking that lock first arms
+      # the wait only after the mode has settled.
       def unprompted(client)
         typeahead = StdinPump::Typeahead.new(input: @input)
         return unless typeahead.console?
 
-        typeahead.listen(kept: -> { @carried || StdinPump::Typeahead::NOTHING }) { |typed| sent(client, typed) }
+        # Not held means the read would not let go; waiting anyway risks the
+        # lost wakeup, while not waiting would drop every line for certain.
+        @pump.exclusively do
+          typeahead.listen(kept: -> { @carried || StdinPump::Typeahead::NOTHING }) { |typed| sent(client, typed) }
+        end
       end
 
       # A partial line, one ended by Ctrl-D, waits for the rest of it.

@@ -85,6 +85,23 @@ RSpec.describe "typing in a real cockpit while the model is busy", :e2e do
     end
   end
 
+  it "stops the next model call when /stop is typed after the approval was answered in nvim" do
+    journey([calling("bash", { "command" => "touch made-by-agent.txt" }), holding]) do |cockpit, _sandbox, upstream|
+      cockpit.type("Run touch made-by-agent.txt")
+      wait_until(timeout: 20, reason: "command> asked in the input pane") do
+        parked?(cockpit) && cockpit.capture(:input).include?("command>")
+      end
+
+      cockpit.approve
+      await_chats(upstream, 2)
+      cockpit.type("/stop")
+      await_interrupted(cockpit)
+
+      expect(interruptions(cockpit)).to eq(["stopped"])
+      expect(chats(upstream).size).to eq(2)
+    end
+  end
+
   it "reaches the chat at once, before a model that never answers is released" do
     journey([holding]) do |cockpit, _sandbox, upstream|
       cockpit.type("Say anything")

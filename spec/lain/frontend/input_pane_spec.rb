@@ -459,6 +459,44 @@ RSpec.describe Lain::Frontend::InputPane do
     end
   end
 
+  # The idle wait waits for the pump's terminal lock: a console whose wait
+  # never returns while the line editor's read still holds the terminal fails
+  # any pane that arms its wait before that read has let go.
+  describe "a command> read withdrawn after it was open for a while" do
+    let(:console) do
+      Class.new do
+        attr_accessor :held
+
+        def initialize(io) = (@io = io) && (@held = false)
+        def tty? = true
+        def echo? = true
+        def read_nonblock(*args, **opts) = @io.read_nonblock(*args, **opts)
+        def wait_readable = held ? sleep : @io.wait_readable
+      end.new(pipe.first)
+    end
+    let(:reader) { console }
+
+    before do
+      allow(Reline).to receive(:readmultiline) do
+        console.held = true
+        sleep
+      ensure
+        console.held = false
+      end
+    end
+
+    it "sends the next line typed to the chat at once, with no generation" do
+      chat = open_pane
+      publish(chat, { "kind" => "command", "text" => "command> ", "generation" => 3 })
+      settles { console.held || nil }
+      say(chat, { "v" => "unpublished" })
+
+      keyboard.write("/stop\r")
+
+      expect(next_frame(chat, of: "line")).to eq({ "v" => "line", "text" => "/stop", "generation" => 0 })
+    end
+  end
+
   it "gives the pane back to the chat's own prompt when it publishes one after nothing" do
     chat = open_pane
     publish(chat, { "generation" => 3 })
