@@ -226,17 +226,31 @@ module Lain
       end
       private_class_method :blocks
 
+      # What one tool block says of itself, without its bytes: a call names the
+      # tool and the path it touched, a result its outcome.
+      #
+      # @param block [Hash] a tool_use or tool_result content block
+      # @return [String]
+      def gist(block) = stub(block)
+
       # An `else` on purpose: the block vocabulary is the provider's and grows
       # without notice, so an unknown type is named rather than dropped.
       def stub(block)
         case block["type"]
         when "text" then block["text"].to_s
-        when "tool_use" then "[calls #{block["name"]}]"
+        when "tool_use" then call_gist(block)
         when "tool_result" then outcome(block)
         else "[#{block["type"]}]"
         end
       end
       private_class_method :stub
+
+      def call_gist(block)
+        path = block["input"].then { |input| input["path"] if input.is_a?(Hash) }
+        target = flatten(path)[0, LINE_CHARS] if path.is_a?(String)
+        "#{["[calls #{block["name"]}", target].compact.join(" ")}]"
+      end
+      private_class_method :call_gist
 
       # The stub bounds itself; cutting it again would clip a short result kept whole.
       def shortened(block) = block["type"] == "tool_result" ? flatten(stub(block)) : cut(stub(block))

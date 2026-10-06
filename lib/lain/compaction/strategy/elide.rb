@@ -56,6 +56,8 @@ module Lain
         # reason differs: there was never a summary to hold, by design.
         ELIDED = "(elided -- no summary was taken)"
 
+        TOOL_BLOCKS = %w[tool_use tool_result].freeze
+
         # The whole span, in one range. There is no cut this strategy could
         # prefer: it answers the same bytes under every partition of the span.
         def propose_ranges(_messages, span:) = [span]
@@ -66,7 +68,22 @@ module Lain
 
         private
 
-        def attested(message) = [{ "type" => "text", "text" => "[#{attest(message)}] #{ELIDED}" }]
+        def attested(message)
+          [{ "type" => "text", "text" => [attestation(message), *gists(message), ELIDED].join(" ") }]
+        end
+
+        def attestation(message) = "[#{attest(message)}]"
+
+        # A tool round's bytes are gone, so the line is the only place that
+        # still says which tool ran against which path.
+        def gists(message)
+          content = message.fetch("content", nil)
+          return [] unless content.is_a?(Array)
+
+          content.grep(Hash).filter_map do |block|
+            Oracle::Handoff.gist(block) if TOOL_BLOCKS.include?(block["type"])
+          end
+        end
 
         # Byte-for-byte {SummarySnapshot#attest}, including its `fetch`: the
         # role is ours, so a missing one is a caller bug and not a blank to

@@ -120,6 +120,43 @@ RSpec.describe Lain::Oracle::Handoff do
       end
     end
 
+    describe ".gist" do
+      let(:call) do
+        { "type" => "tool_use", "id" => "tu_1", "name" => "read_file", "input" => { "path" => "config/routes.rb" } }
+      end
+
+      it "names a tool call's tool and its path" do
+        expect(described_class.gist(call)).to eq("[calls read_file config/routes.rb]")
+      end
+
+      it "names only the tool when the call carries no path" do
+        expect(described_class.gist(call.merge("input" => {}))).to eq("[calls read_file]")
+      end
+
+      it "flattens and bounds a path so one call stays one line" do
+        gist = described_class.gist(call.merge("input" => { "path" => "a\nb#{"z" * 5000}" }))
+
+        expect(gist).not_to include("\n")
+        expect(gist.length).to be < described_class::LINE_CHARS * 2
+      end
+
+      it "ignores a path that is not a string" do
+        expect(described_class.gist(call.merge("input" => { "path" => ["a"] }))).to eq("[calls read_file]")
+      end
+
+      it "reads a result as its outcome" do
+        result = { "type" => "tool_result", "tool_use_id" => "tu_1", "content" => "ok" }
+
+        expect(described_class.gist(result)).to eq("[result for tu_1: ok]")
+      end
+
+      it "puts the path into the line a handoff question carries" do
+        turn = { "role" => "assistant", "content" => [call] }
+
+        expect(described_class.line(turn)).to include("read_file").and include("config/routes.rb")
+      end
+    end
+
     it "names a tool call by the tool it called" do
       call = { "role" => "assistant",
                "content" => [{ "type" => "tool_use", "id" => "tu_1", "name" => "read_file", "input" => {} }] }
@@ -166,6 +203,16 @@ RSpec.describe Lain::Oracle::Handoff do
     def slots(held: [], span: [], pins: [], document: nil, window: nil)
       described_class.question(held:, span:, pins:, document:,
                                budget: described_class.budget_for(window || fallback_window))
+    end
+
+    it "names the tool and path of a held elide round in the question" do
+      round = [{ "role" => "assistant",
+                 "content" => [{ "type" => "tool_use", "id" => "tu_1", "name" => "read_file",
+                                 "input" => { "path" => "config/routes.rb" } }] }]
+      elided = Lain::Compaction::Strategy::Elide.new.collapse(round)
+      held = [{ "role" => "user", "content" => elided.content }]
+
+      expect(slots(held:)[:held]).to include("read_file").and include("config/routes.rb")
     end
 
     def total(question) = question.values.sum(&:bytesize)

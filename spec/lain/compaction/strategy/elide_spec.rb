@@ -53,6 +53,32 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
       end
     end
 
+    describe "a tool round" do
+      let(:round) do
+        [{ "role" => "assistant",
+           "content" => [{ "type" => "tool_use", "id" => "tu_1", "name" => "read_file",
+                           "input" => { "path" => "config/routes.rb" } }] },
+         { "role" => "user",
+           "content" => [{ "type" => "tool_result", "tool_use_id" => "tu_1", "content" => "get '/'" }] }]
+      end
+
+      it "names the tool and path the call ran" do
+        expect(texts(elide.collapse(round)).first).to include("read_file").and include("config/routes.rb")
+      end
+
+      it "leaves no double space on a message mixing text with a tool call" do
+        mixed = { "role" => "assistant",
+                  "content" => [{ "type" => "text", "text" => "reading" },
+                                { "type" => "tool_use", "id" => "tu_1", "name" => "read_file", "input" => {} }] }
+
+        expect(texts(elide.collapse([mixed])).first).not_to include("  ")
+      end
+
+      it "carries the result's outcome" do
+        expect(texts(elide.collapse(round)).last).to include("result for tu_1: get '/'")
+      end
+    end
+
     it "says the bytes are gone rather than implying a summary was taken" do
       expect(texts(elide.collapse(span))).to all(include(described_class::ELIDED))
     end
