@@ -2314,6 +2314,50 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    # The alternate screen wipes whatever was printed before it opened, so a
+    # notice said only at launch is gone before the human sees the chat.
+    describe "resume notices on the chat screen" do
+      let(:mismatch) { "recorded with --compact-keep 4; continuing with 8 (the current flags win)" }
+
+      def resumed_with_notice
+        timeline = Lain::Timeline.new(head_digest: nil, store: Lain::Store.new)
+        Lain::CLI::Resume::Result.new(file: "prior.ndjson", timeline:, session: Lain::Session.new, open: false,
+                                      recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty),
+                                      notices: [mismatch])
+      end
+
+      def run_resumed(stdin:, options: { grace: 5 })
+        said = []
+        screen = StringIO.new
+        Dir.mktmpdir do |dir|
+          factory = lambda do |channel:, **|
+            Lain::Frontend::TTY.new(channel:, output: screen, history_path: File.join(dir, "history"))
+          end
+          wiring = described_class.new(options:, chronicle:, status_feed:, stdin:,
+                                       tty_factory: factory, conductor_opener:)
+          wiring.run(backend:, resumed: resumed_with_notice, nvim: nil) { |line| said << line }
+          wiring.conductor.close(reason: :exit)
+        end
+        [said, screen.string]
+      end
+
+      it "draws a notice after the alternate screen opens, where the human can still see it" do
+        stdin = StringIO.new("quit\n")
+        allow(stdin).to receive(:tty?).and_return(true)
+
+        _said, screen = run_resumed(stdin:, options: { grace: 5, non_interactive: true })
+
+        expect(screen.index(mismatch)).to be > screen.index(Lain::Frontend::TTY::ALTERNATE_SCREEN_ON)
+      end
+
+      it "says a notice once to the notice block when there is no terminal" do
+        said, screen = run_resumed(stdin: StringIO.new("quit\n"))
+
+        expect(said.count(mismatch)).to eq(1)
+        expect(screen).not_to include(mismatch)
+      end
+    end
+
     # The `vi` and `notify` layers are the terminal's to act on, so what this
     # class owes the TTY factory is the session's layer set as it is NOW --
     # read through the live switch `/mode` writes, never a copy taken at launch.

@@ -284,9 +284,9 @@ module Lain
         @notice = notice || SILENT
         recorder, session = run_state(resumed)
         agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
-        resumed&.notices&.each(&notice)
-        memory_notices(recorder, resumed).each(&notice)
-        tty = open_terminal(agent, notice)
+        startup = [*resumed&.notices, *memory_notices(recorder, resumed)]
+        startup.each(&notice)
+        tty = open_terminal(agent, notice, startup)
         rail = Lain::Frontend::Intake.new(screen: tty, history: history_for(tty))
         @conductor = open_conductor(tty, rail)
         @conductor.guard do
@@ -416,11 +416,28 @@ module Lain
 
       # The countdown reads its keys through the pump's terminal, so stdin keeps
       # its one reader.
-      def open_terminal(agent, notice)
+      def open_terminal(agent, notice, startup)
         @tty_factory.call(channel:, input: Lain::Frontend::StdinPump.keys(@stdin),
                           prompt_renderer: prompt_renderer(agent, notice),
-                          layers: @switchboard.mode_switch.method(:layers)).tap do |tty|
+                          layers: @switchboard.mode_switch.method(:layers)).then do |tty|
           @human_line = tty.method(:render_summons)
+          Lain::Frontend::StdinPump.terminal?(@stdin) ? ScreenNotices.new(tty, startup) : tty
+        end
+      end
+
+      # The alternate screen wipes what was said before it opened, so a startup
+      # notice is said again once the screen is up.
+      class ScreenNotices < SimpleDelegator
+        def initialize(tty, lines)
+          super(tty)
+          @lines = lines
+        end
+
+        def run
+          __getobj__.run do |screen|
+            @lines.each { |line| screen.render_warning(line) }
+            yield screen
+          end
         end
       end
 
