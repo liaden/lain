@@ -73,10 +73,10 @@ RSpec.describe Lain::CLI::Consolidate do
 
   # Every text block across every request the provider was handed -- the
   # scaffold the clerk actually saw.
-  def prompts_seen(provider)
-    provider.requests.flat_map do |request|
-      request.messages.flat_map { |message| Array(message["content"]).grep(Hash).map { |block| block["text"] } }
-    end.compact
+  def prompts_seen(provider) = provider.requests.flat_map { |request| texts_in(request) }
+
+  def texts_in(request)
+    request.messages.flat_map { |message| Array(message["content"]).grep(Hash).map { |block| block["text"] } }.compact
   end
 
   describe "#report" do
@@ -269,6 +269,79 @@ RSpec.describe Lain::CLI::Consolidate do
 
       store = Lain::Memory::ProjectStore.new(project_dir:)
       expect(File.read(store.path)).to include("login-ttl")
+    end
+  end
+
+  # Each clerk owns only what its own spawn wrote. Twin spawns share a digest,
+  # so "own spawn" is "own digest", and a later pass over the same lineage is
+  # the same owner.
+  describe "a clerk owns only its own spawn's items" do
+    def backend_for(provider) = instance_double(Lain::CLI::Backend, provider:, context:, slots:)
+
+    def from_options(provider:)
+      allow(Lain::CLI::Backend).to receive(:new).and_return(backend_for(provider))
+      described_class.from_options({ max_tokens: 64 }, selector: "s1", profile: anthropic, paths:, project_dir:)
+    end
+
+    def store = Lain::Memory::ProjectStore.new(project_dir:)
+
+    def tool_results_seen(request)
+      request.messages.flat_map { |message| Array(message["content"]).grep(Hash) }
+             .select { |block| block["type"] == "tool_result" }.map { |block| block["content"].to_s }
+    end
+
+    def stored(id, description, author:)
+      store.append(Lain::Memory::Item.new(id:, description:, body: "#{id} body", author:))
+    end
+
+    it "refuses lineage B's clerk over an id lineage A's clerk wrote, and keeps A's row" do
+      provider = Lain::Provider::Mock.new(responses: [
+                                            tool_response(memory_write("shared", "from A")), text_response("A done"),
+                                            tool_response(memory_write("shared", "from B")), text_response("B done")
+                                          ])
+
+      from_options(provider:).report
+
+      expect(store.view.fetch("shared").body).to eq("from A")
+      expect(tool_results_seen(provider.requests.last).join("\n")).to include("another lineage")
+    end
+
+    it "lets a repeat pass over the same lineage replace the item its earlier pass wrote" do
+      first = Lain::Provider::Mock.new(responses: [tool_response(memory_write("login-ttl", "v1")),
+                                                   text_response("A done"), text_response("B done")])
+      from_options(provider: first).report
+      expect(store.view.fetch("login-ttl").body).to eq("v1")
+      second = Lain::Provider::Mock.new(responses: [tool_response(memory_write("login-ttl", "v2")),
+                                                    text_response("A done"), text_response("B done")])
+
+      report = from_options(provider: second).report
+
+      expect(store.view.fetch("login-ttl").body).to eq("v2")
+      expect(report).to include("writing memories")
+    end
+
+    it "shows lineage A's clerk only lineage A's items in its manifest" do
+      stored("chat-note", "the human's private note", author: Lain::Memory::Author.chat)
+      stored("b-finding", "what lineage B found", author: Lain::Memory::Author.clerk(spawn: spawn_b))
+      stored("a-finding", "what lineage A found", author: Lain::Memory::Author.clerk(spawn: spawn_a))
+      provider = Lain::Provider::Mock.new(responses: [text_response("A done"), text_response("B done")])
+
+      from_options(provider:).report
+
+      seen_by_a = texts_in(provider.requests.first).join("\n")
+      expect(seen_by_a).to include("a-finding")
+      expect(seen_by_a).not_to include("the human's private note")
+      expect(seen_by_a).not_to include("b-finding")
+    end
+
+    it "answers a clerk's memory_read of a chat id as no memory" do
+      stored("chat-note", "the human's private note", author: Lain::Memory::Author.chat)
+      read = tool_response(["tu_read", "memory_read", { "id" => "chat-note" }])
+      provider = Lain::Provider::Mock.new(responses: [read, text_response("A done"), text_response("B done")])
+
+      from_options(provider:).report
+
+      expect(tool_results_seen(provider.requests[1]).join("\n")).to include("no memory with id \"chat-note\"")
     end
   end
 

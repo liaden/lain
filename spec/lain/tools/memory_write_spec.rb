@@ -106,6 +106,41 @@ RSpec.describe Lain::Tools::MemoryWrite do
     end
   end
 
+  describe "a clerk write over another spawn's item" do
+    let(:clerk_x) { described_class.new(recorder:, author: Lain::Memory::Author.clerk(spawn: "sha256:x")) }
+    let(:clerk_y) { described_class.new(recorder:, author: Lain::Memory::Author.clerk(spawn: "sha256:y")) }
+
+    before { clerk_y.call(id: "finding", description: "d", body: "y's body") }
+
+    it "refuses, naming another lineage, and leaves the row and the root unchanged" do
+      root = recorder.root
+      result = clerk_x.call(id: "finding", description: "d", body: "x's body")
+
+      expect(result.is_error).to be(true)
+      expect(result.content).to include("finding").and include("another lineage")
+      expect(recorder.fetch("finding").body).to eq("y's body")
+      expect(recorder.root).to eq(root)
+    end
+
+    it "refuses when the store's head is another spawn's though this view never saw it" do
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir })
+        project = Lain::ProjectDir.new(root: dir, paths:)
+        stale = Lain::Memory::ProjectStore.new(project_dir: project).view
+        Lain::Memory::ProjectStore.new(project_dir: project).append(
+          Lain::Memory::Item.new(id: "finding", description: "d", body: "y's body",
+                                 author: Lain::Memory::Author.clerk(spawn: "sha256:y"))
+        )
+
+        result = described_class.new(recorder: stale, author: Lain::Memory::Author.clerk(spawn: "sha256:x"))
+                                .call(id: "finding", description: "d", body: "x's body")
+
+        expect(result.content).to include("another lineage")
+        expect(Lain::Memory::ProjectStore.new(project_dir: project).view.fetch("finding").body).to eq("y's body")
+      end
+    end
+  end
+
   describe "a write" do
     it "bumps the recorder's root and names the id and new root in the result" do
       result = tool.call(id: "dosage", description: "Adult dosage", body: "500mg twice daily")

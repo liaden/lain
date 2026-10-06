@@ -474,8 +474,12 @@ that turn.
 
 `lain consolidate` writes through the same store, so its `court_clerk` pass is durable rather
 than in-process. Its own journal lands under `$XDG_STATE_HOME/lain/consolidation/<project-hash>/`,
-a sibling of `sessions/`, so a clerk pass never appears in a chat listing. The scaffolds it builds
-are **masked fail-closed**: every rendered turn's text goes through `Sensitivity::Regions` and
+a sibling of `sessions/`, so a clerk pass never appears in a chat listing. Each clerk sees, and may
+replace, only the items its own spawn wrote: its manifest and `memory_read` are a view over that
+slice alone, and `Memory::Ownership` refuses it any id the chat or another lineage holds. Twin
+spawns share a digest, so a repeat pass over the same lineage refines its own items; the price is
+that a clerk cannot de-duplicate against what the chat already knows. The scaffolds it builds are
+**masked fail-closed**: every rendered turn's text goes through `Sensitivity::Regions` and
 `Sensitivity::Masking` before it reaches a provider, because nobody is at a surface to release a
 region. Only the record's bytes are masked; the digests lain's own frame wraps them in stay
 intact, so the clerk can still cite what it read.

@@ -188,7 +188,7 @@ module Lain
       #
       # @param item [Item]
       # @return [Loaded] the store as this write left it
-      # @raise [Ownership::Refused] when the head is the chat's and the writer is not
+      # @raise [Ownership::Refused] when the writer is a clerk and the id's current head was written by another author
       def append(item)
         locked(File::LOCK_EX) do
           log = held

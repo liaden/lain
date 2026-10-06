@@ -21,6 +21,10 @@ module Lain
   # credential region in a file the clerk reads left masked because nobody is at
   # a surface to release it. A refusal is contained -- the clerk's loop continues
   # on the error result, and so does the pass onto the next lineage.
+  #
+  # A CLERK SEES ONLY WHAT {Memory::Ownership} LETS IT REPLACE, so nothing in its
+  # prompt is an id it would be refused. The price is that it cannot
+  # de-duplicate against what the chat already knows.
   class Consolidation
     ROLE = :court_clerk
 
@@ -28,8 +32,8 @@ module Lain
     # `:spawn`, the address `lain watch` and the fleet already know it by. Twin
     # spawns of one prompt from one head share it even when they answer apart.
     #
-    # `wrote` is whether THIS lineage's clerk moved the recorder's index -- read
-    # off the recorder itself, never off `result`, because a clerk that explored
+    # `wrote` is whether THIS lineage's clerk moved its own view's index -- read
+    # off that view, never off `result`, because a clerk that explored
     # and reported its findings in prose still leaves the store untouched.
     #
     # It answers "did what project memory RESOLVES TO change", not "did a
@@ -47,7 +51,8 @@ module Lain
     # were indistinguishable from a deliberate dry run.
     #
     # @param provider [Lain::Provider] the clerk's model
-    # @param recorder [Memory::Recorder] the shared index the clerk writes into
+    # @param recorder [Memory::Recorder] the project view every clerk's write
+    #   lands through; each clerk renders only its own spawn's slice of it
     # @param context [Lain::Context] the factory context the clerk persona
     #   reshapes (model/max_tokens ride through; its system is REPLACED by the
     #   role prelude)
@@ -101,30 +106,40 @@ module Lain
     attr_reader :recorder
 
     def spawn_clerk(scaffold)
-      root_before = recorder.index.root
-      result = build_clerk(scaffold).ask(scaffold.render).text
-      Outcome.new(spawn: scaffold.spawn, result:, wrote: recorder.index.root != root_before)
+      view = own_view(scaffold.spawn)
+      root_before = view.root
+      result = build_clerk(scaffold, view).ask(scaffold.render).text
+      Outcome.new(spawn: scaffold.spawn, result:, wrote: view.root != root_before)
     end
 
     # The point of this class is the last argument: a tool-phase guard stack the
     # spawn seam would not have supplied.
-    def build_clerk(scaffold)
-      allowed = role.attenuate(clerk_union(scaffold.spawn))
+    def build_clerk(scaffold, view)
+      allowed = role.attenuate(clerk_union(scaffold.spawn, view))
       Agent.new(
         provider: @provider, context: clerk_context, toolset: allowed,
         handler: Effect::Handler::Live.new,
-        timeline: fresh_root, session: clerk_session, journal: clerk_journal, tool_middleware: guard_stack
+        timeline: fresh_root, session: clerk_session(view), journal: clerk_journal(view), tool_middleware: guard_stack
       )
+    end
+
+    # Writes go through the pass's project view rather than straight to its store,
+    # so that view stays current and a later clerk in the same pass, a twin spawn
+    # included, builds its slice from every write made so far.
+    def own_view(spawn)
+      author = Memory::Author.clerk(spawn:)
+      loaded = Memory::ProjectStore::Loaded.of(recorder.index.select { |item| item.author == author })
+      Memory::Recorder.new(index: loaded.index, store: WriteThrough.new(recorder), loaded:)
     end
 
     # Routed through the role's own policy so the fresh-root decision has one
     # owner, not a bare `Timeline.empty` that could drift from it.
     def fresh_root = role.spawn_policy(prefix: :fresh).prefix.base_timeline(store: Store.new)
 
-    def clerk_session = Session.new(memory: recorder, worker_env: WorkerEnv.default)
+    def clerk_session(view) = Session.new(memory: view, worker_env: WorkerEnv.default)
 
-    # Each clerk turn is paired with the recorder's memory root in force at it.
-    def clerk_journal = Memory::JournalMemoryRoot.new(journal: @journal, recorder:)
+    # Each clerk turn is paired with its own view's memory root in force at it.
+    def clerk_journal(view) = Memory::JournalMemoryRoot.new(journal: @journal, recorder: view)
 
     # A deliberate asymmetry: what the guards record lands on the RAW `@journal`
     # -- a refusal or a mask writes no memory, so neither has a root to pair --
@@ -140,10 +155,10 @@ module Lain
 
     # The union the role attenuates FROM: it must hold every tool the clerk's
     # `only`-set names, or {Toolset#only} fails loudly. Both memory tools share the
-    # ONE recorder, so the clerk's writes and its manifest see one index.
-    def clerk_union(spawn)
-      Toolset.new([Tools::ReadFile.new, Tools::ListFiles.new, Tools::MemoryRead.new(index: recorder),
-                   Tools::MemoryWrite.new(recorder:, author: Memory::Author.clerk(spawn:))])
+    # clerk's ONE view, so its writes and its manifest see one index.
+    def clerk_union(spawn, view)
+      Toolset.new([Tools::ReadFile.new, Tools::ListFiles.new, Tools::MemoryRead.new(index: view),
+                   Tools::MemoryWrite.new(recorder: view, author: Memory::Author.clerk(spawn:))])
     end
 
     def clerk_context = role.child_context(@context, slots: @slots)
@@ -155,6 +170,10 @@ module Lain
     # Reopened rather than nested in a `Data.define ... do` block: a constant or
     # nested class declared inside that block scopes to the enclosing module, not
     # the Data class.
+
+    WriteThrough = Data.define(:recorder) do
+      def append(item) = recorder.write(item)
+    end
 
     # The record one clerk reads: one lineage's child turns, rendered. Its ROLE
     # supplies the persona.
