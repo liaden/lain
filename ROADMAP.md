@@ -320,6 +320,7 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     `[exp · parked]`
   - **User-injectable middleware** (TODO 44): users add their own `model`/`tool`/`turn`/`repl`
     middleware into the stack via the DSL — a testable hook *is* middleware `[exp]`.
+    Planned in `planning/specs/config-middleware.md` (item 53).
   - **Grader from Gherkin** (TODO 82–85): `/research` + `/plan` produce human-approved Given/When/Then
     acceptance criteria — a transient structured-English **IR**, not `.feature` files — that the
     test-engineer role (M5) turns into tests in the **lain user's** framework (rspec/pytest/jest/…);
@@ -1970,6 +1971,11 @@ XDG path relative, which put machine state back inside the user's repository)
    (`planning/qa-findings-round22-2026-10-06.md`) over every finding rated LOW-MED or higher, plus the
    forks' scenario corrections. 26 of 28 cards landed, panel-reviewed; the handoff fit check and its
    stall-line wording were deferred by ruling. The manual QA pass the plan names is still owed.
+
+53. **Planned (2026-10-07, panel-reviewed)**: `planning/specs/config-middleware.md`, user middleware
+   declared in `config.rb` for the model, tool, turn, repl and http areas, from both
+   `$XDG_CONFIG_HOME/lain/config.rb` (trusted with `lain trust --user`) and `.lain/config.rb`. Closes
+   round 20's Open decisions 1 and 2 and the "User-injectable middleware (TODO 44)" line. 13 cards.
 
 ## Map of the documents
 
