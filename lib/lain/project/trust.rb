@@ -29,6 +29,14 @@ module Lain
       UNTRUSTED = "%<files>s %<verb>s Ruby this project runs on launch, and these bytes have not been trusted. " \
                   "Read %<pronoun>s, then run: lain trust %<root>s"
 
+      # The user's config.rb is one file, and it runs wherever lain does.
+      USER_UNTRUSTED = "%<files>s is Ruby lain runs in every project, and these bytes have not been trusted. " \
+                       "Read it, then run: lain trust --user"
+
+      # Mixed into the user file's digest so that no project mark, over any
+      # bytes, is also the user file's mark.
+      USER_DOMAIN = "user"
+
       # A project's Ruby that nobody has trusted yet.
       class Untrusted < Error; end
 
@@ -111,13 +119,36 @@ module Lain
       end
       private_class_method :sources_in
 
-      # @param root [String] the project root, which the refusal names
+      # Anything at the path that is not a regular file reads as no bytes;
+      # {Config} refuses that case, since only it knows absence from the rest.
+      #
+      # @param paths [Paths] supplies the user's config.rb and the state home
+      # @return [Trust]
+      # @raise [Unreadable] when the user's config.rb cannot be read
+      def self.for_user(paths: Paths.new)
+        path = paths.user_config
+        new(root: paths.config_home, sources: user_sources(path), record: Record.new(paths:),
+            domain: USER_DOMAIN, untrusted: USER_UNTRUSTED)
+      end
+
+      def self.user_sources(path)
+        File.file?(path) ? { path => File.read(path) } : {}
+      rescue SystemCallError => e
+        raise Unreadable, legible("cannot read the user's config: #{e.message}")
+      end
+      private_class_method :user_sources
+
+      # @param root [String] the directory the judged files live under, which the refusal names
       # @param sources [Hash{String => String}] each `.lain/*.rb` path and its bytes
       # @param record [Record] the mark store
-      def initialize(root:, sources:, record:)
+      # @param domain [String, nil] what keeps this digest apart from a project's; nil for a project
+      # @param untrusted [String] the {UNTRUSTED}-shaped text {#require!} raises
+      def initialize(root:, sources:, record:, domain: nil, untrusted: UNTRUSTED)
         @root = root
         @sources = sources.to_h { |path, bytes| [path.dup.freeze, bytes.dup.freeze] }.freeze
         @record = record
+        @domain = domain
+        @untrusted = untrusted
         freeze
       end
 
@@ -128,10 +159,14 @@ module Lain
       def files = @sources.keys
 
       # Length-prefixed so no pair of names and bodies can be spelled as another.
+      # A project's stream opens with a digit, so a domain, which opens with a
+      # letter, can never be spelled as one.
       #
       # @return [String] the full-width hex digest of every file's name and bytes
       def digest
-        @sources.each_with_object(Digest::SHA256.new) do |(path, bytes), sha|
+        seed = Digest::SHA256.new
+        seed << "#{@domain}:" if @domain
+        @sources.each_with_object(seed) do |(path, bytes), sha|
           name = File.basename(path)
           sha << "#{name.bytesize}:#{name}#{bytes.bytesize}:" << bytes
         end.hexdigest
@@ -155,8 +190,8 @@ module Lain
 
       def refusal
         many = files.length > 1
-        format(UNTRUSTED, files: files.join(", "), verb: many ? "are" : "is",
-                          pronoun: many ? "them" : "it", root: Shellwords.escape(@root))
+        format(@untrusted, files: files.join(", "), verb: many ? "are" : "is",
+                           pronoun: many ? "them" : "it", root: Shellwords.escape(@root))
       end
     end
   end

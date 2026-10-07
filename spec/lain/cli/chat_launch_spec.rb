@@ -655,7 +655,8 @@ RSpec.describe Lain::CLI::ChatLaunch do
 
       launched
 
-      expect(Lain::Config::Builder).to have_received(:evaluate).with(anything, path: config_path(@dir)).once
+      expect(Lain::Config::Builder).to have_received(:evaluate)
+        .with(anything, hash_including(path: config_path(@dir))).once
     end
   end
 

@@ -471,4 +471,113 @@ RSpec.describe Lain::Config do
       end
     end
   end
+
+  describe ".middleware with the user's config.rb" do
+    around do |example|
+      Dir.mktmpdir("lain-user-config") do |tmp|
+        @tmp = tmp
+        example.run
+      end
+    end
+
+    # Its own config and state home, so no other example's file or mark is seen.
+    let(:paths) do
+      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "config"),
+                             "XDG_STATE_HOME" => File.join(@tmp, "state") })
+    end
+    let(:root) { File.join(@tmp, "project").tap { |dir| FileUtils.mkdir_p(dir) } }
+
+    def middleware_class(name) = "class #{name} < Lain::Middleware::Base; end\n"
+
+    def write_user(body, trusted: true)
+      FileUtils.mkdir_p(File.dirname(paths.user_config))
+      File.write(paths.user_config, body)
+      Lain::Project::Trust.for_user(paths:).grant! if trusted
+    end
+
+    def names(members) = members.map { |member| member.class.name.split("::").last }
+
+    it "puts the user's registrations before the project's" do
+      write_user("#{middleware_class("A")}middleware { tool A }\n")
+      write_config(root, "#{middleware_class("B")}middleware { tool B }\n", paths:)
+
+      expect(names(described_class.middleware(root:, paths:).members(:tool))).to eq(%w[A B])
+    end
+
+    it "reads the user file alone when the root has no .lain/" do
+      write_user("#{middleware_class("A")}middleware { model A }\n")
+
+      expect(names(described_class.middleware(root:, paths:).members(:model))).to eq(%w[A])
+    end
+
+    it "finds the user mark and the project mark in the injected state home" do
+      write_user("# #{SecureRandom.hex}\n#{middleware_class("A")}middleware { turn A }\n")
+      write_config(root, "# #{SecureRandom.hex}\n#{middleware_class("B")}middleware { turn B }\n", paths:)
+
+      expect(names(described_class.middleware(root:, paths:).members(:turn))).to eq(%w[A B])
+    end
+
+    it "refuses an untrusted user file, naming it, its reach, and the remedy" do
+      write_user("middleware { }\n", trusted: false)
+
+      expect { described_class.middleware(root:, paths:) }.to raise_error(Lain::Project::Trust::Untrusted) { |error|
+        expect(error.message).to include(paths.user_config).and include("every project")
+          .and include("lain trust --user")
+      }
+    end
+
+    it "is not trusted by a project mark over the same bytes" do
+      body = "middleware { }\n"
+      write_config(root, body, paths:)
+      write_user(body, trusted: false)
+
+      expect { described_class.middleware(root:, paths:) }
+        .to raise_error(Lain::Project::Trust::Untrusted, /#{Regexp.escape(paths.user_config)}/)
+    end
+
+    it "loses its trust when one byte changes" do
+      write_user("middleware { }\n")
+      File.write(paths.user_config, "middleware { }\t")
+
+      expect { described_class.middleware(root:, paths:) }.to raise_error(Lain::Project::Trust::Untrusted)
+    end
+
+    it "evaluates the bytes trust judged, even when the file changes after they were read" do
+      write_user("#{middleware_class("A")}middleware { model A }\n")
+      allow(Lain::Project::Trust).to receive(:for_user).and_wrap_original do |original, **kwargs|
+        original.call(**kwargs).tap do
+          File.write(paths.user_config, "#{middleware_class("B")}middleware { model B }\n")
+        end
+      end
+
+      expect(names(described_class.middleware(root:, paths:).members(:model))).to eq(%w[A])
+    end
+
+    it "refuses a project table in the user file at its line" do
+      write_user("shell exclude: [\"rm\"]\n")
+
+      expect { described_class.middleware(root:, paths:) }
+        .to raise_error(Lain::Config::Refusal,
+                        %r{#{Regexp.escape(paths.user_config)}:1: .*shell belongs in a project's \.lain/config\.rb})
+    end
+
+    it "refuses a user config.rb that is not a regular file" do
+      FileUtils.mkdir_p(paths.user_config)
+
+      expect { described_class.middleware(root:, paths:) }
+        .to raise_error(Lain::Project::Trust::Unreadable, /#{Regexp.escape(paths.user_config)}/)
+    end
+
+    it "is never read by the project's own readers" do
+      with_env("XDG_CONFIG_HOME" => File.join(@tmp, "config")) do
+        write_user("# #{SecureRandom.hex}\nmiddleware { }\n", trusted: false)
+        write_config(root, "shell exclude: %w[curl]\nisolation retain_days: 3\n")
+
+        expect([described_class.shell_exclusions(root:).permits?("curl"),
+                described_class.load(root:).isolation.retain_days])
+          .to eq([false, 3])
+        expect { described_class.middleware(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+      end
+    end
+  end
 end

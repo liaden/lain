@@ -116,6 +116,68 @@ RSpec.describe Lain::Project::Trust do
     end
   end
 
+  describe "the project digest's inputs" do
+    # Every mark already granted on a machine is this digest; changing what
+    # feeds it would void them all.
+    it "is each file's length-prefixed name and bytes, and nothing else" do
+      digest = trust_for(project("app", "config.rb" => "x\n")).digest
+
+      expect(digest).to eq(Digest::SHA256.hexdigest("9:config.rb2:x\n"))
+    end
+  end
+
+  describe ".for_user" do
+    let(:paths) do
+      Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@tmp, "state"),
+                             "XDG_CONFIG_HOME" => File.join(@tmp, "config"), "HOME" => @tmp })
+    end
+
+    def user_config(body)
+      FileUtils.mkdir_p(File.dirname(paths.user_config))
+      File.write(paths.user_config, body)
+    end
+
+    it "judges the user's config.rb by its bytes" do
+      user_config("middleware { }\n")
+
+      expect(described_class.for_user(paths:).sources).to eq(paths.user_config => "middleware { }\n")
+    end
+
+    it "is not trusted by a project mark over identical bytes" do
+      user_config("middleware { }\n")
+      trust_for(project("app", "config.rb" => "middleware { }\n")).grant!
+
+      expect(described_class.for_user(paths:)).not_to be_trusted
+    end
+
+    it "is trusted once its own mark is granted" do
+      user_config("middleware { }\n")
+      described_class.for_user(paths:).grant!
+
+      expect(described_class.for_user(paths:)).to be_trusted
+    end
+
+    it "refuses, naming the file, that it runs in every project, and `lain trust --user`" do
+      user_config("middleware { }\n")
+
+      expect { described_class.for_user(paths:).require! }.to raise_error(described_class::Untrusted) { |error|
+        expect(error.message).to include(paths.user_config).and include("every project")
+          .and include("lain trust --user")
+      }
+    end
+
+    it "has nothing to judge when there is no user config.rb" do
+      expect([described_class.for_user(paths:).sources, described_class.for_user(paths:).trusted?])
+        .to eq([{}, true])
+    end
+
+    it "reads no bytes from a user config.rb that is a directory" do
+      FileUtils.mkdir_p(paths.user_config)
+
+      expect(described_class.for_user(paths:).sources).to eq({})
+    end
+  end
+
   describe "an entry that is not a regular file" do
     # Reading a FIFO with no writer blocks forever, so one planted in `.lain/`
     # would hang every launch.

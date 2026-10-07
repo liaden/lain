@@ -14,6 +14,10 @@ RSpec.describe Lain::Paths do
       expect(paths("XDG_CONFIG_HOME" => "/x").config_home).to eq("/x/lain")
     end
 
+    it "puts the user's config.rb under XDG_CONFIG_HOME" do
+      expect(paths("XDG_CONFIG_HOME" => "/x").user_config).to eq("/x/lain/config.rb")
+    end
+
     it "uses XDG_CACHE_HOME, suffixed with /lain" do
       expect(paths("XDG_CACHE_HOME" => "/x").cache_home).to eq("/x/lain")
     end
@@ -30,6 +34,16 @@ RSpec.describe Lain::Paths do
 
     it "uses XDG_RUNTIME_DIR, suffixed with /lain" do
       expect(paths("XDG_RUNTIME_DIR" => "/run/user/1000").runtime_dir).to eq("/run/user/1000/lain")
+    end
+  end
+
+  describe "the suite's own config home" do
+    # The user's config.rb runs in every project, so a suite reading the
+    # developer's would pass or fail on whatever that file says.
+    it "is a tmp directory, never the developer's ~/.config" do
+      expect([described_class.new.config_home.start_with?(Dir.tmpdir),
+              described_class.new.config_home.start_with?(File.join(Dir.home, ".config"))])
+        .to eq([true, false])
     end
   end
 

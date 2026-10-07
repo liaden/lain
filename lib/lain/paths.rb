@@ -225,6 +225,13 @@ module Lain
     end
 
     def config_home = xdg_dir("XDG_CONFIG_HOME", ".config")
+
+    # The user's own config.rb, which runs in every project; it shares a
+    # project config's file name and nothing else.
+    #
+    # @return [String]
+    def user_config = File.join(config_home, ProjectDir::CONFIG_FILE)
+
     def cache_home = xdg_dir("XDG_CACHE_HOME", ".cache")
     def state_home = xdg_dir("XDG_STATE_HOME", ".local/state")
 

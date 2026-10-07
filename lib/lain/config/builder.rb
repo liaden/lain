@@ -24,6 +24,10 @@ module Lain
     class Builder
       VERBS = %i[epics approval isolation sensitivity shell tests middleware].freeze
 
+      # The user's config.rb runs in every project, so the tables that rule
+      # one project stay in that project's file.
+      USER_VERBS = %i[middleware].freeze
+
       # Records the calls a block makes, so the verb that owns the block can
       # validate them at the line each was written on.
       class Collector
@@ -40,8 +44,8 @@ module Lain
         # @param name [Symbol] the verb
         # @param args [Array] its positional arguments
         # @param kwargs [Hash{Symbol => Object}] its keyword arguments, kept as written
-        # @option kwargs [Object] :field one field of an entry, as written
         # @param block [Proc, nil] the block the call carried, kept for the verb that wants it
+        # @option kwargs [Object] :field one field of an entry, as written
         def method_missing(name, *args, **kwargs, &block)
           line = Builder.line_in(@path)
           raise Builder.unknown_verb(name, @verbs, path: @path, line:) unless @verbs.include?(name)
@@ -55,11 +59,12 @@ module Lain
 
       # @param source [String] the text of a `.lain/config.rb`
       # @param path [String] what backtraces and refusals name
+      # @param verbs [Array<Symbol>] the tables this file may declare
       # @return [Built]
       # @raise [Refusal] naming the path and line of what the file got wrong,
       #   whether that is a refused value or Ruby itself failing
-      def self.evaluate(source, path:)
-        builder = new(path)
+      def self.evaluate(source, path:, verbs: VERBS)
+        builder = new(path, verbs)
         # A String read under LC_ALL=C is US-ASCII, and `load` would assume UTF-8 here.
         builder.instance_eval(source.dup.force_encoding(Encoding::UTF_8), path, 1)
         builder.built
@@ -85,8 +90,9 @@ module Lain
                     path: located(path, line), key: name.to_s)
       end
 
-      def initialize(path)
+      def initialize(path, verbs = VERBS)
         @path = path
+        @verbs = verbs
         @tables = {}
       end
 
@@ -137,11 +143,11 @@ module Lain
 
       # Kernel#test answers the likeliest typo of `tests` with an unrelated TypeError.
       def test(*, **)
-        raise self.class.unknown_verb(:test, VERBS, path: @path, line: self.class.line_in(@path))
+        raise self.class.unknown_verb(:test, @verbs, path: @path, line: self.class.line_in(@path))
       end
 
       def method_missing(name, *, **)
-        raise self.class.unknown_verb(name, VERBS, path: @path, line: self.class.line_in(@path))
+        raise self.class.unknown_verb(name, @verbs, path: @path, line: self.class.line_in(@path))
       end
 
       def respond_to_missing?(*) = super
@@ -150,10 +156,15 @@ module Lain
 
       def declare(table, label, keywords = {})
         at = located_at(self.class.line_in(@path))
+        refuse_project_only(table, at) unless @verbs.include?(table)
         raise Refusal.new("declares #{table} twice", path: at, table: label, key: table.to_s) if @tables.key?(table)
 
         refuse_repeated_keys(keywords, at, label)
         @tables[table] = yield(at)
+      end
+
+      def refuse_project_only(table, at)
+        raise Refusal.new("#{table} belongs in a project's #{ProjectDir.config}", path: at, key: table.to_s)
       end
 
       def refuse_repeated_keys(keywords, at, label)

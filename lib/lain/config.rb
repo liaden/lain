@@ -15,6 +15,9 @@ module Lain
   # {Isolation}, {Sensitivity::Rules}, {Shell::Exclusions}, {TestLayout} -- so
   # a wrong-shaped value inside one is loud instead of silently defaulting or
   # crashing three call frames deep.
+  #
+  # The user's `$XDG_CONFIG_HOME/lain/config.rb` is read by {.middleware}
+  # alone, under its own trust, and may declare nothing but middleware.
   class Config
     # The evaluated file, memoised on its path and trusted bytes: a `lain chat`
     # startup asks the four readers below for one file, and an edit is new
@@ -57,14 +60,18 @@ module Lain
     # @raise [Refusal] as {.load}
     def self.shell_exclusions(root:) = built(root).shell
 
-    # The middleware this project asks to run in each phase. `root:` is
-    # REQUIRED, as {.sensitivity}'s is.
+    # The middleware the user's config.rb and then this project's ask to run in
+    # each phase. The only reader of the user's file: it runs in every project,
+    # so it may add middleware and never loosen a project's own tables.
+    # `root:` is REQUIRED, as {.sensitivity}'s is.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
-    # @return [Middleware] empty when the file or the table is absent
-    # @raise [Project::Trust::Untrusted] as {.load}
-    # @raise [Refusal] as {.load}
-    def self.middleware(root:) = built(root).middleware
+    # @param paths [Paths] the user's config.rb and the state home both marks live in
+    # @return [Middleware] empty when neither file declares the table
+    # @raise [Project::Trust::Untrusted] as {.load}, for either file
+    # @raise [Project::Trust::Unreadable] when either file's path is not a regular file
+    # @raise [Refusal] as {.load}, for either file
+    def self.middleware(root:, paths: Paths.new) = user(paths) + built(root, paths:).middleware
 
     # Where this project keeps its tests, which the layout guard holds a test
     # file's path to. With no table the layout falls back to the preset of a
@@ -87,37 +94,47 @@ module Lain
     #
     # A path that exists but is not a regular file refuses: reading it as
     # absent would drop the restricting tables in silence.
-    def self.built(root)
-      project_dir = ProjectDir.new(root:)
+    def self.built(root, paths: Paths.new)
+      project_dir = ProjectDir.new(root:, paths:)
       path = project_dir.config
       return Builder.new(path).built unless File.exist?(path)
 
-      trust = Project::Trust.for(project_dir:)
+      judged(path, Project::Trust.for(project_dir:, paths:), Builder::VERBS, "this project's")
+    end
+
+    def self.user(paths)
+      path = paths.user_config
+      return Middleware.empty unless File.exist?(path)
+
+      judged(path, Project::Trust.for_user(paths:), Builder::USER_VERBS, "the user's").middleware
+    end
+
+    def self.judged(path, trust, verbs, whose)
       source = trust.sources[path]
-      raise Project::Trust::Unreadable, Project::Trust.legible(format(NOT_A_FILE, path:)) if source.nil?
+      raise Project::Trust::Unreadable, Project::Trust.legible(format(NOT_A_FILE, path:, whose:)) if source.nil?
 
       trust.require!
-      outcome = evaluated(path, source)
+      outcome = evaluated(path, source, verbs)
       raise outcome if outcome.is_a?(Refusal)
 
       outcome
     end
 
     # A refusal is memoised like a value, so a failing file runs once too.
-    def self.evaluated(path, source)
+    def self.evaluated(path, source, verbs)
       @lock.synchronize do
         @built.fetch([path, source]) do
           @built[[path, source]] = begin
-            Builder.evaluate(source, path:)
+            Builder.evaluate(source, path:, verbs:)
           rescue Refusal => e
             e
           end
         end
       end
     end
-    private_class_method :built, :evaluated
+    private_class_method :built, :user, :judged, :evaluated
 
-    NOT_A_FILE = "%<path>s is not a regular file, so this project's config cannot be read"
+    NOT_A_FILE = "%<path>s is not a regular file, so %<whose>s config cannot be read"
     private_constant :NOT_A_FILE
 
     # @return [Config] every field at its default -- the value an absent file yields.

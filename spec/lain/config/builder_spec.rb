@@ -214,4 +214,32 @@ RSpec.describe Lain::Config::Builder do
         .to raise_error(Lain::Config::Refusal, /config\.rb:2: `shell` declares shell twice/)
     end
   end
+
+  describe "the user's config.rb" do
+    let(:path) { "/home/someone/.config/lain/config.rb" }
+
+    def build_user(source) = described_class.evaluate(source, path:, verbs: described_class::USER_VERBS)
+
+    it "builds a middleware table" do
+      built = build_user("middleware { model { |env, &down| down.call(env) } }\n")
+
+      expect(built.middleware.members(:model).map(&:class)).to eq([Lain::Middleware::Inline])
+    end
+
+    it "refuses a project table at its line, saying where it belongs" do
+      expect { build_user("shell exclude: [\"rm\"]\n") }
+        .to raise_error(Lain::Config::Refusal,
+                        %r{\A#{Regexp.escape(path)}:1: .*shell belongs in a project's \.lain/config\.rb})
+    end
+
+    it "refuses a block-taking project table before running its block" do
+      expect { build_user("approval do\n  raise \"ran\"\nend\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:1: .*approval belongs in a project's/)
+    end
+
+    it "lists only middleware as a known verb" do
+      expect { build_user("\nmiddlewear { }\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*:middlewear; known verbs: middleware\z/)
+    end
+  end
 end
