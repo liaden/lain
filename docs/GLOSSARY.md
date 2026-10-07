@@ -411,12 +411,14 @@ is an object waiting to be named.
 > in the chain. ([Wikipedia](https://en.wikipedia.org/wiki/Chain-of-responsibility_pattern))
 
 A `Middleware::Stack` is one. Each layer's `#call(env, &app)` either answers the call — a refusal,
-a masked result — or passes it on through `#downstream`, and an agent's tool phase is six such layers
-built in one place (`CLI::ToolGuard`): the secret-write, secret-read, path-listing and test-layout
-guards, then `Middleware::Sensitivity`, which refuses a denied path, then `Middleware::Gate`, which
-asks about what a human may still allow. A `handler_union` child gets a seventh,
-`Middleware::RefuseUnpermitted`, inserted just ahead of `Sensitivity`. The order is the posture, and `Middleware::Gate.closes!`
-refuses a stack that does not end with those last two.
+a masked result, or passes it on through `#downstream`, and an agent's tool phase is eight such layers
+built in one place (`CLI::ToolGuard`): scope confinement, then the secret-write, secret-read,
+path-listing, test-layout and automatic-output guards, then `Middleware::Sensitivity`, which refuses a
+denied path, then `Middleware::Gate`, which asks about what a human may still allow. Middleware a
+user's `config.rb` registers for the tool phase runs outermost, ahead of all eight. A
+`handler_union` child gets a ninth, `Middleware::RefuseUnpermitted`, inserted just ahead of
+`Sensitivity`. The order is the posture, and `Middleware::Gate.closes!` refuses a stack that does not
+end with those last two.
 
 The chain ends in an interpreter, never in another link: `Effect::Handler::Live` runs the tool and
 `Effect::Handler::Mock` answers a canned result, and neither delegates to anything. Handlers once

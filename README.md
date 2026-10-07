@@ -596,7 +596,7 @@ There are no config files to write before the first run. Everything below has a 
 | `.lain/slots/role/*.md` | Per-role prompt fills, over the shipped role templates. |
 | `.lain/slots/skill/*.md` | Per-skill prompt fills. |
 | `.lain/skills/*.md` | Your skills, merged over the shipped catalog. Reachable as `@role/skill` at the prompt. |
-| `.lain/config.rb` | Your per-project settings: the `epics`, `approval`, `isolation`, `sensitivity`, `shell` and `tests` verbs. See [Configuration](docs/commands.md#configuration-configrb). |
+| `.lain/config.rb` | Your per-project settings: the `epics`, `approval`, `isolation`, `sensitivity`, `shell`, `tests` and `middleware` verbs. See [Configuration](docs/commands.md#configuration-configrb). |
 | `.lain/services.rb` | The isolation services DSL: the per-worker `postgres` databases and `compose` stacks a worker's lease provisions. Read by the `DbIndex` and `Compose` decorators, which layer over whatever `--isolation` resolved. |
 | `.lain/summarizers.rb` | Your deterministic tier-0 summarizers, tried before any model call. See [Compaction and summarizer tiers](#compaction-and-summarizer-tiers). |
 | `.lain/summarizers/` | Drafts written by `/meta summarizer`, for you to read and copy into `summarizers.rb`. **Nothing loads this directory.** |
@@ -607,7 +607,8 @@ There are no config files to write before the first run. Everything below has a 
 untrusted, or a `config.rb` that will not load, is refused before anything starts; the message
 names the file and line, and for an untrusted file it names [`lain trust`](docs/commands.md#lain-trust).
 Trust covers the top-level `.lain/*.rb` files only, not the files they `require` or `load`. A
-changed byte in any of them needs a new decision.
+changed byte in any of them needs a new decision. Your user-level `$XDG_CONFIG_HOME/lain/config.rb`,
+which may declare `middleware` for every project, is trusted separately with `lain trust --user`.
 
 **Durable state, under XDG.** `Lain::Paths` resolves `$XDG_STATE_HOME` (falling back to
 `~/.local/state`), `$XDG_CONFIG_HOME`, `$XDG_CACHE_HOME`, and `$XDG_RUNTIME_DIR`. A non-absolute
@@ -703,6 +704,9 @@ Four stacks, one protocol:
 Ordering is the classic Rack footgun, so the stacks are inspectable and mutable Sidekiq-style with
 `to_a`, `insert_before`, and `insert_after`. What you may safely put inside one is bounded by the
 fiber model: see [Slow middleware blocks the reactor](#slow-middleware-blocks-the-reactor).
+
+Your own middleware goes in a `middleware` block in `config.rb`, per area, and runs outermost in its
+phase. See [middleware](docs/commands.md#middleware).
 
 ### Context strategies compose
 

@@ -150,6 +150,12 @@ now reads DRIVABLE NOW — the config deny path, the auto-approving rule, the te
 `blocked on` sentence as history, never as licence to file the absence. (Its preamble, which called
 that chunk `draft` and unlanded, was corrected on 2026-09-14.)
 
+**Added 2026-10-07**: user middleware from `config.rb` and the trust that gates the user-level file:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`config-middleware.md`](scenarios/config-middleware.md) | Does an untrusted `~/.config/lain/config.rb` refuse a real launch **before a session record exists**, does `lain trust --user` bind exact bytes, does a configured tool member run outermost in a live cockpit and again, on its own instance, in a spawned child, and does an `http` entry see a real streamed Ollama request as a Hash? Steps 1 to 3 need no model; steps 4 to 6 need a live local model. | cheap to minutes |
+
 ## Automated by `spec/e2e`
 
 Since 2026-10-03, `spec/e2e/` runs this checkout's real `exe/lain` (a plain chat, and a `lain up` cockpit with tmux and nvim) against a stand-in for ollama that replays recorded turns, or plays scripted ones, in `rake pspec` and the commit hook. Each section it drives carries an **Automated by** line naming the spec and its examples, and a **Still needs a human** half. That line is the list: this table only says where to look. A full round skips the automated half and always drives the human half; a round the user scopes to a named scenario or section drives it whole.
@@ -217,6 +223,9 @@ read. The set, with the date each joined:
 
 Running one of these early costs almost nothing and catches a broken bench before a subject session
 is spent on it.
+
+`config-middleware` is not on the cheap set above, but its steps 1 to 3 are deterministic and may run with
+it; steps 4 to 6 ride a local model session.
 
 **`ollama-cloud-arm` has a placement too, in two halves.** It sat in no tier at all until
 2026-08-28 — described in the table above, scheduled nowhere, which is the same "somebody added it

@@ -259,13 +259,15 @@ compaction thrash, iteration ceilings.
 ```
 lain trust [PATH]          # show the project's .lain/*.rb, ask [y/N]
 lain trust --yes [PATH]    # grant without asking, for a headless run
+lain trust --user          # the same for $XDG_CONFIG_HOME/lain/config.rb, which takes no PATH
 ```
 
 Shows every top-level `.lain/*.rb` of the project at `PATH` (default: the current project), with
 control characters escaped, and on a yes records a mark for those exact bytes. Trust covers those
 files only, not what they `require` or `load`. Any changed byte, added file or rename is a new
 decision. A no, or end of input, records nothing and exits non-zero, so `lain trust && lain chat`
-stops there. A project with no `.lain/*.rb` has nothing to trust.
+stops there. A project with no `.lain/*.rb` has nothing to trust. `--user` judges the one file
+`$XDG_CONFIG_HOME/lain/config.rb`, which runs in every project, under a mark no project's can equal.
 
 ### lain consolidate
 
@@ -792,15 +794,16 @@ End the session. Same as a bare `quit`.
 
 ## Configuration (config.rb)
 
-`.lain/config.rb` is Ruby, evaluated once per launch, with 6 verbs: `epics`, `approval`,
-`isolation`, `sensitivity`, `shell` and `tests`. Each verb may appear once, and every one is
-optional. Each is read by its own **strict** reader: an unknown key is refused by name, listing the
-keys that do exist, because a restricting table has to refuse a typo loudly rather than silently
-leave the restriction off.
+`.lain/config.rb` is Ruby, evaluated once per launch, with 7 verbs: `epics`, `approval`,
+`isolation`, `sensitivity`, `shell`, `tests` and `middleware`. Each verb may appear once, and every
+one is optional. Each is read by its own **strict** reader: an unknown key is refused by name,
+listing the keys that do exist, because a restricting table has to refuse a typo loudly rather than
+silently leave the restriction off.
 
-The file runs only after [`lain trust`](#lain-trust) has recorded its bytes. A file that is
-untrusted, or that will not load (a Ruby error, an unknown verb, a refused value), refuses every
-launch before anything starts, naming `.lain/config.rb:LINE`.
+The file runs only after [`lain trust`](#lain-trust) has recorded its bytes. A file that exists and
+is untrusted, or that will not load (a Ruby error, an unknown verb, a refused value), refuses every
+launch before anything starts, naming `.lain/config.rb:LINE`. A project with no `.lain/config.rb`
+is never refused: every table is then at its default.
 
 ```ruby
 epics home: :repo, width: 3 do
@@ -824,6 +827,92 @@ tests preset: :rspec
 * `sensitivity`: `denied:`, `gated:` and `exempt:`, each a list of path globs.
 * `shell`: `exclude:`, a list of program names or globs the shell tool refuses. `exclude: %w[*]` is
   the strictest setting.
+* `middleware`: documented [below](#middleware).
+
+### middleware
+
+Your own code, run around what lain already does. The `middleware` verb takes one line per
+registration, and the area (`model`, `tool`, `turn`, `repl` or `http`) is the verb of that line.
+
+```ruby
+class TagRequests < Lain::Middleware::Base
+  def initialize(tag:) = (@tag = tag)
+  def call(env, &app) = downstream(env.merge(tag: @tag), &app)
+end
+
+class CountTurns < Lain::Middleware::Base
+  def call(env, &app) = downstream(env, &app)
+end
+
+class AddHeader < Faraday::Middleware
+  def initialize(app, name, value)
+    super(app)
+    @name = name
+    @value = value
+  end
+
+  def call(env)
+    env.request_headers[@name] = @value
+    @app.call(env)
+  end
+end
+
+middleware do
+  model TagRequests, tag: "home"
+  tool { |env, &downstream| downstream.call(env) }
+  turn CountTurns
+  repl { |env, &downstream| downstream.call(env) }
+  http AddHeader, "x-mine", "yes"
+end
+```
+
+Write `Lain::Middleware::Base` in full: the file is evaluated as a string, so a bare
+`Middleware::Base` does not resolve. A class defined in the file belongs to that evaluation, and a
+block becomes a middleware of its own (`Lain::Middleware::Inline`).
+
+| Area | Runs around | `env` in | Pass on, and set |
+|---|---|---|---|
+| `model` | each provider call | `:request`, `:stands_on` | `:response` |
+| `tool` | each tool call | `:effect`, `:context`, `:tool` | `:result` |
+| `turn` | each pass of the agent loop | `:iteration`, `:timeline` | `:response`, `:settled` |
+| `repl` | each line a human types | `:text`, `:agent` | `:response` |
+| `http` | each HTTP attempt | a Faraday request env | the Faraday response |
+
+`env` is read-only: `env.merge(key: value)` returns a new one, and an absent key raises
+`KeyError`. A middleware that answers without calling downstream must still set the key its phase
+reads on the way out, or the phase raises. A `turn` class must also answer `#settle(timeline)`,
+which every turn sends as it commits; `Lain::Middleware::Base` answers it with nothing to do, and
+a class that does not is refused when the file loads.
+
+**Order.** Configured middleware runs outermost in every phase: your user-level file first, then
+the project's, each in the order written, ahead of every member lain builds. In the `tool` phase
+each of lain's guards therefore judges whatever your middleware passes on, and on the way back your
+middleware sees a result after `RedactSecretReads` has masked it. The approval gate stays last, so
+nothing you write can sit between a judged call and its interpreter. In `http`, entries sit after
+stall protection and before JSON encoding, so each retry attempt passes through them and they see
+the body as a Hash.
+
+**Instances.** A `model`, `tool`, `turn` or `repl` registration is a recipe: lain builds a new
+instance each time it builds a stack, so two agents never share one. Its arguments are frozen
+when the file loads, and a value that cannot be frozen is refused. `http` is the exception.
+Faraday builds an `http` middleware once per provider connection, and subagents use their
+parent's provider, so **one instance serves the parent and every child at the same time. It must
+be thread-safe.** An `http` entry is a class, never a block, and faraday-retry hands the same body
+object to each attempt, so an edit made in place repeats on every retry.
+
+**Refusals.** A registration that is not a class (or a block), a class with no instance `#call`, a
+`turn` class with no `#settle`, an `http` block, an unknown area, and a constructor that rejects
+its arguments are each refused naming `config.rb:LINE` of the line that registered it.
+
+**Scope.** `lain chat` and `lain up` read the middleware once, before the session opens, and apply
+it to the chat and to every subagent it spawns. `lain bench`, `lain consolidate`, `lain improve`
+and `lain epic submit` read none, so a bench arm does not change with the home directory.
+
+**The user-level file.** `$XDG_CONFIG_HOME/lain/config.rb` (by default `~/.config/lain/config.rb`)
+accepts only the `middleware` verb and applies to every project. It runs only after
+`lain trust --user`, which shows the file and records its exact bytes. Trust is consent to bytes
+someone reviewed: it is not containment, and an agent that can write the file can also write the
+mark, as it can for a project today. Any changed byte asks again.
 
 ### isolation
 

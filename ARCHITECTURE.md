@@ -550,13 +550,27 @@ and a policy's answer is a Boolean, which is approvable by construction.
 builds it for a chat's agent (`.stack`), for each of that chat's children (`ToolGuard::Spawned`, the
 builder the spawn seam carries, reading the parent's board when the child is built), and for a run
 with no chat (`.detached`, whose gate approves deliberately: nobody is at a surface to answer). The
-layers, in order: `RefuseSecretWrites`, `RedactSecretReads`, `WithholdSecretPaths`,
-`GuardTestLayout`, then `Sensitivity`, then `Gate`. `Middleware::Gate.closes!` refuses any stack
+layers, in order: the members a user's `config.rb` registered (see below), `ConfineToScope`,
+`RefuseSecretWrites`, `RedactSecretReads`, `WithholdSecretPaths`, `GuardTestLayout`,
+`WithholdAutomaticOutput`, then `Sensitivity`, then `Gate`. `Middleware::Gate.closes!` refuses any stack
 that does not end Sensitivity → Gate; `ToolGuard` holds every stack it builds to it, and
 `Tools::Subagent` holds whatever a seam's builder hands a child to it before any of the child's
 tools can run. Under the `handler_union` spawn posture the child renders the shared union, so
 `Middleware::RefuseUnpermitted` is inserted just outside `Sensitivity` to refuse a tool the child
 was not attenuated to, before a human is ever asked about it.
+
+**A user's middleware is outermost, and read once.** `middleware do ... end` in
+`$XDG_CONFIG_HOME/lain/config.rb` (gated by `lain trust --user`) and in a project's
+`.lain/config.rb` registers members for the `model`, `tool`, `turn` and `repl` phases and, for
+`http`, Faraday entries on the provider's connection. `Config.middleware` returns the user's
+registrations then the project's, `CLI::ChatLaunch` reads it once before the session record opens
+and hands it to `CLI::Backend`, which `CLI::Wiring` reads it back from, so a launch cannot see 2
+versions of one file. In every phase configured members sit outside lain's own, which keeps what
+`Gate.closes!` pins: nothing a user writes can come between the gate and the interpreter. A
+registration is a recipe built fresh per stack, except `http`, which Faraday builds once per
+connection and every subagent shares. Commands without a chat (`bench`, `consolidate`, `improve`,
+`epic submit`) read no config. The env keys and the user-facing rules are in
+[`docs/commands.md`](docs/commands.md#middleware).
 
 `Lain::Middleware` (`lib/lain/middleware.rb`) is the Rack/Sidekiq/Faraday-idiom public API these
 layers are written against: `Middleware::Base#call(env, &app)` passes a call on through

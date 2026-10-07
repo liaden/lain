@@ -242,7 +242,7 @@ module Lain
         layered(chronicle, inputs, inputs.test_layout.roots_for(worker_env), policy, requester:)
       end
 
-      # The configured members, then the six guards over one set of inputs,
+      # The configured members, then the eight guards over one set of inputs,
       # the layout held at `roots`, and the gate's two layers asking `policy`
       # -- checked closed as it is built, the one check a child's stack from
       # any builder is also held to.
