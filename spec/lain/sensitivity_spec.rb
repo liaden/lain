@@ -1154,7 +1154,11 @@ RSpec.describe Lain::Sensitivity do
     end
 
     it "accepts a closed bracket and an escaped one" do
-      expect { described_class.from({ "gated" => ["[ab]c", "a\\[b"] }) }.not_to raise_error
+      rules = described_class.from({ "gated" => ["[ab]c", "a\\[b"] })
+      sensitivity = Lain::Sensitivity.new(home:, cwd:, rules:)
+
+      expect(["ac", "bc", "a[b"].map { |name| sensitivity.classify("keys/#{name}") }).to all(be_gated)
+      expect(%w[cc ab].map { |name| sensitivity.classify("keys/#{name}") }).to all(be_ordinary)
     end
 
     it "names the config file in a refusal when it was given one" do

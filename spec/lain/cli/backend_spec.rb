@@ -1567,9 +1567,9 @@ RSpec.describe Lain::CLI::Backend do
         end
 
         it "accepts a valid keep and strategy, and ignores both under --no-compact" do
-          expect { compacting_backend(compact_keep: 3, compact_strategy: "elide").refuse_compaction_flags! }
-            .not_to raise_error
-          expect { compacting_backend(compact: false, compact_keep: 0).refuse_compaction_flags! }.not_to raise_error
+          expect(compacting_backend(compact_keep: 3, compact_strategy: "elide").refuse_compaction_flags!)
+            .to be_a(Lain::Compaction::Strategy::Base)
+          expect(compacting_backend(compact: false, compact_keep: 0).refuse_compaction_flags!).to be_nil
         end
       end
 
