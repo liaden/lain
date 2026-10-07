@@ -48,12 +48,12 @@ RSpec.describe Lain::Config::Builder do
     end
 
     it "yields every default for an empty file" do
-      expect(build("").to_h).to eq(epics: Lain::Config::Epics.new(home: :xdg),
-                                   approval: Lain::Config::Answers.empty,
-                                   isolation: Lain::Config::Isolation.empty,
-                                   sensitivity: Lain::Sensitivity::Rules.empty,
-                                   shell: Lain::Shell::Exclusions.empty,
-                                   tests: nil)
+      expect(build("").to_h.except(:middleware)).to eq(epics: Lain::Config::Epics.new(home: :xdg),
+                                                       approval: Lain::Config::Answers.empty,
+                                                       isolation: Lain::Config::Isolation.empty,
+                                                       sensitivity: Lain::Sensitivity::Rules.empty,
+                                                       shell: Lain::Shell::Exclusions.empty,
+                                                       tests: nil)
     end
 
     it "leaves the framework fallback reachable when no tests table is declared" do
@@ -75,6 +75,47 @@ RSpec.describe Lain::Config::Builder do
     it "refuses an unknown verb inside a block at its line" do
       expect { build("approval do\n  alow \"bash\"\nend\n") }
         .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*:alow.*allow, deny, deny_tool/)
+    end
+
+    it "names the middleware verb among the known verbs" do
+      expect { build("\n\n\nshel exclude: %w[curl]\n") }
+        .to raise_error(Lain::Config::Refusal, /epics, approval, isolation, sensitivity, shell, tests, middleware/)
+    end
+
+    it "builds a middleware table whose registrations keep their class and block" do
+      built = build(<<~RUBY)
+        class Stamp < Lain::Middleware::Base; end
+        middleware do
+          tool Stamp
+          model { |env, &down| down.call(env) }
+        end
+      RUBY
+
+      expect([built.middleware.members(:tool).map do |m|
+        m.class.name.split("::").last
+      end, built.middleware.members(:model).map(&:class)])
+        .to eq([["Stamp"], [Lain::Middleware::Inline]])
+    end
+
+    it "defaults to no members in any area" do
+      middleware = build("").middleware
+
+      expect(Lain::Config::Middleware::AREAS.flat_map { |area| middleware.members(area) }).to be_empty
+    end
+
+    it "refuses an unknown area at its line, listing the areas" do
+      expect { build("class Stamp < Lain::Middleware::Base; end\nmiddleware { modle Stamp }\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*:modle.*model, tool, turn, repl, http/)
+    end
+
+    it "refuses middleware declared twice" do
+      expect { build("middleware { }\nmiddleware { }\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*declares middleware twice/)
+    end
+
+    it "ignores a block handed to an approval entry as today" do
+      expect(build("approval do\n  allow(\"bash\", command: \"x\") { 1 }\nend\n").approval)
+        .to eq(build("approval do\n  allow \"bash\", command: \"x\"\nend\n").approval)
     end
 
     it "keeps a semantic refusal, at the line of the verb" do

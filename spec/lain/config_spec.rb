@@ -416,4 +416,59 @@ RSpec.describe Lain::Config do
       end
     end
   end
+
+  describe ".middleware" do
+    let(:stamp) { "class Stamp < Lain::Middleware::Base; end\n" }
+
+    it "takes its root from the caller rather than the working directory" do
+      expect { described_class.middleware }.to raise_error(ArgumentError, /root/)
+    end
+
+    it "reads a trusted project's registrations" do
+      Dir.mktmpdir do |root|
+        write_config(root, "#{stamp}middleware do\n  tool Stamp\n  model { |env, &down| down.call(env) }\nend\n")
+
+        middleware = described_class.middleware(root:)
+
+        expect([middleware.members(:tool).size, middleware.members(:model).map(&:class)])
+          .to eq([1, [Lain::Middleware::Inline]])
+      end
+    end
+
+    it "names the file and line of an unknown area" do
+      Dir.mktmpdir do |root|
+        write_config(root, "#{stamp}middleware { modle Stamp }\n")
+
+        expect { described_class.middleware(root:) }
+          .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.rb:2: .*model, tool, turn, repl, http})
+      end
+    end
+
+    it "answers the empty value for a root with no config file" do
+      Dir.mktmpdir do |root|
+        expect(described_class.middleware(root:).members(:tool)).to be_empty
+      end
+    end
+
+    it "refuses an untrusted file before reading any middleware" do
+      Dir.mktmpdir do |root|
+        FileUtils.mkdir_p(File.join(root, ".lain"))
+        File.write(config_path(root), "# #{SecureRandom.hex}\nmiddleware { }\n")
+
+        expect { described_class.middleware(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+      end
+    end
+
+    it "evaluates one file once for middleware and the shell table" do
+      Dir.mktmpdir do |root|
+        write_config(root, "#{stamp}middleware { tool Stamp }\nshell exclude: %w[curl]\n")
+        allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
+
+        described_class.middleware(root:)
+        described_class.shell_exclusions(root:)
+
+        expect(Lain::Config::Builder).to have_received(:evaluate).once
+      end
+    end
+  end
 end

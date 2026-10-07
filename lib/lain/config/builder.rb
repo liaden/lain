@@ -8,7 +8,7 @@ module Lain
     # is the reader: absence must stay distinguishable from a declared table so
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
-    Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :tests) do
+    Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :tests, :middleware) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -22,12 +22,12 @@ module Lain
     # A refusal names the line of the verb that caused it, because the user
     # wrote Ruby and a backtrace into this file points nowhere they can edit.
     class Builder
-      VERBS = %i[epics approval isolation sensitivity shell tests].freeze
+      VERBS = %i[epics approval isolation sensitivity shell tests middleware].freeze
 
       # Records the calls a block makes, so the verb that owns the block can
       # validate them at the line each was written on.
       class Collector
-        Call = Data.define(:verb, :args, :kwargs, :line)
+        Call = Data.define(:verb, :args, :kwargs, :block, :line)
 
         attr_reader :calls
 
@@ -41,11 +41,12 @@ module Lain
         # @param args [Array] its positional arguments
         # @param kwargs [Hash{Symbol => Object}] its keyword arguments, kept as written
         # @option kwargs [Object] :field one field of an entry, as written
-        def method_missing(name, *args, **kwargs)
+        # @param block [Proc, nil] the block the call carried, kept for the verb that wants it
+        def method_missing(name, *args, **kwargs, &block)
           line = Builder.line_in(@path)
           raise Builder.unknown_verb(name, @verbs, path: @path, line:) unless @verbs.include?(name)
 
-          @calls << Call.new(verb: name, args:, kwargs:, line:)
+          @calls << Call.new(verb: name, args:, kwargs:, block:, line:)
         end
 
         def respond_to_missing?(name, include_private = false) = @verbs.include?(name) || super
@@ -96,7 +97,8 @@ module Lain
                   isolation: @tables.fetch(:isolation, Isolation.empty),
                   sensitivity: @tables.fetch(:sensitivity, Sensitivity::Rules.empty),
                   shell: @tables.fetch(:shell, Shell::Exclusions.empty),
-                  tests: @tables[:tests])
+                  tests: @tables[:tests],
+                  middleware: @tables.fetch(:middleware, Middleware.empty))
       end
 
       def epics(**table, &block)
@@ -125,6 +127,10 @@ module Lain
 
       def shell(**table)
         declare(:shell, Shell::Exclusions::TABLE, table) { |at| Shell::Exclusions.from(shaped(table), path: at) }
+      end
+
+      def middleware(&block)
+        declare(:middleware, Middleware::TABLE) { Middleware.from(collect(block, Middleware::AREAS), path: @path) }
       end
 
       def tests(**table) = declare(:tests, TestLayout::TABLE, table) { |at| TestLayout.from(shaped(table), path: at) }

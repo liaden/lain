@@ -57,6 +57,15 @@ module Lain
     # @raise [Refusal] as {.load}
     def self.shell_exclusions(root:) = built(root).shell
 
+    # The middleware this project asks to run in each phase. `root:` is
+    # REQUIRED, as {.sensitivity}'s is.
+    #
+    # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @return [Middleware] empty when the file or the table is absent
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] as {.load}
+    def self.middleware(root:) = built(root).middleware
+
     # Where this project keeps its tests, which the layout guard holds a test
     # file's path to. With no table the layout falls back to the preset of a
     # framework the caller passes; detection is the caller's, because the test
