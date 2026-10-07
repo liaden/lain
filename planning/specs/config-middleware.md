@@ -1,6 +1,6 @@
 # Middleware declared in config.rb, at the user level and in the project
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -234,7 +234,7 @@ refusal names `lain trust --user`, which T5 adds.
 
 ## Tasks
 
-### T1: Add Middleware::Inline, a block as a middleware          [risk: low]
+### [x] T1: Add Middleware::Inline, a block as a middleware          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/middleware/inline.rb`, `spec/lain/middleware/inline_spec.rb`
@@ -280,7 +280,7 @@ end
   4.0.6.
 - `Middleware.settles!` needs more than `Base#settle` to accept an Inline.
 
-### T2: Add Config::Middleware, the registrations per area          [risk: medium]
+### [x] T2: Add Config::Middleware, the registrations per area          [risk: medium]
 
 **Depends on:** T1
 **Files:** `lib/lain/config/middleware.rb`, `spec/lain/config/middleware_spec.rb`
@@ -369,7 +369,7 @@ end
 - `Config::Refusal.new` cannot carry the area name as `key:` without changing
   `spec/lain/config/refusal_spec.rb`.
 
-### T3: Read a middleware table from the project's config.rb          [risk: medium]
+### [x] T3: Read a middleware table from the project's config.rb          [risk: medium]
 
 **Depends on:** T2
 **Files:** `lib/lain/config/builder.rb`, `lib/lain/config.rb`, `spec/lain/config/builder_spec.rb`,
@@ -438,7 +438,7 @@ def Lain::Config.middleware(root:) # Config::Middleware; T4 widens it to user + 
 - `builder.rb` passes `Metrics/ClassLength`'s limit; move the call-to-registration translation into
   `Config::Middleware.from` rather than raising the limit.
 
-### T4: Read the user-level config.rb under its own trust          [risk: high]
+### [x] T4: Read the user-level config.rb under its own trust          [risk: high]
 
 **Depends on:** T3
 **Files:** `lib/lain/paths.rb`, `lib/lain/project/trust.rb`, `lib/lain/config.rb`,
@@ -456,7 +456,7 @@ def Lain::Config.middleware(root:) # Config::Middleware; T4 widens it to user + 
 ```gherkin
 Scenario: the suite never reads the developer's config home
   Given the suite's spec_helper has loaded
-  Then Paths.new.config_home is under the suite's tmp directory and not under the real $HOME
+  Then Paths.new.config_home is under the suite's tmp directory and not under the real ~/.config
 
 Scenario: user then project
   Given a trusted user config.rb registering tool A and a trusted project config.rb registering tool B
@@ -520,7 +520,7 @@ class Lain::Project::Trust
   USER_DOMAIN = "user"  # mixed into the user digest only; the project digest's inputs are unchanged
   def self.for_user(paths: Paths.new) # sources: {user_config => bytes} when it is a regular file;
                                       # Config refuses a path that exists and is not one (NOT_A_FILE)
-  def initialize(root:, sources:, record:, domain: nil, refusal: UNTRUSTED)
+  def initialize(root:, sources:, record:, domain: nil, untrusted: UNTRUSTED)
 end
 
 class Lain::Config
@@ -529,7 +529,7 @@ end
 
 class Lain::Config::Builder
   USER_VERBS = %i[middleware].freeze
-  def self.evaluate(source, path:, verbs: VERBS)  # Config.evaluated keys its memo on [path, source, verbs]
+  def self.evaluate(source, path:, verbs: VERBS)  # Config.evaluated keys its memo on [path, source]
 end
 ```
 
@@ -543,7 +543,7 @@ end
   only `.middleware` may.
 - `spec/lain/project/trust_spec.rb`'s project digest examples change value.
 
-### T5: Let `lain trust --user` mark the user config          [risk: medium]
+### [x] T5: Let `lain trust --user` mark the user config          [risk: medium]
 
 **Depends on:** T4
 **Files:** `lib/lain/cli/trust.rb`, `exe/lain`, `spec/lain/cli/trust_spec.rb`
@@ -593,7 +593,7 @@ end
 - `exe/lain`'s Thor `trust` command cannot take the flag without changing `spec/lain/cli_spec.rb`'s
   command listing.
 
-### T6: Read configured middleware once per chat launch          [risk: high]
+### [x] T6: Read configured middleware once per chat launch          [risk: high]
 
 **Depends on:** T4
 **Files:** `lib/lain/cli/chat_launch.rb`, `lib/lain/cli/wiring.rb` (`initialize` only),
@@ -651,7 +651,7 @@ end
   (`chat_launch.rb:109-112`), so confirm `project` resolves lazily to the same root.
 - Any `lib/` site other than `ChatLaunch` would need to call `Config.middleware`.
 
-### T7: Put configured tool middleware outermost in every guarded stack          [risk: high]
+### [x] T7: Put configured tool middleware outermost in every guarded stack          [risk: high]
 
 **Depends on:** T6
 **Files:** `lib/lain/cli/tool_guard.rb`, `lib/lain/cli/switchboard.rb`,
@@ -720,7 +720,7 @@ Switchboard.for(..., middleware: Config::Middleware.empty)
 - Explaining the new first members would need a WHAT comment at `tool_guard.rb:238`; name a method
   instead.
 
-### T8: Put configured model and turn middleware outermost in a chat          [risk: medium]
+### [x] T8: Put configured model and turn middleware outermost in a chat          [risk: medium]
 
 **Depends on:** T7
 **Files:** `lib/lain/cli/wiring.rb`, `spec/lain/cli/wiring_spec.rb`
@@ -754,7 +754,7 @@ Spec file: `spec/lain/cli/wiring_spec.rb`
 - `wiring.rb` trips `Metrics/ClassLength`; move the 2 phase builders into an existing `Wiring::`
   shard before any limit moves.
 
-### T9: Give each subagent its own configured model and turn middleware          [risk: medium]
+### [x] T9: Give each subagent its own configured model and turn middleware          [risk: medium]
 
 **Depends on:** T8
 **Files:** `lib/lain/tools/subagent.rb`, `lib/lain/cli/wiring/toolset_build.rb`,
@@ -813,7 +813,7 @@ end
 - `spec/lain/tools/subagent_posture_equivalence_spec.rb` compares stacks across postures and
   disagrees once a member is added.
 
-### T10: Put configured repl middleware ahead of skill dispatch          [risk: low]
+### [x] T10: Put configured repl middleware ahead of skill dispatch          [risk: low]
 
 **Depends on:** T9
 **Files:** `lib/lain/cli/command/surface.rb`, `lib/lain/cli/wiring.rb` (`assemble_surface` only),
@@ -855,7 +855,7 @@ end
 - `Surface#middleware`'s memo (`surface.rb:90`) is read before the Surface holds its middleware
   value in any production path.
 
-### T11: Let a provider configuration carry Faraday middleware          [risk: medium]
+### [x] T11: Let a provider configuration carry Faraday middleware          [risk: medium]
 
 **Depends on:** none
 **Files:** `lib/lain/provider/http/configuration.rb`,
@@ -909,7 +909,7 @@ Spec files: `spec/lain/provider/http/connection/middleware_stack_spec.rb`,
   `spec/lain/provider/http/error_handling_spec.rb`.
 - `StackLocked` fires because an entry is added after the first request.
 
-### T12: Hand the configured http middleware to every chat provider          [risk: medium]
+### [x] T12: Hand the configured http middleware to every chat provider          [risk: medium]
 
 **Depends on:** T11, T6, T10
 **Files:** `lib/lain/cli/backend.rb`, `lib/lain/cli/backend/ollama_tier.rb`,
@@ -968,7 +968,7 @@ Spec files: `spec/lain/cli/backend_spec.rb`, `spec/lain/provider/ollama/transpor
 - `Ollama`'s deployment `apply` (`ollama.rb:609`) overwrites `http_middleware`, the same ordering
   trap its comment describes for `--api-base`.
 
-### T13: Document the middleware table, the user file and its trust          [risk: low]
+### [x] T13: Document the middleware table, the user file and its trust          [risk: low]
 
 **Depends on:** T5, T12
 **Files:** `docs/commands.md`, `README.md`, `ARCHITECTURE.md`, `docs/GLOSSARY.md`,
@@ -1037,3 +1037,62 @@ After the last card lands:
   `planning/specs/*.md`, and `bin/lint-commit-msg` at commit-msg. A Ruby commit takes about 70s.
   The suite cannot run beside another suite (shared `TMPDIR`), so cards land in windows.
 - Grounding re-checked: the plan was verified at `40ce3736`, which is the base. No drift.
+- T1 started
+- T11 started
+- T1 landed 7f47b802
+- T11 landed a3fb62f0
+- T2 started
+- T2 landed 2dbd54a1
+- T3 started
+- T3: the review called `Config::Middleware`'s "has no area" refusal dead code. It is pinned by
+  `spec/lain/config/middleware_spec.rb` and guards the public `Middleware.from`, so it stays.
+- T3 hook run 1 red: `Lain::CLI::HumanReplies a question settled elsewhere while human> is open for
+  it stops the read, retires the item, and draws no human> for it on the next three lines`, seed
+  40099. Green alone. Seed 40099 on base `2dbd54a1`: that example green, but the documented flake
+  `Lain::Tools::ReadFile ... reads at most a bounded probe of the file it refuses, and never slurps
+  it` red (its 2nd sighting). Seed 40099 on the T3 tree: 22,069 examples, 0 failures (base 22,057).
+  Not caused by T3 and not reproduced; T3 landed on a new-seed hook run.
+- T3 landed b51cc26b
+- The human has another session reworking `/manual-qa`, which touches `planning/qa/`. T13 writes
+  `planning/qa/scenarios/config-middleware.md` and edits `planning/qa/README.md`: re-read both
+  before T13 starts.
+- T4 started
+- abe46807 landed from another session (manual-qa docs, planning/qa/README.md top 3 lines). T4 worktree was cut at b51cc26b, before it; no file overlap.
+- T4 deviations accepted by review: `untrusted:` replaces `refusal:` (spec/refusal_width_discipline_spec.rb reads any `refusal:` keyword as editor text); the memo key drops `verbs`; the config-home check is "not under ~/.config", since the suite TMPDIR is under $HOME. Card text updated. Scope change: spec/lain/cli/chat_launch_spec.rb:658 now matches with hash_including.
+- T4 landed 4079a42a
+- T5 started
+- T6 started
+- T5 landed b5078391
+- T6 review: REQUEST-CHANGES. The untrusted-user-file example could not fail (a late-opened session file is reaped before the check). Accepted a design change: Wiring takes no `middleware:` keyword and reads `backend.middleware`, so one value has one path. T7 to T10 read `@middleware` from that source.
+- Pre-existing, not from this plan: about 187 examples in wiring_spec and backend_spec fail under LC_ALL=C on main (T6 reviewer).
+- T6 approved on its second review (APPROVE). Hook run red on the same HumanReplies example as T3,
+  seed 11428: expected "(human> closed -- answered elsewhere)", got "(human> closed -- the ask
+  waiting on it was stopped)". 2 sightings on 2 unrelated cards. A fix runs in
+  `tmp/worktrees/flake-hr` before T6 lands. T7 started on HEAD plus T6's approved files.
+- T7 started
+- T7 review: APPROVE-WITH-FIXES. Substantive fix accepted, extending scope to lib/lain/tools/subagent.rb: RefuseUnpermitted is placed with an is_a? match on Sensitivity, so a configured member subclassing Sensitivity would put it outside the user member. Second review follows.
+- T7 approved on its second review. T8 started on HEAD plus T6 and T7 approved files.
+- From here, at the human's request (a game running): commits run `direnv exec . env LAIN_SPEC_WORKERS=4 git commit`, and agents keep parallel spec runs at 4 workers. Expect a slower hook (about 3 min) and more wall-clock reds from the extra load.
+- T8 approved (mechanical fixes applied). T9 started on HEAD plus T6, T7 and T8 approved files.
+- Race fix reworked after REQUEST-CHANGES; second review running. Side sighting during it: `spec/lain/cli/review_spec.rb` "the released text once the run's ledger holds the release" red once in a bare parallel spec/lain/cli/ run, green alone and in a LAIN_SLOW run.
+- T9 review: APPROVE-WITH-FIXES (1 comment). Follow-up not in this plan: give Config::Middleware value `==` and `hash`, which would retire Subagent::Seam::NO_MIDDLEWARE. `lain epic submit` building its Seam without middleware is intended (Design rule 6).
+- T9 approved. T10 started on HEAD plus T6 to T9 approved files.
+- T10 approved. T12 started on HEAD plus T6 to T10 approved files.
+- Race fix second review: REQUEST-CHANGES (the rework can leave a read claimed forever on a ScriptError or Async::Stop). Fixes sent to the implementer; the human is asked whether a third review may run.
+- User ruled: a third review of the race fix may run. T12 approved. T13 started on HEAD (which has abe46807) plus T6 to T12 approved files.
+- Race fix third review: REQUEST-CHANGES, 1 mechanical blocker (a read stays claimed if `settled` raises after hand-off). Applied without a fourth review, per the mechanical-fix rule; the main session checks the probes itself.
+- Landed: race fix de3320ac, T6 5ec4c2e7, T7 28b00e16. T8 hook red: spec/lain/seams/window_self_correction_spec.rb (:slow) calls the private turn_phase with the old 2 arguments; 8 examples, a real failure, not a flake. Back to the implementer with a spec-only fix preferred, since 4 later worktrees carry the new wiring.rb.
+- Landed: T8 ea19a1e8 (after a spec-only fix to window_self_correction_spec), T9 b075bd06, T10 bada6a54. T12 hook red: spec/provider_construction_discipline_spec.rb finds ollama_tier.rb:179 and :182 constructing Provider::Ollama with no journal visible; a real failure. Back to the implementer.
+- T12 hook run 2 red on 4 timing specs: `typing in a real cockpit while the model is busy stops the next model call when /stop is typed after the approval was answered in nvim`, `a chat fed by an input pane ends only the pane on HUP, and the chat answers a line from a respawned pane`, `a chat fed by an input pane takes a countdown key pressed at a countdown that opened under an open read`, `Lain::Isolation::WorkingBranch#current_in? is true only while the checkout's HEAD is on the branch`. Each green alone; base suite green at 4 workers; T12 tree suite green at 4 workers. Load from the human's game; not caused by T12.
+- T13 hook run 1 red: `typing in a real cockpit while the model is busy consumes the question when an ask parked on it is stopped` (spec/e2e/stop_while_busy_spec.rb, the same file as a T12 load flake). Green alone; T13 changes docs and 1 comment only; base 35ffa335 green in its own hook.
+- Landed: T12 35ffa335 (after a fix that spells `journal:` out at both ollama_tier.rb constructions),
+  T13 88bd8680. The ROADMAP.md wiring went into the close-out commit, since it names the SHA range.
+- Integration checks, 2026-10-07, at 4 workers:
+  1. `rake pspec`: 22,145 examples, 0 failures, 13 pending. For scale, 22,057 at `2dbd54a1` on seed
+     40099, before T3 to T13 and the race fix.
+  2. `rubocop`, `bin/comment-census --check-tickets`, `bin/zeitwerk-census --check`: all exit 0.
+  3. `bin/spec-census --check`: exit 0.
+  4. Untrusted real `~/.config/lain/config.rb` during `bundle exec rspec`: see the next entry.
+  5. Manual pass owed by the human: `/manual-qa config-middleware`.
+- `git worktree list` and `git branch --list` match the start of the run.
+- Check 4: a real `~/.config/lain/config.rb` whose first line raises was in place during `bundle exec rspec`: 20,567 examples, 0 failures, 13 pending. The file and directory were removed afterwards (neither existed before).
