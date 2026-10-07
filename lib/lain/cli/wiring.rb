@@ -837,7 +837,7 @@ module Lain
                                           switchboard: -> { @switchboard }, journal: durable_journal,
                                           verdict:, isolation: fleet_isolation,
                                           handback:, epic: epic_mount(notice),
-                                          attachments:)
+                                          attachments:, middleware: backend.middleware)
         @toolset_build.build(recorder, ask_human:)
       end
 

@@ -760,6 +760,10 @@ module Lain
       # {Isolation::Null} ignores the id it is handed.
       NO_ISOLATION = Isolation::Leases.new
 
+      # Config::Middleware has no value equality, so a fresh empty would make 2
+      # unconfigured seams compare unequal.
+      NO_MIDDLEWARE = Config::Middleware.empty
+
       # The scope of a seam no board confines.
       module UNSCOPED
         def self.current = Session::Unconfined
@@ -927,7 +931,7 @@ module Lain
       # nowhere new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :supervisor,
-                         :observer, :askers, :isolation, :escalation, :scope, :attachments) do
+                         :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -979,11 +983,17 @@ module Lain
         # shareability claim above nowhere: a {Lain::Attachment::Store} freezes
         # itself at construction and its Null is a module, so both are shareable
         # already.
+        #
+        # `middleware` is the configured registrations, and rides the seam for
+        # the reason `attachments` does: a grandchild inherits the seam verbatim,
+        # so the whole subtree is configured alike. It holds recipes, not
+        # instances: each child builds its own members from it.
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
                        telemetry: Channel::Null.instance, supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        askers: NoAskers, isolation: NO_ISOLATION,
                        escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED,
-                       attachments: Middleware::ResolveAttachments::Unwired)
+                       attachments: Middleware::ResolveAttachments::Unwired,
+                       middleware: NO_MIDDLEWARE)
           Seam.refuse_unbuildable(tool_middleware)
 
           super
@@ -1325,7 +1335,8 @@ module Lain
         # the child is granted.
         def child_budget
           voice = Middleware::RequestBudget::Child.new(name: @name)
-          Middleware::Stack.new([Middleware::RequestBudget.new(journal: @seam.journal, voice:),
+          Middleware::Stack.new([*@seam.middleware.members(:model),
+                                 Middleware::RequestBudget.new(journal: @seam.journal, voice:),
                                  Middleware::ResolveAttachments.new(attachments: @seam.attachments)])
         end
 
@@ -1364,7 +1375,8 @@ module Lain
         # turn env carries the PRE-step snapshot, and is late-bound because the
         # middleware must exist before the Agent that runs it.
         def recorded_turns(chain)
-          Middleware::Stack.new([Middleware::JournalTurns.new(scribe: chain.feed, timeline: chain.timeline)])
+          Middleware::Stack.new([*@seam.middleware.members(:turn),
+                                 Middleware::JournalTurns.new(scribe: chain.feed, timeline: chain.timeline)])
         end
 
         # Three composed reshapes over the factory's Context: PERSONA first, then

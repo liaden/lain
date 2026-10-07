@@ -3633,4 +3633,61 @@ RSpec.describe Lain::Tools::Subagent do
       expect(rows.map { |row| row["state"] }).to eq(["failed"])
     end
   end
+
+  describe "configured middleware" do
+    let(:stamp) { Class.new(Lain::Middleware::Base) }
+    let(:configured) do
+      registration = ->(factory) { Lain::Config::Middleware::Registration.new(factory:, args: [], kwargs: {}, block: nil, at: "/spec/config.rb:1") }
+      Lain::Config::Middleware.new(model: [registration.call(stamp)], turn: [registration.call(stamp)])
+    end
+
+    def children_built(**seam)
+      built = []
+      allow(Lain::Agent).to receive(:new).and_wrap_original do |original, **kwargs|
+        original.call(**kwargs).tap { built << kwargs }
+      end
+      build_subagent(provider: mock(text_response("done")), **seam).run("look")
+      built
+    end
+
+    it "starts a child's model stack with the configured middleware" do
+      stack = children_built(middleware: configured).first[:model_middleware]
+
+      expect(stack.to_a.map(&:class))
+        .to eq([stamp, Lain::Middleware::RequestBudget, Lain::Middleware::ResolveAttachments])
+    end
+
+    it "starts a child's turn stack with the configured middleware" do
+      stack = children_built(middleware: configured).first[:turn_middleware]
+
+      expect(stack.to_a.map(&:class)).to eq([stamp, Lain::Middleware::JournalTurns])
+    end
+
+    it "builds a new member for every child" do
+      tool = build_subagent(provider: mock(text_response("one"), text_response("two")), middleware: configured)
+      stacks = []
+      allow(Lain::Agent).to receive(:new).and_wrap_original do |original, **kwargs|
+        original.call(**kwargs).tap { stacks << kwargs[:model_middleware].to_a.first }
+      end
+
+      2.times { tool.run("look") }
+
+      expect(stacks.first).not_to be(stacks.last)
+    end
+
+    it "keeps a grandchild's seam on the same configuration" do
+      seam = Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> {}, parent: nil,
+                                             tool_middleware: ToolRegistry::UNGUARDED, middleware: configured)
+
+      expect(seam.with(escalation: []).middleware).to be(configured)
+    end
+
+    it "keeps today's stacks for a seam built with no middleware" do
+      built = children_built.first
+
+      expect([built[:model_middleware].to_a.map(&:class), built[:turn_middleware].to_a.map(&:class)])
+        .to eq([[Lain::Middleware::RequestBudget, Lain::Middleware::ResolveAttachments],
+                [Lain::Middleware::JournalTurns]])
+    end
+  end
 end

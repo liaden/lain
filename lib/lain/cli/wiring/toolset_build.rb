@@ -191,6 +191,8 @@ module Lain
         # @param session [Lain::Session] the chat's own, whose held compaction
         #   cuts an :inherit child renders as they stand at its spawn. The Null
         #   session holds none, so a build handed none spawns as it always did.
+        # @param middleware [Lain::Config::Middleware] the configured registrations
+        #   every child's model and turn stacks start with.
         # @option options [String] :exec the transport the `exec:` default
         #   resolves, with `:exec_image` the only other keys this class reads.
         #   `--auto-approve` is not among them: it seeds the mode's layer on
@@ -200,6 +202,7 @@ module Lain
                        root:, switchboard:, askers:, usage: nil, session: Lain::Session::Null.instance,
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
                        handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
+                       middleware: Lain::Config::Middleware.empty,
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))
           @library = library
           @backend = backend
@@ -212,7 +215,7 @@ module Lain
           @switchboard = switchboard
           @auto_approve = AutoApproveLayer.new(board: switchboard)
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:,
-                             isolation:, handback:)
+                             isolation:, handback:, middleware:)
           @parent_view = parent_view(backend, session)
         end
 
@@ -327,11 +330,11 @@ module Lain
         # stack resolves a picture the parent's tool wrote rather than sending its
         # address as if it were one.
         def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:, isolation:,
-                       handback:)
+                       handback:, middleware:)
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
                                           tool_middleware: guard(chronicle, switchboard),
                                           journal:, telemetry: chronicle.instrumentation.journal,
-                                          attachments: @attachments,
+                                          attachments: @attachments, middleware:,
                                           supervisor:, observer: chronicle.observer, askers:,
                                           scope: CLI::ToolGuard::BoardScope.new(board: switchboard),
                                           isolation: Lain::Isolation::Leases.new(backend: isolation,

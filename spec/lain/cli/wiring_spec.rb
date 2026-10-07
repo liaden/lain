@@ -132,6 +132,16 @@ class WiringSpecModelStamp < Lain::Middleware::Base
   end
 end
 
+# A model middleware that keeps which instance ran, to tell the chat's from a child's.
+class WiringSpecInstanceStamp < Lain::Middleware::Base
+  SEEN = Queue.new
+
+  def call(env, &block)
+    SEEN << self
+    downstream(env, &block)
+  end
+end
+
 # A turn middleware a config.rb could register: Base's pass-through settle.
 class WiringSpecTurnStamp < Lain::Middleware::Base; end
 
@@ -3012,11 +3022,15 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    def configured_backend(root, **areas)
-      middleware = Lain::Config::Middleware.new(**areas.transform_values do |factory|
+    def configured_middleware(**areas)
+      Lain::Config::Middleware.new(**areas.transform_values do |factory|
         [Lain::Config::Middleware::Registration.new(factory:, args: [], kwargs: {}, block: nil,
                                                     at: "/spec/config.rb:1")]
       end)
+    end
+
+    def configured_backend(root, **areas)
+      middleware = configured_middleware(**areas)
       offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
                                 mock: mock_provider, root:, middleware:)
     end
@@ -3054,6 +3068,25 @@ RSpec.describe Lain::CLI::Wiring do
         seen = Array.new(WiringSpecModelStamp::SEEN.size) { WiringSpecModelStamp::SEEN.pop }
         expect(seen.map(&:content)).to eq([[{ "type" => "text", "text" => "settled" }]])
         expect(agent.timeline.to_a.last.content).to eq([{ "type" => "text", "text" => "settled" }])
+      end
+    end
+
+    it "gives a spawned child its own instance of the configured model middleware" do
+      in_tree do |root|
+        WiringSpecInstanceStamp::SEEN.clear
+        spawning = Lain::Provider::Mock.new(responses: [tool_response(["s1", "subagent", { "prompt" => "look" }]),
+                                                        text_response("child done"), text_response("parent done")])
+        middleware = configured_middleware(model: WiringSpecInstanceStamp)
+        backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                            mock: spawning, root:, middleware:)
+        wiring = configured_wiring(root)
+        recorder, session = wiring.run_state(nil)
+        wiring.wire_agent(channel:, recorder:, session:, backend:).ask("spawn one")
+
+        seen = Array.new(WiringSpecInstanceStamp::SEEN.size) { WiringSpecInstanceStamp::SEEN.pop }
+        parent, child = seen.first(2)
+        expect([seen.size, parent.equal?(child), parent.class, child.class])
+          .to eq([3, false, WiringSpecInstanceStamp, WiringSpecInstanceStamp])
       end
     end
 
