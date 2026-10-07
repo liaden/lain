@@ -50,6 +50,8 @@ module Lain
       # @param gc_schedule_factory [#call] builds the daily reap's {GcSchedule}
       #   for the project's root; the real one spawns with the real process
       #   spawner
+      # @param middleware_reader [#call] reads the configured middleware for a
+      #   `root:`; called once per launch, ahead of the record
       # @param env [#[]] the environment, read for $TMUX by
       #   {#refuse_windows_outside_tmux!}
       # @option options [Boolean] :journal whether the run records one
@@ -71,6 +73,7 @@ module Lain
                      status_feed_factory: lambda { |run_clock:, context_window:|
                        Lain::StatusFeed.new(run_clock:, context_window:)
                      },
+                     middleware_reader: Config.public_method(:middleware),
                      env: ENV)
         @options = options
         @typed_profile = profile
@@ -83,6 +86,7 @@ module Lain
         @project_factory = project_factory
         @status_feed_factory = status_feed_factory
         @gc_schedule_factory = gc_schedule_factory
+        @middleware_reader = middleware_reader
         @env = env
       end
 
@@ -150,10 +154,10 @@ module Lain
       # recorded is still read, since that writes nothing, and a selector that
       # refuses reads as no recorded profile: that refusal stays the pane's.
       #
-      # The project's `.lain/config.rb` is evaluated here too, so a file that
-      # will not load refuses `lain up` on the operator's terminal rather than
-      # in a pane that dies before anyone sees it. It writes nothing and asks
-      # no server.
+      # The project's `.lain/config.rb` and the user's config.rb are evaluated
+      # here too, so a file that will not load or is not trusted refuses `lain
+      # up` on the operator's terminal rather than in a pane that dies before
+      # anyone sees it. It writes nothing and asks no server.
       #
       # @return [nil]
       # @raise [Lain::Error] whatever the flags refuse, in the flag's own name
@@ -161,6 +165,7 @@ module Lain
         refuse_contradictory_flags!
         resolve_project!
         Config.load(root: project.root)
+        configured_middleware
         @recorded_header = preflight_header
         constructed
         # A mode that says nothing looks exactly like a hang, and this one is
@@ -216,7 +221,9 @@ module Lain
       # Its root is the resolved {#project}'s, and that is what carries `--root`
       # into the system prompt: the skills and slots the Backend loads are the
       # named project's, not the ones in whatever directory the shell was in.
-      def backend = @backend ||= Backend.new(@options, profile:, compaction:, root: project.root)
+      def backend
+        @backend ||= Backend.new(@options, profile:, compaction:, root: project.root, middleware: configured_middleware)
+      end
 
       # The ONE {RunProfile} the run's backend is built from: what was typed,
       # over the profile a `--resume`d or `--fork`ed header recorded. Resolved
@@ -263,6 +270,12 @@ module Lain
       def exit_status = @wiring ? @wiring.exit_status : Repl::Outcome::COMPLETED
 
       private
+
+      # Read ONCE per launch into the one {#backend}, which the wiring runs on,
+      # so an edit made mid-launch cannot give two phases two answers. The
+      # first {#backend} read forces it, which in {#call} is ahead of the
+      # record: an untrusted or broken file refuses before a session file exists.
+      def configured_middleware = @configured_middleware ||= @middleware_reader.call(root: project.root)
 
       # The collaborators the flags decide, built and thrown away. Split out so
       # the one refusal whose answer depends on WHERE the check ran has

@@ -167,6 +167,10 @@ module Lain
       #   until said. Left out, it is read off `options`; a resumed chat hands in
       #   what it typed laid over the recording, and {#compaction_header} then
       #   records only what is set.
+      # @param middleware [Config::Middleware] what the user's and the
+      #   project's config.rb registered, read once by {ChatLaunch}; empty for
+      #   every command without a chat, so a bench arm never changes with the
+      #   home directory
       # @option options [String] :provider name of the chat tier's provider
       # @option options [String] :model model id for the chat tier
       # @option options [String] :api_base base URL override, ollama only
@@ -186,9 +190,10 @@ module Lain
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
       def initialize(options, root:, profile: RunProfile.from_options(options),
-                     compaction: CompactionProfile.typed(options))
+                     compaction: CompactionProfile.typed(options), middleware: Config::Middleware.empty)
         @options = options
         @root = root
+        @middleware = middleware
         @run_profile = profile
         @compaction = compaction
         summarizer_name
@@ -350,6 +355,10 @@ module Lain
       #
       # @return [RunProfile]
       attr_reader :run_profile
+
+      # @return [Config::Middleware] the configured middleware this run's
+      #   providers and stacks are built with
+      attr_reader :middleware
 
       # Where this run's records land. Bound by the first {#pipeline_source}
       # call (the run has exactly one wiring site) and the Null channel until

@@ -1259,3 +1259,96 @@ RSpec.describe Lain::CLI::ChatLaunch, "over a config that will not load" do
     expect { launch.preflight { |_notice| nil } }.to raise_error(Lain::Project::Trust::Untrusted)
   end
 end
+
+RSpec.describe Lain::CLI::ChatLaunch, "reading configured middleware" do
+  around do |example|
+    Dir.mktmpdir("lain-launch-middleware") do |dir|
+      @dir = File.realpath(dir)
+      with_env("XDG_STATE_HOME" => File.join(@dir, "state"), "XDG_CONFIG_HOME" => File.join(@dir, "config"),
+               "HOME" => File.join(@dir, "home")) { example.run }
+    end
+  end
+
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: JSON.generate("models" => []))
+  end
+
+  let(:root) { File.join(@dir, "repo").tap { |dir| FileUtils.mkdir_p(dir) } }
+  let(:profile) { Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama") }
+
+  def declaring_model_and_http
+    <<~RUBY
+      class Stamp < Lain::Middleware::Base
+        def call(env, &app) = downstream(env, &app)
+      end
+      class Header < Faraday::Middleware; end
+
+      middleware do
+        model Stamp
+        http Header
+      end
+    RUBY
+  end
+
+  def untrusted_user_config
+    FileUtils.mkdir_p(File.dirname(Lain::Paths.new.user_config))
+    File.write(Lain::Paths.new.user_config, "middleware { model { |env, &downstream| downstream.call(env) } }\n")
+  end
+
+  def launch(options = { journal: false, nvim: false, max_tokens: 16 }, **factories)
+    project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+    described_class.new(options, profile:, project_factory: -> { project }, gc_schedule_factory: ->(**) { -> {} },
+                                 **factories)
+  end
+
+  it "reads the config once into the backend the wiring runs on" do
+    write_config(root, declaring_model_and_http)
+    reads = []
+    reader = lambda do |root:|
+      reads << root
+      Lain::Config.middleware(root:)
+    end
+    wiring_factory = ->(**kwargs) { Lain::CLI::Wiring.new(**kwargs).tap { |wiring| allow(wiring).to receive(:run) } }
+    chat = launch(middleware_reader: reader, wiring_factory:)
+
+    chat.call { |_notice| nil }
+
+    expect(reads).to eq([root])
+    expect(chat.wiring).to have_received(:run).with(hash_including(backend: chat.backend))
+    expect([chat.backend.middleware.members(:model).size, chat.backend.middleware.http_entries.size]).to eq([1, 1])
+  end
+
+  it "refuses an untrusted user config before any session file is opened" do
+    untrusted_user_config
+
+    opened = []
+    chronicle_factory = lambda do |**kwargs|
+      opened << kwargs
+      Lain::CLI::Chronicle::Null.new
+    end
+
+    expect { launch({ journal: true, nvim: false, max_tokens: 16 }, chronicle_factory:).call { |_notice| nil } }
+      .to raise_error(Lain::Project::Trust::Untrusted)
+    expect(opened).to be_empty
+  end
+
+  it "refuses a pre-flight over an untrusted user config" do
+    untrusted_user_config
+
+    expect { launch.preflight { |_notice| nil } }.to raise_error(Lain::Project::Trust::Untrusted)
+  end
+
+  # An untrusted user file would refuse any read, so an empty value here also
+  # says nothing was read: a bench arm must not change with the home directory.
+  it "leaves the bench's backend without configured middleware" do
+    load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+    write_config(root, declaring_model_and_http)
+    untrusted_user_config
+
+    backend = Dir.chdir(root) { LainCLI::Bench.new([], { provider: "ollama" }).model_backend }
+
+    expect(%i[model tool turn repl].map { |area| backend.middleware.members(area) } << backend.middleware.http_entries)
+      .to all(be_empty)
+  end
+end
