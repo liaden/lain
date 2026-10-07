@@ -17,6 +17,7 @@ RSpec.describe Lain::Survey::Projection do
   subject(:projection) { described_class.new(ledger:) }
 
   let(:ledger) { Lain::Sensitivity::Ledger.new }
+  let(:verdict) { Lain::Sensitivity::Verdict.new(level: :gated, reason: :credential) }
   let(:path) { "/repo/.env" }
   # Literal, never sliced from the detector's own tables: a fixture built out of
   # the constant it is meant to pin cannot fail when that constant is wrong.
@@ -31,14 +32,14 @@ RSpec.describe Lain::Survey::Projection do
 
   describe "a gated file entering masked" do
     it "keeps the structure a human reviews and withholds only the values" do
-      projected = projection.project(path, dotenv)
+      projected = projection.project(path, dotenv, verdict:)
 
       expect(projected).to include("API_KEY=", "DATABASE_PASSWORD=", "SESSION_SECRET=")
       expect(projected).not_to include(api_key, password, session_secret)
     end
 
     it "stands one placeholder in for each value, numbered in reading order" do
-      expect(projection.project(path, dotenv))
+      expect(projection.project(path, dotenv, verdict:))
         .to eq("API_KEY=#{placeholder(1)}\nDATABASE_PASSWORD=#{placeholder(2)}\nSESSION_SECRET=#{placeholder(3)}\n")
     end
 
@@ -46,7 +47,7 @@ RSpec.describe Lain::Survey::Projection do
     # path must not drift on what a masked region looks like, and two copies of
     # the format is how they would.
     it "renders the read path's own placeholder" do
-      expect(projection.project(path, dotenv)).to include(placeholder(1))
+      expect(projection.project(path, dotenv, verdict:)).to include(placeholder(1))
       expect(Lain::Sensitivity::Regions::PLACEHOLDER).to eq("<redacted:%d>")
     end
 
@@ -57,7 +58,7 @@ RSpec.describe Lain::Survey::Projection do
     it "masks byte for byte as the read path's own scan does" do
       scan = Lain::Middleware::RedactSecretReads::Scan.new(dotenv)
 
-      expect(projection.project(path, dotenv)).to eq(scan.mask(scan.regions))
+      expect(projection.project(path, dotenv, verdict:)).to eq(scan.mask(scan.regions))
     end
   end
 
@@ -65,7 +66,7 @@ RSpec.describe Lain::Survey::Projection do
     it "is real bytes, while everything unreleased stays a placeholder" do
       ledger.release(path, [regions_in(dotenv).first])
 
-      projected = projection.project(path, dotenv)
+      projected = projection.project(path, dotenv, verdict:)
 
       expect(projected).to include(api_key)
       expect(projected).not_to include(password, session_secret)
@@ -74,7 +75,7 @@ RSpec.describe Lain::Survey::Projection do
     it "renumbers what is left, so the ordinals still count masked regions" do
       ledger.release(path, [regions_in(dotenv).first])
 
-      expect(projection.project(path, dotenv))
+      expect(projection.project(path, dotenv, verdict:))
         .to eq("API_KEY=#{api_key}\nDATABASE_PASSWORD=#{placeholder(1)}\nSESSION_SECRET=#{placeholder(2)}\n")
     end
 
@@ -83,10 +84,10 @@ RSpec.describe Lain::Survey::Projection do
     # pinned here is the half this object owns: the bytes move exactly where the
     # release was, and nowhere else.
     it "changes the projection only where the released region sits" do
-      before_release = projection.project(path, dotenv)
+      before_release = projection.project(path, dotenv, verdict:)
       ledger.release(path, [regions_in(dotenv).last])
 
-      after_release = projection.project(path, dotenv)
+      after_release = projection.project(path, dotenv, verdict:)
 
       expect(after_release.lines.first(2)).to eq(before_release.lines.first(2))
       expect(after_release.lines.last).not_to eq(before_release.lines.last)
@@ -94,13 +95,15 @@ RSpec.describe Lain::Survey::Projection do
   end
 
   describe "a file the path rules called ordinary" do
+    let(:verdict) { Lain::Sensitivity::Verdict.new(level: :ordinary, reason: :none) }
+
     # The content boundary exists for exactly this: a path rule cannot see a key
-    # pasted into a notes file, so the projection never asks what the path
+    # pasted into a notes file, so regions are masked whatever the path
     # classified as.
     it "is projected too, because a pasted key is a secret wherever it sits" do
       pasted = "Deploy notes\n\nAPI_KEY=#{api_key}\n\nAsk Sam before restarting.\n"
 
-      projected = projection.project("/repo/notes.txt", pasted)
+      projected = projection.project("/repo/notes.txt", pasted, verdict:)
 
       expect(projected).not_to include(api_key)
       expect(projected).to include("Deploy notes", "Ask Sam before restarting.")
@@ -109,7 +112,15 @@ RSpec.describe Lain::Survey::Projection do
     it "is handed back as it stands when it holds nothing sensitive" do
       ordinary = "x = 1\nDEBUG = true\nNote: this is important\n"
 
-      expect(projection.project("/repo/app.rb", ordinary)).to eq(ordinary)
+      expect(projection.project("/repo/app.rb", ordinary, verdict:)).to eq(ordinary)
+    end
+  end
+
+  describe "the verdict it is given" do
+    it "is required on every route, so no caller is judged by its regions alone in silence" do
+      expect { projection.project(path, dotenv) }.to raise_error(ArgumentError, /verdict/)
+      expect { projection.line(path, dotenv, 1) }.to raise_error(ArgumentError, /verdict/)
+      expect { projection.projected_line(path, dotenv, 1) }.to raise_error(ArgumentError, /verdict/)
     end
   end
 
@@ -119,23 +130,23 @@ RSpec.describe Lain::Survey::Projection do
     # again rather than being sent on the strength of an old release.
     it "reconciles a release away when the file no longer holds that region" do
       ledger.release(path, regions_in(dotenv))
-      projection.project(path, "API_KEY=\n")
+      projection.project(path, "API_KEY=\n", verdict:)
 
-      expect(projection.project(path, dotenv)).not_to include(api_key)
+      expect(projection.project(path, dotenv, verdict:)).not_to include(api_key)
     end
 
     it "keeps a release across a projection that still holds the region" do
       ledger.release(path, [regions_in(dotenv).first])
-      projection.project(path, dotenv)
+      projection.project(path, dotenv, verdict:)
 
-      expect(projection.project(path, dotenv)).to include(api_key)
+      expect(projection.project(path, dotenv, verdict:)).to include(api_key)
     end
 
     # The ledger is per-RUN and reaches every child, so it has no cwd to resolve
     # against and refuses a relative path. Delegated rather than re-checked:
     # a second absolute-path rule is a second answer.
     it "refuses a relative path, because two cwds behind one key is a release that travels" do
-      expect { projection.project("notes.txt", dotenv) }.to raise_error(ArgumentError, /must be absolute/)
+      expect { projection.project("notes.txt", dotenv, verdict:) }.to raise_error(ArgumentError, /must be absolute/)
     end
 
     it "cannot be built without one, and there is deliberately no Null" do
@@ -151,23 +162,23 @@ RSpec.describe Lain::Survey::Projection do
   # forever.
   describe "the whole-file promise" do
     it "refuses a partial read when the listing says how big the file was" do
-      expect { projection.project(path, dotenv.byteslice(0, 20), size: dotenv.bytesize) }
+      expect { projection.project(path, dotenv.byteslice(0, 20), size: dotenv.bytesize, verdict:) }
         .to raise_error(ArgumentError, /whole file/)
     end
 
     it "projects when the bytes are the size the walk listed" do
-      expect(projection.project(path, dotenv, size: dotenv.bytesize)).to include(placeholder(1))
+      expect(projection.project(path, dotenv, size: dotenv.bytesize, verdict:)).to include(placeholder(1))
     end
 
     it "projects without a size, because a caller holding no listing has nothing to check against" do
-      expect(projection.project(path, dotenv)).to include(placeholder(1))
+      expect(projection.project(path, dotenv, verdict:)).to include(placeholder(1))
     end
 
     it "leaves the ledger untouched when it refuses, so a refusal reconciles nothing away" do
       ledger.release(path, [regions_in(dotenv).first])
 
-      expect { projection.project(path, "API_KEY=\n", size: dotenv.bytesize) }.to raise_error(ArgumentError)
-      expect(projection.project(path, dotenv)).to include(api_key)
+      expect { projection.project(path, "API_KEY=\n", size: dotenv.bytesize, verdict:) }.to raise_error(ArgumentError)
+      expect(projection.project(path, dotenv, verdict:)).to include(api_key)
     end
   end
 
@@ -175,7 +186,7 @@ RSpec.describe Lain::Survey::Projection do
     it "keeps the file's encoding, because an offset into re-decoded text is a different offset" do
       utf8 = "# café\nAPI_KEY=#{api_key}\n"
 
-      projected = projection.project(path, utf8)
+      projected = projection.project(path, utf8, verdict:)
 
       expect(projected.encoding).to eq(Encoding::UTF_8)
       expect(projected).to include("café")
@@ -194,26 +205,26 @@ RSpec.describe Lain::Survey::Projection do
     let(:keyed) { "one\n#{pem}\nseven\neight\nAPI_KEY=#{api_key}\n" }
 
     it "masks the values on that line and keeps the rest of it" do
-      expect(projection.line(path, dotenv, 2)).to eq("DATABASE_PASSWORD=#{placeholder(2)}")
+      expect(projection.line(path, dotenv, 2, verdict:)).to eq("DATABASE_PASSWORD=#{placeholder(2)}")
     end
 
     it "numbers each placeholder as the whole file's projection does" do
-      expect(projection.line(path, keyed, 10)).to eq("API_KEY=#{placeholder(2)}")
+      expect(projection.line(path, keyed, 10, verdict:)).to eq("API_KEY=#{placeholder(2)}")
     end
 
     it "answers a line below a multi-line region by the disk's own number" do
-      expect([1, 8, 9].map { |number| projection.line(path, keyed, number) }).to eq(%w[one seven eight])
+      expect([1, 8, 9].map { |number| projection.line(path, keyed, number, verdict:) }).to eq(%w[one seven eight])
     end
 
     it "answers every line inside a masked region with that region's mask, never a neighbour's text" do
-      expect((2..7).map { |number| projection.line(path, keyed, number) }).to all(eq(placeholder(1)))
+      expect((2..7).map { |number| projection.line(path, keyed, number, verdict:) }).to all(eq(placeholder(1)))
     end
 
     it "shows a released region's bytes on its line" do
       ledger.release(path, [regions_in(dotenv).first])
 
-      expect(projection.line(path, dotenv, 1)).to eq("API_KEY=#{api_key}")
-      expect(projection.line(path, dotenv, 2)).to eq("DATABASE_PASSWORD=#{placeholder(1)}")
+      expect(projection.line(path, dotenv, 1, verdict:)).to eq("API_KEY=#{api_key}")
+      expect(projection.line(path, dotenv, 2, verdict:)).to eq("DATABASE_PASSWORD=#{placeholder(1)}")
     end
 
     # The line view asks the ledger about the WHOLE file, so it reconciles
@@ -222,17 +233,17 @@ RSpec.describe Lain::Survey::Projection do
     it "keeps a release standing for a region on a line it was not asked about" do
       ledger.release(path, regions_in(dotenv))
 
-      projection.line(path, dotenv, 3)
+      projection.line(path, dotenv, 3, verdict:)
 
-      expect(projection.project(path, dotenv)).to include(api_key, password)
+      expect(projection.project(path, dotenv, verdict:)).to include(api_key, password)
     end
 
     it "answers nothing for a line the file does not hold" do
-      expect([projection.line(path, dotenv, 4), projection.line(path, "", 1)]).to eq([nil, nil])
+      expect([projection.line(path, dotenv, 4, verdict:), projection.line(path, "", 1, verdict:)]).to eq([nil, nil])
     end
 
     it "keeps a blank line blank" do
-      expect(projection.line(path, "a\n\nb\n", 2)).to eq("")
+      expect(projection.line(path, "a\n\nb\n", 2, verdict:)).to eq("")
     end
 
     # A blank line is an empty byte span: inside a key block it is still that
@@ -241,11 +252,12 @@ RSpec.describe Lain::Survey::Projection do
     it "masks a blank line inside a region, and leaves the blank line after it blank" do
       spaced = "#{pem.sub("\n", "\n\n")}\n\nafter\n"
 
-      expect([2, 8, 9].map { |number| projection.line(path, spaced, number) }).to eq([placeholder(1), "", "after"])
+      expect([2, 8, 9].map { |number| projection.line(path, spaced, number, verdict:) })
+        .to eq([placeholder(1), "", "after"])
     end
 
     it "keeps the file's encoding and a carriage return" do
-      answered = projection.line(path, "café\r\nx\n", 1)
+      answered = projection.line(path, "café\r\nx\n", 1, verdict:)
 
       expect([answered, answered.encoding]).to eq(["café\r", Encoding::UTF_8])
     end
@@ -259,31 +271,81 @@ RSpec.describe Lain::Survey::Projection do
     let(:keyed) { "#{pem}\nseven\neight\n" }
 
     it "sends every line of a masked region to the line holding its placeholder" do
-      expect((1..6).map { |number| projection.projected_line(path, keyed, number) }).to all(eq(1))
+      expect((1..6).map { |number| projection.projected_line(path, keyed, number, verdict:) }).to all(eq(1))
     end
 
     it "shifts a line below a region by the lines the region swallowed" do
-      expect([7, 8].map { |number| projection.projected_line(path, keyed, number) }).to eq([2, 3])
+      expect([7, 8].map { |number| projection.projected_line(path, keyed, number, verdict:) }).to eq([2, 3])
     end
 
     it "agrees with the projection about where that line lands" do
-      projected = projection.project(path, keyed).lines(chomp: true)
+      projected = projection.project(path, keyed, verdict:).lines(chomp: true)
 
-      expect(projected[projection.projected_line(path, keyed, 8) - 1]).to eq("eight")
+      expect(projected[projection.projected_line(path, keyed, 8, verdict:) - 1]).to eq("eight")
     end
 
     it "leaves every line alone in a file with nothing to mask" do
-      expect((1..3).map { |number| projection.projected_line(path, "a\nb\nc\n", number) }).to eq([1, 2, 3])
+      expect((1..3).map { |number| projection.projected_line(path, "a\nb\nc\n", number, verdict:) }).to eq([1, 2, 3])
     end
 
     it "does not shift past a region the human released" do
       ledger.release(path, regions_in(keyed))
 
-      expect(projection.projected_line(path, keyed, 8)).to eq(8)
+      expect(projection.projected_line(path, keyed, 8, verdict:)).to eq(8)
     end
 
     it "answers the number it was given for a line the file does not hold" do
-      expect(projection.projected_line(path, keyed, 40)).to eq(40)
+      expect(projection.projected_line(path, keyed, 40, verdict:)).to eq(40)
+    end
+  end
+
+  # A name says the whole file is the secret, and a detector that finds no
+  # region in it would otherwise let every byte through.
+  describe "a file gated by its name" do
+    let(:path) { "/repo/password.txt" }
+    let(:named) { Lain::Sensitivity::Verdict.new(level: :gated, reason: :named) }
+    let(:content) { "hunter2\nAPI_KEY=#{api_key}\nthird\n" }
+
+    it "projects as one placeholder, holding neither the bare value nor the detected one" do
+      projected = projection.project(path, content, verdict: named)
+
+      expect(projected).to eq(placeholder(1))
+    end
+
+    it "answers every line it holds as that placeholder, and nothing past its end" do
+      expect([1, 2, 3, 4].map { |number| projection.line(path, content, number, verdict: named) })
+        .to eq([placeholder(1), placeholder(1), placeholder(1), nil])
+    end
+
+    it "lands every line on the placeholder's line" do
+      expect([1, 3, 9].map { |number| projection.projected_line(path, content, number, verdict: named) })
+        .to eq([1, 1, 9])
+    end
+
+    # Masked whole or not, the ask is what forgets a release for a region the
+    # file no longer holds; skipping it would send that region raw if it came back.
+    it "still reconciles the ledger, so a release for a deleted region is forgotten" do
+      ledger.release(path, regions_in(dotenv))
+      projection.project(path, "hunter2\n", verdict: named)
+
+      expect(projection.project(path, dotenv, verdict:)).not_to include(api_key)
+    end
+
+    it "stays masked after a release, because a whole-file mask has no release route" do
+      ledger.release(path, regions_in(content))
+
+      expect(projection.project(path, content, verdict: named)).to eq(placeholder(1))
+    end
+  end
+
+  describe "a file gated for its credential shape" do
+    let(:credential) { Lain::Sensitivity::Verdict.new(level: :gated, reason: :credential) }
+
+    it "masks only its detected regions" do
+      expect(projection.project(path, dotenv, verdict: credential))
+        .to eq("API_KEY=#{placeholder(1)}\nDATABASE_PASSWORD=#{placeholder(2)}\nSESSION_SECRET=#{placeholder(3)}\n")
+      expect(projection.line(path, dotenv, 1, verdict: credential)).to eq("API_KEY=#{placeholder(1)}")
+      expect(projection.projected_line(path, dotenv, 3, verdict: credential)).to eq(3)
     end
   end
 
@@ -313,7 +375,9 @@ RSpec.describe Lain::Survey::Projection do
       write(".env", dotenv)
       walk = Lain::Survey::Walk.new(root: @root, sensitivity: Lain::Sensitivity.new(home: "/home/surveyor", cwd: @root))
 
-      projected = walk.files.to_h { |file| [file.path, projection.project(file.absolute, File.read(file.absolute))] }
+      projected = walk.files.to_h do |file|
+        [file.path, projection.project(file.absolute, File.read(file.absolute), verdict: file.verdict)]
+      end
 
       expect(projected.keys).to eq([".env"])
       expect(projected.values.join).not_to include(private_key, api_key)

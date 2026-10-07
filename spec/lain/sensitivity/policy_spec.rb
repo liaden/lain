@@ -447,7 +447,7 @@ RSpec.describe Lain::Sensitivity::Policy do
 
         expect(named.gates?(call("read_file", { "path" => "password.txt" }), cwd: root)).to be(true)
         expect(named.filter.sift(rows) { |row| [row] })
-          .to have_attributes(kept: [], withheld: [have_attributes(reason: :credential)])
+          .to have_attributes(kept: [], withheld: [have_attributes(reason: :named)])
       end
     end
 

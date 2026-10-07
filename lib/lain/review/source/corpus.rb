@@ -198,24 +198,26 @@ module Lain
           # against a rebuilt corpus -- which is what a re-survey is for -- but
           # WITHIN one session the two answers are of different moments. Freezing
           # them together means holding every file's bytes for the session.
-          def content = projection.project(listing.absolute, File.binread(listing.absolute))
+          def content = projection.project(listing.absolute, bytes, verdict: listing.verdict)
 
           # One line of {#content}, numbered as the file on disk numbers it
           # ({Survey::Projection#line}).
           #
           # @param number [Integer] 1-based
           # @return [String, nil]
-          def line(number) = projection.line(listing.absolute, File.binread(listing.absolute), number)
+          def line(number) = projection.line(listing.absolute, bytes, number, verdict: listing.verdict)
 
           # Where a raw line lands in {#content} ({Survey::Projection#projected_line}).
           #
           # @param number [Integer] 1-based
           # @return [Integer]
           def projected_line(number)
-            projection.projected_line(listing.absolute, File.binread(listing.absolute), number)
+            projection.projected_line(listing.absolute, bytes, number, verdict: listing.verdict)
           end
 
           private
+
+          def bytes = File.binread(listing.absolute)
 
           # `File.join` and not interpolation, so a prefix is joined by one rule
           # rather than by one that has to be remembered per caller.

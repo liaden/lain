@@ -224,7 +224,9 @@ human placed it in numbers it. For a diff source that is `#file_at` cut by
 key block) collapses those lines into one placeholder, so the projection's line
 N is not the file's. `Corpus#line_at` asks `Survey::Projection#line`, which
 reconciles over the whole file and masks only where a region crosses that raw
-line.
+line. A file the walk gated for its name (`password.txt`, `secrets/prod`) is
+masked whole instead: every line of it answers the one placeholder, and
+`#projected_line` maps every line to 1.
 
 It answers nil rather than refusing -- past the end, at a revision that does not
 hold the path, for a surveyed file deleted since -- and `Changeset#anchor`

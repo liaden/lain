@@ -179,7 +179,7 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
       shown = content(list(checkout, recursive: true))
 
       expect(shown).not_to include("prod.yml")
-      expect(shown).to include("README", "withheld (credential)")
+      expect(shown).to include("README", "withheld (named)")
     end
 
     # `/mode plan` started in a subdirectory runs in a spike that mirrors it,
@@ -383,7 +383,7 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
       shown = content(glob("many/*", path: dir))
 
       expect(shown.split("\n")).to include(notice)
-      expect(shown).to end_with("\n1 path withheld (credential)")
+      expect(shown).to end_with("\n1 path withheld (named)")
       expect(shown).not_to include("credentials.json")
       expect(shown).not_to include(secret)
     end
@@ -392,7 +392,7 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
       shown = content(list(File.join(dir, "many")))
 
       expect(shown.split("\n")).to include(Lain::Tools::ListFiles::BOUND.notice(total))
-      expect(shown).to end_with("\n1 path withheld (credential)")
+      expect(shown).to end_with("\n1 path withheld (named)")
       expect(shown).not_to include("credentials.json")
     end
   end

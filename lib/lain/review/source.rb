@@ -304,7 +304,7 @@ module Lain
         #   no such path or no such line
         def line_at(revision, path, number)
           bytes = file_at(revision, path)
-          projection.line(ledger_path(path), bytes, number) unless bytes.nil?
+          projection.line(ledger_path(path), bytes, number, verdict: Survey::Projection::UNJUDGED) unless bytes.nil?
         end
 
         # A diff's hunks number the file as it is, so there is nothing to map.

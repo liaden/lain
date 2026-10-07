@@ -63,6 +63,7 @@ module Lain
       EXPLANATIONS = {
         none: "ordinary",
         credential: "a credential-shaped name",
+        named: "a name or directory naming a secret",
         out_of_scope: "a personal directory outside any project",
         protected: "a protected path",
         configured: "named by this project's sensitivity config",
@@ -97,6 +98,7 @@ module Lain
       def denied? = level == :denied
       def credential? = reason == :credential
       def exempt? = reason == :exempt
+      def named? = reason == :named
       def explanation = EXPLANATIONS.fetch(reason)
     end
 
@@ -329,8 +331,10 @@ module Lain
       DATA = %w[txt toml yml yaml json env tfvars csv ini conf cfg xml properties].freeze
       SPECIMENS = [*[*WORDS, "api_key"].product(DATA), *%w[secrets/config secrets/notes secrets/prod].product(DATA)]
                   .map { |name, extension| "#{name}.#{extension}".freeze }.freeze
-      LABEL = "a name or directory naming a secret"
-      VERDICT = Verdict.new(level: :gated, reason: :credential)
+      LABEL = Verdict::EXPLANATIONS.fetch(:named)
+      # Its own reason rather than `credential`, because a survey masks such a
+      # file whole: a name can say the whole file is the secret, a shape cannot.
+      VERDICT = Verdict.new(level: :gated, reason: :named)
       SLASH = File::SEPARATOR.ord
 
       def credential? = true
@@ -649,7 +653,12 @@ module Lain
     # but a toolchain that writes `.KEY` or `.PEM` still wrote a key, and on a
     # case-insensitive filesystem `CONFIG/MASTER.KEY` opens the lowercase one.
     # Those spellings are ordinary here today.
+    #
+    # {NAME} comes first, so a name that says the whole file is the secret
+    # answers `named` even where an older entry also lists it; DENIED is
+    # consulted before any of this, so it never lifts a denial.
     GATED = [
+      NAME,
       *%w[.env .env.* .envrc *.pem *.p12 *.key *.keyring credentials.json credentials.yml.enc secrets.y*ml
           .git-credentials .npmrc .pypirc .gitconfig rclone.conf terraform.tfstate *.tfvars *_history
           .vault-token application_default_credentials.json passwords.txt]
@@ -713,8 +722,7 @@ module Lain
       # the table rather than a considered position. Anchored on the `.git`
       # SEGMENT, on {Rule.within}'s shape, because a bare `config` basename is a
       # plausible name in any checkout.
-      Rule.within(".git", name: "config", level: :gated, reason: :credential),
-      NAME
+      Rule.within(".git", name: "config", level: :gated, reason: :credential)
     ].freeze
 
     # The project's own Ruby, which a later launch evaluates. The trust digest

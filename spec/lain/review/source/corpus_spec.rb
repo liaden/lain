@@ -392,6 +392,53 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
+  describe "a file gated by its name" do
+    let(:api_key) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
+    let(:placeholder) { format(Lain::Sensitivity::Regions::PLACEHOLDER, 1) }
+
+    before do
+      write("password.txt", "hunter2\nAPI_KEY=#{api_key}\n")
+      write("notes.txt", "hello")
+    end
+
+    it "is still listed, and its corpus text is one placeholder" do
+      text = corpus.file_at(corpus.head_ref, "password.txt")
+
+      expect(corpus.files.map(&:path)).to eq(%w[notes.txt password.txt])
+      expect(text).to eq(placeholder)
+      expect(file_for(corpus, "password.txt").hunks.flat_map(&:lines).join).not_to include("hunter2", api_key)
+    end
+
+    it "gives a note on it the placeholder as evidence, on projected line 1" do
+      expect(corpus.line_at(corpus.head_ref, "password.txt", 1)).to eq(placeholder)
+      expect(corpus.line_at(corpus.head_ref, "password.txt", 2)).to eq(placeholder)
+      expect(corpus.projected_line(corpus.head_ref, "password.txt", 2)).to eq(1)
+    end
+
+    it "masks a file the table always named whole too, though the detector finds nothing in it" do
+      write("secrets.yml", "production:\n  signing: hunter2\n")
+      write("credentials.json", "{\"login\": \"hunter2\"}\n")
+
+      expect(%w[secrets.yml credentials.json].map { |path| corpus.file_at(corpus.head_ref, path) })
+        .to eq([placeholder, placeholder])
+    end
+
+    it "masks a link named for a credential shape whole when its target is named for a secret" do
+      File.symlink("password.txt", File.join(root, ".env"))
+      FileUtils.mkdir_p(File.join(root, "config"))
+      write("config/prod.secrets", "hunter2\n")
+      File.symlink("config/prod.secrets", File.join(root, ".env.production"))
+
+      expect(%w[.env .env.production].flat_map do |path|
+        [corpus.file_at(corpus.head_ref, path), corpus.line_at(corpus.head_ref, path, 1)]
+      end).to all(eq(placeholder))
+    end
+
+    it "leaves an ordinary file beside it untouched" do
+      expect(corpus.file_at(corpus.head_ref, "notes.txt")).to eq("hello")
+    end
+  end
+
   describe "withheld paths" do
     it "keeps a denied path out of the files and readable from the report" do
       write(".ssh/id_ed25519", private_key)

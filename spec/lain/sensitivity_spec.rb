@@ -257,8 +257,7 @@ RSpec.describe Lain::Sensitivity do
 
   describe "gated, credential-shaped" do
     %w[
-      .env .env.local .env.production .envrc server.pem bundle.p12 credentials.json
-      secrets.yml secrets.yaml .git-credentials .npmrc .pypirc .gitconfig
+      .env .env.local .env.production .envrc server.pem bundle.p12 .npmrc .pypirc .gitconfig
       terraform.tfstate prod.tfvars
     ].each do |name|
       it "gates #{name} for its credential shape" do
@@ -305,11 +304,9 @@ RSpec.describe Lain::Sensitivity do
     {
       "config/master.key" => "a Rails master key",
       "certs/server.key" => "any private key file",
-      "config/credentials.yml.enc" => "Rails encrypted credentials",
       "#{SensitivitySpecSupport::HOME}/.pgpass" => "a postgres password file",
       "#{SensitivitySpecSupport::HOME}/.bash_history" => "a shell history",
       "#{SensitivitySpecSupport::HOME}/.zsh_history" => "another shell's history",
-      "#{SensitivitySpecSupport::HOME}/.gem/credentials" => "a rubygems API key",
       "#{SensitivitySpecSupport::HOME}/.ssh/config" => "an ssh client config",
       "#{SensitivitySpecSupport::HOME}/.config/rclone/rclone.conf" => "an rclone remote config",
       "#{SensitivitySpecSupport::HOME}/.local/share/keyrings/login.keyring" => "a login keyring",
@@ -354,13 +351,6 @@ RSpec.describe Lain::Sensitivity do
     {
       "#{SensitivitySpecSupport::HOME}/.ssh/deploy" => "a key in ~/.ssh under a name that is not id_*",
       "#{SensitivitySpecSupport::HOME}/.ssh/keys/github" => "a key nested beneath ~/.ssh",
-      "#{SensitivitySpecSupport::HOME}/.vault-token" => "a HashiCorp Vault token",
-      "project/.vault-token" => "a Vault token wherever it sits",
-      "#{SensitivitySpecSupport::HOME}/.cargo/credentials.toml" => "a crates.io token",
-      "#{SensitivitySpecSupport::HOME}/.config/gcloud/application_default_credentials.json" =>
-        "gcloud application default credentials",
-      "#{SensitivitySpecSupport::HOME}/.terraform.d/credentials.tfrc.json" => "a Terraform Cloud token",
-      "#{SensitivitySpecSupport::HOME}/.azure/msal_token_cache.json" => "anything under ~/.azure",
       "#{SensitivitySpecSupport::HOME}/.kube/config.bak" => "a kubeconfig backup",
       "#{SensitivitySpecSupport::HOME}/.kube/config-staging" => "a second kubeconfig"
     }.each do |path, what|
@@ -461,10 +451,33 @@ RSpec.describe Lain::Sensitivity do
 
   describe "gated by a name or a directory that names a secret" do
     ["password.txt", "Password.TXT", "secrets/prod", ".secrets/x", "my-secrets/x", "credentials/x", "private/x",
-     "auth/x", "api_key.txt", "secrets.toml"].each do |path|
+     "auth/x", "api_key.txt", "secrets.toml", "passwords.txt", "secrets.yml", "secrets.yaml", "credentials.json",
+     ".git-credentials", ".vault-token"].each do |path|
       it "gates #{path}" do
-        expect(classify(path)).to have_attributes(level: :gated, reason: :credential)
+        expect(classify(path)).to have_attributes(level: :gated, reason: :named)
       end
+    end
+
+    # A name outranks a credential store's own entry, so a survey masks the
+    # store whole too.
+    it "answers for the name of a credential store an older entry also lists" do
+      ["config/credentials.yml.enc", "#{home}/.gem/credentials", "#{home}/.vault-token", "project/.vault-token",
+       "#{home}/.cargo/credentials.toml", "#{home}/.config/gcloud/application_default_credentials.json",
+       "#{home}/.terraform.d/credentials.tfrc.json", "#{home}/.azure/msal_token_cache.json"].each do |path|
+        expect(classify(path)).to have_attributes(level: :gated, reason: :named), path
+      end
+    end
+
+    it "never lifts a denial whose path also names a secret" do
+      expect(["#{home}/.aws/credentials", "#{home}/.password-store/site.gpg", "#{home}/.ssh/id_rsa"]
+        .map { |path| classify(path) }).to all(have_attributes(level: :denied, reason: :protected))
+    end
+
+    # Its own reason, because a survey masks a name-gated file whole while a
+    # credential-shaped one keeps its region-level masking.
+    it "says why apart from a credential shape" do
+      expect(classify("password.txt").explanation).to eq("a name or directory naming a secret")
+      expect(classify(".env").reason).to eq(:credential)
     end
 
     ["AUTHORS", "README", "lib/session.rb", "lib/auth/token.rb", "token.ts", "tokenizer.json", "compass.yml",
@@ -544,7 +557,7 @@ RSpec.describe Lain::Sensitivity do
       it "reads directory names below the call's cwd as well" do
         expect(rooted.classify("#{checkout}/secrets/prod.yml")).to be_ordinary
         expect(rooted.classify("#{checkout}/secrets/prod.yml", within: checkout))
-          .to have_attributes(level: :gated, reason: :credential)
+          .to have_attributes(level: :gated, reason: :named)
         expect(rooted.classify("#{checkout}/README", within: checkout)).to be_ordinary
       end
 

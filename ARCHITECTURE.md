@@ -795,6 +795,8 @@ passwd, secret, token, credential, api key, private, auth) is gated for every re
 markdown files are excepted. With no root the base is cwd, and a call that runs in a checkout outside
 the root (a leased worker, `/mode plan`) also counts the names below that checkout. An
 ancestor of a base never counts, and an exemption that lifts a name is counted against the rule.
+Such a file enters a survey masked whole and stays masked there; a file gated by its shape
+(`.env`, `*.pem`) keeps region masking and release.
 
 `Policy` judges a path twice before the call runs: as the call wrote it, and where it lands
 (`Landing.of`, resolved against the call's own worker cwd, so a worktree or `/mode plan` moves the

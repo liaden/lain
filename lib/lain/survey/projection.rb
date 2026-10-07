@@ -8,18 +8,19 @@ module Lain
     #
     # == Why a listed file is still projected
     #
-    # A gated file enters the corpus REDACTED to its released regions. The two
-    # alternatives are each wrong in one direction: withholding it wholesale
-    # makes a survey stricter than {Middleware::RedactSecretReads} over the same
-    # file, and entering it whole makes a survey looser. Neither is defensible
-    # when both arms are looking at the same bytes for the same human.
+    # A file gated for its SHAPE (`.env`, `*.pem`) enters the corpus REDACTED to
+    # its released regions. The two alternatives are each wrong in one direction:
+    # withholding it wholesale makes a survey stricter than
+    # {Middleware::RedactSecretReads} over the same file, and entering it whole
+    # makes a survey looser. A file gated for its NAME is the one exception,
+    # masked whole (below).
     #
     # And EVERY file is projected, not just the gated ones, for the content
     # boundary's own reason: a path rule cannot see a key pasted into
     # `notes.txt`. {Walk} decides which paths enter; this decides which bytes of
     # them do, and the two together are one admission policy.
     #
-    # == What it masks is exactly what {Sensitivity::Regions} finds, no more
+    # == Outside a name-gated file, it masks what {Sensitivity::Regions} finds, no more
     #
     # Said plainly, because a survey applies this to whole trees of prose and "no
     # secret reaches the corpus" is a claim it cannot make. A value the detector
@@ -66,11 +67,26 @@ module Lain
     #
     # With no approval surface wired into a survey, the masked projection simply
     # stands.
+    #
+    # == A file gated by its NAME is masked whole
+    #
+    # `password.txt` says the whole file is the secret, and the detector finds no
+    # region in a bare `hunter2`. So a `:named` verdict masks every byte as one
+    # placeholder, on all three routes. It has no release route: a human who
+    # wants the file reads it in chat, through the gate. A credential-SHAPED
+    # name such as `.env` keeps region masking, where a release is real.
+    #
+    # The verdict is the walk's, handed in per call, so the projection never
+    # classifies a second time. It is required: a caller with no walk behind it,
+    # a changeset's hunks, says so by passing {UNJUDGED}.
     class Projection
       # The contract the required `ledger:` keeps, named so the raise and the
       # doc above it cannot drift into two different arguments.
       LEDGER_CONTRACT = "the run has ONE region ledger, built on the Switchboard and injected -- " \
                         "a second one holds releases nobody ever sees"
+
+      # What a caller with no walk verdict passes: judged by its regions alone.
+      UNJUDGED = Sensitivity::Verdict.new(level: :ordinary, reason: :none)
 
       # @param ledger [Sensitivity::Ledger] the run's ONE region ledger
       # @raise [ArgumentError] on a nil ledger
@@ -90,11 +106,12 @@ module Lain
       # @param size [Integer, nil] what the walk measured, when the caller holds a
       #   {Walk::Listing}; checked against the bytes and refused on a
       #   disagreement. A cross-check, not a second source of truth.
+      # @param verdict [Sensitivity::Verdict] the walk's verdict on `path`
       # @return [String] the same bytes with every unreleased region masked,
-      #   shaped and encoded as it arrived
+      #   shaped and encoded as it arrived; one placeholder for a name-gated file
       # @raise [ArgumentError] on a relative path (from the ledger) or on
       #   content that is not the whole file
-      def project(path, content, size: nil)
+      def project(path, content, verdict:, size: nil)
         # BEFORE the ledger is touched, for {Middleware::RedactSecretReads}'
         # reason: `outstanding` reconciles, so asking it about a view we are
         # about to refuse would forget releases for regions nobody looked at.
@@ -104,7 +121,8 @@ module Lain
         # holds now, so skipping the call for an empty scan would leave a
         # release standing for a secret that has been deleted -- and send it
         # unasked if it ever came back.
-        unreleased = @ledger.outstanding(path, Sensitivity::Regions.detect(content), complete: true)
+        unreleased = outstanding(path, content)
+        return whole(content) if verdict.named?
         return content if unreleased.empty?
 
         # {Sensitivity::Masking} and not a walk of this object's own: the read
@@ -129,12 +147,14 @@ module Lain
       # @param path [String, Pathname] the file, ABSOLUTE, as for {#project}
       # @param content [String] its whole bytes
       # @param number [Integer] 1-based, by {Review::Anchor.lines}' rule
+      # @param verdict [Sensitivity::Verdict] the walk's verdict on `path`
       # @return [String, nil] that line with its unreleased regions masked, in
       #   the content's encoding; nil when the file holds no such line
-      def line(path, content, number)
-        unreleased = @ledger.outstanding(path, Sensitivity::Regions.detect(content), complete: true)
+      def line(path, content, number, verdict:)
+        unreleased = outstanding(path, content)
         from, to = span(content, number)
         return nil if from.nil?
+        return whole(content) if verdict.named?
 
         crossing = unreleased.each_with_index.select { |region, _| crosses?(region, from, to) }
         Sensitivity::Masking.render(content.byteslice(from, to - from),
@@ -149,17 +169,23 @@ module Lain
       # @param path [String, Pathname] the file, ABSOLUTE, as for {#project}
       # @param content [String] its whole bytes
       # @param raw_line [Integer] 1-based, by {Review::Anchor.lines}' rule
+      # @param verdict [Sensitivity::Verdict] the walk's verdict on `path`
       # @return [Integer] 1-based; `raw_line` itself when the file holds no such line
-      def projected_line(path, content, raw_line)
-        unreleased = @ledger.outstanding(path, Sensitivity::Regions.detect(content), complete: true)
+      def projected_line(path, content, raw_line, verdict:)
+        unreleased = outstanding(path, content)
         from, to = span(content, raw_line)
         return raw_line if from.nil?
+        return 1 if verdict.named?
 
         offset = unreleased.find { |region| crosses?(region, from, to) }&.start || from
         1 + newlines(content, 0, offset) - swallowed_before(content, unreleased, offset)
       end
 
       private
+
+      def outstanding(path, content) = @ledger.outstanding(path, Sensitivity::Regions.detect(content), complete: true)
+
+      def whole(content) = Sensitivity::Masking.render(content, [Clipped.new(start: 0, length: content.bytesize)])
 
       def newlines(content, start, length) = content.b.byteslice(start, length).count("\n")
 
