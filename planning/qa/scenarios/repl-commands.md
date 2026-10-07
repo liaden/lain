@@ -76,7 +76,8 @@ you> /introspect
 
 **`/introspect` is the human-facing half of a pair whose model-facing half is `session_usage`** —
 drive it in both states, because it exists to answer a question honestly rather than plausibly.
-Before any turn: occupancy reads "no turn yet in this run" and review reads "none held by /review or
+Before any turn: occupancy reads `no turn measured on this chain in this run` (the wording since round 22;
+"no turn yet in this run" is stale) and review reads "none held by /review or
 /survey". After a turn: occupancy is a percentage, the token rows are populated, and the cache-hit
 row reads a ratio or "nothing billed on the way in yet" if nothing was. **Check the `unreported`
 row names all three gaps by word, every time**, each on its own indented row beneath it:
@@ -310,6 +311,13 @@ results would be rewound past, and the next request would dangle the call (neare
 and with `failure-injection.md` §2's torn head; check all three say the same thing about the same
 shape, because three different sentences for one state is how a human learns to distrust all of
 them.
+
+**`/rewind` onto a stranded prompt lands on its parent** (round 22). When the turn the count lands on is a
+prompt whose ask never got an answer (a stop or a pre-wire failure left it), the head would fold into the next
+line and replay the side effects the rewind just dropped, so the rewind goes one turn further and says so:
+`1 more turn was dropped so the head is not a stranded prompt: "<the prompt's first 60 characters>"`. Drive it
+after a `/stop`, rewind to just that prompt, and check the extra line and that the next request carries neither
+the prompt nor its folded text.
 
 After a successful rewind, confirm the **next** turn's request does not contain the rewound
 content. The head moving in the display while the context still carries the discarded turns is the
@@ -549,7 +557,7 @@ than from this document. **All three must actually terminate it** — drive each
 | how it ends | how to drive it |
 |---|---|
 | the model says done | give it a one-step objective it can finish |
-| the cap | give it an objective it cannot finish, and count the turns |
+| the cap | give it an objective it cannot finish, and count the turns. **On this model the cap is unreachable**: it ends the ask in iteration 1 (round 22), so the cap row cannot be driven live; record it as not reached, or use a stand-in model that never ends |
 | `/goal off` | type it mid-drive |
 
 `/goal off` must yield `goal off -- the driver stops re-prompting; type your next line at you>` and
@@ -610,7 +618,7 @@ the model cannot finish, typing `/goal off` **in the input pane** during iterati
 
 **The cockpit can stop it too: `:LainGoalOff` in nvim.** With a goal driving it stops the driver before
 its next iteration and the chat pane says `goal off from the editor -- the driver stopped before its
-next iteration` *(prediction, not yet driven)*. With none driving, the editor says so — *driven
+next iteration` *(driven in round 22, and it passes)*. With none driving, the editor says so, *driven
 2026-09-14* in a `lain up` cockpit: `lain: :LainGoalOff stops a standing goal, and none is driving`,
 with the chat pane untouched at `you>`. `:h lain-runtime-commands` (`plugin/nvim/doc/lain.txt`)
 documents it. `/mode -goal` with a goal standing stops it as `/goal off` does.
@@ -656,7 +664,7 @@ you> /meta run bad             "bad" (<root>/.lain/meta/bad.rb) does not parse a
 **The last one is new, and it is round 17's F125.** `/meta` wrote a model's prose reply to
 `.lain/meta/<slug>.rb` as a ready script, and `/meta run` launched it into a window that died. The
 script is now checked with a parse that never evaluates it: `/meta run` refuses an unparseable file
-by name (driven above, over a hand-planted prose file), and a `/meta <prompt>` whose reply does not
+by name (driven above, over a hand-planted prose file; **the planted "prose" must actually fail `ruby -c`**, or the refusal has nothing to fire on, so run `ruby -c` on it first), and a `/meta <prompt>` whose reply does not
 parse says `wrote <path>, but it does not parse as Ruby -- <role> answered with something other
 than code. Review it and try /meta again; /meta run would refuse to launch it as it stands.`
 *(Prediction, not yet driven: needs a model reply.)*

@@ -299,7 +299,8 @@ does not borrow the dangling sentence; regress against these exact texts:
 
 All six exited 1 with **zero** backtrace frames, and both damaged files still advertised `43 turns`
 and the correct head digest at rest — invisible at rest, unforgeable on use, in both directions.
-**The supervisor door was NOT driven** and stays owed; round 9 says so rather than marking it passed.
+**The supervisor door was NOT driven** and stays owed; round 9 says so rather than marking it passed. It stays unreachable
+too: `Supervisor::Restart` has no caller outside `lib/lain/supervisor/restart.rb`, so no door can drive it (round 22).
 
 ## 4 — A severed transport
 
@@ -330,7 +331,9 @@ failure is on the first turn. `--prompt '<text>'` is the cheap vehicle, in a win
   <remedy>, e.g. http://localhost:11434`.
 
 **This is the pre-wire shape, so the prompt is WITHDRAWN here**, not folded: every attempt failed
-before the server saw anything, so it does not come back with the next ask. Confirm the
+before the server saw anything, so it does not come back with the next ask. **Use a closed port
+(nothing listening) for this check.** A listener that accepts and then resets, as `pathcount.rb`
+does, is post-wire: the server saw the connection, so the prompt folds instead. Confirm the
 difference against §1b's post-wire fold — the two must not behave alike, and a withdrawn prompt
 reappearing is as much a finding as a stranded one vanishing.
 
@@ -357,7 +360,9 @@ human a verb**, so there is something to drive:
 - **`/stop` does the same thing from the parked prompt itself.** It is lifted off the input rail
   before the command registry sees it, so it works at a `human>` or a `[y/N]`, not only at
   `you>`.
-- The stopped ask's prompt is **kept**, not withdrawn (§1b): the next ask folds it.
+- The stopped ask's prompt is **kept**, not withdrawn (§1b), but "the next ask folds it" holds
+  only when the chain's head is the prompt. After a stop at a parked tool the head is the
+  cancelled tool result, so read the head before predicting the fold.
 
 - **The stopped ask's question retires with it** (round 20's C-1: the `ask_human` row stayed in
   `lain://inbox` and `inbox:N` stayed in the HUD for good after a stop). After `s` or `/stop` at a parked
@@ -396,6 +401,9 @@ Since T14 the ceiling bounds **one ask**, so this is now three checks and not on
 the one that was actually fatal:
 
 1. **A long single ask still stops.** 25 model calls inside one prompt raise `Budget::Exceeded`.
+   Name a vehicle that forces serial calls, such as a chain of files where each read names the
+   next. "Call X 30 times" does not work: the model batches the calls into a few turns and the
+   ceiling counts model calls, not tool calls.
 2. **The stop is SAID, in one line:** `error: loop ran 25 iterations, ceiling is 25`. Round 4's
    failure rendered *nothing at all* while the HUD kept reading `idle 0s`.
 3. **The next prompt is answered normally**, on a fresh count. A per-session counter is the
@@ -588,7 +596,9 @@ this order:
        limit, or with a window covering the whole file, then edit
 
 4. `read_file offset: 1, limit: <lines beyond the end>` — a window covering the whole file → the
-   read is recorded as **complete**. **On a 32k window this step is also round 17's F90 trigger**:
+   read is recorded as **complete**. **A single full-cover window can no longer reach the
+   over-window wall**: every window is capped at 16 KiB, so the wall is reached in aggregate (several
+   reads whose sum overruns the loaded window), and that is the vehicle to use. **On a 32k window this step is also round 17's F90 trigger**:
    the 300 KB window made a 330,522-byte request, and ollama truncated the prompt to 16,386 tokens
    from the front — system prompt and tools gone — while lain journaled the truncated count as 50%
    occupancy. Since 2026-09-14 lain asks ollama not to truncate, so this request is **refused**, and
@@ -618,7 +628,10 @@ $QA/drive.sh '/ruby [session.read?(File.expand_path("mid.rb")), session.partiall
 $QA/peek.sh 6
 ```
 
-`[false, true]` after step 2; `[true, false]` after step 4.
+`[false, true]` after step 2; `[true, false]` after step 4. Read `session.read?` only after a
+**later tool round**: right after the ask whose only tool round read the file whole it answered
+`[false, false]`, and after the next tool round `[true, false]` (round 22's C-5). The edit itself is
+permitted either way, so the instrument lags and the behaviour is right.
 
 **6. Several windows ADD UP, which is new in round 18 and now the ordinary path.** With the
 ceiling at 16 KiB (§8), a single full-cover window is impossible for most real files, so a read
@@ -667,9 +680,11 @@ Expected `[4096, 262144]` — a **lower** bound (too small to be worth a model c
 one (too large for a model to serve). Collapsing them into one knob is the regression: they answer
 different questions, and merging them silently changes which results get a free-tier summary.
 
-Reaching the upper bound needs a tool that legitimately returns megabytes; `web_fetch` is the one
-left, capping at 5 MiB, since T5 and T6 bounded the rest of the shipped floor. Drive one large fetch
-and check:
+**The upper bound is unreachable by construction in this tree**: every tool caps its result at
+16 KiB, so no result gets near the 262144 ceiling. Check the two constants above and the independence
+of the gates by reading, and drive the decline path only with a result a spec or a stand-in tool
+can make large. If a tool that legitimately returns megabytes comes back, drive one large result and
+check:
 
 - the oversized result is **declined before any tier is asked** — no `oracle_answer` for it, and the
   project's own declared summarizers are not consulted either;
@@ -682,7 +697,8 @@ and check:
   tells a size decline from a dead summarizer: it is true only when every miss this decision counted
   was a size decline, so a `summary_misses` count with the flag `false` means something else is
   wrong;
-- the result then renders as an **elision line** carrying its type, content address and byte count.
+- the result then renders as an **elision line** carrying its type, content address and byte count,
+  and, for an elided round, the tool's name and the path it read.
   Silence there — a block that simply vanishes — is the failure.
 
 ## 11 — `lain up` refuses before it builds, and reports a corpse it cannot attach to
@@ -809,7 +825,9 @@ tmux -L lain-qa show-window-options -t lain-qa:chat remain-on-exit   # -> remain
 
 `failed` — not `on` — is what makes holding a corpse cost nothing in the ordinary case. **A clean
 exit must still close the pane.** If a normal `/quit` leaves a dead pane behind, the option has been
-widened to `on` and the fix has overshot.
+widened to `on` and the fix has overshot. The check needs an **attached client**; a detached test
+server cannot show it. Inside a sandbox pane, `env -u TMUX lain up ... --socket S` is a working
+recipe for attaching one.
 
 **On an older tmux this whole section degrades rather than fails.** `remain-on-exit failed` needs
 tmux ≥ 3.2 and the option is set best-effort on purpose: a diagnostic nicety must not take `lain up`

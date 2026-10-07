@@ -182,6 +182,8 @@ git -C "$T" init -q && git -C "$T" add -A          # the walk lists through `git
 |---|---|---|
 | `plain.rb` | listed | ordinary |
 | `deploy.pem` | **listed**, content rendered `<redacted:1>` | gated, not denied — masked by `Projection` on region detection, not by the path verdict |
+| `password.txt`, `secrets.yml`, `credentials.json`, `secrets/prod` (a name, or a directory below the root, that names a secret) | **listed**, corpus text is **1 placeholder** | name-gated (after round 22's S-1), so the file is listed but its content never enters the corpus. A note on it journals the placeholder as the evidence, projected line 1, and it stays masked for the whole survey: there is no release route on a survey, so a human reads the file in chat through the gate. A symlink such as `.env -> password.txt` is masked the same way. Code and `.md` files are never name-gated (`auth.py`, `docs/secrets.md` list normally) |
+| `.env`, `deploy.pem` (shape-gated) | listed, only the **detected regions** masked | these keep region masking and can be released. **Known follow-up, expected verdict and not a fix:** a shape-gated file with no detected region still enters the corpus raw |
 | `blob.bin` | withheld, `binary content` | a NUL in the first 8192 bytes |
 | `notes.txt` | withheld, **without naming what it is** (`a protected path`) | a symlink is two names for one file; denial is tested **before** containment, so this must not be disclosed as a scope note. Round 11: naming it as a key would itself disclose what the denial hides — the assertion is that it is NOT disclosed as `outside` |
 | `elsewhere.conf` | withheld, `outside` | resolves out of the tree the human pointed at |

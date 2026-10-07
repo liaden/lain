@@ -202,7 +202,8 @@ lain consolidate <session> --provider ollama --model qwen3-coder:30b
 **Automated by** `spec/e2e/session_passes_spec.rb`, "records the session on a model that is not the default" and "runs #{pass} on the model and num_batch the session header recorded" (run once for consolidate): with no flags typed, a pass without `--dry-run` over a session with a completed lineage exits 0 and sends every model call on the header's model (`lfm2.5:latest`, not the default) and `num_batch`. **Still needs a human:** the dry run and its credential negative, the masked scaffold, the pass's own journal directory, the lineage list and the torn-session refusal, the 3 resolutions, the `writing memories` or `stored nothing` report, the read-back and author checks, and whether what the clerk wrote is any good.
 
 Check the three resolutions `lain consolidate` accepts — an explicit path, a bare filename, and a
-prefix — and confirm they are **not** `lain chat --resume`'s three, which are a different contract.
+filename without its `.ndjson` suffix (not a prefix: `cli/session_file.rb` resolves the missing
+suffix only, so a leading fragment of the name finds nothing), and confirm they are **not** `lain chat --resume`'s three, which are a different contract.
 A driver who assumes they are the same will file a false defect the first time a selector that
 resumes fine fails to consolidate.
 
@@ -294,7 +295,15 @@ Two more, cheap and worth taking:
   second chat, then `--resume` the first: the resumed one reproduces the roots its own file
   recorded. The item is still durable — a *fresh* chat sees it.
 - **A `/rewind` past a `memory_write` drops it from the live view and not from the store.**
-  `memory_read` in that session stops finding it; a fresh chat still does.
+  `memory_read` in that session stops finding it; a fresh chat still does. **`/rewind N` counts
+  turns, so N must reach past the `tool_use` turn, not just the prompt.** Round 22: `/rewind 7` past
+  a `scratch` write answered `no memory with id "scratch"` with the row still in the store, while
+  `/rewind 1` moved one turn, landed on the write's `tool_result` and kept the write, which is
+  correct. Pick N from the turn count, not from the number of prompts.
+- **A memory row that is not valid UTF-8 is skipped by name.** Append a row with a bad byte to the
+  store and start a chat: the notice reads `<store path>:<line> (id "<id>") is not valid UTF-8 and was
+  skipped`, once per row, and the rest of the store loads. A chat that refuses to start, or that
+  loads nothing, is the old shape.
 
 ## 5 — `lain improve`, `improvement_write`, `lain improvements`
 

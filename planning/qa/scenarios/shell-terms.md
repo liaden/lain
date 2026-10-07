@@ -432,9 +432,10 @@ what a round should check rather than the outcome:
 | `cat config/master.key`, `cat config/credentials.yml.enc`, `cat .pgpass`, `cat id_rsa`, `cat .bash_history` | classify **gated** since 2026-09-14 — round 17's F91 approved every one of these with nobody asked. The widened `Sensitivity` table names `config/master.key`, `*.key`, `credentials.yml.enc`, `.pgpass`, `*_history`, `.gem/credentials`, `.ssh/config`, `rclone.conf`, `*.keyring`/`keyrings/**` and a bare `id_rsa`/`id_ed25519`/`id_ecdsa` anywhere except `*.pub`; *driven 2026-09-14*, `Sensitivity#classify` read `gated credential` for each, and `ordinary` for `id_ed25519.pub` |
 | `cat _netrc`, `cat .netrc.bak`, `cat .authinfo`, `cat .msmtprc`, `cat .htpasswd`, `cat .vault_pass`, `cat passwords.txt`, `cat .pgpass.bak` | **credential variants by name** (round 20's H-1, whose live repro was `cat _netrc` releasing `password hunter2hunter2`). `_netrc` and `.netrc.bak` classify **denied**; the others **gated**. Create each in the scratch tree with mode 0644 and one line `machine h login u password hunter2hunter2`, and expect every row to abstain. **The check that catches H-1 returning is `cat _netrc` answering the `every stage is a bare allowlisted reader` reason** |
 | `cat notes.cfg`, a 0644 file under an unlisted name holding `machine h login u password hunter2hunter2` | **the content predicate over netrc, pgpass, htpasswd and msmtprc shapes.** Nothing in the name says credential, so only `Regions` can refuse it. Also try a `db.example:5432:app:alice:s3cretpass` line and `alice:$apr1$abc$0123456789abcdefghijk` |
+| `cat secrets/prod`, `cat credentials/x`, `cat password.txt` (a directory or a file name below the root that names a secret) | **the name rule, new after round 22 (S-1).** `secrets/prod` has an ordinary basename and a directory that names a secret; all three classify **gated** and abstain, and nothing opens them. Before the fix `cat secrets/prod` printed the file with nobody asked. Source files and `.md` files are excepted by extension (`cat docs/secrets.md` still approves). Drive the same three through `read_file` as well: each now parks before a byte is read, where before it returned the bytes with no prompt (`secret-boundary.md` §1) |
 | `cat plain.txt`, where `plain.txt` is a symlink to `.netrc` (`ln -s .netrc plain.txt`) | **the landing.** The rule judges where the link points, so a link with an ordinary name to a denied file abstains; `cat readme2.txt` over `readme2.txt -> .env.local` abstains too. The same holds when the link is a directory (`keys -> ~/.ssh`, `cat keys/id_qa`) |
 | `cat ../outside/notes.txt`, `cat /etc/hostname` | **the root predicate.** Every path-like word, and the call's own cwd, must resolve under the project root — lexically and again through the real path, so a symlink out of the root does not count as in it. A call whose cwd is `/` abstains even for `cat README.md` (*driven 2026-09-14*) |
-| `cat secrets.txt`, where `secrets.txt` is an ordinary-classified file holding an `API_KEY=…` line | **the content predicate**, new in round 18 and the last one checked, because it is the only one that opens a file. Every word that resolves to a real regular file must be world-readable, at most 64 KiB, and carry **no region** `Sensitivity::Regions` can find. Classification said this file was ordinary and it is; the bytes are what disqualify it. Not-a-file words (a nonexistent path, a directory) pass trivially; a FIFO, socket or device does not, and the open is `O_NOFOLLOW` |
+| `cat notes2.txt`, where `notes2.txt` is an ordinary-classified file holding an `API_KEY=…` line (not named `secrets.txt`: since round 22 that name classifies gated by itself, which would refuse it for the wrong predicate) | **the content predicate**, new in round 18 and the last one checked, because it is the only one that opens a file. Every word that resolves to a real regular file must be world-readable, at most 64 KiB, and carry **no region** `Sensitivity::Regions` can find. Classification said this file was ordinary and it is; the bytes are what disqualify it. Not-a-file words (a nonexistent path, a directory) pass trivially; a FIFO, socket or device does not, and the open is `O_NOFOLLOW` |
 | `cat <an exempted `.env`>` | **also the content predicate's neighbour, the ordinary-words one.** An `exempt` entry lifts the human read prompt and nothing else, so an ordinary-**by-exemption** verdict still fails here. One basename exemption for a fixture `.env` used to approve `cat` of every `.env` in the tree with nobody asked |
 
 **Two roots approve nothing at all, whatever the command.** A session rooted at `$HOME` (or above
@@ -572,6 +573,11 @@ the round.**
   no rung at all. An absent `shell_arm` is still the regression this section exists to catch;
   an absent `escalation` is a new one.
 
+**A call refused before it runs writes no `shell_arm`** (round 22): the record is written when the command is
+about to run, so a call the gate denied, or one that parked and was never answered, leaves none. Count
+`shell_arm` against the `bash` calls that **ran**, not against every `tool_use` named `bash`, or a refused
+call reads as a missing record.
+
 Take one abstaining command at each approval level too (`git log --oneline -5` will do): expect
 `"verdict":"abstain","arm":"string","term":[]`. **A record written only on the interesting
 branch cannot answer §9's question**, so a missing abstention record is a finding even
@@ -658,6 +664,7 @@ above plus these, every one refused before any connection:
 | `http://127.1/`, `http://0x7f000001/`, `http://017700000001/` | `… is address-shaped but not a canonical address` |
 | `http://localhost./`, `http://LOCALHOST/`, `http://foo.localhost/` | `… is a blocked internal name (localhost)` |
 | `http://metadata.google.internal/` | `… is a blocked internal name (internal)` |
+| `http://metadata/`, `http://instance-data/` | `… is a single-label name the resolver search list could map inward`; **new after round 22 (H-2)**: a bare name is expanded by the resolver's search list and can land inside the network, so a host with no dot is refused. `http://localhost/` still reads as the blocked internal name, since that check answers first |
 | `http://224.0.0.1/` | `… is in the blocked multicast range 224.0.0.0/4` |
 | `http://255.255.255.255/` | `… is in the blocked reserved range 240.0.0.0/4` |
 | `http://198.18.0.1/` | `… is in the blocked benchmarking range 198.18.0.0/15` |
@@ -744,7 +751,8 @@ the reduction.
 
 What to record, because none of it is a pass/fail and all of it is the point:
 
-- the three counts and the term-arm fraction;
+- the three counts and the term-arm fraction (counted over commands that **ran**: a refused call writes no
+  `shell_arm`, so the denominator is the calls that executed, not every gated one);
 - **the divergence rows** — `verdict=allow arm=string` is the interesting one, and a
   non-zero count on a `--exec local` session would be a finding, since `Local#takes_term?`
   is unconditionally `true`;

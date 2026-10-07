@@ -117,12 +117,15 @@ round 18. Before it, only a child that finished wrote a completion, so a crashed
 `:spawn` with nothing beside it: the fleet count never came down and every lineage reader waited
 forever. Now the completion `:message` carries a `lifecycle` of `settled`, `stopped` or `failed`,
 and a failed one also names the error's **class** — and carries **no** `result` key at all, which
-is what keeps it out of every finished-work reader:
+is what keeps it out of every finished-work reader. **A one-shot child's completion never carries
+`settled`**: an answered one and a killed one both write `stopped` (an actor's `settled` is its
+answer riding back as a message), so **the presence of `result` is the discriminator** between them.
+Print `result` presence beside `lifecycle` in the reduction (round 22):
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
   next unless r["type"]=="message" && r.dig("payload","lifecycle")
-  puts "#{r["payload"]["lifecycle"]}\t#{r["payload"]["error"]}"}' "$JOURNAL"
+  puts "#{r["payload"]["lifecycle"]}\tresult=#{r["payload"].key?("result")}\t#{r["payload"]["error"]}"}' "$JOURNAL"
 ```
 
 Three things to drive:
@@ -138,6 +141,10 @@ Three things to drive:
    completion carries `lifecycle: failed`, `error: Lain::Tools::Subagent::MalformedAnswer`, and no
    `result` key — the parent's tool call comes back `error: the child's turn was a tool call
    written as prose, not an answer`, not delivered as though it were the child's findings.
+   **Live on ollama 0.34.4 with qwen3-coder this child is unreachable** (round 22): ollama's parser
+   answers 500 or cuts the stream before lain sees a prose envelope. The decoder now also strips
+   tool-call markup from a reply, so a stripped one is the other thing to look for. Drive this item
+   with a stand-in endpoint that emits the envelope, and say so.
 
 A write that cannot land is itself journaled, as `ending_not_recorded` naming the spawn and which
 record was lost, rather than dropped silently.
@@ -153,7 +160,9 @@ shape was never written in production, and every lineage reader that walked it f
 17's F98). The `:spawn` message's payload names the parent's head as `spawned_from`, the completion
 `message` names the spawn and the child's final turn, and the session file holds each child turn as
 a `child_turn` record. Confirm both directions: the lineage survives (the spawn's `spawned_from`
-resolves to a parent turn), and the child **never inherits the parent's prompt**. Put a distinctive sentence in the parent's context — a `/btw`-worthy
+resolves to a parent turn), and the child **never inherits the parent's prompt**. **The `inherit`
+prefix is the other shape**: an `:inherit` child starts from the parent's held cuts at spawn, so a
+parent that has compacted hands the child the compacted view, not the full chain. Put a distinctive sentence in the parent's context, a `/btw`-worthy
 aside, a memory item — and confirm it is absent from the child's request.
 
 ## 3 — `actor` mode, and `--isolation worktree`
@@ -311,6 +320,10 @@ session: `lain watch bfc36418ae69 --session <file>` rendered
 `[blake3:bfc36418ae69 spawn] fresh/schema spawned from blake3:ff9ca1f05f4a` and its completion, the
 same as the full digest. **A no-match names the file it searched**: `lain watch zzzz --session
 <file>` → `no spawn matched selector "zzzz" in <file's basename>`, exit 1.
+
+**A finished child is told apart from a killed one.** `lain watch` renders an answered one-shot's
+completion as `(done)` and a stopped one as `(stopped)`, though both journal `lifecycle: stopped`;
+the answer (`result`) is what decides it. Drive one of each and read the marker.
 
 `EmptySelector` must say what a selector is: `selector must be a spawn-digest prefix, got ""`. With
 no sessions at all, `NoSession` must name the directory it read **and what it skipped** — the

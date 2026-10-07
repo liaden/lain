@@ -71,7 +71,9 @@ Checks:
 
    **The repro is a squeeze AND a restore, not just the squeeze, and the HUD must come back with
    no ask running and no key pressed.** Shrink the window below 13 rows, then grow it back: the
-   pane returns to its own floor either way, and the HUD row has to be repainted on that geometry
+   pane returns to its own floor either way **unless the human had grown it first**: after a
+   restore the pane holds the height it was grown to, so the check is "at or above the floor", or
+   the squeeze step must also cap it back first (round 22's B-8). The HUD row has to be repainted on that geometry
    settling by itself, with nobody typing and nothing dispatching. And an **idle** pane must
    repaint nothing at all while sitting still — a poll that redraws on the clock rather than on a
    real geometry edge is the regression this guards against, so measure bytes, not eyeballing:
@@ -146,12 +148,22 @@ Checks:
    **chat** trying to bind a socket a live chat already holds is refused by name rather than
    stealing it, while a stale file left by a dead chat is rebound.
 
+**Three round-22 behaviours of the input pane, each a quick look.** The pane redraws its header only where
+it is: after an answered `[y/N]` nothing is written over the echoed answer, and the next prompt draws the
+header whole. `lain input` takes over the cockpit's input-pane slot, deriving the session from `TMUX_PANE`
+(not from `--name`, which defaults to `chat`), so a second pane started by hand adopts the recorded slot of
+**its own** cockpit. And a line the terminal cut at its canonical limit while an ask was running (4,095 bytes
+on a cooked terminal) is **held and said**, not committed: the human is told the terminal cut it and to paste it
+at the idle prompt; a 200-byte line mid-ask is held as typeahead as before.
+
 **Stopping an ask, and keeping the session.** Two gestures, one outcome:
 
 - `/stop` typed at whatever prompt the run parked on — it is lifted off the input rail before the
   command registry sees it, so it works from a `[y/N]` or a `human>` and not only from `you>`.
 - Ctrl-C, then `s` at the countdown. (`c` cancels the countdown, `w` extends it, `r` waits for
-  responses. An **idle** `you>` countdown offers only `c` and `w`, because there is no ask.)
+  responses.) There is no idle countdown: a Ctrl-C at an idle `you>` **ends the chat**
+  (`docs/commands.md`, the `--grace` row). The countdown is for a run in flight, or for a
+  `[y/N]` that took the terminal from an idle `you>`.
 
 **Drive the countdown from a prompt that already had a read open** — a Ctrl-C at a parked
 `[y/N]` is exactly that shape, and it is where the pane's countdown used to misbehave. The
@@ -392,7 +404,10 @@ says `<C-w>l<C-w>l` because a single motion reaches only the history side. A **s
 side (`changeset-review.md` says so in its own opening), so the slots are sidebar, NEW: two windows,
 and the banner correctly says one `<C-w>l`. This section's own example is `/survey ./lib`, so
 following it literally over a survey counts one window too many. Read the banner the run printed and
-`winnr("$")`, rather than either number quoted here.
+`winnr("$")`, rather than either number quoted here. **A re-survey while a previous thread window
+is still open prints one more**: the old thread window stays open (round 22's B-10), so close it
+(`:only` on the review tab, or `:close` on the thread window) before reading `winnr("$")`, or read
+the count against the windows you can see.
 
 Then, over RPC, verifying focus at every step:
 
@@ -402,7 +417,7 @@ nvim --server "$S" --remote-send ':1wincmd w<CR>'    # the sidebar
 nvim --server "$S" --remote-expr 'bufname()'         # MUST print lain://review
 nvim --server "$S" --remote-send '2G'
 nvim --server "$S" --remote-send '<CR>'              # opens sidebar | NEW -- a survey has no old side
-nvim --server "$S" --remote-expr 'winnr("$")'        # MUST print 2, not 3
+nvim --server "$S" --remote-expr 'winnr("$")'        # MUST print 2, not 3 -- on a FIRST survey
 ```
 
 After `<CR>` the tab holds **two** windows, sidebar and NEW, because this round is a survey:
@@ -760,17 +775,22 @@ own `ask_human`:
 **And an inline `[y/N]` does not ring.** In the same kind of chat, with the layer up, a parked
 `ls -la` drew its `[y/N]` and wrote no BEL and ran no `display-message` (driven 2026-09-14): the
 approval bell rides the one-line approval ARRIVAL, which only a cockpit draws. So check the approval
-bell in the cockpit — the `! <requester> asks to run …` line followed by one `\a` *(prediction,
-not yet driven)* — and record the plain chat's silent `[y/N]` as the current shape rather than as a
+bell in the cockpit, the `! <requester> asks to run …` line followed by one `\a`, plus one
+`display-message <arrival line>` (driven in round 22: 1 BEL and 1 display-message), and record the plain chat's silent `[y/N]` as the current shape rather than as a
 pass. With the layer down, an arrival must write no BEL and run no `tmux` command at all.
 
 **Now drive three gated calls in one turn.** The house model **does emit parallel tool calls** now
 — round 17 saw six `tool_use` blocks in one message when it asked for one per turn, and two
-`subagent` calls in one message — so the multi-pending shape this section could never reach before
-is drivable. Ask for `ls -la`, `ls -l` and `ls` as three calls in one message, then check: three
-arrival lines, three rows in `lain://approval`, and answering **one** in nvim decides that call and
-leaves the other two parked and still listed. *(Prediction, not yet driven: the three-at-once
-shape was not re-driven after the nvim-first change.)*
+`subagent` calls in one message, but **`bash` is an unsafe tool, and the runner treats each
+unsafe call as a barrier that runs alone** (`agent/tool_runner.rb`, `ToolRunner#run`). So three
+parallel `bash` calls park ONE AT A TIME, and three rows at once is unreachable with `bash`
+(round 22). Ask for `ls -la`, `ls -l` and `ls` as three calls in one message and check what is
+reachable: one arrival line and one row in `lain://approval`, and answering it releases the next,
+in wire order. Three rows at once needs gated calls that are all parallel-safe, so name that
+vehicle before claiming the shape. **Queued approvals are announced**: each call parked behind
+the drawn one gets its own line (`Intake#enter`), and an approval's clock starts when its row is
+drawn, not when it was parked. Round 22 saw "nothing announces" once; that was a draw-order
+observation, not a missing announcement.
 
 **The `escalation` records are the sixth surface, and the only one that says WHICH surface
 answered.** Round 9 used them to settle round 8's F40 in a way no pane capture could: every gated
@@ -856,6 +876,11 @@ read is guarded three ways, and each guard is a check:
    **followed by a line break** before the model's next words, and the `[y/N]` row itself is still in the
    scrollback (`tmux capture-pane -p -S -50`). **Catches B-3 returning:** the verdict and the model's first
    word on one line, or a `[y/N]` row that was overwritten.
+4. **A `[y/N]` takes only a verdict** (round 22's F-5: a paste during a `[y/N]` was read as "no" and
+   discarded). `y`, `yes`, `n`, `no` in any case, and an empty line, decide the approval; any other line
+   leaves the approval open and is held as the next prompt, said in one line. Paste `please also fix the
+   tests` at a parked `[y/N]` and check the call is still parked and the line comes back at `you>`. The
+   input pane's reader is stubbed in the spec, so this one needs a human in a live pane.
 4. **A question answered elsewhere retires.** A subagent question settled by another surface is
    retired rather than re-queued, so no `human>` is drawn on the next dispatched lines. *(Prediction,
    not yet driven: round 17's F101 ghost was three `human>` prompts drawn mid-dispatch after an nvim
@@ -949,7 +974,9 @@ Round 20's C-1: an ask parked on `ask_human` that the human stopped left its row
 a cockpit: ask the model something it can only answer by calling `ask_human`, wait for the row, then `/stop`
 (or Ctrl-C). **PASS**, all four: the journal holds a `questions_consumed` record naming that question's
 digest, the HUD reads `inbox:0`, `lain://inbox` has no row, and `/inbox` offers nothing. An **answered**
-question retires exactly **once**, so count `questions_consumed` records naming it: 1, not 2. **Catches C-1
+question retires exactly **once** for the parent, so count `questions_consumed` records naming it:
+1, not 2. **For a child's question the count is 2 today** (round 22's B-5: `ask_human` and the
+scribe each journal one, one digest); record that as the current shape, not as a pass. **Catches C-1
 returning:** any of the four surfaces still showing the question after the ask ended.
 
 **Automated by** `spec/e2e/stop_while_busy_spec.rb`, "consumes the question when an ask parked on it is stopped": after `/stop` the journal holds a `questions_consumed` with 1 digest, the status feed's `inbox_count` is 0 and `lain://inbox` has no row. **Still needs a human:** that the digest is the parked question's, the HUD's `inbox:0` read off the pane, `/inbox` offering nothing, Ctrl-C as the stop, and the answered question retiring once.
@@ -997,7 +1024,7 @@ becomes the answer, and the answer goes through `lain://inbox` or a deliberate `
 between. **What wrong looks like in the cockpit:** a prose line at `command>` recorded as the answer,
 or a `human>` drawn in the chat pane at all. In the cockpit, steps 2–5 below are driven inside
 `/inbox`'s own drain, which owns the terminal for its line; step 1's `/status` is typed at
-`command>`. *(Prediction, not yet driven: `/inbox` typed at `command>` in a cockpit.)*
+`command>`. *(Driven in round 22: `/inbox` typed at `command>` in a cockpit passes.)*
 
 **Automated by** `spec/e2e/cockpit_question_spec.rb`, "lists the parked question in lain://inbox and counts it in state.json", "journals the human's answer to the child's question", "leaves inbox_count and fleet at 0 and lain://inbox with no open question" and "reports none open in the chat pane when /inbox is typed in the input pane": a skill child on a second model parks a question, `:LainReply` on its `lain://inbox` row journals the answer, `state.json`, `lain://inbox` and `/inbox` come back empty, and `/inbox` typed at `you>` afterwards answers `(no questions pending)` in the chat pane. **Still needs a human:** the HUD's `inbox:N` read off the pane, no `human>` drawn in the chat pane at all, the arrival line, a prose line at `command>` held rather than taken as the answer, the prediction above, and the whole `--no-nvim` table below.
 

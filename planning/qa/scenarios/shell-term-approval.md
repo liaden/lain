@@ -381,8 +381,12 @@ corrections round 15 had to make to this snippet — the member is **`exit_statu
 `Pipeline#call` requires **`env:` and `timeout:`**:
 
 ```bash
-$QA/drive.sh '/ruby Lain::Shell::Pipeline.new.call([["cat","README.md"],["tee","out.txt"]], cwd: Dir.pwd, env: {}, timeout: 10).to_h.reject{|k,_| k==:stdout}.inspect' 6 30 >/dev/null; $QA/peek.sh 6
+$QA/drive.sh '/ruby Lain::Shell::Pipeline.new.call([["cat","README.md"],["tee","out.txt"]], cwd: Dir.pwd, env: {}, timeout: 10, capture: Lain::Exec::Capture::Bounded.new(ceiling: 16384)).to_h.reject{|k,_| k==:stdout}.inspect' 6 30 >/dev/null; $QA/peek.sh 6
 ```
+
+**`capture:` is a required keyword too** (round 22): without it the call raises, so pass
+`Lain::Exec::Capture::Bounded.new(ceiling: 16384)`. The result then also carries `size` and `ceiling`
+beside `exit_status` and `stderr`, so the reduced hash prints those two as well.
 
 Measured round 15, verbatim:
 `{exit_status: 126, stderr: "lain: tee: not permitted downstream of a pipe\n"}`, `out.txt` absent,
@@ -467,9 +471,12 @@ Build the fixture per `secret-boundary.md` §0 (redirect `HOME` first), then, ze
 $QA/drive.sh '/ruby (h = ENV["HOME"]; s = Lain::Sensitivity.new(home: h, cwd: Dir.pwd); ["grep", "-r", ".", "#{h}/.ssh"].map { |w| [w, s.classify(w).level] })' 6 30 >/dev/null; $QA/peek.sh 6
 ```
 
-**Every word classifies `:ordinary`.** The directory `~/.ssh` is not itself denied — the shipped
-rule is `Rule.within(".ssh", name: "id_*", except: "*.pub", level: :denied)`, so it names files
-inside it and not the directory. And `Shell::Verdict.new.call("grep -r . <H>/.ssh")` is a clean
+**Every word classified `:ordinary` when this section was written, and one no longer does** (round 22):
+`<H>/.ssh`, the directory, classifies `gated` with reason `credential` (checked against the real `Lain::Sensitivity`, 2026-10-06), not `ordinary`; the other words (`grep`, `-r`, `.`) stay
+ordinary. The directory is still not itself *denied*, the shipped rule is
+`Rule.within(".ssh", name: "id_*", except: "*.pub", level: :denied)`, so it names files inside it and not the
+directory, but the verdict on the directory word is `gated`, which does not change the outcome below, since the
+term is judged by the flag matcher and not by that word. And `Shell::Verdict.new.call("grep -r . <H>/.ssh")` is a clean
 **allow** carrying `[["grep", "-r", ".", "<H>/.ssh"]]`, with `grep` on no family list.
 
 So: **a term whose every word is ordinary, printing a file nothing may lift.**
@@ -614,7 +621,9 @@ capability every rule has, since no rule *but* `ComposedTerm` reads a term.
 
   - `cat README.md` — allowlisted program, ordinary classification, world-readable, small, no
     region. The predicate opens it and says nothing.
-  - `cat ~/.ssh/id_ed25519.pub` (spelled absolute) — both the denied and the gated `.ssh` rules
+  - `cat id_ed25519.pub`, **a file inside the root** (round 22: the absolute `$HOME/.ssh/id_ed25519.pub`
+    abstains, because it lies outside the project root, so it is not the live positive; plant the key in the
+    root and use the in-root spelling), both the denied and the gated `.ssh` rules
     carry `except: "*.pub"`, so it classifies ordinary, **and** the detector recognises a parsed
     OpenSSH or PEM **public** key as not a region. That second half is by structure, not by
     extension: renaming a private key to `.pub` does not get it past the detector.
@@ -655,8 +664,11 @@ Drive it: put an `API_KEY=` line in a file under `$T`, get `cat` of it auto-appr
 if the file is ordinary and the predicate above passes — use a file the model itself writes so
 the pre-check sees it empty), then read three things. The model's `tool_result` must be the
 refusal and not the bytes. The **retry** must reach a human: the same command typed again
-abstains at the rules rung with a `barred` reason and parks, where before it would have been
-auto-approved a second time. And the pending it parks on carries `"humans_only": true` — under
+abstains at the rules rung and parks, where before it would have been
+auto-approved a second time. **Which reason the rules rung gives depends on the level** (round 22): under
+`ask`, when the content predicate already refuses the file (an `API_KEY=` line it can read), the retry's rules
+reason is `no rule had an opinion`, because nothing needed to bar it; `barred` appears under `auto`, where the
+bar is what keeps the command off the queue. Do not file `no rule had an opinion` under `ask` as a missing bar. And the pending it parks on carries `"humans_only": true`, under
 `/mode auto` there is no queue, so the same command gets a *final* deny naming `/mode ask` as the
 way out (§11).
 

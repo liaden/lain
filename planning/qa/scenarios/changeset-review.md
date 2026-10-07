@@ -212,6 +212,31 @@ That is documented, deliberate, and exactly the kind of thing a round records as
 files as a defect. What must still hold: the surface is never told, **nothing is drawn**, and the
 refusal reaches stderr. A refused review that renders a partial diff is the finding.
 
+## 4b: Hunks are projected before any reader sees them *(after round 22's D-4)*
+
+Round 22 found a changeset's hunks reaching the docent brief, `/critique`'s patch, submit and marks
+with an unreleased secret in them. Hunks are now projected first. Plant `API_KEY=sk-live-0000000000000000000000000000`
+and a PEM block (a realistic body, per `secret-boundary.md` section 4) in a changed file, open the review,
+ask the docent about it, run `/critique`, and drive a note. Checks:
+
+- a detected, unreleased secret reads as `<redacted:N>` in all four readers, and the session journal holds **no
+  byte** of it (the `secret-boundary.md` section 7 grep over `$QA`, minus the exclusions listed there);
+- **each side of a file is projected whole**, so a key block cut off at a hunk's edge is still caught, and the
+  hunk's line counts still match its header;
+- **a rename projects the `-` lines from the old path at `base_ref`**: rename a file holding a secret and check
+  the removed side is masked too;
+- **a release the human made on the working tree survives opening a review**; the base side never forgets
+  one, so a base-side secret stays masked even after the working copy was released;
+- placeholders number once per hunk across both sides; a note's quoted evidence numbers them across the
+  **whole file**, so the same region can show a different number there. Known, not a defect;
+- **hunk keys and the changeset identity do not move** when a region is released, or when a secret appears in
+  another hunk. Open twice around a release and compare the keys and the `changeset_opened` digest.
+
+**Known limits, expected verdicts and not fixed:** a file gated only by its **name** (`password.txt`) is
+region-masked in a hunk, not masked whole as it is in a survey (`survey.md` section 4); and an implementation
+review opened through `request_review` does not see a release made in chat. Opening a review costs about
+15 to 20 ms per file (`HEAD~150` is about 6 seconds), so a slow open on a wide changeset is not a regression.
+
 ## 5 — In the cockpit, over a changeset instead of a survey
 
 Piggyback on the subject session's cockpit, and drive the **same rails `cockpit-surfaces.md` §4

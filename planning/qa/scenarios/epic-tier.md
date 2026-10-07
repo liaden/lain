@@ -192,7 +192,10 @@ lain epic status --mermaid
 
 Renders the issue graph as mermaid flowchart source instead of the text report. Two things to check,
 because both were bugs once: **node ids are injective** (two issues whose ids sanitize to the same
-token must not collide into one node), and labels **escape** `&`, `<`, `>`, `"` and `#`. Paste the
+token must not collide into one node), and labels escape `&`, `<`, `>`, `"` and `#`. **Round 22:
+the escape half is unreachable through `lain epic add`**: a label is the issue's id alone, and ids are
+`[a-z0-9-]`, so none of those characters can appear in one; check injectivity (`a--b` and `a-b` come out
+as distinct nodes) and treat the escape as covered by the unit spec. Paste the
 output into any mermaid renderer and confirm it draws; a diagram that fails to parse is a finding
 even though the command exited 0.
 
@@ -299,8 +302,8 @@ lain epic submit research`; an interactive gate refuses a stdin that is not a te
 asks anything, so every piped line tests the refusal below and none tests an answer. **Drive `y`,
 `n` and end-of-input in a tmux pane** (type `y`, `n`, and Ctrl-D at the prompt, one submit each),
 and read the `gate_decision` after each. **End-of-input is not a human's answer** since 2026-09-14:
-it journals `answered_by: eof`, where round 17 found `answered_by: human` (fork E3). *(Prediction, not
-yet driven.)*
+it journals `answered_by: eof`, where round 17 found `answered_by: human` (fork E3). *(Driven in round
+22: `n` gives human and false, Ctrl-D gives `answered_by: eof`, `yes` gives human and true.)*
 
 Then the refusal, which is what a pipe or `< /dev/null` reaches. It used to print a backtrace, then
 the jargon `… but this session is missing asker` (round 17). *Driven 2026-09-14*, both
@@ -487,7 +490,7 @@ What to check, because the edge rewrite is the whole point:
   id survives in `Discovered from:`;
 - after a **merge**, the result carries both sides' edge sets minus the self-references the rewrite
   would otherwise create, **and a `Discovered from:` both sides share** — round 17 found merge
-  dropping it (fork E7) *(prediction, not yet driven)*;
+  dropping it (fork E7) *(driven in round 22)*;
 - after each, `lain epic status` shows a graph with **no dangling `Blocks:` edge**;
 - **an id the tier cannot use is refused where the issue is built** (round 20's G-1: `lain epic add`
   accepted `late_discovery` and `a.b`, and the epic was then refused by every other command). Drive
@@ -601,7 +604,9 @@ then at the `you>` prompt:
 /implement-epic --width 1
 ```
 
-`--width` is the only flag it takes; it defaults to 2. Check that `--width 0`, `--width -1` and
+`--width` is the only flag it takes. **Its default depends on the endpoint**: 2 for a remote one, 1 on
+a local one (`EpicDriver::Factory::LOCAL_WIDTH`, taken from the admission default), so a run against
+ollama on loopback is sequential, and "it defaults to 2" is false there (round 22). Check that `--width 0`, `--width -1` and
 `--width two` are each refused by name, and that an unknown flag is refused rather than read as an
 argument.
 
@@ -618,7 +623,7 @@ What to watch for:
 - **an actor that committed nothing opens no gate.** Round 17 found the implementation gate opening
   over the red commit alone (F111). The issue is now reported as `its actor settled having committed
   no work beyond its failing tests at <sha>, so there was no implementation to submit`, and no
-  implementation gate opens *(prediction, not yet driven)*;
+  implementation gate opens *(driven in round 22: shout's red step, no gate opened)*;
 - **a per-issue refusal stops that issue, never the run.** Break one issue deliberately (an
   unsatisfiable criterion) and confirm the other still lands;
 - **Ctrl-C stops between issues**, not mid-merge. Work still in flight is reported as unsettled.
@@ -638,8 +643,9 @@ timeout`) left `lain://inbox` listing the question, `inbox_count` at 1, `:LainRe
 "stale", `/inbox` saying none pending while `/status` said 1, and `fleet 1` long after the run said
 `0 landed` (F100). Drive one timeout (the window is 300 s) and one answer, and after each confirm
 `lain://inbox` is empty, the status feed's `inbox_count` is 0, and `/inbox` and `/status` agree.
-*(Prediction, not yet driven.)* An answer given in nvim is journaled as the human's words, not as a
-denial.
+*(The deny leg was driven in round 22: `deny` through `:LainReply` journaled human, interactive, false, and
+`lain://inbox`, `inbox_count` and the HUD all read empty. The timeout leg is still not driven.)* An answer
+given in nvim is journaled as the human's words, not as a denial.
 
 ### 10e — retries
 
@@ -653,7 +659,8 @@ not be checked out … already used by worktree at …/retained/…`, `lain work
 `git worktree remove -f -f` got past. Since 2026-09-14 a retained checkout anchors its HEAD and
 **detaches**, keeping its files and letting go of the branch. Drive a per-issue refusal, then the
 retry: it must launch, and `git -C <retained path> status` must still show the uncommitted work.
-*(Prediction, not yet driven.)*
+*(Driven in round 22: the retained checkout had a detached HEAD, kept its uncommitted `spec/`, and no
+worktree held the branch.)*
 
 **A retry is a new running row, not an invisible one** (round 20's G-4: `lain://status` and `state.json`
 froze during `/implement-epic` because a failed attempt wrote no anchor, so the retry was handed attempt 1
@@ -661,7 +668,11 @@ again and its `:spawn` digest repeated, which `Fleet` ignores as one it has seen
 attempt before it writes an anchor (a per-issue refusal, or Ctrl-C), then retry it. **PASS:** the retry's
 `:spawn` digest **differs** from the first attempt's (`grep '"kind":"spawn"'` the two records), and
 `lain://status` and `.lain/state.json` list the retry as **running**. The lane and the worktree key are the
-first attempt's, unchanged. **Catches G-4 returning:** the status feed stuck on the first attempt's
+first attempt's, unchanged. **A retried RED step gets a fresh lane too** (round 22's G-n3: the red step
+runs in the run's own lane with no lifecycle, so its retry journaled a byte-identical `test_engineer`
+`:spawn`, and `lain://status` listed the live retry as `failed`): fail an issue's red step at the
+ceiling, retry it, and the retry's `test_engineer` `:spawn` digest differs from the first one's and is listed
+as running. **Catches G-4 returning:** the status feed stuck on the first attempt's
 `failed` row while the run visibly works.
 
 ## 11 — The `lain://status` buffer
@@ -740,8 +751,8 @@ refuse because the other holds one. A single `landing/` directory is the stale s
 reaping a fresh, unlocked landing worktree as "landed on main" while an `--epic` cockpit was live).
 A landing that finds its checkout held by something else refuses rather than merging in it, naming
 the holder — `lain's landing checkout at <path> is leased by live process <pid> on <host>, so this
-run will not merge in it -- stop whatever holds it, or `git worktree unlock` it …` *(prediction, not
-yet driven)*; the run's end releases the lock, Ctrl-C included.
+run will not merge in it -- stop whatever holds it, or `git worktree unlock` it …` *(driven in round
+22 through `lain epic land`)*; the run's end releases the lock, Ctrl-C included.
 
 ## 13 — Test layout, and worktree GC
 
@@ -797,7 +808,7 @@ lain worktrees gc
 
 - **a checkout still at the commit lain cut it at is not "landed"** (since 2026-09-14): gc keeps it
   as `nothing has landed since it was cut; retained until <date>`, where round 17 reaped a fresh
-  landing checkout as landed on `main` *(prediction, not yet driven)*;
+  landing checkout as landed on `main` *(driven in round 22)*;
 - **a live run's landing checkout is kept as held**, by its lock.
 
 Then the launch-gated run: remove the stamp under `$XDG_STATE_HOME/lain/gc/` and start **`lain chat`**

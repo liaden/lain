@@ -41,6 +41,10 @@ Expected shapes (round 4, all passing):
 - `--api-base "localhost:11434" has no host; a scheme is required, e.g. http://localhost:11434`
 - `--api-base "not a uri at all" is not a usable URL`
 
+**`--non-interactive` draws no alternate screen** (round 22's G-n1 and H-3: it drew the answer on the alternate
+screen and wiped it at exit, and the escapes reached a pipe). With `--non-interactive --prompt` on a terminal the
+answer or the refusal stays on the scrollback after exit, and redirected to a file stdout carries no `ESC[?1049h`.
+
 **The trained maximum must arrive with NOTHING resident** — it rides `/api/show` on the same 2s
 probe connection as `/api/ps`, and only when `--num-ctx` is set. Verify residency is empty first, or
 this proves nothing.
@@ -241,7 +245,16 @@ run --compact-strategy 'elide-tools+'                        # a trailing separa
 run --compact-strategy '+elide'                              # a leading one
 run --compact-strategy 'elide-tools+summarize-conversation'  # the recommended pair: must LAUNCH
 run --compact-strategy 'elide+summarizing'                   # refused at launch -- see below
+run --compact-strategy 'summarizing+elide-tools'             # any other composition: refused too
+run --compact-keep 0                                         # refused at launch, one line
+run --compact-keep -1
 ```
+
+**A refused compaction flag leaves no session file behind, the same as §9.** Count the files around
+each refusal (the `count` helper of §9). Round 22 found `--compact-keep 0` and `-1` crashing with a raw
+`ArgumentError` and a 4-frame backtrace, and every refused `--compact-strategy` leaving a session file whose
+header recorded the refused name (listed by `lain sessions` as `0 turns closed`). Both now refuse before the
+session file is opened, in one line with no frames; a file left behind, or a backtrace, is that finding back.
 
 Verified against the built binary 2026-08-18 (with `--prompt hi`, which the refusal precedes) — exit
 **1**, one line, **zero** backtrace frames:
@@ -259,7 +272,9 @@ Three things to read carefully, because each is a place a driver files the wrong
   was typed is a regression, not a cosmetic difference.
 - **The refusal must list all four names.** The set grew this chunk; a refusal still naming only
   `["summarizing", "elide"]` means the registry and the resolver have drifted apart.
-- **`elide+summarizing` is refused at launch** (round 21). Both claim the whole span, so the refusal
+- **Every composition except `elide-tools+summarize-conversation` is refused at launch** (round 21 refused
+  `elide+summarizing`; round 22 found 6 other overlapping spellings launching and tearing an ask with
+  `Overlap`, and they are refused now too). Both parts of `elide+summarizing` claim the whole span, so the refusal
   names both and points at the pair that partitions it: `--compact-strategy "elide+summarizing":
   "elide" and "summarizing" each claim the whole span and would overlap; compose
   elide-tools+summarize-conversation instead, which partition it`. A pair that launches and then
@@ -287,7 +302,9 @@ Two launch-level checks, both free:
   where it should have been kept, which is exactly the failure this refusal exists to prevent.
 - **The session header records only the compaction flags that were TYPED.** (Round 20's RB-2 changed
   this: the Thor defaults are gone so that an unset flag and a default can be told apart, and a resume
-  inherits whatever the header recorded.) Launch once with no compaction flags and read the header: it has
+  inherits whatever the header recorded. An untyped RESUME's own header does record `compact_keep` and
+  `compact_strategy`, inherited from the session it resumed: the "no key" reading below is for a fresh,
+  unflagged launch.) Launch once with no compaction flags and read the header: it has
   **no** `compact_fallback`, `compact_keep`, `compact_bytes`, `compact_cap` or `compact_strategy` key, and
   `Backend` behaves as it always did (`handoff`, keep 20). An older reading of this bullet, "an unflagged
   launch records the default rather than nothing", is stale, so a header carrying `compact_keep: 20` from

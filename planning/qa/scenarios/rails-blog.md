@@ -127,8 +127,12 @@ unanswered call, is F89 back. **Already-damaged journals are not healed** (the c
 
 That pair is the one to reach for because the two strategies are **exact complements by
 construction** — both ask one predicate which messages carry a tool block — so they partition a span
-instead of fighting over it. Any other pairing may not, and a pair that both claim the whole span (`elide+summarizing`) is
-refused at launch; `session-and-window.md` drives that refusal.
+instead of fighting over it. Any other pairing may not. Round 22 found that only 2 of the 8 overlapping
+spellings were refused at launch and the other 6 were accepted and tore an ask
+with `Overlap` (F-1). **Now every composition other than `elide-tools+summarize-conversation` refuses at
+launch, by name, before the session file is opened**, and so does a bad `--compact-keep`;
+`session-and-window.md` drives those refusals. Drive a few of the old accepted spellings here and expect the
+refusal, not an ask.
 
 **Why the tool results must be large, measured rather than assumed.** The elide half writes a
 per-message attestation of about **230 bytes** — role, digest, byte count. Over `"ok"`-sized tool
@@ -168,6 +172,14 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
     if r["type"]=="compaction_decision"}' "$JOURNAL"
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; puts r["type"]}' "$JOURNAL" | sort | uniq -c
 ```
+
+**After each advance cut, grep the next `request_sent` for the running ask's own text** (round 22's F-6: an
+advance cut at `size - keep_last` used to summarize the prompt of the ask still running, and the model went on
+from a summary that had lost its instructions). Plant a distinctive list in the ask, such as 12 named files to
+audit, run past `keep_last` tool rounds, and check that the list survives each cut. **Every cut now keeps the
+running ask's prompt, and it stays verbatim until a handoff** when it sits before the first held range; a
+handoff is the one cut allowed to restate it, in the state document. A summary that says "no specific findings"
+over a list the model then ignores is F-6 back.
 
 Expected once occupancy climbs: `signals` stops being `[]`, a compaction is warranted, and
 `.lain/state.json` `compactions` increments. Then:
@@ -225,9 +237,9 @@ driven — this is integration check 7 of the discharging chunk)*:
   elide-tools+summarize-conversation --compact-keep 4`, reach a handoff cut, then `--resume` with none of
   them. The first resumed request carries the same replacement bytes as the recording's last derived
   render, holds the handoff document **and not the full history**, and no summarizer request precedes
-  it. Read the header of the resumed file: it records only the compaction flags that were typed, so an
-  untyped run has no `compact_keep` key at all (Backend applies its own default of 20 for an unset
-  field). **Catches RB-2 returning:** the resumed `request_sent` input tokens stay near the recording's
+  it. Read the header of the resumed file: an untyped resume's header **does** record `compact_keep` and
+  `compact_strategy`, inherited from the session (round 22), so "no `compact_keep` key at all" is stale; check the
+  recorded values equal the first run's. **Catches RB-2 returning:** the resumed `request_sent` input tokens stay near the recording's
   last one instead of jumping to the full history, and no over-window refusal follows. Then resume with
   `--compact-keep 8`: the typed flag wins, and the notice reads
   `recorded with --compact-keep 4; continuing with 8 (the current flags win)`.
@@ -313,6 +325,12 @@ driven — this is integration check 7 of the discharging chunk)*:
 record — ten cuts under `summarize-conversation` rendering ten summaries — is closed and its old
 expectation is now the finding. Once more than one cut is held, a signal with nothing newly
 droppable commits one `collapse` cut over what they render between them, superseding them all.
+**A collapse is reachable only at `keep_last 2` with 2-message steps** (round 22's F-9; the collapse branch
+needs an empty droppable head, and with a larger `keep_last` each render adds at least an assistant and a user
+message, so the head holds 2 or more and declines as `would_not_shrink` first; `spec/lain/compaction/source_spec.rb`
+drives four held advances into one collapse at exactly that setting). A forward run at the default
+`keep_last` held 8 advance cuts and never collapsed, which is not a defect. Launch with `--compact-keep 2`
+and step in 2-message turns to reach it, or record it as not reached.
 Drive it: reach two held cuts, then keep going, and read the `compaction_cut` records —
 `"kind": "collapse"` with at least two addresses in `supersedes`, the rendered prompt shrinking
 rather than accumulating, and a collapse that would not shrink declined as `would_not_shrink`

@@ -72,7 +72,9 @@ lain chat --provider ollama-cloud     # then read the status line
 ```
 
 The cloud default model resolves **128,000 tokens, `published`, authoritative** — not the
-`CONSERVATIVE_FALLBACK` of 8,192 tagged `guessed`. Confirm by eye in the status line.
+`CONSERVATIVE_FALLBACK` of 8,192 tagged `guessed`. **No window shows in the HUD or in `/status`
+before the first turn** (round 22), so a status line read at launch proves nothing. Take one turn,
+then read it from the journal: `window_tokens` and `provenance` on the turn's records.
 
 This is worth a manual look because a `guessed` denominator does two things at once, and neither is
 loud: it under-reports occupancy by ~16x, **and** it makes `Compaction::Source` decline
@@ -81,7 +83,8 @@ loud: it under-reports occupancy by ~16x, **and** it makes `Compaction::Source` 
 **Known asymmetry, not a bug to report:** pass `--num-ctx` and the resolution drops back to
 `guessed` regardless of the table, because `narrowest` returns nil only when *both* ceilings are
 absent. Also: the cloud arm performs **no `--num-ctx` refusal at all**, because
-the hosted `Deployment#model_metadata?` is `false`. Both are recorded follow-ups.
+the hosted `Deployment#model_metadata?` is `false`: `--num-ctx 999999999` on the cloud arm constructs,
+as documented (round 22 drove it). Both are recorded follow-ups.
 
 ## 4. Windows come from the weights, not the library page
 

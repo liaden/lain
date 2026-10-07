@@ -113,10 +113,10 @@ lain chat --root "$(pwd)" --provider ollama --model qwen3-coder:30b < /dev/null
 Must refuse:
 
 ```
-unknown role slot file ".../.lain/slots/role/chef.md"; known roles: auto_approver, court_clerk, dev, diff_critic, diff_docent, gate_adjudicator, harness_improver, issue_orchestrator, merge_resolver, meta_harness, meta_summarizer, researcher, reviewer_code, reviewer_dba, reviewer_security, reviewer_sre, test_engineer
+unknown role slot file ".../.lain/slots/role/chef.md"; known roles: auto_approver, court_clerk, dev, diff_critic, diff_docent, gate_adjudicator, harness_improver, issue_orchestrator, merge_resolver, meta_harness, meta_summarizer, qa, researcher, reviewer_code, reviewer_dba, reviewer_security, reviewer_sre, test_engineer
 ```
 
-naming **all 17** shipped roles, alphabetically, not a truncated sample. *Driven 2026-09-14*, exit
+naming **all 18** shipped roles (`qa` is the 18th; round 22 counted 18, not 17), alphabetically, not a truncated sample. *Driven 2026-09-14*, exit
 1 — but with the names then spelled with **hyphens**, which is the thing to correct on the next
 drive.
 
@@ -185,10 +185,13 @@ $QA/drive.sh '/ruby Lain::CacheProfile::ANTHROPIC.min_prefix_tokens' 8 30 >/dev/
 ```
 
 364 bytes is ~91 tokens at the ~4-bytes-per-token estimate this project uses elsewhere
-(`Lain::ProxyBytes::BYTES_PER_TOKEN`) — well under the 4096-token floor
-`CacheProfile::ANTHROPIC.min_prefix_tokens` reports. That much costs nothing, and it is real
-evidence: the shipped default is provably, cheaply, below the floor before a single dollar is
-spent.
+(`Lain::ProxyBytes::BYTES_PER_TOKEN`), but the template is only half of what is cached.
+**Anthropic's cached prefix is the tools block plus the system prompt**, so the free half must
+count the tools block too: 19,619 bytes of tool schemas on the wire in round 22, which is about
+4,900 tokens and so ABOVE the 4096-token floor `CacheProfile::ANTHROPIC.min_prefix_tokens` reports.
+364 bytes of template alone does not show the request is under the floor. Measure the tools
+block (the request's `tools` serialised, from the journal's request record) beside the template
+before predicting a zero, and treat a non-zero `cache_creation_input_tokens` as possible.
 
 Whether it actually **misses the cache on the wire** is a different claim — "eligible for the
 cache" and "cached" are not the same thing, and only a real round trip's `usage` block settles it:
@@ -206,10 +209,11 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
     if r["type"]=="turn_usage"}' "$JOURNAL"
 ```
 
-Expected: **zero on both fields, on both turns** — no write, no read, at a shipped default this
-short. A non-zero reading on either turn is a real finding (either the default has grown past 364
-bytes since this was measured — check `wc -c` again first — or Anthropic's published floor moved),
-not a flake to retry.
+Expected: read it against the tools-plus-system size above. Under the floor, **zero on both fields,
+on both turns**; over it (the round 22 shape, with the tools block counted), a write on the first
+turn and a read on the second is the cache working, not a finding. A reading that contradicts the
+measured prefix size is a real finding (check the byte count again first, or Anthropic's published
+floor moved), not a flake to retry.
 
 **Budget: 2 completions, real quota, the cheapest priced model (`claude-haiku-4-5`).** Skip this
 half of §6 and say so in the findings if the round has no Anthropic budget — reporting only the

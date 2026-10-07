@@ -106,6 +106,7 @@ lives. Check each class has a representative and that each behaves differently:
 | `_netrc`, `netrc`, `.netrc.bak`, `.netrc.old` | `denied` | `protected` | **variants of a denied name stay denied** (round 20's H-1). A bare `.netrc` was denied while `_netrc` was ordinary |
 | `.pgpass.bak`, `pgpass`, `.pgpass2`, `.authinfo`, `.msmtprc`, `.fetchmailrc`, `.htpasswd`, `.vault_pass`, `.vault-password`, `passwords.txt` | `gated` | `credential` | the same class, by name |
 | `~/Downloads/x` | `gated` | `out_of_scope` | a different reason, and it must say so |
+| `password.txt`, `secrets/prod`, `credentials/x` (a name, or a directory, below the root that names a secret) | `gated` | `credential` | **new after round 22 (S-1).** A whole-word `password`, `secret`, `token`, `credential`, `apikey`, `private` or `auth`, in a file name or a directory below the root. Source and `.md` files are excepted (`auth.py`, `docs/secrets.md`); data files are not. It gates for `read_file`, the listing, `grep` and `bash` alike, in the root, in a checkout and in a checkout subdirectory. **The survey route** differs: the file is listed but its corpus text is 1 placeholder, a note journals that placeholder as evidence (projected line 1), it stays masked for the whole survey and has no release route (read it in chat through the gate), and a symlink like `.env -> password.txt` is masked the same way; `survey.md` §4 drives it. **A changeset's hunks** are projected too, whole per side (`changeset-review.md` section 4b), but a name-gated file is region-masked there, not masked whole. Shape-gated `.env` and `*.pem` mask only detected regions, and one with no detected region still enters raw (known follow-up) `.env` and `*.pem` keep region masking; a name-gated file is masked whole |
 | `lib.rb` | `ordinary` | — | the control |
 
 Drive each as a `read_file` and read the journal, not the screen:
@@ -234,13 +235,17 @@ and lifted nothing. An exemption may now lift **at most one** built-in gated ent
 pattern must be a literal path. Evaluated 2026-09-30:
 
 ```
-<path>:N: `sensitivity` exempt lifts 20 built-in gated entries (".env", ".env.*", ".envrc", "*.pem", "*.p12", "*.key", "*.keyring", ".git-credentials", ".npmrc", ".pypirc", ".gitconfig", "*.tfvars", ".vault-token", ".pgpass", ".authinfo", ".msmtprc", ".fetchmailrc", ".htpasswd", ".vault_pass", ".vault-password"), and one exemption may lift at most one -- name each file or directory on its own line: ".*"
+<path>:N: `sensitivity` exempt lifts 25 built-in gated entries (".env", ".env.*", ".envrc", "*.pem", "*.p12", "*.key", "*.keyring", ".git-credentials", ".npmrc", ".pypirc", ".gitconfig", "*.tfvars", ".vault-token", ".pgpass", ".authinfo", ".msmtprc", ".fetchmailrc", ".htpasswd", ".vault_pass", ".vault-password"), and one exemption may lift at most one -- name each file or directory on its own line: ".*"
 <path>:N: `sensitivity` exempt can never match: an anchored pattern is a literal, clean path -- no glob, no empty, `.` or `..` segment: "~/.ss*"
 ```
 
 The number is the built-in table's gated size, so it rises when a credential name is added (it was 13
-before round 20's credential variants). A stale number in this section is a scenario defect, not a
-finding: read it off the refusal.
+before round 20's credential variants, and 20 above is the old figure: round 22 read 25). The name-and-directory rule below may move it again. A stale number in
+this section is a scenario defect, not a finding: read it off the refusal.
+
+**A malformed rule glob refuses at load.** A `denied`, `gated` or `exempt` pattern with an unclosed
+bracket, such as `"*.[ab"`, no longer loads and then silently matches nothing: the launch refuses
+with `an unclosed [` and names the pattern. Drive one and read the refusal.
 
 **The project's own Ruby cannot be exempted.** `sensitivity exempt: %w[/.lain/config.rb]` is refused
 with `` `sensitivity` exempt reaches the project's own Ruby under .lain, which is always asked about: the model can write it and a later launch would run it: "/.lain/config.rb" ``.
@@ -337,7 +342,7 @@ alone passes either way.** `server.pem`'s body above is 14 characters, under the
 24-character floor, so its body line is left visible by design and a grep for `BEGIN PRIVATE KEY`
 finds only the (masked) marker. Against generated RSA and Ed25519 PEMs every base64 body line was
 masked. So plant a realistic key for this check (`openssl genpkey -algorithm ed25519`, or
-`survey.md` §4's high-entropy body) and grep for a line of its body; an OpenSSH key's first body
+`survey.md` §4's high-entropy body) and grep for a line of its body. **A generated PEM is masked whole, as one region with its markers included** (round 22), so the BEGIN and END lines go with the body; an OpenSSH key's first body
 line (the public header) and its END marker stay visible, which is a note, not a leak. Delete the
 generated key afterwards.
 
@@ -695,7 +700,7 @@ Drive each through a real model and read the journal, not the screen:
 | `read_file readme2.txt` | `approval_pending` parks **before any byte is read**; the bytes reach the model only after a human `y` |
 | `write_file cfg.txt` | `approval_pending` parks (a write through a link is judged at its landing) |
 | `read_file loop` | `approval_pending` with reason `malformed`, and no backtrace: an unresolvable landing is gated, never an exception |
-| `list_files keys` and `grep -r id_qa keys` | `keys/id_qa` is withheld (`1 path withheld (protected)` or the tool's own count), and never listed as an ordinary row |
+| `list_files keys` and `grep -r id_qa keys` | `list_files keys` first **parks** for approval, before anything is listed (round 22); then `keys/id_qa` is withheld (`1 path withheld (protected)` or the tool's own count), and never listed as an ordinary row |
 | `read_file a.txt` | the bytes return with no prompt: the ordinary-link control, the false positive of the fix |
 
 Then the same links from a worker: launch with `--isolation worktree`, have a subagent read a **relative**
@@ -814,3 +819,16 @@ grep -RIl -e 'sk-live-' -e 'BEGIN PRIVATE KEY' -e 'AKIAIOSFODNN7EXAMPLE' "$QA" |
 may appear — not the journal, not the session record, not a request, not a tmux scrollback capture,
 not a nvim buffer dump the driver saved. This check costs nothing and is the only one that tests all
 three places at once.
+
+**Three exclusions, all documented scope rather than findings (round 22).**
+
+- **The live display is not covered.** Under `/mode auto`, `cat server.pem` streams the key into the
+  chat pane and `lain://journal` while the model's copy and the session record are withheld
+  (`withhold_automatic_output.rb`: "Nor does it cover the live display"). So a scrollback capture or
+  a buffer dump taken after a gated credential ran under `auto` will hold the bytes; grep the session
+  file, the journal and the requests, and leave the pane captures out of that case.
+- **Values a human released.** A region the human released at the gate is meant to reach the model;
+  exclude those values from the grep.
+- **The AKIA string the driver types.** The driver's own prompt carries `AKIAIOSFODNN7EXAMPLE`, so it
+  appears in the request that holds the prompt. Use a distinct string for the planted file and for
+  anything typed, or exclude the typed one.
