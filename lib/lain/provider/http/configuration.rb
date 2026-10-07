@@ -113,6 +113,7 @@ module Lain
         option :retry_interval_randomness, 0.5
         option :http_proxy, nil
         option :faraday_adapter, :net_http
+        option :http_middleware, [].freeze
         # Left nil so the vendored default retry stays silent; a provider that
         # wants retries JOURNALED sets these, and MiddlewareStack forwards them
         # so the retry becomes visible rather than invisible spend.

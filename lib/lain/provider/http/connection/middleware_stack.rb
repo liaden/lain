@@ -45,6 +45,7 @@ module Lain
               setup_logging(faraday)
               setup_retry(faraday)
               setup_stall_protection(faraday)
+              setup_configured(faraday)
               setup_middleware(faraday)
               setup_http_proxy(faraday)
             end
@@ -146,6 +147,14 @@ module Lain
               rate_limit_reset_header: @config.rate_limit_reset_header,
               header_parser_block: @config.header_parser_block
             }.compact
+          end
+
+          # After retry so entries run on every attempt, before `:json` so they
+          # see the body as the caller's Hash. `respond_to?` for the same reason
+          # as {#connect_budget}.
+          def setup_configured(faraday)
+            entries = @config.respond_to?(:http_middleware) ? @config.http_middleware : []
+            entries.each { |klass, *args| faraday.use(klass, *args) }
           end
 
           def setup_middleware(faraday)

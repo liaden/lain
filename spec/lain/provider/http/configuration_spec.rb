@@ -90,4 +90,10 @@ RSpec.describe Lain::Provider::HTTP::Configuration do
       expect(pretty(described_class.new)).to include("request_timeout")
     end
   end
+
+  describe "#http_middleware" do
+    it "is frozen and empty for every instance" do
+      expect(Array.new(2) { described_class.new.http_middleware }).to all(be_frozen.and(be_empty))
+    end
+  end
 end
