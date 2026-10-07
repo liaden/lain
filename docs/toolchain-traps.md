@@ -352,6 +352,11 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   and the vsock harness's `VsockAvailability.available? leaks no descriptor across repeated
   probing`.
 
+  Added 2026-10-06, wall-clock examples red under a load average of about 12 (agents running specs
+  beside a suite) and green alone each time: `Lain::Tools::WebFetch an HTML page comes back as
+  readable text refuses a page of more nodes than the walk budget quickly, naming raw` (red twice);
+  and `a chat whose terminal is gone ends at its prompt once the terminal is closed`.
+
   Added 2026-09-29, red once in a whole-suite run (seed 59509) and green 3 of 3 alone. It counts
   every descriptor in `/proc/self/fd`, so anything else live in the same worker process moves the
   count: `Lain::Agent the graph CoreGraph hands out by default runs to completion holding no file
