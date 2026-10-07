@@ -1056,6 +1056,14 @@ Prefer it to reasoning from the source when a scenario asks "is this the number 
 live", and note the answer in the record — a constant read from a file is a claim about the repo, a
 constant read through `/ruby` is a claim about the process under test.
 
+## The desktop notifier is gone
+
+`Lain::Notify` was deleted on 2026-09-12 (`c40ab419`), with `--desktop`, `LAIN_DESKTOP`, and every
+dunst surface. Round 17 proved it by the negative: a gated call parked with `/usr/bin/dunstify` on
+`PATH`, and `dunstctl count displayed` and `waiting` read 0 and 0. A scenario section that checks the
+notifier is recorded as moot, never as passed. Take both counts at close-out anyway: a non-zero means
+something raised a notification that nothing in lain can raise.
+
 ## Check the machine is quiet, at the start and again before any timing claim
 
 `uptime` and `ps -eo pcpu,etime,args --sort=-pcpu | head`. Any timing in a scenario is a claim about

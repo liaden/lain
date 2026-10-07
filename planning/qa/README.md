@@ -5,8 +5,9 @@ against each other with a human at the approval gate, and every defect it has fo
 in a seam that had specs on **both** sides. Round 1 found eleven behind a green suite of ten
 thousand examples; round 4 found seven more, two of them session-killers.
 
-These documents are the **inputs to the `manual-qa` skill** (`.claude/skills/manual-qa/`). The skill
-owns the procedure and the driver scripts; these own the method and the scenarios.
+These documents are the **inputs to the `manual-qa` skill**. The procedure is the user-level skill
+(`~/.claude/skills/manual-qa/`); the repo's `.claude/skills/manual-qa/` holds the sandbox script and
+lain's gates; these own the method and the scenarios.
 
 ## Layout
 

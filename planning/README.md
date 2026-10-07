@@ -19,8 +19,9 @@ concrete mechanism, to be pulled into the plan (or dropped) deliberately.
 
 The manual QA bench: a standing method, the model-server bring-up, and one scenario per question
 (session/window honesty, a Rust CLI smoke test, the cockpit surfaces, failure injection, the bowling
-and Rails subjects, the arm driver). These are the **inputs to the `manual-qa` skill**
-(`.claude/skills/manual-qa/`), which owns the procedure and the driver scripts.
+and Rails subjects, the arm driver). These are the **inputs to the `manual-qa` skill**: the
+procedure is user-level (`~/.claude/skills/manual-qa/`), and the repo's `.claude/skills/manual-qa/`
+holds the sandbox script and lain's gates.
 
 Start at [`qa/README.md`](qa/README.md), which says which scenario answers which question and what
 each costs. A round's findings live beside the chunk specs while it is in flight, and are

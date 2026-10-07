@@ -11,5 +11,6 @@ the two are read at different times.
   [`qa/README.md`](qa/README.md), which says which to pick.
 - The bowling oracles moved to [`qa/oracles/bowling.rb`](qa/oracles/bowling.rb).
 
-A round is now driven by the `manual-qa` skill (`.claude/skills/manual-qa/`), which takes one of
-those scenarios as its input.
+A round is now driven by the user-level `manual-qa` skill (`~/.claude/skills/manual-qa/`), with
+the repo's `.claude/skills/manual-qa/` holding the sandbox script, which takes one of those
+scenarios as its input.
