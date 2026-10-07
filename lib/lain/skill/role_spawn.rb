@@ -35,11 +35,22 @@ module Lain
       # directly; the loose pre-Seam keywords still work through `**spawn_over`,
       # and passing a seam AND its members raises. The tool guard is the one
       # member with no default, on the loose path as on the seam.
-      def initialize(toolset:, slots:, seam: nil, max_depth: 1, **spawn_over)
+      #
+      # @param toolset [Toolset] the union a role attenuates from
+      # @param slots [Prompt::Slots] where a role's persona is read from
+      # @param seam [Tools::Subagent::Seam, nil] the spawn collaborators, or nil
+      #   to build them from the loose members
+      # @param max_depth [Integer] how many levels a child may still spawn
+      # @param compaction [Tools::Subagent::ParentView, #call] what every child
+      #   it builds reads its parent's held cuts through
+      # @param spawn_over [Hash] the loose seam members, when no seam is given
+      def initialize(toolset:, slots:, seam: nil, max_depth: 1, compaction: Tools::Subagent::ParentView::None,
+                     **spawn_over)
         @seam = Tools::Subagent::Seam.resolve(seam, **spawn_over)
         @toolset = toolset
         @slots = slots
         @max_depth = max_depth
+        @compaction = compaction
       end
 
       # `context_mode` names the prefix strategy directly (`:inherit` -> inherit
@@ -69,12 +80,13 @@ module Lain
       # @raise [Isolation::Leases::Lane::Refused] when git would not accept the name
       def within(worker_env, lane: nil)
         self.class.new(seam: @seam.with(isolation: lent(worker_env, lane)), toolset: @toolset, slots: @slots,
-                       max_depth: @max_depth)
+                       max_depth: @max_depth, compaction: @compaction)
       end
 
       # This spawn, its children built through the seam guard's never-parking
       # copy ({CLI::ToolGuard::NeverParking}): what an approval judge spawns
       # through, because it waits on the child with the judged call parked.
+      # It reads no parent's cuts: a judge spawns :fresh.
       #
       # @return [RoleSpawn]
       def never_parking
@@ -99,7 +111,7 @@ module Lain
         Tools::Subagent.new(
           seam: @seam, toolset: @toolset, policy: role.spawn_policy(prefix: context_mode),
           persona: Role::Persona.new(role:, slots: @slots), model:,
-          max_depth: @max_depth, name: role.name.to_s
+          max_depth: @max_depth, name: role.name.to_s, compaction: @compaction
         )
       end
     end

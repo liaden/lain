@@ -188,13 +188,16 @@ module Lain
         #   run's ONE handoff, the same one {Wiring} hands the {Supervisor}.
         #   Defaults to one that only releases, for the direct-construction
         #   seams the specs drive.
+        # @param session [Lain::Session] the chat's own, whose held compaction
+        #   cuts an :inherit child renders as they stand at its spawn. The Null
+        #   session holds none, so a build handed none spawns as it always did.
         # @option options [String] :exec the transport the `exec:` default
         #   resolves, with `:exec_image` the only other keys this class reads.
         #   `--auto-approve` is not among them: it seeds the mode's layer on
         #   {Switchboard.for}, and the surface here reads that layer. Last,
         #   after every `@param`, because yard-lint fixes that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
-                       root:, switchboard:, askers:, usage: nil,
+                       root:, switchboard:, askers:, usage: nil, session: Lain::Session::Null.instance,
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
                        handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))
@@ -210,6 +213,7 @@ module Lain
           @auto_approve = AutoApproveLayer.new(board: switchboard)
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:,
                              isolation:, handback:)
+          @parent_view = parent_view(backend, session)
         end
 
         # The board's layout run, read when asked because the board is built
@@ -355,7 +359,16 @@ module Lain
         # CALL from the parsed role name and context mode, so what is fixed
         # here is only what they all share.
         def role_spawn_seam(base)
-          Lain::Skill::RoleSpawn.new(seam:, toolset: base, slots: library.slots)
+          Lain::Skill::RoleSpawn.new(seam:, toolset: base, slots: library.slots, compaction: @parent_view)
+        end
+
+        # The chat's held cuts, read by a child at its spawn, over a Source of
+        # the run's own arm. The provider is read when a child is built, which
+        # is after the run's provider is settled.
+        def parent_view(backend, session)
+          source = -> { backend.child_compaction_source(cache_profile: seam.provider.cache_profile) }
+          arm = Lain::Compaction::Source::Collapse.new(name: backend.compaction.strategy).name
+          Lain::Tools::Subagent::ParentView.new(session:, arm:, source:)
         end
 
         # The in-agent composition primitive: it renders a skill's scaffold

@@ -358,6 +358,34 @@ RSpec.describe Lain::CLI::Wiring do
     wiring.wire_agent(channel:, recorder:, session:, backend:)
   end
 
+  # The route `/meta` takes, from the chat's own session: an :inherit child
+  # spawned after the chat committed a cut renders the cut, not the turns it
+  # replaced.
+  describe "the chat session an :inherit child reads its parent's cuts from" do
+    let(:mock_provider) { Lain::Provider::Mock.new(responses: [text_response("settled"), text_response("done")]) }
+
+    def handoff_at(head, first)
+      Lain::Telemetry::CompactionCut.new(
+        digest: head, head:, strategy: Lain::Telemetry::Compaction::EAGER_CONTROL_ARM, kind: "handoff", parent: nil,
+        supersedes: [], plan_step_completions: 0,
+        collapses: [{ "span" => [first, head], "content" => [{ "type" => "text", "text" => "STATE-DOCUMENT" }] }]
+      )
+    end
+
+    it "renders the chat's held cut to a child spawned through the run's role-spawn seam" do
+      recorder, session = wiring.run_state(nil)
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
+      agent.ask("REPLACED-TURN")
+      session.record_compaction_cut(handoff_at(agent.timeline.head_digest, agent.timeline.to_a.first.digest))
+
+      wiring.role_spawn.call(:researcher, :inherit, "go")
+
+      sent = Lain::Canonical.dump(mock_provider.last_request.messages)
+      expect(sent).to include("STATE-DOCUMENT")
+      expect(sent).not_to include("REPLACED-TURN")
+    end
+  end
+
   # The 2026-08-05 defect, at the site it fired from -- and the surface it fired
   # from is now deleted. This call built a real dunstify adapter unconditionally,
   # so every spec, probe and experiment that reached #wire_agent notified the

@@ -841,6 +841,83 @@ RSpec.describe Lain::Session do
 
       expect(journal).to eq([cut("blake3:one")])
     end
+
+    # An :inherit child renders the parent's held cuts as they stood at spawn.
+    # They are already in the parent's record, so the child's copy is held,
+    # never written again.
+    describe "seeded with cuts another session recorded" do
+      let(:one) { cut("blake3:one") }
+      let(:two) { cut("blake3:two", parent: one.address) }
+
+      it "holds them in their order and answers each by its address" do
+        seeded = described_class.new(seeded_cuts: [one, two])
+
+        expect(seeded.compaction_cuts).to eq([one, two])
+        expect(seeded.compaction_cut(two.address)).to equal(two)
+      end
+
+      it "journals none of them" do
+        journal = []
+        described_class.new(journal:, seeded_cuts: [one, two])
+
+        expect(journal).to eq([])
+      end
+
+      it "journals a cut recorded later, which may name a seeded parent" do
+        journal = []
+        seeded = described_class.new(journal:, seeded_cuts: [one])
+
+        seeded.record_compaction_cut(two)
+
+        expect(journal).to eq([two])
+        expect(seeded.compaction_cuts).to eq([one, two])
+      end
+
+      # The parent's cuts consumed the parent's plan steps, not the child's.
+      # Asked through a real Source's decision record over a chain with
+      # something to drop, so the plan-step signal is read the way a render
+      # reads it.
+      describe "its own completed plan step" do
+        let(:done) { Struct.new(:content, :status).new("x", "completed") }
+        let(:consumed) do
+          Lain::Telemetry::CompactionCut.new(
+            digest: "blake3:far", head: "blake3:far-head", strategy: "eager", kind: "advance", parent: nil,
+            supersedes: [], plan_step_completions: 3,
+            collapses: [{ "span" => %w[blake3:a blake3:far], "content" => [{ "type" => "text", "text" => "s" }] }]
+          )
+        end
+
+        def chain
+          (1..6).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, index|
+            line.commit(role: index.odd? ? "user" : "assistant",
+                        content: [{ "type" => "text", "text" => "turn #{index}" }])
+          end
+        end
+
+        def plan_step_signalled?(session)
+          journal = []
+          source = Lain::Compaction::Source.new(
+            need: Lain::Compaction::Need.new(byte_threshold: 1_000_000),
+            cold: Lain::Compaction::Cold.new(cache_profile: Lain::CacheProfile::NO_CACHING, journal:),
+            hard_cap: 1_000_000, keep_last: 2, journal:,
+            context_window: Lain::ContextWindow.new(windows: { "m" => 8192 })
+          )
+          source.context_for(base: Lain::Context.new(model: "m", max_tokens: 8), timeline: chain, usage: nil, session:)
+          journal.grep(Lain::Compaction::Source::CompactionDecision).last.signals.include?(:plan_step_completion)
+        end
+
+        it "is pending, as an unseeded session's is" do
+          seeded = described_class.new(seeded_cuts: [consumed]).write_todos([done])
+          unseeded = described_class.new.write_todos([done])
+
+          expect([plan_step_signalled?(seeded), plan_step_signalled?(unseeded)]).to eq([true, true])
+        end
+      end
+
+      it "refuses a seed whose parent is not seeded before it" do
+        expect { described_class.new(seeded_cuts: [two]) }.to raise_error(Lain::Session::UnrecordedParent)
+      end
+    end
   end
 
   describe "#reminders with a memory source" do

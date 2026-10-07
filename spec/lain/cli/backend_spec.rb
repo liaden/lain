@@ -1323,6 +1323,50 @@ RSpec.describe Lain::CLI::Backend do
       end
     end
 
+    # An :inherit child holds its parent's cuts only under the arm that wrote
+    # them, and its decisions are its own, not the run's.
+    describe "a child's compaction source" do
+      def child_of(backend) = backend.child_compaction_source(cache_profile: profile)
+
+      it "is a Source of its own, apart from the run's and from every other child's" do
+        backend = compacting_backend
+        run = backend.pipeline_source(cache_profile: profile, journal:)
+
+        expect(child_of(backend)).to be_a(Lain::Compaction::Source)
+        expect(child_of(backend)).not_to be(run)
+        expect(child_of(backend)).not_to be(child_of(backend))
+      end
+
+      ["elide-tools+summarize-conversation", nil].each do |arm|
+        it "collapses under the run's arm when --compact-strategy is #{arm.inspect}" do
+          backend = compacting_backend(compact_strategy: arm)
+          run = backend.pipeline_source(cache_profile: profile, journal:)
+
+          expect(child_of(backend).collapse_strategy).to eq(run.collapse_strategy)
+        end
+      end
+
+      it "journals none of its decisions into the run's journal" do
+        backend = compacting_backend
+        backend.pipeline_source(cache_profile: profile, journal:)
+
+        child_of(backend).context_for(base: backend.context, timeline: history(8), usage: nil, session:)
+
+        expect(decisions).to be_empty
+      end
+
+      it "leaves the run's own source unbound, so the run binds its journal after a spawn" do
+        backend = compacting_backend
+        child_of(backend)
+
+        expect(backend.pipeline_source(cache_profile: profile, journal:)).to be_a(Lain::Compaction::Source)
+      end
+
+      it "is the Null source under --no-compact" do
+        expect(child_of(compacting_backend(compact: false))).to be(Lain::Agent::PipelineSource::Null)
+      end
+    end
+
     # `--provider ollama` names models no Anthropic-shaped window table can
     # carry, so ContextWindow.default falls back rather than raising -- an
     # unsupported provider must still START.

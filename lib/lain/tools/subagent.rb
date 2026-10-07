@@ -85,15 +85,20 @@ module Lain
       # they are the same word. A separate keyword rather than a rename: `name`
       # is the model-facing tool name, so renaming it would change the rendered
       # schema bytes.
+      #
+      # `compaction` is the {ParentView} a child reads its parent's held cuts
+      # through. It is not copied by {#descend}: a grandchild's parent is the
+      # child, whose session this view does not read.
       def initialize(toolset:, policy:, seam: nil, budget: Agent::Budget.new,
                      max_depth: 1, name: NAME, announces_as: name, mode: :one_shot,
                      log: Log::Null, persona: Role::Persona::Null, model: ModelChoice::Null,
-                     answer: ANSWER, **spawn_over)
+                     answer: ANSWER, compaction: ParentView::None, **spawn_over)
         super()
         @seam = Seam.resolve(seam, **spawn_over)
         @announces_as = announces_as
         @answer = answer
-        @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, model:, name: announces_as)
+        @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, model:, name: announces_as,
+                                    compaction:)
         seed_config(max_depth, name, mode, log)
       end
 
@@ -760,6 +765,55 @@ module Lain
         def self.current = Session::Unconfined
       end
 
+      # What a child renders through, read off its parent at the instant of the
+      # spawn: the parent's held compaction cuts, and a compaction Source of
+      # the parent's arm to hold them. The child's chain stays the raw fork, so
+      # its lineage, its session-file records and its questions' address are
+      # what they always were; only what it renders changes.
+      #
+      # A child whose chain holds no cut of the parent's arm gets what a child
+      # always got, and no Source: there is nothing to inherit, and a Source
+      # would start compacting a child that never did. The cuts are a frozen
+      # snapshot, so a cut the parent commits later never reaches it.
+      class ParentView
+        # @param session [Session] the parent's, whose cuts are read at spawn
+        # @param arm [String] the name of the arm the source collapses under,
+        #   the only arm whose cuts it holds
+        # @param source [#call] builds a fresh compaction Source of that arm,
+        #   one per child, since a Source is run state
+        def initialize(session:, arm:, source:)
+          @session = session
+          @arm = arm
+          @source = source
+          freeze
+        end
+
+        # @param base [Timeline] where the child starts
+        # @param worker_env [WorkerEnv] the child's environment
+        # @param scope [Session::Unconfined, Session::Confined] where the
+        #   child's tools are confined to
+        # @return [Array(#context_for, Session)] the child's pipeline source and
+        #   its session
+        def call(base:, worker_env:, scope:)
+          cuts = @session.compaction_cuts
+          return None.call(worker_env:, scope:) unless cuts.reverse_each.any? { |cut| holds?(cut, base) }
+
+          [@source.call, Session.new(worker_env:, scope:, seeded_cuts: cuts)]
+        end
+
+        private
+
+        def holds?(cut, base) = cut.strategy == @arm && base.include?(cut.head)
+
+        # The view of a spawn whose parent no compaction reaches: a grandchild,
+        # or a spawn built with no parent session to read.
+        module None
+          def self.call(worker_env:, scope:, **)
+            [Agent::PipelineSource::Null, Session.new(worker_env:, scope:)]
+          end
+        end
+      end
+
       ModelChoice = Data.define(:model, :declared_by) do
         # Interned HERE and not in {.of}, because `.new` and `#with` go nowhere
         # near that factory: a member left as the caller's String is reachable
@@ -1071,7 +1125,7 @@ module Lain
         # question to them, so a role spawn announces as "researcher" rather
         # than as a 71-character correlation.
         def initialize(seam:, toolset:, policy:, budget:, persona: Role::Persona::Null,
-                       model: ModelChoice::Null, name: "subagent")
+                       model: ModelChoice::Null, name: "subagent", compaction: ParentView::None)
           @seam = seam
           @toolset = toolset
           @policy = policy
@@ -1079,6 +1133,7 @@ module Lain
           @persona = persona
           @model = model
           @name = name
+          @compaction = compaction
         end
 
         # Every copy gets the spawn wiring verbatim, the seam's observer and
@@ -1121,8 +1176,8 @@ module Lain
           child = nil
           chain = own_chain(parent, progress) { child.timeline }
           union = child_union(chain.timeline, chain.escalation, ceiling)
-          session = Session.new(worker_env: scope.env_over(worker_env), scope:)
-          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, session)
+          view = @compaction.call(base: chain.base, worker_env: scope.env_over(worker_env), scope:)
+          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, view)
             .tap { |built| child = built.agent }
         end
 
@@ -1162,11 +1217,11 @@ module Lain
         # for anyone to hang a `deregister` on, and retention runs from
         # `register` to `deregister` and nothing else -- so this method is the
         # only place that release can live.
-        def spawned(enrolled, chain, union, session)
+        def spawned(enrolled, chain, union, view)
           child = nil
           asker = enrolled.asker
           allowed = granted(@policy.attenuate(union), asker)
-          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, session),
+          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, view),
                             registration: enrolled.registration, tools: allowed.names, asker:, feed: chain.feed)
         ensure
           # Keyed on the handle rather than `rescue StandardError`, so a
@@ -1237,13 +1292,13 @@ module Lain
         # file would read as the parent's: salvage would pair it with the
         # parent's in-flight `request_sent`, cache-waste would count it, and the
         # ledger would price it as the parent's spend.
-        def spawn_agent(chain, union, allowed, session)
+        def spawn_agent(chain, union, allowed, (pipeline_source, session))
           Agent.new(
             provider: @seam.provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain),
             model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed),
-            session:, budget: @budget, journal: Channel::Null.instance
+            session:, budget: @budget, journal: Channel::Null.instance, pipeline_source:
           )
         end
 

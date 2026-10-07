@@ -51,8 +51,15 @@ module Lain
     #   channel records nothing and is what every non-chat Session uses
     # @param scope [Unconfined, Confined] where the session's tools are
     #   confined to; a child spawned under plan scope is handed its parent's
+    # @param seeded_cuts [Array<Telemetry::CompactionCut>] cuts another
+    #   session already recorded, oldest first, held here without being
+    #   journaled again: an :inherit child renders its parent's cuts as they
+    #   stood at spawn, and they are already in the parent's record. Its
+    #   plan-step count starts at the most those cuts consumed, so a step the
+    #   child completes is pending against them as it would be against none.
+    # @raise [UnrecordedParent] when a seeded cut's parent is not seeded before it
     def initialize(memory: Memory::Recorder.new, worker_env: WorkerEnv.default,
-                   journal: Channel::Null.instance, scope: Unconfined)
+                   journal: Channel::Null.instance, scope: Unconfined, seeded_cuts: [])
       @journal = journal
       @reads = ReadSet.new
       @writes = Set.new
@@ -61,9 +68,10 @@ module Lain
       @todo_reminder = nil
       @todo_items = []
       @plan_step_completed = false
-      @plan_step_completions = 0
       @compaction_cuts = [].freeze
       @cuts_by_address = {}
+      seeded_cuts.each { |cut| hold_cut(cut) }
+      @plan_step_completions = seeded_cuts.map(&:plan_step_completions).max || 0
       watch_memory(memory)
       @worker_env = worker_env
       @scope = scope
@@ -470,13 +478,7 @@ module Lain
     # @return [self]
     # @raise [UnrecordedParent] when `cut.parent` names no cut recorded here
     def record_compaction_cut(cut)
-      unless cut.parent.nil? || @cuts_by_address.key?(cut.parent)
-        raise UnrecordedParent,
-              "compaction_cut at #{cut.digest} names parent #{cut.parent}, which is not a cut this session recorded"
-      end
-
-      @cuts_by_address[cut.address] = cut
-      @compaction_cuts = [*@compaction_cuts, cut].freeze
+      hold_cut(cut)
       @journal << cut
       self
     end
@@ -726,6 +728,16 @@ module Lain
     end
 
     private
+
+    def hold_cut(cut)
+      unless cut.parent.nil? || @cuts_by_address.key?(cut.parent)
+        raise UnrecordedParent,
+              "compaction_cut at #{cut.digest} names parent #{cut.parent}, which is not a cut this session recorded"
+      end
+
+      @cuts_by_address[cut.address] = cut
+      @compaction_cuts = [*@compaction_cuts, cut].freeze
+    end
 
     def withheld(rounds)
       @journal << Telemetry::SessionReadWithheld.new(rounds:) unless rounds.empty?

@@ -304,6 +304,36 @@ RSpec.describe Lain::Skill::RoleSpawn do
         .to raise_error(Lain::Isolation::Leases::Lane::Refused)
     end
 
+    # The epic driver lends its children a held checkout through here, and a
+    # lent :inherit child still renders the parent's held cut.
+    it "keeps the parent's held cuts for a lent :inherit child" do
+      session = Lain::Session.new.record_compaction_cut(
+        Lain::Telemetry::CompactionCut.new(
+          digest: parent.head_digest, head: parent.head_digest, strategy: Lain::Telemetry::Compaction::EAGER_CONTROL_ARM,
+          kind: "handoff", parent: nil, supersedes: [], plan_step_completions: 0,
+          collapses: [{ "span" => [parent.to_a.first.digest, parent.head_digest],
+                        "content" => [{ "type" => "text", "text" => "STATE-DOCUMENT" }] }]
+        )
+      )
+      source = lambda do
+        Lain::Compaction::Source.new(
+          need: Lain::Compaction::Need.new(byte_threshold: 1_000_000),
+          cold: Lain::Compaction::Cold.new(cache_profile: Lain::CacheProfile::NO_CACHING, journal: []),
+          hard_cap: 1_000_000, keep_last: 20, context_window: Lain::ContextWindow.new(windows: { "child" => 8192 })
+        )
+      end
+      provider = mock(text_response("done"))
+      arm = Lain::Telemetry::Compaction::EAGER_CONTROL_ARM
+      view = Lain::Tools::Subagent::ParentView.new(session:, arm:, source:)
+      spawn = seam(provider:, compaction: view)
+
+      spawn.within(Lain::WorkerEnv.default).call(:test_engineer, :inherit, "go")
+
+      sent = Lain::Canonical.dump(provider.last_request.messages)
+      expect(sent).to include("STATE-DOCUMENT")
+      expect(sent).not_to include('"hi"')
+    end
+
     it "leaves the seam it was built over leasing as it did" do
       spawn = watched(provider: mock(text_response("unused")))
 

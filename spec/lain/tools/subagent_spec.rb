@@ -197,6 +197,44 @@ class SubagentSpecEditorTool < Lain::Tool
   end
 end
 
+# A child's compaction Source, recorded: the cuts its session held at every
+# render. It changes nothing it renders, so an example reads only what the
+# child was handed.
+class SubagentSpecViewSource
+  attr_reader :seen_cuts
+
+  def initialize
+    @seen_cuts = []
+  end
+
+  def context_for(base:, session:, **)
+    @seen_cuts << session.compaction_cuts
+    base
+  end
+
+  def droppable? = Lain::Agent::PipelineSource::Null::NO_ROOM
+  def handoff(**) = Lain::Agent::PipelineSource::Null::NO_ROOM
+  def handed_off? = Lain::Agent::PipelineSource::Null::NO_ROOM
+end
+
+# Runs the block it was built with when called, so a child can make something
+# happen to its parent between two of its own renders.
+class SubagentSpecCommitTool < Lain::Tool
+  def initialize(&on_call)
+    super()
+    @on_call = on_call
+  end
+
+  def name = "commit"
+  def description = "Makes the parent commit a cut."
+  def input_schema = { type: :object, properties: {} }
+
+  def perform(_input, _invocation)
+    @on_call.call
+    Lain::Tool::Result.ok("committed")
+  end
+end
+
 RSpec.describe Lain::Tools::Subagent do
   # A shared Store, and a two-turn parent chain whose head is H.
   let(:store) { Lain::Store.new }
@@ -981,6 +1019,100 @@ RSpec.describe Lain::Tools::Subagent do
       tool.call({ "prompt" => "go" }, invocation)
 
       expect(record.child(store).include?(parent.head_digest)).to be(true)
+    end
+  end
+
+  # The child's chain stays the raw fork; what it inherits is the parent's held
+  # cuts as they stand at spawn, rendered through a Source of its own.
+  describe "the parent's held cuts at spawn" do
+    let(:parent_journal) { [] }
+    let(:parent_session) { Lain::Session.new(journal: parent_journal) }
+    let(:sources) { [] }
+
+    def cut(digest, head:, parent: nil, strategy: "eager")
+      Lain::Telemetry::CompactionCut.new(
+        digest:, head:, strategy:, kind: "handoff", parent:, supersedes: [], plan_step_completions: 0,
+        collapses: [{ "span" => [head, head], "content" => [{ "type" => "text", "text" => "the state" }] }]
+      )
+    end
+
+    def held_at_head = cut(parent.head_digest, head: parent.head_digest)
+
+    def view
+      described_class::ParentView.new(session: parent_session, arm: "eager",
+                                      source: -> { SubagentSpecViewSource.new.tap { |built| sources << built } })
+    end
+
+    def spawning(prefix, *responses, toolset: union, only: %i[read_file])
+      build_subagent(provider: mock(*responses), policy: spawn_policy(prefix:, only:), toolset:, compaction: view)
+    end
+
+    it "renders an :inherit child through a Source of its own, over a session holding the parent's cuts" do
+      held = held_at_head
+      parent_session.record_compaction_cut(held)
+
+      spawning(:inherit, text_response("done")).run("go")
+
+      expect(sources.size).to eq(1)
+      expect(sources.first.seen_cuts).to eq([[held]])
+    end
+
+    it "leaves a child with no held cut on its chain as it is today: no Source is built" do
+      parent_session.record_compaction_cut(held_at_head)
+
+      result = spawning(:fresh, text_response("done")).run("go")
+
+      expect(result).to be_ok
+      expect(sources).to be_empty
+    end
+
+    # A cut holds only under the arm that wrote it, so one from another arm
+    # has nothing to hand the child.
+    it "builds no Source when the parent's cut was written under another arm" do
+      parent_session.record_compaction_cut(cut(parent.head_digest, head: parent.head_digest, strategy: "elide"))
+
+      spawning(:inherit, text_response("done")).run("go")
+
+      expect(sources).to be_empty
+    end
+
+    it "builds no Source for an :inherit child of a parent that never compacted" do
+      spawning(:inherit, text_response("done")).run("go")
+
+      expect(sources).to be_empty
+    end
+
+    it "keeps a cut the parent commits after the spawn out of the child's render" do
+      held = held_at_head
+      parent_session.record_compaction_cut(held)
+      later = cut("blake3:later", head: parent.head_digest, parent: held.address)
+      committing = SubagentSpecCommitTool.new { parent_session.record_compaction_cut(later) }
+      tool = spawning(:inherit, tool_response(["c1", "commit", {}]), text_response("done"),
+                      toolset: Lain::Toolset.new([committing]), only: %i[commit])
+
+      tool.run("go")
+
+      expect(parent_session.compaction_cuts).to eq([held, later])
+      expect(sources.first.seen_cuts).to eq([[held], [held]])
+    end
+
+    it "writes nothing into the parent's session record" do
+      parent_session.record_compaction_cut(held_at_head)
+      before = parent_journal.dup
+
+      spawning(:inherit, text_response("done")).run("go")
+
+      expect(parent_journal).to eq(before)
+    end
+
+    it "is not carried to a grandchild, whose parent is the child and not this session" do
+      parent_session.record_compaction_cut(held_at_head)
+      grandchild = spawning(:inherit, text_response("unused")).descend(parent: -> { parent }, escalation: [],
+                                                                       ceiling: 1)
+
+      grandchild.run("go")
+
+      expect(sources).to be_empty
     end
   end
 

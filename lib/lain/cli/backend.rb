@@ -491,6 +491,25 @@ module Lain
                              end
       end
 
+      # A spawned child's own compaction Source, built fresh per call over the
+      # run's arm, so the cuts an :inherit child is seeded with hold under it.
+      # Not memoized and not bound: a Source is one Agent's run state, and the
+      # run's own stays whatever {#pipeline_source} binds.
+      #
+      # Its decisions journal nowhere, and its cuts land only in the child's own
+      # session, which journals nowhere either: the run's file is the parent's,
+      # and a child's record read there would be counted as the parent's. Its
+      # summarizer and handoff tiers are the run's, though, so their requests
+      # and `oracle_answer` records do land in the run's file.
+      #
+      # @param cache_profile [Lain::CacheProfile] the child provider's own
+      # @return [Compaction::Source, Agent::PipelineSource::Null]
+      def child_compaction_source(cache_profile:)
+        return Agent::PipelineSource::Null unless compaction?
+
+        compaction_source(cache_profile:, journal: Channel::Null.instance, sink: Sink::Null.new)
+      end
+
       # The post-dispatch observer {Agent::ToolRunner} fires eager summaries
       # through, over the run's ONE {Oracle::Eager} -- the store
       # {#pipeline_source} snapshots. Null under a named strategy, which replaces the eager tier.

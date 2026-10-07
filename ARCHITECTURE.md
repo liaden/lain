@@ -133,7 +133,10 @@ design turns on. `Workspace` renders into the `Request` and is never appended to
 
 A subagent's chain lives in the shared `Store` and starts at a fresh root by default, so the child's
 prompt chain never includes the parent's conversation; the `inherit` prefix arm is the exception,
-starting the child on the parent's head to share its cached prefix. Causal lineage is not on any
+starting the child on the parent's head to share its cached prefix. Such a child renders the
+parent's held compaction cuts as they stood at spawn, through a Source of its own, while its chain
+stays the raw fork. The cuts are a snapshot taken at spawn, so a later parent cut never reaches it;
+the child then compacts on its own, and its own cuts are not journaled. Causal lineage is not on any
 turn: a `:spawn` event names the parent's head as `spawned_from`, the completion `:message` names
 that spawn and the child's final turn, and the session file records each child turn as a
 `child_turn` record, once per digest -- a turn equal to one already written gets none, which is why

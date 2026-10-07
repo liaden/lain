@@ -383,7 +383,7 @@ module Lain
         parent = -> { @agent.timeline }
         @supervisor = supervise
         @ask_human = wire_askers(parent)
-        toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, notice:)
+        toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, session:, notice:)
         # Resolved BEFORE the record opens, and the statement order IS the
         # guarantee -- see #switchboard for what can refuse here and why a
         # refusal must land ahead of the header.
@@ -830,8 +830,8 @@ module Lain
       # nil`. Nothing is invented either way -- `Lain::Usage.zero` is truthy, so
       # a run that has spent nothing still reports zero and cannot be confused
       # with an unassigned slot.
-      def build_toolset(recorder, backend:, parent:, ask_human:, notice: nil)
-        @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend),
+      def build_toolset(recorder, backend:, parent:, ask_human:, session: Lain::Session::Null.instance, notice: nil)
+        @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend), session:,
                                           chronicle:, options:, root:, usage: -> { @agent&.usage }, askers: @askers,
                                           supervisor: @supervisor, parent:, library: backend.library,
                                           switchboard: -> { @switchboard }, journal: durable_journal,

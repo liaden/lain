@@ -530,6 +530,67 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           expect(spawn_dev).to include("ask_human")
         end
       end
+
+      # The route `/meta` takes: a role spawned :inherit through the run's own
+      # role-spawn seam, over the run's own Backend, from a chat whose session
+      # holds a handoff cut on the parent's chain.
+      context "when the chat session holds a cut and an :inherit child is spawned" do
+        let(:provider) { Lain::Provider::Mock.new(responses: [text_response("done"), text_response("done")]) }
+        let(:chain) do
+          Lain::Timeline.empty(store: Lain::Store.new)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "REPLACED-TURN" }])
+                        .commit(role: :assistant, content: [{ "type" => "text", "text" => "ok" }])
+        end
+        let(:parent) { -> { chain } }
+        let(:session) { Lain::Session.new }
+
+        def held
+          Lain::Telemetry::CompactionCut.new(
+            digest: chain.head_digest, head: chain.head_digest, strategy: Lain::Telemetry::Compaction::EAGER_CONTROL_ARM,
+            kind: "handoff", parent: nil, supersedes: [], plan_step_completions: 0,
+            collapses: [{ "span" => [chain.to_a.first.digest, chain.head_digest],
+                          "content" => [{ "type" => "text", "text" => "STATE-DOCUMENT" }] }]
+          )
+        end
+
+        def spawned_text(build)
+          build.build(recorder, ask_human:)
+          build.role_spawn.call(:researcher, :inherit, "go")
+          Lain::Canonical.dump(provider.last_request.messages)
+        end
+
+        it "renders the cut's document in place of the turns it replaced" do
+          session.record_compaction_cut(held)
+
+          text = spawned_text(build_with(options, session:))
+
+          expect(text).to include("STATE-DOCUMENT", "go")
+          expect(text).not_to include("REPLACED-TURN")
+        end
+
+        # Under --compact-strategy elide, the run's arm is "elide".
+        def eliding(session)
+          flags = { provider: "ollama", model: nil, max_tokens: 64, compact_strategy: "elide" }
+          backend = Lain::CLI::Backend.new(flags, root: Dir.pwd)
+          described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:,
+                              epic:, root:, switchboard: -> { SpecNulls::NoSwitchboard },
+                              askers: SpecNulls::UnwiredAskers.build, session:)
+        end
+
+        it "holds a cut written under the run's named arm, and not one written under the control arm" do
+          session.record_compaction_cut(held.with(strategy: "elide"))
+          control = Lain::Session.new.record_compaction_cut(held)
+
+          expect(spawned_text(eliding(session))).to include("STATE-DOCUMENT")
+          expect(spawned_text(eliding(control))).to include("REPLACED-TURN")
+        end
+
+        it "renders the raw chain when the build is handed no session" do
+          session.record_compaction_cut(held)
+
+          expect(spawned_text(build_with(options))).to include("REPLACED-TURN")
+        end
+      end
     end
 
     # Who a child asks the human THROUGH. The run has ONE
