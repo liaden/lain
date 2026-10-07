@@ -262,6 +262,14 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
 
   def fetch_call = git_calls.find { |argv| argv.include?("fetch") }
 
+  def commit_on_origin(files)
+    files.each { |path, text| File.write(File.join(origin, path), text) }
+    run_git(origin, "add", "-A")
+    run_git(origin, "commit", "-q", "-m", "a new head")
+    run_git(origin, "update-ref", "refs/pull/#{number}/head", "HEAD")
+    run_git(origin, "rev-parse", "HEAD").strip
+  end
+
   # GitHub's own words when the combined diff is too big to serve, as gh relays
   # them: the API answers HTTP 406 with a `too_large` error and gh prefixes its
   # own sentence. Recorded verbatim rather than paraphrased -- matching it
@@ -437,19 +445,32 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     # most days, and silently a different one whenever the two disagree, which is
     # exactly the case nobody would notice. The API's diff here names a file the
     # locally regenerated one cannot, so the two are told apart.
-    it "parses the bytes it actually served, rather than a locally regenerated diff" do
-      served = "#{expected_diff}#{<<~DIFF}"
+    #
+    # The served hunk on creds.rb shows one line from the middle of a key block,
+    # which reads as a key only against the whole fetched file, so its mask says
+    # the file was read from the fetched head.
+    it "parses the bytes it actually served, masking them from the fetched file" do
+      body = (1..28).map { |i| format("line%02d", i) * 8 }
+      key = ["-----BEGIN PRIVATE KEY-----", *body, "-----END PRIVATE KEY-----"].join("\n")
+      head = commit_on_origin("creds.rb" => "#{key}\n")
+      replies[:view] = answered(stdout: JSON.generate(view_document.merge("headRefOid" => head)))
+      replies[:diff] = answered(stdout: "#{expected_diff}#{<<~DIFF}")
         diff --git a/only-github-served-this.rb b/only-github-served-this.rb
         new file mode 100644
         --- /dev/null
         +++ b/only-github-served-this.rb
         @@ -0,0 +1 @@
         +served
+        diff --git a/creds.rb b/creds.rb
+        --- a/creds.rb
+        +++ b/creds.rb
+        @@ -15,0 +16 @@
+        +#{body[14]}
       DIFF
-      replies[:diff] = answered(stdout: served)
 
-      expect(build.files.map(&:path)).to include("only-github-served-this.rb")
-      expect(fetch_call).to be_nil
+      # No fetch assertion: the review already fetched the head for base_ref.
+      lines = build.files.to_h { |file| [file.path, file.hunks.flat_map(&:lines)] }
+      expect(lines).to include("only-github-served-this.rb" => ["+served"], "creds.rb" => ["+<redacted:1>"])
     end
 
     # The walk cannot come from a combined diff, so this is where the fetch has

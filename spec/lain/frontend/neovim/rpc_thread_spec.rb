@@ -1115,7 +1115,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
 
     # The head's bytes, because a note's evidence is read out of the revision.
     def changeset
-      double = instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, commits: walk,
+      double = instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, commits: walk, file_at: nil,
                                                                   base_ref: -("b" * 40), head_ref: -("h" * 40))
       allow(double).to receive(:file_at).with(-("h" * 40), "a.rb").and_return("one\nTWO\nTWO\n".b)
       Lain::Review::Changeset.new(source: DiffSource.over(double))

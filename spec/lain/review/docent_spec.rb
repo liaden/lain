@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
+require "json"
 require "stringio"
 require "timeout"
 require "tmpdir"
@@ -270,6 +272,41 @@ RSpec.describe Lain::Review::Docent do
       expect(prompts).to be_empty
       expect(journal).to be_empty
       expect(subject.conversation("a-42").entries).to be_empty
+    end
+  end
+
+  describe "a hunk over a token nobody released", :seam do
+    let(:token) { "sk-live-2222222222222222" }
+    let(:changeset) do
+      Lain::Review::Changeset.new(source: Lain::Review::Source::LocalBranch.new(base: @base, repo_root: @repo))
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-docent-token") do |root|
+        @repo = File.join(File.realpath(root), "repo")
+        FileUtils.cp_r(SeedRepo.at({ "README.md" => "seed\n" }), @repo)
+        @base = SeedRepo.git(@repo, "rev-parse", "HEAD").stdout.strip
+        SeedRepo.git(@repo, "checkout", "-q", "-b", "feature")
+        File.write(File.join(@repo, "creds.rb"), "x = 1\nAPI_KEY=#{token}\n")
+        SeedRepo.git(@repo, "add", "-A")
+        SeedRepo.git(@repo, "commit", "-q", "-m", "add creds")
+        example.run
+      end
+    end
+
+    it "briefs the child with the mask, and journals no byte of the token" do
+      answerer, prompts = recording_answerer
+      asked = changeset.anchor(path: "creds.rb", side: :new, line: 2)
+
+      Sync do
+        subject = docent(answerer:)
+        subject.open(asked)
+        subject.ask(asked.id, "why is this here?").task.wait
+      end
+
+      expect(prompts.first).to include("<redacted:1>")
+      expect(prompts.first).not_to include(token)
+      expect(journal.map { |record| JSON.generate(record.to_h) }.join).not_to include(token)
     end
   end
 

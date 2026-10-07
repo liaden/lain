@@ -22,6 +22,8 @@ module DiffSource
   # defined method always does.
   class OverBytes < SimpleDelegator
     include Lain::Review::Source::Diffed
+
+    def file_at(revision, path) = __getobj__.respond_to?(:file_at) ? super : nil
   end
 
   # @param double [Object] anything answering `#diff` and `#base_ref`

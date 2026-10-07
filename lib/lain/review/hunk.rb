@@ -2,7 +2,7 @@
 
 module Lain
   module Review
-    Hunk = Data.define(:path, :old_start, :old_count, :new_start, :new_count, :heading, :lines)
+    Hunk = Data.define(:path, :old_start, :old_count, :new_start, :new_count, :heading, :lines, :keyed)
 
     # One hunk of a unified diff, and the key that carries its reviewed state
     # from one regeneration of that diff to the next.
@@ -12,6 +12,11 @@ module Lain
     # clearing the mark. `Canonical` is deliberately not used: a hunk body is
     # already bytes, and routing it through a JSON-native canonicalization would
     # normalize away differences the key exists to keep.
+    #
+    # That text is `keyed`, and nil means `lines`. A source that masks what
+    # `lines` shows passes a second rendering where every detected region reads
+    # alike, so neither a release nor a secret in another hunk moves the key,
+    # and no secret byte reaches a digest that is journaled.
     #
     # Keys are derivable on the MAIN Ractor only. A Hunk is shareable, but
     # `Ext.blake3_hex` is not ractor-safe -- the same recorded gap Fuzzy and
@@ -46,10 +51,11 @@ module Lain
 
       # `to_str` rather than `to_s`, to match the loudness of the `Integer()`
       # beside it: a nil path must raise here, not address as the empty string.
-      def initialize(path:, old_start:, old_count:, new_start:, new_count:, lines:, heading: "")
+      def initialize(path:, old_start:, old_count:, new_start:, new_count:, lines:, heading: "", keyed: nil)
         super(path: -path.to_str, old_start: Integer(old_start), old_count: Integer(old_count),
               new_start: Integer(new_start), new_count: Integer(new_count),
-              heading: -heading.to_str, lines: lines.map { -_1.to_str }.freeze)
+              heading: -heading.to_str, lines: lines.map { -_1.to_str }.freeze,
+              keyed: keyed&.map { -_1.to_str }&.freeze)
       end
 
       # Position-independent: the same bytes in the same file, wherever they sit.
@@ -74,7 +80,7 @@ module Lain
 
       # `.b` per LINE, not once over the join: two lines of one diff can carry
       # different encodings, and joining those raises instead of hashing.
-      def body = lines.map(&:b).join("\n")
+      def body = (keyed || lines).map(&:b).join("\n")
 
       # The scheme is HASHED, not merely prefixed. As a bare prefix it leaves a
       # content digest forgeable into a span digest by a body whose first line

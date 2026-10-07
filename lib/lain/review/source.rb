@@ -255,8 +255,16 @@ module Lain
         # forgery reason, and this address IS journaled.
         DIGEST_SCHEME = "review-changeset-v1"
 
+        # Neither side has a walk verdict to pass: a changeset source holds no
+        # run classifier, so its hunks are masked by detected regions alone.
+        VERDICT = Survey::Projection::UNJUDGED
+
+        # Projected HERE, once, so no reader of a hunk -- the docent's brief, a
+        # `/critique` patch, the marks -- ever holds a byte the ledger has not
+        # released.
+        #
         # @return [Array<ChangedFile>] in the diff's own (path-sorted) order
-        def files = @files ||= Parser.new(diff).files.freeze
+        def files = @files ||= Parser.new(diff).files.map { |file| masked(file) }.freeze
 
         # Both, and HERE for {#files}' reason: having a diff IS having two
         # revisions. It does not move with the files -- a diff whose only file is
@@ -317,6 +325,29 @@ module Lain
 
         private
 
+        # Only the working tree's own bytes may reconcile: the ledger is keyed by
+        # the path on disk, so reconciling against any other revision's bytes
+        # forgets a release made on what the human is looking at.
+        def masked(file)
+          return file if file.hunks.empty?
+
+          mask = MaskedHunks.new(old: side(base_ref, file.old_path, file.path, reconcile: false),
+                                 new: side(head_ref, file.new_path, file.path, reconcile: reconciles?(file.new_path)))
+          ChangedFile.new(**file.to_h, hunks: file.hunks.map { |hunk| mask.call(hunk) })
+        end
+
+        # The release check first: with nothing released a reconcile changes
+        # nothing, and asking git whether the path is checked out costs 2 spawns.
+        def reconciles?(path) = !path.nil? && projection.released?(ledger_path(path)) && checked_out?(path)
+
+        def side(revision, path, identity, reconcile:)
+          bytes = path && file_at(revision, path)
+          unread = ->(texts) { sheet(identity, "#{texts.join("\n")}\n", reconcile: false) }
+          MaskedHunks::Side.new(sheet: bytes && sheet(path, bytes, reconcile:), unread:)
+        end
+
+        def sheet(path, bytes, reconcile:) = projection.sheet(ledger_path(path), bytes, verdict: VERDICT, reconcile:)
+
         # The ledger keys releases by ABSOLUTE path. A host with no checkout (a
         # stub over held bytes) roots at "/", which still keys consistently.
         def ledger_path(path) = File.join(@repo_root.to_s, path)
@@ -333,6 +364,107 @@ module Lain
           [base_ref,
            *files.flat_map { |file| [file.path, file.status.to_s, *keys.fetch(file.path, [])] }]
         end
+      end
+
+      # A changed file's hunks with every line read back from its side's
+      # projection, numbered as the file numbers it, so each hunk keeps the line
+      # count its header claims: a key block spanning many lines masks line by
+      # line rather than collapsing into one placeholder.
+      #
+      # Each hunk numbers its placeholders itself, across both sides in reading
+      # order, so a `-` and a `+` line never show one number for two values. Its
+      # keys hash a second rendering where every detected region reads alike, so
+      # neither a release nor a secret elsewhere in the file moves them, and no
+      # secret byte reaches a journaled digest.
+      class MaskedHunks
+        # One revision of the file. A hunk's lines are checked against the raw
+        # bytes before the sheet masks them; where they disagree, or the revision
+        # held no file, the hunk's own text is projected instead, so a
+        # misbehaving source reads masked, never raw.
+        class Side
+          # @param sheet [Survey::Projection::Sheet, nil] the revision's file
+          # @param unread [#call] lines to a sheet over just those lines
+          def initialize(sheet:, unread:)
+            @sheet = sheet
+            @unread = unread
+          end
+
+          # @param start [Integer] the hunk's 1-based first line on this side
+          # @param texts [Array<String>] the hunk's lines on this side, unmarked
+          # @return [Array(Survey::Projection::Sheet, Integer)] where those lines
+          #   are read from, and the number the first one has there
+          def reading(start, texts)
+            return [@sheet, start] if texts.empty? || agrees?(start, texts)
+
+            [@unread.call(texts), 1]
+          end
+
+          private
+
+          def agrees?(start, texts)
+            !@sheet.nil? && texts.each_with_index.all? { |text, offset| @sheet.raw(start + offset) == text }
+          end
+        end
+
+        # One hunk, read in order. Stateful on purpose: a line's number on each
+        # side is how many of that side's lines came before it.
+        class Walk
+          # git's "\ No newline at end of file" marker is not file content, so it
+          # passes through as it is.
+          SIDED = [" ", "-", "+"].freeze
+
+          # @param old [Array(Survey::Projection::Sheet, Integer)] from {Side#reading}
+          # @param new [Array(Survey::Projection::Sheet, Integer)] from {Side#reading}
+          def initialize(old:, new:)
+            @sheets = { "-" => old.first, "+" => new.first }
+            @at = { "-" => old.last, "+" => new.last }
+            @numbers = Hash.new { |seen, key| seen[key] = seen.size + 1 }
+          end
+
+          # @param line [String] one hunk line, marker included
+          # @return [Array(String, String)] the line as shown, and as keyed
+          def relined(line)
+            marker = line[0]
+            return [line, line] unless SIDED.include?(marker)
+
+            # A context line is on both sides; it reads the head's.
+            step("-") if marker == " "
+            side = marker == "-" ? "-" : "+"
+            rendered(line, marker, side, step(side))
+          end
+
+          private
+
+          def step(side) = (@at[side] += 1) - 1
+
+          def rendered(line, marker, side, number)
+            sheet = @sheets.fetch(side)
+            numbering = ->(region) { @numbers[[side, region.start]] }
+            [sheet.line(number, numbering), sheet.blind(number)].map do |text|
+              (marker + text).force_encoding(line.encoding)
+            end
+          end
+        end
+
+        # @param old [Side] the base revision
+        # @param new [Side] the head revision
+        def initialize(old:, new:)
+          @old = old
+          @new = new
+        end
+
+        # @param hunk [Hunk]
+        # @return [Hunk] the same hunk, every sided line masked
+        def call(hunk)
+          walk = Walk.new(old: @old.reading(hunk.old_start, texts(hunk, "-")),
+                          new: @new.reading(hunk.new_start, texts(hunk, "+")))
+          pairs = hunk.lines.map { |line| walk.relined(line) }
+          Hunk.new(**hunk.to_h, lines: pairs.map(&:first), keyed: pairs.map(&:last))
+        end
+
+        private
+
+        def texts(hunk, marker) = hunk.lines.select { |line| line.start_with?(" ", marker) }.map { |line| line[1..] }
       end
 
       # The unified-diff reader, promoted from `spike/review-probe/diff_map.rb`.

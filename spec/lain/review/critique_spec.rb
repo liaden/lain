@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "tmpdir"
 
 # The role spawn a critique asks for its children, recorded: which checkout
@@ -415,6 +416,31 @@ RSpec.describe Lain::Review::Critique do
                                            paths: ["lib/a.rb"], role: :diff_critic, brief_key: "k",
                                            outcome: "maybe", text: "fine")
       end.to raise_error(ArgumentError, /outcome/)
+    end
+  end
+
+  describe Lain::Review::Critique::Patch, :seam do
+    let(:token) { "sk-live-3333333333333333" }
+
+    around do |example|
+      Dir.mktmpdir("lain-critique-patch") do |root|
+        @repo = File.join(File.realpath(root), "repo")
+        FileUtils.cp_r(SeedRepo.at({ "README.md" => "seed\n" }), @repo)
+        @base = SeedRepo.git(@repo, "rev-parse", "HEAD").stdout.strip
+        SeedRepo.git(@repo, "checkout", "-q", "-b", "feature")
+        File.write(File.join(@repo, "creds.rb"), "x = 1\nAPI_KEY=#{token}\n")
+        SeedRepo.git(@repo, "add", "-A")
+        SeedRepo.git(@repo, "commit", "-q", "-m", "add creds")
+        example.run
+      end
+    end
+
+    it "is built from the masked hunks, never the token" do
+      source = Lain::Review::Source::LocalBranch.new(base: @base, repo_root: @repo)
+      patch = described_class.of(Lain::Review::Changeset.new(source:).file("creds.rb"))
+
+      expect(patch).to include("+API_KEY=<redacted:1>")
+      expect(patch).not_to include(token)
     end
   end
 

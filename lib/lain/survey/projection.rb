@@ -107,11 +107,13 @@ module Lain
       #   {Walk::Listing}; checked against the bytes and refused on a
       #   disagreement. A cross-check, not a second source of truth.
       # @param verdict [Sensitivity::Verdict] the walk's verdict on `path`
+      # @param reconcile [Boolean] false for bytes that are not the file on disk
+      #   now -- an older revision -- so they read releases without forgetting any
       # @return [String] the same bytes with every unreleased region masked,
       #   shaped and encoded as it arrived; one placeholder for a name-gated file
       # @raise [ArgumentError] on a relative path (from the ledger) or on
       #   content that is not the whole file
-      def project(path, content, verdict:, size: nil)
+      def project(path, content, verdict:, size: nil, reconcile: true)
         # BEFORE the ledger is touched, for {Middleware::RedactSecretReads}'
         # reason: `outstanding` reconciles, so asking it about a view we are
         # about to refuse would forget releases for regions nobody looked at.
@@ -121,7 +123,7 @@ module Lain
         # holds now, so skipping the call for an empty scan would leave a
         # release standing for a secret that has been deleted -- and send it
         # unasked if it ever came back.
-        unreleased = outstanding(path, content)
+        unreleased = outstanding(path, content, reconcile:)
         return whole(content) if verdict.named?
         return content if unreleased.empty?
 
@@ -151,16 +153,28 @@ module Lain
       # @return [String, nil] that line with its unreleased regions masked, in
       #   the content's encoding; nil when the file holds no such line
       def line(path, content, number, verdict:)
-        unreleased = outstanding(path, content)
-        from, to = span(content, number)
-        return nil if from.nil?
-        return whole(content) if verdict.named?
-
-        crossing = unreleased.each_with_index.select { |region, _| crosses?(region, from, to) }
-        Sensitivity::Masking.render(content.byteslice(from, to - from),
-                                    crossing.map { |region, _| clipped(region, from, to) },
-                                    ordinals: crossing.map { |_, index| index + 1 }.each)
+        sheet = sheet(path, content, verdict:)
+        sheet.line(number, sheet.ordinals) unless sheet.raw(number).nil?
       end
+
+      # The file, scanned once, for a caller that masks only some of its lines
+      # -- a diff's hunks -- and numbers the placeholders itself.
+      #
+      # @param path [String, Pathname] the file, ABSOLUTE, as for {#project}
+      # @param content [String] its whole bytes
+      # @param verdict [Sensitivity::Verdict] the walk's verdict on `path`
+      # @param reconcile [Boolean] as for {#project}
+      # @return [Sheet]
+      def sheet(path, content, verdict:, reconcile: true)
+        detected = Sensitivity::Regions.detect(content)
+        Sheet.new(content, detected:, unreleased: @ledger.outstanding(path, detected, complete: reconcile),
+                           named: verdict.named?)
+      end
+
+      # @param path [String, Pathname] the file, ABSOLUTE, as for {#project}
+      # @return [Boolean] whether the run's ledger holds a release for `path`,
+      #   which is the only case in which reconciling it can change anything
+      def released?(path) = !@ledger.released(path).empty?
 
       # Where a raw line lands in {#project}'s answer. A region collapses to one
       # placeholder, so every line it spans answers the placeholder's line and
@@ -183,7 +197,9 @@ module Lain
 
       private
 
-      def outstanding(path, content) = @ledger.outstanding(path, Sensitivity::Regions.detect(content), complete: true)
+      def outstanding(path, content, reconcile: true)
+        @ledger.outstanding(path, Sensitivity::Regions.detect(content), complete: reconcile)
+      end
 
       def whole(content) = Sensitivity::Masking.render(content, [Clipped.new(start: 0, length: content.bytesize)])
 
@@ -211,11 +227,6 @@ module Lain
       # empty line would begin with its newline, and no detector emits one.
       def crosses?(region, from, to) = region.start < to && region.start + region.length > from
 
-      def clipped(region, from, to)
-        start = [region.start, from].max
-        Clipped.new(start: start - from, length: [region.start + region.length, to].min - start)
-      end
-
       # `complete: true` is a claim about the BYTES, and this object cannot see a
       # truncation by looking at one. The failure it prevents surfaces nowhere
       # near the truncation: a partial scan reconciles away releases for regions
@@ -225,6 +236,75 @@ module Lain
 
         raise ArgumentError, "a projection is over the whole file: got #{content.bytesize} bytes, " \
                              "and the walk listed #{size}"
+      end
+
+      # One file's lines, masked one at a time. Regions are found by binary
+      # search on their sorted, non-overlapping offsets, so a hunk's lines cost
+      # what they cross rather than a walk of every region in the file.
+      class Sheet
+        # @param content [String] the file's whole bytes
+        # @param detected [Array<Sensitivity::Regions::Region>] every region in it
+        # @param unreleased [Array<Sensitivity::Regions::Region>] those still masked
+        # @param named [Boolean] whether the file is masked whole
+        def initialize(content, detected:, unreleased:, named:)
+          @content = content
+          @raw = Review::Anchor.lines(content.b)
+          @starts = @raw.each_with_object([0]) { |line, starts| starts << (starts.last + line.bytesize + 1) }
+          @detected = detected
+          @unreleased = unreleased
+          @named = named
+        end
+
+        # @param number [Integer] 1-based, by {Review::Anchor.lines}' rule
+        # @return [String, nil] the line's raw bytes, BINARY; nil past the end
+        def raw(number) = number.between?(1, @raw.size) ? @raw[number - 1] : nil
+
+        # @param number [Integer] 1-based; must be a line the file holds
+        # @param numbering [#[]] region to the number its placeholder shows
+        # @return [String] the line with its unreleased regions masked
+        def line(number, numbering)
+          return masked(number, [whole], [1].each) if @named
+
+          crossing = crossing(@unreleased, number)
+          masked(number, crossing, crossing.map { |region| numbering[region] }.each)
+        end
+
+        # Every detected region reads alike here, released or not, so text keyed
+        # from it moves neither with the ledger nor with its neighbours' numbering.
+        #
+        # @param number [Integer] 1-based; must be a line the file holds
+        # @return [String] the line with every detected region masked as one
+        #   fixed placeholder
+        def blind(number) = masked(number, @named ? [whole] : crossing(@detected, number), [0].cycle)
+
+        # @return [Hash{Sensitivity::Regions::Region => Integer}] each unreleased
+        #   region's place in the whole file, the numbering {Projection#project} shows
+        def ordinals = @unreleased.each_with_index.to_h { |region, index| [region, index + 1] }
+
+        private
+
+        def whole = Clipped.new(start: 0, length: @content.bytesize)
+
+        def crossing(regions, number)
+          from, to = span(number)
+          first = regions.bsearch_index { |region| region.start + region.length > from }
+          return [] if first.nil?
+
+          (first...regions.size).lazy.map { |index| regions[index] }.take_while { |region| region.start < to }.to_a
+        end
+
+        def masked(number, regions, ordinals)
+          from, to = span(number)
+          Sensitivity::Masking.render(@content.byteslice(from, to - from),
+                                      regions.map { |region| clipped(region, from, to) }, ordinals:)
+        end
+
+        def span(number) = [@starts[number - 1], @starts[number - 1] + @raw[number - 1].bytesize]
+
+        def clipped(region, from, to)
+          start = [region.start, from].max
+          Clipped.new(start: start - from, length: [region.start + region.length, to].min - start)
+        end
       end
     end
   end
