@@ -208,6 +208,8 @@ class LainCLI < Thor
       { project_factory: -> { resolved_project(root:, cwd: cwd || root) } }
     end
 
+    def trust_root(path) = directory!(path, "PATH") || Lain::Project::Resolver.default_project.root
+
     # A path the user typed, expanded against the shell's directory and refused
     # BY NAME when it is not a directory. The resolver would take a regular file
     # as a root perfectly happily -- it asks realpath, and a file has one -- and
@@ -1195,10 +1197,14 @@ class LainCLI < Thor
 
   desc "trust [PATH]", "Show this project's .lain/*.rb and, on a yes, let lain run those exact bytes"
   method_option :yes, type: :boolean, default: false, desc: "Trust without asking, for a headless run"
+  method_option :user, type: :boolean, default: false,
+                       desc: "Trust $XDG_CONFIG_HOME/lain/config.rb instead of a project's .lain/*.rb"
   def trust(path = nil)
+    raise Thor::Error, "--user takes no PATH" if options[:user] && path
+
     render do
-      Lain::CLI::Trust.new(root: directory!(path, "PATH") || Lain::Project::Resolver.default_project.root,
-                           input: $stdin, output: $stdout, yes: options[:yes]).call
+      Lain::CLI::Trust.new(root: (trust_root(path) unless options[:user]),
+                           input: $stdin, output: $stdout, yes: options[:yes], user: options[:user]).call
     end
   end
 

@@ -4,6 +4,8 @@ require "stringio"
 require "tmpdir"
 require "fileutils"
 
+load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+
 RSpec.describe Lain::CLI::Trust do
   around do |example|
     Dir.mktmpdir("lain-cli-trust") do |tmp|
@@ -135,5 +137,49 @@ RSpec.describe Lain::CLI::Trust do
     described_class.new(root:, input: StringIO.new("y\n"), output:).call
 
     expect(Lain::Summarizer::Catalog.load(root:).map(&:name)).to eq(["granted-#{object_id}"])
+  end
+
+  describe "with user: true" do
+    let(:user_paths) do
+      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "config"),
+                             "XDG_STATE_HOME" => File.join(@tmp, "state") })
+    end
+
+    def write_user(body)
+      FileUtils.mkdir_p(File.dirname(user_paths.user_config))
+      File.write(user_paths.user_config, body)
+    end
+
+    def run_user(answer: nil)
+      described_class.new(input: StringIO.new(answer.to_s), output:, paths: user_paths, user: true).call
+    end
+
+    it "shows the file's bytes, writes the mark, and lets Config.middleware load it" do
+      write_user("class Stamp < Lain::Middleware::Base; end\nmiddleware { model Stamp }\n")
+      root = File.join(@tmp, "project").tap { |dir| FileUtils.mkdir_p(dir) }
+
+      expect { Lain::Config.middleware(root:, paths: user_paths) }.to raise_error(Lain::Project::Trust::Untrusted)
+      expect(run_user(answer: "y\n")).to include("trusted")
+
+      expect(output.string).to include(user_paths.user_config).and include("middleware { model Stamp }")
+      expect(Lain::Config.middleware(root:, paths: user_paths).members(:model).length).to eq(1)
+    end
+
+    it "raises Declined and writes no mark on a no" do
+      write_user("middleware { }\n")
+
+      expect { run_user(answer: "n\n") }.to raise_error(described_class::Declined, /not trusted/)
+      expect(Lain::Project::Trust.for_user(paths: user_paths).trusted?).to be(false)
+    end
+
+    it "says the user config does not exist when there is no file" do
+      expect(run_user(answer: "y\n")).to include("user config does not exist").and include("nothing to trust")
+      expect(output.string).not_to include("[y/N]")
+    end
+
+    it "is refused `lain trust --user PATH` through the Thor command" do
+      expect { LainCLI.start(["trust", "--user", @tmp], debug: true) }
+        .to raise_error(Thor::Error, /--user takes no PATH/)
+    end
   end
 end

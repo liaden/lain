@@ -18,28 +18,38 @@ module Lain
       ALREADY = "already trusted: %<files>s"
       QUESTION = "Trust covers these %<count>d file(s) only, not what they require or load.\n" \
                  "Run them as Ruby whenever lain loads this project? [y/N] "
+      USER_QUESTION = "Trust covers this file only, not what it requires or loads.\n" \
+                      "Run it as Ruby in every project lain loads? [y/N] "
       GRANTED = "trusted: %<files>s"
+      NO_USER_CONFIG = "the user config does not exist (%<path>s), so there is nothing to trust"
       DECLINED = "not trusted; nothing recorded"
 
       # The human said no, or nothing.
       class Declined < Error; end
 
-      # @param root [String] the project root whose `.lain/*.rb` is judged
+      # @param root [String, nil] the project root whose `.lain/*.rb` is judged; unused with `user:`
       # @param input [#gets] where the human's answer is read
       # @param output [#write] where the files and the question are shown
       # @param paths [Paths] supplies the state home the mark is kept under
       # @param yes [Boolean] grant without asking
-      def initialize(root:, input:, output:, paths: Paths.new, yes: false)
+      # @param user [Boolean] judge the user's config.rb instead of the project's
+      def initialize(input:, output:, root: nil, paths: Paths.new, yes: false, user: false)
         @root = root
         @input = input
         @output = output
         @yes = yes
-        @trust = Project::Trust.for(project_dir: ProjectDir.new(root:, paths:), paths:)
+        @user = user
+        @empty = user ? format(NO_USER_CONFIG, path: paths.user_config) : format(NOTHING, root:)
+        @trust = if user
+                   Project::Trust.for_user(paths:)
+                 else
+                   Project::Trust.for(project_dir: ProjectDir.new(root:, paths:), paths:)
+                 end
       end
 
       # @return [String] the outcome, for the caller to print
       def call
-        return legible(format(NOTHING, root: @root)) if @trust.files.empty?
+        return legible(@empty) if @trust.files.empty?
         return legible(format(ALREADY, files: listed)) if @trust.trusted?
 
         show
@@ -57,10 +67,12 @@ module Lain
         @trust.sources.each { |path, bytes| @output.write(legible("==> #{path} <==\n#{bytes}\n")) }
       end
 
+      def question = @user ? USER_QUESTION : format(QUESTION, count: @trust.files.length)
+
       def confirmed?
         return true if @yes
 
-        @output.write(format(QUESTION, count: @trust.files.length))
+        @output.write(question)
         AFFIRMATIVE.match?(@input.gets.to_s.strip)
       end
 
