@@ -211,6 +211,7 @@ module Lain
       #   the live frontend stream rather than the session's record.
       # @param spool [#open_frame, nil] where each round trip's raw response
       #   bytes are teed for salvage.
+      # @param http_middleware [Array<Array>] `[klass, *args, kwargs]` entries, for a config built here
       #
       #   THE NIL DEFAULT IS LOAD-BEARING and is not the missing Null Object it
       #   looks like: it is the only thing that tells "passed no spool" apart
@@ -225,13 +226,14 @@ module Lain
       #   injected both could see.
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, retries: nil,
                      sink: Sink::Null.new, api_base: nil, queue: true, journal: Channel::Null::INSTANCE,
-                     deployment: Deployment.local, spool: nil)
+                     deployment: Deployment.local, spool: nil, http_middleware: [])
         super()
         raise ArgumentError, RETRIES_OWN_THE_SPOOL if retries && spool
 
         @queue = queue
         @journal = journal
         @deployment = deployment
+        @http_middleware = http_middleware
         @model_capabilities = {}
         @retries = retries || RetryTap.new(channel:, spool: spool || Spool::Null.new)
         @config = journaled_retries(config || build_config(api_base:))
@@ -608,6 +610,7 @@ module Lain
       def build_config(api_base:)
         config = @deployment.apply(Provider::HTTP::Configuration.new)
         config.ollama_api_base = api_base unless api_base.nil?
+        config.http_middleware = @http_middleware
         config
       end
 

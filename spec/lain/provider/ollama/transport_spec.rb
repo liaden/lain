@@ -21,6 +21,23 @@ RSpec.describe Lain::Provider::Ollama::Transport do
     end
   end
 
+  describe "the probe connection" do
+    it "carries no http middleware, so an operator's entries never see a metadata probe" do
+      entry = [Class.new, {}].freeze
+      transport = described_class.new(config_with(http_middleware: [entry].freeze))
+
+      expect(transport.send(:probe_config).http_middleware).to eq([])
+    end
+
+    it "leaves the chat configuration's entries in place" do
+      entry = [Class.new, {}].freeze
+      config = config_with(http_middleware: [entry].freeze)
+      described_class.new(config).send(:probe_config)
+
+      expect(config.http_middleware).to eq([entry])
+    end
+  end
+
   # RULING 1: opening a frame is not filling one. A tap that opened frames the
   # transport never appended to and never closed would be a WAL of empty or
   # never-terminated records -- green under every spec that injects its own

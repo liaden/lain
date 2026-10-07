@@ -64,14 +64,16 @@ module Lain
       # @param journal [#<<] where a {Telemetry::ProviderWait} lands when this
       #   provider QUEUES for capacity -- see {Provider::Ollama#initialize} for
       #   why this is not `channel:`.
+      # @param http_middleware [Array<Array>] `[klass, *args, kwargs]` entries, for a config built here
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, sink: Sink::Null.new,
                      spool: Spool::Null.new, api_key: nil, api_base: nil, queue: true,
-                     journal: Channel::Null::INSTANCE)
+                     journal: Channel::Null::INSTANCE, http_middleware: [])
         super()
         @queue = queue
         @journal = journal
         @channel = channel
         @retries = RetryTap.new(spool:, channel:)
+        @http_middleware = http_middleware
         @config = config || build_config(api_key:, api_base:)
         @transport = transport || Transport.new(@config, sink:)
       end
@@ -127,6 +129,7 @@ module Lain
         config.max_retries = 2
         config.retry_block = @retries.retry_block
         config.exhausted_retries_block = @retries.exhausted_block
+        config.http_middleware = @http_middleware
         apply_rate_limit_backoff(config)
       end
 

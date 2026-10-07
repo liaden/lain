@@ -233,6 +233,7 @@ module Lain
         def probe_config
           @config.dup.tap do |config|
             config.max_retries = 0
+            config.http_middleware = [].freeze
             config.request_timeout = PROBE_TIMEOUT_SECONDS
           end
         end

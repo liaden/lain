@@ -419,4 +419,15 @@ RSpec.describe Lain::Provider::Anthropic do
             -> { "no error raised: complete returned content=#{returned&.content.inspect} -- an empty turn" }
     end
   end
+
+  describe "an injected config" do
+    it "keeps its own http middleware when the provider was given others" do
+      mine = [[Class.new, {}].freeze].freeze
+      config = Lain::Provider::HTTP::Configuration.new.tap { |c| c.http_middleware = mine }
+
+      described_class.new(config:, transport: transport_sync({}), http_middleware: [[Class.new, {}].freeze])
+
+      expect(config.http_middleware).to equal(mine)
+    end
+  end
 end

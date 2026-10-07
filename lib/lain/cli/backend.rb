@@ -269,7 +269,8 @@ module Lain
       def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance, queue: true,
                    journal: run_journal)
         case name
-        when *OllamaTier::NAMES then ollama_tier(name).provider(channel:, queue:, journal:, spool:)
+        when *OllamaTier::NAMES then ollama_tier(name).provider(channel:, queue:, journal:, spool:,
+                                                                http_middleware: middleware.http_entries)
         else anthropic_provider(spool, channel, journal, queue:, flag: OllamaTier.flag_for(chat: chat_name?(name)))
         end
       end
@@ -647,7 +648,7 @@ module Lain
         raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; #{flag} anthropic needs it to build a client" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
-        Provider::Anthropic.new(spool:, channel:, queue:, journal:)
+        Provider::Anthropic.new(spool:, channel:, queue:, journal:, http_middleware: middleware.http_entries)
       end
 
       # Where a provider's {Telemetry::ProviderWait} lands: this run's journal,

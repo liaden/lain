@@ -172,12 +172,14 @@ module Lain
         #   on which ollama the session dialled. A real Null Object rather than
         #   nil, matching {Backend#provider}'s own default, so this arm states a
         #   spool either way and nothing downstream coalesces.
+        # @param http_middleware [Array<Array>] `[klass, *args, kwargs]` entries for the chat connection
         # @return [Provider::Ollama] dialling whichever ollama this arm names
-        def provider(channel:, queue:, journal:, spool: Provider::Spool::Null.new)
-          return Provider::Ollama.local(api_base: @api_base, channel:, queue:, journal:, spool:) unless cloud?
+        def provider(channel:, queue:, journal:, spool: Provider::Spool::Null.new, http_middleware: [])
+          return local_provider(channel:, queue:, journal:, spool:, http_middleware:) unless cloud?
 
           naming_the_flag do
-            Provider::Ollama.cloud(api_key: key, api_base: @api_base, channel:, queue:, journal:, spool:)
+            Provider::Ollama.cloud(api_key: key, api_base: @api_base, channel:, queue:, journal:, spool:,
+                                   http_middleware:)
           end
         end
 
@@ -193,6 +195,10 @@ module Lain
         def self.default_model(name) = name == CLOUD ? CLOUD_DEFAULT_MODEL : Provider::Ollama::DEFAULT_MODEL
 
         private
+
+        def local_provider(channel:, queue:, journal:, spool:, http_middleware:)
+          Provider::Ollama.local(api_base: @api_base, channel:, queue:, journal:, spool:, http_middleware:)
+        end
 
         def key = ENV.fetch(API_KEY_ENV_KEY, nil)
 

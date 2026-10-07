@@ -347,6 +347,55 @@ RSpec.describe Lain::CLI::Backend do
   # identity alone is now vacuous (every branch here builds Anthropic), so
   # these pin the ACTUAL spool object reaching the built provider -- the same
   # ivar-inspection idiom the Ollama --api-base example above uses.
+  describe "#provider http middleware" do
+    let(:counter) { Class.new }
+    let(:call_class) { Struct.new(:verb, :args, :kwargs, :block, :line, keyword_init: true) }
+
+    def configured_with(klass)
+      call = call_class.new(verb: :http, args: [klass], kwargs: {}, block: nil, line: 1)
+      Lain::Config::Middleware.from([call], path: "/p")
+    end
+
+    def entries_of(provider) = provider.instance_variable_get(:@config).http_middleware
+
+    def backend_with(middleware, **options) = described_class.new(options, root: Dir.pwd, middleware:)
+
+    it "hands the entries to the anthropic provider" do
+      provider = with_env("ANTHROPIC_API_KEY" => "sk-test") do
+        backend_with(configured_with(counter), provider: "anthropic").provider
+      end
+
+      expect(entries_of(provider)).to eq([[counter, {}]])
+    end
+
+    it "hands the entries to the local ollama arm" do
+      provider = backend_with(configured_with(counter), provider: "ollama").provider
+
+      expect(entries_of(provider)).to eq([[counter, {}]])
+    end
+
+    it "hands the entries to the cloud ollama arm" do
+      provider = with_env("OLLAMA_API_KEY" => "sk-ollama-test") do
+        backend_with(configured_with(counter), provider: "ollama-cloud").provider
+      end
+
+      expect(entries_of(provider)).to eq([[counter, {}]])
+    end
+
+    it "hands the entries to the summarizer provider" do
+      provider = backend_with(configured_with(counter), provider: "ollama", summarizer_provider: "ollama")
+                 .summarizer_provider
+
+      expect(entries_of(provider)).to eq([[counter, {}]])
+    end
+
+    it "adds nothing when the backend was built without middleware" do
+      provider = backend_for(provider: "ollama").provider
+
+      expect(entries_of(provider)).to eq([])
+    end
+  end
+
   describe "#provider spool threading" do
     it "still constructs Anthropic with the default Null spool when none is given at all" do
       provider = with_env("ANTHROPIC_API_KEY" => "sk-test") { backend_for(provider: "anthropic").provider }
