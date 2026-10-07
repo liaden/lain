@@ -97,7 +97,7 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
                           status_feed: instance_double(Lain::StatusFeed),
                           project: Lain::Project.new(root: Dir.pwd, cwd: Dir.pwd, kind: :project,
                                                      detected_by: :flag))
-                     .send(:turn_phase, -> {}, backend.context_window)
+                     .send(:turn_phase, -> {}, backend.context_window, backend.middleware)
   end
 
   # The response ECHOES the model, as a real provider's does, because that is

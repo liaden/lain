@@ -123,6 +123,18 @@ WiringSpecResumed = Data.define(:recorder, :session)
 # A tool middleware a config.rb could register: Base's pass-through.
 class WiringSpecToolStamp < Lain::Middleware::Base; end
 
+# A model middleware a config.rb could register; it keeps what came back.
+class WiringSpecModelStamp < Lain::Middleware::Base
+  SEEN = Queue.new
+
+  def call(env, &)
+    downstream(env, &).tap { |out| SEEN << out[:response] }
+  end
+end
+
+# A turn middleware a config.rb could register: Base's pass-through settle.
+class WiringSpecTurnStamp < Lain::Middleware::Base; end
+
 # Records what the backend was asked for a provider WITH, because
 # {Lain::CLI::Wiring}'s `#spooled_provider` has as its whole content the pair
 # of keywords it passes -- the spool tee and the channel -- and the object that
@@ -2997,6 +3009,71 @@ RSpec.describe Lain::CLI::Wiring do
                   Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                   Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
                   Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+      end
+    end
+
+    def configured_backend(root, **areas)
+      middleware = Lain::Config::Middleware.new(**areas.transform_values do |factory|
+        [Lain::Config::Middleware::Registration.new(factory:, args: [], kwargs: {}, block: nil,
+                                                    at: "/spec/config.rb:1")]
+      end)
+      offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                mock: mock_provider, root:, middleware:)
+    end
+
+    def configured_wiring(root)
+      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                          project: Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag))
+    end
+
+    def configured_agent(root, **areas)
+      wiring = configured_wiring(root)
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel:, recorder:, session:, backend: configured_backend(root, **areas))
+    end
+
+    def configured_instrumentation(root, wiring, backend)
+      wiring.send(:backing, backend, channel, -> {}, board: board_for(root:))[:instrumentation]
+    end
+
+    it "starts the agent's model stack with the configured model middleware" do
+      in_tree do |root|
+        classes = configured_agent(root, model: WiringSpecModelStamp).send(:model_caller).middleware.to_a.map(&:class)
+
+        expect(classes.first(2)).to eq([WiringSpecModelStamp, Lain::Middleware::RequestBudget])
+        expect(classes.last).to be(Lain::Middleware::ResolveAttachments)
+      end
+    end
+
+    it "lets a configured model middleware see the response the agent committed" do
+      in_tree do |root|
+        WiringSpecModelStamp::SEEN.clear
+        agent = configured_agent(root, model: WiringSpecModelStamp)
+        agent.ask("hello")
+
+        seen = Array.new(WiringSpecModelStamp::SEEN.size) { WiringSpecModelStamp::SEEN.pop }
+        expect(seen.map(&:content)).to eq([[{ "type" => "text", "text" => "settled" }]])
+        expect(agent.timeline.to_a.last.content).to eq([{ "type" => "text", "text" => "settled" }])
+      end
+    end
+
+    it "starts the agent's turn stack with the configured turn middleware" do
+      in_tree do |root|
+        backend = configured_backend(root, turn: WiringSpecTurnStamp)
+        classes = configured_instrumentation(root, configured_wiring(root), backend).turn_middleware.to_a.map(&:class)
+
+        expect(classes.first(2)).to eq([WiringSpecTurnStamp, Lain::Middleware::ResolveWindow])
+      end
+    end
+
+    it "builds a fresh model and turn member for every stack" do
+      in_tree do |root|
+        wiring = configured_wiring(root)
+        backend = configured_backend(root, model: WiringSpecModelStamp, turn: WiringSpecTurnStamp)
+        first, second = Array.new(2) { configured_instrumentation(root, wiring, backend) }
+
+        expect(first.model_middleware.to_a.first).not_to eql(second.model_middleware.to_a.first)
+        expect(first.turn_middleware.to_a.first).not_to eql(second.turn_middleware.to_a.first)
       end
     end
 

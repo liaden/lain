@@ -707,8 +707,8 @@ module Lain
         telemetry = mount.instrumentation
         { provider:, context_window: window,
           instrumentation: telemetry.with(tool_middleware: ToolGuard.stack(chronicle, board),
-                                          turn_middleware: turn_phase(timeline, window),
-                                          model_middleware: model_phase(telemetry)) }
+                                          turn_middleware: turn_phase(timeline, window, backend.middleware),
+                                          model_middleware: model_phase(telemetry, backend.middleware)) }
       end
 
       # The model stack, with the request budget OUTERMOST, so the refusal it
@@ -728,9 +728,9 @@ module Lain
       # unrecorded. Over the run's ONE store (#attachments), the same object the
       # toolset's tools write into: the tool that writes the bytes and the stage
       # that reads them back must address one directory.
-      def model_phase(telemetry)
+      def model_phase(telemetry, configured)
         budget = Middleware::RequestBudget.new(journal: chronicle.record_journal, compaction: telemetry.pipeline_source)
-        Middleware::Stack.new([budget, *telemetry.model_middleware.to_a,
+        Middleware::Stack.new([*configured.members(:model), budget, *telemetry.model_middleware.to_a,
                                Middleware::ResolveAttachments.new(attachments:)])
       end
 
@@ -739,8 +739,8 @@ module Lain
       # of the turn a journal records, and everything downstream that reads a
       # window must see the refreshed one. A {Middleware::Stack}, because the
       # ordering is the footgun and a Stack is the shape that stays inspectable.
-      def turn_phase(timeline, window)
-        Middleware::Stack.new([Middleware::ResolveWindow.new(book: window),
+      def turn_phase(timeline, window, configured)
+        Middleware::Stack.new([*configured.members(:turn), Middleware::ResolveWindow.new(book: window),
                                *chronicle.turn_middleware(timeline).to_a])
       end
 
