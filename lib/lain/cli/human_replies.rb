@@ -245,7 +245,7 @@ module Lain
       def drain_at_prompt
         @inbox.gather(@questions)
         heard = Sync { @reads.race(@inbox.oldest.digest) { @reply.at_prompt } }
-        return drained_elsewhere if heard.equal?(OpenReads::SETTLED)
+        return drained_elsewhere if OpenReads.closed?(heard)
 
         answer, answered = heard
         resolve_reply(answer, answered.digest) unless answer.strip.empty?
@@ -317,7 +317,7 @@ module Lain
         @answers ||= AnswerLoop.new(questions: @questions, inbox: @inbox, tty: @tty, reply: @reply,
                                     resolve: method(:resolve_reply), reads: @reads,
                                     awaited: ->(digest) { @ask_human.awaiting?(digest) },
-                                    withdrawn: method(:settled))
+                                    withdrawn: method(:withdraw_reads))
       end
 
       # {#answers}' cockpit counterpart. `drain:` is `/inbox`, which a cockpit
@@ -371,11 +371,20 @@ module Lain
       # there BEFORE it is handed on. Handing it on can re-open the same set
       # under the same digest -- a reply too long for the record is handed back
       # -- and a read or an arrival for THAT is waiting on an answer nobody gave.
+      #
+      # The reads are claimed BEFORE the answer is handed on: once it lands the
+      # set is unawaited, and a withdrawal watch that looks first must not call
+      # the read's close a stopped ask. The claim ends in `ensure`, so no raise
+      # can strand it: an answer handed on settles them, and one that was not,
+      # a refusal or an unwind, answered nothing and lets them go.
       def deliver(answer, digest)
-        open = @reads.on(digest)
+        open = @reads.on(digest).each(&:claim)
         queued = @queued.on(digest)
         handed_on(answer, digest)
+        handed = true
         settled(digest, open, queued)
+      ensure
+        open&.each { |read| handed ? read.settle : read.release }
       end
 
       def handed_on(answer, digest)
@@ -400,6 +409,13 @@ module Lain
         @inbox.retire(digest)
         @queued.withdraw(queued)
         reads.each(&:settle)
+      end
+
+      # @return [Array<OpenReads::Read>, nil] the reads withdrawn, or nil while
+      #   an answer being handed on holds them
+      def withdraw_reads(digest)
+        reads = @reads.on(digest)
+        settled(digest, reads.each(&:withdraw)) unless reads.any?(&:claimed?)
       end
 
       # The :LainReply command lands on the frontend's rail and this fiber
@@ -645,8 +661,8 @@ module Lain
         def exchange(item)
           @inbox << item
           announce(item)
-          heard, withdrawn = watched(item.digest) { @reads.race(item.digest) { @reply.for(item) } }
-          heard.equal?(OpenReads::SETTLED) ? closed(withdrawn) : resolved(*heard)
+          heard = watched(item.digest) { @reads.race(item.digest) { @reply.for(item) } }
+          OpenReads.closed?(heard) ? closed(heard) : resolved(*heard)
           true
         rescue StandardError => e
           @tty.render_error(e.message)
@@ -657,23 +673,26 @@ module Lain
         # delivered answer also ends the wait and is not a withdrawal.
         def watched(digest)
           watch = Async::Task.current.async { withdraw_when_unawaited(digest) }
-          [yield, watch.completed?]
+          yield
         ensure
           watch&.stop
         end
 
         # A tick BEFORE the first look: the watch starts ahead of the read, and
-        # a settle that finds no read open has nothing to close.
+        # a settle that finds no read open has nothing to close. A read an
+        # answer has claimed is looked at again, since the answer may be refused.
         def withdraw_when_unawaited(digest)
-          Enumerator.produce { Async::Task.current.sleep(CommandLine::TICK) }.find { !@awaited.call(digest) }
-          @withdrawn.call(digest)
+          Enumerator.produce { Async::Task.current.sleep(CommandLine::TICK) }
+                    .find { !@awaited.call(digest) && @withdrawn.call(digest) }
         end
 
         def resolved(answer, answered) = @resolve.call(answer, answered.digest)
 
         # Private on the terminal, reached as {HumanReplies#command_line} reaches
         # it: the frontend's one-line note.
-        def closed(withdrawn) = @tty.method(:render_warning).call(withdrawn ? WITHDRAWN : ANSWERED_ELSEWHERE)
+        def closed(heard)
+          @tty.method(:render_warning).call(heard.equal?(OpenReads::WITHDRAWN) ? WITHDRAWN : ANSWERED_ELSEWHERE)
+        end
 
         # An ARRIVAL is announced ONCE, however often the item is served: a
         # re-queued item is dequeued again, and "this just arrived" is false by
@@ -852,25 +871,53 @@ module Lain
         # What {#race} answers for a read stopped because its set was settled.
         SETTLED = Object.new.freeze
 
+        # What {#race} answers for a read stopped because its ask stopped.
+        WITHDRAWN = Object.new.freeze
+
+        def self.closed?(heard) = heard.equal?(SETTLED) || heard.equal?(WITHDRAWN)
+
+        # What a read claimed by an answer still being handed on holds.
+        CLAIMED = Object.new.freeze
+
         # One read of one set.
         class Read
           attr_reader :digest
 
+          # @return [Object, nil] nil while open, {CLAIMED} while an answer
+          #   for it is being handed on, then {SETTLED} or {WITHDRAWN}
+          attr_reader :reason
+
           def initialize(digest, task)
             @digest = digest
             @task = task
-            @settled = false
+            @reason = nil
           end
 
-          def settled? = @settled
+          def settled? = OpenReads.closed?(@reason)
+
+          def claim
+            @reason = CLAIMED if @reason.nil?
+          end
+
+          def claimed? = CLAIMED.equal?(@reason)
+
+          def release
+            @reason = nil if claimed?
+          end
 
           def wait = @task.wait
 
           # Not a stop of the calling fiber: a settle reached from inside the
           # read would unwind the delivery that settled it. The read then ends
           # as it would have, and still counts as settled.
-          def settle
-            @settled = true
+          def settle = close(SETTLED)
+
+          def withdraw = close(WITHDRAWN)
+
+          private
+
+          def close(reason)
+            @reason = reason unless settled?
             @task.stop unless @task.current?
           end
         end
@@ -878,13 +925,13 @@ module Lain
         def initialize = @open = []
 
         # Run the block as a read of `digest` in a child task, answering its
-        # value or {SETTLED}. `finished: false` because a raise out of the read
-        # is re-raised here by `wait`, and is the caller's to report.
+        # value, {SETTLED} or {WITHDRAWN}. `finished: false` because a raise out
+        # of the read is re-raised here by `wait`, and is the caller's to report.
         def race(digest, &block)
           read = Read.new(digest, Async::Task.current.async(finished: false, &block))
           @open << read
           heard = read.wait
-          read.settled? ? SETTLED : heard
+          read.settled? ? read.reason : heard
         ensure
           @open.delete(read)
         end

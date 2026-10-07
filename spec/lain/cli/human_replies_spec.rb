@@ -1829,6 +1829,190 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(output.string).to include(Lain::CLI::HumanReplies::AnswerLoop::ANSWERED_ELSEWHERE)
     end
 
+    # An answered set is no longer awaited, so the withdrawal watch can see it
+    # unawaited before the answer's own settle reaches the read. The answer is
+    # held at exactly that point until the watch has looked.
+    it "says answered elsewhere even when the withdrawal watch sees the answered set first" do
+      reading_at_the_terminal
+      looked_unawaited = false
+      allow(directory).to receive(:awaiting?).and_wrap_original do |original, digest|
+        original.call(digest).tap { |awaited| looked_unawaited ||= !awaited }
+      end
+      allow(directory).to receive(:reply).and_wrap_original do |original, *args|
+        original.call(*args).tap do
+          pumped_until(Async::Task.current, reason: "the watch looked at the answered set") { looked_unawaited }
+        end
+      end
+
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        rail.detach
+        line = replies.chat_surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task, reason: "human> opened") { @open_reads.positive? }
+        rail.push(["reply", ["postgres"]])
+        pumped_until(task, reason: "human> closed") { @open_reads.zero? }
+        pumped_until(task, reason: "the closing line") { output.string.include?("(human> closed") }
+        line.each(&:stop)
+        run.stop
+        session.each(&:stop)
+      end
+
+      expect(output.string).to include(Lain::CLI::HumanReplies::AnswerLoop::ANSWERED_ELSEWHERE)
+      expect(output.string).not_to include(Lain::CLI::HumanReplies::AnswerLoop::WITHDRAWN)
+    end
+
+    # A rail answer for a stopped ask is refused, and so answers nothing: the
+    # read it found open still closes as withdrawn. The watch is held until the
+    # refusal has happened, so it looks only after the answer gave up.
+    it "says the ask was stopped when a rail answer for it was refused before the watch looked" do
+      reading_at_the_terminal
+      refused = false
+      allow(directory).to receive(:reply).and_wrap_original do |original, *args|
+        original.call(*args)
+      rescue Lain::Tools::AskHuman::NoPendingQuestion
+        refused = true
+        raise
+      end
+      allow(directory).to receive(:awaiting?).and_wrap_original do |original, digest|
+        pumped_until(Async::Task.current, reason: "the rail answer was refused") { refused }
+        original.call(digest)
+      end
+
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        rail.detach
+        line = replies.chat_surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task, reason: "human> opened") { @open_reads.positive? }
+        digest = ask_human.last_question.digest
+        run.stop
+        rail.push(["question_answered", [digest, Struct.new(:render).new("postgres")]])
+        pumped_until(task, reason: "the closing line") { output.string.include?("(human> closed") }
+        line.each(&:stop)
+        session.each(&:stop)
+      end
+
+      expect(output.string).to include(Lain::CLI::HumanReplies::AnswerLoop::WITHDRAWN)
+      expect(output.string).not_to include(Lain::CLI::HumanReplies::AnswerLoop::ANSWERED_ELSEWHERE)
+    end
+
+    # A reply that raises past every rescue still answered nothing, so the
+    # read it claimed closes as withdrawn once the ask stops.
+    it "says the ask was stopped when a rail answer raised a ScriptError on its way" do
+      reading_at_the_terminal
+      replied = false
+      allow(directory).to receive(:reply) do
+        replied = true
+        raise NotImplementedError, "abstract duck"
+      end
+
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        rail.detach
+        line = replies.chat_surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task, reason: "human> opened") { @open_reads.positive? }
+        digest = ask_human.last_question.digest
+        rail.push(["question_answered", [digest, Struct.new(:render).new("postgres")]])
+        pumped_until(task, reason: "the rail answer raised") { replied }
+        run.stop
+        pumped_until(task, timeout: 2, reason: "the closing line") { output.string.include?("(human> closed") }
+      ensure
+        line&.each(&:stop)
+        session&.each(&:stop)
+      end
+
+      expect(output.string).to include(Lain::CLI::HumanReplies::AnswerLoop::WITHDRAWN)
+    end
+
+    # The ask stops while a rail answer holds the read, the watch looks, and
+    # only then is the answer refused: the watch must look again.
+    it "withdraws a read the watch found claimed once the claiming answer is refused" do
+      reading_at_the_terminal
+      looked_during_claim = false
+      allow(replies).to receive(:withdraw_reads).and_wrap_original do |original, digest|
+        original.call(digest).tap { |withdrawn| looked_during_claim ||= withdrawn.nil? }
+      end
+      run = nil
+      allow(directory).to receive(:reply).and_wrap_original do |original, *args|
+        run.stop
+        pumped_until(Async::Task.current, reason: "the watch looked during the claim") { looked_during_claim }
+        original.call(*args)
+      end
+
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        rail.detach
+        line = replies.chat_surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task, reason: "human> opened") { @open_reads.positive? }
+        digest = ask_human.last_question.digest
+        rail.push(["question_answered", [digest, Struct.new(:render).new("postgres")]])
+        pumped_until(task, timeout: 2, reason: "the closing line") { output.string.include?("(human> closed") }
+      ensure
+        line&.each(&:stop)
+        session&.each(&:stop)
+      end
+
+      expect(output.string).to include(Lain::CLI::HumanReplies::AnswerLoop::WITHDRAWN)
+    end
+
+    # The answer was handed on, so the read it claimed is settled even when
+    # the bookkeeping after the hand-off raises.
+    it "closes the read as answered when the settle after a handed-on answer raises" do
+      reading_at_the_terminal
+      views = replies.instance_variable_get(:@views)
+      calls = 0
+      allow(views).to receive(:answered).and_wrap_original do |original, *args|
+        calls += 1
+        raise "views fell over" if calls == 1
+
+        original.call(*args)
+      end
+
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        rail.detach
+        line = replies.chat_surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task, reason: "human> opened") { @open_reads.positive? }
+        rail.push(["reply", ["postgres"]])
+        pumped_until(task, timeout: 2, reason: "the closing line") { output.string.include?("(human> closed") }
+      ensure
+        line&.each(&:stop)
+        run&.stop
+        session&.each(&:stop)
+      end
+
+      expect(@open_reads).to eq(0)
+      expect(output.string).to include(Lain::CLI::HumanReplies::AnswerLoop::ANSWERED_ELSEWHERE)
+    end
+
+    # An `/inbox` drain and a parked set's `human>` can be open for the same
+    # set at once, and the parked one's watch closes both when the ask stops.
+    it "ends an /inbox drain open beside a withdrawn read with nothing answered" do
+      reading_at_the_terminal
+      answer = nil
+
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        rail.detach
+        line = replies.chat_surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task, reason: "human> opened") { @open_reads.positive? }
+        drain = task.async { replies.drain_at_prompt }
+        pumped_until(task, reason: "the drain's human> opened") { @open_reads == 2 }
+        run.stop
+        answer = task.with_timeout(5) { drain.wait }
+        line.each(&:stop)
+        session.each(&:stop)
+      end
+
+      expect(answer).to eq("")
+      expect(@open_reads).to eq(0)
+    end
+
     # The same set with NO read open: the line it was listed under ended, so it
     # went back on the queue, and the editor answered it between lines. Served
     # again, it drew `human>` under every later line until somebody typed into
@@ -1901,6 +2085,36 @@ RSpec.describe Lain::CLI::HumanReplies do
       end
 
       expect(still_open).to eq(1)
+    end
+  end
+
+  describe Lain::CLI::HumanReplies::OpenReads do
+    it "answers the first close of a read, not a later one" do
+      reads = described_class.new
+      heard = nil
+
+      Sync do |task|
+        racing = task.async { reads.race("blake3:a") { task.sleep(30) } }
+        pumped_until(task, reason: "the read opened") { reads.on("blake3:a").any? }
+        reads.on("blake3:a").each(&:settle).each(&:withdraw)
+        heard = racing.wait
+      end
+
+      expect(heard).to equal(described_class::SETTLED)
+    end
+
+    it "keeps a settled read settled when an answer claims it afterwards" do
+      reads = described_class.new
+      heard = nil
+
+      Sync do |task|
+        racing = task.async { reads.race("blake3:a") { task.sleep(30) } }
+        pumped_until(task, reason: "the read opened") { reads.on("blake3:a").any? }
+        reads.on("blake3:a").each(&:settle).each(&:claim)
+        heard = racing.wait
+      end
+
+      expect(heard).to equal(described_class::SETTLED)
     end
   end
 
