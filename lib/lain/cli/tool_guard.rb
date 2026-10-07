@@ -34,6 +34,11 @@ module Lain
     # tool the runner resolved and the input it was shown, so a layer after it
     # could rewrite what was approved.
     #
+    # Ahead of all of them runs what a user's or a project's config.rb
+    # registers for the tool phase ({.configured}): every guard then judges
+    # whatever that middleware passes on, and it sees a result only after the
+    # guards have masked it.
+    #
     # A child runs the same stack: the spawn seam carries a builder over it
     # ({Spawned}), so every child is guarded and gated over its parent's board
     # ({.child_stack}). A run with no chat to borrow a board from builds its own
@@ -51,10 +56,12 @@ module Lain
       # `policy_for` has no default: a board that forgot it would judge every
       # leased child by its parent's policy, in silence. `scope` answers
       # `#current`, the session scope the board is in; a run that can never
-      # enter plan scope confines nothing, which is its default.
+      # enter plan scope confines nothing, which is its default. `middleware`
+      # is what the chat's config.rb files registered; a run with no chat
+      # reads no config, which is its default.
       Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
-                           :scope) do
-        def initialize(scope: UNSCOPED, **) = super
+                           :scope, :middleware) do
+        def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty, **) = super
       end
 
       # The scope of a run with no board that can enter plan.
@@ -235,23 +242,33 @@ module Lain
         layered(chronicle, inputs, inputs.test_layout.roots_for(worker_env), policy, requester:)
       end
 
-      # The six guards over one set of inputs, the layout held at `roots`, and
-      # the gate's two layers asking `policy` -- checked closed as it is built,
-      # the one check a child's stack from any builder is also held to.
+      # The configured members, then the six guards over one set of inputs,
+      # the layout held at `roots`, and the gate's two layers asking `policy`
+      # -- checked closed as it is built, the one check a child's stack from
+      # any builder is also held to.
       def layered(chronicle, inputs, roots, policy, requester: nil)
         journal = chronicle.instrumentation.journal
         Middleware::Gate.closes!(
-          Middleware::Stack.new([Middleware::ConfineToScope.new(scope: inputs.scope),
+          Middleware::Stack.new([*configured(inputs), Middleware::ConfineToScope.new(scope: inputs.scope),
                                  Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
                                  Middleware::RedactSecretReads.new(**read_kwargs(chronicle, inputs), requester:),
                                  Middleware::WithholdSecretPaths.new(filter: path_filter(inputs)),
                                  Middleware::GuardTestLayout.new(run: inputs.test_layout, roots:, journal:),
                                  Middleware::WithholdAutomaticOutput.new(bar: inputs.bar, journal:),
-                                 Middleware::Sensitivity.new(sensitivity: inputs.sensitivity, journal:),
-                                 Middleware::Gate.new(policy:, sensitivity: inputs.sensitivity,
-                                                      denial: inputs.denial)])
+                                 *gating(inputs, policy, journal)])
         )
       end
+
+      def gating(inputs, policy, journal)
+        [Middleware::Sensitivity.new(sensitivity: inputs.sensitivity, journal:),
+         Middleware::Gate.new(policy:, sensitivity: inputs.sensitivity, denial: inputs.denial)]
+      end
+
+      # Fresh instances on every call, so no two stacks share one.
+      #
+      # @param inputs [Inputs]
+      # @return [Array] the tool members the run's config registered, in written order
+      def configured(inputs) = inputs.middleware.members(:tool)
 
       # The guard for a run with no chat, as the builder a spawn seam carries.
       # The board is built ONCE, here, so every child the run spawns releases

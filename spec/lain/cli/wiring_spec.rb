@@ -120,6 +120,9 @@ end
 # object on each call could not show that.
 WiringSpecResumed = Data.define(:recorder, :session)
 
+# A tool middleware a config.rb could register: Base's pass-through.
+class WiringSpecToolStamp < Lain::Middleware::Base; end
+
 # Records what the backend was asked for a provider WITH, because
 # {Lain::CLI::Wiring}'s `#spooled_provider` has as its whole content the pair
 # of keywords it passes -- the spool tee and the channel -- and the object that
@@ -302,8 +305,8 @@ RSpec.describe Lain::CLI::Wiring do
   # extracted Repl is constructible without the exe).
   let(:offline_backend_class) do
     Class.new(Lain::CLI::Backend) do
-      def initialize(options, mock:, root: Dir.pwd)
-        super(options, root:)
+      def initialize(options, mock:, root: Dir.pwd, **)
+        super(options, root:, **)
         @mock = mock
       end
 
@@ -2972,6 +2975,28 @@ RSpec.describe Lain::CLI::Wiring do
           write_config(root, config) if config
           yield(root, home)
         end
+      end
+    end
+
+    # The backend carries what the launch read from config.rb, and the board
+    # the chat builds hands its tool members to the agent's stack, outermost.
+    it "starts the agent's tool stack with the configured tool middleware" do
+      in_tree do |root|
+        middleware = Lain::Config::Middleware.new(tool: [Lain::Config::Middleware::Registration.new(
+          factory: WiringSpecToolStamp, args: [], kwargs: {}, block: nil, at: "/spec/config.rb:1"
+        )])
+        configured = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                               mock: mock_provider, root:, middleware:)
+        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                                     project: Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag))
+        recorder, session = wiring.run_state(nil)
+        runner = wiring.wire_agent(channel:, recorder:, session:, backend: configured).send(:tool_runner)
+
+        expect(runner.middleware.to_a.map(&:class))
+          .to eq([WiringSpecToolStamp, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+                  Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
+                  Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
+                  Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
       end
     end
 

@@ -94,6 +94,26 @@ class ToolGuardSpecDecliningQueue
   end
 end
 
+# A tool middleware a config.rb could register: Base's pass-through.
+class ToolGuardSpecStamp < Lain::Middleware::Base; end
+
+# A configured tool middleware that points a read somewhere else, as a user's
+# could, so an example can ask whether the guards judge the path it passes on.
+class ToolGuardSpecRedirect < Lain::Middleware::Base
+  def initialize(to:)
+    super()
+    @to = to
+  end
+
+  def call(env, &block)
+    effect = env.fetch(:effect)
+    downstream(env.merge(effect: effect.with(input: effect.input.merge("path" => @to))), &block)
+  end
+end
+
+# A board answering only the one value the guard reads.
+ToolGuardSpecBareBoard = Data.define(:guard_inputs)
+
 # The tool phase's guards, and the wiring line each rests on. The stack itself
 # is one expression, which is why it went untested: it looks like plumbing. It
 # is not -- `board.approvals || Unqueued.instance` decides whether a run asks a
@@ -383,6 +403,63 @@ RSpec.describe Lain::CLI::ToolGuard do
              .map { |stack| dispatched(stack).content }
 
       expect(told).to all(include("the argv names a key", "no approval will lift this"))
+    end
+  end
+
+  # What a user's or a project's config.rb registers for the tool phase runs
+  # outermost, so every guard lain builds judges whatever it passes on.
+  describe "configured tool middleware" do
+    def configured(factory, **kwargs)
+      Lain::Config::Middleware.new(tool: [Lain::Config::Middleware::Registration.new(
+        factory:, args: [], kwargs:, block: nil, at: "/spec/config.rb:1"
+      )])
+    end
+
+    def board_with(middleware)
+      ToolGuardSpecBareBoard.new(guard_inputs: ToolGuardSpecBoard.new.guard_inputs.with(middleware:))
+    end
+
+    def read_result(stack, path)
+      stack.call({ effect: read_call(path), tool: Lain::Tools::ReadFile.new, context: nil }) do |passed|
+        passed.merge(result: Lain::Tool::Result.ok("the interpreter ran"))
+      end.fetch(:result)
+    end
+
+    it "runs ahead of every guard lain builds" do
+      expect(guards(board_with(configured(ToolGuardSpecStamp))).map(&:class))
+        .to eq([ToolGuardSpecStamp, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+                Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
+                Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+    end
+
+    it "has the guards judge the path it passes on, as if the model had named it" do
+      secret = "/home/tester/.ssh/id_rsa"
+      redirected = described_class.stack(chronicle, board_with(configured(ToolGuardSpecRedirect, to: secret)))
+
+      told = read_result(redirected, "/home/tester/project/README.md")
+
+      expect(told).to have_attributes(is_error: true)
+      expect(told).to eq(read_result(described_class.stack(chronicle, ToolGuardSpecBoard.new), secret))
+    end
+
+    it "builds each child its own instance, in a stack the gate still closes" do
+      spawned = described_class::Spawned.new(chronicle:, board: -> { board_with(configured(ToolGuardSpecStamp)) },
+                                             requester: "subagent")
+
+      stacks = Array.new(2) { spawned.call(Lain::WorkerEnv.default).to_a }
+
+      expect(stacks.map(&:first)).to all(be_a(ToolGuardSpecStamp))
+      expect(stacks.first.first).not_to be(stacks.last.first)
+      expect(stacks.map { |layers| layers.last(2).map(&:class) })
+        .to all(eq([Lain::Middleware::Sensitivity, Lain::Middleware::Gate]))
+    end
+
+    it "runs first in an approval judge's children too, which copy the board's inputs" do
+      board = board_with(configured(ToolGuardSpecStamp))
+      judged = described_class::Spawned.new(chronicle:, board: -> { board }, requester: "subagent").never_parking
+
+      expect(judged.call(Lain::WorkerEnv.default).to_a.first).to be_a(ToolGuardSpecStamp)
     end
   end
 

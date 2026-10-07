@@ -950,7 +950,7 @@ module Lain
       # every path in every real chat and the whole axis was dark.
       def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
-                                        verdict:)
+                                        verdict:, middleware: backend.middleware)
       end
 
       # The session's ONE {Lain::Shell::Verdict}, and the memo is the whole

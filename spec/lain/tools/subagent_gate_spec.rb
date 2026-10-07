@@ -31,6 +31,13 @@ module SubagentGateSupport
     Lain::Approval::Gate::Adjudicator::EVIDENCE_ROLE
   ].freeze
 
+  # A tool middleware a config.rb could register: Base's pass-through.
+  class ConfiguredStamp < Lain::Middleware::Base; end
+
+  # A configured tool middleware that is itself a path refusal, as a user's
+  # could be.
+  class ConfiguredPathRefusal < Lain::Middleware::Sensitivity; end
+
   # A tool whose name and tier are constructor arguments, so one class covers a
   # whole role's `only`-set. The tier is what matters and the bytes are not:
   # `bash` here answers {Lain::Tool#requires_approval?} exactly as
@@ -332,6 +339,36 @@ RSpec.describe "Subagent gating" do
       expect(listed(child(posture: :handler_union, role: :merge_resolver)))
         .to eq([*guards, Lain::Middleware::RefuseUnpermitted, Lain::Middleware::Sensitivity,
                 Lain::Middleware::Gate, Lain::Effect::Handler::Live])
+    end
+
+    def union_child_configured_with(factory)
+      middleware = Lain::Config::Middleware.new(tool: [Lain::Config::Middleware::Registration.new(
+        factory:, args: [], kwargs: {}, block: nil, at: "/spec/config.rb:1"
+      )])
+      board = Lain::CLI::Switchboard.new(journal:, model: "m", toolset: union, sensitivity: path_policy, middleware:)
+      guard = Lain::CLI::ToolGuard::Spawned.new(chronicle: Lain::CLI::Chronicle::Null.new, board: -> { board },
+                                                requester: "merge_resolver")
+      Lain::Tools::Subagent::ChildBuilder.new(
+        seam: seam(provider: mock).with(tool_middleware: guard), toolset: union,
+        policy: Lain::Role::Catalog[:merge_resolver].spawn_policy(posture: :handler_union),
+        budget: Lain::Agent::Budget.new
+      ).build(parent, ceiling: 1).agent
+    end
+
+    # A configured member runs outermost, so inserting the refusal by its
+    # neighbour, never by its index, is what keeps it beside the path refusal.
+    it "keeps the unpermitted-call refusal beside the path refusal when a configured member runs first" do
+      expect(listed(union_child_configured_with(SubagentGateSupport::ConfiguredStamp)))
+        .to eq([SubagentGateSupport::ConfiguredStamp, *guards, Lain::Middleware::RefuseUnpermitted,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
+    end
+
+    # Outside a configured member, the refusal would judge a call that member
+    # could still rewrite into one the child was never granted.
+    it "puts the unpermitted-call refusal beside lain's own path refusal, not a configured one that subclasses it" do
+      expect(listed(union_child_configured_with(SubagentGateSupport::ConfiguredPathRefusal)))
+        .to eq([SubagentGateSupport::ConfiguredPathRefusal, *guards, Lain::Middleware::RefuseUnpermitted,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
     end
 
     # The gate judges what the runner resolves, and under `handler_union` the

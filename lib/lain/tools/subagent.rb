@@ -1347,9 +1347,14 @@ module Lain
           stack = Middleware::Gate.closes!(Middleware::Stack.new(@seam.tool_middleware.call(worker_env).to_a))
           return stack unless @policy.posture.refuses_over_union?
 
-          stack.insert_before(Middleware::Sensitivity,
+          stack.insert_before(path_refusal(stack),
                               Middleware::RefuseUnpermitted.new(allowed: allowed.names, journal: @seam.journal))
         end
+
+        # By identity: a configured member ahead of the guards may subclass
+        # {Middleware::Sensitivity}, and the refusal must sit inside it.
+        # {Middleware::Gate.closes!} has pinned lain's own as next to last.
+        def path_refusal(stack) = stack.to_a.fetch(-2)
 
         # The child's turns, into the session record as each is committed,
         # before any tool it called runs: a child's `ask_human` question and a

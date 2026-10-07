@@ -44,11 +44,13 @@ module Lain
         #   toolset exists. A default built here could not be shared, so it is
         #   the permissive one and the production call site must pass the
         #   session's -- which is what this file's identity example pins.
+        # @param middleware [Config::Middleware] what the launch read from
+        #   config.rb; its tool members run ahead of every guard
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
         def for(chronicle:, options:, model:, toolset:, project:, paths: Paths.new,
-                verdict: Lain::Shell::Verdict.new)
+                verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty)
           # Compiled once: the exemption check stats the disk.
           table = rules(project:)
           # The SAME factory reaches both the triage rung and the approving
@@ -59,7 +61,7 @@ module Lain
                           rules: [Lain::Approval::Remembered.from(Config.load(root: project.root))].reject(&:empty?),
                           approving: method(:approving),
                           sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
-                          classifiers: factory, test_layout: test_layout(project:))
+                          classifiers: factory, test_layout: test_layout(project:), middleware:)
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree

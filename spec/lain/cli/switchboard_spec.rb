@@ -88,6 +88,18 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(board.guard_inputs.denial).to start_with("no approval is possible for tool %<name>s")
       end
 
+      it "carries the configured middleware among the guard's inputs, by identity" do
+        middleware = Lain::Config::Middleware.new
+        board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+                                    test_layout: layout_run, middleware:)
+
+        expect(board.guard_inputs.middleware).to be(middleware)
+      end
+
+      it "carries no configured tool middleware when the entry names none" do
+        expect(board_for.guard_inputs.middleware.members(:tool)).to eq([])
+      end
+
       it "gives a directly built board a run of its own that declares no layout" do
         expect(switchboard.test_layout.layout).to be(Lain::TestLayout::None)
         expect(switchboard.test_layout).not_to be(switchboard.test_layout)
