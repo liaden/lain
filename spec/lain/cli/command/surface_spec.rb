@@ -40,11 +40,11 @@ RSpec.describe Lain::CLI::Command::Surface do
   # library and hands it over, so a surface that read its own would be a second
   # read of the same tree -- the drift this class's one-snapshot promise exists
   # to deny.
-  def build_surface(root, approvals: nil, **epic)
+  def build_surface(root, approvals: nil, **rest)
     described_class.new(agent:, replies: instance_spy(Lain::CLI::HumanReplies),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
                         chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
-                        status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:, **epic)
+                        status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:, **rest)
   end
 
   it "refuses to construct without the run's library, rather than reading one of its own" do
@@ -337,6 +337,28 @@ RSpec.describe Lain::CLI::Command::Surface do
 
       expect { surface.commands.dispatch("/review-submit") { raise "fallthrough must not run" } }
         .to raise_error(Lain::Error, /no changeset review is open/)
+    end
+  end
+
+  # A repl middleware a config.rb could register: Base's pass-through.
+  def configured_repl(klass)
+    registration = Lain::Config::Middleware::Registration.new(factory: klass, args: [], kwargs: {}, block: nil,
+                                                              at: "/spec/config.rb:1")
+    Lain::Config::Middleware.new(repl: [registration])
+  end
+
+  it "puts a configured repl middleware ahead of skill dispatch" do
+    with_project do |root|
+      echo = Class.new(Lain::Middleware::Base)
+      surface = build_surface(root, middleware: configured_repl(echo))
+
+      expect(surface.middleware.to_a.map(&:class)).to eq([echo, Lain::Middleware::SkillDispatch])
+    end
+  end
+
+  it "keeps skill dispatch alone when no middleware is given" do
+    with_project do |root|
+      expect(build_surface(root).middleware.to_a.map(&:class)).to eq([Lain::Middleware::SkillDispatch])
     end
   end
 

@@ -47,8 +47,9 @@ module Lain
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
                        model_switch:, mode_switch:, library:, ledger:, sensitivity:, snapshots:, window:,
                        approvals: nil, root: Dir.pwd, cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null,
-                       epic: nil)
+                       epic: nil, middleware: Lain::Config::Middleware.empty)
           @role_spawn = role_spawn
+          @configured = middleware
           @window = window
           @goal_driver = goal_driver
           @root = root
@@ -88,7 +89,8 @@ module Lain
         # `/review` holds its round in, so `/critique` finds that round.
         def middleware
           @middleware ||= ReplMiddleware.build(role_spawn: @role_spawn, library: @library, outbox:, window: @window,
-                                               checkouts: critique_checkouts, journal: @env.chronicle.record_journal)
+                                               checkouts: critique_checkouts, journal: @env.chronicle.record_journal,
+                                               extras: @configured.members(:repl))
         end
 
         private

@@ -3099,6 +3099,30 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    it "runs a configured repl middleware over a typed line before the agent sees it" do
+      in_tree do |root|
+        upcase = proc { |env, &downstream| downstream.call(env.merge(text: env.fetch(:text).upcase)) }
+        registration = Lain::Config::Middleware::Registration.new(factory: nil, args: [], kwargs: {}, block: upcase,
+                                                                  at: "/spec/config.rb:1")
+        middleware = Lain::Config::Middleware.new(repl: [registration])
+        backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                            mock: mock_provider, root:, middleware:)
+        Dir.mktmpdir do |dir|
+          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                                       stdin: StringIO.new("hi\nquit\n"),
+                                       tty_factory: lambda { |channel:, **|
+                                         Lain::Frontend::TTY.new(channel:, output: StringIO.new,
+                                                                 history_path: File.join(dir, "history"))
+                                       },
+                                       project: Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag))
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+        end
+
+        expect(mock_provider.last_request.messages.last.to_s).to include("HI")
+      end
+    end
+
     it "builds a fresh model and turn member for every stack" do
       in_tree do |root|
         wiring = configured_wiring(root)
@@ -3935,7 +3959,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     it "is assigned by the time the command surface is assembled" do
       wire
 
-      expect { wiring.send(:assemble_surface, agent: nil, library: nil, window: nil, endpoint: nil) }
+      expect { wiring.send(:assemble_surface, agent: nil, library: nil, window: nil, endpoint: nil, middleware: Lain::Config::Middleware.empty) }
         .to raise_error(ArgumentError, /\[:replies, :agent\]/)
     end
 
