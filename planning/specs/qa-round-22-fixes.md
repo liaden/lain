@@ -1,6 +1,6 @@
 # QA round 22 fixes: the ask keeps its prompt, every reader sees one secret table, and markup never reaches the chain
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1184,3 +1184,55 @@ Spec file: none (documentation; checked by the next manual QA round)
   `bin/lint-commit-msg`. The suite cannot run beside other tests (shared `TMPDIR`), so cards land
   in windows. Worktrees under `tmp/worktrees/` (ignored by `/tmp/`).
 - Friction log: `~/.claude/friction/lain-2026-10-06-qa-round-22-fixes.md`.
+- T1, T2, T3, T6, T8, T11, T20, T25 started (worktrees cut at `9a249c59`, the plan commit).
+- T8 stopped on its stop condition (2 readers pair request_sent by position); ruled in scope: `friction/cache_waste.rb` and `session_record/salvage.rb` filter to the agent.
+- T6 landed `f7eed2d9`.
+- T25 approved. First commit attempt red on 12 contention flakes (all green alone, none in T25's files); waits for a quiet window.
+- T8 review found `bench/rewrites.rb#from_journal` reads every requester (reachable via `lain friction`); ruled into T8's scope, same filter.
+- User rulings (2026-10-06, mid-run): T1 does not widen the collapse stretch; a prompt before the first held range stays verbatim until a handoff. T11's name rule also excepts `.md` ("let's not have to worry about .md files so much"); 4 planning docs named `secret` would otherwise gate.
+- T16 scope widened to `input_pane.rb` (the cockpit reads mid-ask lines through `InputPane#sent`); T18 now waits for T16.
+- Approved, awaiting a quiet landing window: T3, T25, T10, T20, T8. T7 REQUEST-CHANGES (the bare-opener anchor missed the real `42.<tool_call>` shape).
+- Follow-up outside this plan: `frontend/neovim/request_buffer.rb:59` takes any `RequestSent` as the resend baseline, whatever the requester (from T8's review, unverified whether a non-agent event reaches it).
+- T16 approved (the reviewer's off-by-one was not real: lines reach `uncut` without their newline; boundary specs at 4,094 and 4,095 pin it). T23 and T24 approved.
+- T7 second review: APPROVE-WITH-FIXES, 1 substantive fix (the unclosed-envelope strip ate prose after a `<function=` example). No third review: the main session verifies it with the reviewer's probes. Follow-up outside this plan: a lone trailing `</tool_call>` stays as text with no record (0 real cases in the round-22 corpus).
+- T10 `2dd597ce`, T16 `bc7700a6`, T20 `768bd2e4`, T25 `b90f2a69`, T3 `026d7d7a`, T2 `89b11196`, T8 `d42cca78` landed. T2 and T8 each had 1 hook run fail as 'files were modified by this hook' with a green suite (not reproduced). T23's hook went red on `seams/stranded_prompt_fold_spec.rb:244`, red alone too: it pins the old fold after /rewind; ruled into T23's scope.
+- T24 `ddb63d7b`, T1 `a4cf0dc4`, T7 `d5353afa`, T17 `9265e7dc`, T23 `f353dfb4` landed (T23 after its seam rewrite). 14 of 28 cards landed; worktrees removed.
+- T4, T9, T18, T19, T21, T27, T28 started at `f353dfb4`; T11 second review started.
+- T28 approved. Pre-existing timing example to watch: `web_fetch_spec.rb` walk-budget (1M-node walk under 3 s), red once under agent load; T28 does not touch what it times.
+- T21's stop condition fired: `Intake#enter` already announces each call parked behind the drawn one; the card is a spec only. T29 notes fork c's 'nothing announces' as a draw-order observation.
+- T21 approved (spec only). T19 review: the takeover adopted by `--name` (default "chat"), so a `--socket` pane could adopt into the wrong session silently; ruled to derive the session from `TMUX_PANE`. T9 ruled name-only for the strategy check. T11 second review: the sub-cwd limit fails open under `/mode plan` from a subdirectory; closed in this card via `worker_env.checkout || cwd` (`middleware/gate.rb`, `approval/path_gate.rb`, the withhold middleware ruled in). `wiring_spec` attended-notice example flakes under load since T17 landed; T17's implementer fixes it in `T17fix`.
+- T18 approved (its follow-up attempted a git stash against the brief; the classifier denied it and the tree was verified intact). The stubbed line reader is a stated limit; QA round 23 checks an answered [y/N] in a live input pane by hand.
+- T11 approved: the main session ran the reviewer's v2 probe; read_file, the listing, grep and bash agree in the root, a checkout, and a checkout subdirectory. Its diff replayed cleanly onto `f353dfb4` in worktree T11b.
+- T4 REQUEST-CHANGES: bytes/4 runs about 8% high on code against qwen3's real count, so the check could refuse a handoff that fits near a large window; the fix scales by the refused request's own count.
+- T17's flake root-caused (T17fix): the attended example stubbed `tty?` true, so the line reader read the real `$stdin` and hung when stdin was a terminal (every agent shell); spec-only fix stubs `Reline.readmultiline`. 12 of 12 red before under pty, green after; main session confirmed 3 of 3 under pty.
+- Landing window 2 opened: T9, T11b, T18, T19, T21, T27, T28, T17fix.
+- Window 2 landed: T17fix `31d9ab33`, T9 `f1d05258`, T11 `ca1bed99`, T18 `63bdaff0`, T19 `c3e7662a`, T21 `7ffaf838`, T27 `2e109af0`, T28 `93d792ac`. 20 of 28 cards landed.
+- T4 failed its second review (the proportional estimate still over-counts a kept span when the handed-off history is denser, 1.46x on lockfiles against live qwen3). User ruling: defer T4, and with it T5's handoff wording; T26 no longer waits on them. The T4 diff, hand-back and probes are kept in the session scratchpad.
+- T12, T14, T26 started.
+- T14 stopped (Projection has no classifier; 4 lib and 12 spec construction sites). Ruling, option B: `corpus.rb` passes the listing's verdict per call, and `NameRule` gets its own verdict reason so only name-gated files mask whole (.env keeps region release). `review/source/corpus.rb` and `sensitivity.rb` ruled in; T14 resumes after T12 lands (both edit sensitivity.rb).
+- T26 stopped at step 1 (the parent's session lives only in `Wiring#wire_agent`; `Backend#compaction_source` is private). `cli/wiring.rb` and `cli/backend.rb` ruled in for those 2 seams; `epic_submit.rb:683` keeps a nil default.
+- T12's hook red on `seams/input_pane_socket_spec.rb` 'draws a multi-line header whole, and redraws it when a row moves' (green alone 3 of 3); suspected from T18's header change; T18's implementer fixes it in T18fix. T12 waits.
+- The header-redraw seam flake predated this plan (a fixed 0.5 s sleep; the pre-T18 pane fails the same way). User ruling: land the spec fix. Landed `e1cad496`, then T12 `d204ac24`. 21 of 28 landed.
+- T26 review: APPROVE-WITH-FIXES (a seeded child inherits the parent's plan-step count; no seam where the child compacts itself; 3 dead view passes on always-fresh spawns). Follow-up outside this plan: tag a child's own summarizer and handoff requests so a bench does not charge them to the parent's arm.
+- T14 resumed on `d204ac24` under option B.
+- T14 ruling: `NameRule` answers ahead of the older gated name rows, so `secrets.yml`, `credentials.json`, `passwords.txt` mask whole too; shape-gated files (`.env`, `*.pem`) keep region masking; a deny is never downgraded. `policy_spec.rb` and `withhold_secret_paths_spec.rb` ruled in (the listing note now reads 'withheld (named)').
+- T26 approved after its second review (11 mutants killed; live qwen3 probe). Wall-clock examples red under a load average of 12 during that review's pspec, green alone: `web_fetch_spec` walk budget (second time) and `terminal_gone_spec` example near line 122.
+- T14 REQUEST-CHANGES: a credential-shaped symlink to a name-gated file kept the link's verdict on a tie and reached the survey raw; `survey/walk.rb` and `docs/review.md` ruled in. T26 landing.
+- T26 landed `49096ec7`. 22 of 28 landed (T4, T5 deferred). T29 started early (documents only); its survey and changeset rows wait for T14 and T15.
+- Follow-up outside this plan: a shape-gated file whose bytes no detector matches (`.env` with `PLAIN=hunter2`) still enters a survey raw; the plan keeps region masking for shape-gated files.
+- T14 landed `e7c40ae1` (after 2 reviews; replayed onto `49096ec7`). 23 of 28 landed. T15 started.
+- T29: corrections from forks a to h applied (fork i had none); 2 corrections rewritten to landed code (session-and-window section 7, the strategy spellings). `survey.md` and `changeset-review.md` ruled in for the S-1 and D-4 rows; the D-4 row waits for T15.
+- T15 stopped (a Diffed source reaches no Sensitivity; 3 or more constructor sites). Ruling, option B: both sides project UNJUDGED on purpose; region masking meets the D-4 scenarios. Follow-ups outside this plan: whole-file masking of a name-gated file inside a changeset hunk; `Source::Repository` never gets the run's ledger, so a release made in chat does not reach an implementation review.
+- T15: `spec/support/diff_source.rb` ruled in for 1 line (doubles without `file_at` answer nil); a side with hunk lines but no file never falls back to raw bytes.
+- T15: `GithubPr#files` now fetches the head to project a file; ruled: on a failed fetch, mask from the hunk text and say so in 1 line, never fail the presentation or fall back to raw. `github_pr_spec.rb` and `rpc_thread_spec.rb` ruled in.
+- T15: a GithubPr review already fetches before any hunk (via `#base_ref`), so projecting from the fetched file adds no failure mode; the fallback ruling is withdrawn, option A taken.
+- Follow-ups outside this plan (from T15): `Diffed#line_at` still reconciles for a base-revision note, which can forget a head release; the head side reconciles even when the working tree is not at `head_ref` (no worse than before).
+- T15 REQUEST-CHANGES: masking was lines times regions (6.3 s against 0.15 s on a HEAD~150 review); the head side reconciled when not the working tree; keys and identity hashed ordinal masked text. Ruled: keys from a release-blind, ordinal-free masking, never raw.
+- T15 approved after its second review (cost accepted: 0.26 s at HEAD~1, 5.8 s at HEAD~150, about 15 to 20 ms per file; limiting detection to hunk ranges would reopen the edge leak). Follow-ups outside this plan: a note's evidence numbers placeholders file-wide while hunks number per hunk; read files with one `git cat-file --batch` instead of 1 `git show` each.
+- T15 landed `6701ef5a`. 24 of 28 landed (T4, T5 deferred); T29 remains.
+- Integration checks: rubocop clean; comment-census tickets and load order 0 unclassified; zeitwerk-census all 0; spec-census FAIL assertions 186 > 184, the 2 new sole_raise_error examples are from T9 (`backend_spec.rb`) and T12 (`sensitivity_spec.rb`); a scope change to landed cards' specs, fixed in worktree census. T29 approved (12 added em dashes replaced).
+- T29 landed `68f2cef0`. The 2 new sole_raise_error examples (from T9 and T12) were rewritten to assert what they return: `ff7ca60a`; spec-census is back at its 184 ceiling.
+- Close-out 2026-10-06. Landed 26 of 28 cards (T1 to T3, T6 to T29 apart from T4 and T5), plus 3 spec fixes (the attended resume notice reading a real stdin; the header-redraw seam's fixed sleep, which predated this plan; the 2 census examples). T4 and T5 deferred by user ruling; T4's diff, hand-back and probes are kept in the session scratchpad only.
+- Integration checks at `ff7ca60a`: `rake pspec` 22,033 examples, 0 failures, 13 pending (above the 21,730 baseline); rubocop clean; comment-census tickets and load order 0 unclassified; spec-census ok (assertions 184 at ceiling, lib_reach 57); zeitwerk-census all 0. `git worktree list` and `git branch --list` match the start of the run.
+- Still owed: QA round 23 by hand, as the Integration checks section says, plus an answered [y/N] in a live input pane (the T18 spec stubs the line reader).
+- Follow-ups outside this plan, collected: the handoff fit check (T4, needs the provider's tokenizer or the reviewer's min() bound); whole-file masking of a name-gated file in a changeset hunk; `Source::Repository` never gets the run's ledger; a shape-gated file with no detected region enters a survey raw; `Diffed#line_at` reconciles for a base-revision note; a note's evidence numbers placeholders file-wide; `git cat-file --batch` for review open cost; a child's own compaction requests are charged to the parent's arm; `frontend/neovim/request_buffer.rb` takes any `RequestSent` as its baseline; a lone trailing `</tool_call>` stays as text.
