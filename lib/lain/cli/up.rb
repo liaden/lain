@@ -1353,6 +1353,16 @@ module Lain
         set_option("status-right", @hud.status_right)
         set_option("status-interval", @hud.interval.to_s)
         @tmux.act("set-window-option", "-t", chat_target, "monitor-bell", "on")
+        set_option("mouse", "on")
+        enable_extended_keys
+      end
+
+      # tmux scopes extended-keys to the server, so this change is server-wide.
+      def enable_extended_keys
+        return unless @tmux.run("show-options", "-sv", "extended-keys").stdout.strip == "off"
+
+        @tmux.act("set-option", "-s", "extended-keys", "on")
+        @warnings << "set the tmux server option extended-keys on (server-wide; tmux has no session scope for it)"
       end
 
       # A chat pane that dies takes its error message with it, and when it is

@@ -150,6 +150,46 @@ RSpec.describe Lain::CLI::Up do
       expect(eval_status_job(status_right)).to eq("lain: no state yet")
     end
 
+    it "turns mouse mode on for the session only" do
+      system("tmux", "-L", socket, "-f", File::NULL, "new-session", "-d", "-s", "control", "-x", "80", "-y", "24")
+      before = tmux("show-options", "-g", "mouse")
+
+      up.call
+
+      expect(tmux("show-options", "-v", "-t", session, "mouse")).to eq("on")
+      expect(tmux("show-options", "-g", "mouse")).to eq(before)
+      expect(tmux("show-options", "-v", "-t", "control", "mouse")).to eq("")
+    end
+
+    it "turns the server's extended-keys on and says it changed a server option" do
+      system("tmux", "-L", socket, "-f", File::NULL, "new-session", "-d", "-s", "control", "-x", "80", "-y", "24")
+      system("tmux", "-L", socket, "set-option", "-s", "extended-keys", "off")
+
+      report = up.call
+
+      expect(tmux("show-options", "-sv", "extended-keys")).to eq("on")
+      expect(report.warnings).to include(a_string_matching(/extended-keys.*server/))
+    end
+
+    it "stays quiet about extended-keys when the server already has it on" do
+      system("tmux", "-L", socket, "-f", File::NULL, "new-session", "-d", "-s", "control", "-x", "80", "-y", "24")
+      system("tmux", "-L", socket, "set-option", "-s", "extended-keys", "on")
+
+      report = up.call
+
+      expect(report.warnings).not_to include(a_string_matching(/extended-keys/))
+    end
+
+    it "leaves a server already on extended-keys always as it is, without a notice" do
+      system("tmux", "-L", socket, "-f", File::NULL, "new-session", "-d", "-s", "control", "-x", "80", "-y", "24")
+      system("tmux", "-L", socket, "set-option", "-s", "extended-keys", "always")
+
+      report = up.call
+
+      expect(tmux("show-options", "-sv", "extended-keys")).to eq("always")
+      expect(report.warnings.grep(/extended-keys/)).to eq([])
+    end
+
     it "sets monitor-bell on the spawned chat window" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
 
@@ -290,7 +330,7 @@ RSpec.describe Lain::CLI::Up do
                                     chat_preflight: no_preflight).call
 
       expect(retried.created).to be true
-      expect(retried.warnings).to be_empty
+      expect(retried.warnings.reject { |warning| warning.include?("extended-keys") }).to eq([])
       expect(session_count).to eq(1)
     end
 
@@ -335,7 +375,8 @@ RSpec.describe Lain::CLI::Up do
       end
 
       chat = chat_pane_pid
-      expect([report.created, report.warnings]).to eq([true, []])
+      expect(report.created).to be true
+      expect(report.warnings.reject { |warning| warning.include?("extended-keys") }).to eq([])
       expect(session_survives_its_own_launch?).to be true
       expect(lain_chat?(chat)).to be true
       expect(outlives_its_server?(chat)).to be false
@@ -452,7 +493,8 @@ RSpec.describe Lain::CLI::Up do
                                    chat_preflight: no_preflight).launch_plan(nested: false)
 
         expect(session_count).to eq(1)
-        expect(plan.messages).to eq(["HUD state: #{state_path}", "created tmux session '#{session}'"])
+        expect(plan.messages.reject { |message| message.include?("extended-keys") })
+          .to eq(["HUD state: #{state_path}", "created tmux session '#{session}'"])
         expect(plan.argv).to eq(["tmux", "-L", socket, "attach", "-t", session])
       end
     end
