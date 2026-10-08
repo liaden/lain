@@ -189,7 +189,8 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new,
       options: {}, supervisor: Lain::Supervisor.new, parent: -> { Lain::Timeline.empty(store: Lain::Store.new) },
       journal: Lain::Channel::Null.instance, library: backend.library, epic: SpecNulls.unmounted_epic,
-      root: repo, switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build
+      root: repo, switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
+      **SpecNulls.unloaded_project
     )
   end
 

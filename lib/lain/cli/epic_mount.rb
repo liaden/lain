@@ -19,8 +19,8 @@ module Lain
     # == A chat never fails to start over an epic
     #
     # Every refusal from the epic tier answers {NoEpic}, whose whole surface is
-    # `tools` and `mounted?`: its tools are epic_write alone, which needs no
-    # mounted epic. `home` and `review` have no honest null (which epic this is
+    # `tools` and `mounted?`: its tools are epic_write and epic_submit, which
+    # need no mounted epic. `home` and `review` have no honest null (which epic this is
     # cannot be defaulted), so answering them would be a lie rather than a Null
     # Object.
     #
@@ -36,16 +36,18 @@ module Lain
 
       # No epic resolved. `tools` and `mounted?` are the entire duck its
       # callers depend on; the class comment says why `home` and `review` are
-      # absent. Its one tool is the epic_write a chat needs to start its first
-      # epic.
+      # absent. Its tools are the epic_write and epic_submit a chat needs to
+      # start its first epic and put it before its gates.
       class NoEpic
         # @param homes [Homes] where epic_write resolves a home per call
         def initialize(homes:)
-          @tools = [Lain::Tools::EpicWrite.new(homes:)].freeze
+          @epic_write = Lain::Tools::EpicWrite.new(homes:)
           freeze
         end
 
-        attr_reader :tools
+        # @param submitter [#submit] the chat's in-process gate submitter
+        # @return [Array<Lain::Tool>]
+        def tools(submitter:) = [@epic_write, Lain::Tools::EpicSubmit.new(submitter:)]
 
         def mounted? = false
       end
@@ -246,8 +248,12 @@ module Lain
 
       # A collection rather than a tool-or-nil, so {ToolsetBuild} appends
       # whatever the epic tier offers with no nil check -- {NoEpic} answers the
-      # same message with epic_write alone.
-      def tools = @tools ||= [request_review, epic_write]
+      # same message without request_review.
+      #
+      # @param submitter [#submit] the chat's in-process gate submitter, which
+      #   needs the ask_human the toolset is built with
+      # @return [Array<Lain::Tool>]
+      def tools(submitter:) = [*(@tools ||= [request_review, epic_write]), Lain::Tools::EpicSubmit.new(submitter:)]
 
       def mounted? = true
 

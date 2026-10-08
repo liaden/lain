@@ -31,7 +31,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
                         supervisor: Lain::Supervisor.new, parent: -> { Lain::Timeline.empty(store: Lain::Store.new) },
                         journal: Lain::Channel::Null.instance, library: backend.library,
                         epic: SpecNulls.unmounted_epic, root: @repo,
-                        switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build)
+                        switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
+                        **SpecNulls.unloaded_project)
   end
 
   def git(dir, *args) = SeedRepo.git(dir, *args).stdout.strip
@@ -111,7 +112,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
                                 journal: chronicle.durable_journal,
                                 library: backend.library, epic: SpecNulls.unmounted_epic, root: @repo,
                                 switchboard: -> { SpecNulls::NoSwitchboard },
-                                askers: SpecNulls::UnwiredAskers.build)
+                                askers: SpecNulls::UnwiredAskers.build,
+                                **SpecNulls.unloaded_project)
     fleet.build(recorder, ask_human:)
     epics = %w[a b].map { |id| fleet.epic_subagent(**issue_lane(id), lane: "issue.demo.#{id}") }
 

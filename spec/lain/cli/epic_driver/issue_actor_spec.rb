@@ -123,7 +123,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, supervisor: Lain::Supervisor.new,
       parent: -> { Lain::Timeline.empty(store: Lain::Store.new) }, journal: Lain::Channel::Null.instance,
       library: backend.library, epic: SpecNulls.unmounted_epic, root: repo,
-      switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build
+      switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
+      **SpecNulls.unloaded_project
     ).tap do |toolset|
       toolset.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
     end
@@ -332,7 +333,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
         backend:, provider:, chronicle:, options: {}, supervisor: Lain::Supervisor.new,
         parent: -> { shared_parent }, journal: Lain::Channel::Null.instance,
         library: backend.library, epic: SpecNulls.unmounted_epic, root: repo,
-        switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build
+        switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
+        **SpecNulls.unloaded_project
       ).tap do |toolset|
         toolset.build(Lain::Memory::Recorder.new,
                       ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))

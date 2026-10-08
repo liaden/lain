@@ -176,7 +176,8 @@ RSpec.describe Lain::SearchRules do
         backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
         supervisor: Lain::Supervisor.new(journal:), parent: -> { Lain::Timeline.new }, journal:,
         library: backend.library, epic: SpecNulls.unmounted_epic, root:,
-        switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build
+        switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
+        **SpecNulls.unloaded_project
       ).build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
       grep = toolset.fetch("grep")
 

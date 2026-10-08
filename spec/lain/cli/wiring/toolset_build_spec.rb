@@ -77,8 +77,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   # the Backend's, which is where the run's single load lives.
   let(:library) { backend.library }
 
-  # A chat outside an epic, which is the overwhelmingly common one: its only
-  # epic tool is epic_write, so nothing below has to know a mounted epic exists.
+  # A chat outside an epic, which is the overwhelmingly common one: its epic
+  # tools are epic_write and epic_submit, so nothing below has to know a
+  # mounted epic exists.
   # The example that DOES care wires a real {Lain::CLI::EpicMount}.
   let(:epic) { SpecNulls.unmounted_epic }
 
@@ -111,7 +112,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   def build_with(options, **over)
     described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
                         root:, switchboard: -> { SpecNulls::NoSwitchboard },
-                        askers: SpecNulls::UnwiredAskers.build, **over)
+                        askers: SpecNulls::UnwiredAskers.build, **SpecNulls.unloaded_project, **over)
   end
 
   describe "#build" do
@@ -244,11 +245,51 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
                                  told: ->(_line) {})
       end
 
-      it "offers epic_write and no review tool" do
+      it "offers epic_write and epic_submit, and no review tool" do
         names = toolset_build.build(recorder, ask_human:).names
 
-        expect(names).to include("epic_write")
+        expect(names).to include("epic_write", "epic_submit")
         expect(names).not_to include("request_review")
+      end
+    end
+
+    # The whole chain a chat runs: a real journaled chronicle, the real mount,
+    # and the gate asking through the very ask_human the build was handed.
+    context "when a chat with a session journal submits the research it wrote", :seam do
+      around do |example|
+        Dir.mktmpdir do |dir|
+          @project = dir
+          example.run
+        ensure
+          @chronicle&.close
+        end
+      end
+
+      let(:root) { @project }
+      let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@project, "state"), "HOME" => @project }) }
+      let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo)) }
+      let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:) }
+      let(:epic) { Lain::CLI::EpicMount.for(chronicle:, options: {}, root:, config:, paths:, told: ->(_line) {}) }
+      let(:ask_human) { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) }
+      let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+      def research = { "stage" => "research", "slug" => "frugirl-mvp" }
+
+      it "asks the human through ask_human and journals their approval in the chat's session" do
+        tools = build_with(options, paths:, config:).build(recorder, ask_human:)
+        tools.fetch("epic_write").call({ "slug" => "frugirl-mvp", "artifact" => "research", "content" => "# r\n" },
+                                       invocation)
+
+        result = Sync do |task|
+          call = task.async { tools.fetch("epic_submit").call(research, invocation) }
+          task.yield until ask_human.pending?
+          ask_human.reply("approve", ask_human.last_question.digest)
+          call.wait
+        end
+
+        expect(result.content).to start_with("approved")
+        decisions = Lain::Journal.records(File.foreach(chronicle.journal_path), type: "gate_decision").to_a
+        expect(decisions.map { |record| record.values_at("stage", "approved") }).to eq([["research", true]])
       end
     end
 
@@ -591,7 +632,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           backend = Lain::CLI::Backend.new(flags, root: Dir.pwd)
           described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:,
                               epic:, root:, switchboard: -> { SpecNulls::NoSwitchboard },
-                              askers: SpecNulls::UnwiredAskers.build, session:)
+                              askers: SpecNulls::UnwiredAskers.build, session:, **SpecNulls.unloaded_project)
         end
 
         it "holds a cut written under the run's named arm, and not one written under the control arm" do
@@ -747,7 +788,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     it "refuses to construct without the library" do
       expect do
         described_class.new(backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options:,
-                            supervisor:, parent: -> { Lain::Timeline.new }, journal:, epic:)
+                            supervisor:, parent: -> { Lain::Timeline.new }, journal:, epic:,
+                            **SpecNulls.unloaded_project)
       end.to raise_error(ArgumentError, /library/)
     end
   end

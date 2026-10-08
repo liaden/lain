@@ -366,7 +366,8 @@ module Lain
         return sole(slugs, container, command:) if slug.nil?
         return slug if slugs.include?(slug)
 
-        raise UnknownEpic, "no epic #{slug.inspect} in #{container} -- it holds #{listed(slugs)}"
+        held = slugs.empty? ? "no epics" : listed(slugs)
+        raise UnknownEpic, "no epic #{slug.inspect} in #{container} -- it holds #{held}"
       end
 
       # An empty home is reachable only through {#resolve_slug}: {#status}

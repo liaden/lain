@@ -851,7 +851,7 @@ RSpec.describe Lain::CLI::Switchboard do
         supervisor: Lain::Supervisor.new(journal: RecordingChannel.new),
         parent: -> { Lain::Timeline.empty(store: Lain::Store.new) }, journal: RecordingChannel.new,
         library: backend.library, epic: SpecNulls.unmounted_epic, root: "/srv/switchboard-project",
-        askers: SpecNulls::UnwiredAskers.build
+        askers: SpecNulls::UnwiredAskers.build, **SpecNulls.unloaded_project
       )
     end
 

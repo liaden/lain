@@ -46,11 +46,13 @@ module Lain
         #   session's -- which is what this file's identity example pins.
         # @param middleware [Config::Middleware] what the launch read from
         #   config.rb; its tool members run ahead of every guard
+        # @param config [Config] `.lain/config.rb`, whose remembered answers the board approves
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
         def for(chronicle:, options:, model:, toolset:, project:, paths: Paths.new,
-                verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty)
+                verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty,
+                config: Config.load(root: project.root))
           # Compiled once: the exemption check stats the disk.
           table = rules(project:, paths:)
           # The SAME factory reaches both the triage rung and the approving
@@ -58,7 +60,7 @@ module Lain
           # in one command's argv lands.
           factory = classifiers(project:, paths:, table:)
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
-                          rules: [Lain::Approval::Remembered.from(Config.load(root: project.root))].reject(&:empty?),
+                          rules: [Lain::Approval::Remembered.from(config)].reject(&:empty?),
                           approving: method(:approving),
                           sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, test_layout: test_layout(project:), middleware:,
@@ -122,7 +124,8 @@ module Lain
         # because a leased worker's chain is composed again over that worker's
         # own factory.
         #
-        # @param remembered [Array<Lain::Approval::Rule>] the config's remembered answers
+        # @param remembered [Array<Lain::Approval::Rule>] call shapes `.lain/config.rb` pre-approves, kept
+        #   ahead of the composed term
         # @param factory [#call, #confinement, #content] the `cwd -> #classify` factory,
         #   on {Lain::Approval::ComposedTerm}'s terms
         # @return [Array<Lain::Approval::Rule>]

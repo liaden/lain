@@ -31,6 +31,19 @@ RSpec.describe Lain::CLI::EpicMount do
   # the tool, so a mount cannot open a review nobody could be told about.
   let(:told) { [] }
 
+  # Records what the chat's epic_submit hands it, the way {CLI::EpicSubmit}
+  # would be asked.
+  let(:submitter) do
+    Class.new do
+      attr_reader :asked
+
+      def submit(stage, slug = nil, issue: nil, digest: nil)
+        (@asked ||= []) << [stage, slug, issue, digest]
+        "approved #{stage}"
+      end
+    end.new
+  end
+
   # Fully injected, so neither this machine's real epics nor its real session
   # journals can reach an example: repo-mode home under the tmpdir, and an XDG
   # state home inside it too.
@@ -48,6 +61,8 @@ RSpec.describe Lain::CLI::EpicMount do
   def mount_for(options: {}, **overrides)
     described_class.for(chronicle:, options:, root: @dir, paths:, config:, told: told.method(:<<), **overrides)
   end
+
+  def tools_of(mount) = mount.tools(submitter:)
 
   def notices_from(options: {})
     said = []
@@ -97,7 +112,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = mount_for
 
       expect(mount.slug).to eq("alpha")
-      expect(mount.tools.map(&:name)).to eq(%w[request_review epic_write])
+      expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_submit])
     end
 
     # The whole reason --epic exists: the sole-epic default cannot answer, and
@@ -108,7 +123,7 @@ RSpec.describe Lain::CLI::EpicMount do
 
       mount, said = notices_from
 
-      expect(mount.tools.map(&:name)).to eq(["epic_write"])
+      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_submit])
       expect(said.join).to include("alpha", "beta", "lain chat --epic SLUG")
     end
 
@@ -131,7 +146,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = mount_for(options: { epic: "beta" })
 
       expect(mount.slug).to eq("beta")
-      expect(mount.tools.map(&:name)).to eq(%w[request_review epic_write])
+      expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_submit])
     end
 
     # The ordinary case. Most chats are not in an epic, and a startup line about
@@ -140,7 +155,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount, said = notices_from
 
       expect(mount).not_to be_mounted
-      expect(mount.tools.map(&:name)).to eq(["epic_write"])
+      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_submit])
       expect(said).to be_empty
     end
 
@@ -162,7 +177,29 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = nil
 
       expect { mount = mount_for }.not_to raise_error
-      expect(mount.tools.map(&:name)).to eq(["epic_write"])
+      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_submit])
+    end
+  end
+
+  describe "epic_submit" do
+    def submit_through(mount)
+      tools_of(mount).find { |tool| tool.name == "epic_submit" }
+                     .call({ "stage" => "research", "slug" => "alpha" }, invocation)
+    end
+
+    it "submits through the submitter the chat hands a mounted epic" do
+      create_epic("alpha")
+
+      expect(submit_through(mount_for).content).to eq("approved research")
+      expect(submitter.asked).to eq([["research", "alpha", nil, nil]])
+    end
+
+    it "submits through the same submitter in a chat that mounted no epic" do
+      mount = mount_for
+
+      expect(mount).not_to be_mounted
+      expect(submit_through(mount).content).to eq("approved research")
+      expect(submitter.asked).to eq([["research", "alpha", nil, nil]])
     end
   end
 
@@ -183,7 +220,7 @@ RSpec.describe Lain::CLI::EpicMount do
 
       expect(mount.notes).to equal(mount.notes)
       expect(mount).to be_mounted
-      expect(mount.tools.first).to be_a(Lain::Tools::RequestReview)
+      expect(tools_of(mount).first).to be_a(Lain::Tools::RequestReview)
     end
 
     # The invariant this whole object exists for, asserted rather than read off
@@ -194,7 +231,7 @@ RSpec.describe Lain::CLI::EpicMount do
       path = bare_home("alpha").epic.path
 
       parked do |task|
-        run = call_in(task, mount.tools.first, { "stage" => "epic_plan" })
+        run = call_in(task, tools_of(mount).first, { "stage" => "epic_plan" })
 
         expect { mount.home.write_epic(three_issue_graph) }
           .to raise_error(Lain::Epic::Home::Journaled::ReviewPending)
@@ -209,7 +246,7 @@ RSpec.describe Lain::CLI::EpicMount do
       path = bare_home("alpha").epic.path
 
       parked do |task|
-        run = call_in(task, mount.tools.first, { "stage" => "epic_plan" })
+        run = call_in(task, tools_of(mount).first, { "stage" => "epic_plan" })
         mount.review.settle(mount.review.generation_for(path), disk: File.binread(path))
         run.wait
       end
@@ -275,7 +312,7 @@ RSpec.describe Lain::CLI::EpicMount do
     it "reads the bindings thunk when the tool asks, not when the mount is built" do
       replies = nil
       mount = mount_for(bindings: -> { replies })
-      tool = mount.tools.first
+      tool = tools_of(mount).first
 
       expect(tool.send(:bindings)).to equal(Lain::Tools::RequestReview::NoBindings)
 
@@ -289,7 +326,7 @@ RSpec.describe Lain::CLI::EpicMount do
     # pinned is that the mount's own line reaches the tool rather than merely
     # that something non-nil did.
     it "hands the tool the line to the human it was mounted with" do
-      mount_for.tools.first.send(:instance_variable_get, :@told).call("epic.md is open for review")
+      tools_of(mount_for).first.send(:instance_variable_get, :@told).call("epic.md is open for review")
 
       expect(told).to eq(["epic.md is open for review"])
     end
@@ -300,7 +337,7 @@ RSpec.describe Lain::CLI::EpicMount do
     # a caller that can answer turns the half on by injecting one rather than by
     # editing this class.
     it "leaves the changeset seam unwired, so implementation refuses rather than parking" do
-      result = mount_for.tools.first.call({ "stage" => "implementation", "base" => "main" }, invocation)
+      result = tools_of(mount_for).first.call({ "stage" => "implementation", "base" => "main" }, invocation)
 
       expect(result).to be_error
       expect(result.content).to include("no changeset")
@@ -317,14 +354,14 @@ RSpec.describe Lain::CLI::EpicMount do
           nil
         end
       end.new
-      mount_for(changesets:).tools.first.call({ "stage" => "implementation", "base" => "main" }, invocation)
+      tools_of(mount_for(changesets:)).first.call({ "stage" => "implementation", "base" => "main" }, invocation)
 
       expect(changesets.asked).to eq([%w[main HEAD]])
     end
   end
 
   describe "epic_write, with or without a mounted epic" do
-    def epic_write(mount) = mount.tools.find { |tool| tool.name == "epic_write" }
+    def epic_write(mount) = tools_of(mount).find { |tool| tool.name == "epic_write" }
 
     def write_research(mount, slug: "frugirl-mvp", content: "# research\n")
       epic_write(mount).call({ "slug" => slug, "artifact" => "research", "content" => content }, invocation)
@@ -354,7 +391,7 @@ RSpec.describe Lain::CLI::EpicMount do
       path = bare_home("frugirl-mvp").research.path
 
       parked do |task|
-        run = call_in(task, mount.tools.first, { "stage" => "research" })
+        run = call_in(task, tools_of(mount).first, { "stage" => "research" })
         result = write_research(mount, content: "# regenerated\n")
 
         expect(result).to be_error

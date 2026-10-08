@@ -155,6 +155,12 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(said).to include("approved", research_digest, "research", "alpha")
     end
 
+    it "names the policy that approved it" do
+      said = command(gates: { "research" => "hands_off" }).submit("research")
+
+      expect(said.lines.first).to include("by policy hands_off")
+    end
+
     it "journals one approving gate_decision under the configured policy" do
       command(gates: { "research" => "hands_off" }).submit("research")
 
@@ -889,10 +895,56 @@ RSpec.describe Lain::CLI::EpicSubmit do
           seat.submit("research")
         end
 
-        expect(said).to include("denied")
+        expect(said).to include("nobody answered", "nothing advanced")
         expect(while_waiting).to eq(1)
         expect(inbox_count).to eq(0)
       end
+    end
+  end
+
+  # What a chat's epic_submit tool decides through: the chat's own journal,
+  # lent, or a refusal when the chat keeps none.
+  describe ".in_chat" do
+    before { write_research }
+
+    def in_chat(chronicle)
+      described_class.in_chat(chronicle:, root:, paths:, config: config(hands_off), asker: nil, role_spawn: nil)
+    end
+
+    it "decides into the chronicle's own record journal, lent and left open" do
+      io = StringIO.new
+      chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:),
+                                           journal_path: File.join(sessions_dir, "chat.ndjson"))
+
+      in_chat(chronicle).submit("research", "alpha")
+
+      expect(Lain::Journal.records(io.string.lines, type: "gate_decision").count).to eq(1)
+      expect(gate_decisions).to be_empty
+      expect(chronicle.record_journal).not_to be_closed
+    end
+
+    # A --btw session's file is reaped at close, and the decision with it.
+    it "refuses in an ephemeral session until it is kept, naming --btw and /keep" do
+      chronicle = Lain::CLI::Chronicle.for(enabled: true, btw: true, paths:)
+      submitter = in_chat(chronicle)
+
+      expect { submitter.submit("research", "alpha") }.to raise_error(Lain::Error, %r{--btw.*/keep}m)
+      chronicle.promote!
+      expect(submitter.submit("research", "alpha")).to start_with("approved")
+    ensure
+      chronicle&.close
+    end
+
+    it "refuses under --no-journal, naming the flag, and journals nothing" do
+      expect { in_chat(Lain::CLI::Chronicle::Null.new).submit("research", "alpha") }
+        .to raise_error(Lain::Error, /--no-journal/)
+      expect(gate_decisions).to be_empty
+    end
+  end
+
+  describe "an epic named in a home that holds none" do
+    it "says the home holds no epics" do
+      expect { command.submit("research", "ghost") }.to raise_error(Lain::Error, /holds no epics/)
     end
   end
 
@@ -1070,9 +1122,21 @@ RSpec.describe Lain::CLI::EpicSubmit do
       policy.define_singleton_method(:decide) { |*| raise Interrupt }
       submission = Lain::Epic::Submission.research(text: research_text, slug: "alpha")
       verdict = described_class.new(submission:, stage: Lain::Epic::Stage.new("research"), policy:, gate: nil,
-                                    queue: nil, advance: nil)
+                                    queue: nil, advance: nil, journal: nil)
 
       expect { verdict.call }.to raise_error(Interrupt)
+    end
+
+    it "says a 1-second window in the singular" do
+      policy = Object.new
+      policy.define_singleton_method(:decide) { |*| false }
+      journal = Object.new
+      journal.define_singleton_method(:expired) { |_digest| 1 }
+      submission = Lain::Epic::Submission.research(text: research_text, slug: "alpha")
+      verdict = described_class.new(submission:, stage: Lain::Epic::Stage.new("research"), policy:, gate: nil,
+                                    queue: nil, advance: nil, journal:)
+
+      expect(verdict.call).to include("within 1 second --")
     end
   end
 

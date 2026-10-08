@@ -842,7 +842,8 @@ module Lain
                                           switchboard: -> { @switchboard }, journal: durable_journal,
                                           verdict:, isolation: fleet_isolation,
                                           handback:, epic: epic_mount(notice),
-                                          attachments:, middleware: backend.middleware)
+                                          attachments:, middleware: backend.middleware, paths: @paths,
+                                          config:)
         @toolset_build.build(recorder, ask_human:)
       end
 
@@ -885,7 +886,11 @@ module Lain
                      sync: Isolation::SelfSync.new(base:, strategy:, retries: settings.rebase_retries))
       end
 
-      def isolation_settings = Config.load(root:).isolation
+      def isolation_settings = config.isolation
+
+      # `.lain/config.rb`, evaluated once per chat start, so the epic mount, the
+      # gate submitter, the board and the isolation settings read the same file.
+      def config = @config ||= Config.load(root:)
 
       # Which epic this chat is seated in, resolved ONCE and read twice: the
       # toolset takes the mount's tools, and an attached editor's lain://status
@@ -907,7 +912,7 @@ module Lain
       #   FIRST call only, which is the toolset build's
       # @return [EpicMount, EpicMount::NoEpic]
       def epic_mount(notice = nil)
-        @epic_mount ||= EpicMount.for(chronicle:, options:, notice:, told:, root:, config: Config.load(root:),
+        @epic_mount ||= EpicMount.for(chronicle:, options:, notice:, told:, root:, config:,
                                       bindings: replies, **ReviewSeams.for(replies, root:))
       end
 
@@ -955,7 +960,7 @@ module Lain
       # every path in every real chat and the whole axis was dark.
       def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
-                                        verdict:, middleware: backend.middleware)
+                                        verdict:, middleware: backend.middleware, config:)
       end
 
       # The session's ONE {Lain::Shell::Verdict}, and the memo is the whole

@@ -383,6 +383,17 @@ RSpec.describe Lain::CLI::Wiring do
     wiring.wire_agent(channel:, recorder:, session:, backend:)
   end
 
+  # The epic mount, the toolset's gate submitter, the board and the isolation
+  # settings all read `.lain/config.rb` through one reader, so they cannot
+  # read two different files.
+  it "loads the project's config once per chat start" do
+    allow(Lain::Config).to receive(:load).and_call_original
+
+    wire_agent
+
+    expect(Lain::Config).to have_received(:load).once
+  end
+
   # The route `/meta` takes, from the chat's own session: an :inherit child
   # spawned after the chat committed a cut renders the cut, not the turns it
   # replaced.
@@ -4072,7 +4083,8 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
                                           parent:, journal:, library: backend.library,
                                           epic: SpecNulls.unmounted_epic, root: Dir.pwd,
                                           switchboard: -> { SpecNulls::NoSwitchboard },
-                                          askers: SpecNulls::UnwiredAskers.build)
+                                          askers: SpecNulls::UnwiredAskers.build,
+                                          **SpecNulls.unloaded_project)
     end
 
     def live_bash = assembler.build(recorder, ask_human: Lain::Tools::AskHuman.new(parent:)).fetch("bash")

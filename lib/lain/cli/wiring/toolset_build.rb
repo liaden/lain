@@ -193,13 +193,17 @@ module Lain
         #   session holds none, so a build handed none spawns as it always did.
         # @param middleware [Lain::Config::Middleware] the configured registrations
         #   every child's model and turn stacks start with.
+        # @param paths [Lain::Paths] the state home the epic gate's session
+        #   journals are read from
+        # @param config [Lain::Config] `.lain/config.rb`, which names each epic
+        #   stage's gate policy
         # @option options [String] :exec the transport the `exec:` default
         #   resolves, with `:exec_image` the only other keys this class reads.
         #   `--auto-approve` is not among them: it seeds the mode's layer on
         #   {Switchboard.for}, and the surface here reads that layer. Last,
         #   after every `@param`, because yard-lint fixes that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
-                       root:, switchboard:, askers:, usage: nil, session: Lain::Session::Null.instance,
+                       root:, switchboard:, askers:, paths:, config:, usage: nil, session: Lain::Session::Null.instance,
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
                        handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
                        middleware: Lain::Config::Middleware.empty,
@@ -211,6 +215,7 @@ module Lain
           @root = root
           @verdict = verdict
           @epic = epic
+          @in_chat = { chronicle:, root:, paths:, config: }.freeze
           @askers = askers
           @usage = usage
           @switchboard = switchboard
@@ -242,7 +247,9 @@ module Lain
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
           @auto_surface = Lain::Approval::AutoSurface.new(role_spawn: @role_spawn, enabled: @auto_approve)
           @floor = base
-          Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill, session_usage] + epic.tools)
+          submitter = EpicSubmit.in_chat(**@in_chat, asker: ask_human, role_spawn: @role_spawn)
+          Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill, session_usage] +
+                            epic.tools(submitter:))
         end
 
         # The one Subagent that grants {ISSUE_ORCHESTRATOR}: the floor {#build}

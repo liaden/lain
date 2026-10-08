@@ -310,6 +310,12 @@ module ToolBoundsRegistry
               "The written content is never quoted back"
     ),
     ToolExemption.new(
+      tool: "Lain::Tools::EpicSubmit", grounds: ToolExemption::FIXED_RESULT,
+      reason: "answers with the verdict: approved, denied, deferred or already approved, the artifact digest, " \
+              "the stage, the slug and the stage it advanced to; or a refusal whose size is set by lain's own " \
+              "sentence and the path, slug or issue id it names. No artifact content is quoted back"
+    ),
+    ToolExemption.new(
       tool: "Lain::Tools::TodoWrite", grounds: ToolExemption::FIXED_RESULT,
       reason: "answers with the number of items the list now holds; the items themselves came " \
               "from the model and are not quoted back at it"

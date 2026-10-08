@@ -276,13 +276,23 @@ module Lain
         def initialize(journal, dir:)
           @journal = journal
           @dir = dir
+          @decided = []
         end
 
         def record(entry)
+          @decided << entry if entry.is_a?(Approval::GateDecision)
           @journal.record(entry)
           self
         end
         alias << record
+
+        # @param digest [String] the submitted artifact's address
+        # @return [Numeric, nil] the window, in seconds, that closed on this
+        #   digest's gate with nobody answering; nil when somebody answered
+        def expired(digest)
+          decision = @decided.reverse.find { |decided| decided.artifact_digest == digest }
+          decision.latency if decision&.answered_by == Approval::Gate::TIMEOUT_SURFACE
+        end
 
         def each(&block) = SessionJournals.new(dir: @dir, types: [Approval::SignoffQueue::JOURNAL_TYPE]).each(&block)
       end
@@ -291,7 +301,8 @@ module Lain
       # verdict is a different job from resolving a home, a policy, a queue and a
       # journal: by the time this is built every one of those is settled.
       class Verdict
-        def initialize(submission:, stage:, policy:, gate:, queue:, advance:)
+        def initialize(submission:, stage:, policy:, gate:, queue:, advance:, journal:)
+          @journal = journal
           @submission = submission
           @stage = stage
           @policy = policy
@@ -328,8 +339,8 @@ module Lain
         def slug = @submission.slug
 
         def approved
-          ["approved #{@submission.digest}", "  #{@stage} for epic #{slug} (#{@submission.fact})",
-           "  #{@advance.call}"].join("\n")
+          ["approved #{@submission.digest} by policy #{@policy.name}",
+           "  #{@stage} for epic #{slug} (#{@submission.fact})", "  #{@advance.call}"].join("\n")
         end
 
         # Parked or plainly denied is read off the QUEUE, not off the policy's
@@ -337,6 +348,9 @@ module Lain
         # off, and reading the policy would be a second opinion on what
         # deferring means.
         def refused
+          window = @journal.expired(@submission.digest)
+          return unanswered(window) if window
+
           parked = @queue.parked(slug, @stage.name).find { |item| item.artifact_digest == @submission.digest }
           parked ? deferred(parked) : denied
         end
@@ -346,6 +360,15 @@ module Lain
            "  parked in #{item.partition} -- nothing advanced",
            "  review it: lain epic queue #{item.epic_slug}"].join("\n")
         end
+
+        # A closed window denies, but nobody decided it, so it is not said as a denial.
+        def unanswered(window)
+          ["unanswered #{@submission.digest}",
+           "  nobody answered the #{@stage} gate for epic #{slug} within #{seconds(window)} -- " \
+           "nothing advanced"].join("\n")
+        end
+
+        def seconds(window) = window == 1 ? "1 second" : "#{format("%g", window)} seconds"
 
         def denied
           ["denied #{@submission.digest}", "  #{@stage} for epic #{slug} -- nothing advanced"].join("\n")
@@ -383,12 +406,14 @@ module Lain
       # @param spike_journal [Adjudication::Destination] where the pair's provider
       #   writes its own records; pointed at the decision's journal for the
       #   length of each decision, and the one the pair was built over
+      # @param policies [#call] resolves the submitted stage's policy;
+      #   {WholePipeline} unless a caller decides one stage alone
       # @param epics [CLI::Epic] answers WHICH epic a bare invocation means.
       #   Asked rather than reimplemented: two spellings of "the sole epic in the
       #   home" would disagree without either of them raising.
       def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                      input: nil, output: nil, asker: Prompt.on(input:, output:), journal: nil, role_spawn: nil,
-                     brief: nil, spike_journal: Adjudication::Destination.new,
+                     brief: nil, spike_journal: Adjudication::Destination.new, policies: WholePipeline,
                      epics: Epic.new(root:, paths:, config:))
         @root = root
         @paths = paths
@@ -400,6 +425,7 @@ module Lain
         @brief = brief
         @spike_journal = spike_journal
         @epics = epics
+        @policies = policies
       end
 
       # The exe's assembly seam: the command, plus the adjudication pair when a
@@ -428,6 +454,72 @@ module Lain
         spike_journal = Adjudication::Destination.new
         pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: guard, journal: spike_journal)
         new(root:, paths:, config:, input:, output:, role_spawn: pair.role_spawn, brief: pair.brief, spike_journal:)
+      end
+
+      # Which policy decides the submitted stage. The command resolves the
+      # whole pipeline, so a stage configured wrong refuses before any is
+      # decided.
+      module WholePipeline
+        def self.call(stage, config:, deps:)
+          Approval::Gate::Policies.for_all(config:, deps:, asking: [stage]).fetch(stage)
+        end
+      end
+
+      # A chat resolves the submitted stage alone: it cannot build the
+      # adjudication spike prompt, and another stage's adjudicated gate must
+      # not refuse this one.
+      module SubmittedStage
+        def self.call(stage, config:, deps:) = Approval::Gate::Policies.for(stage:, config:, deps:)
+      end
+
+      # A chat's submitter decides into the chat's own session journal, lent
+      # as the epic driver lends it, so {ReadBack} sees this chat's earlier
+      # decisions. The adjudication brief is not wired, so an adjudicated
+      # stage refuses by name, as it does for the driver.
+      #
+      # @param chronicle [Chronicle, Chronicle::Null] the chat's record
+      # @param root [String] as for {#initialize}
+      # @param paths [Paths] as for {#initialize}
+      # @param config [Config] as for {#initialize}
+      # @param asker [#ask, nil] the chat's ask_human, heard through {Heard}
+      # @param role_spawn [#call, nil] the chat's role spawn seam
+      # @return [InChat]
+      def self.in_chat(chronicle:, root:, paths:, config:, asker:, role_spawn:)
+        InChat.new(chronicle:, command: new(root:, paths:, config:, asker:, journal: chronicle.record_journal,
+                                            role_spawn:, policies: SubmittedStage))
+      end
+
+      # Refuses while the chat's session file would not keep a decision: a
+      # decision no later reader sees lets the same stage be approved twice.
+      # Asked per submit, so a --btw session kept with /keep mid-chat submits.
+      class InChat
+        NO_JOURNAL = "this chat was started with --no-journal, so a gate decision would land in no session " \
+                     "journal; restart the chat without --no-journal, or run lain epic submit from a shell"
+        EPHEMERAL = "this chat was started with --btw, and its session journal, gate decisions included, is " \
+                    "deleted when the chat ends; keep the session with /keep first, or run lain epic submit " \
+                    "from a shell"
+
+        # @param chronicle [#journal_path] the chat's record
+        # @param command [EpicSubmit] the submitter lent the chat's journal
+        def initialize(chronicle:, command:)
+          @chronicle = chronicle
+          @command = command
+        end
+
+        # @return [String] the verdict, as {EpicSubmit#submit}
+        # @raise [Lain::Error] when the session would not keep the decision
+        def submit(stage, slug = nil, issue: nil, digest: nil)
+          refuse_unkept!
+          @command.submit(stage, slug, issue:, digest:)
+        end
+
+        private
+
+        def refuse_unkept!
+          path = @chronicle.journal_path
+          raise Lain::Error, NO_JOURNAL if path.nil?
+          raise Lain::Error, EPHEMERAL if Paths.ephemeral?(path)
+        end
       end
 
       # The pair's children borrow no chat's guard, so this command builds
@@ -492,7 +584,7 @@ module Lain
         return standing(submission, advance) if standing?(queue, submission)
 
         required.each { |plan| ensure_approved!(queue, plan) }
-        Verdict.new(submission:, stage:, policy:, gate:, queue:, advance:).call
+        Verdict.new(submission:, stage:, policy:, gate:, queue:, advance:, journal:).call
       end
 
       # The ASKER says its own window ({Prompt#window}), never a type check
@@ -543,7 +635,7 @@ module Lain
       def policy_for(stage, queue, journal)
         deps = Approval::Gate::Policies::Deps.new(queue:, asker: Heard.over(@asker), journal:,
                                                   role_spawn: @role_spawn, brief: @brief)
-        Approval::Gate::Policies.for_all(config: @config, deps:, asking: [stage.name]).fetch(stage.name)
+        @policies.call(stage.name, config: @config, deps:)
       rescue Approval::Gate::Policies::Refusal => e
         raise unless e.seams == ["asker"]
 
