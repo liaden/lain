@@ -304,7 +304,8 @@ module Lain
         def refuse_body!(question, expected, taken)
           offset = expected.zip(taken).index { |want, got| want != got }
           raise MalformedDocument, "line #{@position + offset + 1}: question #{question.id.inspect} renders its " \
-                                   "body verbatim and reads only your answer, so this line cannot be edited " \
+                                   "body verbatim and reads only your answer, so write answers below the whole " \
+                                   "question, after a blank line, indented #{INDENT.size} spaces, not inside it " \
                                    "(expected #{expected[offset].inspect}, got #{shown(taken[offset])})"
         end
 

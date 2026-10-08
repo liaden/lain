@@ -388,6 +388,17 @@ RSpec.describe Lain::Question::Document do
       expect { parse(edited) }.to raise_error(Lain::Question::MalformedDocument, /line 2.*verbatim/m)
     end
 
+    it "tells a reply written inside a numbered body where answers belong" do
+      scope = question("scope", body: "1. Which files?\n2. Which depth?")
+      asked_scope = set(scope)
+      typed = described_class.unanswered(asked_scope).sub("1. Which files?", "1. Which files?\nall of them")
+
+      expect { parse(typed, asked_scope) }.to raise_error(
+        Lain::Question::MalformedDocument,
+        /line 3.*below the whole question, after a blank line, indented 2 spaces/m
+      )
+    end
+
     it "refuses a document whose questions were reordered" do
       reordered = document.lines.rotate(6).join
 
