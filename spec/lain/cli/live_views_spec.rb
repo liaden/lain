@@ -151,4 +151,51 @@ RSpec.describe Lain::CLI::LiveViews do
       }
     end
   end
+
+  # The production path of a one-shot subagent: Lineage writes through the
+  # chronicle's observer, the scribe promotes the record onto the tee, and the
+  # tee carries it to the real feed.
+  describe "a one-shot subagent's lifecycle, through the real chronicle and feed" do
+    let(:store) { Lain::Store.new }
+    let(:policy) { Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []) }
+    let(:real_chronicle) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new)) }
+    let(:state_path) { File.join(Dir.mktmpdir, "state.json") }
+    let(:feed) { Lain::StatusFeed.new(path: state_path) }
+    let(:lineage) { Lain::Tools::Subagent::Lineage.new(policy:, observer: real_chronicle.observer) }
+    let(:parent) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]) }
+    let(:child) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "task" }]) }
+
+    def hud = JSON.parse(File.read(state_path)).fetch("hud")
+
+    before do
+      # Production order: the scribe takes its tee at start, so LiveViews must wrap it first.
+      described_class.new(options: { journal: true }, chronicle: real_chronicle, status_feed: feed)
+      real_chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 10, system: "s"),
+                           toolset: Lain::Toolset.new([]))
+    end
+
+    it "counts a spawned child as fleet:1 while it runs" do
+      lineage.spawn(parent, prompt: "go")
+
+      expect(hud).to include("fleet:1")
+    end
+
+    it "drops the count when the child's completion names a failure" do
+      spawn = lineage.spawn(parent, prompt: "go")
+      expect(hud).to include("fleet:1")
+
+      lineage.ended(parent, spawn, child, lifecycle: Lain::StatusFeed::SpawnLifecycle::FAILED, error: "Boom")
+
+      expect(hud).to include("fleet:0")
+    end
+
+    it "drops the count when the child answers" do
+      spawn = lineage.spawn(parent, prompt: "go")
+      expect(hud).to include("fleet:1")
+
+      lineage.message(parent, spawn, child, Data.define(:text).new(text: "done"))
+
+      expect(hud).to include("fleet:0")
+    end
+  end
 end
