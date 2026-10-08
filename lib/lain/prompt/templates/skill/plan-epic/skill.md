@@ -13,7 +13,8 @@ them. You are cutting seams, not implementing them and not writing the issues up
 
 ## Phase 1 — Read the research
 
-Read `research.md` from the epic home (`Epic::Home.resolve`, the only door). If it names open
+Read `research.md` from the epic home with `read_file`. The epic home for this project is
+`<%= epic_home %>`, so the file is `<%= epic_home %>/<slug>/research.md`. If it names open
 questions that change how the work is cut, raise them now; do not decide them silently inside
 a heading.
 
@@ -120,14 +121,17 @@ you are told which edge to cut.
 
 ## Phase 4 — Check the shape before you gate it
 
-Write through the epic home, then read it back and look at what came out — the graph answers
+Write `epic.md` with the `epic_write` tool (`artifact` is `epic`, `content` is the whole file;
+it is checked against the grammar before anything lands, and a document with no issues is
+refused). Then read `<%= epic_home %>/<slug>/epic.md` back and look at what came out — the graph answers
 `ready` (pending with every blocker done) and `waves` (each wave a maximal set that can run in
 parallel). If everything lands in one long chain, you cut the seams wrong; go back to Phase 2.
 
 ## Phase 5 — Each issue's plan declares the file its tests mirror
 
 An issue is implemented from a plan — `plans/<id>.md` in the epic home — and that plan carries one
-line the driver cannot do without:
+line the driver cannot do without. Write it with `epic_write` (`artifact` is `plan`, `issue` is the
+id) to `<%= epic_home %>/<slug>/plans/<id>.md`:
 
 ````text
 Subject: lib/exporter/stream.rb
@@ -149,7 +153,8 @@ subject is approved along with the plan, and editing it reopens that gate.
 
 ## Phase 6 — Request the epic_plan gate
 
-Submit `epic.md` with `lain epic submit epic_plan`. Under `interactive` a human answers; under
+Submit `epic.md` with the `epic_submit` tool: `stage` is `epic_plan`, `slug` is the epic's slug.
+Under `interactive` a human answers; under
 `hands_off` it approves itself audibly; under `deferred` it refuses now and parks the question
 for a human to sign off later — the refusal is journaled as a real denial, no spike runs and
 **no model is asked** on the way.
@@ -161,12 +166,19 @@ refuses and parks for a human, with that evidence attached to the parked item �
 spike itself came back empty, the reason it did rather than evidence. Expect it to park; the
 spike is there to make the morning review cheaper, not to sign off for you.
 
+`epic_submit` cannot run an adjudicated stage in the chat: it refuses, and an adjudicated stage
+cannot be submitted from the chat at all. When it refuses, relay the shell command
+`lain epic submit epic_plan <slug>` to the user and stop. The policy descriptions above are
+background for the user, not something you run. An interactive gate the user leaves unanswered
+reads as no answer, and nothing advanced. A `--btw` chat cannot submit at all.
+
 The `epic_plan` gate cannot open while this epic's `research` sign-offs are still parked. If
-you are told the stage is blocked, that is the boundary rule, not a bug: drain the earlier
-stage with `lain epic queue` and `lain epic approve DIGEST` / `lain epic deny DIGEST` first.
+you are told the stage is blocked, that is the boundary rule, not a bug: ask the
+user to drain the earlier stage first, with `lain epic queue` and `lain epic approve DIGEST` /
+`lain epic deny DIGEST`.
 
 Structural changes after this point belong to `iterate-epic`, not to a second run of this
-skill — it edits the graph through `lain epic split`, `lain epic merge` and `lain epic add`
-rather than by rewriting the document.
+skill — it edits the graph through the `epic_graph` tool (`split`, `merge` and `add`) rather than by
+rewriting the document.
 
 Once the graph is approved, `create-epic-issues` writes the issues up.

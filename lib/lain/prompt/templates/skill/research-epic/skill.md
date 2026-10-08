@@ -30,9 +30,13 @@ Ask few questions and ask them together. Do not ask what Phase 2 could verify.
 
 ## Phase 2 — Ground the answers against the code
 
-Now read. Fan out parallel `researcher` sub-agents (`@researcher[/skill]` for a fresh-context
-probe) over every seam the answers named: the files, the utilities worth reusing, the specs
-that pin current behaviour.
+Now read, in the project and the paths the user gave you, and nowhere else. Fan out parallel
+`researcher` sub-agents (`@researcher[/skill]` for a fresh-context probe) over every seam the
+answers named: the files, the utilities worth reusing, the specs that pin current behaviour.
+
+Ground against the paths the user gave. If the answer lives above them, in a sibling repository
+or a parent directory nobody named, report that to the user rather than searching up there: do
+not search above the named paths on your own.
 
 Record where the user's picture and the code disagree. Each disagreement is either a question
 worth one more round or an open question `research.md` carries forward — never something you
@@ -40,11 +44,13 @@ quietly resolve on your own.
 
 ## Phase 3 — Write research.md
 
-Reach the epic home through `Epic::Home.resolve` rather than building a path by hand: it is the
-only door — the constructor is private — and it checks the slug, which matches
-`/\A[a-z0-9][a-z0-9-]*\z/`: lowercase letters, digits and dashes, opening with a letter or a
-digit. Resolving is otherwise pure, and creates nothing; the directories arrive on the first
-write, and that is also where a path escaping the home is refused.
+Write it with the `epic_write` tool: `slug` is the epic's name (lowercase letters, digits and
+dashes, opening with a letter or a digit), `artifact` is `research`, and `content` is the whole
+file. The tool creates the directories, so a first write needs nothing prepared.
+
+The epic home for this project is `<%= epic_home %>`, and the epic lives at
+`<%= epic_home %>/<slug>/`. You can read anything there with `read_file` at that absolute path,
+for example `<%= epic_home %>/<slug>/research.md`.
 
 An epic home holds exactly four kinds of artifact: `research.md`, `epic.md`, `issues/<id>.md`,
 `plans/<id>.md`. By default it lives under XDG state, so an epic never shows up in
@@ -65,7 +71,8 @@ Structure it so `plan-epic` can decompose from it alone:
 
 ## Phase 4 — Request the research gate
 
-Submit `research.md` with `lain epic submit research`. What happens next is the session's
+Submit `research.md` with the `epic_submit` tool: `stage` is `research` and `slug` is the epic's
+slug. What happens next is the session's
 gate policy, not your choice:
 
 - `interactive` — a human answers.
@@ -83,7 +90,16 @@ gate policy, not your choice:
   the spike came back empty when it did. It is a spike before the queue, not a gate that
   answers itself: expect it to park.
 
-Parked sign-offs are drained with `lain epic queue`, then `lain epic approve DIGEST` or
-`lain epic deny DIGEST`. Tell the user this is where their epic now sits.
+`epic_submit` cannot run an adjudicated stage in the chat: it refuses, and an adjudicated stage
+cannot be submitted from the chat at all. When it refuses, relay the shell command
+`lain epic submit research <slug>` to the user and stop. The policy descriptions above are
+background for the user, not something you run. An interactive gate the user leaves unanswered
+reads as no answer, and nothing advanced. A `--btw` chat cannot submit at all.
+
+Parked sign-offs are drained by the user, not by you: tell them to run `lain epic queue`, then
+`lain epic approve DIGEST` or `lain epic deny DIGEST`. Tell the user this is where their epic
+now sits.
+
+If you created this epic in this chat, it is not mounted in it, so tell the user to restart the chat so the epic mounts before the review or `/implement-epic`.
 
 Stop after the gate. An approved `research.md` is this skill's whole deliverable.

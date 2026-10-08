@@ -352,12 +352,13 @@ RSpec.describe "shipped skills" do
       verbs
     end
 
-    it "ends each epic skill at the submit stage it owns" do
+    it "ends each epic skill at the submit stage it owns, through the epic_submit tool" do
       with_empty_project do |renderer|
         ends_at.each do |name, stage|
           expect(Lain::Epic::STAGES.map(&:to_s)).to include(stage)
-          expect(renderer.render(name)).to include("lain epic submit #{stage}"),
-                                           "#{name} never names the submit stage it ends at"
+          rendered = renderer.render(name)
+          expect(rendered).to include("epic_submit"), "#{name} never names the epic_submit tool"
+          expect(rendered).to match(/epic_submit.{0,200}#{stage}/m), "#{name} never names the stage #{stage} it ends at"
         end
       end
     end
@@ -376,20 +377,129 @@ RSpec.describe "shipped skills" do
     # Restructuring is an edge rewrite, and the three operations do it. A
     # scaffold telling an author to re-emit `epic.md` by hand is teaching the
     # one move that produces a dangling edge.
-    it "has iterate-epic reach for the graph verbs rather than re-emitting epic.md by hand" do
+    it "has iterate-epic reach for the graph tool rather than re-emitting epic.md by hand" do
       with_empty_project do |renderer|
         scaffold = renderer.render("iterate-epic")
 
+        expect(scaffold).to include("epic_graph")
         %w[split merge add].each do |verb|
-          expect(scaffold).to include("lain epic #{verb}"), "iterate-epic never names `lain epic #{verb}`"
+          expect(scaffold).to match(/epic_graph.{0,400}#{verb}/m), "iterate-epic never pairs epic_graph with #{verb}"
         end
       end
     end
 
-    it "hands the reader on to the driver and the command that finishes an epic" do
+    it "hands the reader on to the driver and the commands that finish an epic" do
       with_empty_project do |renderer|
         expect(renderer.render("create-epic-issues")).to include("/implement-epic")
         expect(epic_names.map { |name| renderer.render(name) }.join).to include("lain epic finish")
+      end
+    end
+
+    it "names no internal Ruby API in any epic skill" do
+      internals = ["Epic::Home.resolve", "Epic::Home::NAME", "Lain::Epic"]
+      with_empty_project do |renderer|
+        epic_names.each do |name|
+          rendered = renderer.render(name)
+
+          internals.each do |internal|
+            expect(rendered).not_to include(internal), "#{name} names the internal #{internal}"
+          end
+        end
+      end
+    end
+
+    it "renders the absolute epic home into the skills that write or read artifacts" do
+      with_empty_project do |renderer|
+        epic_names.each do |name|
+          expect(renderer.render(name)).to include("/state/lain/epics/test/"), "#{name} never names the epic home"
+        end
+      end
+    end
+
+    it "has research-epic write through epic_write and submit through epic_submit" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("research-epic")
+
+        expect(scaffold).to include("epic_write")
+        expect(scaffold).to include("epic_submit")
+        expect(scaffold).to include("/state/lain/epics/test")
+      end
+    end
+
+    it "has plan-epic and create-epic-issues write through epic_write" do
+      with_empty_project do |renderer|
+        %w[plan-epic create-epic-issues].each do |name|
+          expect(renderer.render(name)).to include("epic_write"), "#{name} never names the epic_write tool"
+        end
+      end
+    end
+
+    it "keeps lain epic commands inside paragraphs addressed to the user" do
+      with_empty_project do |renderer|
+        epic_names.each do |name|
+          paragraphs = renderer.render(name).split(/\n\n+/).grep(/lain epic (queue|approve|deny|status|finish|submit)/)
+
+          expect(paragraphs).to all(match(/\buser\b/i)), "#{name} has a lain epic command outside text for the user"
+        end
+        expect(renderer.render("create-epic-issues")).to include("lain epic finish --local")
+      end
+    end
+
+    it "tells the agent an adjudicated stage cannot be submitted from the chat" do
+      with_empty_project do |renderer|
+        epic_names.each do |name|
+          paragraph = renderer.render(name).split(/\n\n+/).grep(/cannot be submitted from the chat/).first
+
+          expect(paragraph).to match(/lain epic submit \w+ <slug>/), "#{name} never relays the shell command"
+          expect(paragraph).to match(/stop/i)
+          expect(paragraph).to match(/no answer/i)
+          expect(paragraph).to include("--btw")
+        end
+      end
+    end
+
+    it "does not quote a command in the refusal for an issue_plan submit that names no issue" do
+      with_empty_project do |renderer|
+        sentence = renderer.render("create-epic-issues")[/the tool refuses an issue_plan submit that names no issue.*/]
+
+        expect(sentence).not_to be_nil
+        expect(sentence).not_to include("lain epic")
+      end
+    end
+
+    it "uses only the verbs, stages and artifacts the tools accept" do
+      with_empty_project do |renderer|
+        text = epic_names.map { |name| renderer.render(name) }.join
+        allowed = {
+          "verb" => Lain::Tools::EpicGraph::VERBS, "stage" => Lain::Tools::EpicSubmit::STAGES,
+          "artifact" => Lain::Tools::EpicWrite::ARTIFACTS.keys.map(&:to_s)
+        }
+
+        allowed.each do |field, values|
+          named = text.scan(/`#{field}(?:: |` is )`?([a-z_]+)`/).flatten
+          expect(named).not_to be_empty
+          expect(named - values).to be_empty, "skills name #{field} values the tool refuses: #{named - values}"
+        end
+      end
+    end
+
+    it "keeps research on the project and the paths the user named" do
+      with_empty_project do |renderer|
+        phase = renderer.render("research-epic")[/## Phase 2.*?(?=^## Phase 3)/m]
+
+        expect(phase).to match(/paths the user (gave|named)/i)
+        expect(phase).to match(/report/i)
+        expect(phase).to match(/(not|never|do not) .{0,40}(search|look) above/i)
+      end
+    end
+
+    it "tells the user to restart only when this chat created the epic" do
+      with_empty_project do |renderer|
+        sentence = renderer.render("research-epic").split(/(?<=\.)\s+/).grep(/restart/i)
+
+        expect(sentence.size).to eq(1)
+        expect(sentence.first).to match(/if .{0,60}(created|started) .{0,40}this chat/i)
+        expect(sentence.first).to match(%r{restart.{0,90}mount.{0,100}(review|/implement-epic)}im)
       end
     end
 

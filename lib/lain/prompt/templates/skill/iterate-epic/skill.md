@@ -13,7 +13,8 @@ not re-planning the epic from scratch.
 
 ## Phase 1 — Read the current epic
 
-Read `epic.md` back through the epic home (`Epic::Home.resolve`). Read it, do not assume it:
+Read `epic.md` with `read_file` at `<%= epic_home %>/<slug>/epic.md`, where `<%= epic_home %>` is
+this project's epic home. Read it, do not assume it:
 statuses have moved since it was written, and the graph you are editing is the one on disk.
 
 Note what the graph derives rather than stores — which issues are `ready`, what the waves look
@@ -36,13 +37,14 @@ holds:
 - **Add** an issue discovered mid-flight. Nothing is removed; the caller may name the
   provenance, and if it does not, the issue's own declared provenance stands.
 
-Each one is a command, and the command is how you should reach for it:
+Each one is the `epic_graph` tool, and the tool is how you should reach for it. Every call
+takes the epic's `slug` and a `verb`:
 
-```bash
-lain epic split ID [SLUG] --into=other-id,another-id
-lain epic merge LEFT RIGHT [SLUG] --as=merged-id --title="What the merged issue is called"
-lain epic add ID TITLE [SLUG] --discovered-from=parent-id
-```
+- `verb: split` with `id` (the issue to split) and `into` (the parts' ids, comma-separated).
+- `verb: merge` with `left`, `right`, `as` (the merged id) and optionally `title`.
+- `verb: add` with `id`, `title` and optionally `discovered_from`.
+
+The tool refuses while a review holds `epic.md`; wait for the user to answer it.
 
 Each is journaled as a `graph_revision`, so the restructuring is part of the record rather than an
 unexplained change to a file.
@@ -110,8 +112,9 @@ and this is exactly why.
 
 ## Phase 3 — Re-emit through the grammar
 
-Write the epic back through the epic home, which renders the graph rather than patching the
-file. That render is the honesty check: an issue the grammar cannot write back verbatim is
+`epic_graph` writes the epic back for you, rendering the graph rather than patching the
+file. If you ever must write `epic.md` whole, use `epic_write` (`artifact` is `epic`), which
+renders the same way. That render is the honesty check: an issue the grammar cannot write back verbatim is
 refused by name, and nothing is silently reinterpreted.
 
 Two things it will do that are correct and may still surprise you:
@@ -127,9 +130,16 @@ when you are mid-review.
 ## Phase 4 — Re-request the epic_plan gate
 
 A restructured epic is a new artifact with a new digest, so it needs a fresh sign-off:
-`lain epic submit epic_plan`. An earlier approval was of a different graph.
+the `epic_submit` tool, where `stage` is `epic_plan`. An earlier approval was of a different graph.
+
+`epic_submit` cannot run an adjudicated stage in the chat: it refuses, and an adjudicated stage
+cannot be submitted from the chat at all. When it refuses, relay the shell command
+`lain epic submit epic_plan <slug>` to the user and stop. The policy descriptions above are
+background for the user, not something you run. An interactive gate the user leaves unanswered
+reads as no answer, and nothing advanced. A `--btw` chat cannot submit at all.
+
 
 If the gate reports the stage is blocked, this epic still has parked sign-offs at an earlier
-stage; drain them with `lain epic queue` and `lain epic approve DIGEST` / `lain epic deny
-DIGEST`. Say plainly what changed and why, so the reviewer is signing off on the delta rather
-than re-reading the whole epic.
+stage; ask the user to drain them with `lain epic queue` and `lain epic approve DIGEST` /
+`lain epic deny DIGEST`. Say plainly what changed and why, so the reviewer is signing off on the
+delta rather than re-reading the whole epic.

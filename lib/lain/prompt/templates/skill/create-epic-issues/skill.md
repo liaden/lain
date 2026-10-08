@@ -16,8 +16,8 @@ graph is wrong, stop and say so — restructuring is `iterate-epic`.
 
 ## Phase 1 — Walk the approved graph
 
-Read `epic.md` back through the epic home (`Epic::Home.resolve`) and work from the parsed graph
-rather than from the file's text. The graph is what answers the questions the write-up needs:
+Read `epic.md` with `read_file` at `<%= epic_home %>/<slug>/epic.md` (`<%= epic_home %>` is this
+project's epic home) and work from the parsed graph rather than from the file's text. The graph is what answers the questions the write-up needs:
 
 - **The issue's own fields** — id, title, description, status, and whatever acceptance criteria
   the epic already carries.
@@ -44,7 +44,8 @@ and every link line pointing at it would go stale.
 ## Phase 2 — Write each issue file
 
 `issues/<id>.md` is prose, not epic-markdown: the grammar governs `epic.md` only, so this file
-is yours to structure. Structure it like this:
+is yours to structure. Write it with the `epic_write` tool (`artifact` is `issue`, `issue` is the
+id), which lands it at `<%= epic_home %>/<slug>/issues/<id>.md`. Structure it like this:
 
 ````text
 # <id> — <title>
@@ -97,16 +98,17 @@ not hold, and every id in a link line resolves.
 
 ## Phase 4 — Request the issue_plan gate
 
-Submit each issue's write-up with `lain epic submit issue_plan --issue ID`. The stage gates one
-issue's work, so it names the issue; submitting it bare is refused, and the refusal ends with the
-command that would have worked.
+Submit each issue's write-up with the `epic_submit` tool: `stage` is `issue_plan`, `slug` is the
+epic's slug, and `issue` is the id. The stage gates one
+issue's work, so it names the issue: the tool refuses an issue_plan submit that names no issue.
 
 **An issue's acceptance criteria are approved together with its plan, in this one gate.** They are
 not signed off separately and there is no later criteria gate: the `issue_plan` digest covers the
 plan's whole content, so editing the criteria — or the `Subject:` line below — reopens this gate
 rather than slipping past an approval that was given for different words.
 
-That plan, `plans/<id>.md`, carries the line the implementation step cannot start without:
+That plan, `plans/<id>.md`, is written with `epic_write` (`artifact` is `plan`) to
+`<%= epic_home %>/<slug>/plans/<id>.md`, and carries the line the implementation step cannot start without:
 
 ````text
 Subject: lib/exporter/stream.rb
@@ -130,10 +132,16 @@ refuses and parks for a human, with that evidence attached to the parked item �
 spike itself came back empty, the reason it did rather than evidence. Expect it to park; the
 spike is there to make the morning review cheaper, not to sign off for you.
 
+`epic_submit` cannot run an adjudicated stage in the chat: it refuses, and an adjudicated stage
+cannot be submitted from the chat at all. When it refuses, relay the shell command
+`lain epic submit issue_plan <slug> --issue <id>` to the user and stop. The policy descriptions above are
+background for the user, not something you run. An interactive gate the user leaves unanswered
+reads as no answer, and nothing advanced. A `--btw` chat cannot submit at all.
+
 `issue_plan` sits behind two earlier stages, so its gates cannot open while this epic's
-`research` or `epic_plan` sign-offs are still parked. Drain them with `lain epic queue` and
-`lain epic approve DIGEST` / `lain epic deny DIGEST`. `lain epic status [SLUG]` prints where
-the epic currently stands.
+`research` or `epic_plan` sign-offs are still parked. Ask the user to drain them with
+`lain epic queue` and `lain epic approve DIGEST` / `lain epic deny DIGEST`; the user can run
+`lain epic status [SLUG]` to see where the epic currently stands.
 
 ## Where the epic goes after you
 
@@ -142,7 +150,9 @@ the shape of it is what keeps an issue file honest about what an implementer wil
 
 - **`/implement-epic`** works the approved issues to the epic's own branch, one actor per issue in
   its own worktree, landing them serially. It reads exactly what you wrote here.
-- **`lain epic finish`** takes an epic whose every issue is done to `main` as one pull request.
+- **`lain epic finish`** is run by the user: it takes an epic whose every issue is done to `main`
+  as one pull request. For a project with no remote, tell the user to run
+  `lain epic finish --local`, which merges the finished epic into the default branch locally.
 
 So an issue that only makes sense next to this conversation will reach an actor that does not have
 it. That is the property Phase 3 is checking for.
