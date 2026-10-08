@@ -21,6 +21,12 @@ RSpec.describe Lain::Role::Catalog do
     end
   end
 
+  describe "the researcher" do
+    it "searches the tree beside reading and fetching" do
+      expect(described_class.fetch(:researcher).only).to include(:grep, :glob, :read_file, :list_files)
+    end
+  end
+
   # The grant is the epic seam's to make: a chat attenuates every child from a
   # floor that holds neither name, so a second role naming one would be a role
   # no ordinary spawn could ever build.

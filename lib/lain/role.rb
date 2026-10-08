@@ -1,15 +1,15 @@
 # frozen_string_literal: true
 
 module Lain
-  Role = Data.define(:name, :only, :unattended) do
+  Role = Data.define(:name, :only, :unattended, :max_iterations) do
     # `name` is the catalog key (`:test_engineer`); `only` normalizes to frozen
     # Symbols -- the tool names this role attenuates the spawn's union down to.
     # `unattended` is the guarantee described on the reopened class below. It
     # normalizes to a REAL boolean like every member beside it, and defaults to
     # false: a role CLAIMS the guarantee, it never inherits one.
-    def initialize(name:, only:, unattended: false)
+    def initialize(name:, only:, unattended: false, max_iterations: Agent::Budget::DEFAULT_MAX_ITERATIONS)
       super(name: name.to_sym, only: Array(only).map(&:to_sym).freeze,
-            unattended: unattended ? true : false)
+            unattended: unattended ? true : false, max_iterations: Integer(max_iterations))
     end
 
     # The child's capability set: the spawn's union attenuated DOWN to `only`.
@@ -17,6 +17,10 @@ module Lain
     # so a role that names a phantom tool fails loudly at spawn rather than
     # silently granting less than it claims.
     def attenuate(union) = union.only(*only)
+
+    # The ceiling a child of this role runs under, handed to the spawn beside
+    # the policy because the policy carries capabilities, not limits.
+    def budget = Agent::Budget.new(max_iterations:)
 
     # The spawn policy the {Tools::Subagent} tool reads: this role's `only`-set
     # and its unattended declaration, under the caller's chosen prefix/posture

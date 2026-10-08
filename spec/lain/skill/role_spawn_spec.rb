@@ -77,6 +77,31 @@ RSpec.describe Lain::Skill::RoleSpawn do
     end.to raise_error(ArgumentError, /tool_middleware/)
   end
 
+  # ---- The child runs under its role's iteration ceiling ---------------------
+
+  describe "a child's iteration ceiling" do
+    let(:search_union) do
+      Lain::Toolset.new(union.to_a + [Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
+    end
+
+    def reads(count)
+      Array.new(count) { |i| tool_response(["r#{i}", "read_file", { "path" => "/nowhere/at/all" }]) }
+    end
+
+    def spawn_over(role, calls)
+      provider = mock(*reads(calls), text_response("finished"))
+      seam(provider:, toolset: search_union).call(role, :fresh, "go")
+    end
+
+    it "lets a researcher run past the default ceiling" do
+      expect(spawn_over(:researcher, 30).content).to eq("finished")
+    end
+
+    it "stops a role that declares no ceiling at 25 iterations" do
+      expect { spawn_over(:dev, 30) }.to raise_error(Lain::Agent::Budget::Exceeded, /ceiling is 25/)
+    end
+  end
+
   # ---- A chosen role at call time, inherit prefix, persona in system ---------
 
   it "spawns the chosen role's only-set with an inherit prefix and the role persona in system" do

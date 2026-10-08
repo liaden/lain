@@ -938,11 +938,21 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
-    it "gives the orchestrator 200 iterations for its one ask, where a chat child keeps the default" do
+    it "gives the orchestrator 200 iterations for its one ask, and a chat's researcher child 60" do
       full = toolset_build.build(recorder, ask_human:)
 
       expect(issue_epic.budget.max_iterations).to eq(200)
-      expect(full.fetch("subagent").budget.max_iterations).to eq(Lain::Agent::Budget::DEFAULT_MAX_ITERATIONS)
+      expect(full.fetch("subagent").budget.max_iterations).to eq(60)
+    end
+
+    it "holds each orchestrator child to its role's own ceiling" do
+      toolset_build.build(recorder, ask_human:)
+      allow(Lain::Role::Catalog).to receive(:fetch).and_wrap_original do |original, name|
+        role = original.call(name)
+        role.name == :dev ? role.with(max_iterations: 7) : role
+      end
+
+      expect(issue_epic.attenuates_from.fetch("subagent")["dev"].budget.max_iterations).to eq(7)
     end
 
     it "fans out exactly one level: the orchestrator spawns a dev child, which holds no spawner" do

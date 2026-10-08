@@ -98,6 +98,17 @@ RSpec.describe Lain::Role do
     end
   end
 
+  describe "a role declares its iteration ceiling" do
+    it "gives the researcher 60 iterations" do
+      expect(Lain::Role::Catalog.fetch(:researcher).max_iterations).to eq(60)
+    end
+
+    it "defaults a role that declares none to the budget default" do
+      expect(Lain::Role::Catalog.fetch(:dev).max_iterations).to eq(Lain::Agent::Budget::DEFAULT_MAX_ITERATIONS)
+      expect(described_class.new(name: :probe, only: []).max_iterations).to eq(25)
+    end
+  end
+
   # QA reports and never fixes, and that has to be a fact about what it HOLDS
   # rather than a promise in its prompt: a role that could edit the tree it is
   # judging would need a throwaway checkout to be honest, and one that could run

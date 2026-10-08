@@ -396,7 +396,8 @@ module Lain
         def research_subagent(base)
           Lain::Tools::Subagent.new(seam: announcing(RESEARCHER.to_s), toolset: base,
                                     policy: backend.spawn_policy(RESEARCHER),
-                                    max_depth: 1, announces_as: RESEARCHER.to_s)
+                                    max_depth: 1, announces_as: RESEARCHER.to_s,
+                                    budget: Lain::Role::Catalog.fetch(RESEARCHER).budget)
         end
 
         # The floor plus the two names only the orchestrator holds: one spawner
@@ -420,7 +421,7 @@ module Lain
         def spawner(role, issue)
           Lain::Tools::Subagent.new(seam: announcing(role.to_s, over: issue), toolset: @floor,
                                     policy: backend.spawn_policy(role), persona: persona(role), max_depth: 1,
-                                    announces_as: role.to_s)
+                                    announces_as: role.to_s, budget: Lain::Role::Catalog.fetch(role).budget)
         end
 
         # What a child is told it is, in its own system prompt: the same role

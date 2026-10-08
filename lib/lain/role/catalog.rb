@@ -30,7 +30,9 @@ module Lain
         # reaches the network: a review must not edit the tree under it, and
         # the three reviewers above hold `bash`, which writes.
         Role.new(name: :reviewer_code, only: %i[read_file list_files glob grep]),
-        Role.new(name: :researcher, only: %i[read_file list_files web_fetch web_search]),
+        # Research walks many files and pages, so it gets a ceiling above the default.
+        Role.new(name: :researcher, only: %i[read_file list_files glob grep web_fetch web_search],
+                 max_iterations: 60),
         Role.new(name: :court_clerk, only: %i[read_file list_files memory_read memory_write]),
         # {Approval::AutoSurface}'s judge. Unattended because the sweep that
         # asked it waits on its answer with the judged call still parked: a

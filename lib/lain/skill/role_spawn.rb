@@ -110,7 +110,7 @@ module Lain
       def build_subagent(role, context_mode, model)
         Tools::Subagent.new(
           seam: @seam, toolset: @toolset, policy: role.spawn_policy(prefix: context_mode),
-          persona: Role::Persona.new(role:, slots: @slots), model:,
+          persona: Role::Persona.new(role:, slots: @slots), model:, budget: role.budget,
           max_depth: @max_depth, name: role.name.to_s, compaction: @compaction
         )
       end

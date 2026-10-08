@@ -16,7 +16,7 @@ RSpec.describe "a spawned role's persona" do
                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
-  let(:union) { Lain::Toolset.new(%i[read_file list_files bash web_fetch web_search].map { |n| tool(n) }) }
+  let(:union) { Lain::Toolset.new(%i[read_file list_files glob grep bash web_fetch web_search].map { |n| tool(n) }) }
 
   # Anonymous named capabilities: a role attenuates against tool NAMES, and the
   # child never executes a tool here (the mock settles on the first turn), so a
@@ -132,7 +132,7 @@ RSpec.describe "a spawned role's persona" do
       # own, on top of its role's only-set: a question is not a tree mutation,
       # which is the same judgement `plan`'s READ_ONLY already records.
       expect(tools.map { |t| t["name"] })
-        .to match_array(%w[read_file list_files web_fetch web_search ask_human])
+        .to match_array(%w[glob grep list_files read_file web_fetch web_search ask_human])
     end
   end
 

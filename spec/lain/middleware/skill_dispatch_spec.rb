@@ -295,10 +295,11 @@ RSpec.describe Lain::Middleware::SkillDispatch do
                     .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
     end
 
-    # The researcher role attenuates to read_file/list_files/web_fetch/web_search;
+    # The researcher role attenuates to read_file/list_files/glob/grep/web_fetch/web_search;
     # the union must hold every one of those or Toolset#only fails loudly.
     def real_seam(parent:, slots:)
       union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new,
+                                 Lain::Tools::Glob.new, Lain::Tools::Grep.new,
                                  Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
       child_context = Lain::Context.new(model: "child-model", max_tokens: 256)
       Lain::Skill::RoleSpawn.new(provider: Lain::Provider::Mock.new(responses: [text_response("the plan")]),

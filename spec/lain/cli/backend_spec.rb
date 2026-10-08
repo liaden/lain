@@ -1042,6 +1042,7 @@ RSpec.describe Lain::CLI::Backend do
 
     it "comes from Role::Catalog.fetch, not a parallel construction -- attenuates identically" do
       union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::EditFile.new,
+                                 Lain::Tools::Glob.new, Lain::Tools::Grep.new,
                                  Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
 
       resolved = backend.spawn_policy(:researcher)
