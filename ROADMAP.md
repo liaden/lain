@@ -1979,6 +1979,14 @@ XDG path relative, which put machine state back inside the user's repository)
    all panel-reviewed, in `7f47b802`..`88bd8680`, with a race fix in `de3320ac` that the suite
    surfaced on the way. The manual QA pass (`/manual-qa config-middleware`) is still owed.
 
+54. **Planned (2026-10-08, panel-reviewed)**: `planning/specs/greenfield-trial-fixes.md`, every
+   finding from the first greenfield trial (`/research-epic` on an empty project over ollama-cloud):
+   search that honors ignore files, stays bounded and runs off the reactor; epic skills that use
+   agent tools in place of Ruby internals; `lain epic finish --local`; subagent ceilings and partial
+   handbacks; secret-detector false positives and related directories; approval deadlines and deny
+   reasons; cloud windows and width; and the cockpit under a real nvim config. 42 cards, with a new
+   `greenfield-epic` manual QA scenario.
+
 ## Map of the documents
 
 - **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
