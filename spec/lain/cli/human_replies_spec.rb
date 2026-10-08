@@ -2215,6 +2215,24 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(ask_human.pending?).to be(true)
     end
 
+    it "tells a held line did not answer a pending question, and where to answer it" do
+      typed_at_command_line("yes please")
+
+      line_for { Sync { announced(ask_human, "which db?") } }
+
+      expect(output.string).to include("held as your next prompt: yes please", "does not answer the question",
+                                       "/inbox", ":LainReply")
+    end
+
+    it "names /approve for a held line when only an approval is outstanding" do
+      typed_at_command_line("yes please")
+
+      line_for { outstanding }
+
+      expect(output.string).to include("held as your next prompt: yes please", "/approve")
+      expect(output.string).not_to include("/inbox")
+    end
+
     # An unregistered `/word` may be a SKILL, which only `you>` dispatches.
     it "holds a /word no command claims, rather than refusing it" do
       typed_at_command_line("/critique the diff")

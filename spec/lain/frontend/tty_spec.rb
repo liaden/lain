@@ -442,6 +442,20 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  describe "#render_held_not_an_answer" do
+    it "says the held line did not answer the question and names /inbox and :LainReply" do
+      tty.render_held_not_an_answer(question: true)
+
+      expect(output.string).to include("does not answer the question", "/inbox", ":LainReply")
+    end
+
+    it "says the held line did not answer the approval and names /approve" do
+      tty.render_held_not_an_answer(question: false)
+
+      expect(output.string).to include("does not answer the approval", "/approve")
+    end
+  end
+
   describe "#render_error" do
     it "prints the message" do
       tty.render_error("something broke")

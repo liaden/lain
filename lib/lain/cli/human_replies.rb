@@ -849,12 +849,21 @@ module Lain
           nil
         end
 
+        # Holding at `command>` also says why the line is not an answer: the
+        # human typed it with something outstanding.
+        def held_here
+          lambda do |line|
+            @hold.call(line)
+            @tty.render_held_not_an_answer(question: !@inbox.empty?)
+          end
+        end
+
         # `StandardError` for {AnswerLoop#exchange}'s reason: this fiber is the
         # only way to type `/approve` while the line is parked, so a drain that
         # raised must be reported rather than end it. {Reply::UnknownArm} is the
         # one raise that climbs, as it does at the reply prompt.
         def served(line)
-          @reply.commanded(line, hold: @hold, drain: @drain)
+          @reply.commanded(line, hold: held_here, drain: @drain)
         rescue Reply::UnknownArm
           raise
         rescue StandardError => e

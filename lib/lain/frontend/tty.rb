@@ -48,6 +48,8 @@ module Lain
       # line the human had not finished is dropped from THIS prompt, with the
       # rest of it held too once they finish it.
       HELD = "held as your next prompt: %s"
+      HELD_BESIDE_QUESTION = "that does not answer the question: /inbox lists it, and :LainReply answers it"
+      HELD_BESIDE_APPROVAL = "that does not answer the approval: /approve answers it"
       DISCARDED = "discarded: %s -- finish that line and it is held as your next prompt"
 
       NO_LAYERS = -> { Mode::LayerSet.empty }
@@ -211,6 +213,12 @@ module Lain
       # for `you>` ({Intake#hold}) -- said, since a line nobody was told about
       # reads as swallowed.
       def render_held(line) = render_warning(format(HELD, legible(line)))
+
+      # Said after {#render_held} at `command>`, where the human most likely
+      # meant the line as an answer.
+      def render_held_not_an_answer(question:)
+        render_warning(question ? HELD_BESIDE_QUESTION : HELD_BESIDE_APPROVAL)
+      end
 
       def render_discarded(partial) = render_warning(format(DISCARDED, legible(partial)))
 
