@@ -36,10 +36,10 @@ module Lain
     #     matches today's in-process callers get. Pinned as a witness in
     #     spec/lain/core/grep_parity_spec.rb rather than smoothed over.
     #
-    # VCS ignore rules are the other divergence: the in-process walk lists a
-    # repository through {FileWalk}, so git's ignores apply to it, while
-    # {CoreSearch} sends `respect_ignores: false` and the daemon searches
-    # ignored files too.
+    # VCS ignore rules agree: the in-process walk lists a repository through
+    # {FileWalk}, and {CoreSearch} sends `respect_ignores: true` with the same
+    # include list, so the daemon skips what git ignores too. The remaining
+    # gaps are pinned in spec/lain/core/grep_parity_spec.rb.
     class Grep < Tool
       include Tool::FileTarget
 
@@ -261,8 +261,9 @@ module Lain
         # The started {Core::Client} is injected: the caller owns the daemon's
         # lifecycle and its reactor. One round trip per search, and the client
         # demuxes by msgid, which keeps {Grep#parallel_safe?} true here.
-        def initialize(client)
+        def initialize(client, include)
           @client = client
+          @include = include
         end
 
         def call(path, input)
@@ -284,16 +285,13 @@ module Lain
         # is a decoder's incidental behaviour and not the wire contract, so the
         # default is resolved HERE and the wire always carries a bool.
         #
-        # `respect_ignores` is sent FALSE explicitly and always, and is not a
-        # model-facing input: the daemon can apply .gitignore/.ignore rules and
-        # {RubySearch} cannot, so leaving them on would make the same tool
-        # answer differently depending on whether a client happened to be wired.
-        # SENDING it rather than leaning on the daemon's default is what makes
-        # this side's intent auditable on the wire.
+        # `respect_ignores` is sent explicitly, so this side's intent is
+        # auditable on the wire and a change of the daemon's default cannot
+        # alter grep's behaviour silently. It is not a model-facing input.
         def wire_params(path, input)
           { "pattern" => input.pattern, "path" => path,
             "case_insensitive" => input.case_insensitive || false,
-            "respect_ignores" => false }
+            "respect_ignores" => true, "include" => @include }
         end
       end
 
@@ -315,7 +313,7 @@ module Lain
       # different wire.
       def initialize(client: nil, walk_limit: Tool::Bounds::WalkLimit::DEFAULT, include: [])
         super()
-        @search = client ? CoreSearch.new(client) : RubySearch.new(walk_limit, include)
+        @search = client ? CoreSearch.new(client, include) : RubySearch.new(walk_limit, include)
       end
 
       def name = "grep"

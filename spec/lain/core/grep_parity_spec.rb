@@ -30,13 +30,10 @@ require "tmpdir"
 # only proof this block reached the daemon at all: delete them for being "not
 # parity" and the file passes green having proved nothing.
 #
-# The same limit applies to the ignore-rules parity example above, and it is
-# worth naming because it looks like it is pinned here and is not: dropping
-# `respect_ignores` from the wire params reddens ZERO examples in this file,
-# because the daemon's own default is off too. What pins that the flag is sent
-# is the wire assertion in spec/lain/tools/grep_spec.rb, which reddens 2. An
-# agreement between two defaults is not the same fact as an intent stated on
-# the wire, and only one of the two files can hold the second.
+# The ignore-rules examples below use a fixture repository, because the
+# in-process walk only honours a `.gitignore` inside one. The names they use
+# avoid `src`, which a developer's own global gitignore may list and the
+# daemon would then honour from outside the fixture.
 RSpec.describe Lain::Tools::Grep, :core do
   # Both arms of the same tool, across the lain-core boundary.
   around do |example|
@@ -96,6 +93,13 @@ RSpec.describe Lain::Tools::Grep, :core do
   def expect_identical(ruby, core)
     expect(core.error?).to eq(ruby.error?)
     expect(core.content.b).to eq(ruby.content.b)
+  end
+
+  def differential_including(include, path = tmpdir)
+    input = { pattern: "needle", path: }
+    ruby = described_class.new(include:).call(input, invocation)
+    core = with_client { |client| described_class.new(client:, include:).call(input, invocation) }
+    [ruby, core]
   end
 
   describe "axes where the two paths agree" do
@@ -198,45 +202,67 @@ RSpec.describe Lain::Tools::Grep, :core do
       expect(core.content).to eq("no such file or directory: #{missing}")
     end
 
-    # RESOLVED, and it did not start out that way. The daemon walks with
-    # ripgrep's `ignore` crate and CAN apply .gitignore/.ignore rules; Dir.glob
-    # has no idea what a .gitignore is and cannot get one without the
-    # subprocess this tier-1 tool exists to avoid. So the in-process semantics
-    # win: Grep::CoreSearch sends `respect_ignores: false` and the daemon's
-    # walker switches all five ignore sources off.
-    #
-    # This example lived in the block below as a DIVERGENCE witness until
-    # 2026-07-29, and it went red the moment the daemon grew the param -- which
-    # is exactly what a witness is for. Do not weaken it back to "the wire
-    # returns a subset": the claim now is equality.
-    #
-    # What this example CANNOT show, and where to look instead. The two arms
-    # here agree partly because the daemon's own default is off too, so a build
-    # that dropped `respect_ignores` from the wire entirely would still pass.
-    # Two other places carry the halves this one cannot:
-    #
-    # - that the flag is SENT, and sent false on purpose -- the wire-params
-    #   example in spec/lain/tools/grep_spec.rb, which reddens if it is dropped.
-    # - that the daemon genuinely HONOURS it, so this agreement is a decision
-    #   and not an incapacity -- `respect_ignores_rides_the_wire_and_decides_
-    #   what_comes_back` in crates/lain-core/src/grep.rs, which drives a real
-    #   daemon over a real socket in both directions.
-    #
-    # Deliberately not re-proved here with a raw `respect_ignores: true` call:
-    # no Lain code sends true, so that would exercise a path production never
-    # takes, in a file whose every other example means "the two arms agree".
-    it "agrees that .gitignore'd files are still searched -- the wire is told to skip no one" do
-      write(".gitignore", "ignored.txt\nvendor/\n")
-      write("kept.txt", "needle kept\n")
-      write("ignored.txt", "needle ignored\n")
-      write("vendor/dep.txt", "needle vendored\n")
+    def git_init
+      system("git", "init", "-q", tmpdir, exception: true)
+    end
+
+    # The daemon walks with ripgrep's `ignore` crate and the in-process walk
+    # lists the repository through `git ls-files`; both skip what git ignores.
+    it "agrees that a git-ignored file is skipped" do
+      git_init
+      write(".gitignore", "target/\n")
+      write("target/x.txt", "needle ignored\n")
+      write("app/y.txt", "needle kept\n")
 
       ruby, core = differential("needle")
 
       expect_identical(ruby, core)
-      expect(core.content).to eq("ignored.txt:1:needle ignored\n" \
-                                 "kept.txt:1:needle kept\n" \
-                                 "vendor/dep.txt:1:needle vendored")
+      expect(core.content).to eq("app/y.txt:1:needle kept")
+    end
+
+    it "agrees that a search include re-includes an ignored file and keeps the rest" do
+      git_init
+      write(".gitignore", "target/\n")
+      write("target/x.txt", "needle ignored\n")
+      write("target/other.txt", "needle also ignored\n")
+      write("app/y.txt", "needle kept\n")
+
+      ruby, core = differential_including(%w[target/x.txt])
+
+      expect_identical(ruby, core)
+      expect(core.content).to eq("app/y.txt:1:needle kept\ntarget/x.txt:1:needle ignored")
+    end
+
+    # These fixtures happen to sort re-included files last; the order itself
+    # diverges, pinned in the gaps block below.
+    it "agrees that a slashless include glob matches at the repository top only" do
+      git_init
+      write(".gitignore", "*.log\nx.txt\n")
+      write("app/y.txt", "needle kept\n")
+      write("d/b.log", "needle nested log\n")
+      write("sub/x.txt", "needle nested\n")
+      write("x.txt", "needle top\n")
+      write("z.log", "needle top log\n")
+
+      ruby, core = differential_including(%w[*.log x.txt])
+
+      expect_identical(ruby, core)
+      expect(core.content).to eq("app/y.txt:1:needle kept\nx.txt:1:needle top\nz.log:1:needle top log")
+    end
+
+    it "agrees that include globs match from the repository top when searching a subdirectory" do
+      git_init
+      write(".gitignore", "target/\n")
+      write("app/target/z.txt", "needle ignored\n")
+      write("app/a.txt", "needle kept\n")
+
+      ruby, core = differential_including(%w[app/target/z.txt], File.join(tmpdir, "app"))
+      expect_identical(ruby, core)
+      expect(core.content).to eq("a.txt:1:needle kept\ntarget/z.txt:1:needle ignored")
+
+      ruby, core = differential_including(%w[target/z.txt], File.join(tmpdir, "app"))
+      expect_identical(ruby, core)
+      expect(core.content).to eq("a.txt:1:needle kept")
     end
 
     it "agrees that dotfiles are searched and .git is not" do
@@ -278,6 +304,84 @@ RSpec.describe Lain::Tools::Grep, :core do
       expect(core).to be_error
       expect(ruby.content).to start_with('invalid pattern "(unclosed"')
       expect(core.content).to start_with('invalid pattern "(unclosed"')
+    end
+  end
+
+  # Five named gaps in the ignore handling, accepted: a tracked file that
+  # .gitignore also names, `**` glob syntax, a .gitignore outside a repository,
+  # a bare .ignore file, and the order of re-included files. Each is pinned so a
+  # change on either side reddens a test instead of silently altering a search.
+  describe "ignore-handling gaps the daemon carries -- pinned, not smoothed over" do
+    def git_init
+      system("git", "init", "-q", tmpdir, exception: true)
+    end
+
+    # `git ls-files --cached` keeps a tracked file that also matches
+    # .gitignore, while the `ignore` crate skips it.
+    it "DIVERGES on a tracked file that .gitignore also names: git keeps it, the crate skips it" do
+      git_init
+      write("app/y.txt", "needle kept\n")
+      write("target/x.txt", "needle tracked\n")
+      system("git", "-C", tmpdir, "add", "-f", "target/x.txt", exception: true)
+      write(".gitignore", "target/\n")
+
+      ruby, core = differential("needle")
+
+      expect(ruby.content).to eq("app/y.txt:1:needle kept\ntarget/x.txt:1:needle tracked")
+      expect(core.content).to eq("app/y.txt:1:needle kept")
+    end
+
+    # File.fnmatch and gitignore syntax differ on `**` edge cases: a trailing
+    # `**` crosses directories only in gitignore syntax.
+    it "DIVERGES on an include glob ending in **: gitignore syntax crosses directories, fnmatch does not" do
+      git_init
+      write(".gitignore", "target/\n")
+      write("target/deep/z.txt", "needle deep\n")
+
+      ruby, core = differential_including(%w[target/**])
+
+      expect(ruby.content).to eq(%(grep: no matches for "needle" in #{tmpdir}))
+      expect(core.content).to eq("target/deep/z.txt:1:needle deep")
+    end
+
+    # require_git is off in the daemon, so a .gitignore applies outside a
+    # repository, while the in-process walk lists a plain directory whole.
+    it "DIVERGES on a .gitignore outside a repository: the crate honours it, the plain walk does not" do
+      write(".gitignore", "target/\n")
+      write("target/x.txt", "needle ignored\n")
+      write("app/y.txt", "needle kept\n")
+
+      ruby, core = differential("needle")
+
+      expect(ruby.content).to eq("app/y.txt:1:needle kept\ntarget/x.txt:1:needle ignored")
+      expect(core.content).to eq("app/y.txt:1:needle kept")
+    end
+
+    # Ruby sorts the merged list; the daemon appends re-included files after
+    # the normal walk.
+    it "DIVERGES on the order of re-included files: Ruby sorts the merged list, the daemon appends them" do
+      git_init
+      write(".gitignore", "aa/\n")
+      write("aa/x.txt", "needle ignored\n")
+      write("bb/y.txt", "needle kept\n")
+
+      ruby, core = differential_including(%w[aa/x.txt])
+
+      expect(ruby.content).to eq("aa/x.txt:1:needle ignored\nbb/y.txt:1:needle kept")
+      expect(core.content).to eq("bb/y.txt:1:needle kept\naa/x.txt:1:needle ignored")
+    end
+
+    # A bare .ignore file is honoured by the crate only.
+    it "DIVERGES on a bare .ignore file: the crate honours it, git does not" do
+      git_init
+      write(".ignore", "hidden.txt\n")
+      write("hidden.txt", "needle hidden\n")
+      write("app/y.txt", "needle kept\n")
+
+      ruby, core = differential("needle")
+
+      expect(ruby.content).to eq("app/y.txt:1:needle kept\nhidden.txt:1:needle hidden")
+      expect(core.content).to eq("app/y.txt:1:needle kept")
     end
   end
 

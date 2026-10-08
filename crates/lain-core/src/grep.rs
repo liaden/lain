@@ -9,13 +9,15 @@
 //! Out of process by the placement rule -- a directory walk is I/O, so it could
 //! never have lived in `ext/lain`.
 
+use std::collections::HashSet;
 use std::ops::ControlFlow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::UTF8;
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder};
 use ignore::WalkBuilder;
+use ignore::overrides::{Override, OverrideBuilder};
 use rmpv::Value;
 use thiserror::Error;
 
@@ -31,16 +33,14 @@ pub(crate) struct GrepParams {
     pub(crate) pattern: String,
     pub(crate) path: String,
     pub(crate) case_insensitive: bool,
-    /// Whether the walk applies `.gitignore`/`.ignore` rules. **Off by
-    /// default, deliberately**: the in-process `Tools::Grep` walks with
-    /// `Dir.glob`, which has no notion of a `.gitignore` and cannot get one
-    /// without the subprocess that tool exists to avoid. Defaulting this ON
-    /// would make the SAME tool answer differently depending on whether a core
-    /// client happened to be wired, which confounds the only comparison the
-    /// bench cares about -- transport against transport. So the transport swap
-    /// is behaviour-preserving, and VCS-aware search is a separate, opt-in
-    /// capability that lands with its own before/after.
+    /// Whether the walk applies `.gitignore`/`.ignore` rules. **On by
+    /// default**: the in-process `Tools::Grep` lists a repository through
+    /// `git ls-files`, so it skips what git ignores, and the same tool must
+    /// answer the same way whichever transport carries it.
     pub(crate) respect_ignores: bool,
+    /// Globs, from the top of the repository, naming ignored files to search
+    /// anyway. Inert when `respect_ignores` is off, since nothing is ignored.
+    pub(crate) include: Vec<String>,
 }
 
 /// `path` is relative to the searched root for a directory target, and the
@@ -73,6 +73,8 @@ pub(crate) enum ParamError {
     CaseInsensitive,
     #[error("respect_ignores must be a boolean")]
     RespectIgnores,
+    #[error("include must be a list of strings")]
+    Include,
     #[error("pattern is required")]
     MissingPattern,
     #[error("path is required")]
@@ -115,6 +117,7 @@ impl GrepParams {
             path: draft.path.ok_or(ParamError::MissingPath)?,
             case_insensitive: draft.case_insensitive,
             respect_ignores: draft.respect_ignores,
+            include: draft.include,
         })
     }
 }
@@ -122,12 +125,24 @@ impl GrepParams {
 /// The half-built params: `pattern` and `path` are required, so they cannot be
 /// absent from [`GrepParams`] itself and the fold needs somewhere to put them
 /// until every entry has been seen.
-#[derive(Default)]
 struct Draft {
     pattern: Option<String>,
     path: Option<String>,
     case_insensitive: bool,
     respect_ignores: bool,
+    include: Vec<String>,
+}
+
+impl Default for Draft {
+    fn default() -> Self {
+        Self {
+            pattern: None,
+            path: None,
+            case_insensitive: false,
+            respect_ignores: true,
+            include: Vec::new(),
+        }
+    }
 }
 
 impl Draft {
@@ -137,8 +152,13 @@ impl Draft {
         match key {
             "pattern" => self.pattern = Some(string(value, ParamError::Pattern)?),
             "path" => self.path = Some(string(value, ParamError::Path)?),
-            "case_insensitive" => self.case_insensitive = flag(value, ParamError::CaseInsensitive)?,
-            "respect_ignores" => self.respect_ignores = flag(value, ParamError::RespectIgnores)?,
+            "case_insensitive" => {
+                self.case_insensitive = flag(value, false, ParamError::CaseInsensitive)?
+            }
+            "respect_ignores" => {
+                self.respect_ignores = flag(value, true, ParamError::RespectIgnores)?;
+            }
+            "include" => self.include = globs(value)?,
             unknown => return Err(ParamError::UnknownKey(unknown.to_string())),
         }
         Ok(())
@@ -150,13 +170,25 @@ fn string(value: &Value, error: ParamError) -> Result<String, ParamError> {
 }
 
 /// msgpack has no "absent", so a caller that omitted an optional flag may send
-/// an explicit nil; that reads as `false`, which is the default for both flags.
-/// Anything that is neither nil nor a boolean is a caller bug and fails loudly,
-/// the same way an unknown key does.
-fn flag(value: &Value, error: ParamError) -> Result<bool, ParamError> {
+/// an explicit nil; that reads as the flag's `default`. Anything that is
+/// neither nil nor a boolean is a caller bug and fails loudly, the same way an
+/// unknown key does.
+fn flag(value: &Value, default: bool, error: ParamError) -> Result<bool, ParamError> {
     match value {
-        Value::Nil => Ok(false),
+        Value::Nil => Ok(default),
         other => other.as_bool().ok_or(error),
+    }
+}
+
+fn globs(value: &Value) -> Result<Vec<String>, ParamError> {
+    match value {
+        Value::Nil => Ok(Vec::new()),
+        other => other
+            .as_array()
+            .ok_or(ParamError::Include)?
+            .iter()
+            .map(|glob| string(glob, ParamError::Include))
+            .collect(),
     }
 }
 
@@ -177,14 +209,7 @@ fn search(params: &GrepParams) -> Result<Outcome, GrepError> {
     let matcher = build_matcher(params)?;
     let mut searcher = build_searcher();
 
-    let mut files = walk(root, params.respect_ignores)
-        .filter_map(|entry| {
-            entry
-                .inspect_err(|error| tracing::debug!(%error, "skipping an unwalkable entry"))
-                .ok()
-        })
-        .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
-        .map(ignore::DirEntry::into_path);
+    let mut files = candidate_files(params, root);
 
     // One past the cap is all that is ever collected -- enough to know the
     // result was capped, without searching a file the cap has already
@@ -206,6 +231,104 @@ fn search(params: &GrepParams) -> Result<Outcome, GrepError> {
         matches: found,
         capped,
     })
+}
+
+/// The files to search: the normal walk, then (with an include list) an
+/// ignores-off walk keeping only files an include glob names. Not an
+/// `OverrideBuilder` whitelist, which would hide every path matching no glob.
+/// The second pass has no entry limit; the daemon is not wired in production.
+fn candidate_files(params: &GrepParams, root: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
+    let walked = files_of(walk(root, params.respect_ignores));
+    if !params.respect_ignores || params.include.is_empty() {
+        return Box::new(walked);
+    }
+    let reincluded = files_of(reincluding_walk(root, &params.include));
+    Box::new(
+        walked
+            .chain(reincluded)
+            .scan(HashSet::new(), |seen, file| {
+                Some(seen.insert(file.clone()).then_some(file))
+            })
+            .flatten(),
+    )
+}
+
+fn files_of(walk: ignore::Walk) -> impl Iterator<Item = PathBuf> {
+    walk.filter_map(|entry| {
+        entry
+            .inspect_err(|error| tracing::debug!(%error, "skipping an unwalkable entry"))
+            .ok()
+    })
+    .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
+    .map(ignore::DirEntry::into_path)
+}
+
+/// A slashless glob is anchored, since `File.fnmatch` with `FNM_PATHNAME`
+/// matches it at the top only while gitignore syntax would match at any depth.
+fn anchored(glob: &str) -> String {
+    if glob.contains('/') {
+        glob.to_string()
+    } else {
+        format!("/{glob}")
+    }
+}
+
+/// Whether a glob (anchored, from the repository top) can match beneath `dir`,
+/// judged by the glob's leading components that contain no wildcard.
+fn within_reach(dir: &Path, glob: &str) -> bool {
+    let literal = glob
+        .trim_start_matches('/')
+        .split('/')
+        .take_while(|part| !part.contains(['*', '?', '[', '{', '\\']));
+    dir.components()
+        .zip(literal)
+        .all(|(component, part)| component.as_os_str() == part)
+}
+
+/// Globs are matched from the repository top, so one glob means the same path
+/// whichever directory of the repository a search starts in. A glob that does
+/// not compile matches nothing, as a pattern in an ignore file would.
+fn reincluding_walk(root: &Path, include: &[String]) -> ignore::Walk {
+    let top = repository_top(root);
+    let globs: Vec<String> = include.iter().map(|glob| anchored(glob)).collect();
+    let mut builder = OverrideBuilder::new(&top);
+    for glob in &globs {
+        if let Err(error) = builder.add(glob) {
+            tracing::debug!(%error, glob, "skipping an include glob that does not compile");
+        }
+    }
+    let matcher = builder.build().unwrap_or_else(|_| Override::empty());
+    let root = root.to_path_buf();
+    let root_from_top = std::path::absolute(&root)
+        .ok()
+        .and_then(|absolute| absolute.strip_prefix(&top).map(Path::to_path_buf).ok())
+        .unwrap_or_default();
+    WalkBuilder::new(&root)
+        .standard_filters(false)
+        .hidden(false)
+        .sort_by_file_path(Path::cmp)
+        .filter_entry(move |entry| {
+            let from_top =
+                root_from_top.join(entry.path().strip_prefix(&root).unwrap_or(Path::new("")));
+            if entry.file_name() == GIT_DIR {
+                false
+            } else if entry.file_type().is_some_and(|kind| kind.is_dir()) {
+                globs.iter().any(|glob| within_reach(&from_top, glob))
+            } else {
+                matcher.matched(top.join(&from_top), false).is_whitelist()
+            }
+        })
+        .build()
+}
+
+/// The nearest ancestor holding a `.git`, or the searched root when none does.
+fn repository_top(root: &Path) -> PathBuf {
+    let absolute = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+    absolute
+        .ancestors()
+        .find(|dir| dir.join(GIT_DIR).exists())
+        .unwrap_or(&absolute)
+        .to_path_buf()
 }
 
 /// The two guards `Tools::Grep#problem_with` applies -- exists, and is
@@ -282,19 +405,15 @@ const GIT_DIR: &str = ".git";
 
 /// Ignore rules come from `ignore`, which is ripgrep's own resolver for the
 /// `.gitignore`/`.ignore` precedence hierarchy -- not a thing to re-derive.
-/// **Every source of them is switched by `respect_ignores`, which is off by
+/// **Every source of them is switched by `respect_ignores`, which is on by
 /// default** (see [`GrepParams::respect_ignores`] for why). All five are named
 /// rather than reached through `standard_filters`, because that switch also
 /// carries `hidden`, and dotfile searching is a decision this walk makes
 /// unconditionally -- coupling the two would silently stop searching dotfiles
 /// the day someone turned ignores on.
 ///
-/// `parents` is named because the rule it governs is the one a reader forgets:
-/// ignore files ABOVE the searched root. Without it a search of a directory
-/// that happens to sit inside a repository would answer differently from the
-/// same search on a copy of that directory elsewhere. Pinned in both
-/// directions by
-/// `an_ignore_file_above_the_root_filters_only_when_ignores_are_respected`.
+/// `parents` is named so ignore files above the searched root apply too; pinned
+/// by `an_ignore_file_above_the_root_filters_only_when_ignores_are_respected`.
 ///
 /// Three further defaults are overridden deliberately:
 /// - `hidden(false)`: dotfiles ARE searched, matching `Tools::Grep`'s
@@ -416,6 +535,7 @@ mod tests {
             path: path.to_string_lossy().into_owned(),
             case_insensitive: false,
             respect_ignores: false,
+            include: Vec::new(),
         }
     }
 
@@ -425,7 +545,7 @@ mod tests {
             .expect("the search succeeds")
     }
 
-    /// The same search with the opt-in VCS-aware walk. Everything else about
+    /// The same search with the VCS-aware walk on. Everything else about
     /// the request is identical, so a difference between this and [`grep`] can
     /// only be the ignore rules.
     async fn grep_respecting_ignores(path: &Path, pattern: &str) -> Outcome {
@@ -457,17 +577,9 @@ mod tests {
         dir
     }
 
-    /// THE DEFAULT, and the reason `respect_ignores` exists. `Tools::Grep`'s
-    /// in-process walk is `Dir.glob`, which searches a `.gitignore`'d file like
-    /// any other; if this daemon skipped them by default then wiring a core
-    /// client would silently change what the same tool returns, and the
-    /// transport arm would no longer be measuring the transport.
-    ///
-    /// The `kept.txt` assertion is first and is not decoration: "the ignored
-    /// files ARE present" is a claim about a non-empty result, and this is what
-    /// makes a walk that never ran fail instead of pass.
+    /// With the rules off a `.gitignore`'d file is searched like any other.
     #[tokio::test]
-    async fn ignore_rules_are_off_by_default_so_the_walk_matches_tools_grep() {
+    async fn a_walk_with_ignore_rules_off_searches_ignored_files_like_dir_glob() {
         let dir = fixture();
         let found = paths(&grep(dir.path(), "needle").await);
         assert!(
@@ -476,16 +588,10 @@ mod tests {
         );
         assert!(
             found.iter().any(|path| path == "ignored.txt"),
-            "a .gitignore'd file must still be searched by default, as Dir.glob does: {found:?}"
+            "a .gitignore'd file must be searched with the rules off: {found:?}"
         );
 
-        // A SECOND search, and the different pattern is the point rather than
-        // convenience: `vendor/` sorts after `kept.txt`, whose 250 matches trip
-        // the cap first, so a "needle" search never reaches the directory at
-        // all. That is the cap behaving correctly, and asserting the directory
-        // claim on that result would be measuring MAX_MATCHES rather than the
-        // ignore rules. "an ignored" matches only the two ignored files, so
-        // this search is nowhere near the cap.
+        // `kept.txt` trips the cap before `vendor/`, so this pattern avoids it.
         let uncapped = paths(&grep(dir.path(), "an ignored").await);
         assert!(
             uncapped.iter().any(|path| path == "ignored.txt"),
@@ -493,18 +599,11 @@ mod tests {
         );
         assert!(
             uncapped.iter().any(|path| path.starts_with("vendor")),
-            "a .gitignore'd directory must still be searched by default: {uncapped:?}"
+            "a .gitignore'd directory must be searched with the rules off: {uncapped:?}"
         );
     }
 
-    /// The rule a reader forgets: an ignore file ABOVE the searched root. Every
-    /// other test here puts the `.gitignore` inside the root, so nothing else
-    /// covers `parents`, and the consequence is user-visible -- a directory
-    /// that happens to sit inside a repository would otherwise answer
-    /// differently from a copy of it somewhere else.
-    ///
-    /// Both directions, because only the pair makes this a decision rather than
-    /// an accident of which flags happen to be off.
+    /// An ignore file ABOVE the searched root applies only when rules are on.
     #[tokio::test]
     async fn an_ignore_file_above_the_root_filters_only_when_ignores_are_respected() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -552,6 +651,153 @@ mod tests {
             !found.iter().any(|path| path.starts_with("vendor")),
             "a .gitignore'd directory was searched: {found:?}"
         );
+    }
+
+    fn ignored_target_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir for the fixture tree");
+        write(dir.path(), ".git/HEAD", "ref: refs/heads/main\n");
+        write(dir.path(), ".gitignore", "target/\n");
+        write(dir.path(), "target/x.txt", "needle in an ignored file\n");
+        write(
+            dir.path(),
+            "target/other.txt",
+            "needle in another ignored file\n",
+        );
+        write(dir.path(), "app/y.txt", "needle in a kept file\n");
+        dir
+    }
+
+    async fn grep_including(path: &Path, globs: &[&str]) -> Vec<String> {
+        let mut including = params(path, "needle");
+        including.respect_ignores = true;
+        including.include = globs.iter().map(|glob| (*glob).to_string()).collect();
+        paths(&run(including).await.expect("the search succeeds"))
+    }
+
+    #[tokio::test]
+    async fn an_include_glob_re_includes_one_ignored_file_and_keeps_the_rest_of_the_walk() {
+        let dir = ignored_target_fixture();
+        let found = grep_including(dir.path(), &["target/x.txt"]).await;
+        assert_eq!(vec!["app/y.txt", "target/x.txt"], found);
+    }
+
+    #[tokio::test]
+    async fn an_include_glob_matching_a_walked_file_does_not_report_it_twice() {
+        let dir = ignored_target_fixture();
+        let found = grep_including(dir.path(), &["app/*.txt", "target/x.txt"]).await;
+        assert_eq!(vec!["app/y.txt", "target/x.txt"], found);
+    }
+
+    #[tokio::test]
+    async fn an_include_list_that_names_nothing_ignored_changes_nothing() {
+        let dir = ignored_target_fixture();
+        let found = grep_including(dir.path(), &["docs/*.md"]).await;
+        assert_eq!(vec!["app/y.txt"], found);
+    }
+
+    #[tokio::test]
+    async fn an_include_list_is_inert_when_the_rules_are_off() {
+        let dir = ignored_target_fixture();
+        let mut off = params(dir.path(), "needle");
+        off.include = vec!["target/x.txt".to_string()];
+        let found = paths(&run(off).await.expect("the search succeeds"));
+        assert_eq!(vec!["app/y.txt", "target/other.txt", "target/x.txt"], found);
+    }
+
+    #[tokio::test]
+    async fn an_include_glob_matching_everything_never_reaches_the_git_directory() {
+        let dir = ignored_target_fixture();
+        write(dir.path(), ".git/hooks/zz.txt", "needle in a hook\n");
+        let found = grep_including(dir.path(), &["**"]).await;
+        assert!(
+            found.iter().any(|path| path == "target/x.txt"),
+            "nothing was re-included: {found:?}"
+        );
+        assert!(
+            !found.iter().any(|path| path.starts_with(".git/")),
+            "the git directory was searched: {found:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn include_globs_match_from_the_repository_top_when_searching_a_subdirectory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), ".git/HEAD", "ref: refs/heads/main\n");
+        write(dir.path(), ".gitignore", "target/\n");
+        write(dir.path(), "app/target/z.txt", "needle ignored\n");
+        let root = dir.path().join("app");
+        assert_eq!(
+            vec!["target/z.txt"],
+            grep_including(&root, &["app/target/z.txt"]).await
+        );
+        assert!(grep_including(&root, &["target/z.txt"]).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_slashless_include_glob_matches_only_at_the_repository_top() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), ".git/HEAD", "ref: refs/heads/main\n");
+        write(dir.path(), ".gitignore", "x.txt\n");
+        write(dir.path(), "x.txt", "needle at the top\n");
+        write(dir.path(), "sub/x.txt", "needle below\n");
+        assert_eq!(vec!["x.txt"], grep_including(dir.path(), &["x.txt"]).await);
+    }
+
+    #[tokio::test]
+    async fn a_slashless_include_glob_does_not_reach_a_nested_ignored_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), ".git/HEAD", "ref: refs/heads/main\n");
+        write(dir.path(), ".gitignore", "x.txt\n");
+        write(dir.path(), "x.txt", "needle at the top\n");
+        write(dir.path(), "d/x.txt", "needle nested\n");
+        assert_eq!(vec!["x.txt"], grep_including(dir.path(), &["x.txt"]).await);
+    }
+
+    // `within_reach` alone prunes a nested file for an unanchored glob, so only
+    // a directory named like the glob reaches the anchoring.
+    #[tokio::test]
+    async fn a_slashless_include_glob_does_not_match_inside_a_directory_of_that_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), ".git/HEAD", "ref: refs/heads/main\n");
+        write(dir.path(), ".gitignore", "x.txt\n");
+        write(dir.path(), "x.txt/x.txt", "needle nested\n");
+        assert!(grep_including(dir.path(), &["x.txt"]).await.is_empty());
+    }
+
+    #[test]
+    fn a_directory_is_worth_entering_only_when_a_glob_can_match_beneath_it() {
+        use super::within_reach;
+        assert!(within_reach(Path::new(""), "/target/x.txt"));
+        assert!(within_reach(Path::new("target"), "/target/x.txt"));
+        assert!(!within_reach(Path::new("app"), "/target/x.txt"));
+        assert!(!within_reach(Path::new("target/sub"), "/target/x.txt"));
+        assert!(within_reach(Path::new("target/sub"), "/target/*.txt"));
+        assert!(within_reach(Path::new("anything/deep"), "/*.log"));
+        assert!(within_reach(Path::new("anything"), "/**/x.txt"));
+    }
+
+    #[test]
+    fn include_decodes_a_list_of_strings_and_refuses_anything_else() {
+        let map = |include| {
+            Value::Map(vec![
+                (Value::from("pattern"), Value::from("needle")),
+                (Value::from("path"), Value::from("/tmp")),
+                (Value::from("include"), include),
+            ])
+        };
+        let absent = GrepParams::from_value(&grep_map("/tmp", "needle", None)).expect("decodes");
+        assert!(absent.include.is_empty());
+
+        let nil = GrepParams::from_value(&map(Value::Nil)).expect("nil reads as empty");
+        assert!(nil.include.is_empty());
+
+        let listed = GrepParams::from_value(&map(Value::Array(vec![Value::from("a/*.txt")])))
+            .expect("a list of strings decodes");
+        assert_eq!(vec!["a/*.txt"], listed.include);
+
+        let wrong = GrepParams::from_value(&map(Value::Array(vec![Value::from(1)])))
+            .expect_err("an integer is not a glob");
+        assert_eq!("include must be a list of strings", wrong.to_string());
     }
 
     #[tokio::test]
@@ -634,17 +880,21 @@ mod tests {
     /// off, and a value that is neither nil nor a boolean fails loudly rather
     /// than being coerced into a search the caller did not ask for.
     #[test]
-    fn respect_ignores_defaults_off_and_refuses_a_value_that_is_not_a_boolean() {
+    fn respect_ignores_defaults_on_and_refuses_a_value_that_is_not_a_boolean() {
         let absent = GrepParams::from_value(&grep_map("/tmp", "needle", None))
             .expect("a map without the key decodes");
-        assert!(!absent.respect_ignores, "absent means off");
+        assert!(absent.respect_ignores, "absent means on");
 
         let nil =
             GrepParams::from_value(&flagged_map(Value::Nil)).expect("an explicit nil decodes");
         assert!(
-            !nil.respect_ignores,
+            nil.respect_ignores,
             "msgpack has no absent, so nil reads as the default"
         );
+
+        let off = GrepParams::from_value(&flagged_map(Value::from(false)))
+            .expect("an explicit false decodes");
+        assert!(!off.respect_ignores, "false turns the rules off");
 
         let wrong = GrepParams::from_value(&flagged_map(Value::from("yes")))
             .expect_err("a string is not a boolean");
@@ -860,8 +1110,20 @@ mod tests {
             .await;
         assert!(error.is_nil(), "unexpected error: {error:?}");
         assert!(
+            !wire_paths(&result).iter().any(|path| path == "ignored.txt"),
+            "omitting the key must skip ignored files over the wire too"
+        );
+
+        let off = Value::Map(vec![
+            (Value::from("pattern"), Value::from("needle")),
+            (Value::from("path"), Value::from(root)),
+            (Value::from("respect_ignores"), Value::from(false)),
+        ]);
+        let (_, error, result) = client.call(3, "grep", vec![off]).await;
+        assert!(error.is_nil(), "unexpected error: {error:?}");
+        assert!(
             wire_paths(&result).iter().any(|path| path == "ignored.txt"),
-            "omitting the key must keep Dir.glob's semantics over the wire too"
+            "false must search ignored files"
         );
     }
 
@@ -948,6 +1210,7 @@ mod probe_hazards {
             path: path.to_string_lossy().into_owned(),
             case_insensitive: false,
             respect_ignores: false,
+            include: Vec::new(),
         };
         let (tx, rx) = mpsc::channel();
         // Detached on purpose: if it IS parked, joining would hang the probe.
@@ -1181,6 +1444,7 @@ mod probe_ordering {
             path: dir.to_string_lossy().into_owned(),
             case_insensitive: false,
             respect_ignores: false,
+            include: Vec::new(),
         })
         .await
         .expect("the search succeeds")

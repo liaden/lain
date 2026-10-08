@@ -318,22 +318,27 @@ RSpec.describe Lain::Tools::Grep do
 
       expect(client).to have_received(:call).with(
         "grep", [{ "pattern" => "needle", "path" => tmpdir,
-                   "case_insensitive" => true, "respect_ignores" => false }]
+                   "case_insensitive" => true, "respect_ignores" => true, "include" => [] }]
       )
     end
 
-    # The daemon CAN apply .gitignore/.ignore rules and the in-process walk
-    # cannot, so leaving them on would make the same tool answer differently
-    # depending on how it was wired. Sent explicitly rather than left to the
-    # daemon's default, so this side's intent is auditable on the wire -- and
-    # so a future flip of that default cannot change grep's behaviour silently.
-    it "always tells the daemon NOT to honour VCS ignore rules" do
+    it "always tells the daemon to honour VCS ignore rules, as the in-process walk does" do
       allow(client).to receive(:call).and_return(reply([]))
 
       tool.call(pattern: "needle", path: tmpdir)
 
       expect(client).to have_received(:call).with(
-        "grep", [hash_including("respect_ignores" => false)]
+        "grep", [hash_including("respect_ignores" => true)]
+      )
+    end
+
+    it "sends the search include list so the daemon re-includes the same ignored files" do
+      allow(client).to receive(:call).and_return(reply([]))
+
+      described_class.new(client:, include: %w[target/x.txt]).call(pattern: "needle", path: tmpdir)
+
+      expect(client).to have_received(:call).with(
+        "grep", [hash_including("include" => %w[target/x.txt])]
       )
     end
 
