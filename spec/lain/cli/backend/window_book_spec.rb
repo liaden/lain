@@ -13,7 +13,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
   def probed_by(*probes, num_ctx: nil)
     provider = instance_double(Lain::Provider::Ollama)
     allow(provider).to receive(:window_probe).and_return(*probes)
-    instance_double(Lain::CLI::Backend, model: "qwen3:4b", num_ctx:, provider:)
+    instance_double(Lain::CLI::Backend, model: "qwen3:4b", num_ctx:, provider:, cloud?: false)
   end
 
   # A clock that moves `seconds` between any two readings, so every probe
@@ -33,6 +33,13 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     def shipped = Lain::ContextWindow.new(windows: { "sonnet" => 200_000 }, fallback: 8_192)
 
     def served(model: "qwen3", window_tokens: 32_768) = described_class.new(model:, window_tokens:, shipped:)
+
+    it "resolves an unprobed bare cloud name as published when built over the cloud book" do
+      book = described_class.new(model: "gpt-oss:120b-cloud", window_tokens: 64_000, shipped: Lain::ContextWindow.cloud)
+      resolution = book.resolve("glm-5.3")
+
+      expect([resolution.window_tokens, resolution.provenance]).to eq([1_000_000, Lain::ContextWindow::PUBLISHED])
+    end
 
     # The server answered about ONE resident runner. That is the only window
     # anywhere in this system that was actually MEASURED.
@@ -183,7 +190,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # {Lain::Compaction::Source} spends on an irreversible rewrite.
     def cloud_backend(num_ctx:)
       provider = instance_double(Lain::Provider::Ollama, window_probe: Lain::Provider::WindowProbe::NONE_RESIDENT)
-      instance_double(Lain::CLI::Backend, model: "gpt-oss:120b-cloud", num_ctx:, provider:)
+      instance_double(Lain::CLI::Backend, model: "gpt-oss:120b-cloud", num_ctx:, provider:, cloud?: true)
     end
 
     it "resolves a shipped cloud model authoritatively, given no --num-ctx" do
@@ -201,6 +208,32 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # `:approaching_window` on it. That is pre-existing and identical on the
     # local arm; the cloud catalogue publishes windows, it does not change who
     # vouches for one. Pinned so the day it changes, it changes here first.
+    it "resolves a bare cloud name published on the cloud arm" do
+      resolution = described_class.new(backend: cloud_backend(num_ctx: nil)).book.resolve("glm-5.3")
+
+      expect([resolution.window_tokens, resolution.provenance]).to eq([1_000_000, Lain::ContextWindow::PUBLISHED])
+    end
+
+    context "with a local runner and nothing resident" do
+      let(:local) do
+        provider = instance_double(Lain::Provider::Ollama)
+        allow(provider).to receive(:window_probe).and_return(probe::NONE_RESIDENT, probe.of(32_768))
+        instance_double(Lain::CLI::Backend, model: "gpt-oss:20b", num_ctx: nil, provider:, cloud?: false)
+      end
+
+      it "still guesses a name that has a cloud row" do
+        resolution = described_class.new(backend: local).book.resolve("gpt-oss:20b")
+
+        expect(resolution.provenance).to eq(Lain::ContextWindow::GUESSED)
+      end
+
+      it "keeps re-asking until the runner answers" do
+        live = Lain::CLI::Backend::WindowBook::Live.new(source: described_class.new(backend: local))
+
+        expect(live.reresolve.resolve("gpt-oss:20b").provenance).to eq(Lain::ContextWindow::PROBED)
+      end
+    end
+
     it "falls back to an unauthoritative --num-ctx for the same cloud model" do
       resolution = described_class.new(backend: cloud_backend(num_ctx: 16_384)).book.resolve("gpt-oss:120b-cloud")
 

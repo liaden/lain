@@ -425,6 +425,50 @@ RSpec.describe Lain::ContextWindow do
       end
     end
 
+    describe "a bare cloud model name" do
+      subject(:book) { described_class.cloud }
+
+      it "resolves to its cloud-tagged row as published" do
+        resolution = book.resolve("glm-5.3")
+
+        expect([resolution.window_tokens, resolution.provenance]).to eq([1_000_000, described_class::PUBLISHED])
+      end
+
+      it "finds a size-tagged cloud row from its bare size name" do
+        expect(book.window_tokens("gemma4:31b")).to eq(256_000)
+      end
+
+      it "keeps the longest key winning" do
+        expect(book.window_tokens("glm-5.2")).to eq(976_000)
+        expect(book.window_tokens("glm-5.3-flash")).to eq(1_000_000)
+      end
+
+      it "still guesses an unknown name" do
+        resolution = book.resolve("no-such-model")
+
+        expect([resolution.window_tokens, resolution.provenance])
+          .to eq([described_class::CONSERVATIVE_FALLBACK, described_class::GUESSED])
+      end
+
+      it "leaves a local model with no cloud row on the guess" do
+        expect(book.resolve("qwen3:4b").provenance).to eq(described_class::GUESSED)
+      end
+
+      it "lets a substring match win over the bare-name alias" do
+        windows = { "glm" => 1, "glm-5:cloud" => 2 }
+
+        expect(described_class.new(windows:, bare_cloud: true).window_tokens("glm-5")).to eq(1)
+      end
+
+      it "is not applied by the default book, which serves local runners" do
+        guesses = %w[glm-5.3 gemma4:31b gemma4 gpt-oss:20b].map do |name|
+          described_class.default.resolve(name).provenance
+        end
+
+        expect(guesses).to all(eq(described_class::GUESSED))
+      end
+    end
+
     # Pinned as the whole pre-cloud table rather than a sample: the claim is
     # that NO Anthropic answer moved, and a sample cannot say that.
     describe "the rows that existed before the cloud section" do

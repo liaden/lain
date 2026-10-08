@@ -375,14 +375,21 @@ module Lain
     # @return [ContextWindow] the bench's default book, degrading gracefully
     def self.default = DEFAULT
 
+    # The book for `--provider ollama-cloud`, where a bare name is a cloud name.
+    def self.cloud = CLOUD
+
     # @param windows [Hash{String=>Integer}] family/model token => window size
     # @param fallback [Integer, nil] used for an unmatched model; nil means raise
-    def initialize(windows: DEFAULTS, fallback: nil)
+    # @param bare_cloud [Boolean] also find a row keyed by its served cloud tag
+    #   from the bare name; off for a local runner, whose same-named model is
+    #   served at a far smaller window than the cloud row's
+    def initialize(windows: DEFAULTS, fallback: nil, bare_cloud: false)
       # Deep-frozen for the same reason as PriceBook: `transform_keys` and a
       # fresh Hash literal are both mutable by default, and the shared
       # {DEFAULT} must not be corruptible through them.
       @windows = windows.to_h { |key, tokens| [-key.to_s, tokens] }.freeze
       @fallback = fallback
+      @bare_cloud = bare_cloud
       freeze
     end
 
@@ -418,7 +425,7 @@ module Lain
       # VALUE would instead demote it to the fallback and call it a guess -- an
       # invalid table degrading in silence.
       name = model.to_s
-      key = @windows.key?(name) ? name : matched_key(name)
+      key = @windows.key?(name) ? name : matched_key(name) || (cloud_key(name) if @bare_cloud)
       return WindowResolution.new(window_tokens: @windows.fetch(key), provenance: PUBLISHED) if key
 
       WindowResolution.new(window_tokens: @fallback || unknown!(model), provenance: GUESSED)
@@ -443,6 +450,7 @@ module Lain
     # The bench's default book as a shared value -- a constant, not a
     # memoized class ivar, so there is no first-call race.
     DEFAULT = new(windows: DEFAULTS, fallback: CONSERVATIVE_FALLBACK)
+    CLOUD = new(windows: DEFAULTS, fallback: CONSERVATIVE_FALLBACK, bare_cloud: true)
 
     private
 
@@ -455,6 +463,13 @@ module Lain
     # malformed table entry to the fallback (see {#resolve}).
     def matched_key(name)
       @windows.keys.select { |token| name.include?(token) }.max_by(&:length)
+    end
+
+    # A bare name a user types (`glm-5.3`, `gemma4:31b`) against rows keyed by
+    # their served cloud tag; tried only after the substring match fails, so a
+    # longer key still wins.
+    def cloud_key(name)
+      ["#{name}:cloud", "#{name}-cloud"].find { |candidate| @windows.key?(candidate) }
     end
 
     # Mirrors `Provider::Ollama#blank?`'s local shape rather than pulling in

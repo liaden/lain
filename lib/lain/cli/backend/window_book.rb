@@ -288,9 +288,10 @@ module Lain
         def lookup
           model = @backend.model
           provider = @backend.provider
+          shipped = @backend.cloud? ? ContextWindow.cloud : ContextWindow.default
           started = @clock.call
           probe = provider.window_probe(model)
-          Lookup.new(book: book_from(model, probe.window_tokens), seconds: @clock.call - started)
+          Lookup.new(book: book_from(model, probe.window_tokens, shipped), seconds: @clock.call - started)
         rescue UnknownProvider, Backend::MissingAPIKey, URI::Error
           Lookup.new(book: ContextWindow.default, seconds: 0.0)
         end
@@ -309,11 +310,11 @@ module Lain
 
         private
 
-        def book_from(model, reported)
+        def book_from(model, reported, shipped)
           window = narrowest(reported)
-          return ContextWindow.default if window.nil?
+          return shipped if window.nil?
 
-          Served.new(model:, window_tokens: window, provenance: vouched_by(reported))
+          Served.new(model:, window_tokens: window, provenance: vouched_by(reported), shipped:)
         end
 
         # WHO VOUCHES for the number, a different question from what the number

@@ -403,6 +403,9 @@ module Lain
       # @return [WindowBook::Live]
       def context_window = @context_window ||= WindowBook::Live.new(source: WindowBook.new(backend: self))
 
+      # Whether this run's chat provider is the hosted ollama arm.
+      def cloud? = provider_name == OllamaTier::CLOUD
+
       # `--num-ctx`, through the same {Ceiling} both `--max-tokens` flags go
       # through, and OPTIONAL: unset means "serve the model's own". What is NOT
       # a real answer is a non-positive one, and `0` is where this bit --
