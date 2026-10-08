@@ -506,6 +506,104 @@ RSpec.describe Lain::Tools::Subagent do
       expect(record.message.causal_parents).to contain_exactly(record.spawn.digest, child.head_digest)
     end
 
+    context "when the ceiling stops a child that had read files and written notes" do
+      def turn(note, *calls)
+        uses = calls.each_with_index.map do |(name, input), i|
+          { "type" => "tool_use", "id" => "#{note}#{i}", "name" => name, "input" => input }
+        end
+        Lain::Response.new(content: [{ "type" => "text", "text" => note }, *uses], stop_reason: :tool_use)
+      end
+
+      def read(path) = ["read_file", { "path" => path }]
+
+      let(:provider) do
+        mock(turn("first note", read("Gemfile"), read("gone.rb"), ["grep", { "pattern" => "TODO", "path" => "lib" }],
+                  ["grep", { "pattern" => "TODO", "path" => "lib" }]),
+             turn("last note", read("Rakefile"), ["glob", { "pattern" => "**/*.md" }]))
+      end
+
+      it "hands the parent the ceiling message, the files read and the last text block" do
+        result = dispatched_by_parent(provider:)
+
+        expect(result["is_error"]).to be(true)
+        expect(result["content"]).to start_with("loop ran 2 iterations, ceiling is 2")
+        expect(result["content"]).to include("Gemfile", "Rakefile", "last note")
+        expect(result["content"]).not_to include("first note")
+      end
+
+      it "lists only the reads that succeeded" do
+        expect(dispatched_by_parent(provider:)["content"]).not_to include("gone.rb")
+      end
+
+      it "lists each search once by its arguments, never its hits" do
+        content = dispatched_by_parent(provider:)["content"]
+
+        expect(content).to include("Searches it ran")
+        expect(content.scan("TODO").size).to eq(1)
+        expect(content).to include("lib", "**/*.md")
+      end
+
+      it "keeps the ceiling message and the last text block when the lists are huge" do
+        many = Array.new(5000) { |i| ["grep", { "pattern" => "needle#{i}", "path" => "lib" }] }
+        flood = mock(turn("first note", *many), turn("final text", read("Rakefile")))
+
+        content = dispatched_by_parent(provider: flood)["content"]
+
+        expect(content).to start_with("loop ran 2 iterations, ceiling is 2")
+        expect(content).to include("final text", "and ", " more")
+        expect(content.bytesize).to be <= Lain::Tools::Subagent::ANSWER_BOUND.limit
+      end
+
+      # Where the lists end relative to the bound depends on line widths, so
+      # sweep the padding until some run lands them flush against it.
+      it "stays within the bound however the lists land against it" do
+        limit = Lain::Tools::Subagent::ANSWER_BOUND.limit
+        sizes = (0..9).map do |pad|
+          many = Array.new(1500) { |i| ["grep", { "pattern" => "n#{i}#{"p" * pad}", "path" => "lib" }] }
+          dispatched_by_parent(provider: mock(turn("n", *many),
+                                              turn("final text", read("Rakefile"))))["content"].bytesize
+        end
+
+        expect(sizes).to all(be <= limit)
+      end
+
+      it "lists a numeric read path as no path at all" do
+        content = dispatched_by_parent(provider: mock(turn("n", ["read_file", { "path" => 7 }]),
+                                                      turn("last note", read("Rakefile"))))["content"]
+
+        expect(content).to start_with("loop ran 2 iterations, ceiling is 2")
+        expect(content).to include("- Rakefile").and(satisfy { |c| !c.include?("- 7") })
+      end
+
+      it "survives a read or a search whose input is missing or not a hash" do
+        odd = mock(turn("note", ["read_file", nil], %w[read_file Gemfile], ["grep", nil], ["glob", "**/*"],
+                        ["list_files", {}]),
+                   turn("last note", read("Rakefile")))
+
+        content = dispatched_by_parent(provider: odd)["content"]
+
+        expect(content).to start_with("loop ran 2 iterations, ceiling is 2")
+        expect(content).to include("Rakefile", "last note")
+        expect(content).not_to match(/ $/)
+        expect(content).not_to match(/^- (grep|glob|list_files) ?$/)
+      end
+
+      it "sends no further model request for the child" do
+        dispatched_by_parent(provider:)
+
+        expect(provider.requests.size).to eq(2)
+      end
+
+      it "keeps the report within the answer's byte bound" do
+        wordy = "x" * (Lain::Tools::Subagent::ANSWER_BOUND.limit * 2)
+        long = mock(turn("y", read("Gemfile")), turn(wordy, read("Rakefile")))
+
+        result = dispatched_by_parent(provider: long)
+
+        expect(result["content"].bytesize).to be <= Lain::Tools::Subagent::ANSWER_BOUND.limit
+      end
+    end
+
     it "retires the spawn from the fleet the HUD publishes" do
       dispatched_by_parent
 
@@ -2048,6 +2146,20 @@ RSpec.describe Lain::Tools::Subagent do
 
         expect { tool.run("go") }.to raise_error("this child gets no context")
         expect(calls).to eq([[:sync, spawned_id, false, false], [:surrender, spawned_id, false]])
+      end
+
+      # The ceiling hit in the self-sync ask comes AFTER a complete answer, so
+      # it must reach the parent as itself, not as a partial report.
+      it "does not turn a ceiling hit in the self-sync into a partial report" do
+        exhausted = Class.new(SubagentSpecSync) do
+          def call(*) = raise(Lain::Agent::Budget::Exceeded, "sync ask ran out")
+        end
+        leases = Lain::Isolation::Leases.new(backend:, handoff:, sync: exhausted.new(calls))
+        read = tool_response(["r1", "read_file", { "path" => "Gemfile" }])
+        tool = build_subagent(provider: mock(read, text_response("answer")), isolation: leases,
+                              policy: spawn_policy(only: %i[read_file]))
+
+        expect { tool.run("go") }.to raise_error(Lain::Agent::Budget::Exceeded, "sync ask ran out")
       end
 
       it "runs the child in the environment the sync hands it" do

@@ -320,9 +320,17 @@ module Lain
       # checkout with nobody to ask before surrendering it.
       def run_child(child, prompt, sync, on_stream_started: nil)
         child.answered do |agent, tools|
-          @answer.bounded(agent, refusing_malformed(agent.ask(prompt, on_stream_started:)), journal:)
+          @answer.bounded(agent, refusing_malformed(asked(agent, prompt, on_stream_started)), journal:)
                  .tap { sync.call(Isolation::SelfSync.worker(agent, tools:)) }
         end
+      end
+
+      # Only the child's own run is rescued: a ceiling hit later, in the
+      # self-sync ask, follows a complete answer and must not read as a stop.
+      def asked(agent, prompt, on_stream_started)
+        agent.ask(prompt, on_stream_started:)
+      rescue Agent::Budget::Exceeded => e
+        raise Agent::Budget::Exceeded, @answer.partial(agent, e.message)
       end
 
       # Checked before the bounding, so an envelope too large to deliver is not
@@ -526,6 +534,12 @@ module Lain
         end
       end
 
+      # The blank line between the sections of a partial report.
+      SECTION_GAP = 2
+
+      # The tools whose arguments say what a stopped child looked for.
+      SEARCH_TOOLS = %w[grep glob list_files].freeze
+
       # A child's answer, kept under {ANSWER_BOUND} by asking the CHILD to
       # summarize it. Its context already holds the answer, so that ask is the
       # cheapest summarizer available and the only one that cannot mistake what
@@ -556,7 +570,72 @@ module Lain
           condensed(agent, response, size, journal)
         end
 
+        # The same class is raised with this message, so the lifecycle still
+        # records the ceiling as the failure.
+        #
+        # @param agent [#timeline] the child that was stopped
+        # @param message [String] the ceiling's own message, kept first
+        # @return [String] the message, the reads that succeeded, the searches
+        #   run and the last text block, within the answer's byte bound
+        def partial(agent, message)
+          events = agent.timeline.to_a
+          text = clipped(last_text(events), bounds.limit - message.bytesize - SECTION_GAP)
+          room = bounds.limit - [message, text].sum(&:bytesize) - (SECTION_GAP * 3)
+          [message, *lists(events, room), text].reject(&:empty?).join("\n\n")
+        end
+
         private
+
+        def lists(events, room)
+          blocks = events.flat_map(&:content)
+          calls = blocks.select { |b| b["type"] == "tool_use" }
+          reads = section("Files it read before stopping", read_paths(calls, failed_ids(blocks)), room)
+          [reads, section("Searches it ran", search_lines(calls), room - reads.bytesize - SECTION_GAP)]
+        end
+
+        def failed_ids(blocks)
+          blocks.select { |b| b["type"] == "tool_result" && b["is_error"] }.to_set { |b| b["tool_use_id"] }
+        end
+
+        def arguments(call) = call["input"].is_a?(Hash) ? call["input"] : {}
+
+        def read_paths(calls, failed)
+          calls.select { |c| c["name"] == "read_file" && !failed.include?(c["id"]) }
+               .filter_map { |c| arguments(c)["path"] }.grep(String).uniq
+        end
+
+        def search_lines(calls)
+          calls.select { |c| SEARCH_TOOLS.include?(c["name"]) }.filter_map do |c|
+            args = arguments(c).slice("pattern", "path").values.map(&:to_s)
+            "#{c["name"]} #{args.join(" in ")}" unless args.empty?
+          end.uniq
+        end
+
+        # Lines are kept from the front while they fit, leaving room for the
+        # "and N more" line that says the list was cut.
+        def section(title, lines, room)
+          reserve = "\n- and #{lines.size} more".bytesize
+          base = title.bytesize + 1
+          return "" if lines.empty? || base + reserve > room
+
+          fits = fitting(lines, room - base - reserve)
+          kept = lines.first(fits).map { |line| "- #{line}" }
+          kept << "- and #{lines.size - fits} more" if fits < lines.size
+          "#{title}:\n#{kept.join("\n")}"
+        end
+
+        def fitting(lines, room)
+          lines.each_with_object([0]) { |line, sums| sums << (sums.last + "\n- #{line}".bytesize) }
+               .drop(1).count { |size| size <= room }
+        end
+
+        def clipped(text, room) = text.byteslice(0, [room, 0].max).scrub("")
+
+        def last_text(events)
+          blocks = events.select { |e| e.role.to_s == "assistant" }.flat_map(&:content)
+          text = blocks.reverse.find { |b| b["type"] == "text" && !b["text"].to_s.strip.empty? }
+          text ? "Its last text block:\n#{text["text"]}" : ""
+        end
 
         # ONE further ask, never a loop: a child whose summary is ALSO over the
         # ceiling has shown it will not shrink, and asking again would spend
