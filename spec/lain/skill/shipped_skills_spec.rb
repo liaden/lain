@@ -42,9 +42,7 @@ RSpec.describe "shipped skills" do
   # `.lain/` overrides live; default it at an empty tmpdir so no stray user skill
   # or slot leaks into the "as shipped" assertions.
   def shipped_renderer(root:)
-    catalog = Lain::Skill::Catalog.load(root:)
-    slots = Lain::Prompt::Slots.load(root:)
-    Lain::Skill::Renderer.new(catalog:, slots:)
+    Lain::Skill::Library.load(root:, locals: { epic_home: "/state/lain/epics/test" }).renderer
   end
 
   def with_empty_project

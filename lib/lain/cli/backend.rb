@@ -171,6 +171,7 @@ module Lain
       #   project's config.rb registered, read once by {ChatLaunch}; empty for
       #   every command without a chat, so a bench arm never changes with the
       #   home directory
+      # @param paths [Paths] where the epic home resolves its state directory
       # @option options [String] :provider name of the chat tier's provider
       # @option options [String] :model model id for the chat tier
       # @option options [String] :api_base base URL override, ollama only
@@ -190,8 +191,10 @@ module Lain
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
       def initialize(options, root:, profile: RunProfile.from_options(options),
-                     compaction: CompactionProfile.typed(options), middleware: Config::Middleware.empty)
+                     compaction: CompactionProfile.typed(options), middleware: Config::Middleware.empty,
+                     paths: Paths.new)
         @options = options
+        @paths = paths
         @root = root
         @middleware = middleware
         @run_profile = profile
@@ -599,7 +602,7 @@ module Lain
       # working directory: that is the whole of what `--root` buys, and the
       # layering is unchanged -- Wiring still receives a loaded library, and the
       # root arrives from above rather than being resolved here.
-      def library = @library ||= Skill::Library.load(root: @root)
+      def library = @library ||= Skill::Library.load(root: @root, locals: { epic_home: method(:epic_home) })
 
       # The loaded prompt slots -- exposed (not just the rendered String
       # {#context} produces) so a caller can emit ONE Telemetry::SlotFills built
@@ -618,6 +621,10 @@ module Lain
       def spawn_policy(role_name) = Role::Catalog.fetch(role_name).spawn_policy
 
       private
+
+      def epic_home
+        @epic_home ||= ::Lain::Epic::Home.container(config: Config.load(root: @root), paths: @paths, root: @root)
+      end
 
       def refuse_keep!
         Compaction.validate_keep_last(@compaction.keep)

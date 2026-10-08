@@ -147,4 +147,42 @@ RSpec.describe Lain::Skill::Renderer do
       end
     end
   end
+
+  describe "declared locals" do
+    def with_locals(shipped, locals)
+      Dir.mktmpdir do |root|
+        dir = File.join(root, "shipped")
+        shipped.each { |path, body| write(File.join(dir, path), body) }
+        catalog = Lain::Skill::Catalog.load(root:, shipped_dir: dir)
+        slots = Lain::Prompt::Slots.load(root:, skill_shipped_dir: dir)
+        yield described_class.new(catalog:, slots:, locals:)
+      end
+    end
+
+    it "renders a scaffold that reads a declared local" do
+      with_locals({ "a/skill.md" => "home: <%= epic_home %>" }, { epic_home: "/state/lain/epics/abc" }) do |renderer|
+        expect(renderer.render("a")).to eq("home: /state/lain/epics/abc")
+      end
+    end
+
+    it "refuses an undeclared name as impure, naming it" do
+      with_locals({ "a/skill.md" => "<%= epic_home %>" }, {}) do |renderer|
+        expect { renderer.render("a") }.to raise_error(Lain::Prompt::ImpureSlot, /epic_home/)
+      end
+    end
+
+    it "refuses a method call on a declared local" do
+      with_locals({ "a/skill.md" => "<%= epic_home.upcase %>" }, { epic_home: "/x" }) do |renderer|
+        expect { renderer.render("a") }.to raise_error(Lain::Prompt::ImpureSlot)
+      end
+    end
+
+    it "shows an included fragment the same locals" do
+      shipped = { "a/skill.md" => "---\nincludes:\n  - conventions\n---\n<%= render(\"conventions\") %>",
+                  "conventions/skill.md" => "conv at <%= epic_home %>" }
+      with_locals(shipped, { epic_home: "/state/lain/epics/abc" }) do |renderer|
+        expect(renderer.render("a")).to eq("conv at /state/lain/epics/abc")
+      end
+    end
+  end
 end

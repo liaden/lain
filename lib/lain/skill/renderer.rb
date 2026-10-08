@@ -38,9 +38,10 @@ module Lain
       PLACEHOLDER = /#{SENTINEL}lain-fragment:(?<index>\d+)#{SENTINEL}/
       private_constant :SENTINEL, :PLACEHOLDER
 
-      def initialize(catalog:, slots:)
+      def initialize(catalog:, slots:, locals: {})
         @catalog = catalog
         @slots = slots
+        @locals = locals
       end
 
       # The finished scaffold bytes for +skill_name+, holes filled and includes
@@ -56,7 +57,7 @@ module Lain
           if stack.include?(skill.name)
 
         fragments = []
-        engine = Prompt::LockedBinding.new(resolve: collector(skill, stack + [skill.name], fragments))
+        engine = Prompt::LockedBinding.new(resolve: collector(skill, stack + [skill.name], fragments), locals: @locals)
         splice(engine.render_template(skill.scaffold, "skill/#{skill.name}"), fragments)
       end
 
@@ -88,7 +89,7 @@ module Lain
       end
 
       def resolve_hole(skill, ref)
-        @slots.render_skill(skill.name, ref) if skill.slots.include?(ref)
+        @slots.render_skill(skill.name, ref, locals: @locals) if skill.slots.include?(ref)
       end
 
       def resolve_include(skill, ref, stack)

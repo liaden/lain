@@ -193,9 +193,9 @@ module Lain
       # scaffold. Pure and session-fixed exactly like {#render_role}. A hole with
       # neither override nor shipped default is a loud {UnknownSlot}, never a
       # silent empty fill.
-      def render_skill(skill, hole)
+      def render_skill(skill, hole, locals: {})
         source = @skill_slots.source(skill, hole)
-        LockedBinding.new(resolve: method(:resolve)).render_template(source, "skill/#{skill}/#{hole}")
+        LockedBinding.new(resolve: method(:resolve), locals:).render_template(source, "skill/#{skill}/#{hole}")
       end
 
       # The content address of each known slot's RENDERED bytes -- not the fill

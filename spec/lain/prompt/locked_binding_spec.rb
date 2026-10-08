@@ -34,4 +34,44 @@ RSpec.describe Lain::Prompt::LockedBinding do
         }
     end
   end
+
+  describe "declared locals" do
+    def engine(locals) = described_class.new(resolve: ->(name) { "<%= #{name} %>" }, locals:)
+
+    it "renders a declared local read" do
+      expect(engine(epic_home: "/state/epics/abc").render_template("home=<%= epic_home %>", "t"))
+        .to eq("home=/state/epics/abc")
+    end
+
+    it "hands the same locals to a rendered partial" do
+      expect(engine(epic_home: "/state/epics/abc").render("epic_home")).to eq("/state/epics/abc")
+    end
+
+    it "freezes the value a callable local resolves to" do
+      value = +"/lazy"
+      engine(epic_home: -> { value }).render_template("<%= epic_home %>", "t")
+
+      expect(value).to be_frozen
+    end
+
+    it "still refuses a name nobody declared, naming it" do
+      expect { engine({}).render_template("<%= epic_home %>", "t") }
+        .to raise_error(Lain::Prompt::ImpureSlot, /epic_home/)
+    end
+
+    it "still refuses a method call on a declared local" do
+      expect { engine(epic_home: "/x").render_template("<%= epic_home.upcase %>", "t") }
+        .to raise_error(Lain::Prompt::ImpureSlot, /upcase/)
+    end
+  end
+
+  describe Lain::Prompt::Purity do
+    it "accepts a read of a declared local" do
+      expect { described_class.check!("epic_home", "t", locals: [:epic_home]) }.not_to raise_error
+    end
+
+    it "rejects the same read when it is not declared" do
+      expect { described_class.check!("epic_home", "t") }.to raise_error(Lain::Prompt::ImpureSlot, /epic_home/)
+    end
+  end
 end

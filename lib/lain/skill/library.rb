@@ -30,15 +30,22 @@ module Lain
     #
     # Nor do two loads of one tree compare `eq`: neither half defines `==`, and
     # Data's member-wise equality is only ever as deep as its members.
-    Library = Data.define(:catalog, :slots) do
+    Library = Data.define(:catalog, :slots, :locals) do
       # The session's one read. `root:` is where BOTH halves find their `.lain/`
       # overrides, and taking it once here retires it from four signatures.
-      def self.load(root: Dir.pwd) = new(catalog: Catalog.load(root:), slots: Prompt::Slots.load(root:))
+      #
+      # `locals` are the names every skill template and hole may read bare, such
+      # as the epic home; a callable value is resolved only when read.
+      def self.load(root: Dir.pwd, locals: {})
+        new(catalog: Catalog.load(root:), slots: Prompt::Slots.load(root:), locals: locals.transform_values do |v|
+          v.respond_to?(:call) ? v : v.dup.freeze
+        end.freeze)
+      end
 
       # The composition the pair exists for. Two callers need it -- the repl's
       # {Middleware::SkillDispatch} and {Tools::RunSkill} -- and they cannot
       # drift because there is only one pair to compose.
-      def renderer = Renderer.new(catalog:, slots:)
+      def renderer = Renderer.new(catalog:, slots:, locals:)
     end
   end
 end

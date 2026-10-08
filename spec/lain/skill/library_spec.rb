@@ -19,6 +19,101 @@ RSpec.describe Lain::Skill::Library do
     File.write(path, body)
   end
 
+  describe ".load with locals" do
+    it "hands them, frozen, to every renderer it builds" do
+      with_project do |root|
+        write(File.join(root, ".lain", "skills", "where", "skill.md"), "# Where\n<%= epic_home %>\n")
+        library = described_class.load(root:, locals: { epic_home: "/state/lain/epics/abc" })
+
+        expect(library.renderer.render(:where)).to include("/state/lain/epics/abc")
+        expect(library.locals).to be_frozen
+      end
+    end
+
+    it "defaults to no locals, so a template reading one is refused" do
+      with_project do |root|
+        write(File.join(root, ".lain", "skills", "where", "skill.md"), "# Where\n<%= epic_home %>\n")
+
+        expect { described_class.load(root:).renderer.render(:where) }
+          .to raise_error(Lain::Prompt::ImpureSlot, /epic_home/)
+      end
+    end
+  end
+
+  describe "the chat backend's library" do
+    it "carries the project's absolute epic home, from the XDG default" do
+      with_project do |root|
+        write(File.join(root, ".lain", "skills", "where", "skill.md"), "# Where\n<%= epic_home %>\n")
+        backend = Lain::CLI::Backend.new({ provider: "ollama" }, root:, paths: Lain::Paths.new)
+        expected = Lain::Epic::Home.container(config: Lain::Config.load(root:), paths: Lain::Paths.new, root:)
+
+        expect(backend.library.renderer.render(:where)).to include(expected).and(satisfy { expected.start_with?("/") })
+      end
+    end
+  end
+
+  describe "lazy and frozen locals" do
+    it "does not call a callable local no template reads" do
+      with_project do |root|
+        library = described_class.load(root:, locals: { epic_home: -> { raise "resolved" } })
+
+        expect(library.renderer.render(:greet)).to include("Say hello")
+      end
+    end
+
+    it "resolves a callable local when a template reads it" do
+      with_project do |root|
+        write(File.join(root, ".lain", "skills", "where", "skill.md"), "<%= epic_home %>")
+        library = described_class.load(root:, locals: { epic_home: -> { +"/lazy" } })
+
+        expect(library.renderer.render(:where)).to eq("/lazy")
+      end
+    end
+
+    it "freezes the values, not only the hash" do
+      with_project do |root|
+        expect(described_class.load(root:, locals: { epic_home: +"/x" }).locals[:epic_home]).to be_frozen
+      end
+    end
+
+    it "lets a skill hole read a local" do
+      with_project do |root|
+        write(File.join(root, ".lain", "skills", "where", "skill.md"),
+              "---\nslots:\n  - spot\n---\n<%= render(\"spot\") %>")
+        write(File.join(root, ".lain", "slots", "skill", "where", "spot.md"), "at <%= epic_home %>")
+        library = described_class.load(root:, locals: { epic_home: "/hole" })
+
+        expect(library.renderer.render(:where)).to eq("at /hole")
+      end
+    end
+  end
+
+  describe "the backend's injected paths" do
+    it "puts the epic home under the injected state home" do
+      Dir.mktmpdir do |root|
+        write(File.join(root, ".lain", "skills", "where", "skill.md"), "<%= epic_home %>")
+        state = File.join(root, "custom-state")
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state })
+        backend = Lain::CLI::Backend.new({ provider: "ollama" }, root:, paths:)
+
+        expect(backend.library.renderer.render(:where)).to start_with(state)
+      end
+    end
+  end
+
+  describe "the backend with an untrusted config" do
+    it "still answers #slots, since no template read the epic home" do
+      Dir.mktmpdir do |root|
+        write(File.join(root, ".lain", "config.rb"), "epics_home :repo\n")
+        xdg = %w[CONFIG STATE DATA].to_h { |kind| ["XDG_#{kind}_HOME", File.join(root, kind.downcase)] }
+        paths = Lain::Paths.new(env: xdg)
+        backend = Lain::CLI::Backend.new({ provider: "ollama" }, root:, paths:)
+
+        expect { backend.slots }.not_to raise_error
+      end
+    end
+  end
+
   describe ".load" do
     it "reads the catalog and the slots from ONE root, so both halves see one tree" do
       with_project do |root|

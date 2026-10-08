@@ -25,8 +25,14 @@ module Lain
     # {Purity} BEFORE it is evaluated. Impure code therefore never runs; the
     # failure is a named {ImpureSlot}, raised at render.
     class LockedBinding
-      def initialize(resolve:)
+      # @param resolve [#call] slot name to template source
+      # @param locals [Hash{Symbol=>String,#call}] names a template may read bare;
+      #   any other bare name is still a refused call. A callable value is
+      #   resolved only for a template whose source mentions its name, so a
+      #   costly or failing lookup never runs for a template that ignores it.
+      def initialize(resolve:, locals: {})
         @resolve = resolve
+        @locals = locals
         @rendering = []
       end
 
@@ -59,8 +65,8 @@ module Lain
         end
 
         template = ERB.new(source, trim_mode: "-")
-        Purity.check!(template.src, label)
-        template.result(clean_binding)
+        Purity.check!(template.src, label, locals: @locals.keys)
+        template.result(clean_binding(template.src))
       end
 
       # A binding with zero locals of its own, so a fill's `template = template`
@@ -71,8 +77,11 @@ module Lain
       # just its receiver, so nothing short of a separate call escapes them.
       # `self` (and therefore the `render` helper) still resolves, because
       # self travels with the binding regardless of which frame captured it.
-      def clean_binding
-        binding
+      def clean_binding(source)
+        read = @locals.select { |name, _| source.match?(/\b#{name}\b/) }
+        read.each_with_object(binding) do |(name, value), clean|
+          clean.local_variable_set(name, (value.respond_to?(:call) ? value.call : value).freeze)
+        end
       end
     end
 
@@ -101,8 +110,10 @@ module Lain
         Prism::LocalVariableTargetNode
       ].freeze
 
-      def self.check!(ruby_source, label)
-        offense = offense_in(Prism.parse(ruby_source).value)
+      # `locals` are parsed as in scope, so a bare read of one is a local read
+      # rather than the receiverless call the grammar refuses.
+      def self.check!(ruby_source, label, locals: [])
+        offense = offense_in(Prism.parse(ruby_source, scopes: [locals]).value)
         return unless offense
 
         raise ImpureSlot, "slot #{label.inspect} is impure: #{offense}; " \
