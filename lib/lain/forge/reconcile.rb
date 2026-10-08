@@ -297,6 +297,9 @@ module Lain
           when PR_MERGE then merged?(intent)
           when REVIEW_SUBMIT then raise Unobservable, unrepeatable(intent)
           when BRANCH_DELETE then deleted?(intent)
+          # The world is the remote, which a local merge never touches; a retry
+          # is safe because git merges nothing once the base holds the branch.
+          when LOCAL_MERGE then false
           # An action nothing here knows how to observe. Unreachable while
           # {Contracts::Intent} closes {ACTIONS} to what {Reconcile::Observer} handles --
           # it is the canary for a later card widening one of those and not the other.

@@ -30,7 +30,11 @@ module Lain
     # not -- so a resume asks the remote rather than deleting a second time,
     # and a branch GitHub deleted on merge reads as done.
     BRANCH_DELETE = "branch_delete"
-    ACTIONS = [PROMOTE, PR_CREATE, PR_MERGE, REVIEW_SUBMIT, BRANCH_DELETE].freeze
+
+    # Merging a finished epic into the default branch of this repository, with
+    # no remote: its own action so a remote finish never reads it as a pr_merge.
+    LOCAL_MERGE = "local_merge"
+    ACTIONS = [PROMOTE, PR_CREATE, PR_MERGE, REVIEW_SUBMIT, BRANCH_DELETE, LOCAL_MERGE].freeze
 
     # Construction contracts for the tier's two journal records, in the house
     # validate-then-freeze convention: a throwaway {Lain::Declarative::Carrier}

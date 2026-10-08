@@ -587,9 +587,15 @@ class LainCLI < Thor
       render { landing.call.land(issue_id, slug) }
     end
 
-    desc "finish [SLUG]", "Take an epic whose every issue is done to main as one pull request, " \
-                          "then delete its remote branch"
-    def finish(slug = nil) = render { Lain::CLI::EpicFinish.new.finish(slug) }
+    desc "finish [SLUG]", "Take an epic whose every issue is done to main: as one pull request, deleting its " \
+                          "remote branch after, or with --local as one merge commit in this repository"
+    method_option :local, type: :boolean, default: false,
+                          desc: "Merge epic/SLUG into main, which must be checked out and clean; " \
+                                "no remote, no pull request"
+    def finish(slug = nil)
+      local = options[:local] ? { finisher: Lain::CLI::EpicFinish::Local.new } : {}
+      render { Lain::CLI::EpicFinish.new(**local).finish(slug) }
+    end
   end
 
   # The worktrees subcommand, on the same thin-wiring rule as epic:

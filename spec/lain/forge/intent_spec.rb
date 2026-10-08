@@ -99,7 +99,7 @@ RSpec.describe Lain::Forge::Intent do
 
   it "refuses an action outside the closed set" do
     expect { intent(action: "push") }.to raise_error(ArgumentError, /action/)
-    expect(Lain::Forge::ACTIONS).to eq(%w[promote pr_create pr_merge review_submit branch_delete])
+    expect(Lain::Forge::ACTIONS).to eq(%w[promote pr_create pr_merge review_submit branch_delete local_merge])
   end
 
   it "refuses an unnamed epic or an unnamed issue" do

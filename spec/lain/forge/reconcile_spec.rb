@@ -276,6 +276,19 @@ RSpec.describe Lain::Forge::Reconcile do
       expect(standing.unsettled.map(&:verdict)).to eq(["needs_retry"])
     end
 
+    # A local merge touches no remote, so the world has nothing to say about it,
+    # and git's own merge is a no-op once the base holds the branch.
+    it "reads an unsettled local merge as needing a retry without asking the world" do
+      merge = blind(action: "local_merge", params: { "head" => "epic/demo", "base" => "main", "sha" => "cafe" })
+      world = ForgeReconcileSpecSupport.counting(refs: { ref => "cafe" })
+
+      fold = reconcile([merge], world:)
+
+      expect(fold.unsettled.map(&:verdict)).to eq(["needs_retry"])
+      expect(fold.unaddressable).to be_empty
+      expect(world.calls).to be_empty
+    end
+
     # `fetch` succeeds on a nil, and two `.to_s` calls then read two
     # ABSENCES of knowledge as a confirmation that the push landed.
     it "refuses a blank address as hard as a missing one" do

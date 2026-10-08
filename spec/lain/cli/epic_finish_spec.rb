@@ -9,6 +9,9 @@ require "tmpdir"
 # worktree gc.
 #
 # Real git against a local BARE remote; GitHub is a double. Never the network.
+# `exe/lain` is a script that guards its own `LainCLI.start`, so loading it only defines the Thor classes.
+load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI::Epic)
+
 RSpec.describe Lain::CLI::EpicFinish, :seam do
   around do |example|
     Dir.mktmpdir do |tmp|
@@ -180,6 +183,105 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       expect(%w[a b].map { |issue| remote_ref("refs/heads/epic/demo/#{issue}") }).to all(eq(tip))
       expect(remote_ref("refs/heads/epic/demo")).to be_empty
       expect(github).not_to have_received(:pr_create)
+    end
+  end
+
+  describe "finishing locally" do
+    before { git(root, "remote", "remove", "origin") }
+
+    def local
+      described_class.new(root:, paths:, config:, github:, shell_out_factory: recording,
+                          finisher: described_class::Local.new(root:, shell_out_factory: recording))
+    end
+
+    def forge_records
+      Dir.children(paths.sessions_dir).sort
+         .flat_map { |name| Lain::Journal.records(File.foreach(File.join(paths.sessions_dir, name))).to_a }
+         .select { |record| record["type"].start_with?("forge_") }
+    end
+
+    it "merges epic/demo into main, pushes nothing, and journals the finish with remote false" do
+      before = git(root, "rev-parse", "main")
+      landed = tip
+
+      output = local.finish("demo")
+
+      expect(git(root, "rev-list", "--parents", "-n", "1", "main").split.drop(1)).to eq([before, landed])
+      expect(output).to include("finished demo at #{landed}", "merged into main", "nothing was pushed")
+      expect(calls.flatten).not_to include("push")
+      expect(github).not_to have_received(:pr_create)
+      intent, outcome = forge_records
+      expect(intent).to include("action" => "local_merge", "epic_slug" => "demo")
+      expect(outcome).to include("intent_id" => intent["intent_id"], "ok" => true)
+      expect(outcome["detail"]).to include("remote" => false)
+      expect([intent["params"]["sha"], outcome["detail"]["sha"]]).to eq([landed, landed])
+    end
+
+    it "refuses an epic with no branch, naming it, and journals nothing" do
+      git(root, "branch", "-q", "-D", "epic/demo")
+
+      expect { local.finish("demo") }.to raise_error(described_class::NoBranch) { |error|
+        expect(error.message).to eq("there is no epic/demo branch in #{root} -- nothing merged into main")
+      }
+      expect(forge_records).to be_empty
+    end
+
+    it "refuses an unfinished epic, naming the issue, and journals nothing" do
+      expect { local.finish("other") }.to raise_error(described_class::Unfinished) { |error|
+        expect(error.message).to include("b is in_flight", "nothing merged into main")
+        expect(error.message).not_to include("remote")
+      }
+      expect(forge_records).to be_empty
+    end
+
+    it "stops on a conflict, naming the path, with main where it was" do
+      commit("README" => "main moved\n")
+      before = git(root, "rev-parse", "main")
+
+      output = local.finish("demo")
+
+      expect(output).to include("stopped demo", "README", "`lain epic finish --local` again")
+      expect(git(root, "rev-parse", "main")).to eq(before)
+    end
+
+    it "is what `lain epic finish SLUG --local` runs" do
+      env = { "XDG_STATE_HOME" => state_home, "XDG_CONFIG_HOME" => File.join(@tmp, "config"), "HOME" => state_home }
+      before = git(root, "rev-parse", "main")
+
+      with_env(env) do
+        home = Lain::Epic::Home.resolve(config: Lain::Config.load(root:), paths: Lain::Paths.new, root:, slug: "demo")
+        home.write_epic(Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "a", status: "done")]))
+        expect { Dir.chdir(root) { LainCLI::Epic.start(%w[finish demo --local], debug: true) } }
+          .to output(/finished demo.*nothing was pushed/m).to_stdout
+      end
+
+      expect(git(root, "rev-list", "--parents", "-n", "1", "main").split.drop(1)).to eq([before, tip])
+    end
+
+    it "is never read by a later remote finish as that finish's own merge" do
+      local.finish("demo")
+      git(root, "remote", "add", "origin", remote)
+
+      command.finish("demo")
+
+      expect(github).to have_received(:pr_merge).once
+      expect(forge_actions).to eq(%w[local_merge promote pr_create pr_merge branch_delete])
+    end
+
+    # A crash between the intent and its outcome: the remote fold reads every
+    # forge record of the epic, and an unanswerable one would stop it for good.
+    it "does not stop a later remote finish when a local merge crashed before its outcome" do
+      crashed = Lain::Forge::Intent.new(action: "local_merge", epic_slug: "demo",
+                                        issue_id: Lain::Forge::Landing::WHOLE_EPIC,
+                                        params: { "head" => "epic/demo", "base" => "main", "sha" => tip })
+      line = JSON.generate({ "ts" => "2026-01-01T00:00:00.000000Z" }.merge(crashed.to_journal))
+      File.write(File.join(paths.sessions_dir, "crashed.ndjson"), "#{line}\n")
+      git(root, "remote", "add", "origin", remote)
+
+      output = command.finish("demo")
+
+      expect(output).to include("finished demo", "pull request #7 -- merged")
+      expect(github).to have_received(:pr_merge).once
     end
   end
 
