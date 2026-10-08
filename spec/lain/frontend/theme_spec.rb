@@ -66,6 +66,11 @@ RSpec.describe Lain::Frontend::Theme do
       expect(theme.paint(:error, "nope")).to eq(colored.red.bold("nope"))
     end
 
+    it "renders a heading bold and a command name in its own colour" do
+      expect(theme.paint(:heading, "commands:")).to eq(colored.bold("commands:"))
+      expect(theme.paint(:command_name, "/help")).to eq(colored.cyan("/help"))
+    end
+
     it "renders a question the colour it carries today" do
       expect(theme.paint(:question_label, "the agent asks:")).to eq(colored.yellow.bold("the agent asks:"))
       expect(theme.paint(:question, "why?")).to eq(colored.yellow("why?"))

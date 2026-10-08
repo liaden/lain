@@ -3,17 +3,23 @@
 module Lain
   module CLI
     module Command
-      # `/help`: one rendered String -- the registered commands (one usage line
-      # each) above the skill catalog -- returned to the Repl's boundary
-      # renderer (commands return text, never print). Holds the LIVE registry
-      # it is registered in, so a command a later card registers appears with
-      # no edit here; the catalog is the SAME snapshot SkillDispatch dispatches
-      # over (Wiring threads one load into both), so the listing and the
-      # dispatch can never drift.
+      # `/help`. Holds the LIVE registry it is registered in, so a later
+      # command appears with no edit here; the catalog is the same snapshot
+      # SkillDispatch dispatches over, so listing and dispatch cannot drift.
       class Help
-        def initialize(registry:, catalog:)
+        SEPARATOR = " -- "
+        INDENT = 2
+        GUTTER = 2
+        FALLBACK_WIDTH = 80
+
+        # @param registry [#map] the live command registry
+        # @param catalog [#all] the skill catalog
+        # @param width [#call] the terminal width in columns; read at render
+        #   time so a resized terminal is honoured
+        def initialize(registry:, catalog:, width: method(:terminal_width))
           @registry = registry
           @catalog = catalog
+          @width = width
           freeze
         end
 
@@ -21,31 +27,51 @@ module Lain
 
         def usage = "/help -- list commands and skills"
 
-        # A {Lain::Renderable}, not a String -- the same words, with each
-        # section HEADER naming a token so the listing beneath it reads as
-        # content rather than as one flat colour.
         def call(_args, _env)
-          section("commands:", command_lines).plain("\n\n") + section("skills:", skill_lines)
+          columns = @width.call
+          section("commands:", command_entries, columns).plain("\n\n") + section("skills:", skill_entries, columns)
         end
 
         private
 
-        # A header and its lines: the header names `:label`, every entry is the
-        # renderable's own plain token, and the newlines belong to the entries
-        # so no style ever wraps a line ending.
-        def section(header, lines)
-          lines.inject(Lain::Renderable.new.with(:label, header)) do |rendered, line|
-            rendered.plain("\n#{line}")
-          end
+        # No tty (a pipe, a captured stdout) cannot answer an ioctl, and /help
+        # must still render there.
+        def terminal_width
+          ::TTY::Screen.width
+        rescue StandardError
+          FALLBACK_WIDTH
         end
 
-        def command_lines = @registry.map { |command| "  #{command.usage}" }
+        def section(header, entries, columns)
+          start = Lain::Renderable.new.with(:heading, header)
+          return start.plain("\n#{" " * INDENT}(none)") if entries.empty?
 
-        # An empty catalog renders honestly rather than as a bare header.
-        def skill_lines
-          return ["  (none)"] if @catalog.all.empty?
+          name_width = [entries.map { |name, _| name.length }.max, columns / 3].min
+          entries.inject(start) { |rendered, (name, text)| row(rendered, name, text, name_width, columns) }
+        end
 
-          @catalog.all.map { |skill| "  /#{skill.name} -- #{skill.description}" }
+        def row(rendered, name, text, name_width, columns)
+          lead = INDENT + name_width + GUTTER
+          lines = wrap(text, [columns - lead, 1].max)
+          named = rendered.plain("\n#{" " * INDENT}").with(:command_name, name)
+          return named + continuation(lines, lead) if name.length > name_width
+
+          padding = " " * (name_width - name.length + GUTTER)
+          named.plain("#{padding}#{lines.first}") + continuation(lines.drop(1), lead)
+        end
+
+        def continuation(lines, lead)
+          lines.inject(Lain::Renderable.new) { |rendered, line| rendered.plain("\n#{" " * lead}#{line}") }
+        end
+
+        def wrap(text, limit)
+          text.scan(/\S.{0,#{limit - 1}}(?=\s|\z)|\S+/).presence || [""]
+        end
+
+        def command_entries = @registry.map { |command| command.usage.split(SEPARATOR, 2).then { |n, d| [n, d.to_s] } }
+
+        def skill_entries
+          @catalog.all.map { |skill| ["/#{skill.name}", skill.description] }
         end
       end
     end

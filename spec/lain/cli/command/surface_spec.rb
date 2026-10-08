@@ -169,7 +169,7 @@ RSpec.describe Lain::CLI::Command::Surface do
       surface = build_surface(root)
 
       listing = surface.commands.dispatch("/help") { raise "fallthrough must not run" }
-      expect(listing.text).to include(Lain::CLI::Command::Model.new.usage)
+      expect(listing.text).to include("/model [id]", "show the model in force")
     end
   end
 
