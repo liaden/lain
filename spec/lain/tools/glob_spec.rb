@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "open3"
 require "tmpdir"
 
 RSpec.describe Lain::Tools::Glob do
@@ -138,6 +139,88 @@ RSpec.describe Lain::Tools::Glob do
       expect(result.content.bytesize).to be <= ceiling
       expect(result.content.lines.last).to match(/\A\.\.\. truncated to \d+ of 400 paths, withholding \d+ bytes/)
       expect(result.content).to include("narrow the pattern or the path")
+    end
+  end
+
+  describe "a tree git ignores part of" do
+    def git_init(dir)
+      FileUtils.mkdir_p(dir)
+      _out, err, status = Open3.capture3("git", "init", "-q", chdir: dir)
+      raise err unless status.success?
+    end
+
+    before do
+      git_init(tmpdir)
+      File.write(File.join(tmpdir, ".gitignore"), "target/\n")
+    end
+
+    it "does not return git-ignored files" do
+      touch("target", "a.rs")
+      touch("src", "b.rs")
+
+      expect(tool.call(pattern: "**/*.rs", path: tmpdir).content).to eq("src/b.rs")
+    end
+
+    it "returns a directory that holds a listed file and not one that holds nothing" do
+      touch("src", "sub", "c.rs")
+      FileUtils.mkdir_p(File.join(tmpdir, "src", "empty"))
+
+      expect(tool.call(pattern: "src/*", path: tmpdir).content).to eq("src/sub")
+    end
+
+    it "does not return a directory holding only ignored files" do
+      touch("src", "target", "d.rs")
+      touch("src", "e.rs")
+      File.write(File.join(tmpdir, "src", ".gitignore"), "target/\n")
+
+      expect(tool.call(pattern: "src/*", path: tmpdir).content.split("\n")).to eq(%w[src/.gitignore src/e.rs])
+    end
+  end
+
+  describe "a pattern naming a directory away from the base" do
+    it "honors an absolute pattern, filtered by that directory's own ignores" do
+      Dir.mktmpdir do |elsewhere|
+        _out, _err, status = Open3.capture3("git", "init", "-q", chdir: elsewhere)
+        expect(status).to be_success
+        File.write(File.join(elsewhere, ".gitignore"), "target/\n")
+        FileUtils.mkdir_p(File.join(elsewhere, "target"))
+        File.write(File.join(elsewhere, "target", "x.rs"), "")
+        File.write(File.join(elsewhere, "y.rs"), "")
+
+        result = tool.call(pattern: File.join(elsewhere, "**", "*.rs"), path: tmpdir)
+
+        expect(result.content).to eq(File.join(elsewhere, "y.rs"))
+      end
+    end
+
+    it "honors a pattern that climbs out of the base" do
+      touch("up.rb")
+      touch("base", "in.rb")
+
+      result = tool.call(pattern: "../*.rb", path: File.join(tmpdir, "base"))
+
+      expect(result.content).to eq("../up.rb")
+    end
+
+    it "expands braces" do
+      touch("a.rb")
+      touch("b.py")
+      touch("c.txt")
+
+      expect(tool.call(pattern: "*.{rb,py}", path: tmpdir).content).to eq("a.rb\nb.py")
+    end
+  end
+
+  describe "a pattern ending in a slash" do
+    before do
+      touch("src", "sub", "a.rb")
+      touch("top.rb")
+    end
+
+    it "returns the matching directories with a trailing slash, and no files" do
+      expect(tool.call(pattern: "src/", path: tmpdir).content).to eq("src/")
+      expect(tool.call(pattern: "*/", path: tmpdir).content).to eq("src/")
+      expect(tool.call(pattern: "**/", path: tmpdir).content.split("\n")).to eq(%w[src/ src/sub/])
     end
   end
 end

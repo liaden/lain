@@ -38,7 +38,19 @@ module Lain
       visit(@root, probe: true, &block)
     end
 
+    # The listed files and the directories holding them, relative to the root and
+    # tagged UTF-8 whatever the bytes are, because both feed text the model reads.
+    # A directory exists here only when a listed file lies under it.
+    # @return [Array(Array<String>, Array<String>)] files, then directories
+    def relative_tree
+      prefix = "#{String.new(@root, encoding: Encoding::UTF_8)}/"
+      files = map { String.new(_1, encoding: Encoding::UTF_8).delete_prefix(prefix) }
+      [files, files.flat_map { ancestors(_1) }.uniq]
+    end
+
     private
+
+    def ancestors(file) = Enumerator.produce(File.dirname(file)) { File.dirname(_1) }.take_while { _1 != "." }
 
     # Only the root is probed without a `.git` entry: it may sit inside a
     # repository whose `.git` is above it.

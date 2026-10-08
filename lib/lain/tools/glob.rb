@@ -60,6 +60,12 @@ module Lain
       # return different 200s of the same tree.
       BOUND = Tool::Bounds::Enumeration.new(limit: 500, unit: "paths")
 
+      # Dir.glob's own reading of a pattern: `**` crosses directories, braces
+      # expand, and dotfiles are listed rather than hidden.
+      FNM_FLAGS = File::FNM_PATHNAME | File::FNM_EXTGLOB | File::FNM_DOTMATCH
+
+      MAGIC = /[*?\[{\\]/
+
       # The row cap is a count, and a path's length is the world's, so the
       # rows also meet a byte ceiling.
       BYTE_BOUND = Tool::Bounds::Fill.new(limit: Tool::Bounds::CEILINGS.fetch("glob"), unit: "paths",
@@ -98,8 +104,9 @@ module Lain
       end
 
       # Audited: reads Session#worker_env.cwd (a value read, not a mutation) to
-      # resolve `base`, then only calls Dir.glob. No Session write, no chdir --
-      # `Dir.glob`'s `base:` resolves without touching process-global Dir.pwd.
+      # resolve `base`, then only reads the filesystem through {FileWalk} and
+      # git subprocesses. No Session write, no chdir -- the root is passed
+      # explicitly, so nothing touches process-global Dir.pwd.
       def parallel_safe? = true
 
       protected
@@ -126,9 +133,28 @@ module Lain
       # rides beside {BYTE_BOUND} as a trailer, so the byte ceiling cannot
       # withhold it.
       def matches(base, pattern)
-        sorted = Dir.glob(pattern, base:).sort
+        sorted = listed(base, pattern).sort
         trailers = BOUND.admits?(sorted.size) ? [] : [BOUND.notice(sorted.size)]
         [*BYTE_BOUND.fit(sorted.first(BOUND.limit), beside: trailers), *trailers]
+      end
+
+      # The pattern's leading segments without wildcards name the directory to
+      # walk, so an absolute pattern or one climbing out via `../` walks that
+      # directory under its own ignore files. The last segment always stays in
+      # the matched part: a pattern naming one file is still a pattern. A
+      # trailing slash asks for directories only, as Dir.glob read it.
+      def listed(base, pattern)
+        fixed = fixed_directories(pattern)
+        prefix = fixed.empty? ? "" : "#{fixed.join("/")}/"
+        files, directories = FileWalk.new(root: File.expand_path(fixed.join("/"), base)).relative_tree
+        rest = pattern.delete_prefix(prefix)
+        candidates = pattern.end_with?("/") ? directories.map { "#{_1}/" } : files + directories
+        candidates.select { File.fnmatch?(rest, _1, FNM_FLAGS) }.map { "#{prefix}#{_1}" }
+      end
+
+      def fixed_directories(pattern)
+        segments = pattern.chomp("/").split("/", -1)
+        segments.first(segments.size - 1).take_while { !MAGIC.match?(_1) }
       end
     end
   end

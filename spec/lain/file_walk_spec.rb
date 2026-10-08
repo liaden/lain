@@ -200,4 +200,35 @@ RSpec.describe Lain::FileWalk do
 
     expect(relatives).to eq(%w[a/z.rb a.rb b.rb z.rb])
   end
+
+  describe "#relative_tree" do
+    it "tags files and directories as UTF-8 under a root spelled as BINARY bytes" do
+      write("sub/one.rb")
+
+      files, directories = described_class.new(root: root.b).relative_tree
+
+      expect([*files, *directories].map(&:encoding).uniq).to eq([Encoding::UTF_8])
+      expect(files + directories).to contain_exactly("sub/one.rb", "sub")
+    end
+
+    it "returns the listed files and the directories holding them, relative to the root" do
+      write("src/sub/a.rb")
+      write("top.rb")
+      FileUtils.mkdir_p(File.join(root, "empty"))
+
+      files, directories = walk.relative_tree
+
+      expect(files).to contain_exactly("src/sub/a.rb", "top.rb")
+      expect(directories).to contain_exactly("src", "src/sub")
+    end
+
+    it "tags every path as UTF-8 text, a name that is not valid text included" do
+      File.binwrite(File.join(root, "bad\xFF.rb".b), "")
+
+      files, = described_class.new(root: root.b).relative_tree
+
+      expect(files.map(&:encoding)).to eq([Encoding::UTF_8])
+      expect(files.first.b).to eq("bad\xFF.rb".b)
+    end
+  end
 end

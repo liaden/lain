@@ -563,4 +563,14 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
       expect(content(env)).not_to include(".env")
     end
   end
+
+  describe "a glob that now reaches dotfiles" do
+    it "lists .env under a bare star and withholds it" do
+      shown = content(glob("*"))
+
+      expect(shown.split("\n")).to include("app.rb", "notes")
+      expect(shown).not_to match(/^\.env$/)
+      expect(shown).to match(/\d+ paths? withheld/)
+    end
+  end
 end

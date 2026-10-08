@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "open3"
 require "tmpdir"
 
 RSpec.describe Lain::Tools::ListFiles do
@@ -227,6 +228,24 @@ RSpec.describe Lain::Tools::ListFiles do
       expect(result.content.bytesize).to be <= ceiling
       expect(result.content.lines.last).to match(/\A\.\.\. truncated to \d+ of \d+ paths, withholding \d+ bytes/)
       expect(result.content).to include("list a subdirectory")
+    end
+  end
+
+  describe "a recursive listing of a repository" do
+    before do
+      _out, err, status = Open3.capture3("git", "init", "-q", chdir: tmpdir)
+      raise err unless status.success?
+
+      File.write(File.join(tmpdir, ".gitignore"), "target/\n")
+    end
+
+    it "lists no entry under .git or an ignored tree, and keeps the directories that hold listed files" do
+      touch("target", "a.rs")
+      touch("src", "b.rs")
+
+      rows = tool.call(path: tmpdir, recursive: true).content.split("\n")
+
+      expect(rows).to eq(%w[.gitignore src src/b.rs])
     end
   end
 end
