@@ -8,7 +8,8 @@ module Lain
     # is the reader: absence must stay distinguishable from a declared table so
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
-    Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware) do
+    Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
+                        :approval_timeout) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -94,6 +95,7 @@ module Lain
         @path = path
         @verbs = verbs
         @tables = {}
+        @approval_timeout = Approval::Queue::DEFAULT_TIMEOUT
       end
 
       # @return [Built] every table not declared at its default
@@ -105,7 +107,8 @@ module Lain
                   shell: @tables.fetch(:shell, Shell::Exclusions.empty),
                   search: @tables.fetch(:search, SearchRules.empty),
                   tests: @tables[:tests],
-                  middleware: @tables.fetch(:middleware, Middleware.empty))
+                  middleware: @tables.fetch(:middleware, Middleware.empty),
+                  approval_timeout: @approval_timeout)
       end
 
       def epics(**table, &block)
@@ -115,8 +118,9 @@ module Lain
         end
       end
 
-      def approval(&block)
+      def approval(timeout: nil, &block)
         declare(:approval, Answers::TABLE) do |at|
+          @approval_timeout = timeout_from(timeout, at)
           calls = collect(block, %i[allow deny deny_tool])
           calls.each { |call| Answers.from({ call.verb.to_s => [entry(call)] }, path: located_at(call.line)) }
           Answers.from(calls.group_by(&:verb).to_h { |verb, group| [verb.to_s, group.map { |call| entry(call) }] },
@@ -175,6 +179,14 @@ module Lain
       def refuse_repeated_keys(keywords, at, label)
         twice = keywords.keys.map(&:to_s).tally.select { |_, count| count > 1 }.keys
         raise Refusal.new("gives #{twice.join(", ")} twice", path: at, table: label, key: twice) if twice.any?
+      end
+
+      def timeout_from(timeout, at)
+        return @approval_timeout if timeout.nil?
+        return timeout if timeout.is_a?(Numeric) && timeout.finite? && timeout.positive?
+
+        detail = "timeout must be above 0 seconds, got #{timeout.inspect}"
+        raise Refusal.new(detail, path: at, table: Answers::TABLE, key: "timeout")
       end
 
       def located_at(line) = self.class.located(@path, line)

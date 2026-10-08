@@ -54,7 +54,8 @@ RSpec.describe Lain::Config::Builder do
                                                        sensitivity: Lain::Sensitivity::Rules.empty,
                                                        shell: Lain::Shell::Exclusions.empty,
                                                        search: Lain::SearchRules.empty,
-                                                       tests: nil)
+                                                       tests: nil,
+                                                       approval_timeout: 300)
     end
 
     it "leaves the framework fallback reachable when no tests table is declared" do

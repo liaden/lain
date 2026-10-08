@@ -96,6 +96,7 @@ module Lain
       #   behind it is a mis-wire, not a default
       # @param middleware [Config::Middleware] what the chat's config.rb files
       #   registered, whose tool members run ahead of every guard
+      # @param approval_timeout [Numeric] seconds an unanswered call waits before the queue denies it
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [Boolean] :auto_approve the session starts with the
@@ -105,9 +106,10 @@ module Lain
       def self.for(chronicle:, options:, model:, toolset:, test_layout:, rules: [], approving: REMEMBERED,
                    sensitivity: Sensitivity::Policy::Null.instance,
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
-                   verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty)
+                   verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
+                   approval_timeout: Approval::Queue::DEFAULT_TIMEOUT)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
-            verdict:, test_layout:, spike:, middleware:, attended: !options[:non_interactive],
+            verdict:, test_layout:, spike:, middleware:, approval_timeout:, attended: !options[:non_interactive],
             layers: options[:auto_approve] ? [:auto_approve] : [])
       end
 
@@ -193,11 +195,13 @@ module Lain
       #   refuses, so a board built with no project behind it cannot enter plan
       #   scope
       # @param middleware [Config::Middleware] as on {.for}; none by default
+      # @param approval_timeout [Numeric] as on {.for}
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
                      verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
-                     attended: true, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty)
+                     attended: true, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
+                     approval_timeout: Approval::Queue::DEFAULT_TIMEOUT)
         @attended = attended
         @journal = journal
         @rules = rules.to_a.freeze
@@ -207,7 +211,7 @@ module Lain
         @spike = spike
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
-        @approvals = Approval::Queue.new(journal:) if @attended
+        @approvals = Approval::Queue.new(journal:, timeout: approval_timeout) if @attended
         @toolset = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(layers:))

@@ -116,6 +116,19 @@ RSpec.describe Lain::CLI::Switchboard do
       expect(board.ladder.first.instance_variable_get(:@sensitivity)).to be(factory)
     end
 
+    it "denies an unanswered call once the configured approval timeout passes" do
+      board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+                                  test_layout: layout_run, approval_timeout: 0.01)
+
+      expect(Sync { board.approvals.call(gated_call, nil) }).to be(false)
+    end
+
+    it "keeps the queue's 300 seconds when no approval timeout is passed" do
+      board = board_for
+
+      expect(board.approvals.instance_variable_get(:@timeout)).to eq(300)
+    end
+
     # There is no longer a flag that skips either half: a chat gets the parked
     # list and ask approval, and `/mode auto` is the only way out of them.
     it "wires the approval queue and starts in checkout ask, with no flag to skip either" do

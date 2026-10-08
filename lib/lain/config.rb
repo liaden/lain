@@ -60,6 +60,15 @@ module Lain
     # @raise [Refusal] as {.load}
     def self.shell_exclusions(root:) = built(root).shell
 
+    # How long the chat's approval queue waits on an unanswered call before it
+    # denies. `root:` is REQUIRED, as {.sensitivity}'s is.
+    #
+    # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @return [Numeric] seconds, above 0; {Approval::Queue::DEFAULT_TIMEOUT} when unset
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] as {.load}
+    def self.approval_timeout(root:) = built(root).approval_timeout
+
     # What a project searches beyond the files git shows, and how much one
     # walk may cost. `root:` is REQUIRED, as {.sensitivity}'s is.
     #

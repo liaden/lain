@@ -61,7 +61,8 @@ module Lain
                           rules: [Lain::Approval::Remembered.from(Config.load(root: project.root))].reject(&:empty?),
                           approving: method(:approving),
                           sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
-                          classifiers: factory, test_layout: test_layout(project:), middleware:)
+                          classifiers: factory, test_layout: test_layout(project:), middleware:,
+                          approval_timeout: Config.approval_timeout(root: project.root))
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree

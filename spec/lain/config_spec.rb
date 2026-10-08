@@ -67,6 +67,75 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the approval timeout" do
+    it "is 300 seconds when no config declares one" do
+      Dir.mktmpdir do |root|
+        expect(described_class.approval_timeout(root:)).to eq(300)
+      end
+    end
+
+    it "is 300 seconds when the approval table sets no timeout" do
+      Dir.mktmpdir do |root|
+        write_config(root, "approval do\n  deny_tool \"web_fetch\"\nend\n")
+
+        expect(described_class.approval_timeout(root:)).to eq(300)
+      end
+    end
+
+    it "reads the timeout the approval table declares" do
+      Dir.mktmpdir do |root|
+        write_config(root, "approval timeout: 900\n")
+
+        expect(described_class.approval_timeout(root:)).to eq(900)
+      end
+    end
+
+    it "keeps the table's rules beside the timeout" do
+      Dir.mktmpdir do |root|
+        write_config(root, "approval timeout: 900 do\n  deny_tool \"web_fetch\"\nend\n")
+
+        expect([described_class.approval_timeout(root:), described_class.load(root:).approval.deny_tools])
+          .to eq([900, ["web_fetch"]])
+      end
+    end
+
+    it "refuses a timeout of 0, naming it and saying it must be above 0" do
+      Dir.mktmpdir do |root|
+        write_config(root, "\napproval timeout: 0\n")
+
+        expect { described_class.approval_timeout(root:) }
+          .to raise_error(Lain::Config::Refusal, /config\.rb:2.*timeout.*must be above 0/)
+      end
+    end
+
+    it "refuses a timeout that is not a number" do
+      Dir.mktmpdir do |root|
+        write_config(root, "approval timeout: \"soon\"\n")
+
+        expect { described_class.approval_timeout(root:) }
+          .to raise_error(Lain::Config::Refusal, /timeout.*must be above 0/)
+      end
+    end
+
+    it "refuses a timeout that is not finite" do
+      Dir.mktmpdir do |root|
+        write_config(root, "approval timeout: Float::INFINITY\n")
+
+        expect { described_class.approval_timeout(root:) }
+          .to raise_error(Lain::Config::Refusal, /timeout.*must be above 0/)
+      end
+    end
+
+    it "is refused while the file is untrusted" do
+      Dir.mktmpdir do |root|
+        FileUtils.mkdir_p(File.join(root, ".lain"))
+        File.write(config_path(root), "# #{SecureRandom.hex}\napproval timeout: 900\n")
+
+        expect { described_class.approval_timeout(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+      end
+    end
+  end
+
   describe "the search table" do
     it "is empty when the file or the table is absent" do
       Dir.mktmpdir do |root|

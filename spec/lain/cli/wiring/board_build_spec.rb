@@ -82,6 +82,16 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
+  describe "the approval timeout" do
+    it "reaches the board's approval queue from a trusted config" do
+      in_tree(config: "approval timeout: 0.01\n") do |root, home|
+        board = board_for(root, home)
+
+        expect(Sync { board.approvals.call(bash_of("ls"), nil) }).to be(false)
+      end
+    end
+  end
+
   describe ".classifier" do
     it "anchors the home-relative table at the INJECTED home, not the process's" do
       in_tree do |root, home|
