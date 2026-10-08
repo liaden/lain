@@ -400,6 +400,16 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-08: `typing in a real cockpit while the model is busy consumes the question when an ask
+    parked on it is stopped` (red in 3 hook suites, with `"/stop" shown in the input pane never held
+    within 10s` in an example that took 6 to 8s). `WaitUntil` looked at the condition a second time
+    to decide whether to raise. The input pane echoes `/stop`, then erases that row to draw the
+    `command>` prompt and redraws the line under it, so a second look that fell in that gap
+    raised at once. The natural rate was 0 of about 80 runs alone under modest load, so the proof
+    is forced: with a redraw gap injected into the pane and a 0.6s stall injected before the second
+    look, the old wait failed 10 of 10 and the fixed one 0 of 10. The wait now answers for the look
+    that held.
+
   - 2026-10-03: `the deletion map booting without a capability does NOT load when a forced
     dependent is left behind` (red in a hook suite, green alone). `BootWithout#boot` read any output
     containing "ok" as a clean boot, and a failed boot's backtrace names its `Dir.mktmpdir` path,
