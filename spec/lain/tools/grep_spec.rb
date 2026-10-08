@@ -555,4 +555,82 @@ RSpec.describe Lain::Tools::Grep do
       expect(limited.call(pattern: "needle", path: tmpdir).content).to include("no matches").and include("10 entries")
     end
   end
+
+  it_behaves_like "a walk run off the reactor", ->(dir) { { "pattern" => "needle", "path" => dir } }
+
+  describe "running off the reactor" do
+    include_context "with a slowed walk"
+
+    def run_batch(*inputs)
+      content = inputs.each_with_index.map do |input, index|
+        { "type" => "tool_use", "id" => "tu_#{index}", "name" => "grep", "input" => input }
+      end
+      runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Live.new,
+                                           toolset: Lain::Toolset.new([tool]))
+      runner.run(Lain::Response.new(content:, stop_reason: :tool_use), context: nil)
+    end
+
+    # 50 ticks over a 1.5s walk, so one stall of the ticker under load cannot sink it.
+    it "keeps a sibling fiber running through a batch of slow searches" do
+      write("a.txt", "needle\n")
+      slow_walks(1.5)
+      blocks = nil
+
+      ticks = ticks_while do
+        blocks = run_batch({ "pattern" => "needle", "path" => tmpdir }, { "pattern" => "need", "path" => tmpdir })
+      end
+
+      expect(blocks.map { _1["content"] }).to eq(["a.txt:1:needle", "a.txt:1:needle"])
+      expect(ticks).to be >= 50
+    end
+
+    it "hands an error raised inside the walk back as the tool's error, naming the path" do
+      unreadable = write("a.txt", "needle\n")
+      allow(Lain::FileWalk).to receive(:new).and_wrap_original do |original, **options|
+        original.call(**options).tap { allow(_1).to receive(:each).and_raise(Errno::EACCES, unreadable) }
+      end
+
+      result = dispatch_call("grep", { "pattern" => "needle", "path" => tmpdir }, toolset: Lain::Toolset.new([tool]))
+
+      expect(result.error?).to be(true)
+      expect(result.content).to include("Permission denied").and include(unreadable)
+    end
+
+    describe "stopped while git lists the repository" do
+      # A `git` that hangs on the listing, so the stop lands while the child runs.
+      def hanging_git(dir)
+        real = ENV.fetch("PATH").split(File::PATH_SEPARATOR).map { File.join(_1, "git") }
+                  .find { File.executable?(_1) }
+        File.join(dir, "git").tap do |path|
+          File.write(path, "#!/bin/sh\ncase \"$*\" in *ls-files*) exec sleep 30;; esac\nexec #{real} \"$@\"\n")
+          File.chmod(0o755, path)
+        end
+      end
+
+      it "leaves no offload thread and no git child behind" do
+        Open3.capture3("git", "init", "-q", chdir: tmpdir)
+        write("a.txt", "needle\n")
+        spawned = Thread::Queue.new
+        allow(Process).to receive(:spawn).and_wrap_original do |spawn, *argv, **options|
+          spawn.call(*argv, **options).tap { spawned << _1 }
+        end
+        before = Thread.list
+
+        Dir.mktmpdir("lain-grep-bin") do |bin|
+          hanging_git(bin)
+          with_env("PATH" => [bin, ENV.fetch("PATH")].join(File::PATH_SEPARATOR)) do
+            Sync do |task|
+              search = task.async { tool.call(pattern: "needle", path: tmpdir) }
+              child = spawned.pop
+              search.stop
+              search.wait
+
+              expect(Thread.list - before).to be_empty
+              expect { Process.waitpid(child, Process::WNOHANG) }.to raise_error(Errno::ECHILD)
+            end
+          end
+        end
+      end
+    end
+  end
 end

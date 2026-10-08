@@ -242,4 +242,6 @@ RSpec.describe Lain::Tools::Glob do
       expect(tool.call(pattern: "**/*.txt", path: tmpdir).content).not_to include("narrow")
     end
   end
+
+  it_behaves_like "a walk run off the reactor", ->(dir) { { "pattern" => "**/*.rb", "path" => dir } }
 end

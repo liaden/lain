@@ -364,4 +364,8 @@ RSpec.describe Lain::Tools::AstSearch do
       expect(content.lines.last).to include("1500 bytes")
     end
   end
+
+  it_behaves_like "a walk run off the reactor", lambda { |dir|
+    { "pattern" => "def $NAME($$$A)", "language" => "ruby", "path" => dir }
+  }
 end

@@ -323,7 +323,7 @@ ThreadSafety/ClassInstanceVariable:
     - "lib/lain/tool/contracts.rb"
     - "lib/lain/tool/input.rb"
 
-# The seven deliberate thread groups, and they have three legitimate owners.
+# The eight deliberate thread groups, and they have four legitimate owners.
 #
 # Four are the frontend's: the neovim RPC drain/resend pair and its rpc_thread, the
 # TTY reader, and prompt_breaker's watchdog -- each a supervised reader
@@ -353,6 +353,12 @@ ThreadSafety/ClassInstanceVariable:
 # tmux call on, and waiting for one held every child's window until the chat exited.
 # FleetWindows#close, called from the chat's teardown, closes its queue and joins it.
 #
+# The eighth is Tool::Offload, one thread per grep, glob, list_files or ast_search call.
+# A walk calls Dir.glob, Dir.each_child, File.lstat and File.foreach, which no scheduler
+# hook offloads, so on the reactor's thread one search froze the chat. The calling fiber
+# owns it: it joins the thread for the result, and its own ensure kills and joins it
+# when the task is stopped, so no walk outlives the call that started it.
+#
 # Specs spawn threads to TEST concurrency -- channel_spec's drop-oldest races are the
 # subject, not an accident -- so spec/ is excluded wholesale.
 ThreadSafety/NewThread:
@@ -364,6 +370,7 @@ ThreadSafety/NewThread:
     - "lib/lain/frontend/neovim/rpc_thread.rb"
     - "lib/lain/frontend/tty.rb"
     - "lib/lain/provider/http/streaming/faraday_handlers.rb"
+    - "lib/lain/tool/offload.rb"
     - "spec/**/*"
 
 # `rake pspec` forks one process per core (parallel_tests), so a spec's Dir.chdir is

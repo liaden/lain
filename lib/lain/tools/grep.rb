@@ -214,9 +214,11 @@ module Lain
         end
 
         def call(path, input)
-          reads = Files.under(path, walk_limit: @walk_limit, include: @include).within(@walk_limit)
-          found = WALK_CAP.apply(matching(reads, input.path, build_regex(input)).lazy)
-          Searched.new(found:, notices: reads.notices)
+          Tool::Offload.call do
+            reads = Files.under(path, walk_limit: @walk_limit, include: @include).within(@walk_limit)
+            found = WALK_CAP.apply(matching(reads, input.path, build_regex(input)).lazy)
+            Searched.new(found:, notices: reads.notices)
+          end
         end
 
         private

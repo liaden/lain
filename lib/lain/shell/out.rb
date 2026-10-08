@@ -173,15 +173,24 @@ module Lain
       # Run it and wait. Raises whatever `Process.spawn` raises -- `Errno::ENOENT`
       # for a program that is not there.
       #
+      # The kill happens HERE and not at the caller: any early exit, a Timeout or
+      # a killed thread alike, would otherwise leave an orphan holding the pipes
+      # about to be closed. An `ensure`, because a killed thread runs ensure
+      # blocks and no rescue, and the spawn defers interrupts, so no kill can
+      # land between the child existing and this method holding its pid.
+      #
       # @return [self] so `run_command.stdout` chains
       # @raise [Timeout] when the child outlives its bound
       def run_command
+        pid = nil
         pipes = Pipes.new
         feed = Feed.for(@input)
-        pid = spawn(pipes, feed)
+        Thread.handle_interrupt(Object => :never) { pid = spawn(pipes, feed) }
         @exitstatus = collect(pid, pipes.readers(@stdout, @stderr), feed)
+        pid = nil
         self
       ensure
+        terminate(pid) if pid
         pipes&.close
         feed&.close
       end
@@ -205,15 +214,9 @@ module Lain
       # why a one-word command would otherwise be re-split or shelled out.
       def command = [[@argv.first, @argv.first], *@argv.drop(1)]
 
-      # The kill happens HERE and not at the caller: a Timeout that escaped with
-      # the child still running would leave an orphan holding the pipes this
-      # method's caller is about to close.
       def collect(pid, buffers, feed)
         pump(buffers, feed)
         reap(pid)
-      rescue Timeout
-        terminate(pid)
-        raise
       end
 
       def pump(buffers, feed)

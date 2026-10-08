@@ -180,6 +180,62 @@ RSpec.describe Lain::Shell::Out do
     end
   end
 
+  # A killed thread runs ensure blocks and no rescue, so the Timeout path alone
+  # would leave the child running and then a zombie nobody reaps.
+  describe "a run that finished" do
+    def kill_quietly(pid)
+      Process.kill("KILL", pid) if pid&.positive?
+    rescue Errno::ESRCH
+      nil
+    end
+
+    # A finished run signals nothing: the group it would kill can hold a
+    # process the command deliberately left running.
+    it "leaves alone what a finished command left running in its group" do
+      shell = described_class.new("sh", "-c", "sleep 5 >/dev/null 2>&1 & echo $!").run_command
+      background = shell.stdout.to_i
+      sleep 0.1 # a stray TERM sent as the run ended has landed by now
+
+      # The state, not `Process.kill(0)`, which also answers for a zombie.
+      expect(File.read("/proc/#{background}/stat")[/\) (\S)/, 1]).to eq("S")
+    ensure
+      kill_quietly(background)
+    end
+  end
+
+  describe "a run interrupted while the child is still running" do
+    it "kills and reaps the child, leaving neither a live process nor a zombie" do
+      spawned = Queue.new
+      allow(Process).to receive(:spawn).and_wrap_original do |spawn, *argv, **options|
+        spawn.call(*argv, **options).tap { spawned << _1 }
+      end
+
+      runner = Thread.new { described_class.new("sleep", "30").run_command }
+      pid = spawned.pop
+      runner.kill.join
+
+      expect { Process.waitpid(pid, Process::WNOHANG) }.to raise_error(Errno::ECHILD)
+    end
+
+    # The pause widens the moment between the child existing and the run
+    # holding its pid, where a kill once left the child running.
+    it "kills and reaps a child whose run was interrupted as it was spawned" do
+      spawned = Queue.new
+      allow(Process).to receive(:spawn).and_wrap_original do |spawn, *argv, **options|
+        spawn.call(*argv, **options).tap do |pid|
+          spawned << pid
+          sleep 0.3
+        end
+      end
+
+      runner = Thread.new { described_class.new("sleep", "30").run_command }
+      pid = spawned.pop
+      runner.kill.join
+
+      expect { Process.waitpid(pid, Process::WNOHANG) }.to raise_error(Errno::ECHILD)
+    end
+  end
+
   describe "a child killed by a signal" do
     it "reports a nil exit status" do
       expect(described_class.new("sh", "-c", "kill -TERM $$").run_command.exitstatus).to be_nil

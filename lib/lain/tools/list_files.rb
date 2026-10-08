@@ -90,7 +90,7 @@ module Lain
         return Tool::Result.error(problem) if problem
 
         failing("list", path) do
-          listing = entries(path, input.recursive)
+          listing = Tool::Offload.call { entries(path, input.recursive) }
           Tool::Result.ok(listing.empty? ? self.class.empty_message(path) : listing.join("\n"))
         end
       end

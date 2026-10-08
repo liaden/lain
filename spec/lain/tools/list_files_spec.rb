@@ -267,4 +267,6 @@ RSpec.describe Lain::Tools::ListFiles do
       expect(tool.call(path: tmpdir, recursive: true).content).not_to include("narrow")
     end
   end
+
+  it_behaves_like "a walk run off the reactor", ->(dir) { { "path" => dir, "recursive" => true } }
 end

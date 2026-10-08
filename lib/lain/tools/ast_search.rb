@@ -109,9 +109,7 @@ module Lain
 
         language = input.language.downcase.to_sym
         patterns = resolve_patterns(input, language)
-        reads = files_under(path, language).within(@walk_limit)
-        found = capped_matches(reads, input.path, language, patterns)
-        Tool::Result.ok(RESULT_FORMATTER.call(found, patterns:, path: input.path, notices: reads.notices))
+        Tool::Result.ok(Tool::Offload.call { searched(path, input, language, patterns) })
       # `EncodingError` rides with the rest despite NOT being a Lain::Error:
       # the ext refuses a source it would have to transcode, and Ruby's own
       # class is what comes back. {#each_structural_match} has already named the
@@ -122,6 +120,12 @@ module Lain
       end
 
       private
+
+      def searched(path, input, language, patterns)
+        reads = files_under(path, language).within(@walk_limit)
+        found = capped_matches(reads, input.path, language, patterns)
+        RESULT_FORMATTER.call(found, patterns:, path: input.path, notices: reads.notices)
+      end
 
       # {WALK_CAP} owns the one-more-than-the-limit pull, so this stays a
       # single delegation -- the discipline of parsing no file past what the

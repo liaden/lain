@@ -127,7 +127,7 @@ module Lain
         # C locale would make the no-match sentence compare unequal to the one
         # {Middleware::WithholdSecretPaths} rebuilds.
         base = String.new(target(invocation, input.path), encoding: Encoding::UTF_8)
-        found = matches(base, input.pattern)
+        found = Tool::Offload.call { matches(base, input.pattern) }
         Tool::Result.ok(found.empty? ? self.class.no_matches_message(input.pattern, base) : found.join("\n"))
       end
 
