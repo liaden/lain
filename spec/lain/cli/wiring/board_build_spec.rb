@@ -42,7 +42,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
   # `.for` does.
   def classifier_at(root, home, cwd: root)
     project = project_at(root, cwd)
-    described_class.classifier(project:, paths: paths_at(home), table: described_class.rules(project:))
+    paths = paths_at(home)
+    described_class.classifier(project:, paths:, table: described_class.rules(project:, paths:))
   end
 
   def board_for(root, home, options: {}, **rest)
@@ -216,7 +217,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       it "refuses every reader at the file and line, given #{what}" do
         in_tree(config: "\n#{line}\n") do |root, home|
           project = project_at(root)
-          readers = [-> { described_class.rules(project:) },
+          readers = [-> { described_class.rules(project:, paths: paths_at(home)) },
                      -> { described_class.shell_verdict(project:) },
                      -> { described_class.test_layout(project:) },
                      -> { board_for(root, home) }]
@@ -844,7 +845,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       in_tree(config: %(sensitivity denied: %w[/vault/]\n)) do |root, home|
         FileUtils.mkdir_p(File.join(root, "lib"))
         project = project_at(root)
-        factory = described_class.classifiers(project:, paths: paths_at(home), table: described_class.rules(project:))
+        paths = paths_at(home)
+        factory = described_class.classifiers(project:, paths:, table: described_class.rules(project:, paths:))
 
         expect(factory.call(File.join(root, "lib")).classify("../vault/a.txt")).to be_denied
         expect(factory.call("bad\0dir").classify(File.join(root, "vault", "a.txt"))).to be_denied
@@ -1160,13 +1162,13 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         end
       end
 
-      def table_at(root) = Lain::CLI::Wiring::BoardBuild.rules(project: project_at(root))
+      def table_at(root, home) = Lain::CLI::Wiring::BoardBuild.rules(project: project_at(root), paths: paths_at(home))
 
       # The checkout carries a copy of the tracked tree, and the project's own is
       # one absolute word away, so an anchored pattern denies under either root.
       it "denies an anchored pattern under the checkout AND under the project root, and its home rules as before" do
         in_checkout(config: %(sensitivity denied: %w[/vault/]\n)) do |root, home, checkout|
-          leased = project_factory(root, home, table: table_at(root)).for(leased_at(checkout))
+          leased = project_factory(root, home, table: table_at(root, home)).for(leased_at(checkout))
 
           expect(leased.call(nil).denied?("vault/token")).to be(true)
           expect(leased.call(nil).denied?(File.join(root, "vault", "token"))).to be(true)
@@ -1179,7 +1181,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       it "gates an anchored pattern under either root, and answers the stricter of the two verdicts" do
         config = %(sensitivity gated: %w[/notes/], exempt: %w[/fixtures/.env]\n)
         in_checkout(config:) do |root, home, checkout|
-          leased = project_factory(root, home, table: table_at(root)).for(leased_at(checkout))
+          leased = project_factory(root, home, table: table_at(root, home)).for(leased_at(checkout))
 
           expect(leased.call(nil).classify(File.join(root, "notes", "a.txt"))).to be_gated
           expect(leased.call(nil).classify("notes/a.txt")).to be_gated
@@ -1189,7 +1191,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
       it "confines a leased worker to its checkout alone, whichever root denies" do
         in_checkout(config: %(sensitivity denied: %w[/vault/]\n)) do |root, home, checkout|
-          leased = project_factory(root, home, table: table_at(root)).for(leased_at(checkout))
+          leased = project_factory(root, home, table: table_at(root, home)).for(leased_at(checkout))
 
           expect(leased.confinement(nil).contains?(File.join(root, "README.md"))).to be(false)
         end

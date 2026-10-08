@@ -1444,6 +1444,141 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  describe "a related directory" do
+    def related(*entries) = Lain::Sensitivity::Rules.from({ "related" => entries })
+
+    def refusal(entry)
+      related(entry)
+      nil
+    rescue Lain::Config::Refusal => e
+      e.message
+    end
+
+    it "answers related for a path under a home-anchored entry, expanded against the injected home" do
+      sensitivity = described_class.new(home:, cwd:, rules: related("~/dev/pitchcraft"))
+
+      expect(sensitivity.related?("#{home}/dev/pitchcraft/notes.md")).to be(true)
+      expect(sensitivity.related?("~/dev/pitchcraft/docs/plan.md")).to be(true)
+    end
+
+    it "answers related for a path under an absolute entry" do
+      sensitivity = described_class.new(home:, cwd:, rules: related("/srv/shared/"))
+
+      expect(sensitivity.related?("/srv/shared/notes.md")).to be(true)
+    end
+
+    it "answers unrelated outside every entry, including a sibling that shares the prefix" do
+      sensitivity = described_class.new(home:, cwd:, rules: related("~/dev/pitchcraft"))
+
+      expect(sensitivity.related?("#{home}/dev/other/notes.md")).to be(false)
+      expect(sensitivity.related?("#{home}/dev/pitchcraft-old/notes.md")).to be(false)
+      expect(sensitivity.related?("#{home}/dev/pitchcraft/../other/notes.md")).to be(false)
+      expect(described_class.new(home:, cwd:).related?("#{home}/dev/pitchcraft/notes.md")).to be(false)
+    end
+
+    it "answers unrelated for a path it cannot read lexically" do
+      sensitivity = described_class.new(home:, cwd:, rules: related("/srv/shared"))
+
+      expect(sensitivity.related?("/srv/shared/a\0b")).to be(false)
+      expect(sensitivity.related?("/srv/shared/\xFF")).to be(false)
+    end
+
+    it "answers unrelated for the directory itself, which is no file to read" do
+      sensitivity = described_class.new(home:, cwd:, rules: related("/srv/shared"))
+
+      expect(sensitivity.related?("/srv/shared")).to be(false)
+    end
+
+    it "accepts one trailing separator on either anchor" do
+      sensitivity = described_class.new(home:, cwd:, rules: related("~/dev/pitchcraft/", "/srv/shared/"))
+
+      expect(sensitivity.related?("#{home}/dev/pitchcraft/notes.md")).to be(true)
+      expect(sensitivity.related?("/srv/shared/notes.md")).to be(true)
+    end
+
+    # A directory is named literally, so a character that is a glob elsewhere
+    # in this table is only a character here.
+    it "accepts a directory whose name holds a glob character, and matches it literally" do
+      sensitivity = described_class.new(home:, cwd:, rules: related("~/dev/odd*name", "/srv/a?b", "/srv/[x]"))
+
+      expect(sensitivity.related?("#{home}/dev/odd*name/notes.md")).to be(true)
+      expect(sensitivity.related?("#{home}/dev/oddXname/notes.md")).to be(false)
+      expect(sensitivity.related?("/srv/[x]/notes.md")).to be(true)
+    end
+
+    it "refuses an unclean directory path in words about directories, naming it" do
+      ["~/dev/../other", "/srv/./shared", "/srv//shared", "~//"].each do |entry|
+        expect(refusal(entry)).to match(/related .*directory.*#{Regexp.escape(entry.inspect)}/), entry
+        expect(refusal(entry)).not_to match(/glob|pattern/), entry
+      end
+    end
+
+    it "leaves the built-in verdicts in force under a related directory" do
+      sensitivity = described_class.new(home:, cwd:, rules: related("~/dev/pitchcraft"))
+
+      expect(sensitivity.classify("#{home}/dev/pitchcraft/.env")).to be_gated
+      expect(sensitivity.classify("#{home}/dev/pitchcraft/.ssh/id_ed25519")).to be_denied
+    end
+
+    it "refuses an entry that is not a string, and one that is not readable text" do
+      expect { related(1) }.to raise_error(Lain::Config::Refusal, /related must be a string/)
+      expect { related("/srv/a\0b") }.to raise_error(Lain::Config::Refusal, /related must be readable text/)
+    end
+
+    it "refuses an entry that is neither home-anchored nor absolute, naming it" do
+      expect { related("dev/pitchcraft") }.to raise_error(Lain::Config::Refusal, %r{related.*"dev/pitchcraft"})
+    end
+
+    it "refuses an entry the loader finds is not a directory, naming it and the file" do
+      rules = related("~/dev/pitchcraft", "~/dev/pitchcraft/notes.md")
+      files = ->(expanded) { expanded == "#{home}/dev/pitchcraft/notes.md" }
+
+      expect { rules.relating_directories!(files, home:, path: "/p/.lain/config.rb") }
+        .to raise_error(Lain::Config::Refusal,
+                        %r{\A/p/\.lain/config\.rb: .*related takes directories.*"~/dev/pitchcraft/notes\.md"})
+      expect(related("~/dev/pitchcraft").relating_directories!(files, home:)).to be_a(Lain::Sensitivity::Rules)
+    end
+
+    # As an exemption naming a missing path is accepted.
+    it "accepts an entry naming nothing on disk" do
+      rules = related("~/dev/not-yet")
+
+      expect(rules.relating_directories!(->(_expanded) { false }, home:)).to be_a(Lain::Sensitivity::Rules)
+    end
+
+    it "refuses the filesystem root and the home directory spelled as such, naming the entry" do
+      ["/", "~/", "~/dev/.."].each do |entry|
+        expect { related(entry) }
+          .to raise_error(Lain::Config::Refusal, /related.*#{Regexp.escape(entry.inspect)}/), entry
+      end
+      expect { related("/") }.to raise_error(Lain::Config::Refusal, /must name a specific tree/)
+      expect { related("~/") }.to raise_error(Lain::Config::Refusal, /must name a specific tree/)
+    end
+
+    it "refuses the home directory spelled absolutely, once the loader names home" do
+      rules = related("#{home}/")
+
+      expect { rules.relating_directories!(->(_expanded) { false }, home:, path: "/p/.lain/config.rb") }
+        .to raise_error(Lain::Config::Refusal, %r{\A/p/\.lain/config\.rb: .*related must name a specific tree})
+      expect(related("~/dev").relating_directories!(->(_expanded) { false }, home:)).to be_a(Lain::Sensitivity::Rules)
+    end
+
+    it "refuses an ancestor of the home directory, which relates home and more" do
+      ["/home", "/home/"].each do |entry|
+        expect { related(entry).relating_directories!(->(_expanded) { false }, home:, path: "/p/.lain/config.rb") }
+          .to raise_error(Lain::Config::Refusal, %r{related must name a specific tree.*: "/home"})
+      end
+      expect(related("/home/test").relating_directories!(->(_expanded) { false }, home:)).to be_a(Lain::Sensitivity::Rules)
+    end
+
+    it "keeps the table and the classifier deeply frozen" do
+      rules = related(+"~/dev/pitchcraft", +"/srv/shared")
+
+      expect(Ractor.shareable?(rules)).to be(true)
+      expect(Ractor.shareable?(described_class.new(home:, cwd:, rules:))).to be(true)
+    end
+  end
+
   describe "shape" do
     # `be_frozen` on the instance is SHALLOW and passed while `@home` held a
     # mutable String out of `Pathname#to_s`. `Ractor.shareable?` is the

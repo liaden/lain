@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "openssl"
 require "stringio"
 require "tmpdir"
@@ -845,6 +846,71 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       read(path, tool_use_id: "tu_2") { |q| q.dequeue.deny(surface: "spec") }
 
       expect(decisions.length).to eq(2)
+    end
+  end
+
+  # A real classifier over a real `sensitivity related:` table, with the
+  # tmpdir as home, so the entry is written the way a config writes it.
+  describe "a read under a related directory" do
+    subject(:middleware) { described_class.new(ledger:, queue:, journal:, related: classifier) }
+
+    let(:classifier) do
+      Lain::Sensitivity.new(home: dir, cwd: dir,
+                            rules: Lain::Sensitivity::Rules.from({ "related" => ["~/pitchcraft"] }))
+    end
+
+    def write_under(name, content)
+      File.join(dir, name).tap do |path|
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(path, content)
+      end
+    end
+
+    it "masks every flagged region without parking an approval" do
+      path = write_under("pitchcraft/notes.md", one_secret)
+
+      content = read(path).fetch(:result).content
+
+      expect(parks).to be_empty
+      expect(content).not_to include(api_key)
+      expect(content).to include("<redacted:1>")
+    end
+
+    it "journals the read as redacted with nothing released" do
+      path = write_under("pitchcraft/notes.md", one_secret)
+
+      read(path)
+
+      expect(redactions).to contain_exactly(an_object_having_attributes(path:, regions: 1, released: 0))
+      expect(releases).to be_empty
+    end
+
+    it "masks a later read of the same file again without asking, and journals it once" do
+      path = write_under("pitchcraft/notes.md", one_secret)
+      read(path)
+
+      content = read(path, tool_use_id: "tu_2").fetch(:result).content
+
+      expect(content).to include("<redacted:1>")
+      expect(parks).to be_empty
+      expect(redactions.length).to eq(1)
+    end
+
+    it "records the masked read, so an edit over it is refused" do
+      path = write_under("pitchcraft/notes.md", one_secret)
+
+      read(path)
+
+      expect(session.masked_read?(path)).to be(true)
+    end
+
+    it "still parks an approval for a read outside every related directory" do
+      path = write_under("other/notes.md", one_secret)
+
+      read(path) { |q| approve(q) }
+
+      expect(parks.length).to eq(1)
+      expect(read(path, tool_use_id: "tu_2").fetch(:result).content).to include(api_key)
     end
   end
 

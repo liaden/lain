@@ -52,7 +52,7 @@ module Lain
         def for(chronicle:, options:, model:, toolset:, project:, paths: Paths.new,
                 verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty)
           # Compiled once: the exemption check stats the disk.
-          table = rules(project:)
+          table = rules(project:, paths:)
           # The SAME factory reaches both the triage rung and the approving
           # rule, so the two rungs cannot disagree about where a relative word
           # in one command's argv lands.
@@ -246,12 +246,16 @@ module Lain
         # is on disk to ask: the table itself makes no syscall.
         #
         # @param project [Lain::Project]
+        # @param paths [Paths] supplies the HOME a `related` entry expands against
         # @return [Lain::Sensitivity::Rules]
         # @raise [Lain::Config::Refusal] when the file or the table is malformed
-        def rules(project:)
+        def rules(project:, paths:)
           root = project.root
-          Config.sensitivity(root:).exempting_files!(->(anchored) { File.directory?(File.join(root, anchored)) },
-                                                     path: ProjectDir.new(root:).config)
+          config = ProjectDir.new(root:).config
+          not_a_directory = ->(dir) { File.exist?(dir) && !File.directory?(dir) }
+          Config.sensitivity(root:)
+                .exempting_files!(->(anchored) { File.directory?(File.join(root, anchored)) }, path: config)
+                .relating_directories!(not_a_directory, home: paths.home, path: config)
         end
 
         # The `cwd -> #classify` factory {Approval::Escalation::Triage} takes,

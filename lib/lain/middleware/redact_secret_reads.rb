@@ -118,6 +118,12 @@ module Lain
         def self.instance = INSTANCE
       end
 
+      # Where no `related:` is wired, nothing is related, so every flagged
+      # region still asks.
+      module Unrelated
+        def self.related?(_path) = false
+      end
+
       # The contract the required `ledger:` keeps, named so the raise below and
       # the doc above it cannot drift into two different arguments.
       LEDGER_CONTRACT = "the run has ONE region ledger, built on the Switchboard and injected -- " \
@@ -135,7 +141,7 @@ module Lain
       # ledger and the board's one queue, not a second of either. Asserting on
       # behaviour instead cannot tell a fresh ledger from the board's, which is
       # exactly the mutation that survived review.
-      attr_reader :ledger, :queue, :journal
+      attr_reader :ledger, :queue, :journal, :related
 
       # @param ledger [Sensitivity::Ledger] the run's ONE region ledger.
       #   REQUIRED, with no default and no Null Object: a default is how a
@@ -148,8 +154,11 @@ module Lain
       #   {Telemetry::ReadReleased} land
       # @param requester [String, nil] the child a read is asked for, as its
       #   gate names it; nil for the parent, whose context names nobody
+      # @param related [#related?] answers whether an absolute path lies under
+      #   a `sensitivity related:` directory, whose regions mask without asking.
+      #   A default is safe here, unlike the two above: the default asks.
       # @raise [ArgumentError] on a nil ledger or queue
-      def initialize(ledger:, queue:, journal: Channel::Null.instance, requester: nil)
+      def initialize(ledger:, queue:, journal: Channel::Null.instance, requester: nil, related: Unrelated)
         # A missing KEYWORD is Ruby's error; a nil VALUE is not, and nil is
         # exactly what `Switchboard#approvals` carries in an unattended run -- so
         # without this the argument that "no default means no silent approval"
@@ -161,6 +170,7 @@ module Lain
         @queue = queue
         @journal = journal
         @requester = requester
+        @related = related
         # Mutable, on a frozen object, deliberately: `freeze` seals the ivars,
         # not the Set they point at, and this is the run's accumulating
         # answer-memory -- {Sensitivity::Ledger}'s own posture, for its reason.
@@ -237,7 +247,7 @@ module Lain
 
         withheld = withheld_in(carried, effect, scan)
         return carried unless withheld.unreleased.any?
-        return mask(carried, effect, withheld) if declined?(withheld)
+        return mask(carried, effect, withheld) if declined?(withheld) || @related.related?(withheld.path)
 
         settle(carried, effect, withheld)
       end

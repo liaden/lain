@@ -663,6 +663,16 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
   end
 
+  # The read guard asks the board's own policy which directories are related,
+  # so the gate and the mask read one `sensitivity` table.
+  describe "which classifier the read guard asks about related directories" do
+    it "asks the board's policy itself" do
+      board = ToolGuardSpecBoard.new
+
+      expect(read_guard(board).related).to be(board.sensitivity)
+    end
+  end
+
   # A fresh `Sensitivity::Ledger.new` here would answer every message the
   # board's does and hold none of its releases -- the second ledger that class's
   # own no-default rule exists to prevent. Only identity can see it.

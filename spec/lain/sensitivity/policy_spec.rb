@@ -466,7 +466,7 @@ RSpec.describe Lain::Sensitivity::Policy do
         File.chmod(0o644, secret)
         project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
         paths = Lain::Paths.new(env: { "HOME" => home })
-        table = Lain::CLI::Wiring::BoardBuild.rules(project:)
+        table = Lain::CLI::Wiring::BoardBuild.rules(project:, paths:)
         board = Lain::CLI::Wiring::BoardBuild.policy(project:, paths:, table:)
         factory = Lain::CLI::Wiring::BoardBuild.classifiers(project:, paths:, table:)
         sub = File.join(checkout, "sub")
@@ -531,6 +531,19 @@ RSpec.describe Lain::Sensitivity::Policy do
 
       expect(policy.gates?(call("read_file", { "path" => gated }), cwd:)).to be(true)
       expect(policy.classify(gated)).not_to be_ordinary
+    end
+  end
+
+  describe "#related?" do
+    let(:rules) { Lain::Sensitivity::Rules.from({ "related" => ["~/dev/pitchcraft"] }) }
+
+    it "answers this policy's own classifier about a related directory" do
+      expect(policy.related?("#{home}/dev/pitchcraft/notes.md")).to be(true)
+      expect(policy.related?("#{home}/dev/other/notes.md")).to be(false)
+    end
+
+    it "answers false on the Null, so a run that wired no classifier still asks" do
+      expect(described_class::Null.instance.related?("#{home}/dev/pitchcraft/notes.md")).to be(false)
     end
   end
 

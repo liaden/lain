@@ -418,7 +418,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     # one layer down, one argument changed.
     def disarmed_board(root, home)
       project = project_at(root)
-      table = Lain::CLI::Wiring::BoardBuild.rules(project:)
+      table = Lain::CLI::Wiring::BoardBuild.rules(project:, paths: paths_at(home))
       remembered = Lain::Approval::Remembered.from(Lain::Config.load(root: project.root))
       Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m", toolset:,
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,

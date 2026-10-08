@@ -339,7 +339,7 @@ module Lain
       def read_kwargs(chronicle, inputs)
         { ledger: inputs.ledger,
           queue: inputs.approvals || Middleware::RedactSecretReads::Unqueued.instance,
-          journal: chronicle.instrumentation.journal }
+          journal: chronicle.instrumentation.journal, related: inputs.sensitivity }
       end
 
       # The journal is READ off the chronicle's {Agent::Instrumentation}, whose

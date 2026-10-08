@@ -363,7 +363,7 @@ module Lain
       end
     end
 
-    Rules = Data.define(:denied, :gated, :exempt)
+    Rules = Data.define(:denied, :gated, :exempt, :related)
 
     # The `sensitivity` table: what a project adds to the rules below, and the
     # one thing it may take away.
@@ -399,6 +399,14 @@ module Lain
     # {Config::Answers} is right that an entry which can never do anything is
     # indistinguishable from one that was never written: a project whose
     # `.gitconfig` holds no credential has a legitimate reason to say so.
+    #
+    # `related` is not a pattern list and changes no verdict. Each entry is a
+    # directory, home-anchored or absolute -- here a leading `/` is the
+    # filesystem's root, not the project's -- whose flagged regions are masked
+    # without asking ({Sensitivity#related?}). Masking keeps the boundary; only
+    # the prompt goes.
+    #
+    #   sensitivity related: %w[~/dev/pitchcraft]
     class Rules
       # The constants live on this reopen rather than in a `Data.define` block,
       # where they would scope to {Sensitivity} instead (see
@@ -406,7 +414,8 @@ module Lain
       DENIED = "denied"
       GATED = "gated"
       EXEMPT = "exempt"
-      KEYS = [DENIED, GATED, EXEMPT].freeze
+      RELATED = "related"
+      KEYS = [DENIED, GATED, EXEMPT, RELATED].freeze
       # What each key means as a verdict, and the reason it carries. A config
       # entry says so in its own reason, so a human reading a refusal can tell
       # our table from theirs.
@@ -429,6 +438,10 @@ module Lain
                 "`.` or `..` segment"
       DIRECTORY = "names a directory, and an exemption lifts one file: a directory would lift every " \
                   "credential beneath it"
+      RELATED_SHAPE = %(is a directory, home-anchored ("~/dev/app") or absolute ("/srv/app"))
+      NOT_DIRECTORY = "takes directories, and this is not one"
+      UNSPECIFIC = "must name a specific tree, not the filesystem root, the home directory or an ancestor of it"
+      UNCLEAN_DIRECTORY = "is not a clean directory path: no empty, `.` or `..` segment"
       # What an exemption is probed against. Any absolute path would do; the
       # samples and an anchored exemption only have to agree on one, and one
       # path for both anchors probes `/.env` exactly as it probes `~/.env`.
@@ -474,6 +487,8 @@ module Lain
       # {Risk::Keepsake.scalar}'s reason -- interning an unbounded config string
       # leaks it into the fstring table for the life of the process.
       def self.rule(key, pattern, path: nil)
+        return relation(pattern, path:) if key == RELATED
+
         check!(key, pattern, path:)
         compiled = located(key, pattern, path:)
         lifted = key == EXEMPT ? lifted_by(compiled) : []
@@ -482,6 +497,23 @@ module Lain
 
         compiled
       end
+
+      # A directory, not a pattern, so {.check!}'s glob refusals do not apply:
+      # `*` in a directory name is just a character. Kept as written, `~/` and
+      # all, so the classifier expands it against its own injected home.
+      def self.relation(pattern, path: nil)
+        raise malformed(RELATED, pattern, "must be a string", path:) unless pattern.is_a?(String)
+        raise malformed(RELATED, pattern, "must be readable text", path:) unless Sensitivity.readable?(pattern)
+        raise malformed(RELATED, pattern, RELATED_SHAPE, path:) unless pattern.start_with?(HOME, ROOT)
+
+        directory = pattern.delete_suffix(ROOT)
+        raise malformed(RELATED, pattern, UNSPECIFIC, path:) if ["", Sensitivity::TILDE].include?(directory)
+        raise malformed(RELATED, pattern, UNCLEAN_DIRECTORY, path:) if unclean_directory?(directory)
+
+        directory.dup.freeze
+      end
+
+      def self.unclean_directory?(directory) = directory.split(ROOT, -1).drop(1).intersect?(UNCLEAN_SEGMENTS)
 
       def self.located(key, pattern, path: nil)
         level, reason = VERDICTS.fetch(key)
@@ -576,14 +608,15 @@ module Lain
       # under `denied` or `gated` can only ever add, so they stay legal.
       def self.unbounded?(key, pattern) = key == EXEMPT && UNBOUNDED.include?(pattern)
 
-      private_class_method :compile, :rule, :located, :rooted, :literal, :lifted_by, :wholesale,
-                           :lifts_project_ruby?, :check!, :unbounded?, :unmatchable_home?, :unmatchable_root?,
-                           :unclean?, :not_a_list, :unclosed_bracket?
+      private_class_method :compile, :rule, :relation, :unclean_directory?, :located, :rooted, :literal, :lifted_by,
+                           :wholesale, :lifts_project_ruby?, :check!, :unbounded?, :unmatchable_home?,
+                           :unmatchable_root?, :unclean?, :not_a_list, :unclosed_bracket?
 
       # Validated in the constructor too, {Config::Answers}' precedent: a value
       # built by hand carries rules that never came through {.from}.
-      def initialize(denied: [], gated: [], exempt: [])
-        super(denied: settled(DENIED, denied), gated: settled(GATED, gated), exempt: settled(EXEMPT, exempt))
+      def initialize(denied: [], gated: [], exempt: [], related: [])
+        super(denied: settled(DENIED, denied), gated: settled(GATED, gated), exempt: settled(EXEMPT, exempt),
+              related: settled(RELATED, related))
       end
 
       # Whether any pattern here needs a project root to mean anything.
@@ -600,6 +633,28 @@ module Lain
       def exempting_files!(directory, path: nil)
         found = exempt.select(&:rooted?).find { |rule| directory.call(rule.under) }
         raise self.class.malformed(EXEMPT, found.label, DIRECTORY, path:) if found
+
+        self
+      end
+
+      # {#exempting_files!}'s sibling for `related`. A missing entry passes,
+      # as a missing exemption does. Home and its ancestors are refused here,
+      # where the loader names home: the table itself does not know it.
+      #
+      # @param non_directory [#call] `expanded path -> Boolean`, true when
+      #   something is there and it is not a directory
+      # @param home [String] what a leading `~` expands to
+      # @param path [String, nil] the config file, named in the refusal
+      # @return [Rules] self
+      # @raise [Config::Refusal] naming the first entry that holds home or is not a directory
+      def relating_directories!(non_directory, home:, path: nil)
+        home = Pathname.new(home).cleanpath.to_s
+        expanded = related.to_h { |entry| [entry, entry.sub(Sensitivity::TILDE_SEGMENT) { home }] }
+        unspecific = expanded.find { |_entry, absolute| home == absolute || home.start_with?("#{absolute}#{ROOT}") }
+        raise self.class.malformed(RELATED, unspecific.first, UNSPECIFIC, path:) if unspecific
+
+        found = expanded.find { |_entry, absolute| non_directory.call(absolute) }&.first
+        raise self.class.malformed(RELATED, found, NOT_DIRECTORY, path:) if found
 
         self
       end
@@ -804,6 +859,7 @@ module Lain
 
       @rules = [*DENIED, *project_ruby(@anchors), *rules.denied, *rules.exempt.map(&:exactly), *CREDENTIALS,
                 *rules.exempt.select(&:homed?), *PERSONAL, *rules.gated, ORDINARY].freeze
+      @related = rules.related.map { |entry| lexical(entry).freeze }.freeze
       freeze
     end
 
@@ -817,6 +873,14 @@ module Lain
 
     def denied?(path) = classify(path).denied?
     def gated?(path) = classify(path).gated?
+
+    # Whether `path` lies under a `related` directory, whose flagged regions
+    # {Middleware::RedactSecretReads} masks without asking. Unreadable answers
+    # false, which asks.
+    #
+    # @param path [String, Pathname] as on {#classify}
+    # @return [Boolean]
+    def related?(path) = under_related?(text!(path))
 
     private
 
@@ -846,6 +910,13 @@ module Lain
       # takes the two inputs we know of, and unresolvable is exactly the case
       # that must not be waved through.
       MALFORMED
+    end
+
+    def under_related?(written)
+      clean = lexical(written)
+      @related.any? { |directory| clean.start_with?("#{directory}#{ROOT}") }
+    rescue ArgumentError, EncodingError
+      false
     end
 
     def named_within?(clean, within)

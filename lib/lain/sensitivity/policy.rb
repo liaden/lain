@@ -108,6 +108,9 @@ module Lain
 
         def classify(_path) = ORDINARY.verdict
 
+        # Nothing is related, so a flagged region still asks.
+        def related?(_path) = false
+
         # {Filter::Null}, which already means "withholds nothing" -- so the
         # Null's third answer needs no third object. A policy that gates
         # nothing listing everything is the same posture said once more.
@@ -164,6 +167,13 @@ module Lain
       # @param path [String] as a caller spells it; the classifier resolves it
       # @return [Sensitivity::Verdict]
       def classify(path) = @sensitivity.classify(path)
+
+      # Asked by {Middleware::RedactSecretReads}, so the mask reads the same
+      # `sensitivity` table the gate does.
+      #
+      # @param path [String] absolute
+      # @return [Boolean] whether it lies under a `related` directory
+      def related?(path) = @sensitivity.related?(path)
 
       # The stricter of the path as written and every spelling of where it
       # lands. The literal is asked first, so a denied name costs no syscall.
