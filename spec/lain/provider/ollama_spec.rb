@@ -945,6 +945,51 @@ RSpec.describe Lain::Provider::Ollama do
                                "message" => { "role" => "assistant", "content" => "" })}\n" }
     end
 
+    # Built the way the CLI builds a cloud chat, so the gate narrowed is the one
+    # this provider's own round trips are admitted through. The channel is the
+    # live frontend stream, dropped by a TTY session, so the record must land on
+    # the journal.
+    describe "a concurrency 429 from a hosted endpoint" do
+      after { Lain::Provider::Admission.reset! }
+
+      let(:base) { "https://cloud-#{SecureRandom.hex(4)}.example" }
+      let(:journal) { RecordingChannel.new }
+
+      def refused_then(success)
+        stub_request(:post, "#{base}/api/chat")
+          .to_return(status: 429, body: '{"error":"too many concurrent requests"}',
+                     headers: { "Content-Type" => "application/json", "Retry-After" => "0",
+                                "x-ratelimit-max-concurrent" => "1", "x-ratelimit-active" => "1",
+                                "x-ratelimit-queue-limit" => "10", "x-ratelimit-queued" => "10" }).then
+          .to_return(success)
+      end
+
+      def cloud_provider
+        with_env(Lain::Provider::Admission::ENV_KEY => nil, "LAIN_OLLAMA_CLOUD_CONCURRENCY" => nil) do
+          described_class.cloud(api_key: "sk-test", api_base: base, journal:)
+        end
+      end
+
+      { sync: :ok_body, stream: :ok_ndjson }.each do |path, ok|
+        it "narrows its own gate and journals the move on the #{path} path" do
+          stub = refused_then(send(ok))
+          provider = cloud_provider
+
+          response = with_env(Lain::Provider::Admission::ENV_KEY => nil) do
+            provider.complete(request(stream: path == :stream))
+          end
+
+          expect(response).to stop_with(:end_turn)
+          expect(stub).to have_been_requested.twice
+          expect(Lain::Provider::Admission.for(endpoint: provider.admission_endpoint).width).to eq(1)
+          expect(journal.events.grep(Lain::Telemetry::AdmissionNarrowed).map(&:to_h)).to eq(
+            [{ endpoint: Lain::Provider::Admission.canonical(base), from_width: 3, to_width: 1,
+               max_concurrent: 1, active: 1, queue_limit: 10, queued: 10 }]
+          )
+        end
+      end
+    end
+
     it "journals a retried attempt onto the channel, naming the attempt number" do
       stub_chat.to_raise(Faraday::ConnectionFailed).then.to_return(ok_body)
       channel = RecordingChannel.new

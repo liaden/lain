@@ -235,7 +235,7 @@ module Lain
         @deployment = deployment
         @http_middleware = http_middleware
         @model_capabilities = {}
-        @retries = retries || RetryTap.new(channel:, spool: spool || Spool::Null.new)
+        @retries = retries || RetryTap.new(channel:, journal:, spool: spool || Spool::Null.new)
         @config = journaled_retries(config || build_config(api_base:))
         @transport = transport || Transport.new(@config, sink:)
       end
@@ -473,6 +473,10 @@ module Lain
 
       def wait_journal = @journal
 
+      # The same memoised gate {Admitted#admitted} entered, handed to the round
+      # trip's attempt so a concurrency 429 narrows the gate this request holds.
+      def admission = Admission.for(endpoint: admission_endpoint, width: admission_width)
+
       # The one {Admitted} collaborator that is the SERVER's property rather
       # than the caller's, which is why it comes from the deployment. The
       # loopback arm answers nil, meaning "nobody said", leaving {Admission}'s
@@ -539,7 +543,8 @@ module Lain
       # behind and registers no rollback; the streaming path below is the one
       # with something to discard.
       def sync_body(request, frame, witness)
-        @transport.sync_post(encode(request), attempt: @retries.open_attempt.witnessed_by(witness), frame:).body || {}
+        attempt = @retries.open_attempt.witnessed_by(witness).narrowing(admission)
+        @transport.sync_post(encode(request), attempt:, frame:).body || {}
       end
 
       # The assembler is built out here while faraday-retry runs INSIDE
@@ -560,7 +565,7 @@ module Lain
       # rescue one provider-error family, and the original stays on `#cause`.
       def stream_body(request, frame, witness)
         assembler = StreamAssembler.new
-        attempt = @retries.open_attempt { assembler.reset }.witnessed_by(witness)
+        attempt = @retries.open_attempt { assembler.reset }.witnessed_by(witness).narrowing(admission)
         @transport.stream(encode(request), attempt:, frame:) { |chunk| assembler.feed(chunk) }
         assembler.result.tap { note_truncated_stream(assembler, request) }
       rescue JSON::ParserError => e

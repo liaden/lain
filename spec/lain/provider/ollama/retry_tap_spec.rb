@@ -4,7 +4,11 @@ require "webmock/rspec"
 
 RSpec.describe Lain::Provider::Ollama::RetryTap do
   let(:channel) { RecordingChannel.new }
-  let(:tap) { described_class.new(channel:) }
+  let(:journal) { RecordingChannel.new }
+  let(:tap) { described_class.new(channel:, journal:) }
+  let(:base) { "https://cloud.example" }
+
+  def gate(width) = Lain::Provider::Admission.new(endpoint: base, width:)
 
   # Faraday hands the retry_block a real Env whose `request` RequestOptions
   # carries the context the transport stashed the attempt on; a plain Hash with
@@ -205,6 +209,121 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
     end
   end
 
+  # The server names its limit only on a refusal: a successful response carries
+  # no rate-limit header, so a 429 is the one place the width can be learned.
+  describe "#retry_block on a concurrency 429" do
+    def refusal(body: '{"error":"too many concurrent requests"}', klass: Lain::Provider::HTTP::RateLimitError,
+                **headers)
+      response = Faraday::Env.from(status: 429, body:, response_headers: Faraday::Utils::Headers.new(headers))
+      klass.new(response, body)
+    end
+
+    def limit_headers(max_concurrent)
+      { "x-ratelimit-max-concurrent" => max_concurrent.to_s, "x-ratelimit-active" => "1",
+        "x-ratelimit-queue-limit" => "10", "x-ratelimit-queued" => "10" }
+    end
+
+    def concurrency_refusal(max_concurrent) = refusal(**limit_headers(max_concurrent))
+
+    def fire_refusal(exception, through:)
+      tap.retry_block.call(env: env_for(tap.open_attempt.narrowing(through), status: 429), retry_count: 0,
+                           exception:, will_retry_in: 0)
+    end
+
+    it "narrows the gate the retried request was admitted through to the server's limit" do
+      admission = gate(3)
+
+      fire_refusal(concurrency_refusal(1), through: admission)
+
+      expect(admission.width).to eq(1)
+    end
+
+    it "journals the narrowing with the old width, the new width and the header values" do
+      fire_refusal(concurrency_refusal(1), through: gate(3))
+
+      expect(journal.events.grep(Lain::Telemetry::AdmissionNarrowed).map(&:to_h)).to eq(
+        [{ endpoint: base, from_width: 3, to_width: 1, max_concurrent: 1, active: 1, queue_limit: 10, queued: 10 }]
+      )
+    end
+
+    # The channel is the live frontend stream, which a TTY session drops and a
+    # headless run nulls out; only the journal is the session's record.
+    it "writes the narrowing to the journal, not the channel" do
+      fire_refusal(concurrency_refusal(1), through: gate(3))
+
+      expect(channel.events.grep(Lain::Telemetry::AdmissionNarrowed)).to be_empty
+    end
+
+    it "never widens, and journals nothing when the width did not move" do
+      admission = gate(1)
+
+      fire_refusal(concurrency_refusal(3), through: admission)
+
+      expect([admission.width, journal.events.grep(Lain::Telemetry::AdmissionNarrowed)]).to eq([1, []])
+    end
+
+    it "keeps an explicit LAIN_OLLAMA_CLOUD_CONCURRENCY as the ceiling" do
+      declared = with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "2") do
+        Lain::Provider::Ollama::Deployment.cloud(api_key: "k").admission_width
+      end
+      admission = gate(declared)
+
+      fire_refusal(concurrency_refusal(3), through: admission)
+
+      expect(admission.width).to eq(2)
+    end
+
+    it "leaves the width alone on a 429 that names no concurrency limit" do
+      admission = gate(3)
+
+      fire_refusal(refusal(body: '{"error":"slow down"}'), through: admission)
+
+      expect(admission.width).to eq(3)
+    end
+
+    it "ignores a limit header that is not a positive integer" do
+      admission = gate(3)
+
+      fire_refusal(refusal("x-ratelimit-max-concurrent" => "0"), through: admission)
+
+      expect(admission.width).to eq(3)
+    end
+
+    it "leaves the width alone on a retry that was not a 429" do
+      admission = gate(3)
+
+      fire_refusal(Faraday::ConnectionFailed.new("x"), through: admission)
+
+      expect(admission.width).to eq(3)
+    end
+
+    # Only a 429 names the plan's limit; a 5xx that happens to carry the header
+    # is a server fault, not a plan, and must not shrink the session.
+    it "leaves the width alone on a server error carrying the limit header" do
+      admission = gate(3)
+
+      fire_refusal(refusal(klass: Lain::Provider::HTTP::ServerError, **limit_headers(1)), through: admission)
+
+      expect(admission.width).to eq(3)
+    end
+
+    it "raises nothing and stays unbounded when admission is disabled" do
+      admission = Lain::Provider::Admission::Null.new(endpoint: base)
+
+      expect { fire_refusal(concurrency_refusal(1), through: admission) }.not_to raise_error
+      expect([admission.width, journal.events.grep(Lain::Telemetry::AdmissionNarrowed)])
+        .to eq([Float::INFINITY, []])
+    end
+
+    it "narrows nothing for a round trip that was admitted through no gate" do
+      expect do
+        tap.retry_block.call(env: env_for(tap.open_attempt, status: 429), retry_count: 0,
+                             exception: concurrency_refusal(1), will_retry_in: 0)
+      end.not_to raise_error
+      expect(journal.events.grep(Lain::Telemetry::AdmissionNarrowed)).to be_empty
+    end
+  end
+
   # The half a Hash env double cannot prove: that a REAL faraday-retry reaches
   # this request's attempt, which depends on {Transport} threading it onto the
   # Faraday request context. The assembler reset rides exactly this path, so
@@ -223,6 +342,40 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
 
       expect(abandoned).to eq([:discarded])
       expect(channel.events.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)).to eq([1])
+    end
+
+    context "with a hosted endpoint" do
+      def hosted_transport
+        config = zero_retry_config
+        config.ollama_api_base = base
+        config.retry_block = tap.retry_block
+        Lain::Provider::Ollama::Transport.new(config)
+      end
+
+      it "narrows on a concurrency 429 and lets faraday-retry send the retry exactly once" do
+        admission = gate(3)
+        stub = stub_request(:post, "#{base}/api/chat")
+               .to_return(status: 429, body: '{"error":"too many concurrent requests"}',
+                          headers: { "Content-Type" => "application/json", "Retry-After" => "0",
+                                     "x-ratelimit-max-concurrent" => "1" }).then
+               .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: "{}")
+
+        hosted_transport.sync_post({}, attempt: tap.open_attempt.narrowing(admission))
+
+        expect(admission.width).to eq(1)
+        expect(stub).to have_been_requested.twice
+      end
+
+      it "raises the context-length error as before and leaves the width alone" do
+        admission = gate(3)
+        stub_request(:post, "#{base}/api/chat")
+          .to_return(status: 429, body: '{"error":"context length exceeded"}',
+                     headers: { "Content-Type" => "application/json" })
+
+        expect { hosted_transport.sync_post({}, attempt: tap.open_attempt.narrowing(admission)) }
+          .to raise_error(Lain::Provider::HTTP::ContextLengthExceededError)
+        expect(admission.width).to eq(3)
+      end
     end
   end
 end

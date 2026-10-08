@@ -705,6 +705,49 @@ RSpec.describe Lain::Provider::Admission do
     end
   end
 
+  describe "#narrow!" do
+    it "lowers the width and answers the width it replaced" do
+      admission = described_class.new(endpoint:, width: 3)
+
+      expect([admission.narrow!(1), admission.width]).to eq([3, 1])
+    end
+
+    it "never widens" do
+      admission = described_class.new(endpoint:, width: 1)
+
+      expect([admission.narrow!(3), admission.width]).to eq([1, 1])
+    end
+
+    # Both widths are read in the one critical section that moved them, so two
+    # refusals narrowing at once cannot both report the same move.
+    it "yields the move it made, and only when the width moved" do
+      admission = described_class.new(endpoint:, width: 3)
+      moves = []
+
+      admission.narrow!(1) { |from, to| moves << [from, to] }
+      admission.narrow!(1) { |from, to| moves << [from, to] }
+
+      expect(moves).to eq([[3, 1]])
+    end
+
+    # A caller already inside keeps its slot; only admission of the NEXT caller
+    # reads the lowered width.
+    it "lets a caller already inside finish and refuses the next until the count falls under the new width" do
+      admission = described_class.new(endpoint:, width: 2)
+      outcomes = []
+
+      Sync do
+        admission.enter do
+          admission.narrow!(1)
+          outcomes << admission.try_enter { :admitted }
+        end
+        outcomes << admission.try_enter { :admitted }
+      end
+
+      expect(outcomes).to eq([described_class::REFUSED, :admitted])
+    end
+  end
+
   describe ".reset!" do
     # The spec used to mint a random endpoint per example to dodge cross-example
     # leakage -- a fixture working around a missing affordance. This is the
@@ -751,6 +794,14 @@ RSpec.describe Lain::Provider::Admission do
 
       expect(seen).to eq(1)
       expect(admission.in_flight).to eq(0)
+    end
+
+    it "ignores a narrowing, stays unbounded, and reports no move" do
+      admission = described_class.new(endpoint: "http://unbounded.example")
+      moves = []
+
+      expect(admission.narrow!(1) { |from, to| moves << [from, to] }).to eq(Float::INFINITY)
+      expect([admission.width, moves]).to eq([Float::INFINITY, []])
     end
   end
 

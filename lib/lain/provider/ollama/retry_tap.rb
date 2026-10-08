@@ -50,9 +50,10 @@ module Lain
         # error faraday-retry was carrying. The streaming assembler's reset is
         # bound by this: discarding a buffer cannot be allowed to fail.
         #
-        # It also carries the round trip's {ErrorWrapping::WireWitness}, being
-        # the one object every attempt of it is abandoned through. Handed over
-        # after opening, so {#open_attempt}'s shape stays the rollback alone.
+        # It also carries the round trip's {ErrorWrapping::WireWitness} and the
+        # {Admission} gate it was admitted through, being the one object every
+        # attempt of it is abandoned through. Both are handed over after
+        # opening, so {#open_attempt}'s shape stays the rollback alone.
         class Attempt
           # Null Object: a round trip with nothing to discard is abandoned
           # exactly like one that has something, so no caller writes
@@ -62,6 +63,7 @@ module Lain
           def initialize(on_abandon = nil)
             @on_abandon = on_abandon || NOTHING_TO_DISCARD
             @witness = ErrorWrapping::WireWitness::Unwitnessed
+            @gate = Admission::Null.new(endpoint: nil)
           end
 
           def abandon = @on_abandon.call
@@ -75,10 +77,36 @@ module Lain
 
           # @param exception [Exception] what the abandoned attempt failed with
           def attempted(exception) = @witness.attempted(exception)
+
+          # @param gate [#narrow!, #endpoint] the admission this round trip holds a slot in
+          # @return [self]
+          def narrowing(gate)
+            @gate = gate
+            self
+          end
+
+          # @param limit [Integer] the concurrency the server reported
+          # @yieldparam endpoint [String] the narrowed gate's endpoint
+          # @yieldparam from [Integer] the width replaced
+          # @yieldparam to [Integer] the width now in force
+          def narrow!(limit)
+            @gate.narrow!(limit) { |from, to| yield @gate.endpoint, from, to }
+          end
         end
 
-        def initialize(channel:, spool: Spool::Null.new)
+        RATE_LIMIT_HEADERS = {
+          max_concurrent: "x-ratelimit-max-concurrent",
+          active: "x-ratelimit-active",
+          queue_limit: "x-ratelimit-queue-limit",
+          queued: "x-ratelimit-queued"
+        }.freeze
+
+        # @param channel [Lain::Channel] the live stream retries are narrated on
+        # @param journal [#<<] the session's record, where a narrowing lands
+        # @param spool [#open_frame] where each round trip's raw bytes are teed
+        def initialize(channel:, journal: Channel::Null::INSTANCE, spool: Spool::Null.new)
           @channel = channel
+          @journal = journal
           @spool = spool
         end
 
@@ -118,6 +146,11 @@ module Lain
         # `stop_reason` of `:end_turn`, with nothing above the Provider able to
         # tell.
         #
+        # A concurrency 429 also NARROWS the gate this round trip was admitted
+        # through to the limit the server named, so later requests queue here
+        # instead of being refused there. It adds no retry: faraday-retry still owns the wait and
+        # the resend, inside the slot this request already holds.
+        #
         # `then_call` runs LAST because it is the only part of this lambda that
         # is not ours: an arbitrary callback that raises must not cost the
         # attempt its discard or its {Telemetry::ProviderRetry}.
@@ -132,6 +165,7 @@ module Lain
             attempt&.attempted(exception)
             @channel.push(Telemetry::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
                                                        status: env[:status], reason: exception.class.name))
+            narrow_on(attempt, exception)
             then_call&.call(env:, retry_count:, exception:, will_retry_in:, **rest)
           end
         end
@@ -148,6 +182,27 @@ module Lain
         end
 
         private
+
+        def narrow_on(attempt, exception)
+          reported = rate_limits(exception)
+          return unless reported[:max_concurrent]&.positive?
+
+          attempt&.narrow!(reported[:max_concurrent]) do |endpoint, from, to|
+            @journal << Telemetry::AdmissionNarrowed.new(endpoint:, from_width: from, to_width: to, **reported)
+          end
+        end
+
+        # Only a 429 names the plan's limit: the retried 5xx errors
+        # (ServerError, ServiceUnavailableError, OverloadedError) are server
+        # faults, so a limit header on one is not read. The error carries the
+        # response Env its middleware completed, which is where the headers are.
+        def rate_limits(exception)
+          return {} unless exception.is_a?(Provider::HTTP::RateLimitError)
+
+          response = exception.response
+          headers = (response.response_headers if response.respond_to?(:response_headers)) || {}
+          RATE_LIMIT_HEADERS.transform_values { |name| Integer(headers[name].to_s, 10, exception: false) }
+        end
 
         # `env[:request]` reads the RequestOptions on a real Faraday::Env and on
         # a plain-Hash test double alike; nil-safe so a request that opened no

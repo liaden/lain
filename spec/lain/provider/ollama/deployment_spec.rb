@@ -352,13 +352,17 @@ RSpec.describe Lain::Provider::Ollama::Deployment do
     end
 
     describe "admission width" do
-      it "defaults to one, which is safe on every plan including Free" do
-        expect(deployment.admission_width).to eq(1)
+      # A smaller plan answers its first concurrency 429 with its own limit,
+      # and the endpoint narrows to it from then on.
+      it "defaults to three, the probed paid plan's limit" do
+        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => nil) do
+          expect(described_class.cloud(api_key: key).admission_width).to eq(3)
+        end
       end
 
-      it "is raised by LAIN_OLLAMA_CLOUD_CONCURRENCY, the way every other width in lain is set" do
-        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "3") do
-          expect(described_class.cloud(api_key: key).admission_width).to eq(3)
+      it "is set by LAIN_OLLAMA_CLOUD_CONCURRENCY, the way every other width in lain is set" do
+        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "2") do
+          expect(described_class.cloud(api_key: key).admission_width).to eq(2)
         end
       end
 
@@ -403,13 +407,13 @@ RSpec.describe Lain::Provider::Ollama::Deployment do
       # nor a remedy.
       it "treats a non-breaking space variable as unset, the same as the key path does" do
         with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "\u00A0") do
-          expect(described_class.cloud(api_key: key).admission_width).to eq(1)
+          expect(described_class.cloud(api_key: key).admission_width).to eq(3)
         end
       end
 
       it "ignores an empty variable the same as an unset one" do
         with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "") do
-          expect(described_class.cloud(api_key: key).admission_width).to eq(1)
+          expect(described_class.cloud(api_key: key).admission_width).to eq(3)
         end
       end
     end
@@ -580,7 +584,7 @@ RSpec.describe Lain::Provider::Ollama::Deployment do
 
     it "honours to_h's block form, which Hash callers rely on" do
       expect(deployment.to_h { |name, value| [name.to_s, value] })
-        .to eq("api_key" => "[REDACTED]", "admission_width" => 1)
+        .to eq("api_key" => "[REDACTED]", "admission_width" => 3)
     end
 
     # Pattern matching is the other door `Data` opens, and `in {api_key:}` binds
@@ -591,7 +595,7 @@ RSpec.describe Lain::Provider::Ollama::Deployment do
     end
 
     it "answers only the keys a pattern match asked for" do
-      expect(deployment.deconstruct_keys(%i[admission_width])).to eq(admission_width: 1)
+      expect(deployment.deconstruct_keys(%i[admission_width])).to eq(admission_width: 3)
     end
 
     # `Data` opens TWO destructuring doors. Closing `#deconstruct_keys` alone

@@ -166,9 +166,12 @@ module Lain
                                 "one for a local endpoint). Clearing a hosted deployment's key " \
                                 "with #with reaches here too: build Deployment.local instead"
 
-        # One concurrent model is what the Free plan permits, so it is the only
-        # default that is safe on every plan.
-        DEFAULT_ADMISSION_WIDTH = 1
+        # The probed paid plan's limit. A smaller plan refuses with a 429 naming
+        # its own limit, and {RetryTap} narrows the endpoint's gate to it for
+        # every later request. Requests already in flight past the new width are
+        # not recalled: on a plan with no server queue they spend their retries
+        # and may fail with the 429.
+        DEFAULT_ADMISSION_WIDTH = 3
 
         # Env, not a flag: the plan's width cannot be inferred from the API, and
         # every other admission width in lain is already set this way
@@ -210,7 +213,7 @@ module Lain
           # @return [String] the value with surrounding whitespace removed
           def trim(value) = value.to_s.gsub(SURROUNDING_SPACE, "")
 
-          # Loud on a typo: a misspelt width that silently meant 1 would look
+          # Loud on a typo: a misspelt width that silently meant the default would look
           # exactly like admission working. Unlike
           # {Provider::Admission::ENV_KEY}, `0` is refused too -- there it means
           # "unbounded", which is not a thing to ask of a plan that counts

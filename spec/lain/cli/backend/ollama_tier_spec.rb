@@ -80,7 +80,7 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
       expect(provider.send(:queue_for_capacity?)).to be(false)
     end
 
-    # Free-plan width, read by the hosted Deployment from its own env key. Pinned
+    # The default cloud width, read by the hosted Deployment from its own env key. Pinned
     # here because the CLI is the caller that must NOT quietly pass a width of
     # its own and reopen the metered-plan starvation the default exists for.
     it "leaves the cloud plan's width to the deployment's own default" do
@@ -90,7 +90,7 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
                          journal: Lain::Channel::Null.instance)
         end
       end
-      expect(provider.send(:admission_width)).to eq(1)
+      expect(provider.send(:admission_width)).to eq(3)
     end
 
     # The declared width is only worth declaring if Admission actually pins the
@@ -106,7 +106,7 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
         end
       end
       gate = Lain::Provider::Admission.for(endpoint: endpoint_of(provider), width: provider.send(:admission_width))
-      expect(gate.width).to eq(1)
+      expect(gate.width).to eq(3)
     ensure
       Lain::Provider::Admission.reset!
     end

@@ -151,8 +151,9 @@ module Lain
 
       # @return [String] the resolved endpoint this gate governs
       attr_reader :endpoint
+
       # @return [Integer] how many callers may be inside at once
-      attr_reader :width
+      def width = @lock.synchronize { @width }
       # @return [Float] the acquire deadline, in seconds
       attr_reader :deadline
       # Readable so an observer can describe the gate it wraps instead of
@@ -403,6 +404,21 @@ module Lain
       # @return [Integer] callers inside right now; a snapshot, not a reservation
       def in_flight = @lock.synchronize { @count }
 
+      # Lowers the width for every caller admitted from now on; callers already
+      # inside keep their slots. Only ever lowers, so an operator's setting is
+      # the ceiling and a server's report can never widen the gate past it.
+      # Both widths come from the one critical section that moved them, so two
+      # refusals narrowing at once cannot both report the same move.
+      # @param width [Integer] the limit the server reported
+      # @yieldparam from [Integer] the width replaced
+      # @yieldparam to [Integer] the width now in force
+      # @return [Integer] the width it replaced
+      def narrow!(width)
+        replaced = @lock.synchronize { @width.tap { @width = [@width, width].min } }
+        yield replaced, width if block_given? && width < replaced
+        replaced
+      end
+
       private
 
       # The uncontended path returns before reading the clock at all, which is
@@ -443,7 +459,7 @@ module Lain
       # someone is already debugging a stall.
       def refusal
         "#{@endpoint} is busy: no slot for this request within #{@deadline}s " \
-          "(width #{@width}, #{in_flight} in flight; one gate per server, whatever the spelling; " \
+          "(width #{width}, #{in_flight} in flight; one gate per server, whatever the spelling; " \
           "#{ENV_KEY}=0 disables admission)"
       end
 
@@ -488,6 +504,11 @@ module Lain
         # Never refuses, so {REFUSED} is unreachable here.
         # @yieldparam waited [Float] always {NO_WAIT}
         def try_enter(&block) = counted(&block)
+
+        # Admission is off, so there is no width to lower and no move to yield.
+        # @param _width [Integer]
+        # @return [Float] the unbounded width it kept
+        def narrow!(_width) = width
 
         private
 
