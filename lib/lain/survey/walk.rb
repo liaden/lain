@@ -60,8 +60,9 @@ module Lain
     # This diverges from grep's semantics, which read on.
     #
     # IGNORES are git's answer, never ours: when the root is a repository the walk
-    # asks `ls-files` once, and a non-repository root walks everything, which is
-    # what a LaTeX directory or a folder of prose wants. An ignored path is NOT
+    # asks `ls-files`, and a non-repository root walks everything, which is
+    # what a LaTeX directory or a folder of prose wants. A repository nested under
+    # the root is listed from its own directory, where its ignores are known. An ignored path is NOT
     # withheld -- it is simply not listed (see {Withheld}).
     #
     # == The size is a stat, and that is all it is
@@ -79,25 +80,11 @@ module Lain
       # The bounded binary sniff, in bytes.
       SNIFF = 8192
 
-      # Two jobs, one byte: what makes content binary, and what `-z` separates
-      # git's paths with. Both are "the byte no text holds".
+      # What makes content binary: the byte no text holds.
       NUL = "\0"
 
-      # `--cached` and `--others` together are the working tree as it stands, and
-      # `--exclude-standard` applies `.gitignore`, `.git/info/exclude` and the
-      # user's global excludes without us knowing any of their rules. `-z` because
-      # git QUOTES an unusual name otherwise, and a newline in a name splits a
-      # line-delimited reading into two paths that name nothing.
-      LS_FILES = %w[ls-files -z --cached --others --exclude-standard].freeze
-
-      # Seconds one `git` may take. {Project::Dotfiles::GIT_TIMEOUT}'s figure and
-      # reasoning: this runs while a human waits for a survey to open. A child
-      # that outlives it reads as "no repository".
-      GIT_TIMEOUT = 10
-
-      # `**` with `FNM_DOTMATCH` visits every dotfile -- which a survey wants --
-      # but also `.` and `..` and everything under `.git`, which is not content.
-      SKIPPED = %w[. .. .git].freeze
+      # Kept under this name because the survey's own spec bounds its git by it.
+      GIT_TIMEOUT = FileWalk::GIT_TIMEOUT
 
       Listing = Data.define(:path, :absolute, :size, :verdict)
 
@@ -178,38 +165,14 @@ module Lain
 
       private
 
-      # Sorted and de-duplicated here and nowhere else, so both arms answer one
-      # order. Neither call is falsifiable on its own -- `Dir.glob` has sorted
-      # since Ruby 3.0, `git ls-files` merge-sorts its two halves, and no arm
-      # produces a duplicate -- but the guarantee is this method's to make, not
-      # its sources' to keep making.
-      def candidates = (tracked || globbed).uniq.sort
-
-      # nil means "git has no answer here", which covers both a directory that
-      # is not a repository AND one that is itself ignored -- `ls-files` exits 0
-      # with empty output for the second, so an empty answer must fall through
-      # to the glob or `lain survey tmp/notes` silently presents nothing at all.
-      # A repository whose whole tree is ignored therefore walks like a plain
-      # directory, which is what the human naming that directory meant.
-      def tracked
-        listed = git(*LS_FILES)
-        paths = listed.to_s.split(NUL).reject(&:empty?).map { _1.dup.force_encoding(FILESYSTEM) }
-
-        paths unless paths.empty?
+      # Sorted and de-duplicated here and nowhere else, so every arm answers one
+      # order. {FileWalk} lists a repository with git and walks anything else by
+      # hand, so the guarantee is this method's to make, not its source's.
+      def candidates
+        FileWalk.new(root: @root, links: true, shell_out_factory: @shell_out_factory)
+                .map { |absolute| absolute.delete_prefix("#{@root}#{File::SEPARATOR}") }
+                .uniq.sort
       end
-
-      def globbed
-        Dir.glob(File.join(@root, "**", "*"), File::FNM_DOTMATCH)
-           .map { |entry| entry.delete_prefix("#{@root}#{File::SEPARATOR}") }
-           .reject { |relative| skipped?(relative) }
-      end
-
-      # BYTES, and the path BELOW the root. Bytes because `String#split` raises
-      # `ArgumentError` on a name that is not valid UTF-8 -- `café.tex` in a
-      # latin-1 documents tree took the whole survey down -- and below the root
-      # because a root whose own path holds a `.git` component would otherwise
-      # skip every candidate under it.
-      def skipped?(relative) = relative.b.split(File::SEPARATOR).intersect?(SKIPPED)
 
       def sift(relatives)
         decided = relatives.filter_map { |relative| decide(relative) }
@@ -271,21 +234,6 @@ module Lain
 
       # `read` answers nil for an empty file, which is text.
       def binary?(path) = File.open(path, "rb") { |file| file.read(SNIFF).to_s.include?(NUL) }
-
-      # Raw stdout on success and nil for every way git can fail to answer --
-      # non-zero, signalled (`exitstatus` is nil), timed out, or not installed.
-      # Callers read nil as "no repository", which is the fail-open direction
-      # here on purpose: a survey that listed nothing because git was missing
-      # would look like an empty directory.
-      def git(*argv)
-        shell = @shell_out_factory.call("git", "-C", @root, *argv,
-                                        environment: Isolation::Worktree::GIT_CONTEXT_SCRUB,
-                                        timeout: GIT_TIMEOUT)
-        shell.run_command
-        shell.stdout if shell.exitstatus&.zero?
-      rescue Shell::Out::Timeout, SystemCallError
-        nil
-      end
     end
   end
 end

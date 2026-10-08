@@ -122,7 +122,7 @@ module Lain
         # decode -- and pinning them through a real tree costs a fixture each.
         #
         # BYTES throughout: `String#split` raises `ArgumentError` on a name that
-        # is not valid UTF-8 ({Survey::Walk#skipped?} carries the same note), and
+        # is not valid UTF-8 (the survey walk had the same failure on a latin-1 name), and
         # Pathname's arithmetic runs through regexes with the identical failure.
         # The answer is forced back to the encoding the walk's names carry so the
         # two concatenate; it is NOT a claim that an undecodable name survives
