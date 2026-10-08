@@ -28,7 +28,8 @@ RSpec.describe Lain::CLI::PaneCommand do
                "export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; " \
                "export GEM_HOME=#{Gem.paths.home}; " \
                "export GEM_PATH=#{Gem.path.join(File::PATH_SEPARATOR)}; " \
-               "#{described_class.lain_exports}exec #{$PROGRAM_NAME} chat --fork a\\ b")
+               "#{described_class.lain_exports}#{described_class.runtime_exports}" \
+               "exec #{$PROGRAM_NAME} chat --fork a\\ b")
     end
 
     # The blocker: `lain up` runs its pre-flight by exporting LAIN_PREFLIGHT
@@ -128,6 +129,34 @@ RSpec.describe Lain::CLI::PaneCommand do
       allow(RbConfig).to receive(:ruby).and_return("/opt/totally-fake-ruby-9.9.9/bin/ruby")
 
       expect(described_class.call("chat")).to include("/opt/totally-fake-ruby-9.9.9/bin")
+    end
+  end
+
+  # The same stale-server story for variables lain needs but does not own: the
+  # OpenSSL library path, the shared temp directory, and the cloud concurrency
+  # cap. None is a flag default, so none can live in PANE_ENV.
+  describe ".runtime_exports" do
+    it "exports each runtime variable the launching shell set, escaped and in a stable order" do
+      env = { "TMPDIR" => "/home/me/my tmp", "LD_LIBRARY_PATH" => "/opt/lib", "LAIN_OLLAMA_CLOUD_CONCURRENCY" => "2" }
+
+      expect(described_class.runtime_exports(env))
+        .to eq("export LAIN_OLLAMA_CLOUD_CONCURRENCY=2; export LD_LIBRARY_PATH=/opt/lib; " \
+               'export TMPDIR=/home/me/my\ tmp; ')
+    end
+
+    it "omits a name that is unset or blank" do
+      expect(described_class.runtime_exports({ "TMPDIR" => " " })).to eq("")
+    end
+
+    it "carries no credential" do
+      expect(described_class.runtime_exports({ "OLLAMA_API_KEY" => "secret" })).to eq("")
+    end
+
+    it "reaches the command .call builds from the real environment" do
+      allow(ENV).to receive(:[]).and_call_original
+      allow(ENV).to receive(:[]).with("LD_LIBRARY_PATH").and_return("/opt/lib")
+
+      expect(described_class.call("chat")).to include("export LD_LIBRARY_PATH=/opt/lib; ")
     end
   end
 

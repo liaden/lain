@@ -426,6 +426,65 @@ RSpec.describe Lain::CLI::TmuxSurface do
     end
   end
 
+  describe "#missing_from_global_environment" do
+    def answering(present)
+      lambda do |*args|
+        name = args.last
+        if present.include?(name)
+          FakeTmuxShellOut.new(0, "#{name}=v\n",
+                               "")
+        else
+          FakeTmuxShellOut.new(1, "", "unknown variable: #{name}\n")
+        end
+      end
+    end
+
+    it "names the variables the server's global environment lacks" do
+      surface = described_class.new(shell_out_factory: answering(["PATH"]))
+
+      expect(surface.missing_from_global_environment(%w[OLLAMA_API_KEY PATH])).to eq(%w[OLLAMA_API_KEY])
+    end
+
+    it "names nothing when the server holds them all" do
+      surface = described_class.new(shell_out_factory: answering(["OLLAMA_API_KEY"]))
+
+      expect(surface.missing_from_global_environment(%w[OLLAMA_API_KEY])).to eq([])
+    end
+
+    it "never puts a value on the command line" do
+      calls = []
+      surface = described_class.new(shell_out_factory: lambda { |*args|
+        calls << args
+        FakeTmuxShellOut.new(1, "", "")
+      })
+
+      surface.missing_from_global_environment(%w[OLLAMA_API_KEY])
+
+      expect(calls).to eq([["tmux", "show-environment", "-g", "OLLAMA_API_KEY"]])
+    end
+
+    context "with a real tmux server" do
+      before { skip("tmux not found on PATH") unless tmux_present? }
+
+      let(:socket) { "tmux-surface-spec-#{Process.pid}-#{object_id}" }
+      let(:surface) { described_class.new(socket:) }
+
+      around do |example|
+        system("tmux", "-L", socket, "new-session", "-d", "-s", "lain", out: File::NULL, err: File::NULL)
+        system("tmux", "-L", socket, "set-environment", "-g", "LAIN_SPEC_PRESENT_KEY", "v", out: File::NULL)
+        example.run
+      ensure
+        system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL)
+        FileUtils.rm_f(Dir.glob(File.join(ENV.fetch("TMUX_TMPDIR", "/tmp"), "tmux-#{Process.uid}", socket)))
+      end
+
+      it "separates a held name from an absent one on the server's own global environment" do
+        expect(surface.missing_from_global_environment(%w[LAIN_SPEC_PRESENT_KEY LAIN_SPEC_ABSENT_KEY]))
+          .to eq(%w[LAIN_SPEC_ABSENT_KEY])
+      end
+    end
+  end
+
   describe "no tmux, loud degrade" do
     def no_tmux_factory = ->(*_args) { raise Errno::ENOENT, "no such file or directory - tmux" }
 

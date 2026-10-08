@@ -189,6 +189,16 @@ module Lain
         self
       end
 
+      # A pane gets the SERVER's environment, so a credential in the launching
+      # shell but not here never reaches it. Asks by name only, so no value
+      # ever sits on a command line.
+      #
+      # @param names [Array<String>] variable names to look for
+      # @return [Array<String>] those the server's global environment lacks
+      def missing_from_global_environment(names)
+        names.reject { |name| run("show-environment", "-g", name).exitstatus&.zero? }
+      end
+
       private
 
       def new_window_argv(command:, name:, target_session:, cwd:, printing:)

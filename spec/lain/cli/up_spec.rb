@@ -1039,6 +1039,7 @@ RSpec.describe Lain::CLI::Up do
       # the prefix is delegated rather than duplicated -- the same way
       # btw_spec and fork_spec compare against the recipe.
       expect(command).to eq("#{pane_command_class.scrubs}#{pane_command_class.gem_exports}" \
+                            "#{pane_command_class.runtime_exports}" \
                             "exec #{$PROGRAM_NAME} chat --input socket:lain --model claude-fable-5 --no-journal")
     end
 
@@ -1046,6 +1047,7 @@ RSpec.describe Lain::CLI::Up do
       command = capture_chat_pane_command(chat_args: [])
 
       expect(command).to eq("#{pane_command_class.scrubs}#{pane_command_class.gem_exports}" \
+                            "#{pane_command_class.runtime_exports}" \
                             "exec #{$PROGRAM_NAME} chat --input socket:lain")
     end
 
@@ -1080,6 +1082,81 @@ RSpec.describe Lain::CLI::Up do
   # names"). So the check runs the flags' own owner and reports its verdict.
   # These examples therefore assert on the CALL Up makes and on what it does
   # with the answer; what the child then checks is chat_launch_spec's subject.
+  describe "the provider key check" do
+    let(:state_path) { "/tmp/irrelevant-for-these-examples/state.json" }
+
+    def run_up(calls, key_held: false, chat_args: ["--provider", "ollama-cloud"], session_exists: false)
+      spy = lambda do |*args|
+        calls << args
+        absent = args.include?("show-environment") && !key_held
+        FakeShellOut.new((args[1] == "has-session" && !session_exists) || absent ? 1 : 0, "")
+      end
+      with_env("LAIN_PROVIDER" => nil) do
+        described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy).call
+      end
+    end
+
+    def warnings_for(chat_args, key: "sk-the-secret", provider_env: nil)
+      with_env("OLLAMA_API_KEY" => key, "LAIN_PROVIDER" => provider_env) do
+        spy = ->(*args) { FakeShellOut.new(args[1] == "has-session" || args.include?("show-environment") ? 1 : 0, "") }
+        described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy).call.warnings
+      end
+    end
+
+    it "reads the provider from LAIN_PROVIDER when no --provider is typed" do
+      expect(warnings_for([], provider_env: "ollama-cloud").join).to include("OLLAMA_API_KEY")
+    end
+
+    it "strips the provider value the way EnvDefaults does" do
+      expect(warnings_for([], provider_env: " ollama-cloud ").join).to include("OLLAMA_API_KEY")
+    end
+
+    it "reads the --provider=value spelling" do
+      expect(warnings_for(["--provider=ollama-cloud"]).join).to include("OLLAMA_API_KEY")
+    end
+
+    it "treats a blank key in the shell as unset" do
+      expect(warnings_for(["--provider", "ollama-cloud"], key: "  ")).to be_empty
+    end
+
+    it "neither warns nor asks the server when the shell lacks the key" do
+      calls = []
+      report = with_env("OLLAMA_API_KEY" => nil) { run_up(calls) }
+
+      expect(report.warnings).to be_empty
+      expect(calls.flatten).not_to include("show-environment")
+    end
+
+    it "asks nothing when reattaching, since no chat pane is spawned" do
+      calls = []
+      with_env("OLLAMA_API_KEY" => "sk-the-secret") { run_up(calls, session_exists: true) }
+
+      expect(calls.flatten).not_to include("show-environment")
+    end
+
+    it "warns that the chat pane will not see OLLAMA_API_KEY, names the fix, and never the value" do
+      calls = []
+      report = with_env("OLLAMA_API_KEY" => "sk-the-secret") { run_up(calls, key_held: false) }
+
+      expect(report.warnings.join).to include("OLLAMA_API_KEY", "tmux set-environment -g OLLAMA_API_KEY")
+      expect(calls.flatten.join(" ")).not_to include("sk-the-secret")
+      expect(report.warnings.join).not_to include("sk-the-secret")
+    end
+
+    it "says nothing when the server's global environment holds the key" do
+      report = with_env("OLLAMA_API_KEY" => "sk-the-secret") { run_up([], key_held: true) }
+
+      expect(report.warnings).to be_empty
+    end
+
+    it "asks nothing for a provider that needs no key" do
+      calls = []
+      run_up(calls, key_held: false, chat_args: ["--provider", "ollama"])
+
+      expect(calls.flatten).not_to include("show-environment")
+    end
+  end
+
   describe "the chat pre-flight" do
     let(:state_path) { "/tmp/irrelevant-for-these-examples/state.json" }
 
@@ -1253,6 +1330,7 @@ RSpec.describe Lain::CLI::Up do
       expect(calls.flatten).to include("new-session")
       expect(calls.find { |args| args.include?("respawn-pane") }.last)
         .to eq("#{pane_command_class.scrubs}#{pane_command_class.gem_exports}" \
+               "#{pane_command_class.runtime_exports}" \
                "exec #{$PROGRAM_NAME} chat --input socket:lain --no-journal")
       expect(report.warnings).to be_empty
     end

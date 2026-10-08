@@ -36,6 +36,10 @@ module Lain
         LAIN_TEMPERATURE
       ].freeze
 
+      # Variables lain needs that are not flag defaults, so PANE_ENV cannot hold
+      # them: OpenSSL's library path, the shared temp directory, the cloud cap.
+      RUNTIME_ENV = %w[LAIN_OLLAMA_CLOUD_CONCURRENCY LD_LIBRARY_PATH TMPDIR].freeze
+
       # Names lain sets on ITSELF that a pane would be poisoned by.
       # {ChatLaunch::PREFLIGHT_ENV} turns a `lain chat` into a construction
       # check that exits without conversing, and a tmux SERVER hands its own
@@ -59,7 +63,7 @@ module Lain
       # Composed per call, never a constant, because `$PROGRAM_NAME` must be
       # read when the exe runs -- under rspec it is not the lain binary.
       def self.call(*argv)
-        "#{scrubs}#{gem_exports}#{lain_exports}exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
+        "#{scrubs}#{gem_exports}#{lain_exports}#{runtime_exports}exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
       end
 
       # PATH alone is HALF a chruby, and the missing half made `lain up` die
@@ -149,12 +153,19 @@ module Lain
       #
       # Walked in the list's own order rather than the environment's, so the
       # preamble stays byte-stable across runs.
-      def self.lain_exports(env = ENV)
-        PANE_ENV.filter_map do |name|
+      def self.lain_exports(env = ENV) = exports(PANE_ENV, env)
+
+      # Same rules as {.lain_exports}: no secret, the launching shell's value,
+      # stable order.
+      def self.runtime_exports(env = ENV) = exports(RUNTIME_ENV, env)
+
+      def self.exports(names, env)
+        names.filter_map do |name|
           value = env[name]
           "export #{name}=#{Shellwords.escape(value)}; " unless value.to_s.strip.empty?
         end.join
       end
+      private_class_method :exports
     end
   end
 end

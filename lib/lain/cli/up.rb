@@ -1030,6 +1030,7 @@ module Lain
                      gc_schedule: GcSchedule.for(cwd:, paths:))
         @session = session
         @tmux = Tmux.new(socket:, shell_out_factory:)
+        @surface = TmuxSurface.new(socket:, shell_out_factory:)
         @cwd = cwd
         @paths = paths
         @panes = Panes.new(tmux: @tmux, session: @session, window: chat_target)
@@ -1180,7 +1181,33 @@ module Lain
                           "-x", DETACHED_WIDTH.to_s, "-y", DETACHED_HEIGHT.to_s,
                           "-P", "-F", PANE_ID).stdout.strip
         keep_failed_pane
+        @warnings.concat(missing_key_warnings)
         build_panes(cockpit, first)
+      end
+
+      # Checked after `new-session` because a server lain just started takes
+      # this shell's environment, and only an older one can be missing the key.
+      def missing_key_warnings
+        held = provider_keys.select { |name| EnvDefaults.string(name) }
+        @surface.missing_from_global_environment(held).map do |name|
+          "the chat pane will not see #{name}: the running tmux server's environment lacks it -- " \
+            "run `tmux set-environment -g #{name} \"$#{name}\"` and retry"
+        end
+      end
+
+      # Only the provider this launch types or pins in the environment: a
+      # --resume/--fork run's recorded provider and the summarizer's are not checked.
+      def provider_keys
+        provider = typed_provider || EnvDefaults.string("LAIN_PROVIDER")
+        provider == "ollama-cloud" ? ["OLLAMA_API_KEY"] : []
+      end
+
+      def typed_provider
+        @chat_args.each_with_index.filter_map do |arg, index|
+          if arg == "--provider" then @chat_args[index + 1]
+          elsif arg.start_with?("--provider=") then arg.delete_prefix("--provider=")
+          end
+        end.last&.strip
       end
 
       # `lain up` builds a WORKING session or none at all. Splitting
