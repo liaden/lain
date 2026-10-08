@@ -639,6 +639,66 @@ RSpec.describe "lain nvim plugin", :nvim do
     end
   end
 
+  describe "the cockpit's pane command" do
+    def pane_argv(plugin_root: nil)
+      paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @runtime_dir }, **{ nvim_plugin_root: plugin_root }.compact)
+      Shellwords.split(Lain::CLI::Up::Cockpit.new(option: @control, cwd: @project, paths:).nvim_pane_command)
+    end
+
+    def boot_pane(argv, init:)
+      env = { "XDG_RUNTIME_DIR" => @runtime_dir, "XDG_STATE_HOME" => @state_home, "HOME" => @home }
+      @pid = spawn(env, argv.first, "--headless", "-u", init, "-i", "NONE", *argv.drop(1),
+                   chdir: @project, out: File::NULL, err: File::NULL)
+      Timeout.timeout(10) { sleep 0.02 until File.exist?(@control) }
+    end
+
+    it "defines :LainStart under an init that replaces runtimepath" do
+      init = File.join(@project, "init.lua")
+      File.write(init, "vim.o.runtimepath = vim.env.VIMRUNTIME\n")
+
+      boot_pane(pane_argv, init:)
+
+      expect(wait_until { lua("return vim.fn.exists(':LainStart')") == 2 }).to be(true)
+    end
+
+    it "names the start buffer on a clean nvim and keeps the plugin's :LainStart" do
+      init = File.join(@project, "init.lua")
+      File.write(init, "")
+
+      boot_pane(pane_argv, init:)
+
+      expect(wait_until { lua("return vim.fn.exists(':LainStart')") == 2 }).to be(true)
+      expect(lua("return vim.api.nvim_buf_get_name(0)")).to end_with("lain-cockpit://start")
+    end
+
+    it "sources the plugin once when it already loaded at startup" do
+      init = File.join(@project, "init.lua")
+      File.write(init, <<~LUA)
+        vim.g.lain_sourced = 0
+        vim.api.nvim_create_autocmd("SourcePre", {
+          pattern = "*/plugin/lain.lua",
+          callback = function() vim.g.lain_sourced = vim.g.lain_sourced + 1 end,
+        })
+      LUA
+
+      boot_pane(pane_argv, init:)
+
+      expect(wait_until { lua("return vim.fn.exists(':LainStart')") == 2 }).to be(true)
+      expect(lua("return vim.g.lain_sourced")).to eq(1)
+    end
+
+    it "reports the missing plugin in nvim, naming :LainStart and the path" do
+      init = File.join(@project, "init.lua")
+      File.write(init, "")
+      missing = File.join(@project, "no-such-plugin")
+
+      boot_pane(pane_argv(plugin_root: missing), init:)
+
+      messages = wait_until { lua("return vim.api.nvim_exec2('messages', { output = true }).output").presence }
+      expect(messages).to include(":LainStart").and include(missing)
+    end
+  end
+
   describe "works without the plugin" do
     it "a bare nvim --listen attaches exactly as today" do
       boot_nvim(plugin: false)

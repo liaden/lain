@@ -775,8 +775,10 @@ module Lain
         # The whole of the layout wiring: `:LainStart` lays out now if lain has
         # attached, else arms a one-shot so the views open when the sibling
         # pane's `chat --nvim` lands. The rtp injection through `--cmd` is
-        # evaluated before nvim sources rtp `plugin/` files, which is what makes
-        # `:LainStart` exist with zero user config.
+        # evaluated before nvim sources rtp `plugin/` files, which makes
+        # `:LainStart` exist on a bare nvim; a plugin manager that rewrites rtp
+        # in `init.lua` drops it again, so {LOAD_PLUGIN} re-adds and sources it
+        # after the user's config.
         #
         # THE SHAPE IS FORCED twice over, both halves measured on 2026-08-05
         # against nvim 0.12.4:
@@ -842,9 +844,16 @@ module Lain
         # from outside.
         NO_SWAPFILE = "setlocal noswapfile"
 
+        # `lua` takes the rest of the line, so the bars inside never reach the
+        # `-c` parser that dies on them with E488.
+        LOAD_PLUGIN = "if vim.fn.exists(':LainStart') == 0 then " \
+                      "vim.opt.rtp:append(%<root>s); vim.cmd.runtime('plugin/lain.lua') end"
+
+        MISSING_PLUGIN = "if vim.fn.exists(':LainStart') == 0 then vim.api.nvim_err_writeln(%<message>s) end"
+
         def nvim_pane_command
           Shellwords.join(["nvim", *rtp_flag, "--listen", socket,
-                           "-c", NO_SWAPFILE, "-c", SCRATCH_BUFFER, "-c", LAIN_START])
+                           "-c", NO_SWAPFILE, "-c", SCRATCH_BUFFER, "-c", ensure_plugin, "-c", LAIN_START])
         end
 
         def chat_flags = ["--nvim", socket]
@@ -868,6 +877,16 @@ module Lain
         def nvim_plugin_root = @paths.nvim_plugin_root
 
         private
+
+        def ensure_plugin
+          return "lua #{format(MISSING_PLUGIN, message: missing_message.to_json)}" if plugin_missing?
+
+          "lua #{format(LOAD_PLUGIN, root: nvim_plugin_root.to_json)}"
+        end
+
+        def missing_message
+          "lain: the nvim plugin is not at #{nvim_plugin_root}, so :LainStart is unavailable"
+        end
 
         def rtp_flag
           return [] if plugin_missing?

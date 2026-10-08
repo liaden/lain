@@ -1811,11 +1811,16 @@ RSpec.describe Lain::CLI::Up do
         # (which swallows a real failure inside :LainStart -- how a layout that
         # never opened went unnoticed). Both were measured; see
         # `Up::Cockpit::LAIN_START`.
-        expect(first_pane_call(calls).last)
-          .to eq(Shellwords.join(["nvim", "--cmd", "set rtp+=#{paths.nvim_plugin_root}", "--listen", socket,
-                                  "-c", Lain::CLI::Up::Cockpit::NO_SWAPFILE,
-                                  "-c", Lain::CLI::Up::Cockpit::SCRATCH_BUFFER,
-                                  "-c", Lain::CLI::Up::Cockpit::LAIN_START]))
+        tokens = Shellwords.split(first_pane_call(calls).last)
+        loader_at = tokens.index { |token| token.start_with?("lua ") }
+        expect(tokens[loader_at]).to include(paths.nvim_plugin_root)
+        expect(tokens.values_at(*(0...tokens.size).to_a - [loader_at - 1, loader_at]))
+          .to eq(["nvim", "--cmd", "set rtp+=#{paths.nvim_plugin_root}", "--listen", socket,
+                  "-c", Lain::CLI::Up::Cockpit::NO_SWAPFILE,
+                  "-c", Lain::CLI::Up::Cockpit::SCRATCH_BUFFER,
+                  "-c", Lain::CLI::Up::Cockpit::LAIN_START])
+        expect(loader_at).to be_between(tokens.index(Lain::CLI::Up::Cockpit::SCRATCH_BUFFER),
+                                        tokens.index(Lain::CLI::Up::Cockpit::LAIN_START))
         expect(chat_pane_call(calls).last).to end_with("chat --nvim #{Shellwords.escape(socket)} --input socket:lain")
       end
     end
@@ -1910,7 +1915,8 @@ RSpec.describe Lain::CLI::Up do
     # runtimepath-sugar loss, not a cockpit failure -- the split still
     # happens (mirrors the missing-nvim-binary fallback's "never silent"
     # rule, but the fallback itself differs: THAT one drops to a single
-    # pane, this one keeps both and just skips --cmd).
+    # pane, this one keeps both, skips --cmd, and adds a lua -c that reports
+    # the missing plugin inside nvim).
     it "still opens the cockpit with a plain nvim pane, warning namedly, when the shipped plugin is missing" do
       calls = []
       missing_root = "/nonexistent/lain-plugin-nvim"
@@ -1920,6 +1926,7 @@ RSpec.describe Lain::CLI::Up do
 
       expect(first_pane_call(calls).last).not_to include("--cmd")
       expect(first_pane_call(calls).last).to include("--listen")
+      expect(first_pane_call(calls).last).to include(":LainStart").and include(missing_root)
       expect(split_call(calls)).not_to be_nil
       expect(report.warnings.join).to include(missing_root)
     end
