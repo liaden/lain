@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Writes a `lain` launcher that runs this checkout's exe/lain (default target ~/.local/bin).
+#
+#   bin/install-shim [target-dir]
+#
+# Run it from a shell where `ruby` is the project's (4.0.6 from mise), so the shim
+# carries that interpreter instead of whatever the caller's PATH resolves later.
+set -euo pipefail
+
+target=${1:-$HOME/.local/bin}
+marker='# lain-shim: written by bin/install-shim'
+repo=$(cd "$(dirname "$0")/.." && pwd)
+ruby=$(command -v ruby) || { echo "no ruby on PATH" >&2; exit 2; }
+dest="$target/lain"
+
+if { [ -e "$dest" ] || [ -L "$dest" ]; } && ! grep -qxF "$marker" "$dest"; then
+  echo "$dest exists and is not a shim from bin/install-shim; remove it first" >&2
+  exit 1
+fi
+
+mkdir -p "$target"
+rm -f "$dest"
+{
+  echo '#!/usr/bin/env bash'
+  echo "$marker"
+  if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+    printf 'export LD_LIBRARY_PATH=%q\n' "$LD_LIBRARY_PATH"
+  fi
+  printf 'exec %q %q "$@"\n' "$ruby" "$repo/exe/lain"
+} >"$dest"
+chmod +x "$dest"
+echo "installed $dest"
