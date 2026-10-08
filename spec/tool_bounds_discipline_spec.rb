@@ -303,6 +303,13 @@ module ToolBoundsRegistry
               "the content rather than the content"
     ),
     ToolExemption.new(
+      tool: "Lain::Tools::EpicWrite", grounds: ToolExemption::FIXED_RESULT,
+      reason: "answers with the byte count it wrote, the artifact path it wrote to and, for epic.md, " \
+              "how many issues parsed; or a refusal whose size is set by lain's own sentence, the " \
+              "artifact path, the slug or issue id the model sent, or a parse error quoting the one line it refused. " \
+              "The written content is never quoted back"
+    ),
+    ToolExemption.new(
       tool: "Lain::Tools::TodoWrite", grounds: ToolExemption::FIXED_RESULT,
       reason: "answers with the number of items the list now holds; the items themselves came " \
               "from the model and are not quoted back at it"

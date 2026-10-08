@@ -213,7 +213,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     it "builds a driver for the epic the seat mounted, from that one mount" do
       with_project do |root|
         seams = Lain::CLI::EpicDriver::Seams.new(
-          mount: instance_double(Lain::CLI::EpicMount, slug: "alpha"), paths: Lain::Paths.new,
+          mount: instance_double(Lain::CLI::EpicMount, slug: "alpha", mounted?: true), paths: Lain::Paths.new,
           journal: Lain::Channel::Null.instance, conductor: instance_double(Lain::CLI::Conductor),
           toolset_build: instance_double(Lain::CLI::Wiring::ToolsetBuild), asker: nil
         )

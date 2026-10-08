@@ -19,9 +19,10 @@ module Lain
     # == A chat never fails to start over an epic
     #
     # Every refusal from the epic tier answers {NoEpic}, whose whole surface is
-    # `tools == []` -- the one message {ToolsetBuild} sends. `home` and `review`
-    # have no honest null (which epic this is cannot be defaulted), so answering
-    # them would be a lie rather than a Null Object.
+    # `tools` and `mounted?`: its tools are epic_write alone, which needs no
+    # mounted epic. `home` and `review` have no honest null (which epic this is
+    # cannot be defaulted), so answering them would be a lie rather than a Null
+    # Object.
     #
     # == Two constants named Epic, and they are different classes
     #
@@ -33,10 +34,57 @@ module Lain
       # a status line rather than as something that just cost a tool.
       UNWIRED = "request_review is not wired for this chat: %<reason>s"
 
-      # No epic resolved, so no tool. `tools` is the entire duck {ToolsetBuild}
-      # depends on; the class comment says why `home` and `review` are absent.
-      module NoEpic
-        def self.tools = []
+      # No epic resolved. `tools` and `mounted?` are the entire duck its
+      # callers depend on; the class comment says why `home` and `review` are
+      # absent. Its one tool is the epic_write a chat needs to start its first
+      # epic.
+      class NoEpic
+        # @param homes [Homes] where epic_write resolves a home per call
+        def initialize(homes:)
+          @tools = [Lain::Tools::EpicWrite.new(homes:)].freeze
+          freeze
+        end
+
+        attr_reader :tools
+
+        def mounted? = false
+      end
+
+      # The journaled home for any slug, guarded by the reviews every session
+      # recorded for it. The mounted epic answers with the mount's own home, so
+      # its one {Epic::Review} stays the only guard over its journal.
+      class Homes
+        # @param journal [#<<] where a write's {Lain::Epic::DocWritten} lands
+        # @param root [String] the project root the home resolves under
+        # @param paths [Paths] the state home the sessions directory resolves under
+        # @param config [Config] `.lain/config.rb`, which says where epics live
+        # @param mounted [Lain::Epic::Home::Journaled, nil] the mounted epic's home
+        def initialize(journal:, root:, paths:, config:, mounted: nil)
+          @journal = journal
+          @root = root
+          @paths = paths
+          @config = config
+          @mounted = mounted
+        end
+
+        # Folded per call rather than at startup: an unmounted chat pays for the
+        # walk only when it writes, and a review opened since is still seen.
+        # The mounted slug keeps the mount's own Review, folded once at startup.
+        #
+        # @param slug [String] the epic, checked against {Lain::Epic::Home::NAME}
+        # @return [Lain::Epic::Home::Journaled]
+        def for(slug)
+          return @mounted if @mounted&.slug == slug
+
+          Lain::Epic::Home::Journaled.new(Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root, slug:),
+                                          journal: @journal, reviews: reviews(slug))
+        end
+
+        private
+
+        def reviews(slug)
+          Lain::Epic::Review.from_journal(EpicMount.prior_claims(@paths), journal: @journal, epic_slug: slug)
+        end
       end
 
       # The slug resolves BEFORE the journal is opened or folded: the
@@ -59,16 +107,17 @@ module Lain
       # @param root [String] the project directory the epic's home is resolved under
       # @param config [Config] `.lain/config.rb`, loaded by the caller: a file that
       #   will not load refuses the launch, and is never a reason to drop the tool
+      # @param paths [Paths] the state home, shared by the mount and the null
       # @param injected [Hash] collaborators the caller substitutes, passed to {.mount}
       # @option injected [#call, nil] :bindings a thunk reading the live
       #   {HumanReplies}, which the tool reads at CALL time because it does not
       #   exist yet when the toolset is built
       # @return [EpicMount, NoEpic]
-      def self.for(chronicle:, options:, root:, config:, notice: nil, **injected)
-        mount(chronicle:, options:, root:, config:, **injected)
+      def self.for(chronicle:, options:, root:, config:, notice: nil, paths: Paths.new, **injected)
+        mount(chronicle:, options:, root:, config:, paths:, **injected)
       rescue Lain::Error, SystemCallError => e
         (notice || SILENT).call(unwired(e)) if worth_saying?(options[:epic], e)
-        NoEpic
+        NoEpic.new(homes: Homes.new(journal: chronicle.record_journal, root:, paths:, config:))
       end
 
       # @param chronicle [Epic::Chronicle] the epic's record, mounted read-write
@@ -87,7 +136,7 @@ module Lain
       # @option options [String] :epic the slug {Epic#resolve_slug} refuses by
       #   name when it is ambiguous or unknown
       # @return [EpicMount]
-      def self.mount(chronicle:, options:, told:, root:, config:, paths: Paths.new,
+      def self.mount(chronicle:, options:, told:, root:, config:, paths:,
                      bindings: nil, changesets: nil, surface: nil, view: nil, policy: nil)
         new(slug: Epic.new(root:, paths:, config:).resolve_slug(options[:epic], command: "chat --epic"),
             journal: chronicle.record_journal, root:, paths:, config:, bindings:, told:,
@@ -107,6 +156,43 @@ module Lain
       # behalf of `chat --epic`, so its remedy already names the flag a chat can
       # use. Adding one here is what made a notice name two commands.
       def self.unwired(error) = format(UNWIRED, reason: error.message)
+
+      # Every session journal in this project, not merely this chat's: the claim
+      # a restart has to rebuild was written by the session that died.
+      # {CLI::Epic::Journals} is not reused because its type filter is the
+      # progress tier's and would materialize none of these.
+      #
+      # == What it costs, measured rather than guessed
+      #
+      # Startup, in-epic: 35 ms over 50 files / 2.7 MB, 203 ms over 300 files /
+      # 32 MB. Outside an epic: 0 ms, because {.for} resolves the slug first and
+      # the common chat stops there. Nothing prunes the session directory, so an
+      # epic-using project pays a linearly growing tax at every start -- bounding
+      # it (an mtime window, or chaining back through the session header) is a
+      # follow-up against this walk.
+      #
+      # == Why folding EVERY file is the safer half of a real hazard
+      #
+      # A generation is a per-Review counter from 1, so two dead sessions can
+      # both have handed out 1 for this slug, and one's close then releases the
+      # other's held claim. Folding everything MITIGATES that: {Review::Replay}
+      # takes its high-water across every record it is given, so each session
+      # starts above every claim it can see, where a narrower fold would put
+      # every session back at 1. What is left is the genuinely concurrent case,
+      # which a generation carrying a session id would close.
+      #
+      # `sessions_dir`'s OWN default, NOT `project_hash(root)` -- see the note
+      # on {CLI::Epic::Journals#walk}. The claims replayed here were written by a
+      # chat whose journal lands in the cwd-keyed directory, so keying the read
+      # on the resolved root looked somewhere nothing is ever written.
+      #
+      # @param paths [Paths] the state home the sessions directory resolves under
+      # @return [Array<Hash>] every review open and close record on disk
+      def self.prior_claims(paths)
+        SessionJournals.new(dir: paths.sessions_dir,
+                            types: [Lain::Epic::ReviewOpened::JOURNAL_TYPE,
+                                    Lain::Epic::ReviewClosed::JOURNAL_TYPE]).to_a
+      end
 
       private_class_method :mount, :worth_saying?, :unwired
 
@@ -158,10 +244,12 @@ module Lain
         @review = rebuilt_review
       end
 
-      # A collection rather than a tool-or-nil: "a chat outside an epic has no
-      # document to review" is honestly an EMPTY set, which is what keeps a nil
-      # check out of {ToolsetBuild} -- {NoEpic} answers the same message.
-      def tools = @tools ||= [request_review]
+      # A collection rather than a tool-or-nil, so {ToolsetBuild} appends
+      # whatever the epic tier offers with no nil check -- {NoEpic} answers the
+      # same message with epic_write alone.
+      def tools = @tools ||= [request_review, epic_write]
+
+      def mounted? = true
 
       # The journaled home, guarded by the SAME Review the tool holds. A second
       # construction anywhere would leave the regeneration guard guarding
@@ -199,6 +287,11 @@ module Lain
                                        **@review_seams)
       end
 
+      def epic_write
+        Lain::Tools::EpicWrite.new(homes: Homes.new(journal: @journal, root: @root, paths: @paths, config: @config,
+                                                    mounted: home))
+      end
+
       # {Epic::Review.from_journal} and not {Review.new}, so a chat restarted
       # while a human still holds a file goes on refusing to overwrite it.
       #
@@ -212,39 +305,7 @@ module Lain
         Lain::Epic::Review.from_journal(prior_claims, journal: notes, epic_slug: slug)
       end
 
-      # Every session journal in this project, not merely this chat's: the claim
-      # a restart has to rebuild was written by the session that died.
-      # {CLI::Epic::Journals} is not reused because its type filter is the
-      # progress tier's and would materialize none of these.
-      #
-      # == What it costs, measured rather than guessed
-      #
-      # Startup, in-epic: 35 ms over 50 files / 2.7 MB, 203 ms over 300 files /
-      # 32 MB. Outside an epic: 0 ms, because {.for} resolves the slug first and
-      # the common chat stops there. Nothing prunes the session directory, so an
-      # epic-using project pays a linearly growing tax at every start -- bounding
-      # it (an mtime window, or chaining back through the session header) is a
-      # follow-up against this walk.
-      #
-      # == Why folding EVERY file is the safer half of a real hazard
-      #
-      # A generation is a per-Review counter from 1, so two dead sessions can
-      # both have handed out 1 for this slug, and one's close then releases the
-      # other's held claim. Folding everything MITIGATES that: {Review::Replay}
-      # takes its high-water across every record it is given, so each session
-      # starts above every claim it can see, where a narrower fold would put
-      # every session back at 1. What is left is the genuinely concurrent case,
-      # which a generation carrying a session id would close.
-      #
-      # `sessions_dir`'s OWN default, NOT `project_hash(@root)` -- see the note
-      # on {CLI::Epic::Journals#walk}. The claims replayed here were written by a
-      # chat whose journal lands in the cwd-keyed directory, so keying the read
-      # on the resolved root looked somewhere nothing is ever written.
-      def prior_claims
-        SessionJournals.new(dir: @paths.sessions_dir,
-                            types: [Lain::Epic::ReviewOpened::JOURNAL_TYPE,
-                                    Lain::Epic::ReviewClosed::JOURNAL_TYPE]).to_a
-      end
+      def prior_claims = EpicMount.prior_claims(@paths)
     end
   end
 end

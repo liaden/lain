@@ -97,18 +97,18 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = mount_for
 
       expect(mount.slug).to eq("alpha")
-      expect(mount.tools.map(&:name)).to eq(["request_review"])
+      expect(mount.tools.map(&:name)).to eq(%w[request_review epic_write])
     end
 
     # The whole reason --epic exists: the sole-epic default cannot answer, and
     # guessing would hand a human somebody else's document to review.
-    it "offers no tool, and says which epics are here, when several are and none was named" do
+    it "offers no review tool, and says which epics are here, when several are and none was named" do
       create_epic("alpha")
       create_epic("beta")
 
       mount, said = notices_from
 
-      expect(mount.tools).to be_empty
+      expect(mount.tools.map(&:name)).to eq(["epic_write"])
       expect(said.join).to include("alpha", "beta", "lain chat --epic SLUG")
     end
 
@@ -131,7 +131,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = mount_for(options: { epic: "beta" })
 
       expect(mount.slug).to eq("beta")
-      expect(mount.tools.map(&:name)).to eq(["request_review"])
+      expect(mount.tools.map(&:name)).to eq(%w[request_review epic_write])
     end
 
     # The ordinary case. Most chats are not in an epic, and a startup line about
@@ -139,7 +139,8 @@ RSpec.describe Lain::CLI::EpicMount do
     it "says nothing at all when the project has no epics" do
       mount, said = notices_from
 
-      expect(mount.tools).to be_empty
+      expect(mount).not_to be_mounted
+      expect(mount.tools.map(&:name)).to eq(["epic_write"])
       expect(said).to be_empty
     end
 
@@ -161,7 +162,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = nil
 
       expect { mount = mount_for }.not_to raise_error
-      expect(mount.tools).to be_empty
+      expect(mount.tools.map(&:name)).to eq(["epic_write"])
     end
   end
 
@@ -181,6 +182,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = mount_for
 
       expect(mount.notes).to equal(mount.notes)
+      expect(mount).to be_mounted
       expect(mount.tools.first).to be_a(Lain::Tools::RequestReview)
     end
 
@@ -244,7 +246,7 @@ RSpec.describe Lain::CLI::EpicMount do
 
       mount, said = notices_from
 
-      expect(mount).to be(described_class::NoEpic)
+      expect(mount).not_to be_mounted
       expect(said.join).to include("prior.ndjson", "line 1")
     end
 
@@ -318,6 +320,63 @@ RSpec.describe Lain::CLI::EpicMount do
       mount_for(changesets:).tools.first.call({ "stage" => "implementation", "base" => "main" }, invocation)
 
       expect(changesets.asked).to eq([%w[main HEAD]])
+    end
+  end
+
+  describe "epic_write, with or without a mounted epic" do
+    def epic_write(mount) = mount.tools.find { |tool| tool.name == "epic_write" }
+
+    def write_research(mount, slug: "frugirl-mvp", content: "# research\n")
+      epic_write(mount).call({ "slug" => slug, "artifact" => "research", "content" => content }, invocation)
+    end
+
+    def open_claim_from_another_session(slug)
+      home = bare_home(slug)
+      home.research.write("# what the human holds\n")
+      File.open(File.join(sessions_dir, "prior.ndjson"), "ab") do |file|
+        prior = Lain::Epic::Review.new(journal: Lain::Journal.new(io: file), epic_slug: slug)
+        prior.open(path: home.research.path, written: Lain::Epic::Intake::Prose.new(bytes: home.research.read))
+      end
+    end
+
+    it "lands research.md in the epic home from a chat in a project with no epics yet" do
+      result = write_research(mount_for, content: "# frugirl\nfindings\n")
+
+      expect(result).not_to be_error
+      expect(File.read(bare_home("frugirl-mvp").research.path)).to eq("# frugirl\nfindings\n")
+      expect(io.string).to include('"type":"doc_written"', '"epic_slug":"frugirl-mvp"', '"kind":"research"')
+    end
+
+    it "refuses a mounted chat's write while request_review holds the document" do
+      create_epic("frugirl-mvp")
+      mount = mount_for
+      write_research(mount)
+      path = bare_home("frugirl-mvp").research.path
+
+      parked do |task|
+        run = call_in(task, mount.tools.first, { "stage" => "research" })
+        result = write_research(mount, content: "# regenerated\n")
+
+        expect(result).to be_error
+        expect(result.content).to include(path, "under review")
+        mount.review.settle(mount.review.generation_for(path), disk: File.binread(path))
+        run.wait
+      end
+    end
+
+    # A second epic leaves the chat unmounted: with two and none named, the
+    # sole-epic default cannot answer.
+    it "honors, from an unmounted chat, a review another session left open" do
+      open_claim_from_another_session("frugirl-mvp")
+      create_epic("another")
+      mount = mount_for
+
+      result = write_research(mount, content: "# regenerated\n")
+
+      expect(mount).not_to be_mounted
+      expect(result).to be_error
+      expect(result.content).to include("research.md", "under review")
+      expect(File.read(bare_home("frugirl-mvp").research.path)).to eq("# what the human holds\n")
     end
   end
 end

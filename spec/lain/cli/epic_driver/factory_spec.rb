@@ -188,7 +188,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     Lain::CLI::Wiring::ToolsetBuild.new(
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new,
       options: {}, supervisor: Lain::Supervisor.new, parent: -> { Lain::Timeline.empty(store: Lain::Store.new) },
-      journal: Lain::Channel::Null.instance, library: backend.library, epic: Lain::CLI::EpicMount::NoEpic,
+      journal: Lain::Channel::Null.instance, library: backend.library, epic: SpecNulls.unmounted_epic,
       root: repo, switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build
     )
   end
@@ -324,7 +324,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   describe "with no epic mounted" do
     # A refusing Null, never nil: no command ever writes `if env.epic_driver`.
     it "answers a Null that refuses by name, telling the human to mount one" do
-      driver = factory_over(Lain::CLI::EpicMount::NoEpic)
+      driver = factory_over(SpecNulls.unmounted_epic)
 
       expect(driver).not_to be_mounted
       expect { driver.run }.to raise_error(Lain::Error, /this chat is in no epic/)
@@ -334,12 +334,21 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     # isolation or the supervisor must hear the same named refusal as one
     # reaching for #run, never a NoMethodError.
     it "refuses every published reader by name, rather than answering none of them" do
-      driver = factory_over(Lain::CLI::EpicMount::NoEpic)
+      driver = factory_over(SpecNulls.unmounted_epic)
 
       %i[isolation retirement supervisor attempts].each do |reader|
         expect { driver.public_send(reader) }.to raise_error(Lain::Error, /this chat is in no epic/)
       end
       expect(driver.slug).to be_nil
+    end
+
+    # Built through EpicMount.for, as a real chat's is, rather than through the
+    # spec helper the examples above use.
+    it "answers the same Null for the unmounted mount a chat is really handed" do
+      unmounted = Lain::CLI::EpicMount.for(chronicle: Lain::CLI::Chronicle::Null.new, options: {}, root: repo,
+                                           paths:, config:, told: ->(_line) {})
+
+      expect(factory_over(unmounted)).not_to be_mounted
     end
   end
 

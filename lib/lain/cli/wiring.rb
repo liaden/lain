@@ -906,7 +906,7 @@ module Lain
                                       bindings: replies, **ReviewSeams.for(replies, root:))
       end
 
-      # What lain://status draws. {EpicMount::NoEpic} answers only `tools` --
+      # What lain://status draws. {EpicMount::NoEpic} answers only `tools` and `mounted?` --
       # which epic this is has no honest null -- so the CLI's null becomes the
       # frontend's here, once. The fold reads the same root and default state
       # home the mount resolved against, so the buffer folds the epic the mount
@@ -914,7 +914,7 @@ module Lain
       #
       # @return [Frontend::Neovim::StatusView::Mounted, Frontend::Neovim::StatusView::Unmounted]
       def epic_status
-        return Frontend::Neovim::StatusView::Unmounted if epic_mount.equal?(EpicMount::NoEpic)
+        return Frontend::Neovim::StatusView::Unmounted unless epic_mount.mounted?
 
         Frontend::Neovim::StatusView::Mounted.new(slug: epic_mount.slug, status: Epic.new(root:))
       end

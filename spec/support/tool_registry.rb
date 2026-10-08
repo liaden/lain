@@ -109,6 +109,8 @@ module ToolRegistry
     # in production, so they are passed here rather than left to a default that
     # does not exist.
     "request_review" => -> { Lain::Tools::RequestReview.new(home: nil, review: nil, told: SILENT, notes: nil) },
+    # Construction-only, as request_review: nothing here calls #perform.
+    "epic_write" => -> { Lain::Tools::EpicWrite.new(homes: nil) },
     "web_fetch" => -> { Lain::Tools::WebFetch.new },
     "web_search" => -> { Lain::Tools::WebSearch.new },
     "tool_search" => -> { Lain::Tools::ToolSearch.new(toolset: -> { Lain::Toolset.new([]) }) },

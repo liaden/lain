@@ -460,7 +460,7 @@ RSpec.describe "Subagent gating" do
       the_board = board
       build = Lain::CLI::Wiring::ToolsetBuild.new(
         backend:, provider:, chronicle:, options: {}, supervisor: Lain::Supervisor.new(journal:),
-        parent: -> { parent }, journal:, library: backend.library, epic: Lain::CLI::EpicMount::NoEpic,
+        parent: -> { parent }, journal:, library: backend.library, epic: SpecNulls.unmounted_epic,
         root: "/home/tester/project", switchboard: -> { the_board }, askers: SpecNulls::UnwiredAskers.build
       )
       [build, build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { parent }))]

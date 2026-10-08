@@ -30,7 +30,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
     described_class.new(backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {},
                         supervisor: Lain::Supervisor.new, parent: -> { Lain::Timeline.empty(store: Lain::Store.new) },
                         journal: Lain::Channel::Null.instance, library: backend.library,
-                        epic: Lain::CLI::EpicMount::NoEpic, root: @repo,
+                        epic: SpecNulls.unmounted_epic, root: @repo,
                         switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build)
   end
 
@@ -109,7 +109,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
                                 chronicle:, options: {}, supervisor: Lain::Supervisor.new,
                                 parent: -> { Lain::Timeline.empty(store: Lain::Store.new) },
                                 journal: chronicle.durable_journal,
-                                library: backend.library, epic: Lain::CLI::EpicMount::NoEpic, root: @repo,
+                                library: backend.library, epic: SpecNulls.unmounted_epic, root: @repo,
                                 switchboard: -> { SpecNulls::NoSwitchboard },
                                 askers: SpecNulls::UnwiredAskers.build)
     fleet.build(recorder, ask_human:)

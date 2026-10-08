@@ -192,7 +192,7 @@ RSpec.describe Lain::Attachment::Store, :seam do
       Lain::CLI::Wiring::ToolsetBuild.new(
         backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
         supervisor: Lain::Supervisor.new(journal: RecordingChannel.new), parent: -> { Lain::Timeline.new },
-        journal: RecordingChannel.new, library: backend.library, epic: Lain::CLI::EpicMount::NoEpic, root:,
+        journal: RecordingChannel.new, library: backend.library, epic: SpecNulls.unmounted_epic, root:,
         switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build
       )
     end

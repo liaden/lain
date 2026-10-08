@@ -389,7 +389,7 @@ module Lain
         # @param seams [Hash] forwarded to {#initialize} for a real mount
         # @return [Factory, Unmounted]
         def self.for(mount:, **seams)
-          return Unmounted if mount.equal?(EpicMount::NoEpic)
+          return Unmounted unless mount.mounted?
 
           new(mount:, **seams)
         end

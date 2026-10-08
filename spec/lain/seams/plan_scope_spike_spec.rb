@@ -94,7 +94,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
     build = Lain::CLI::Wiring::ToolsetBuild.new(
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, parent: -> { Lain::Timeline.empty },
       supervisor: Lain::Supervisor.new(journal:), journal:, library: backend.library, root: @repo,
-      epic: Lain::CLI::EpicMount::NoEpic, switchboard: -> { the_board }, askers: SpecNulls::UnwiredAskers.build
+      epic: SpecNulls.unmounted_epic, switchboard: -> { the_board }, askers: SpecNulls::UnwiredAskers.build
     )
     build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty }))
     build.role_spawn

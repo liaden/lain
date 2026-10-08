@@ -152,6 +152,15 @@ RSpec.describe Lain::Middleware::ConfineToScope do
     end
   end
 
+  # Epic artifacts are planning documents, and planning is what plan scope is
+  # for, so the epic home stays writable while every other checkout write is held.
+  it "passes epic_write while it confines, though the epic home lies in the checkout" do
+    effect = call("epic_write", { "slug" => "frugirl-mvp", "artifact" => "research", "content" => "r" })
+
+    expect(described_class::CONFINED).not_to have_key("epic_write")
+    expect(through(effect).content).to eq("ran")
+  end
+
   it "passes a tool it does not confine, whatever it names" do
     expect(through(call("read_file", { "path" => File.join(@checkout, "a.rb") })).content).to eq("ran")
   end

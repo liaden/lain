@@ -77,10 +77,10 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   # the Backend's, which is where the run's single load lives.
   let(:library) { backend.library }
 
-  # A chat outside an epic, which is the overwhelmingly common one: its whole
-  # surface is `tools == []`, so nothing below has to know an epic tier exists.
+  # A chat outside an epic, which is the overwhelmingly common one: its only
+  # epic tool is epic_write, so nothing below has to know a mounted epic exists.
   # The example that DOES care wires a real {Lain::CLI::EpicMount}.
-  let(:epic) { Lain::CLI::EpicMount::NoEpic }
+  let(:epic) { SpecNulls.unmounted_epic }
 
   # The run's real switches, not a double: `/mode` writes these, and
   # the whole claim is that a child reads them LIVE. A stub with a fixed
@@ -225,14 +225,31 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
 
     # A chat outside an epic offers no review tool at all, and the way it
-    # says so is an empty collection rather than a nil this build has to test
-    # for. `include` on its own would be vacuous here, so the floor is pinned
-    # too: the set must be the ordinary one, minus nothing.
+    # says so is a collection without one rather than a nil this build has to
+    # test for. `include` on its own would be vacuous here, so the floor is
+    # pinned too: the set must be the ordinary one, minus nothing.
     it "adds no review tool when the chat is in no epic" do
       names = toolset_build.build(recorder, ask_human:).names
 
       expect(names).not_to include("request_review")
       expect(names).to include("subagent", "ask_human", "run_skill", "session_usage")
+    end
+
+    # Built through EpicMount.for, as a real chat's is: it still carries
+    # epic_write, so the chat can start its first epic.
+    context "when a real chat resolved no epic" do
+      let(:epic) do
+        Lain::CLI::EpicMount.for(chronicle: Lain::CLI::Chronicle::Null.new, options: {}, root:,
+                                 config: Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo)),
+                                 told: ->(_line) {})
+      end
+
+      it "offers epic_write and no review tool" do
+        names = toolset_build.build(recorder, ask_human:).names
+
+        expect(names).to include("epic_write")
+        expect(names).not_to include("request_review")
+      end
     end
 
     context "when the chat resolved an epic" do

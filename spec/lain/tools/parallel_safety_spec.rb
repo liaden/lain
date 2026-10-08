@@ -55,12 +55,14 @@ module ParallelSafetySpecSupport
   # durable, ORDERED cross-process append via {Improvement::Sink}: concurrent
   # dispatch could interleave two `sink.append` calls' underlying `write(2)`s
   # in whatever order the scheduler happens to run them, which is exactly the
-  # ordering a model-visible sequence of notes should not depend on), or a
+  # ordering a model-visible sequence of notes should not depend on),
+  # `epic_write` (replaces a file in the epic home and appends a journal
+  # record, so two calls on one artifact race for the last word), or a
   # capability this card's audit never examined (run_skill, ask_human, the
   # web tools, tool_search) -- none opted in without a deliberate audit of
   # its own.
   FALSE_TOOLS = %w[bash edit_file write_file todo_write memory_write improvement_write
-                   run_skill ask_human request_review web_fetch web_search tool_search].freeze
+                   run_skill ask_human request_review epic_write web_fetch web_search tool_search].freeze
 
   # The builder table moved to spec/support/tool_registry.rb once a second
   # cross-tool property (the approval tier -- see
