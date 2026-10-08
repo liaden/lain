@@ -19,7 +19,7 @@ module Lain
     # == A chat never fails to start over an epic
     #
     # Every refusal from the epic tier answers {NoEpic}, whose whole surface is
-    # `tools` and `mounted?`: its tools are epic_write and epic_submit, which
+    # `tools` and `mounted?`: its tools are epic_write, epic_graph and epic_submit, which
     # need no mounted epic. `home` and `review` have no honest null (which epic this is
     # cannot be defaulted), so answering them would be a lie rather than a Null
     # Object.
@@ -36,18 +36,20 @@ module Lain
 
       # No epic resolved. `tools` and `mounted?` are the entire duck its
       # callers depend on; the class comment says why `home` and `review` are
-      # absent. Its tools are the epic_write and epic_submit a chat needs to
-      # start its first epic and put it before its gates.
+      # absent. Its tools are the epic_write, epic_graph and epic_submit a chat
+      # needs to start its first epic, reshape it and put it before its gates.
       class NoEpic
-        # @param homes [Homes] where epic_write resolves a home per call
+        # @param homes [Homes] where epic_write resolves a home per call, and
+        #   which epic_graph edits through
         def initialize(homes:)
           @epic_write = Lain::Tools::EpicWrite.new(homes:)
+          @epic_graph = Lain::Tools::EpicGraph.new(epics: homes.epics)
           freeze
         end
 
         # @param submitter [#submit] the chat's in-process gate submitter
         # @return [Array<Lain::Tool>]
-        def tools(submitter:) = [@epic_write, Lain::Tools::EpicSubmit.new(submitter:)]
+        def tools(submitter:) = [@epic_write, @epic_graph, Lain::Tools::EpicSubmit.new(submitter:)]
 
         def mounted? = false
       end
@@ -81,6 +83,11 @@ module Lain
           Lain::Epic::Home::Journaled.new(Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root, slug:),
                                           journal: @journal, reviews: reviews(slug))
         end
+
+        # The epic verbs, journaling into the chat's own session record.
+        #
+        # @return [CLI::Epic]
+        def epics = Epic.new(root: @root, paths: @paths, config: @config, journal: @journal, homes: method(:for))
 
         private
 
@@ -253,7 +260,9 @@ module Lain
       # @param submitter [#submit] the chat's in-process gate submitter, which
       #   needs the ask_human the toolset is built with
       # @return [Array<Lain::Tool>]
-      def tools(submitter:) = [*(@tools ||= [request_review, epic_write]), Lain::Tools::EpicSubmit.new(submitter:)]
+      def tools(submitter:)
+        [*(@tools ||= [request_review, epic_write, epic_graph]), Lain::Tools::EpicSubmit.new(submitter:)]
+      end
 
       def mounted? = true
 
@@ -293,9 +302,12 @@ module Lain
                                        **@review_seams)
       end
 
-      def epic_write
-        Lain::Tools::EpicWrite.new(homes: Homes.new(journal: @journal, root: @root, paths: @paths, config: @config,
-                                                    mounted: home))
+      def epic_write = Lain::Tools::EpicWrite.new(homes:)
+
+      def epic_graph = Lain::Tools::EpicGraph.new(epics: homes.epics)
+
+      def homes
+        @homes ||= Homes.new(journal: @journal, root: @root, paths: @paths, config: @config, mounted: home)
       end
 
       # {Epic::Review.from_journal} and not {Review.new}, so a chat restarted

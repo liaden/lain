@@ -691,6 +691,32 @@ RSpec.describe Lain::CLI::Epic do
   describe "the graph-editing verbs" do
     def epic_home(slug = "alpha") = Lain::Epic::Home.resolve(config:, paths:, root:, slug:)
 
+    describe "with a journal lent by the caller" do
+      let(:lent) { StringIO.new }
+      let(:lending) do
+        described_class.new(root:, paths:, config: config(:xdg), ignores:, journal: Lain::Journal.new(io: lent))
+      end
+
+      it "records the revision there, and opens no session journal of its own" do
+        write_epic("alpha", chain)
+
+        lending.split("b", "b1,b2", "alpha")
+
+        expect(lent.string).to include('"type":"graph_revision"', '"operation":"split"')
+        expect(graph_revisions).to be_empty
+      end
+
+      it "leaves the lent journal open for the caller" do
+        write_epic("alpha", chain)
+        journal = instance_spy(Lain::Journal)
+
+        edits = described_class.new(root:, paths:, config: config(:xdg), ignores:, journal:)
+        edits.split("b", "b1,b2", "alpha")
+
+        expect(journal).not_to have_received(:close)
+      end
+    end
+
     def graph_revisions
       Dir.children(sessions_dir).select { |name| name.end_with?(".ndjson") }.sort
          .flat_map { |name| Lain::Journal.records(File.foreach(File.join(sessions_dir, name))).to_a }

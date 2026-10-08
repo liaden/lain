@@ -111,6 +111,7 @@ module ToolRegistry
     "request_review" => -> { Lain::Tools::RequestReview.new(home: nil, review: nil, told: SILENT, notes: nil) },
     # Construction-only, as request_review: nothing here calls #perform.
     "epic_write" => -> { Lain::Tools::EpicWrite.new(homes: nil) },
+    "epic_graph" => -> { Lain::Tools::EpicGraph.new(epics: nil) },
     "epic_submit" => -> { Lain::Tools::EpicSubmit.new(submitter: nil) },
     "web_fetch" => -> { Lain::Tools::WebFetch.new },
     "web_search" => -> { Lain::Tools::WebSearch.new },

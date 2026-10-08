@@ -112,7 +112,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = mount_for
 
       expect(mount.slug).to eq("alpha")
-      expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_submit])
+      expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_graph epic_submit])
     end
 
     # The whole reason --epic exists: the sole-epic default cannot answer, and
@@ -123,7 +123,7 @@ RSpec.describe Lain::CLI::EpicMount do
 
       mount, said = notices_from
 
-      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_submit])
+      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_graph epic_submit])
       expect(said.join).to include("alpha", "beta", "lain chat --epic SLUG")
     end
 
@@ -146,7 +146,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = mount_for(options: { epic: "beta" })
 
       expect(mount.slug).to eq("beta")
-      expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_submit])
+      expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_graph epic_submit])
     end
 
     # The ordinary case. Most chats are not in an epic, and a startup line about
@@ -155,7 +155,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount, said = notices_from
 
       expect(mount).not_to be_mounted
-      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_submit])
+      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_graph epic_submit])
       expect(said).to be_empty
     end
 
@@ -177,7 +177,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = nil
 
       expect { mount = mount_for }.not_to raise_error
-      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_submit])
+      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_graph epic_submit])
     end
   end
 
@@ -357,6 +357,58 @@ RSpec.describe Lain::CLI::EpicMount do
       tools_of(mount_for(changesets:)).first.call({ "stage" => "implementation", "base" => "main" }, invocation)
 
       expect(changesets.asked).to eq([%w[main HEAD]])
+    end
+  end
+
+  describe "epic_graph, with or without a mounted epic" do
+    def epic_graph(mount) = tools_of(mount).find { |tool| tool.name == "epic_graph" }
+
+    def split_scaffold(mount, slug: "frugirl-mvp")
+      epic_graph(mount).call({ "verb" => "split", "slug" => slug, "id" => "scaffold", "into" => "cargo-init,ci" },
+                             invocation)
+    end
+
+    def write_epic_md(slug)
+      bare_home(slug).epic.write("# Frugirl\n\n### [ ] `scaffold` scaffold it\n")
+    end
+
+    it "edits the named epic from a chat mounted into another, journaling in this session" do
+      create_epic("alpha")
+      write_epic_md("frugirl-mvp")
+
+      result = split_scaffold(mount_for(options: { epic: "alpha" }))
+
+      expect(result).not_to be_error
+      expect(bare_home("frugirl-mvp").read_epic.ids).to eq(%w[cargo-init ci])
+      expect(io.string).to include('"type":"graph_revision"', '"epic_slug":"frugirl-mvp"')
+    end
+
+    it "refuses while request_review holds epic.md, leaving the file as the human has it" do
+      write_epic_md("frugirl-mvp")
+      mount = mount_for
+      path = bare_home("frugirl-mvp").epic.path
+      before = File.read(path)
+
+      parked do |task|
+        run = call_in(task, tools_of(mount).first, { "stage" => "epic_plan" })
+        result = split_scaffold(mount)
+
+        expect(result).to be_error
+        expect(result.content).to include(path, "under review")
+        expect(File.read(path)).to eq(before)
+        mount.review.settle(mount.review.generation_for(path), disk: File.binread(path))
+        run.wait
+      end
+    end
+
+    it "edits an epic from a chat in no epic" do
+      write_epic_md("frugirl-mvp")
+      create_epic("other-one")
+
+      result = split_scaffold(mount_for)
+
+      expect(result).not_to be_error
+      expect(io.string).to include('"type":"graph_revision"')
     end
   end
 

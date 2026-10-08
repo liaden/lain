@@ -22,7 +22,13 @@ RSpec.describe "approving and denying a parked call in a real cockpit", :e2e do
 
   def reply_tail(cockpit) = final_reply(cockpit).split.last(3).join(" ")
 
-  def reply_drawn?(cockpit) = cockpit.capture(:chat).squish.include?(reply_tail(cockpit))
+  # The pane hard-wraps at its width, mid-word as often as not, so a drawn reply is matched with
+  # every space and line break taken out of both sides.
+  def unwrapped(text) = text.gsub(/\s+/, "")
+
+  def drawn?(chat, text) = unwrapped(chat).include?(unwrapped(text))
+
+  def reply_drawn?(cockpit) = drawn?(cockpit.capture(:chat), reply_tail(cockpit))
 
   def await_turn_drawn(cockpit)
     wait_until(timeout: patience, reason: "an end_turn usage record") { turn_ended?(cockpit) }
@@ -75,7 +81,7 @@ RSpec.describe "approving and denying a parked call in a real cockpit", :e2e do
       expect(journey.fetch(:approval).join("\n")).to include("(no approvals pending)")
       reply_tail = journey.fetch(:reply).split.last(3).join(" ")
       expect(reply_tail).not_to be_empty
-      expect(journey.fetch(:chat).squish).to include(reply_tail)
+      expect(drawn?(journey.fetch(:chat), reply_tail)).to be(true)
     end
 
     it "shows a fleet line above a you> line in an input pane at its floor height" do

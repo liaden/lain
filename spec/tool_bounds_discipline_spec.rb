@@ -310,6 +310,12 @@ module ToolBoundsRegistry
               "The written content is never quoted back"
     ),
     ToolExemption.new(
+      tool: "Lain::Tools::EpicGraph", grounds: ToolExemption::FIXED_RESULT,
+      reason: "answers with the edit applied: the operation, the epic slug, the issue ids it moved and the " \
+              "2 graph digests; or a refusal whose size is set by lain's own sentence and the id or slug " \
+              "the model sent. epic.md is never quoted back"
+    ),
+    ToolExemption.new(
       tool: "Lain::Tools::EpicSubmit", grounds: ToolExemption::FIXED_RESULT,
       reason: "answers with the verdict: approved, denied, deferred or already approved, the artifact digest, " \
               "the stage, the slug and the stage it advanced to; or a refusal whose size is set by lain's own " \

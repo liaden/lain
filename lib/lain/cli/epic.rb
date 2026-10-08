@@ -39,14 +39,12 @@ module Lain
     # would-be cycle, a duplicate id) leaves `epic.md` and the Journal exactly
     # as they were: nothing here degrades to a partial edit.
     #
-    # The write goes straight to the epic artifact, NOT through
-    # {Epic::Home::Journaled}. That decorator adds a `DocWritten` ack and a
-    # review-baton refusal, both of which exist for the PROSE artifacts a human
-    # reviews turn-by-turn ({Epic::Review}); a structural graph edit is the
-    # epic's own machinery revising its own graph, journaled in the vocabulary
-    # built for exactly that ({Epic::Scribe#graph_revised}). Wiring the review
-    # baton into this door is a later card's to make, once something actually
-    # opens a review on `epic.md` mid-edit.
+    # The write goes through the `homes:` the caller lends, which a chat makes
+    # {Epic::Home::Journaled}: its review baton refuses an edit while a human
+    # holds `epic.md` under review ({Epic::Review}), so a split never rewrites
+    # a file being read. Without `homes:` the write goes straight to the
+    # artifact, as the command line does. The revision itself is journaled in
+    # the vocabulary built for exactly that ({Epic::Scribe#graph_revised}).
     #
     # == Every constant from the epic tier is spelled in full
     #
@@ -177,8 +175,14 @@ module Lain
       # @param config [Config] `.lain/config.rb`, already read
       # @param ignores [#reason] the git question, injected so no spec has to
       #   build a repository to exercise the warning
+      # @param journal [#<<, nil] a journal the caller owns, which an edit's
+      #   revision lands in; nil opens (and closes) one per edit
+      # @param homes [#call, nil] answers a slug with the home an edit reads and
+      #   writes through; nil resolves the plain home
       def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
-                     ignores: GitIgnores.new(root))
+                     ignores: GitIgnores.new(root), journal: nil, homes: nil)
+        @journal = journal
+        @homes = homes || method(:home_for)
         @root = root
         @paths = paths
         @config = config
@@ -472,7 +476,7 @@ module Lain
       # answer straight from the graph that is actually on disk.
       def apply(slug, command:)
         resolved = resolve_slug(slug, command:)
-        home = home_for(resolved)
+        home = @homes.call(resolved)
         source = home.epic.read
         preamble = Lain::Epic::Document.preamble_of(source)
         parsed = Lain::Epic::Document.parse_markdown(source)
@@ -546,10 +550,13 @@ module Lain
         ["approved", approved["stage"], approved["artifact_digest"]]
       end
 
-      # Opened and closed around this one write, the way {EpicSubmit} opens one
-      # around its one decision: the fiber is already known good (it named the
+      # A lent journal is the caller's to close. Otherwise opened and closed
+      # around this one write, the way {EpicSubmit} opens one around its one
+      # decision: the fiber is already known good (it named the
       # graph `write_epic` just wrote), so nothing here can refuse.
       def journal_revision(slug, fiber)
+        return Lain::Epic::Scribe.new(epic_slug: slug, journal: @journal).graph_revised(fiber) if @journal
+
         journal = Journal.open(paths: @paths)
         begin
           Lain::Epic::Scribe.new(epic_slug: slug, journal:).graph_revised(fiber)

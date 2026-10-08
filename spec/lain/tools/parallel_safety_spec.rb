@@ -58,13 +58,16 @@ module ParallelSafetySpecSupport
   # ordering a model-visible sequence of notes should not depend on),
   # `epic_write` (replaces a file in the epic home and appends a journal
   # record, so two calls on one artifact race for the last word),
+  # `epic_graph` (rewrites epic.md from a fresh read, so two edits race and
+  # the later one drops the earlier),
   # `epic_submit` (parks on a human's answer and journals a gate decision,
   # so two submits of one stage race to decide it), or a
   # capability this card's audit never examined (run_skill, ask_human, the
   # web tools, tool_search) -- none opted in without a deliberate audit of
   # its own.
   FALSE_TOOLS = %w[bash edit_file write_file todo_write memory_write improvement_write
-                   run_skill ask_human request_review epic_write epic_submit web_fetch web_search tool_search].freeze
+                   run_skill ask_human request_review epic_write epic_graph epic_submit
+                   web_fetch web_search tool_search].freeze
 
   # The builder table moved to spec/support/tool_registry.rb once a second
   # cross-tool property (the approval tier -- see

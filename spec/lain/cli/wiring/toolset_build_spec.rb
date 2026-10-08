@@ -78,7 +78,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   let(:library) { backend.library }
 
   # A chat outside an epic, which is the overwhelmingly common one: its epic
-  # tools are epic_write and epic_submit, so nothing below has to know a
+  # tools are epic_write, epic_graph and epic_submit, so nothing below has to know a
   # mounted epic exists.
   # The example that DOES care wires a real {Lain::CLI::EpicMount}.
   let(:epic) { SpecNulls.unmounted_epic }
@@ -245,10 +245,10 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
                                  told: ->(_line) {})
       end
 
-      it "offers epic_write and epic_submit, and no review tool" do
+      it "offers epic_write, epic_graph and epic_submit, and no review tool" do
         names = toolset_build.build(recorder, ask_human:).names
 
-        expect(names).to include("epic_write", "epic_submit")
+        expect(names).to include("epic_write", "epic_graph", "epic_submit")
         expect(names).not_to include("request_review")
       end
     end
@@ -290,6 +290,39 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         expect(result.content).to start_with("approved")
         decisions = Lain::Journal.records(File.foreach(chronicle.journal_path), type: "gate_decision").to_a
         expect(decisions.map { |record| record.values_at("stage", "approved") }).to eq([["research", true]])
+      end
+    end
+
+    context "when a chat with a session journal reshapes the epic it wrote", :seam do
+      around do |example|
+        Dir.mktmpdir do |dir|
+          @project = dir
+          example.run
+        ensure
+          @chronicle&.close
+        end
+      end
+
+      let(:root) { @project }
+      let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@project, "state"), "HOME" => @project }) }
+      let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo)) }
+      let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:) }
+      let(:epic) { Lain::CLI::EpicMount.for(chronicle:, options: {}, root:, config:, paths:, told: ->(_line) {}) }
+      let(:ask_human) { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) }
+      let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+      it "rewrites epic.md and journals the graph_revision in the chat's session" do
+        tools = build_with(options, paths:, config:).build(recorder, ask_human:)
+        tools.fetch("epic_write").call({ "slug" => "frugirl-mvp", "artifact" => "epic",
+                                         "content" => "# F\n\n### [ ] `scaffold` scaffold it\n" }, invocation)
+
+        tools.fetch("epic_graph").call({ "verb" => "split", "slug" => "frugirl-mvp", "id" => "scaffold",
+                                         "into" => "cargo-init,ci" }, invocation)
+
+        home = Lain::Epic::Home.resolve(config:, paths:, root:, slug: "frugirl-mvp")
+        expect(home.read_epic.ids).to eq(%w[cargo-init ci])
+        revisions = Lain::Journal.records(File.foreach(chronicle.journal_path), type: "graph_revision").to_a
+        expect(revisions.map { |record| record["operation"] }).to eq(["split"])
       end
     end
 

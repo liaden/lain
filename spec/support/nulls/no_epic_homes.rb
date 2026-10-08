@@ -5,6 +5,13 @@ module SpecNulls
   # name rather than writing into somebody's real state home.
   module NoEpicHomes
     def self.for(_slug) = raise(Lain::Error, "this spec wired no epic home")
+
+    # What epic_graph edits through, refusing as {.for} does.
+    def self.epics = self
+
+    %i[add split merge].each do |verb|
+      define_singleton_method(verb) { |*, **| raise(Lain::Error, "this spec wired no epic home") }
+    end
   end
 
   # The mount a chat in no epic is handed, built as {Lain::CLI::EpicMount.for}
