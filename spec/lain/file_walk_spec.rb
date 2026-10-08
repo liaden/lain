@@ -46,6 +46,42 @@ RSpec.describe Lain::FileWalk do
     expect(relatives).to contain_exactly(".gitignore", "tracked.rb", "untracked.rb")
   end
 
+  describe "re-included ignored paths" do
+    subject(:walk) { described_class.new(root:, include: ["notes/**/*.md"]) }
+
+    before do
+      init_repo
+      write(".gitignore", "notes/\ntarget/\n")
+      write("notes/a.md")
+      write("notes/deep/b.md")
+      write("notes/c.txt")
+      write("target/x.md")
+      write("src.rb")
+    end
+
+    it "lists the ignored files an include glob names, beside the normal listing" do
+      expect(relatives).to contain_exactly(".gitignore", "notes/a.md", "notes/deep/b.md", "src.rb")
+    end
+
+    it "matches the glob from the repository top when the walk starts in a subdirectory" do
+      inside = described_class.new(root: File.join(root, "notes"), include: ["notes/**/*.md"])
+
+      expect(inside.map { _1.delete_prefix("#{root}/") }).to contain_exactly("notes/a.md", "notes/deep/b.md")
+    end
+
+    it "lists a file once when it is both tracked and matched" do
+      git("add", "-f", "notes/a.md")
+
+      expect(relatives.count("notes/a.md")).to eq(1)
+    end
+
+    it "counts re-included files against the entry limit, in sorted order" do
+      limited = described_class.new(root:, include: ["notes/**/*.md"], entries: 2)
+
+      expect([limited.map { _1.delete_prefix("#{root}/") }, limited.listed]).to eq([[".gitignore", "notes/a.md"], 3])
+    end
+  end
+
   it "honors the ignores of a repository held by a plain parent" do
     write("notes.txt")
     init_repo("app")

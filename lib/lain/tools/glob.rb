@@ -92,9 +92,10 @@ module Lain
         end
       end
 
-      def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT)
+      def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT, include: [])
         super()
         @walk_limit = walk_limit
+        @include = include
       end
 
       def name = "glob"
@@ -152,7 +153,8 @@ module Lain
       def listed(base, pattern)
         fixed = fixed_directories(pattern)
         prefix = fixed.empty? ? "" : "#{fixed.join("/")}/"
-        walk = FileWalk.new(root: File.expand_path(fixed.join("/"), base), entries: @walk_limit.entries)
+        walk = FileWalk.new(root: File.expand_path(fixed.join("/"), base), entries: @walk_limit.entries,
+                            include: @include)
         files, directories = walk.relative_tree
         rest = pattern.delete_prefix(prefix)
         candidates = pattern.end_with?("/") ? directories.map { "#{_1}/" } : files + directories

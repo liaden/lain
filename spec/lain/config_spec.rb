@@ -67,6 +67,51 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the search table" do
+    it "is empty when the file or the table is absent" do
+      Dir.mktmpdir do |root|
+        expect(described_class.search(root:)).to eq(Lain::SearchRules.empty)
+      end
+    end
+
+    it "reads the include globs and the limits" do
+      Dir.mktmpdir do |root|
+        write_config(root, "search include: [\"notes/**/*.md\"], max_entries: 5, max_bytes: 10\n")
+
+        rules = described_class.search(root:)
+
+        expect([rules.include, rules.limit.entries, rules.limit.bytes]).to eq([["notes/**/*.md"], 5, 10])
+      end
+    end
+
+    it "refuses a misspelt key, naming it, the file's line and the known keys" do
+      Dir.mktmpdir do |root|
+        write_config(root, "\nsearch incldue: [\"x\"]\n")
+
+        expect { described_class.search(root:) }
+          .to raise_error(Lain::Config::Refusal, /config\.rb:2.*incldue.*include, max_entries, max_bytes/)
+      end
+    end
+
+    it "refuses an include glob that leaves the project" do
+      Dir.mktmpdir do |root|
+        write_config(root, "search include: [\"../other/**\"]\n")
+
+        expect { described_class.search(root:) }
+          .to raise_error(Lain::Config::Refusal, %r{\.\./other/\*\*.*stay under the project root})
+      end
+    end
+
+    it "is refused while the file is untrusted" do
+      Dir.mktmpdir do |root|
+        FileUtils.mkdir_p(File.join(root, ".lain"))
+        File.write(config_path(root), "search max_entries: 5\n")
+
+        expect { described_class.search(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+      end
+    end
+  end
+
   describe "a file Ruby cannot run" do
     it "refuses a syntax error, naming the file and line" do
       Dir.mktmpdir do |root|

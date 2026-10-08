@@ -48,9 +48,10 @@ module Lain
         end
       end
 
-      def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT)
+      def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT, include: [])
         super()
         @walk_limit = walk_limit
+        @include = include
       end
 
       def name = "list_files"
@@ -119,7 +120,7 @@ module Lain
       end
 
       def walked(path)
-        walk = FileWalk.new(root: path, entries: @walk_limit.entries)
+        walk = FileWalk.new(root: path, entries: @walk_limit.entries, include: @include)
         [walk.relative_tree.flatten, @walk_limit.notice(listed: walk.listed, read_bytes: 0)]
       end
     end

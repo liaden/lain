@@ -148,14 +148,19 @@ module Lain
         #   behind it must still work -- and, for the same reason, the default is
         #   what a spec has to drive PAST rather than through, or arm selection
         #   would go unrecorded in every real session while looking wired here.
+        # @param search [Lain::SearchRules] the project's `search` table: ignored
+        #   paths the file tools still read, and the walk limits. Empty by default
+        #   for the headless callers, which run over lain's own state.
         def build(recorder, exec: Lain::Exec::Local.new, verdict: Lain::Shell::Verdict.new,
-                  journal: Lain::Channel::Null.instance)
-          [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new, Lain::Tools::Grep.new,
+                  journal: Lain::Channel::Null.instance, search: Lain::SearchRules.empty)
+          walking = { walk_limit: search.limit, include: search.include }
+          [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new(**walking), Lain::Tools::Glob.new(**walking),
+           Lain::Tools::Grep.new(**walking),
            Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new, Lain::Tools::TodoWrite.new,
            Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat),
            Lain::Tools::MemoryRead.new(index: recorder),
            Lain::Tools::Bash.new(exec:, verdict:, journal:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
-           Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new,
+           Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new(**walking),
            Lain::Tools::FileSymbols.new]
         end
       end

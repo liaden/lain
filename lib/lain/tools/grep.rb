@@ -102,14 +102,15 @@ module Lain
 
         # @param path [String] the resolved target, a file or a directory
         # @param walk_limit [Tool::Bounds::WalkLimit] the entries the walk may list
+        # @param include [Array<String>] ignored files to list anyway, as {FileWalk} reads them
         # @param keep [#call] whether the walk would search a name at all, asked
         #   before its readability, so only a name it wanted can count as skipped
         # @return [Files]
-        def self.under(path, keep: EVERY, walk_limit: Tool::Bounds::WalkLimit::DEFAULT)
+        def self.under(path, keep: EVERY, walk_limit: Tool::Bounds::WalkLimit::DEFAULT, include: [])
           return new(root: nil, readable: [path].freeze, unreadable: 0, listed: 0) if File.file?(path)
 
           root = utf8(path)
-          walk = FileWalk.new(root: path, links: true, entries: walk_limit.entries)
+          walk = FileWalk.new(root: path, links: true, entries: walk_limit.entries, include:)
           names = walked(walk).select { |name| keep.call(name) }
           readable, unreadable = names.partition { |name| relative(name, root).valid_encoding? }
           new(root:, readable: readable.sort.freeze, unreadable: unreadable.size, listed: walk.listed)
@@ -207,12 +208,13 @@ module Lain
       # it has enough, rather than scanning every file under `path` before
       # throwing most of the result away.
       class RubySearch
-        def initialize(walk_limit)
+        def initialize(walk_limit, include)
           @walk_limit = walk_limit
+          @include = include
         end
 
         def call(path, input)
-          reads = Files.under(path, walk_limit: @walk_limit).within(@walk_limit)
+          reads = Files.under(path, walk_limit: @walk_limit, include: @include).within(@walk_limit)
           found = WALK_CAP.apply(matching(reads, input.path, build_regex(input)).lazy)
           Searched.new(found:, notices: reads.notices)
         end
@@ -309,9 +311,9 @@ module Lain
       # The out-of-process arm is OPTED INTO, because it is a different
       # dialect and a different walk (see the class note), not merely a
       # different wire.
-      def initialize(client: nil, walk_limit: Tool::Bounds::WalkLimit::DEFAULT)
+      def initialize(client: nil, walk_limit: Tool::Bounds::WalkLimit::DEFAULT, include: [])
         super()
-        @search = client ? CoreSearch.new(client) : RubySearch.new(walk_limit)
+        @search = client ? CoreSearch.new(client) : RubySearch.new(walk_limit, include)
       end
 
       def name = "grep"

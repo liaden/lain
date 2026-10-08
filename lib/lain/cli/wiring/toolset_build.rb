@@ -208,6 +208,7 @@ module Lain
           @backend = backend
           @attachments = attachments
           @exec = exec
+          @root = root
           @verdict = verdict
           @epic = epic
           @askers = askers
@@ -289,7 +290,8 @@ module Lain
         # what it was given -- the member IS the object handed to this
         # constructor, so a second ivar would be a second thing to keep in step.
         def capability_floor(recorder)
-          Lain::Toolset.new(BaseTools.build(recorder, exec: @exec, verdict: @verdict, journal: seam.journal))
+          Lain::Toolset.new(BaseTools.build(recorder, exec: @exec, verdict: @verdict, journal: seam.journal,
+                                                      search: Lain::Config.search(root: @root)))
         end
 
         # The session model's own capabilities, memoized because the probe is a

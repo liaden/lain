@@ -12,8 +12,8 @@ module Lain
   # no reading one table past a typo in another.
   #
   # Each table is one small class's whole surface -- {Epics}, {Answers},
-  # {Isolation}, {Sensitivity::Rules}, {Shell::Exclusions}, {TestLayout} -- so
-  # a wrong-shaped value inside one is loud instead of silently defaulting or
+  # {Isolation}, {Sensitivity::Rules}, {Shell::Exclusions}, {SearchRules},
+  # {TestLayout} -- so a wrong-shaped value inside one is loud instead of silently defaulting or
   # crashing three call frames deep.
   #
   # The user's `$XDG_CONFIG_HOME/lain/config.rb` is read by {.middleware}
@@ -59,6 +59,15 @@ module Lain
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
     def self.shell_exclusions(root:) = built(root).shell
+
+    # What a project searches beyond the files git shows, and how much one
+    # walk may cost. `root:` is REQUIRED, as {.sensitivity}'s is.
+    #
+    # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @return [SearchRules] empty when the file or the table is absent
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] as {.load}
+    def self.search(root:) = built(root).search
 
     # The middleware the user's config.rb and then this project's ask to run in
     # each phase. The only reader of the user's file: it runs in every project,

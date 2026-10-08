@@ -8,7 +8,7 @@ module Lain
     # is the reader: absence must stay distinguishable from a declared table so
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
-    Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :tests, :middleware) do
+    Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -22,7 +22,7 @@ module Lain
     # A refusal names the line of the verb that caused it, because the user
     # wrote Ruby and a backtrace into this file points nowhere they can edit.
     class Builder
-      VERBS = %i[epics approval isolation sensitivity shell tests middleware].freeze
+      VERBS = %i[epics approval isolation sensitivity shell search tests middleware].freeze
 
       # The user's config.rb runs in every project, so the tables that rule
       # one project stay in that project's file.
@@ -103,6 +103,7 @@ module Lain
                   isolation: @tables.fetch(:isolation, Isolation.empty),
                   sensitivity: @tables.fetch(:sensitivity, Sensitivity::Rules.empty),
                   shell: @tables.fetch(:shell, Shell::Exclusions.empty),
+                  search: @tables.fetch(:search, SearchRules.empty),
                   tests: @tables[:tests],
                   middleware: @tables.fetch(:middleware, Middleware.empty))
       end
@@ -133,6 +134,10 @@ module Lain
 
       def shell(**table)
         declare(:shell, Shell::Exclusions::TABLE, table) { |at| Shell::Exclusions.from(shaped(table), path: at) }
+      end
+
+      def search(**table)
+        declare(:search, SearchRules::TABLE, table) { |at| SearchRules.from(shaped(table), path: at) }
       end
 
       def middleware(&block)

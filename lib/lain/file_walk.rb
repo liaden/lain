@@ -16,6 +16,11 @@ module Lain
     # git quotes an unusual name otherwise.
     LS_FILES = %w[ls-files -z --cached --others --exclude-standard].freeze
 
+    IGNORED = %w[ls-files -z --others --ignored --exclude-standard].freeze
+
+    # DOTMATCH so `**` reaches a dot directory, which is where ignored files live.
+    INCLUDE_FLAGS = File::FNM_PATHNAME | File::FNM_EXTGLOB | File::FNM_DOTMATCH
+
     # Seconds one `git` may take; a child that outlives it reads as "no repository".
     GIT_TIMEOUT = 10
 
@@ -30,11 +35,15 @@ module Lain
     # @param links [Boolean] whether a symbolic link is yielded beside the regular
     #   files; a link is never descended
     # @param entries [Numeric] files and directories one pass may list before it stops
+    # @param include [Array<String>] globs, from the top of a repository, naming
+    #   ignored files to list anyway
     # @param shell_out_factory [#call] builds the subprocess runner
-    def initialize(root:, links: false, entries: Float::INFINITY, shell_out_factory: Shell::Out.public_method(:new))
+    def initialize(root:, links: false, entries: Float::INFINITY, include: [],
+                   shell_out_factory: Shell::Out.public_method(:new))
       @root = File.expand_path(root)
       @links = links
       @entries = entries
+      @include = include
       @listed = 0
       @shell_out_factory = shell_out_factory
     end
@@ -85,10 +94,23 @@ module Lain
     # Sorted per path segment, as the hand walk orders directory entries, so both arms agree;
     # on bytes, because a name that is not valid text raises out of a text split.
     def listing(dir)
-      paths = git(dir, *LS_FILES).to_s.split(NUL).reject(&:empty?)
+      paths = names(dir, LS_FILES) + reincluded(dir)
       paths = paths.sort_by { _1.b.split(File::SEPARATOR) }.map { _1.dup.force_encoding(FILESYSTEM) }
 
       paths unless paths.empty?
+    end
+
+    def names(dir, argv) = git(dir, *argv).to_s.split(NUL).reject(&:empty?)
+
+    # Matched on bytes and from the repository top, so one glob means the same
+    # path whichever directory of the repository a search starts in.
+    def reincluded(dir)
+      return [] if @include.empty?
+
+      prefix = git(dir, "rev-parse", "--show-prefix").to_s.chomp.b
+      names(dir, IGNORED).select do |name|
+        @include.any? { |glob| File.fnmatch?(glob.b, prefix + name.b, INCLUDE_FLAGS) }
+      end
     end
 
     # A trailing slash is git naming an untracked nested repository, which it

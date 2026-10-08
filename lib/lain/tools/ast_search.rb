@@ -69,9 +69,10 @@ module Lain
 
       input_model Input
 
-      def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT)
+      def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT, include: [])
         super()
         @walk_limit = walk_limit
+        @include = include
       end
 
       def name = "ast_search"
@@ -184,7 +185,9 @@ module Lain
       # would never have parsed is not one it skipped.
       def files_under(path, language)
         extensions = EXTENSIONS[language]
-        Grep::Files.under(path, keep: ->(entry) { language_file?(entry, extensions) }, walk_limit: @walk_limit)
+        Grep::Files.under(path, keep: lambda { |entry|
+          language_file?(entry, extensions)
+        }, walk_limit: @walk_limit, include: @include)
       end
 
       # A language with no {EXTENSIONS} entry falls back to searching EVERY

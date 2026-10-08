@@ -53,6 +53,7 @@ RSpec.describe Lain::Config::Builder do
                                                        isolation: Lain::Config::Isolation.empty,
                                                        sensitivity: Lain::Sensitivity::Rules.empty,
                                                        shell: Lain::Shell::Exclusions.empty,
+                                                       search: Lain::SearchRules.empty,
                                                        tests: nil)
     end
 
@@ -79,7 +80,8 @@ RSpec.describe Lain::Config::Builder do
 
     it "names the middleware verb among the known verbs" do
       expect { build("\n\n\nshel exclude: %w[curl]\n") }
-        .to raise_error(Lain::Config::Refusal, /epics, approval, isolation, sensitivity, shell, tests, middleware/)
+        .to raise_error(Lain::Config::Refusal,
+                        /epics, approval, isolation, sensitivity, shell, search, tests, middleware/)
     end
 
     it "builds a middleware table whose registrations keep their class and block" do
