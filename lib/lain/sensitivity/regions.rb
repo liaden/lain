@@ -90,6 +90,17 @@ module Lain
       # one run swallow `API_KEY=` along with the secret, which then merged the
       # name back into the region the value-only rule exists to exclude.
       TOKEN = %r{[A-Za-z0-9+/_-]{20,}={0,2}}
+      # Entropy cannot tell a path from a secret: slash-joined words score 4.21
+      # to 4.40 bits per character, an AWS secret key 4.66. Each segment can
+      # be judged alone, though: a word keeps one case shape and is short or
+      # repetitive, while a generated key mixes case or is a long
+      # high-entropy run in one case. A secret split into short lowercase
+      # segments is given up for that.
+      WORD_SEGMENT = /\A(?:[a-z0-9._-]+|[A-Z0-9_]+|[A-Z][a-z]+)\z/
+      # An alphabet literal (base64's, a charset table) is maximally varied and
+      # wholly predictable; no generator emits 16 consecutive code points. The
+      # runs must cover most of the token, or a key glued onto one goes too.
+      ALPHABET_RUN = 16
       HEX = /\A[0-9a-fA-F]+\z/
       BASE64 = %r{\A[A-Za-z0-9+/=_-]+\z}
       ASSIGNMENT = /\A[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_-]*)[ \t]*[:=][ \t]*(\S.*)\z/m
@@ -240,8 +251,23 @@ module Lain
         end
 
         def entropy_candidates(scanned)
-          matches(scanned, TOKEN).select { secret_shaped?(_1[0]) }
+          matches(scanned, TOKEN).select { secret_shaped?(_1[0]) && !predictable?(_1[0]) }
                                  .map { span(_1.begin(0), _1[0], ENTROPY_REASON, :entropy) }
+        end
+
+        def predictable?(token) = slash_joined_words?(token) || alphabet_run?(token)
+
+        def slash_joined_words?(token)
+          segments = token.split("/").reject(&:empty?)
+
+          segments.size >= 2 && segments.all? { _1.match?(WORD_SEGMENT) && !high_entropy?(_1) }
+        end
+
+        def alphabet_run?(token)
+          covered = token.each_byte.chunk_while { |before, after| after == before + 1 }
+                         .sum { _1.size >= ALPHABET_RUN ? _1.size : 0 }
+
+          covered * 2 > token.bytesize
         end
 
         def span(start, text, reason, detector)

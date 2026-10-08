@@ -122,6 +122,66 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
     end
 
+    context "when a token is slash-joined words" do
+      ["Cargo/Dioxus/clippy/deny/pre-commit",
+       "XDG_CONFIG_HOME/lain/config",
+       "github.com/lmcnulty/gender-voice-visualization_corpus",
+       "/usr/lib/x86_64-linux-gnu/qt6/plugins/wayland-graphics-integration-client"].each do |text|
+        it "reports nothing for #{text}" do
+          expect(detect("see #{text} here\n")).to be_empty
+        end
+      end
+
+      it "still reports a secret whose segments are not words" do
+        regions = detect("the value is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n")
+
+        expect(regions.map { [_1.bytes, _1.reason] })
+          .to eq([["wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "high-entropy token"]])
+      end
+
+      it "keeps the whole candidate flagged when 1 segment is mixed case" do
+        regions = detect("path config/prod/q8ZtLm2xR4vN7kPw9sYb\n")
+
+        expect(regions.map { [_1.bytes, _1.reason] })
+          .to eq([["config/prod/q8ZtLm2xR4vN7kPw9sYb", "high-entropy token"]])
+      end
+
+      # Lowercase hex and base36 are word-shaped character by character, so a
+      # key sitting in a URL or path segment needs its own exclusion.
+      {
+        "a Datadog intake key" => ["https://http-intake.logs.datadoghq.com/v1/input/",
+                                   "9f8e7d6c5b4a39281706f5e4d3c2b1a0"],
+        "a webhook secret" => ["https://hooks.example.com/hooks/",
+                               "3f5a9c2e1d7b4a6f8e0c2b5d7a9f1e3c5b7d9f2a4c6e8a0b2d4f6a8c0e2b4d6f"],
+        "a token file under /var/lib" => ["cat /var/lib/app/tokens/", "3f5a9c2e1d7b4a6f8e0c2b5d7a9f1e3c5b7d9f2a"],
+        "a Zapier catch hook" => ["https://hooks.zapier.com/hooks/catch/1234567/", "k3n9x2q7w5m1z8r4t6y0p2v5b7c9d1f3"]
+      }.each do |label, (prefix, key)|
+        it "still reports #{label} in a path segment" do
+          expect(detect("#{prefix}#{key}\n").map(&:bytes)).to include(a_string_including(key))
+        end
+      end
+    end
+
+    context "when a token holds an alphabet literal" do
+      it "reports nothing for the base64 alphabet" do
+        expect(detect("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\n")).to be_empty
+      end
+
+      it "reports nothing for a 16-character run that is most of the token" do
+        expect(detect("x ABCDEFGHIJKLMNOPq7Zr9Lw2\n")).to be_empty
+      end
+
+      it "reports a 15-character run that is most of the token" do
+        expect(detect("x ABCDEFGHIJKLMNOq7Zr9Lw2Xk\n").map(&:bytes)).to eq(["ABCDEFGHIJKLMNOq7Zr9Lw2Xk"])
+      end
+
+      it "reports a secret glued onto a run" do
+        glued = "ABCDEFGHIJKLMNOPq7Zr9Lw2Xk4Vb8Nm3"
+
+        expect(detect("x #{glued}\n").map(&:bytes)).to eq([glued])
+      end
+    end
+
     # Hex maxes out at 4.0 bits/char and so can never clear the base64 floor of
     # 4.2 -- it needs its own branch, and before these examples that branch had
     # negative controls only. Nothing made it fire in the affirmative, so both of

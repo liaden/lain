@@ -105,7 +105,7 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
   # and a long absolute path in it can scan as a high-entropy token.
   describe "a result nothing ran to produce" do
     let(:refusal) do
-      path = "/tmp/lain-child-worktree20260915-1-abc/repo/vault/token"
+      path = "/tmp/lain-child-worktree20260915-1-aBc9XqZ7/repo/vault/token"
       Lain::Tool::Result.error(%(refused tool "bash": the command names a path this session protects: "#{path}" ) \
                                "is a protected path; no approval will lift this, so do not re-send the same " \
                                "command in another form")
