@@ -80,6 +80,21 @@ RSpec.describe Lain::FileWalk do
     expect(relatives).to eq(["a.txt"])
   end
 
+  it "skips a .git file, as a submodule or worktree pointer, it meets by hand" do
+    write("a.txt")
+    write("sub/.git", "gitdir: /elsewhere\n")
+
+    expect(relatives).to eq(["a.txt"])
+  end
+
+  it "lists a repository holding a name that is not valid UTF-8" do
+    init_repo
+    write("ok.txt")
+    File.binwrite(File.join(root.b, "bad\xE9.txt".b), "x\n")
+
+    expect(walk.map { File.basename(_1).b }).to contain_exactly("ok.txt".b, "bad\xE9.txt".b)
+  end
+
   it "yields absolute paths" do
     write("a.txt")
 

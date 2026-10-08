@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "open3"
 require "tmpdir"
 
 RSpec.describe Lain::Tools::AstSearch do
@@ -324,5 +325,19 @@ RSpec.describe Lain::Tools::AstSearch do
       expect(result.content).to include("over the #{ceiling}-byte ceiling")
       expect(result.content).to include("narrow the pattern or the path")
     end
+  end
+
+  it "skips files git ignores" do
+    _out, err, status = Open3.capture3("git", "init", "-q", chdir: tmpdir)
+    raise err unless status.success?
+
+    write(".gitignore", "target/\n")
+    write("target/gen.rb", "def ignored(x)\nend\n")
+    write("lib/real.rb", "def kept(x)\nend\n")
+
+    content = tool.call(pattern: "def $NAME($$$A)", language: "ruby", path: tmpdir).content
+
+    expect(content).to include("lib/real.rb:1:")
+    expect(content).not_to include("target/")
   end
 end

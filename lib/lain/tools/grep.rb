@@ -19,7 +19,7 @@ module Lain
     #     pathological pattern. {#description} therefore promises the SUBSET
     #     both paths accept and never names Ruby, because that string is what
     #     the model reads to decide what to send.
-    #   * WALK ORDER, AND THEREFORE WHICH MATCHES. Dir.glob sorts ONE flat list
+    #   * WALK ORDER, AND THEREFORE WHICH MATCHES. {Files.under} sorts ONE flat list
     #     of full paths, where "." (0x2E) sorts before "/" (0x2F); the daemon
     #     sorts per directory during a depth-first walk. Two entries show it:
     #
@@ -36,9 +36,10 @@ module Lain
     #     matches today's in-process callers get. Pinned as a witness in
     #     spec/lain/core/grep_parity_spec.rb rather than smoothed over.
     #
-    # VCS ignore rules were the other divergence and are RESOLVED in favour of
-    # the in-process semantics: the daemon can apply .gitignore/.ignore and
-    # Dir.glob cannot, so {CoreSearch} sends `respect_ignores: false`.
+    # VCS ignore rules are the other divergence: the in-process walk lists a
+    # repository through {FileWalk}, so git's ignores apply to it, while
+    # {CoreSearch} sends `respect_ignores: false` and the daemon searches
+    # ignored files too.
     class Grep < Tool
       include Tool::FileTarget
 
@@ -96,7 +97,6 @@ module Lain
       # Reopened rather than written in the `Data.define` block, whose constants
       # would land on {Grep}.
       class Files
-        IGNORED = %w[. .. .git].freeze
         EVERY = ->(_name) { true }
         SKIPPED = "%<count>d %<noun>s skipped: unreadable name"
 
@@ -117,25 +117,17 @@ module Lain
         # whose own directory is not UTF-8 still labels `ok.rb` as text.
         def self.relative(name, root) = name.delete_prefix("#{root}/")
 
-        # `**` with FNM_DOTMATCH visits every dotfile, matching {ListFiles}'
-        # convention, but also "." and ".." and anything under ".git". The
+        # {FileWalk} lists what git would show, so a repository's ignored build
+        # output is never visited. Links come back and are filtered by what they
+        # point at, so a link to a file is still searched as it always was. The
         # trailing `.sort` in {.under} is a FLAT sort of full paths, which is not
-        # the order the daemon walks in -- see the walk-order note on {Grep}. It
-        # stays flat deliberately: changing it would change which matches
-        # today's callers get back from a capped search.
+        # the order the daemon walks in -- see the walk-order note on {Grep}.
         def self.walk(path)
-          Dir.glob(File.join(path, "**", "*"), File::FNM_DOTMATCH)
-             .map { |entry| utf8(entry) }
-             .reject { |entry| ignored?(entry) }
-             .select { |entry| File.file?(entry) }
+          FileWalk.new(root: path, links: true).map { |entry| utf8(entry) }.select { |entry| File.file?(entry) }
         end
 
-        # Split as bytes, since a name that is not UTF-8 raises out of a text
-        # split -- and one under `.git` is not searched, so it is not skipped.
-        def self.ignored?(entry) = entry.b.split("/").intersect?(IGNORED)
-
         def self.utf8(name) = String.new(name, encoding: Encoding::UTF_8)
-        private_class_method :walk, :ignored?, :utf8
+        private_class_method :walk, :utf8
 
         # A DIRECTORY target labels hits relative to the walked root; a
         # SINGLE-FILE target labels them with `display`, the model's own
@@ -174,8 +166,8 @@ module Lain
         end
       end
 
-      # The default, and the tool's tier-1 claim in full: Dir.glob and
-      # File.foreach, no subprocess and no boundary.
+      # The default, and the tool's tier-1 claim in full: {FileWalk} and
+      # File.foreach, no boundary.
       #
       # An {Enumerator} so the MAX_MATCHES+1 pull stops reading files the moment
       # it has enough, rather than scanning every file under `path` before
@@ -291,7 +283,8 @@ module Lain
           "Backreferences and lookaround are not supported -- write a plain " \
           "regular expression, with no (?=...), (?<=...) or \\1. Returns " \
           "matching lines as file:line plus the line text. Given a directory, " \
-          "searches recursively, skipping .git. A line that is not valid UTF-8 " \
+          "searches recursively, skipping .git and, inside a git repository, " \
+          "files git ignores. A line that is not valid UTF-8 " \
           "comes back with each invalid byte written as \\xNN; a file whose name " \
           "is not valid UTF-8 is skipped and counted. Output is capped at " \
           "#{MAX_MATCHES} matches; a capped result says so explicitly rather " \

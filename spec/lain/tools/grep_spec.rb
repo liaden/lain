@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "open3"
 require "tmpdir"
 
 RSpec.describe Lain::Tools::Grep do
@@ -452,6 +453,47 @@ RSpec.describe Lain::Tools::Grep do
       expect(result.content.bytesize).to be <= ceiling
       expect(kept).to be_between(1, 199)
       expect(result.content.lines.last).to start_with("... truncated to #{kept} of 200 matches, withholding ")
+    end
+  end
+
+  describe "a tree git ignores part of" do
+    def git_init(dir)
+      _out, err, status = Open3.capture3("git", "init", "-q", chdir: dir)
+      raise err unless status.success?
+    end
+
+    it "skips git-ignored build output" do
+      git_init(tmpdir)
+      write(".gitignore", "target/\n")
+      write("target/out.txt", "needle\n")
+      write("src/main.rs", "needle\n")
+
+      content = tool.call(pattern: "needle", path: tmpdir).content
+
+      expect(content).to include("src/main.rs:1:")
+      expect(content).not_to include("target/")
+    end
+
+    it "skips and counts a name that is not valid UTF-8 inside a repository" do
+      git_init(tmpdir)
+      write("ok.txt", "needle\n")
+      File.binwrite(File.join(tmpdir, "bad\xE9.txt".b), "needle\n")
+
+      content = tool.call(pattern: "needle", path: tmpdir).content
+
+      expect(content).to include("ok.txt:1:").and end_with("\n1 file skipped: unreadable name")
+    end
+
+    it "skips a nested repository's ignored tree when searching a plain parent" do
+      git_init(File.join(tmpdir, "app").tap { FileUtils.mkdir_p(_1) })
+      write("app/.gitignore", "target/\n")
+      write("app/target/x.txt", "needle\n")
+      write("app/src/y.txt", "needle\n")
+
+      content = tool.call(pattern: "needle", path: tmpdir).content
+
+      expect(content).to include("app/src/y.txt:1:")
+      expect(content).not_to include("target/")
     end
   end
 end

@@ -50,10 +50,11 @@ module Lain
 
     # An empty answer falls through to the hand walk: it covers a repository
     # whose whole tree is ignored, which the human naming it still wants read.
-    # Sorted per path segment, as the hand walk orders directory entries, so both arms agree.
+    # Sorted per path segment, as the hand walk orders directory entries, so both arms agree;
+    # on bytes, because a name that is not valid text raises out of a text split.
     def listing(dir)
       paths = git(dir, *LS_FILES).to_s.split(NUL).reject(&:empty?)
-      paths = paths.map { _1.dup.force_encoding(FILESYSTEM) }.sort_by { _1.split(File::SEPARATOR) }
+      paths = paths.sort_by { _1.b.split(File::SEPARATOR) }.map { _1.dup.force_encoding(FILESYSTEM) }
 
       paths unless paths.empty?
     end
@@ -89,15 +90,11 @@ module Lain
     end
 
     def descend(dir, &block)
-      children(dir).each do |name|
+      children(dir).reject { _1 == ".git" }.each do |name|
         child = File.join(dir, name)
         entry = lstat(child)
-        entry&.directory? ? enter(child, name, &block) : yield_existing(child, &block)
+        entry&.directory? ? visit(child, probe: false, &block) : yield_existing(child, &block)
       end
-    end
-
-    def enter(child, name, &block)
-      visit(child, probe: false, &block) unless name == ".git"
     end
 
     # nil for every way git can fail to answer, which callers read as "no repository".
