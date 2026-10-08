@@ -190,6 +190,48 @@ RSpec.describe Lain::StatusFeed::Reading do
       expect(hud(**warm(approvals_pending: 9, occupancy: 0.99, run_tokens: 1, mode_lighter: "a#b\"c")))
         .not_to include("#")
     end
+
+    describe "work in flight" do
+      def flight(kind, since: now - 7, tools: [])
+        { in_flight: { "kind" => kind, "since" => since.iso8601, "tools" => tools } }
+      end
+
+      it "names a model call with the seconds elapsed since it began" do
+        expect(hud(**warm(**flight("model")))).to eq("🔥 fleet:2 inbox:3 model:7s ")
+      end
+
+      it "names the tools in flight" do
+        expect(hud(**warm(**flight("tool", tools: %w[grep])))).to eq("🔥 fleet:2 inbox:3 tool:grep ")
+      end
+
+      it "names the model call without seconds when asked for the form a file carries" do
+        expect(reading(**warm(**flight("model"))).hud(now:, timed: false)).to eq("🔥 fleet:2 inbox:3 model ")
+      end
+
+      it "strips what would break a status bar out of a tool name, and drops a name left empty" do
+        line = hud(**warm(**flight("tool", tools: ["x\"#y", "#", "ok"])))
+
+        expect(line).to eq("🔥 fleet:2 inbox:3 tool:xy,ok ")
+      end
+
+      it "strips control characters from a tool name" do
+        expect(hud(**warm(**flight("tool", tools: ["x\e]0;pwn\a\ny", "\e"])))).to eq("🔥 fleet:2 inbox:3 tool:x]0;pwny ")
+      end
+
+      it "omits the tool segment when no names remain" do
+        expect(hud(**warm(**flight("tool", tools: ["#"])))).to eq("🔥 fleet:2 inbox:3 ")
+      end
+
+      it "never reads a negative duration off a clock that stepped back" do
+        expect(hud(**warm(**flight("model", since: now + 30)))).to include(" model:0s")
+      end
+
+      it "says nothing for an idle agent, a nil slot, or a slot it cannot read" do
+        [{}, { in_flight: nil }, { in_flight: { "kind" => "model", "since" => "never" } }].each do |idle|
+          expect(hud(**warm(**idle))).to eq("🔥 fleet:2 inbox:3 ")
+        end
+      end
+    end
   end
 
   # The live feed's own struct, read by the same object that reads the file --

@@ -232,8 +232,27 @@ module Lain
       @compactions = 0
       @derivation_refusal_streak = 0
       @fleet = Fleet.new(clock: @clock)
+      @flight = nil
+      @tool_names = []
     end
     private :start_empty
+
+    # The machine's own announcement, taken as a listener so a model call or a
+    # tool in flight shows before the record that ends it exists. A move that
+    # keeps the same kind in flight (a paused turn) keeps its start, so the
+    # seconds count does not restart and nothing republishes.
+    #
+    # @return [void]
+    def on_transition(to:, **)
+      kind = Agent::TransitionListener::IN_FLIGHT[to]
+      @tool_names = [] unless kind == "tool"
+      @flight = nil if @flight && @flight["kind"] != kind
+      @flight ||= { "kind" => kind, "since" => @clock.call.utc.iso8601 } if kind
+      publish_if_changed
+    end
+
+    # @return [self] the duck {Agent::Instrumentation} carries as `transition_listener:`
+    def transition_listener = self
 
     # @param event [Object] a record this sink recognizes, or anything at all.
     #   The recognized set is the class doc's: six journal records matched by
@@ -544,8 +563,25 @@ module Lain
         # spawn's lifecycle. {Fleet} owns the second reading.
         @fleet.completed(event)
         @inbox.arrived(event)
-      when :turn then @inbox.retire(event.causal_parents)
+      when :turn
+        @inbox.retire(event.causal_parents)
+        named = tool_names_in(event)
+        @tool_names = named unless named.empty?
       end
+    end
+
+    # The tools a committed turn asked for: the transition announces only that
+    # tools are awaited, and the turn is where their names are journaled.
+    def tool_names_in(event)
+      Array(event.body&.fetch("content", nil)).filter_map do |block|
+        block["name"] if block.is_a?(Hash) && block["type"] == "tool_use"
+      end
+    end
+
+    def in_flight_slot
+      return @flight unless @flight && @flight["kind"] == "tool"
+
+      @flight.merge("tools" => @tool_names)
     end
 
     public
@@ -589,7 +625,7 @@ module Lain
         "approvals_pending" => @approvals_pending, "occupancy" => @occupancy,
         "window_guessed" => @window_guessed, "unmeasured_turns" => @unmeasured_turns,
         "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,
-        "run_tokens" => @run_tokens }
+        "run_tokens" => @run_tokens, "in_flight" => in_flight_slot }
         .merge(@mode.published)
     end
 
@@ -619,7 +655,7 @@ module Lain
     # the line names -- {Reading} owns the SHAPE, and publishing the result is
     # what lets `plugin/tmux/scripts/lain-status` print a field instead of
     # carrying a second copy of the derivation in a jq program.
-    def rendered(struct) = struct.merge("hud" => Reading.new(struct).hud(now: @clock.call))
+    def rendered(struct) = struct.merge("hud" => Reading.new(struct).hud(now: @clock.call, timed: false))
 
     def default_path = ProjectDir.new.state_path
   end

@@ -10,6 +10,10 @@ module Lain
     # declared machine gives the transition a single interceptable moment, where
     # a scattered `@state = :x` has no such hook.
     module TransitionListener
+      # The states a human is waiting on the machine in, keyed to the word a
+      # surface shows for them; every other state means nothing is in flight.
+      IN_FLIGHT = { awaiting_model: "model", awaiting_tools: "tool" }.freeze
+
       # Null object, so no caller writes `if listener`.
       #
       # `(**)` swallows `from:`/`to:`/`event:` without naming them -- an

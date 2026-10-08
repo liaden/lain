@@ -125,10 +125,12 @@ module Lain
       # rather than information on every quiet chat.
       #
       # @param now [Time] the wall clock the marker is decided against
+      # @param timed [Boolean] whether a model call shows its seconds; false for
+      #   the string a file carries, which is rendered once and would freeze them
       # @return [String] ending in exactly one space, so the last segment never
       #   sits hard against the right edge of a bar
-      def hud(now:)
-        [marker(now:), " fleet:#{fleet_size} inbox:#{inbox_count}", *optional_segments, " "].join
+      def hud(now:, timed: true)
+        [marker(now:), " fleet:#{fleet_size} inbox:#{inbox_count}", *optional_segments(now:, timed:), " "].join
       end
 
       # The HUD with the fleet tree under it: what a surface with more than one
@@ -216,7 +218,9 @@ module Lain
 
       def marker(now:) = warmth(now:) == :warm ? HUD_WARM : HUD_COLD
 
-      def optional_segments = [approvals, occupancy, run_tokens, mode_lighter].compact
+      def optional_segments(now:, timed:)
+        [approvals, occupancy, run_tokens, mode_lighter, in_flight(now:, timed:)].compact
+      end
 
       def approvals
         pending = @state["approvals_pending"].to_i
@@ -237,6 +241,31 @@ module Lain
       def run_tokens
         spent = @state["run_tokens"]
         spent && " run:#{spent}"
+      end
+
+      # `tool:` names tools asked for and awaiting results, not ones known to be
+      # running. Only the model's seconds read a clock, so a live reader's line
+      # moves; a clock stepping back clamps to zero.
+      def in_flight(now:, timed:)
+        slot = @state["in_flight"]
+        return unless slot.is_a?(Hash)
+
+        slot["kind"] == "tool" ? tools_awaited(slot["tools"]) : model_call(slot["since"], now, timed)
+      end
+
+      def tools_awaited(tools)
+        names = Array(tools).map do |name|
+          name.to_s.gsub(UNRENDERABLE, "").gsub(/[[:cntrl:]]/, "")
+        end.reject(&:empty?).uniq
+        " tool:#{names.join(",")}" unless names.empty?
+      end
+
+      def model_call(since, now, timed)
+        return " model" unless timed
+
+        " model:#{[(now - Time.iso8601(since)).floor, 0].max}s"
+      rescue ArgumentError, TypeError
+        nil
       end
 
       # ALREADY COMPOSED upstream (the posture's lighter plus every active

@@ -16,4 +16,7 @@ class RecordingChannel
     self
   end
   alias << push
+
+  # The status feed's duck, for the specs that tee onto this as one.
+  def transition_listener = Lain::Agent::TransitionListener::Null
 end

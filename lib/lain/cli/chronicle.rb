@@ -21,6 +21,7 @@ module Lain
         # Views to tell only once {#wrap_tee} names them.
         def initialize
           @live = Channel::Null.instance
+          @transition_listener = Agent::TransitionListener::Null
         end
 
         # Nil is the honest answer: --no-journal has no file, and /fork reads
@@ -30,8 +31,14 @@ module Lain
         def start(**) = self
         def wrap_session(session) = session
         def wrap_memory(recorder) = recorder
+
+        def listen(listener)
+          @transition_listener = listener
+          self
+        end
+
         def turn_middleware(_timeline) = Middleware::Stack.new
-        def instrumentation = Chronicle.instrumentation(@tee)
+        def instrumentation = Chronicle.instrumentation(@tee).with(transition_listener: @transition_listener)
 
         # No record was ever opened, and {Channel::Null} is not a journal (it
         # answers `#<<`, not `#record`). The null device is the same duck,
@@ -201,6 +208,7 @@ module Lain
         @live = Channel::Null.instance
         @journal_path = journal_path
         @recorder = nil
+        @transition_listener = Agent::TransitionListener::Null
       end
 
       # Read by /fork to compose the child's `--fork <session>@<head>` selector.
@@ -302,12 +310,21 @@ module Lain
         Middleware::Stack.new([Middleware::JournalTurns.new(scribe: self, timeline:)])
       end
 
+      # The listener the chat's agent announces its state changes to; {LiveViews}
+      # hands the status feed's here, as it hands the tee its sinks.
+      #
+      # @return [self]
+      def listen(listener)
+        @transition_listener = listener
+        self
+      end
+
       # Telemetry follows the tee when --nvim fans events to live views, and the
       # session journal otherwise. With a recorder wrapped, ONLY the turn_usage
       # leg is decorated: request_sent lands unpaired, run_recorder's precedent.
       def instrumentation
         destination = @tee || @journal
-        resolved = self.class.instrumentation(destination)
+        resolved = self.class.instrumentation(destination).with(transition_listener: @transition_listener)
         return resolved if @recorder.nil?
 
         resolved.with(journal: Memory::JournalMemoryRoot.new(journal: destination, recorder: @recorder))

@@ -128,6 +128,7 @@ module Lain
         @fleet = FleetWindows.for(options)
         @journal = chronicle.wrap_tee(sink([@channel, status_feed, @fleet].compact))
         @fleet.notice = @journal
+        chronicle.listen(status_feed.transition_listener)
       end
 
       attr_reader :journal, :fleet

@@ -10,6 +10,7 @@ class LiveViewsSpecChronicle
   def initialize = @journal = RecordingChannel.new
 
   def wrap_tee(sink) = Lain::CLI::JournalTee.new(@journal, sink)
+  def listen(_listener) = self
 end
 
 # A live-view leg that is neither closed nor healthy: the tee's review probe
@@ -196,6 +197,35 @@ RSpec.describe Lain::CLI::LiveViews do
       lineage.message(parent, spawn, child, Data.define(:text).new(text: "done"))
 
       expect(hud).to include("fleet:0")
+    end
+  end
+
+  describe "an agent's transitions, through the real chronicle and feed" do
+    let(:real_chronicle) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new)) }
+    let(:state_path) { File.join(Dir.mktmpdir, "state.json") }
+    let(:feed) { Lain::StatusFeed.new(path: state_path) }
+    let(:listener) { real_chronicle.instrumentation.transition_listener }
+
+    def hud = JSON.parse(File.read(state_path)).fetch("hud")
+
+    before { described_class.new(options: { journal: true }, chronicle: real_chronicle, status_feed: feed) }
+
+    it "shows a model segment while the agent awaits the model" do
+      listener.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
+
+      expect(hud).to include(" model ")
+    end
+
+    it "clears the segment once the agent awaits the user again" do
+      listener.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
+      listener.on_transition(from: :awaiting_model, to: :awaiting_user, event: :reopen)
+
+      expect(hud).not_to include("model")
+    end
+
+    it "leaves a chronicle nobody listened on with the Null listener" do
+      expect(Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new)).instrumentation.transition_listener)
+        .to be(Lain::Agent::TransitionListener::Null)
     end
   end
 end

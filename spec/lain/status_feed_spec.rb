@@ -1790,7 +1790,8 @@ RSpec.describe Lain::StatusFeed do
                                                 "approvals_pending",
                                                 "occupancy", "window_guessed", "unmeasured_turns", "compactions",
                                                 "derivation_refusal_streak",
-                                                "run_tokens", "scope", "approval", "layers", "mode_lighter",
+                                                "run_tokens", "in_flight", "scope", "approval", "layers",
+                                                "mode_lighter",
                                                 "elapsed", "idle", "since_compaction", "hud")
     end
 
@@ -2006,5 +2007,91 @@ RSpec.describe Lain::StatusFeed do
     reader.join
 
     expect(reader_errors).to eq([])
+  end
+
+  describe "work in flight" do
+    let(:at) { Time.utc(2026, 10, 8, 12, 0, 0) }
+    let(:feed) { described_class.new(path:, clock: -> { at }) }
+
+    def tool_turn(*names)
+      content = names.map { |name| { "type" => "tool_use", "id" => "tu_#{name}", "name" => name, "input" => {} } }
+      Lain::Event.turn(role: "assistant", content:)
+    end
+
+    def published = JSON.parse(File.read(path))
+    def hud(now:) = Lain::StatusFeed::Reading.new(feed.state).hud(now:)
+
+    it "carries a model segment with the seconds elapsed once the agent awaits the model" do
+      feed.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
+
+      expect(hud(now: at + 12)).to include(" model:12s")
+    end
+
+    it "names the tool once the agent awaits tools for a grep call" do
+      feed.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
+      feed << tool_turn("grep")
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+
+      expect(hud(now: at)).to include(" tool:grep").and(satisfy { |line| !line.include?("model:") })
+    end
+
+    it "names the tools when the turn lands after the transition" do
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+      feed << tool_turn("grep", "read_file")
+
+      expect(hud(now: at)).to include(" tool:grep,read_file")
+    end
+
+    it "carries neither segment once the agent is awaiting the user again" do
+      feed.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
+      feed.on_transition(from: :awaiting_model, to: :done, event: :end_turn)
+
+      expect(hud(now: at + 5)).not_to match(/model:|tool:/)
+    end
+
+    it "forgets the tool names when the agent returns to the model" do
+      feed << tool_turn("grep")
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+      feed.on_transition(from: :awaiting_tools, to: :awaiting_model, event: :tools_done)
+
+      expect(hud(now: at)).not_to include("tool:")
+    end
+
+    it "publishes the bare model word to the file, since a stamped string cannot count seconds" do
+      feed.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
+
+      expect(published["hud"]).to include(" model ").and(satisfy { |line| !line.include?("model:") })
+    end
+
+    it "forgets the tool names after a later model round ends in a tool_use stop with no blocks" do
+      feed << tool_turn("grep")
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+      feed.on_transition(from: :awaiting_tools, to: :awaiting_model, event: :dispatch)
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+
+      expect(hud(now: at)).not_to include("tool:")
+    end
+
+    it "lists a tool asked for twice once" do
+      feed << tool_turn("grep", "grep", "read_file")
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+
+      expect(hud(now: at)).to include(" tool:grep,read_file ")
+    end
+
+    it "does not republish for a transition that changes nothing in flight" do
+      feed.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
+      File.delete(path)
+      feed.on_transition(from: :awaiting_model, to: :awaiting_model, event: :pause_turn)
+
+      expect(File.exist?(path)).to be(false)
+    end
+
+    it "is its own transition listener, so the chat's Instrumentation can carry it" do
+      instrumentation = Lain::Agent::Instrumentation.new(transition_listener: feed.transition_listener)
+      instrumentation.transition_listener.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
+
+      expect(published["in_flight"]).to include("kind" => "model")
+    end
   end
 end

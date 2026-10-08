@@ -41,6 +41,13 @@ RSpec.describe Lain::CLI::Chronicle do
       end
     end
 
+    it "carries a listener handed to the Null duck in its instrumentation" do
+      listener = Object.new
+      null = described_class.for(enabled: false).listen(listener)
+
+      expect(null.instrumentation.transition_listener).to be(listener)
+    end
+
     it "answers the Null duck when journaling is off (--no-journal)" do
       expect(described_class.for(enabled: false)).to be_a(described_class::Null)
       expect(described_class.for(enabled: nil)).to be_a(described_class::Null)
