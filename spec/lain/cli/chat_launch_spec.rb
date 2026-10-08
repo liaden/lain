@@ -140,6 +140,18 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
+  describe "the fleet-windows pump at teardown" do
+    it "is drained and then closed when the run raises" do
+      fleet = spy("fleet")
+      instance = launch({ non_interactive: true, journal: true, provider: "ollama" })
+      instance.instance_variable_set(:@live_views, instance_double(Lain::CLI::LiveViews, fleet:))
+
+      expect { instance.call { |_notice| nil } }.to raise_error(Lain::Error)
+      expect(fleet).to have_received(:drain_pending).ordered
+      expect(fleet).to have_received(:close).ordered
+    end
+  end
+
   describe "--non-interactive" do
     # A headless chat with nothing seeded would sit on a terminal read forever,
     # which is exactly the hang the flag exists to remove -- so the combination

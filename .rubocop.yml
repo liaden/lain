@@ -323,7 +323,7 @@ ThreadSafety/ClassInstanceVariable:
     - "lib/lain/tool/contracts.rb"
     - "lib/lain/tool/input.rb"
 
-# The five deliberate threads, and they now have two legitimate owners.
+# The seven deliberate thread groups, and they have three legitimate owners.
 #
 # Four are the frontend's: the neovim RPC drain/resend pair and its rpc_thread, the
 # TTY reader, and prompt_breaker's watchdog -- each a supervised reader
@@ -348,10 +348,16 @@ ThreadSafety/ClassInstanceVariable:
 # shared across threads and fibers alike, and no write to a pane can block -- see the class
 # comment on why a blocking one would park the chat's own exit.
 #
+# The seventh is the fleet-windows pump, started only when a spawn is observed with no
+# current Async task: a spawn reported from such a thread has no reactor to schedule the
+# tmux call on, and waiting for one held every child's window until the chat exited.
+# FleetWindows#close, called from the chat's teardown, closes its queue and joins it.
+#
 # Specs spawn threads to TEST concurrency -- channel_spec's drop-oldest races are the
 # subject, not an accident -- so spec/ is excluded wholesale.
 ThreadSafety/NewThread:
   Exclude:
+    - "lib/lain/cli/fleet_windows.rb"
     - "lib/lain/cli/input_socket.rb"
     - "lib/lain/cli/prompt_breaker.rb"
     - "lib/lain/frontend/neovim.rb"

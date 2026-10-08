@@ -735,6 +735,72 @@ RSpec.describe Lain::CLI::FleetWindows do
         expect(open_argvs.size).to eq(1)
       end
     end
+
+    it "opens a window for a spawn observed on a thread with no reactor, without waiting for chat exit" do
+      opened = Thread::Queue.new
+      latched = Lain::CLI::TmuxSurface.new(shell_out_factory: lambda { |*args|
+        opened << args
+        FakeFleetShellOut.new(0, "", "")
+      })
+      live = described_class.new(surface: latched, notice: notices)
+      Thread.new { live << spawn_record }.join
+
+      Sync { expect(opened.pop(timeout: 5)).to include("new-window") }
+      live.close
+    end
+
+    it "starts one pump thread however many non-reactor threads enqueue at once" do
+      starts = Thread::Queue.new
+      counting = lambda do |&pump|
+        starts << 1
+        sleep(0.01)
+        described_class::Pump::DEFAULT_SPAWNER.call(&pump)
+      end
+      live = described_class.new(surface:, notice: notices, spawner: counting)
+      records = Array.new(12) { |i| spawn_record(digest: "blake3:5aaa11112222#{format("%04d", i)}") }
+      described_class::CAP_PER_TURN.then { |cap| records.first(cap) }
+                                   .map { |record| Thread.new { live << record } }.each(&:join)
+
+      expect(starts.size).to eq(1)
+      live.close
+    end
+
+    it "leaves no thread behind once closed" do
+      before = Thread.list
+      live = described_class.new(surface:, notice: notices)
+      Thread.new { live << spawn_record }.join
+      live.drain_pending
+      live.close
+
+      expect(Thread.list - before).to be_empty
+    end
+
+    it "keeps an unexpected pump-thread failure off $stderr" do
+      broken = Lain::CLI::TmuxSurface.new(shell_out_factory: ->(*_args) { raise "boom" })
+      live = described_class.new(surface: broken, notice: notices)
+
+      expect do
+        Thread.new { live << spawn_record }.join
+        live.close
+      end.not_to output.to_stderr
+    end
+
+    it "drops a late event silently once closed" do
+      live = described_class.new(surface:, notice: notices)
+      Thread.new { live << spawn_record }.join
+      live.close
+
+      expect { live << spawn_record(digest: "blake3:5bbb111122223333") }.not_to raise_error
+      expect(open_argvs.size).to be <= 1
+    end
+
+    it "keeps a vanished tmux server off $stderr when a queued open fails on the pump thread" do
+      gone = Lain::CLI::TmuxSurface.new(shell_out_factory: ->(*_args) { raise Lain::CLI::TmuxSurface::TmuxUnavailable })
+      live = described_class.new(surface: gone, notice: notices)
+      Thread.new { live << spawn_record }.join
+
+      expect { live.close }.not_to output.to_stderr
+    end
   end
 
   describe "against a real tmux server" do

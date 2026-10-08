@@ -94,6 +94,7 @@ module Lain
         def <<(_event) = self
         def notice=(sink); end
         def drain_pending = self
+        def close = self
       end
 
       # The one attributed record for a capped burst: `actors` names each
@@ -133,13 +134,38 @@ module Lain
       # -- that separation is this object's whole reason to exist apart from
       # the sink.
       class Pump
+        ThreadTask = Struct.new(:thread) do
+          def finished? = !thread.alive?
+
+          # Bounded so a wedged tmux call cannot hold the chat's exit; the
+          # rescue because join re-raises the thread's death inside an ensure.
+          def close
+            thread.join(CLOSE_JOIN_SECONDS)
+          rescue StandardError
+            nil
+          end
+        end
+
+        CLOSE_JOIN_SECONDS = 2
+
+        # A failure here must not reach $stderr, which belongs to the cockpit.
+        def self.pump_thread(&pump)
+          Thread.current.report_on_exception = false
+          Sync(&pump)
+        end
+
         # Transient under whatever task first fed the sink: the reactor stops
         # it at its queue park when that parent finishes, so an idle pump can
-        # never hang shutdown. Outside any reactor there is nothing to spawn
-        # onto; commands stay queued and the next enqueue under a reactor
-        # retries (see {#ensure_task}).
+        # never hang shutdown. A spawn observed off the reactor thread has no
+        # task to hang under, and waiting for a later enqueue would hold its
+        # window until chat exit, so it gets a thread running a reactor of its
+        # own, ended by {#close}.
         DEFAULT_SPAWNER = lambda do |&pump|
-          Async::Task.current?&.async(transient: true, &pump)
+          if Async::Task.current?
+            Async::Task.current.async(transient: true, &pump)
+          else
+            ThreadTask.new(Thread.new { pump_thread(&pump) })
+          end
         end
 
         # One queued window-open, asking the surface to hold the pane if its
@@ -149,6 +175,8 @@ module Lain
         Open = Data.define(:command, :name, :session, :cwd) do
           def perform(pump)
             pump.surface.window(command:, name:, target_session: session, cwd:, keep_failed: true)
+          rescue TmuxSurface::TmuxUnavailable
+            self
           end
         end
 
@@ -211,10 +239,23 @@ module Lain
           @spawner = spawner
           @queue = Thread::Queue.new
           @task = nil
+          @spawn_lock = Mutex.new
+        end
+
+        # Ends the pump: a closed queue wakes the parked pop with nil, and a
+        # pump thread is joined so none outlives the chat.
+        #
+        # @return [self]
+        def close
+          @queue.close
+          @task.close if @task.respond_to?(:close)
+          self
         end
 
         # @return [self]
         def enqueue(command)
+          return self if @queue.closed?
+
           @queue << command
           ensure_task
           self
@@ -223,16 +264,14 @@ module Lain
         # Perform everything queued, on the CALLER's stack: the deterministic
         # seam a spec (or a teardown flush) drives instead of racing the fiber.
         #
-        # The `empty?`-guarded blocking `pop` is FIBER-only safe, and that is
-        # the whole deployment: both consumers share one reactor thread, and
-        # fibers interleave only at await points -- there is none between the
-        # `empty?` check and the `pop`, so the pop can never block on an item
-        # another consumer stole. A second OS thread consuming this queue would
-        # reintroduce exactly that race; do not add one.
+        # The pop never blocks: the fallback thread of {DEFAULT_SPAWNER} may
+        # steal the last item between an `empty?` check and a blocking pop.
         #
         # @return [self]
         def drain_pending
-          perform(@queue.pop) until @queue.empty?
+          while (command = @queue.pop(timeout: 0))
+            perform(command)
+          end
           self
         end
 
@@ -243,17 +282,21 @@ module Lain
         # {#drain} yields before its first pop, so the eager depth-first start
         # of `.async` parks instead of performing.
         def ensure_task
-          @task = @spawner.call { drain } if @task.nil? || @task.finished?
+          @spawn_lock.synchronize do
+            @task = @spawner.call { drain } if @task.nil? || @task.finished?
+          end
         end
 
         # `sleep(0)` FIRST: `.async` runs a new task eagerly on the caller's
         # stack up to its first await, and the caller here is the tee fan-out
         # -- yielding before the first pop is what keeps every perform on this
-        # fiber. `loop` needs no break: the reactor stops a transient task at
-        # its queue park when the parent finishes.
+        # fiber. A reactor task is stopped at its queue park when the parent
+        # finishes; a pump thread ends when {#close} closes the queue.
         def drain
           sleep(0)
-          loop { perform(@queue.pop) }
+          while (command = @queue.pop)
+            perform(command)
+          end
         end
 
         def perform(command) = command.perform(self)
@@ -322,6 +365,14 @@ module Lain
       # See {Pump#notice=} -- the wiring's late-binding seam.
       def notice=(sink)
         @pump.notice = sink
+      end
+
+      # Stops the pump; call after the final {#drain_pending}.
+      #
+      # @return [self]
+      def close
+        @pump.close
+        self
       end
 
       # The teardown flush: release any still-held {WindowsCapped} notice and

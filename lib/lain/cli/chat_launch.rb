@@ -127,7 +127,7 @@ module Lain
         # Last-resort release of a held capped-overflow notice: the closers
         # land in the RAW journal, not the tee, so a failure path may never
         # cross the fleet sink's boundary recognition.
-        @live_views&.fleet&.drain_pending
+        release_fleet
       end
 
       # Every refusal `lain chat` raises before it reads a byte of the
@@ -270,6 +270,12 @@ module Lain
       def exit_status = @wiring ? @wiring.exit_status : Repl::Outcome::COMPLETED
 
       private
+
+      def release_fleet
+        fleet = @live_views&.fleet
+        fleet&.drain_pending
+        fleet&.close
+      end
 
       # Read ONCE per launch into the one {#backend}, which the wiring runs on,
       # so an edit made mid-launch cannot give two phases two answers. The
