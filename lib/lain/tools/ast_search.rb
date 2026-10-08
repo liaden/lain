@@ -69,6 +69,11 @@ module Lain
 
       input_model Input
 
+      def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT)
+        super()
+        @walk_limit = walk_limit
+      end
+
       def name = "ast_search"
 
       def description
@@ -103,9 +108,9 @@ module Lain
 
         language = input.language.downcase.to_sym
         patterns = resolve_patterns(input, language)
-        files = files_under(path, language)
-        found = capped_matches(files, input.path, language, patterns)
-        Tool::Result.ok(RESULT_FORMATTER.call(found, patterns:, path: input.path, notices: files.notices))
+        reads = files_under(path, language).within(@walk_limit)
+        found = capped_matches(reads, input.path, language, patterns)
+        Tool::Result.ok(RESULT_FORMATTER.call(found, patterns:, path: input.path, notices: reads.notices))
       # `EncodingError` rides with the rest despite NOT being a Lain::Error:
       # the ext refuses a source it would have to transcode, and Ruby's own
       # class is what comes back. {#each_structural_match} has already named the
@@ -165,7 +170,7 @@ module Lain
       def search(files, display, language, patterns)
         matcher = Structural::Matcher.new
         Enumerator.new do |yielder|
-          files.readable.each do |file|
+          files.each_file.each do |file|
             label = files.label(file, display)
             each_structural_match(matcher, file, language, patterns) do |line_no, text, captures|
               yielder << [label, line_no, text, captures]
@@ -179,7 +184,7 @@ module Lain
       # would never have parsed is not one it skipped.
       def files_under(path, language)
         extensions = EXTENSIONS[language]
-        Grep::Files.under(path, keep: ->(entry) { language_file?(entry, extensions) })
+        Grep::Files.under(path, keep: ->(entry) { language_file?(entry, extensions) }, walk_limit: @walk_limit)
       end
 
       # A language with no {EXTENSIONS} entry falls back to searching EVERY

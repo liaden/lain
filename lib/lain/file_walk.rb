@@ -21,21 +21,36 @@ module Lain
 
     NUL = "\0"
 
+    STOP = :file_walk_entry_limit
+    private_constant :STOP
+
+    # An instance is single-pass state: {#listed} belongs to the latest pass only.
+    #
     # @param root [String, Pathname] the directory to walk
     # @param links [Boolean] whether a symbolic link is yielded beside the regular
     #   files; a link is never descended
+    # @param entries [Numeric] files and directories one pass may list before it stops
     # @param shell_out_factory [#call] builds the subprocess runner
-    def initialize(root:, links: false, shell_out_factory: Shell::Out.public_method(:new))
+    def initialize(root:, links: false, entries: Float::INFINITY, shell_out_factory: Shell::Out.public_method(:new))
       @root = File.expand_path(root)
       @links = links
+      @entries = entries
+      @listed = 0
       @shell_out_factory = shell_out_factory
     end
+
+    # Entries the latest pass counted, the one it refused included, so more than
+    # the limit means the pass stopped early. A git listing counts every path git
+    # names, and a directory counts when it is descended.
+    # @return [Integer]
+    attr_reader :listed
 
     # @yieldparam path [String] absolute path of an existing regular file (or link, with `links:`)
     def each(&block)
       return enum_for(:each) unless block
 
-      visit(@root, probe: true, &block)
+      @listed = 0
+      catch(STOP) { visit(@root, probe: true, &block) }
     end
 
     # The listed files and the directories holding them, relative to the root and
@@ -49,6 +64,11 @@ module Lain
     end
 
     private
+
+    def count_entry
+      @listed += 1
+      throw STOP if @listed > @entries
+    end
 
     def ancestors(file) = Enumerator.produce(File.dirname(file)) { File.dirname(_1) }.take_while { _1 != "." }
 
@@ -75,6 +95,7 @@ module Lain
     # will not look inside; a gitlink has none and is not a file, so it drops.
     def list(dir, relatives, &)
       relatives.each do |relative|
+        count_entry
         absolute = File.join(dir, relative)
         relative.end_with?("/") ? visit(absolute.chomp("/"), probe: true, &) : yield_existing(absolute, &)
       end
@@ -103,6 +124,7 @@ module Lain
 
     def descend(dir, &block)
       children(dir).reject { _1 == ".git" }.each do |name|
+        count_entry
         child = File.join(dir, name)
         entry = lstat(child)
         entry&.directory? ? visit(child, probe: false, &block) : yield_existing(child, &block)

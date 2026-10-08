@@ -354,6 +354,22 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
+  describe "a grep that stops its walk and withholds" do
+    it "keeps the walk-limit trailer while still withholding the secret path" do
+      limit = Lain::Tool::Bounds::WalkLimit.new(entries: 3, bytes: 1_000_000)
+      write("a.txt", "API_KEY=x\n")
+      write("b.txt", "API_KEY=x\n")
+      write("c.txt", "API_KEY=x\n")
+
+      shown = content(run("grep", Lain::Tools::Grep.new(walk_limit: limit),
+                          { "pattern" => "API_KEY", "path" => "." }))
+
+      expect(shown).to include("listing stopped at 3 entries")
+      expect(shown).to include(" withheld (credential)")
+      expect(shown).not_to include(".env:")
+    end
+  end
+
   # The owed test, and it is owed because the survival is a CLASSIFICATION
   # rather than a structural fact. Grep's trailer survives for a structural
   # reason -- {Matches#paths_in} finds no `path:lineno:text` split in it and so

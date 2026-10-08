@@ -92,6 +92,11 @@ module Lain
         end
       end
 
+      def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT)
+        super()
+        @walk_limit = walk_limit
+      end
+
       def name = "glob"
 
       def description
@@ -133,8 +138,9 @@ module Lain
       # rides beside {BYTE_BOUND} as a trailer, so the byte ceiling cannot
       # withhold it.
       def matches(base, pattern)
-        sorted = listed(base, pattern).sort
-        trailers = BOUND.admits?(sorted.size) ? [] : [BOUND.notice(sorted.size)]
+        paths, walk_notice = listed(base, pattern)
+        sorted = paths.sort
+        trailers = [*(BOUND.notice(sorted.size) unless BOUND.admits?(sorted.size)), *walk_notice]
         [*BYTE_BOUND.fit(sorted.first(BOUND.limit), beside: trailers), *trailers]
       end
 
@@ -146,10 +152,12 @@ module Lain
       def listed(base, pattern)
         fixed = fixed_directories(pattern)
         prefix = fixed.empty? ? "" : "#{fixed.join("/")}/"
-        files, directories = FileWalk.new(root: File.expand_path(fixed.join("/"), base)).relative_tree
+        walk = FileWalk.new(root: File.expand_path(fixed.join("/"), base), entries: @walk_limit.entries)
+        files, directories = walk.relative_tree
         rest = pattern.delete_prefix(prefix)
         candidates = pattern.end_with?("/") ? directories.map { "#{_1}/" } : files + directories
-        candidates.select { File.fnmatch?(rest, _1, FNM_FLAGS) }.map { "#{prefix}#{_1}" }
+        [candidates.select { File.fnmatch?(rest, _1, FNM_FLAGS) }.map { "#{prefix}#{_1}" },
+         @walk_limit.notice(listed: walk.listed, read_bytes: 0)]
       end
 
       def fixed_directories(pattern)

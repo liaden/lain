@@ -48,6 +48,11 @@ module Lain
         end
       end
 
+      def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT)
+        super()
+        @walk_limit = walk_limit
+      end
+
       def name = "list_files"
 
       def description
@@ -101,8 +106,9 @@ module Lain
       # ordering rather than by the walk. The notice rides beside {BYTE_BOUND}
       # as a trailer, so the byte ceiling cannot withhold it.
       def entries(path, recursive)
-        sorted = (recursive ? walked(path) : children(path)).sort
-        trailers = BOUND.admits?(sorted.size) ? [] : [BOUND.notice(sorted.size)]
+        paths, walk_notice = recursive ? walked(path) : [children(path), []]
+        sorted = paths.sort
+        trailers = [*(BOUND.notice(sorted.size) unless BOUND.admits?(sorted.size)), *walk_notice]
         [*BYTE_BOUND.fit(sorted.first(BOUND.limit), beside: trailers), *trailers]
       end
 
@@ -112,7 +118,10 @@ module Lain
            .map { |entry| entry.delete_prefix("#{path}/") }
       end
 
-      def walked(path) = FileWalk.new(root: path).relative_tree.flatten
+      def walked(path)
+        walk = FileWalk.new(root: path, entries: @walk_limit.entries)
+        [walk.relative_tree.flatten, @walk_limit.notice(listed: walk.listed, read_bytes: 0)]
+      end
     end
   end
 end

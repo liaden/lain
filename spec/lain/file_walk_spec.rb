@@ -231,4 +231,49 @@ RSpec.describe Lain::FileWalk do
       expect(files.first.b).to eq("bad\xFF.rb".b)
     end
   end
+
+  describe "an entry limit" do
+    it "stops listing at the limit and counts the entry that did not fit" do
+      30.times { write("f#{format("%02d", _1)}.txt") }
+      limited = described_class.new(root:, entries: 10)
+
+      expect(limited.to_a.size).to eq(10)
+      expect(limited.listed).to eq(11)
+    end
+
+    it "counts a directory descended as an entry" do
+      6.times { write("d#{_1}/a.txt") }
+      limited = described_class.new(root:, entries: 6)
+
+      expect(limited.to_a.size).to be < 6
+      expect(limited.listed).to eq(7)
+    end
+
+    it "is not exceeded by a walk of exactly the limit" do
+      3.times { write("f#{_1}.txt") }
+      limited = described_class.new(root:, entries: 3)
+
+      expect(limited.to_a.size).to eq(3)
+      expect(limited.listed).to eq(3)
+    end
+
+    it "does not count the ignored files of a repository held by a plain parent" do
+      init_repo("proj")
+      write("proj/.gitignore", "target/\n")
+      500.times { write("proj/target/out#{_1}.o") }
+      3.times { write("proj/src/s#{_1}.rb") }
+      limited = described_class.new(root:, entries: 100)
+
+      expect(limited.select { _1.include?("/src/") }.size).to eq(3)
+      expect(limited.listed).to be <= 100
+    end
+
+    it "applies to relative_tree as well" do
+      30.times { write("f#{_1}.txt") }
+      limited = described_class.new(root:, entries: 5)
+
+      expect(limited.relative_tree.first.size).to eq(5)
+      expect(limited.listed).to eq(6)
+    end
+  end
 end

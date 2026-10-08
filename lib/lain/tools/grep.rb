@@ -80,7 +80,7 @@ module Lain
       # only that arm's walk could write.
       Searched = Data.define(:found, :notices)
 
-      Files = Data.define(:root, :readable, :unreadable)
+      Files = Data.define(:root, :readable, :unreadable, :listed)
 
       # The files under a search target whose NAMES can be read as text, and how
       # many could not. Shared with {AstSearch}, the other tool that walks a
@@ -101,16 +101,18 @@ module Lain
         SKIPPED = "%<count>d %<noun>s skipped: unreadable name"
 
         # @param path [String] the resolved target, a file or a directory
+        # @param walk_limit [Tool::Bounds::WalkLimit] the entries the walk may list
         # @param keep [#call] whether the walk would search a name at all, asked
         #   before its readability, so only a name it wanted can count as skipped
         # @return [Files]
-        def self.under(path, keep: EVERY)
-          return new(root: nil, readable: [path].freeze, unreadable: 0) if File.file?(path)
+        def self.under(path, keep: EVERY, walk_limit: Tool::Bounds::WalkLimit::DEFAULT)
+          return new(root: nil, readable: [path].freeze, unreadable: 0, listed: 0) if File.file?(path)
 
           root = utf8(path)
-          names = walk(path).select { |name| keep.call(name) }
+          walk = FileWalk.new(root: path, links: true, entries: walk_limit.entries)
+          names = walked(walk).select { |name| keep.call(name) }
           readable, unreadable = names.partition { |name| relative(name, root).valid_encoding? }
-          new(root:, readable: readable.sort.freeze, unreadable: unreadable.size)
+          new(root:, readable: readable.sort.freeze, unreadable: unreadable.size, listed: walk.listed)
         end
 
         # Judged on the part a label prints, never the whole path: a project
@@ -122,12 +124,10 @@ module Lain
         # point at, so a link to a file is still searched as it always was. The
         # trailing `.sort` in {.under} is a FLAT sort of full paths, which is not
         # the order the daemon walks in -- see the walk-order note on {Grep}.
-        def self.walk(path)
-          FileWalk.new(root: path, links: true).map { |entry| utf8(entry) }.select { |entry| File.file?(entry) }
-        end
+        def self.walked(walk) = walk.map { |entry| utf8(entry) }.select { |entry| File.file?(entry) }
 
         def self.utf8(name) = String.new(name, encoding: Encoding::UTF_8)
-        private_class_method :walk, :utf8
+        private_class_method :walked, :utf8
 
         # A DIRECTORY target labels hits relative to the walked root; a
         # SINGLE-FILE target labels them with `display`, the model's own
@@ -139,6 +139,40 @@ module Lain
           return [] if unreadable.zero?
 
           [format(SKIPPED, count: unreadable, noun: unreadable == 1 ? "file" : "files")]
+        end
+
+        # @param limit [Tool::Bounds::WalkLimit]
+        # @return [Reads]
+        def within(limit) = Reads.new(self, limit)
+      end
+
+      # The byte budget of one search, settled from file sizes before any file is
+      # read, so its notice does not depend on how far the search pulled.
+      class Reads
+        def initialize(files, limit)
+          @files = files
+          @limit = limit
+        end
+
+        # @return [Array<String>] files that fit the budget, ending before the first that does not
+        def each_file = budget.first
+
+        # @return [Array<String>] the skipped-name notice and whatever limit the search hit
+        def notices
+          [*@files.notices, *@limit.notice(listed: @files.listed, read_bytes: budget.last)]
+        end
+
+        def label(file, display) = @files.label(file, display)
+
+        private
+
+        # The total counts the refused file too, which is what marks a stop.
+        def budget
+          @budget ||= begin
+            total = 0
+            admitted = @files.readable.take_while { (total += File.size?(_1).to_i) <= @limit.bytes }
+            [admitted, total]
+          end
         end
       end
 
@@ -173,10 +207,14 @@ module Lain
       # it has enough, rather than scanning every file under `path` before
       # throwing most of the result away.
       class RubySearch
+        def initialize(walk_limit)
+          @walk_limit = walk_limit
+        end
+
         def call(path, input)
-          files = Files.under(path)
-          Searched.new(found: WALK_CAP.apply(matching(files, input.path, build_regex(input)).lazy),
-                       notices: files.notices)
+          reads = Files.under(path, walk_limit: @walk_limit).within(@walk_limit)
+          found = WALK_CAP.apply(matching(reads, input.path, build_regex(input)).lazy)
+          Searched.new(found:, notices: reads.notices)
         end
 
         private
@@ -187,10 +225,10 @@ module Lain
 
         # `display` is the model's original spelling, for {Files#label}.
         # {CoreSearch} reproduces both labelling rules.
-        def matching(files, display, regex)
+        def matching(reads, display, regex)
           Enumerator.new do |yielder|
-            files.readable.each do |file|
-              label = files.label(file, display)
+            reads.each_file.each do |file|
+              label = reads.label(file, display)
               each_matching_line(file, regex) { |line_no, line| yielder << [label, line_no, line] }
             end
           end
@@ -271,9 +309,9 @@ module Lain
       # The out-of-process arm is OPTED INTO, because it is a different
       # dialect and a different walk (see the class note), not merely a
       # different wire.
-      def initialize(client: nil)
+      def initialize(client: nil, walk_limit: Tool::Bounds::WalkLimit::DEFAULT)
         super()
-        @search = client ? CoreSearch.new(client) : RubySearch.new
+        @search = client ? CoreSearch.new(client) : RubySearch.new(walk_limit)
       end
 
       def name = "grep"

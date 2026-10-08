@@ -248,4 +248,23 @@ RSpec.describe Lain::Tools::ListFiles do
       expect(rows).to eq(%w[.gitignore src src/b.rs])
     end
   end
+
+  describe "the walk limit" do
+    subject(:tool) { described_class.new(walk_limit: Lain::Tool::Bounds::WalkLimit.new(entries: 10, bytes: 1_000)) }
+
+    it "stops listing past the entry limit and names it" do
+      30.times { touch("f#{format("%02d", _1)}.txt") }
+
+      content = tool.call(path: tmpdir, recursive: true).content
+
+      expect(content.lines.size).to eq(11)
+      expect(content.lines.last).to include("10 entries").and include("narrow")
+    end
+
+    it "adds no trailer to a walk under the limit" do
+      3.times { touch("f#{format("%02d", _1)}.txt") }
+
+      expect(tool.call(path: tmpdir, recursive: true).content).not_to include("narrow")
+    end
+  end
 end

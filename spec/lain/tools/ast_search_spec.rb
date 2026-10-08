@@ -340,4 +340,28 @@ RSpec.describe Lain::Tools::AstSearch do
     expect(content).to include("lib/real.rb:1:")
     expect(content).not_to include("target/")
   end
+
+  describe "the walk limit" do
+    def limited(entries: 10, bytes: 10_000_000)
+      described_class.new(walk_limit: Lain::Tool::Bounds::WalkLimit.new(entries:, bytes:))
+    end
+
+    it "stops listing past the entry limit, names it, and parses no further file" do
+      30.times { write("f#{format("%02d", _1)}.rb", "def total(items)\n  items.sum\nend\n") }
+
+      content = limited.call(pattern: "def $NAME($$$A)", language: "ruby", path: tmpdir).content
+
+      expect(content.lines.grep(/\.rb:1:/).size).to eq(10)
+      expect(content.lines.last).to include("10 entries").and include("narrow")
+    end
+
+    it "stops reading past the byte limit, names it, and parses no further file" do
+      3.times { write("f#{_1}.rb", "def total(items)\n  items.sum\nend\n#{"# pad\n" * 200}") }
+
+      content = limited(bytes: 1_500).call(pattern: "def $NAME($$$A)", language: "ruby", path: tmpdir).content
+
+      expect(content.lines.grep(/\.rb:1:/).size).to eq(1)
+      expect(content.lines.last).to include("1500 bytes")
+    end
+  end
 end

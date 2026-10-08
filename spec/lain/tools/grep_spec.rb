@@ -496,4 +496,63 @@ RSpec.describe Lain::Tools::Grep do
       expect(content).not_to include("target/")
     end
   end
+
+  describe "the walk limit" do
+    def limited(entries: 10, bytes: 10_000_000)
+      described_class.new(walk_limit: Lain::Tool::Bounds::WalkLimit.new(entries:, bytes:))
+    end
+
+    it "stops listing past the entry limit and names it beside the matches" do
+      30.times { write("f#{format("%02d", _1)}.txt", "needle\n") }
+
+      content = limited.call(pattern: "needle", path: tmpdir).content
+
+      expect(content.lines.grep(/needle/).size).to eq(10)
+      expect(content.lines.last).to include("10 entries").and include("narrow")
+    end
+
+    it "does not count a repository's ignored files held by a plain parent" do
+      FileUtils.mkdir_p(File.join(tmpdir, "proj"))
+      _out, err, status = Open3.capture3("git", "init", "-q", chdir: File.join(tmpdir, "proj"))
+      raise err unless status.success?
+
+      write("proj/.gitignore", "target/\n")
+      300.times { write("proj/target/o#{_1}.o", "needle\n") }
+      3.times { write("proj/src/s#{_1}.rb", "needle\n") }
+
+      content = limited(entries: 100).call(pattern: "needle", path: tmpdir).content
+
+      expect(content.lines.grep(%r{src/s\d.rb:1:}).size).to eq(3)
+      expect(content).not_to include("entries")
+    end
+
+    it "stops reading past the byte limit and names it" do
+      3.times { write("big#{_1}.txt", "needle\n#{"x" * 999_990}\n") }
+
+      content = limited(bytes: 1_500_000).call(pattern: "needle", path: tmpdir).content
+
+      expect(content.lines.grep(/needle/).size).to eq(1)
+      expect(content.lines.last).to include("1500000 bytes")
+    end
+
+    it "names the byte limit in notices read before the matches are consumed" do
+      3.times { write("big#{_1}.txt", "needle\n#{"x" * 999_990}\n") }
+      files = described_class::Files.under(tmpdir)
+      reads = files.within(Lain::Tool::Bounds::WalkLimit.new(entries: 10, bytes: 1_500_000))
+
+      expect(reads.notices.last).to include("1500000 bytes")
+    end
+
+    it "adds no trailer to a walk under both limits" do
+      3.times { write("s#{_1}.txt", "needle\n") }
+
+      expect(limited.call(pattern: "needle", path: tmpdir).content).not_to include("narrow")
+    end
+
+    it "names the limit beside a no-match answer too" do
+      30.times { write("f#{format("%02d", _1)}.txt", "hay\n") }
+
+      expect(limited.call(pattern: "needle", path: tmpdir).content).to include("no matches").and include("10 entries")
+    end
+  end
 end
