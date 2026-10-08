@@ -107,6 +107,65 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
+    it "hints at the answer slot of a free-text question until an indented answer is typed" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        opened_question(three)
+
+        lines = buffer_lines("lain://question")
+        expect(question_hints).to eq([{ "row" => lines.size, "text" => "answer here, indented 2 spaces" }])
+
+        edit_question(lines + ["", "  Use sqlite."])
+        expect(question_hints).to eq([])
+      end
+    end
+
+    it "highlights a line written at column 0 under a question, before the write" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        opened_question(three)
+
+        lines = buffer_lines("lain://question")
+        edit_question(lines + ["", "sqlite please"])
+        expect(question_errors).to eq([lines.size + 2])
+
+        edit_question(lines + ["", "  sqlite please"])
+        expect(question_errors).to eq([])
+      end
+    end
+
+    it "still hints when the free-text body itself holds an indented line" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        snippet = question("snippet", "Explain this:\n  def call; end")
+        expect(frontend.question_view.open(Lain::Question::Set.new(questions: [snippet]), digest)).to be_nil
+        wait_until_editor { question_state }
+
+        expect(question_hints.size).to eq(1)
+      end
+    end
+
+    it "flags a typed duplicate of a rendered line but not the rendered one" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        opened_question(three)
+
+        lines = buffer_lines("lain://question")
+        edit_question(lines + ["", "Anything else?"])
+        expect(question_errors).to eq([lines.size + 2])
+      end
+    end
+
+    it "leaves the bytes compared at write untouched by the hint" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        opened_question(three)
+
+        expect(buffer_lines("lain://question")).to eq(rendered(three))
+        expect(write_question["err"]).to include(":w!")
+      end
+    end
+
     # The third leg of the untouched-write rule, and the ordinary path: ANY real
     # edit makes a plain `:w` work exactly as before.
     it "hands the edited lines and the set's digest to Ruby when the buffer is written" do
@@ -240,6 +299,32 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       local buf = vim.fn.bufnr("lain://question")
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
       return true
+    LUA
+  end
+
+  def question_hints
+    inspector.exec_lua(<<~LUA, [])
+      local buf = vim.fn.bufnr("lain://question")
+      local ns = vim.api.nvim_create_namespace("lain_question_hints")
+      local out = {}
+      for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
+        for _, virt in ipairs(mark[4].virt_lines or {}) do
+          table.insert(out, { row = mark[2] + 1, text = virt[1][1] })
+        end
+      end
+      return out
+    LUA
+  end
+
+  def question_errors
+    inspector.exec_lua(<<~LUA, [])
+      local buf = vim.fn.bufnr("lain://question")
+      local ns = vim.api.nvim_create_namespace("lain_question_indent")
+      local out = {}
+      for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
+        if mark[4].hl_group == "ErrorMsg" then table.insert(out, mark[2] + 1) end
+      end
+      return out
     LUA
   end
 

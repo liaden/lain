@@ -30,6 +30,69 @@
 -- question is a legal answer); it is refusing to read a keystroke nobody typed
 -- as a decision. b:lain_question_rendered is that comparison's other half,
 -- stamped beside the digest in set_question.
+local HINT_NS = vim.api.nvim_create_namespace("lain_question_hints")
+local INDENT_NS = vim.api.nvim_create_namespace("lain_question_indent")
+local ANSWER_HINT = "answer here, indented 2 spaces"
+
+local function is_indented(line)
+  return line:sub(1, 2) == "  " and line:match("%S") ~= nil
+end
+
+-- The rows lain did not render: a line's occurrences past its rendered count.
+-- The limit is that a typed line is indistinguishable from an identical rendered one, so only the surplus copy is flagged.
+local function typed_rows(buf, lines)
+  local budget = {}
+  for _, line in ipairs(vim.b[buf].lain_question_rendered or {}) do
+    budget[line] = (budget[line] or 0) + 1
+  end
+  local typed = {}
+  for row, line in ipairs(lines) do
+    if (budget[line] or 0) > 0 then
+      budget[line] = budget[line] - 1
+    else
+      typed[row] = true
+    end
+  end
+  return typed
+end
+
+local function mark_indent_errors(buf, lines, typed)
+  for row in pairs(typed) do
+    local line = lines[row]
+    if line:match("%S") and not is_indented(line) and question_heading(line) == nil then
+      vim.api.nvim_buf_set_extmark(buf, INDENT_NS, row - 1, 0, { end_row = row - 1, end_col = #line, hl_group = "ErrorMsg" })
+    end
+  end
+end
+
+local function mark_answer_hints(buf, lines, typed)
+  local heading, tail, answered
+  local function close()
+    if heading ~= nil and question_heading(lines[heading]) == QUESTION_NONE and not answered then
+      vim.api.nvim_buf_set_extmark(buf, HINT_NS, tail - 1, 0, { virt_lines = { { { ANSWER_HINT, "Comment" } } } })
+    end
+  end
+  for row, line in ipairs(lines) do
+    if question_heading(line) ~= nil then
+      close()
+      heading, tail, answered = row, row, false
+    elseif heading ~= nil then
+      answered = answered or (typed[row] == true and is_indented(line))
+      tail = line:match("%S") and row or tail
+    end
+  end
+  close()
+end
+
+local function annotate_question(buf)
+  vim.api.nvim_buf_clear_namespace(buf, HINT_NS, 0, -1)
+  vim.api.nvim_buf_clear_namespace(buf, INDENT_NS, 0, -1)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local typed = typed_rows(buf, lines)
+  mark_answer_hints(buf, lines, typed)
+  mark_indent_errors(buf, lines, typed)
+end
+
 local function question_buf(name)
   local existing = vim.fn.bufnr(name)
   if existing ~= -1 then
@@ -51,6 +114,9 @@ local function question_buf(name)
   -- this is the first buffer where RECORD_START serves folds and motions from
   -- the same predicate and the motions were not bound.
   bind_motions(buf, name)
+  -- on_lines rather than TextChanged: it also fires for programmatic edits, and
+  -- extmarks are not a text change, so annotating inside it is allowed.
+  vim.api.nvim_buf_attach(buf, false, { on_lines = function() annotate_question(buf) end })
   return buf
 end
 
