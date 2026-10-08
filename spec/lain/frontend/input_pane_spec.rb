@@ -121,6 +121,22 @@ RSpec.describe Lain::Frontend::InputPane do
     expect(screen.string).to include("🔥 fleet:1 inbox:0")
   end
 
+  it "tells the human at an empty you> prompt how to write more than 1 line" do
+    chat = open_pane
+    publish(chat, {})
+
+    expect(settles { screen.string.include?("you> ") || nil }).to be(true)
+    expect(screen.string).to include("Shift+Enter").and include("Alt+Enter")
+  end
+
+  it "keeps the multi-line hint off a prompt that is not you>" do
+    chat = open_pane
+    publish(chat, { "kind" => "human", "text" => "[y/N] run bash? " })
+
+    expect(settles { screen.string.include?("[y/N]") || nil }).to be(true)
+    expect(screen.string).not_to include("Shift+Enter")
+  end
+
   it "sends what the human typed as the answer to the prompt it was read at" do
     chat = open_pane
     publish(chat, { "generation" => 7 })
@@ -420,7 +436,8 @@ RSpec.describe Lain::Frontend::InputPane do
       expect(screen.string).to eq("")
 
       publish(chat, { "generation" => 8, "header" => "fleet:2\nrow b" })
-      expect(settles { screen.string.include?("row b") ? screen.string : nil }).to eq("\r\e[Kfleet:2\nrow b\n")
+      hint = "\r\e[K#{described_class::MULTILINE_HINT}\n"
+      expect(settles { screen.string.include?("row b") ? screen.string : nil }).to eq("#{hint}\r\e[Kfleet:2\nrow b\n")
     end
 
     it "redraws nothing for an unchanged header" do

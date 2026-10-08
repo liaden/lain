@@ -175,6 +175,47 @@ RSpec.describe Lain::Frontend::LineEditor do
     end
   end
 
+  # Bytes fed through Reline's own key matcher and the live keymap, as its input
+  # loop does, so a sequence nobody bound is swallowed exactly as in a terminal.
+  def typing(editor, bytes)
+    stroke = Reline::KeyStroke.new(config, Encoding::UTF_8)
+    pending = bytes.bytes
+    until pending.empty?
+      keys, pending = stroke.expand(pending)
+      keys.each { |key| editor.input_key(key) }
+    end
+  end
+
+  describe "a newline that does not submit" do
+    before { described_class.load_inputrc }
+
+    {
+      "CSI-u Shift+Enter" => "\e[13;2u",
+      "modifyOtherKeys Shift+Enter" => "\e[27;2;13~",
+      "Alt+Enter" => "\e\r"
+    }.each do |name, sequence|
+      described_class::NEWLINE_MODES.each do |mode|
+        it "inserts a newline on #{name} in #{mode} mode" do
+          config.editing_mode = mode
+          editor = multiline_editor
+
+          typing(editor, "ab#{sequence}cd")
+
+          expect(editor.whole_buffer).to eq("ab\ncd")
+        end
+      end
+    end
+
+    it "joins the lines again when Backspace arrives on the empty one" do
+      editor = multiline_editor
+      typing(editor, "ab\e[13;2u")
+
+      typing(editor, "\x7f")
+
+      expect(editor.whole_buffer).to eq("ab")
+    end
+  end
+
   describe "vi mode" do
     it "leaves the editing mode alone when vi mode was not asked for" do
       allow(Reline).to receive(:readmultiline).and_return("hi")

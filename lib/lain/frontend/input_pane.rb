@@ -61,6 +61,9 @@ module Lain
       # pane must not depend on a screen library to redraw its own header.
       CLEAR_ROW = "\r\e[K"
 
+      # The row naming the keys that start another line, drawn once per you> prompt.
+      MULTILINE_HINT = "Shift+Enter or Alt+Enter for a new line"
+
       # @param path [String] the chat's input socket, from {CLI::InputSocket.path}
       # @param tty [Frontend::TTY] the pane's own terminal; it owns this pane
       #   and nothing else writes to it
@@ -343,6 +346,7 @@ module Lain
       def drawn(client, frame)
         return counted(client, frame) if frame["kind"] == "countdown"
 
+        hint_for(frame)
         over_the_prompt(frame["header"])
         line = @rail.read(frame["kind"].to_sym, frame["text"].to_s, header: frame["header"].to_s)
         # The answer's echoed newline moved the cursor off the input row.
@@ -358,6 +362,13 @@ module Lain
         return if header.to_s.empty?
 
         @tty.print_prompt("#{CLEAR_ROW}#{header}\n")
+      end
+
+      def hint_for(frame)
+        return unless frame["kind"] == "you" && frame["generation"] != @hinted
+
+        @hinted = frame["generation"]
+        @tty.print_prompt("#{CLEAR_ROW}#{MULTILINE_HINT}\n")
       end
 
       def answer(line, frame) = { "v" => "line", "text" => line, "generation" => frame["generation"] }

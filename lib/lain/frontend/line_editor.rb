@@ -56,6 +56,12 @@ module Lain
       # the bottom of this file, reaching handlers through {Registry}.
       ACTION = :lain_key_action
 
+      # What terminals send for Shift+Enter, which Reline would otherwise
+      # swallow whole as an unknown escape sequence: CSI-u and xterm's
+      # modifyOtherKeys. Alt+Enter (ESC CR) is already Reline's own newline key.
+      NEWLINE_MODES = %i[emacs vi_insert].freeze
+      NEWLINE_SEQUENCES = ["\e[13;2u", "\e[27;2;13~"].map { |sequence| sequence.bytes.freeze }.freeze
+
       # Reline's own indicators are "(cmd)"/"(ins)"; lain's bracketed form
       # matches {TTY::Countdown}'s "[c] cancel", so the two pieces of
       # bottom-of-screen furniture read as one interface rather than two.
@@ -128,12 +134,8 @@ module Lain
         # dropped. `claiming` names bytes about to be bound.
         def load_inputrc(claiming: [])
           config = ::Reline.core.config
-          return if config.loaded?
-
-          config.read
-          ::Reline.core.io_gate.set_default_key_bindings(
-            SinglesOnly.new(config, registry.claimed_bytes + claiming)
-          )
+          install_gate_defaults(config, claiming) unless config.loaded?
+          bind_newlines(config)
         end
 
         # Register `handler` on `name`, a control key written the way a human
@@ -146,6 +148,21 @@ module Lain
         def unbind_all = registry.clear
 
         private
+
+        def install_gate_defaults(config, claiming)
+          config.read
+          ::Reline.core.io_gate.set_default_key_bindings(
+            SinglesOnly.new(config, registry.claimed_bytes + claiming)
+          )
+        end
+
+        def bind_newlines(config)
+          NEWLINE_MODES.each do |keymap|
+            NEWLINE_SEQUENCES.each do |sequence|
+              config.add_default_key_binding_by_keymap(keymap, sequence, :key_newline)
+            end
+          end
+        end
 
         def beneath(input)
           return "" unless input.respond_to?(:raw)
