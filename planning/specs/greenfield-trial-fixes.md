@@ -1,6 +1,6 @@
 # Greenfield trial fixes: search that cannot freeze the session, epic skills an agent can run, and a cockpit that behaves
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson). T7 is Rust and is reviewed with the Rust roster (Linus Torvalds, Raph Levien, Andrew Gallant, Frank McSherry, Ashley Williams).
@@ -1819,3 +1819,43 @@ After the last card lands:
 6. Rerun the frugirl trial from the user's notes with `lain up ~/dev/frugirl --create` and compare against the 2026-10-08 session record.
 
 ## Execution log
+
+- 2026-10-08 11:40 start. Base `main` at `22957ea0` (plan commit; code unchanged since grounding `7599bad4`). `git worktree list`: only `/home/tara/dev/lain 22957ea0 [main]`. Branches: `flake/review`, `main`, `spike/combined`, `spike/combined2`.
+- Hook (`.pre-commit-config.yaml`): pre-commit-hooks (shebangs, merge-conflict, yaml, eof, trailing whitespace); shellcheck on shell files; cargo fmt/clippy/test on Rust; cargo deny on Cargo/deny files; `bundle exec rake compile check` (rubocop whole repo + `rake pspec`) on any Ruby or Rust; `bundle exec yard-lint --staged`; `bin/lint-gherkin-docs` on staged plan docs; `bin/lint-commit-msg` (subject <= 72, no period, blank line, no dashes, no trailers); `bin/lint-price-freshness`. Agent-runnable: `bundle exec rubocop <paths>`, `bundle exec yard-lint <paths>`, `shellcheck <file>`, `cargo fmt -- --check && cargo clippy --all-targets -- -D warnings && cargo test`. A Ruby commit takes about 90s (compile, rubocop, 58s suite). The suite must run alone on the box. No paths need user approval.
+- Worktrees under `tmp/worktrees/<card>` (ignored by `/tmp/`), each agent with its own `TMPDIR=$HOME/tmp/lain/<card>`.
+
+- 11:45 started T1 (sonnet), T8 (sonnet), T9 (opus), T13 (opus), T14 (sonnet), T16 (opus), T17 (opus), T22 (opus), T24 (sonnet), T29 (sonnet). Held back for box load: T21, T26, T30, T32, T33, T34, T36, T37, T39 (all ready, no file overlap).
+- 11:41 user asked for wider parallelism; started T21, T26, T30, T32, T33, T34, T36, T37, T39 (all sonnet).
+- 11:55 scope changes decided in the main session: T9 adds `lib/lain/cli/epic_driver/factory.rb` and its spec (NoEpic becomes a class with `mounted?`; identity checks at `factory.rb:392` and `wiring.rb:917` change). T13 adds `lib/lain/forge/intent.rb`, `lib/lain/forge/reconcile.rb` and specs (new `local_merge` Intent action). T14 adds `spec/lain/cli/backend_spec.rb` and `spec/lain/role_prelude_wiring_spec.rb` (researcher tool unions).
+- 12:00 T30 closed on its stop condition with seam examples only. Recorded cause: not reproducible. Counting is correct end to end through the real tee, scribe and status feed, and production builds LiveViews before `chronicle.start`. The session's spawn #1 (13:14:01) was journaled and published in the same synchronous call before the first gap, so a reactor freeze does not explain `fleet:0`; when the user read the HUD is unknown. T31 still applies.
+- 12:00 T39 paused: its `lain up` warning needs `up.rb` and `up_spec.rb`, which T24 holds. Resumes after T24 lands, with both files added to T39.
+- 11:49 T29 landed 77c013d0
+- T16 ruling (main session): the slash-joined exemption no longer covers a segment that is itself a hex or base36 key, so path-embedded lowercase secrets stay flagged. Narrower than the card's accepted trade; costs about 3 git SHAs in URLs. For T42: ARCHITECTURE.md's "Detection: measured" section must drop the "recorded rather than special-cased" sentence for URLs and paths and update the entropy counts (reviewer measured 845 to 615 regions before this fix).
+- T21 ruling reversed: bare-name cloud lookup is opt-in and used only on the cloud arm (Backend#cloud?), because a local model with no resident runner otherwise got an authoritative published window. T21 adds backend.rb, backend/window_book.rb and its spec.
+- Pre-existing order-dependent failure reported by T21's implementer: spec/lain/seams/over_window_request_spec.rb examples at :201 and :259 failed in a large combined by-path run (seed 28619) with and without the card; pass alone. Not reproduced since.
+- 12:30 Pre-existing, found in T26 review on a real pty: after Alt+b or Alt+f in LineEditor#read, the next typed character is not inserted (same with the newline bindings removed). Out of scope; candidate card.
+- 11:54 T30 landed d1310756; T34 landed c06e5a86
+- T22 scope: adds lib/lain/provider/ollama.rb and its spec (journal the narrowing; gate on the request context). Risk for the user: on a plan with no server queue, a fan-out at the new default width 3 can fail the requests already in flight past the plan's limit (reviewer's stub probe: 2 of 3 failed after their retries); later requests run at the narrowed width. Unprobed for a real Free plan (card stop condition stands). For T42: README.md:635 and :842-843 still say the cloud default is 1.
+- 12:02 T37 landed c8838f24; T1 landed b39dfc58; T2 started (sonnet) from b39dfc58
+- 12:04 T8 landed 0e086e3e
+- 12:07 T17 ruling widened: related refuses /, home and any ancestor of home. Card Gherkin correction: .env under a related tree is gated (parks at the read gate) as today, not denied. For T42: docs/commands.md:827 sensitivity keys gain related: (masks without asking, never releases; refuses root, home and its ancestors, a non-directory).
+- 12:10 T9 ruling: epic_write is exempt from plan-scope confinement by name (epic artifacts are planning documents). Pre-existing, found in T9 review: under LANG=C, 108 examples fail in Skill::Catalog.split_front_matter (invalid byte sequence in US-ASCII); candidate card.
+- 12:11 T22 interface change: Admission#narrow! returns the width it replaced (decided under 1 lock), not the width in force.
+- 12:21 T17 accepted limit: the home-ancestor check is lexical; a home reached through a symlinked parent could be related by its other spelling. It only suppresses prompts; masking still applies.
+- 12:22 T2 scope: adds lib/lain/file_walk.rb and its spec (byte-safe sort for non-UTF-8 names; skip a .git file). Known limit recorded: a directory whose .git is a pointer to a missing admin dir is walked by hand, build trees included (seen in ~/dev's .git-less lain-* copies); the walk limit in T4 bounds it.
+- 12:35 Base check: full pspec on HEAD 0e086e3e without T33 on a quiet box: 22195 examples, 0 failures, peak load 12.9. The 4 red T33 hooks were outside load (another session's tests, mempalace mine, Steam).
+- 12:37 T33 landed 21296e92 on its 5th hook, peak load 9.7
+- 12:57 T14 hook red once on spec/e2e/stop_while_busy_spec.rb 'consumes the question when an ask parked on it is stopped' (input pane never showed /stop within 10s). Alone: 1 of 19 runs failed with T14, 0 of 15 on base f42554eb; not distinguishable from a pre-existing flake. Recorded as a known flake; T14 lands. From here landings run at 4 workers under nice and at most 2 agents run, per the user (meeting).
+- 13:01 T2 landed 54d991b0; T24 landed 213df3c0; T36 landed f42554eb; T14 landed 233cc55e. T15 started (sonnet).
+- 13:56 T32 landed 5546a1f5; T26 landed ad34dbfd. T16 hook red on the same e2e flake (stop_while_busy_spec.rb 'consumes the question when an ask parked on it is stopped'); second sighting, so it becomes a follow-up card. T16 retried.
+- 13:58 T16 landed ea5ffaed
+- 14:00 T3 landed 35eadf85; T4 started (sonnet)
+- 14:02 Per the user (more concurrency when unblocked): T10, T23 and T25 started on stacked worktrees, each based on a local-only commit of main plus its approved parent's diff (T9, T22, T39). A stacked card lands only after its parent.
+- 14:02 T13 landed 55eb076f
+- 14:04 T22 landed 138656ac
+- 14:07 T17 landed cae01788
+- 14:08 For T42: with cockpit mouse on, native terminal selection needs Shift-drag (README cockpit section).
+- 14:11 T5 started (sonnet), stacked on T4
+- 14:13 T9 hook red on 18 e2e examples in 5 journeys: the cassettes are stale because every chat request now carries epic_write. T9 unstaged and its files reverted from the main checkout; T9 re-records the e2e cassettes against the local ollama before landing. T10 and T11 add tools too, so each re-records as well.
+- 14:17 T9 re-recorded 6 cassettes (cockpit_approve, cockpit_deny, fork_resume, two_cockpits_a/b, wire_contract); all 8 e2e journeys replay green; requeued
+- 17:24 Checkpoint after a reboot. Landed: T1, T2, T3, T8, T13, T14, T16, T17, T21, T22, T24, T26, T29, T30, T32, T33, T34, T36, T37. Approved and queued: T4, T9 (e2e cassettes re-recorded), T39, T31, T15, T25, T23. In review: T10. In progress: T5 (stacked on T4), T11 (stacked on T10), T38 (stacked on T25). Not started: T6, T7, T12, T18, T19, T20, T27, T28, T35, T40, T41, T42.
