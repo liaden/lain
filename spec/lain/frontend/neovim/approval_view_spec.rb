@@ -172,6 +172,10 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
   end
 
+  it "says in its hint that a denial can carry a reason" do
+    expect(described_class::HINT).to eq("-- y approve, n deny  (:LainApprove / :LainDeny [reason])")
+  end
+
   describe "the round trip that was never written" do
     it "resolves the parked call with the verdict pressed in the editor" do
       result = gated(await: true) { |_queue| view.decide(1, "approve", generation:) }
@@ -185,6 +189,31 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
       expect(result[:verdicts]).to eq([false])
       expect(decisions.map { |record| record.fetch("verdict") }).to eq(["deny"])
+      expect(decisions.first).not_to have_key("reason")
+    end
+
+    it "denies with the words that follow deny as the reason" do
+      result = gated(await: true) { |_queue| view.decide(1, "deny  not this file ", generation:) }
+
+      expect(result[:verdicts]).to eq([false])
+      expect(result[:outcome].pending).to have_attributes(reason: "not this file")
+      expect(decisions.first).to include("verdict" => "deny", "reason" => "not this file")
+    end
+
+    it "reads the verdict word in any case, keeping the reason as typed" do
+      result = gated(await: true) { |_queue| view.decide(1, "DENY Not this file", generation:) }
+
+      expect(result[:verdicts]).to eq([false])
+      expect(decisions.first).to include("verdict" => "deny", "reason" => "Not this file")
+    end
+
+    it "refuses words after approve, since an approval carries no reason" do
+      result = gated(await: true) { |_queue| view.decide(1, "approve not this file", generation:) }
+
+      expect(result[:outcome]).not_to be_decided
+      expect(result[:outcome].report).to eq("approve takes no reason -- run :LainApprove alone; still parked")
+      expect(result[:verdicts]).to eq([false])
+      expect(decisions.map { |record| record.fetch("surface") }).to eq([Lain::Approval::Queue::TIMEOUT_SURFACE])
     end
 
     it "signs its decision with its own surface, so a transcript never reads it as the terminal's" do

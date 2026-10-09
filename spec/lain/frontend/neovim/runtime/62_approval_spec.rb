@@ -72,6 +72,22 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
         expect(settled).to be(false)
         expect(decisions.last).to include("verdict" => "deny")
+        expect(decisions.last).not_to have_key("reason")
+      end
+    end
+
+    it "hands the model the words given after :LainDeny, in the refusal its tool result reads" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do |handle|
+        told = with_parked_approval(handle, ask: method(:refusal_through_gate)) do
+          wait_until_editor { buffer_lines("lain://approval").join.include?("pwd") }
+          inspector.command("buffer lain://approval")
+          inspector.command("LainDeny not this file")
+        end
+
+        expect(told).to eq(Lain::Tool::Result.error('approval denied for tool "bash": not this file'))
+        expect(decisions.last).to include("verdict" => "deny", "reason" => "not this file")
       end
     end
 
@@ -414,9 +430,11 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # clock: a fail-closed denial would answer `false`, which is also what a
   # working deny answers, so a hung run must be distinguishable from a decided
   # one. `:unsettled` is that third answer.
-  def with_parked_approval(frontend, input: { "command" => "pwd" }, grace: 8)
+  def with_parked_approval(frontend, input: { "command" => "pwd" }, grace: 8,
+                           ask: ->(queue, effect) { queue.call(effect, nil) })
     settled = Thread::Queue.new
-    worker = Thread.new { serve_approval(frontend, ApprovalSeamSupport::Effect.new("bash", input, "tu_1"), settled, grace) }
+    effect = ApprovalSeamSupport::Effect.new("bash", input, "tu_1")
+    worker = Thread.new { serve_approval(frontend, effect, settled, grace, ask) }
     yield
     Timeout.timeout(20) { settled.pop }
   ensure
@@ -429,14 +447,24 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # box, while an example asserting that NOTHING answers would otherwise pay
   # that slack in full. The queue's own clock is set far beyond both, so a
   # fail-closed denial can never stand in for a deny the human pressed.
-  def serve_approval(frontend, effect, settled, grace)
+  def serve_approval(frontend, effect, settled, grace, ask)
     Sync do |task|
       queue = Lain::Approval::Queue.new(journal:, timeout: 60)
       surfaces = approval_surfaces(task, frontend, queue)
-      gated = task.async { queue.call(effect, nil) }
+      gated = task.async { ask.call(queue, effect) }
       settled.push(within(task, grace) { gated.finished? } ? gated.wait : :unsettled)
       (surfaces + [gated]).each(&:stop)
     end
+  end
+
+  # The queue as the chat's gate holds it, so the answer is the tool result the
+  # model reads rather than the Boolean beneath it.
+  def refusal_through_gate(queue, effect)
+    call = Lain::Effect::ToolCall.new(tool_use_id: effect.tool_use_id, name: effect.name, input: effect.input)
+    env = Lain::Middleware::Gate.new(policy: queue).call({ effect: Lain::Effect::Approval.new(effect: call) }) do
+      raise "a denied call reached the tool"
+    end
+    env.fetch(:result)
   end
 
   # {#serve_approval}'s shape, widened to the pair {#parked_pair} admits.

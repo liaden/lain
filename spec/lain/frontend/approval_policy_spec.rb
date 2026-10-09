@@ -87,6 +87,33 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
   end
 
+  ["n stay inside ~/dev/frugirl", "no: stay inside ~/dev/frugirl", "N, stay inside ~/dev/frugirl",
+   "No. stay inside ~/dev/frugirl", "n - stay inside ~/dev/frugirl", "nope, stay inside ~/dev/frugirl",
+   "nah stay inside ~/dev/frugirl"].each do |answer|
+    it "denies on #{answer.inspect} and keeps the words after the no as the reason" do
+      approval = pending
+      policy_for("#{answer}\n").decide(approval)
+
+      expect(approval).to have_attributes(decision: :deny, surface: "tty", reason: "stay inside ~/dev/frugirl")
+    end
+  end
+
+  it "keeps punctuation that opens the reason itself" do
+    approval = pending
+    policy_for("n ./build is generated\n").decide(approval)
+
+    expect(approval.reason).to eq("./build is generated")
+  end
+
+  %w[n nope nah no. garbage].push("y stay", "nobody asked").each do |answer|
+    it "denies on #{answer.inspect} with no reason" do
+      approval = pending
+      policy_for("#{answer}\n").decide(approval)
+
+      expect(approval).to have_attributes(decision: :deny, reason: nil)
+    end
+  end
+
   it "denies on a bare newline (the default is refusal, not consent)" do
     approval = pending
     policy_for("\n").decide(approval)

@@ -79,7 +79,7 @@ module Lain
         # The only discoverability this surface has: the buffer takes focus when
         # an approval lands, and a human who has never read `:help lain-approval`
         # has to learn what to press FROM the thing in front of them.
-        HINT = "-- y approve, n deny  (:LainApprove / :LainDeny)"
+        HINT = "-- y approve, n deny  (:LainApprove / :LainDeny [reason])"
 
         # A FOLD's measurement rather than a terminal's: a closed item shows
         # this line plus `10_folds.lua`'s "  (+N lines)" marker on ONE screen
@@ -223,6 +223,7 @@ module Lain
         UNSHOWN = "#{BUFFER} has re-rendered since rendering %<generation>s -- press again".freeze
         NO_ROW = "no parked approval on #{BUFFER} line %s".freeze
         UNKNOWN = "%<given>s is not a verdict lain has -- answer %<verdicts>s; still parked"
+        WORDLESS = "approve takes no reason -- run :LainApprove alone; still parked"
         SETTLED = "%<surface>s %<decision>s #{BUFFER} line %<line>s first, and that stands".freeze
 
         # @param rpc [#set_approval] the editor's render inlet ({RpcThread}):
@@ -319,8 +320,8 @@ module Lain
         # cursor with its item. Neither is contained in this file.
         #
         # @param line [Integer] 1-based, as nvim's cursor reports it
-        # @param verdict [String] one of {VERDICTS}' keys, as the human's key
-        #   sent it
+        # @param verdict [String] one of {VERDICTS}' keys, in any case, as the
+        #   human's key sent it; "deny" may be followed by the human's reason
         # @param generation [Integer] the stamp on the buffer they are looking
         #   at (b:lain_view_generation)
         # @return [Decided]
@@ -333,20 +334,28 @@ module Lain
           return undecided(format(UNSHOWN, generation: generation.inspect)) if resolved.unshown?
           return undecided(format(NO_ROW, line.inspect)) unless resolved.owned?
 
-          answer = VERDICTS[token(verdict)]
+          word, said = words(verdict)
+          answer = VERDICTS[word]
           return undecided(unknown(verdict)) if answer.nil?
+          return undecided(WORDLESS) if answer && said
 
-          settled(resolved.owner, answer, line)
+          settled(resolved.owner, answer, line, said)
         end
 
         private
 
-        # `to_s` armors a non-String that crossed msgpack into something
-        # {VERDICTS} misses BY NAME rather than something a lookup crashes on.
-        def token(verdict) = verdict.to_s.strip.downcase
+        # The verdict word, then whatever the human typed after it, which only
+        # a deny may carry. It rides in the verdict's own string so the reason
+        # crosses the wire the verdict already crosses. `to_s` armors a
+        # non-String that crossed msgpack into something {VERDICTS} misses BY
+        # NAME rather than something a lookup crashes on.
+        def words(verdict)
+          word, said = verdict.to_s.strip.split(/\s+/, 2)
+          [word.to_s.downcase, said]
+        end
 
-        def settled(pending, answer, line)
-          return lost(pending, line) unless pending.decide(answer, surface: SURFACE)
+        def settled(pending, answer, line, said)
+          return lost(pending, line) unless pending.decide(answer, surface: SURFACE, reason: said)
 
           Decided.new(pending:, report: "#{pending.tool} #{outcome(pending)}")
         end

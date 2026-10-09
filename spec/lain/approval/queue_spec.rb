@@ -197,6 +197,17 @@ RSpec.describe Lain::Approval::Queue do
       end
     end
 
+    it "tells the model the words a human denied the call in" do
+      gate = gate_over([])
+
+      Sync do |task|
+        run = task.async { gate.call(tool_call) }
+        queue.dequeue.deny(surface: "tty", reason: "stay inside ~/dev/frugirl")
+
+        expect(run.wait.content).to eq('approval denied for tool "dangerous": stay inside ~/dev/frugirl')
+      end
+    end
+
     it "empties its pending list once the decision settles" do
       Sync do |task|
         run = task.async { queue.call(tool_call, nil) }
@@ -308,6 +319,38 @@ RSpec.describe Lain::Approval::Queue do
       end
 
       expect(decision_records).to contain_exactly(a_hash_including("verdict" => "deny", "timed_out" => false))
+      expect(decision_records.first).not_to have_key("reason")
+    end
+
+    it "journals the words a human denied the call in" do
+      Sync do |task|
+        run = task.async { queue.call(tool_call, nil) }
+        queue.dequeue.deny(surface: "tty", reason: "stay inside ~/dev/frugirl")
+        run.wait
+      end
+
+      expect(decision_records).to contain_exactly(a_hash_including("verdict" => "deny",
+                                                                   "reason" => "stay inside ~/dev/frugirl"))
+    end
+  end
+
+  describe "the words a denial is given in" do
+    def pending = described_class::Pending.new(effect: tool_call, requester: "agent", clock: -> { 0.0 })
+
+    it "keeps them on one line with no control bytes, so they stay one clause of the tool result" do
+      denied = pending
+      denied.deny(surface: "tty", reason: "stay\ninside\e[2K  ~/dev/frugirl\r")
+
+      expect(denied.reason).to eq("stay inside [2K ~/dev/frugirl")
+    end
+
+    it "holds none for blank words or for an approval" do
+      blank = pending
+      blank.deny(surface: "tty", reason: "  \n")
+      approved = pending
+      approved.decide(true, surface: "tty", reason: "fine")
+
+      expect([blank.reason, approved.reason]).to eq([nil, nil])
     end
   end
 

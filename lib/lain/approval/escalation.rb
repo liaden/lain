@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/object/blank"
+
 module Lain
   module Approval
     # The escalation ladder: "middleware wrapping the human", in this repo's own
@@ -84,7 +86,7 @@ module Lain
       # What one rung said, and everything a journal needs to attribute it.
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
       # so `Ractor.shareable?` holds and the record is safe to share.
-      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told)
+      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said)
 
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
@@ -125,7 +127,12 @@ module Lain
         # misread -- a verdict's name, its disclaimer about safety -- so a rung
         # that refuses names the narrower clause itself. Left off {#record},
         # which already holds the whole reason.
-        def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil)
+        #
+        # `said` is kept apart from `told` because the gate appends it to its
+        # own sentence rather than replacing that sentence, and off {#record}
+        # because the queue's `approval_decision` already journals it.
+        def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil,
+                       said: nil)
           unless VERDICTS.include?(verdict)
             raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
@@ -134,7 +141,7 @@ module Lain
           end
 
           super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:,
-                final: final == true, told: -(told || reason).to_s)
+                final: final == true, told: -(told || reason).to_s, said: spoken(said))
         end
 
         def allow? = verdict == :allow
@@ -151,6 +158,11 @@ module Lain
           { "verdict" => verdict.to_s, "rung" => rung, "reason" => reason,
             "faulted" => fault, "authority" => authority.to_s, "final" => final }.freeze
         end
+
+        private
+
+        # One spelling of no reason, so a blank never leaves a dangling ": ".
+        def spoken(said) = (-said.to_s if said.present?)
       end
 
       # The deterministic rungs first, the asking rung last.
@@ -709,7 +721,7 @@ module Lain
           authority = @automatic.include?(pending.surface) ? :automatic : :human
           return Ruling.allow(rung: NAME, because: "#{APPROVED} (#{pending.surface})", authority:) if pending.approved?
 
-          Ruling.deny(rung: NAME, because: "#{REFUSED} (#{pending.surface})", authority:)
+          Ruling.deny(rung: NAME, because: "#{REFUSED} (#{pending.surface})", authority:, said: pending.reason)
         end
       end
     end

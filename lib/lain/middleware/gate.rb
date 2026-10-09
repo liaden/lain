@@ -146,10 +146,11 @@ module Lain
 
       private
 
+      # Inside the one tool result, so the model reads them as the reason.
       def refusal(ruling, name)
         return format(FINAL, name:, because: ruling.told) if ruling.final?
 
-        format(@denial, name:)
+        [format(@denial, name:), ruling.said].compact.join(": ")
       end
 
       def unwrapped(effect) = effect.approval? ? effect.effect : effect

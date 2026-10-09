@@ -52,6 +52,11 @@ module Lain
       AFFIRMATIVE = /\Ay(es)?\z/i
       private_constant :AFFIRMATIVE
 
+      # The model reads the reason. Punctuation counts as a separator only when
+      # space follows it or it touches the word, so "n ./build" keeps its path.
+      REASONED_NO = /\A(?:nope|nah|no?)(?:(?:[[:punct:]]*\s+)+|[[:punct:]]+)(?<reason>\S.*)\z/i
+      private_constant :REASONED_NO
+
       # How a prompt another surface decided ends its line.
       CLOSED = "decided by %<surface>s: %<verdict>s"
 
@@ -169,7 +174,7 @@ module Lain
         return false if pending.decided?
 
         answer = read_until_decided(pending)
-        pending.decide(affirmative?(answer), surface: SURFACE)
+        pending.decide(affirmative?(answer), surface: SURFACE, reason: reason_in(answer))
       end
 
       private
@@ -291,6 +296,8 @@ module Lain
       def affirmative?(answer)
         answer&.strip&.match?(AFFIRMATIVE) || false
       end
+
+      def reason_in(answer) = REASONED_NO.match(answer.to_s.strip)&.[](:reason)
     end
   end
 end

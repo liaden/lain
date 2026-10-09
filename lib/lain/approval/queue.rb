@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/object/blank"
+require "active_support/core_ext/string/filters"
 require "active_support/core_ext/string/inflections"
 require "async"
 require "async/queue"
@@ -121,7 +123,7 @@ module Lain
       # the coordination bug {Promise::AlreadyResolved} names.
       class Pending
         attr_reader :requester, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd,
-                    :within, :timeout
+                    :within, :timeout, :reason
 
         # Defaulting here is NOT the ledger's no-default rule bent: a defaulted
         # LEDGER lets a forgotten injection become a second ledger whose
@@ -172,14 +174,19 @@ module Lain
         # straight-line with no yield point between them. A ledger write is
         # IO-shaped and would open exactly that gap. This queue holds no ledger
         # at all, which is how that stays true.
+        #
+        # `reason` is the human's own words for a denial, which the model reads
+        # as the last clause of its tool result. Flattened to one line with no
+        # control bytes, so it cannot open a line or a sequence of its own.
         # rubocop:disable Naming/PredicateMethod -- a COMMAND whose Boolean
         # reports whether it won the race, not a query; `decide?` would misname
         # the mutation the way `Timeline#commit`'s rename lesson warns about.
-        def decide(verdict, surface:)
+        def decide(verdict, surface:, reason: nil)
           return false if decided?
 
           @surface = surface.to_s
           @decision = verdict ? :approve : :deny
+          @reason = flattened(reason) unless verdict
           @latency = @clock.call - @asked_at
           @promise.resolve(@decision)
           true
@@ -233,7 +240,7 @@ module Lain
         end
 
         def approve(surface:) = decide(true, surface:)
-        def deny(surface:) = decide(false, surface:)
+        def deny(surface:, reason: nil) = decide(false, surface:, reason:)
         def decided? = @promise.resolved?
         def approved? = @decision == :approve
         def timed_out? = @surface == TIMEOUT_SURFACE
@@ -255,11 +262,18 @@ module Lain
         # under one id, at the path gate and again at the release, one after the
         # other, so within an id the records pair IN ORDER. Who released a
         # secret is `read_released`'s `surface`, not a join onto a decision.
+        #
+        # `reason` is written only when a human gave one, so a session recorded
+        # before reasons existed reads the same as a bare denial does now.
         def to_journal
           { "type" => "approval_decision", "tool_use_id" => tool_use_id, "requester" => requester,
             "tool" => tool, "surface" => surface, "verdict" => decision.to_s, "timed_out" => timed_out?,
-            "latency" => latency }
+            "latency" => latency }.merge(reason ? { "reason" => reason } : {})
         end
+
+        private
+
+        def flattened(words) = words.to_s.gsub(/[[:cntrl:]]/, " ").squish.presence
       end
 
       # @param journal [#record] where decisions land as evidence; required,

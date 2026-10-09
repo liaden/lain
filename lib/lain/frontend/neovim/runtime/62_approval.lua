@@ -185,6 +185,10 @@ end
 -- a cursor that stays put, and the stamp this sends is the fresh one, so
 -- nothing refuses. Ruby's ApprovalView#decide carries the full note and why
 -- neither side can close it alone.
+--
+-- A deny's REASON rides inside the verdict string, "deny <words>", so the reason
+-- crosses the one wire the verdict does. Ruby splits it off and refuses words
+-- after approve.
 local function submit_approval(verdict)
   local buf = vim.api.nvim_get_current_buf()
   if vim.api.nvim_buf_get_name(buf) ~= lain_approval.NAME then
@@ -223,9 +227,9 @@ end
 define("LainApprove", function()
   submit_approval("approve")
 end)
-define("LainDeny", function()
-  submit_approval("deny")
-end)
+define("LainDeny", function(opts)
+  submit_approval(vim.trim("deny " .. opts.args))
+end, { nargs = "*" })
 
 -- Bound from a BufEnter autocmd (cleared augroup, so re-attach redefines rather
 -- than stacks) rather than at load: the buffer is created by a render, which is

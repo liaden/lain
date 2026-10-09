@@ -332,8 +332,8 @@ your own `:highlight link` overrides any of them without a fight:
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
 `:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
-`:LainReviewVerdict {verdict}`, `:LainReviewClose`, `:LainApprove`, `:LainDeny`,
-`:LainSurveyAdd`
+`:LainReviewVerdict {verdict}`, `:LainReviewClose`, `:LainApprove`,
+`:LainDeny [{reason}]`, `:LainSurveyAdd`
 (defined, but refuses every time -- NOT YET AVAILABLE, see |:LainSurveyAdd|
 below), and -- only meaningful inside a review
 buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
@@ -709,12 +709,17 @@ One row per parked call, leading with who is asking:
 
     agent  bash({"command" => "pwd"})
 
-    -- y approve, n deny  (:LainApprove / :LainDeny)
+    -- y approve, n deny  (:LainApprove / :LainDeny [reason])
 
     y                       Approve the call your cursor is on
                             (`:LainApprove`).
 
     n                       Deny it (`:LainDeny`).
+
+    :LainDeny [{reason}]    Deny it, and tell the agent why: the words after
+                            the command reach the model as the end of the
+                            refusal it reads, and the decision record keeps
+                            them. `:LainApprove` takes no words.
 
 Both are buffer-local to `lain://approval`, so vim's own `y` and `n` are
 untouched everywhere else, and both are ordinary global commands reading the

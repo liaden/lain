@@ -167,6 +167,22 @@ RSpec.describe Lain::Middleware::Gate do
         .to eq(Lain::Tool::Result.error('approval denied for tool "dangerous"'))
     end
 
+    it "ends the injected sentence with the words the human denied it in" do
+      policy = ruled(ruling.deny(rung: "surfaces", because: "a surface refused this call (tty)", authority: :human,
+                                 said: "stay inside ~/dev/frugirl"))
+
+      expect(through(described_class.new(policy:), tool_call("dangerous")).first)
+        .to eq(Lain::Tool::Result.error('approval denied for tool "dangerous": stay inside ~/dev/frugirl'))
+    end
+
+    it "keeps the bare sentence when the human's words are blank" do
+      policy = ruled(ruling.deny(rung: "surfaces", because: "a surface refused this call (tty)", authority: :human,
+                                 said: "  "))
+
+      expect(through(described_class.new(policy:), tool_call("dangerous")).first)
+        .to eq(Lain::Tool::Result.error('approval denied for tool "dangerous"'))
+    end
+
     it "passes an allowed call downstream" do
       _, reached = through(described_class.new(policy: ruled(ruling.allow(rung: "rules", because: "ok"))),
                            tool_call("dangerous"))
