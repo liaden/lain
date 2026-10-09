@@ -216,6 +216,10 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   failed loudly. Scrub the wider set, not just `GIT_DIR` — a command-line `--git-dir` already
   beats that one, while `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and `GIT_CONFIG_*`
   are the ones that actually redirect git.
+  `GIT_CONTEXT_SCRUB` also drops `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+  `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`, `GIT_DISCOVERY_ACROSS_FILESYSTEM`,
+  `GIT_REPLACE_REF_BASE`, `GIT_NO_REPLACE_OBJECTS`, `GIT_GRAFT_FILE`, `GIT_SHALLOW_FILE` and
+  `GIT_IMPLICIT_WORK_TREE`; never a blanket `GIT_*`, since specs set `GIT_CONFIG_GLOBAL` on purpose.
 - **Mutation harnesses lie by default here, and same-size mutants are the NORM.** `20`→`10`,
   `<=`→`<` and `min_by`→`max_by` are all byte-identical in length, so they collide with
   bootsnap's `(mtime-seconds, size)` iseq key and run against **stale bytecode** while `git diff`

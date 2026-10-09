@@ -372,6 +372,34 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
     end
   end
 
+  describe "GIT_CONTEXT_SCRUB" do
+    let(:repository_locating) do
+      %w[GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+         GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_CEILING_DIRECTORIES
+         GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_REPLACE_REF_BASE GIT_NO_REPLACE_OBJECTS
+         GIT_GRAFT_FILE GIT_SHALLOW_FILE GIT_IMPLICIT_WORK_TREE]
+    end
+
+    it "leaves a child none of the variables that change which repository git sees" do
+      polluted = repository_locating.to_h { |name| [name, "/elsewhere"] }
+
+      shell = with_env(polluted) do
+        Lain::Shell::Out.new("env", environment: described_class::GIT_CONTEXT_SCRUB).run_command
+      end
+
+      seen = shell.stdout.lines.map { |line| line.split("=", 2).first }
+      expect(seen & repository_locating).to be_empty
+    end
+
+    it "does not touch GIT_CONFIG_GLOBAL, which the specs set on purpose" do
+      shell = with_env("GIT_CONFIG_GLOBAL" => "/spec/gitconfig") do
+        Lain::Shell::Out.new("env", environment: described_class::GIT_CONTEXT_SCRUB).run_command
+      end
+
+      expect(shell.stdout.lines).to include("GIT_CONFIG_GLOBAL=/spec/gitconfig\n")
+    end
+  end
+
   describe "under a GIT_*-polluted environment (e.g. launched from a git hook)" do
     # pre-commit exports GIT_DIR/GIT_INDEX_FILE pointing at the HOOK's repo; a
     # shelled git that inherits them resolves index/dir against the wrong repo

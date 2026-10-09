@@ -250,23 +250,35 @@ module Lain
         nil
       end
 
+      # The group outlives its leader when a descendant ignores TERM, so the
+      # grace is spent until the whole group is gone, and KILL goes to the group
+      # even after the leader has been reaped.
       def terminate(pid)
+        deadline = clock + GRACE
         signal(pid, "TERM")
-        return if reaped_within?(GRACE, pid)
-
-        signal(pid, "KILL")
+        reap_exited(pid)
+        while group_alive?(pid) && clock < deadline
+          sleep(POLL)
+          reap_exited(pid)
+        end
+        signal(pid, "KILL") if group_alive?(pid)
         reap(pid)
       end
 
-      # Whether the child died within `grace`. The trailing `waitpid` answers
-      # the question the loop's own condition consumed: it raises `ECHILD` when
-      # the loop exited because the child WAS reaped, and answers nil when it
-      # exited on the deadline instead.
-      def reaped_within?(grace, pid)
-        deadline = clock + grace
-        sleep(POLL) while Process.waitpid(pid, Process::WNOHANG).nil? && clock < deadline
-        !Process.waitpid(pid, Process::WNOHANG).nil?
+      # A zombie leader keeps its group listed as alive, so it is collected
+      # before the group is asked about.
+      def reap_exited(pid)
+        Process.waitpid(pid, Process::WNOHANG)
       rescue Errno::ECHILD
+        nil
+      end
+
+      def group_alive?(pid)
+        Process.kill(0, -pid)
+        true
+      rescue Errno::ESRCH
+        false
+      rescue Errno::EPERM
         true
       end
 

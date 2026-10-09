@@ -53,19 +53,26 @@ module Lain
     # a loud {Refused} -- the second concurrent acquire of a worker_id loses
     # cleanly rather than corrupting the first's checkout.
     class Worktree
-      # The git-context env vars that redirect where git finds its repository,
-      # index, and work tree. A Lain process launched from a git hook --
-      # pre-commit exports these -- would otherwise have its shelled `git`
-      # resolve the index and dir against the HOOK's repository rather than the
-      # leased worktree's, so every git call scrubs them. Mapping each to `nil`
+      # The git-context env vars that change which repository, objects, index,
+      # work tree, namespace or history a git command sees. A Lain process
+      # launched from a git hook -- pre-commit exports these -- would otherwise
+      # have its shelled `git` resolve them against the HOOK's repository (or
+      # replacement refs, grafts and shallow file) rather than the leased
+      # worktree's, so every git call scrubs them. Mapping each to `nil`
       # deletes it in the child (`Process.spawn` semantics, which {Shell::Out}
       # follows), leaving `-C <repository>` the sole authority.
       # GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT are how a hook's `-c`
       # settings reach its children; without COUNT, the KEY_n/VALUE_n pairs
-      # are ignored, so scrubbing it is enough.
+      # are ignored, so scrubbing it is enough. Never a blanket `GIT_*`:
+      # GIT_CONFIG_GLOBAL is set on purpose in specs.
       GIT_CONTEXT_SCRUB = {
         "GIT_DIR" => nil, "GIT_INDEX_FILE" => nil, "GIT_WORK_TREE" => nil,
         "GIT_PREFIX" => nil, "GIT_COMMON_DIR" => nil,
+        "GIT_OBJECT_DIRECTORY" => nil, "GIT_ALTERNATE_OBJECT_DIRECTORIES" => nil,
+        "GIT_NAMESPACE" => nil, "GIT_CEILING_DIRECTORIES" => nil,
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM" => nil, "GIT_REPLACE_REF_BASE" => nil,
+        "GIT_NO_REPLACE_OBJECTS" => nil, "GIT_GRAFT_FILE" => nil, "GIT_SHALLOW_FILE" => nil,
+        "GIT_IMPLICIT_WORK_TREE" => nil,
         "GIT_CONFIG_PARAMETERS" => nil, "GIT_CONFIG_COUNT" => nil
       }.freeze
 

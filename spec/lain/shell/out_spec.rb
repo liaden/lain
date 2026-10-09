@@ -138,6 +138,32 @@ RSpec.describe Lain::Shell::Out do
       end
     end
 
+    it "kills a descendant that ignores TERM, so nothing of the group outlives the timeout" do
+      Dir.mktmpdir("lain-out") do |dir|
+        marker = File.join(dir, "pid")
+        script = "sh -c 'trap \"\" TERM; echo $$ > #{marker}; sleep 30' & wait"
+
+        expect { described_class.new("sh", "-c", script, timeout: 0.5).run_command }
+          .to raise_error(described_class::Timeout)
+
+        grandchild = Integer(File.read(marker))
+        expect(wait_until(reason: "the TERM-ignoring descendant to die") { !alive?(grandchild) }).to be(true)
+      end
+    end
+
+    it "gives a descendant that handles TERM its grace period to finish" do
+      Dir.mktmpdir("lain-out") do |dir|
+        marker = File.join(dir, "cleaned")
+        handler = "sleep 0.5; echo done > #{marker}; exit"
+        script = "sh -c 'trap \"#{handler}\" TERM; while :; do sleep 0.1; done' & wait"
+
+        expect { described_class.new("sh", "-c", script, timeout: 0.5).run_command }
+          .to raise_error(described_class::Timeout)
+
+        expect(File.exist?(marker)).to be(true)
+      end
+    end
+
     # A killed child still has to be REAPED. Without it the raise leaves a
     # zombie per timeout, which a long-lived agent accumulates until it cannot
     # fork at all -- and nothing else here would notice.

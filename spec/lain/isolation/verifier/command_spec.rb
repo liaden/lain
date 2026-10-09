@@ -121,6 +121,15 @@ RSpec.describe Lain::Isolation::Verifier::Command, :seam do
       .to eq([:passed, [tmp, "absent"], false])
   end
 
+  it "hides the caller's GIT_OBJECT_DIRECTORY from the command" do
+    out = File.join(@dir, "objects.out")
+    script = "printf '%s' \"${GIT_OBJECT_DIRECTORY-absent}\" > #{out}"
+
+    with_env("GIT_OBJECT_DIRECTORY" => "/elsewhere/objects") { verifier(["sh", "-c", script]).call(candidate) }
+
+    expect(File.read(out)).to eq("absent")
+  end
+
   it "runs while holding the suite lock" do
     lock = File.join(paths.state_home, "locks", "suite.lock")
 
