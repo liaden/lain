@@ -4080,7 +4080,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     it "resolves a child's sensitivity from the same board its gate policy resolves" do
       wire
 
-      expect(child_gate.instance_variable_get(:@sensitivity)).to be(child_guard.board.call.sensitivity)
+      expect(child_gate.instance_variable_get(:@sensitivity).policy).to be(child_guard.board.call.sensitivity)
     end
 
     # The late half, which the two above cannot see: the thunk closes over an

@@ -278,7 +278,7 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
 
       expect(layer(child_stack, Lain::Middleware::WithholdAutomaticOutput).bar)
         .to be(layer(parent, Lain::Middleware::WithholdAutomaticOutput).bar)
-      expect(layer(child_stack, Lain::Middleware::Sensitivity).instance_variable_get(:@sensitivity))
+      expect(layer(child_stack, Lain::Middleware::Sensitivity).instance_variable_get(:@sensitivity).policy)
         .to be(board.sensitivity)
     end
 

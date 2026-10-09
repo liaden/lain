@@ -476,7 +476,8 @@ module Lain
                             root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                             backend: -> { Backend.new(options, profile:, root:) })
         spike_journal = Adjudication::Destination.new
-        pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: guard, journal: spike_journal)
+        pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: guard(root),
+                                 journal: spike_journal)
         new(root:, paths:, config:, input:, output:, role_spawn: pair.role_spawn, brief: pair.brief, spike_journal:)
       end
 
@@ -549,7 +550,7 @@ module Lain
       # The pair's children borrow no chat's guard, so this command builds
       # one. It records nowhere, as their spawn seam's own journal does: the
       # decision's journal is opened per decision, after the pair exists.
-      def self.guard = ToolGuard.detached(journal: Channel::Null.instance)
+      def self.guard(root) = ToolGuard.detached(journal: Channel::Null.instance, roots: [root])
       private_class_method :guard
 
       # @param stage [String] one of {Epic::STAGES}

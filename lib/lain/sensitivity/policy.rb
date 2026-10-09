@@ -96,6 +96,12 @@ module Lain
         "bash" => "cwd"
       }.freeze
 
+      # The tools above that only read what their path names, and so the ones
+      # a confined child may run anywhere in its scope and nowhere else unasked.
+      READ_TOOLS = %w[read_file glob grep list_files ast_search file_symbols].freeze
+
+      OUTSIDE_PROJECT = Verdict.new(level: :gated, reason: :outside_project)
+
       # Gates nothing, so a chat that wired no classifier behaves byte-for-byte
       # as it did before this boundary existed and no gate writes `if
       # sensitivity`. A shared frozen instance for
@@ -107,6 +113,14 @@ module Lain
         def denial(_effect, **) = nil
 
         def classify(_path, **) = ORDINARY.verdict
+        def judge(_path, **) = ORDINARY.verdict
+
+        # Still confined: a never-parking child over a run with no chat
+        # refuses what it would otherwise have read outside its tree.
+        #
+        # @param roots [Array<String>] absolute
+        # @return [Confined]
+        def confined(roots:) = Confined.new(policy: self, roots:, anchors: {})
 
         # Nothing is related, so a flagged region still asks.
         def related?(_path) = false
@@ -119,6 +133,93 @@ module Lain
         INSTANCE = new.freeze
 
         def self.instance = INSTANCE
+      end
+
+      # A policy as a spawned child is judged by: the policy's own answers, and
+      # a read tool aimed outside every root gated too, so a researcher's look
+      # around the operator's home reaches a human whatever the names it finds.
+      #
+      # Only {#gates?}, {#judge} and {#confined} differ from the policy's own
+      # answers. The listing filter stays the policy's own, so a read a human
+      # approved outside lists what it found, and {Filter} is still built in
+      # one place.
+      #
+      # What is judged is the path a call names and, for `glob`, the directory
+      # its walk starts from ({Tools::Glob.walk_root}), each where {Landing}
+      # says it lands. What a walk meets below that is not: `grep` follows a
+      # file link it walks into, so a link in the project pointing out is read
+      # through unasked.
+      class Confined
+        attr_reader :policy
+
+        # @param policy [Policy] what every other answer is
+        # @param roots [Array<String>] absolute; a path under one is in scope
+        # @param anchors [Hash] the policy's home and root as configured, so a
+        #   landing is also spelled under them
+        def initialize(policy:, roots:, anchors:)
+          @policy = policy
+          @anchors = anchors
+          @roots = roots.flat_map { spellings(_1) }.uniq.freeze
+          freeze
+        end
+
+        # @param roots [Array<String>] absolute; added to the ones held
+        # @return [Confined]
+        def confined(roots:) = Confined.new(policy: @policy, roots: [*@roots, *roots], anchors: @anchors)
+
+        def denial(effect, cwd:) = @policy.denial(effect, cwd:)
+        def classify(path, within: nil) = @policy.classify(path, within:)
+        def related?(path) = @policy.related?(path)
+        def filter = @policy.filter
+
+        # @param effect [Lain::Effect]
+        # @param cwd [String] absolute; the call's own base
+        # @param within [String] absolute; see {Policy.base_of}
+        # @return [Boolean]
+        def gates?(effect, cwd:, within: cwd)
+          @policy.gates?(effect, cwd:, within:) || walked(effect, cwd).any? { !held?(_1) }
+        end
+
+        # @param path [String] as the call wrote it
+        # @param cwd [String] absolute
+        # @param within [String] absolute
+        # @return [Verdict] the policy's own verdict for a denied path or one
+        #   inside a root, and {OUTSIDE_PROJECT} for any other
+        def judge(path, cwd:, within: cwd)
+          verdict = @policy.judge(path, cwd:, within:)
+          verdict.denied? || held?(File.expand_path(path, cwd)) ? verdict : OUTSIDE_PROJECT
+        end
+
+        private
+
+        def walked(effect, cwd)
+          return [] unless effect.tool_call? && READ_TOOLS.include?(effect.name)
+
+          base = File.expand_path(Policy.path_in(effect) || ".", cwd)
+          effect.name == "glob" ? [base, glob_root(effect.input, base)].compact : [base]
+        end
+
+        def glob_root(input, base)
+          pattern = input.is_a?(Hash) && (input["pattern"] || input[:pattern])
+          pattern.is_a?(String) ? ::Lain::Tools::Glob.walk_root(pattern, base) : nil
+        end
+
+        # Every spelling is of where the path lands, so a link that leaves is
+        # judged at its target; a related directory is matched as configured.
+        def held?(named)
+          Landing.of(named, cwd: File::SEPARATOR, **@anchors).any? { under_root?(_1) || @policy.related?(_1) }
+        rescue Landing::Dangling, SystemCallError, ArgumentError, EncodingError
+          false
+        end
+
+        def under_root?(path) = @roots.any? { |root| path == root || path.start_with?(File.join(root, "")) }
+
+        def spellings(root)
+          expanded = File.expand_path(root)
+          [expanded, File.realpath(expanded)]
+        rescue SystemCallError
+          [expanded]
+        end
       end
 
       # The listing half of the same boundary: what {Middleware::WithholdSecretPaths}
@@ -203,6 +304,23 @@ module Lain
         checkout || ::Lain::Session.cwd_of(context)
       end
 
+      # The same boundary for a spawned child, which also asks before it reads
+      # outside the project, its related directories and `roots`.
+      #
+      # @param roots [Array<String>] absolute; the child's own trees
+      # @return [Confined]
+      def confined(roots:) = Confined.new(policy: self, roots: [*@anchors[:root], *roots], anchors: @anchors)
+
+      # The path a call names, read off {PATH_FIELDS}, and nil for a call that
+      # names none.
+      #
+      # @param effect [Lain::Effect::ToolCall]
+      # @return [String, nil]
+      def self.path_in(effect)
+        field = PATH_FIELDS[effect.name]
+        field && path(at(effect.input, field))
+      end
+
       # @param effect [Lain::Effect] any effect at all; the question is total
       #   over the vocabulary, so no caller guards on kind first
       # @param cwd [String] absolute; the call's own base, see {Session.cwd_of}
@@ -211,7 +329,7 @@ module Lain
       def gates?(effect, cwd:, within: cwd)
         return false unless effect.tool_call?
 
-        path = path_in(effect)
+        path = self.class.path_in(effect)
         !path.nil? && !judge(path, cwd:, within:).ordinary?
       end
 
@@ -241,14 +359,14 @@ module Lain
       # @return [Denial, nil] nil when nothing here refuses
       def denial(effect, cwd:)
         call = unwrapped(effect)
-        # {#path_in} reads `effect.name`, which a {Effect::ModelCall} has not
+        # {.path_in} reads `effect.name`, which a {Effect::ModelCall} has not
         # got. Without this guard the boundary raises NoMethodError on the
         # synchronous dispatch path, and the repair a crash there invites is a
         # `rescue` answering "not denied" -- this class failing OPEN to quiet an
         # exception, which is the worst shape a security control can take.
         return nil unless call.tool_call?
 
-        path = path_in(call)
+        path = self.class.path_in(call)
         verdict = path && judge(path, cwd:)
         return nil unless verdict&.denied?
 
@@ -283,11 +401,6 @@ module Lain
       # make a double wrap the bypass a single wrap no longer is.
       def unwrapped(effect) = effect.approval? ? unwrapped(effect.effect) : effect
 
-      def path_in(effect)
-        field = PATH_FIELDS[effect.name]
-        field && path(at(effect.input, field))
-      end
-
       # Mirrors {Sensitivity#text}, and for a reason narrower than symmetry:
       # {Tool::Input} COERCES rather than refuses, so the value this class
       # declines to judge and the value the tool then acts on are different
@@ -295,7 +408,7 @@ module Lain
       # path somebody can open -- an Array becomes its own `inspect`, which
       # names no file -- so a Pathname declined here was read anyway, with no
       # approval asked. {Sensitivity#classify} always took both.
-      def path(value)
+      def self.path(value)
         return value if value.is_a?(String)
 
         converted = value.respond_to?(:to_path) ? value.to_path : nil
@@ -316,11 +429,12 @@ module Lain
       # shape carrying no readable field is declined instead. It also stops
       # `String#[]` from answering: on a raw JSON payload that is a SUBSTRING
       # SEARCH, so a fragment of the wire bytes would be read as a path.
-      def at(input, field)
+      def self.at(input, field)
         return nil unless input.is_a?(Hash)
 
         input[field] || input[field.to_sym]
       end
+      private_class_method :path, :at
     end
   end
 end

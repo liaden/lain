@@ -65,6 +65,7 @@ module Lain
         credential: "a credential-shaped name",
         named: "a name or directory naming a secret",
         out_of_scope: "a personal directory outside any project",
+        outside_project: "outside the project and every directory this child was given",
         protected: "a protected path",
         configured: "named by this project's sensitivity config",
         exempt: "exempted by this project's sensitivity config",

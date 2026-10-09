@@ -141,8 +141,8 @@ module Lain
       # parked in turn would wait on the very judgement it was spawned to serve.
       # Every approval such a child needs refuses instead, in words: its gate
       # asks the one {Unasked} rung whatever the board would have allowed, and
-      # a masked region stays masked. The ledger, the path policy, the layout
-      # and the bar are the guard's own.
+      # a masked region stays masked. The ledger, the layout and the bar are
+      # the guard's own, and so is the path policy, confined as every child's is.
       #
       # This is a property of the spawn site, not of the role: a docent is
       # unattended too, and its read still parks, because nothing that could
@@ -223,8 +223,9 @@ module Lain
       # layout guard holds that checkout's root beside the project's, and its
       # gate asks the policy the board answers for its environment -- whose
       # rungs read a command's words in that checkout -- on behalf of the child
-      # `requester` names, as its read guard asks a release. The path policy,
-      # ledger and listing filter stay the board's one.
+      # `requester` names, as its read guard asks a release. The ledger and
+      # listing filter stay the board's one, and the path policy is the board's
+      # confined to the child's scope ({.working}).
       #
       # @param chronicle [CLI::Chronicle] as on {.stack}
       # @param board [CLI::Switchboard] as on {.stack}
@@ -240,8 +241,16 @@ module Lain
       # A worker's stack, over the inputs it is guarded by, the checkout its
       # environment names if its lease cut one, the policy its gate asks, and
       # the child a release is asked for -- nil for a worker nobody named.
+      #
+      # Its path policy is confined to the project, its related directories
+      # and the worker's own tree, so a read anywhere else asks first. The main
+      # agent's stack is built by {.stack} and reads where it likes.
       def working(chronicle, inputs, worker_env, policy = inputs.policy, requester: nil)
-        layered(chronicle, inputs, inputs.test_layout.roots_for(worker_env), policy, requester:)
+        layered(chronicle, confined(inputs, worker_env), inputs.test_layout.roots_for(worker_env), policy, requester:)
+      end
+
+      def confined(inputs, worker_env)
+        inputs.with(sensitivity: inputs.sensitivity.confined(roots: [worker_env.checkout || worker_env.cwd]))
       end
 
       # The configured members, then the eight guards over one set of inputs,
@@ -282,20 +291,22 @@ module Lain
       # forever -- and none of them holds a gated tool, which
       # `subagent_gate_spec` audits from the spawn sites.
       #
-      # Its path policy is the Null, and the gate reads the same one: a listing
-      # filtered through a policy the gate never consults would hide a path the
-      # child can still read by name. The read guard needs no path policy to
-      # mask a credential region, which is the half this run can enforce. It
-      # reads no `tests` table either: its children write nothing a layout
-      # holds.
+      # Its path policy is the Null confined to `roots`, and the gate reads the
+      # same one: a listing filtered through a policy the gate never consults
+      # would hide a path the child can still read by name. The read guard
+      # needs no path policy to mask a credential region, which is the half
+      # this run can enforce. It reads no `tests` table either: its children
+      # write nothing a layout holds.
       #
       # @param journal [#<<] where a refusal or a mask is recorded
+      # @param roots [Array<String>] absolute; the run's own trees, in scope
+      #   for every child wherever it stands
       # @return [Detached] `worker_env -> stack`, a fresh one per call, every
       #   one over the same board
-      def detached(journal:)
+      def detached(journal:, roots: [])
         approve_all = Middleware::Gate::ApproveAll.new
         inputs = Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: Unreleased,
-                            sensitivity: Lain::Sensitivity::Policy::Null.instance,
+                            sensitivity: Lain::Sensitivity::Policy::Null.instance.confined(roots:),
                             test_layout: Middleware::GuardTestLayout::Run.undeclared,
                             policy: approve_all, policy_for: ->(_worker_env) { approve_all },
                             denial: Middleware::Gate::DENIAL, bar: Middleware::WithholdAutomaticOutput::Bar.new)

@@ -386,9 +386,10 @@ RSpec.describe Lain::CLI::ToolGuard do
     # release reads as the parent's own.
     it "asks a child's release on the board's one queue in the child's name", :seam do
       board = ToolGuardSpecBoard.new(approvals: queue, sensitivity: Lain::Sensitivity::Policy::Null.instance)
-      stack = described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher")
 
       read = lambda do |path|
+        stack = described_class.child_stack(chronicle, board, Lain::WorkerEnv.default.with(cwd: File.dirname(path)),
+                                            requester: "researcher")
         stack.call({ effect: read_call(path), tool: Lain::Tools::ReadFile.new, context: Lain::Session.new }) do |inner|
           inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input,
                                                              Lain::Tool::Invocation.new(tool_use_id: "tu_1")))
@@ -577,8 +578,9 @@ RSpec.describe Lain::CLI::ToolGuard do
       File.join(@dir, "creds.txt").tap { |path| File.write(path, "harmless line\naws_access_key_id = #{secret}\n") }
     end
 
+    # The child works in the tree its files are in, so only their names gate them.
     def read_through(builder, path)
-      layers = builder.call(Lain::WorkerEnv.default).to_a
+      layers = builder.call(Lain::WorkerEnv.default.with(cwd: @dir)).to_a
       dispatch_call("read_file", { "path" => path }, toolset:, layers:, context: Lain::Session.new)
     end
 
@@ -812,6 +814,44 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(leased_policy.contexts.map(&:requester)).to eq(%w[subagent])
       expect(board.policy.contexts).to be_empty
     end
+
+    # The main agent's stack is not confined, so only the child's gate is asked
+    # about a read outside the project and the child's own checkout.
+    describe "a read outside the child's roots" do
+      let(:sensitivity) do
+        classifier = Lain::Sensitivity.new(home: "/home/tester", cwd: @project, root: @project)
+        Lain::Sensitivity::Policy.new(sensitivity: classifier, root: @project)
+      end
+      let(:board) { ToolGuardSpecBoard.new(test_layout: run, sensitivity:) }
+
+      def read_through(stack, path)
+        stack.call({ effect: read_call(path), tool: Lain::Tools::ReadFile.new, context: :the_session }) do |passed|
+          passed.merge(result: Lain::Tool::Result.ok("the interpreter ran"))
+        end
+      end
+
+      it "asks the gate for a child's read outside, and for none inside its project or checkout" do
+        child = child_stack(env_at(@checkout, checkout: @checkout))
+
+        [File.join(@project, "lib"), File.join(@checkout, "a.rb"), "/etc/hosts"].each { read_through(child, _1) }
+
+        expect(board.policy.contexts.size).to eq(1)
+      end
+
+      it "takes a leased child's checkout as its root rather than the cwd below it" do
+        below = File.join(@checkout, "sub").tap { FileUtils.mkdir_p(_1) }
+
+        read_through(child_stack(env_at(below, checkout: @checkout)), File.join(@checkout, "a.rb"))
+
+        expect(board.policy.contexts).to be_empty
+      end
+
+      it "asks nothing for the main agent's read outside" do
+        read_through(described_class.stack(chronicle, board), "/etc/hosts")
+
+        expect(board.policy.contexts).to be_empty
+      end
+    end
   end
 
   # Scenario: there is still one listing filter
@@ -837,6 +877,41 @@ RSpec.describe Lain::CLI::ToolGuard do
   describe ".detached" do
     let(:secret) { "AKIAIOSFODNN7EXAMPLE" }
 
+    def outside_read(builder)
+      Dir.mktmpdir do |dir|
+        stack = builder.call(Lain::WorkerEnv.default.with(cwd: File.realpath(dir)))
+        stack.call({ effect: read_call("/etc/hosts"), tool: Lain::Tools::ReadFile.new,
+                     context: Lain::Session.new }) do |passed|
+          passed.merge(result: Lain::Tool::Result.ok("the read ran"))
+        end.fetch(:result)
+      end
+    end
+
+    # An approval judge's child spawned over a run with no chat cannot ask, so
+    # its read outside its own tree is refused, not run.
+    it "refuses a never-parking child's read outside its root" do
+      refused = outside_read(described_class.detached(journal:).never_parking)
+
+      expect(refused.content).to eq(format(described_class::UNPARKED, name: '"read_file"'))
+    end
+
+    # The run's own tree is in scope wherever the child stands, so an epic
+    # adjudicator launched from a subdirectory still reads the whole project.
+    it "lets a never-parking child read inside the roots the run was built over" do
+      Dir.mktmpdir do |dir|
+        project = File.realpath(dir)
+        path = File.join(project, "notes.md").tap { File.write(_1, "in the project\n") }
+        stack = described_class.detached(journal:, roots: [project]).never_parking
+                               .call(Lain::WorkerEnv.default.with(cwd: File.join(project, "sub")))
+
+        expect(detached_read(stack, path)).to eq("in the project\n")
+      end
+    end
+
+    it "runs the same read for a detached child, whose gate approves" do
+      expect(outside_read(described_class.detached(journal:)).content).to eq("the read ran")
+    end
+
     def detached_read(stack, path)
       Sync do
         stack.call({ effect: read_call(path), tool: Lain::Tools::ReadFile.new, context: Lain::Session.new }) do |inner|
@@ -857,8 +932,9 @@ RSpec.describe Lain::CLI::ToolGuard do
     # A run with no chat has no surface for a question to reach, so its gate
     # APPROVES, deliberately against the gate's own fail-closed default: the
     # roles such a run spawns hold no gated tool, and a gate that parked would
-    # park forever. Over the Null path policy, for the listing's reason below.
-    it "approves every gated call, over no path policy" do
+    # park forever. Over the Null path policy confined to the child's tree, for
+    # the listing's reason below.
+    it "approves every gated call, over the Null path policy confined" do
       stack = described_class.detached(journal:).call(Lain::WorkerEnv.default)
       bash = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
 
@@ -867,7 +943,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       end
 
       expect(env.fetch(:result)).to eq(Lain::Tool::Result.ok("the interpreter ran"))
-      expect(stack.to_a.last.instance_variable_get(:@sensitivity)).to be(Lain::Sensitivity::Policy::Null.instance)
+      expect(stack.to_a.last.instance_variable_get(:@sensitivity).policy).to be(Lain::Sensitivity::Policy::Null.instance)
     end
 
     # The thunk is called once per child, and every child must release into the

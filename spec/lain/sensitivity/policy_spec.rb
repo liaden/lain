@@ -59,6 +59,13 @@ RSpec.describe Lain::Sensitivity::Policy do
 
   def call(name, input) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name:, input:)
 
+  describe "the read tools" do
+    it "are every path-taking tool but the three that write or run" do
+      expect(described_class::PATH_FIELDS.keys - described_class::READ_TOOLS).to eq(%w[edit_file write_file bash])
+      expect(described_class::READ_TOOLS - described_class::PATH_FIELDS.keys).to be_empty
+    end
+  end
+
   describe "the tool-to-field table" do
     it "maps every path-taking tool to the field that names its path" do
       expect(described_class::PATH_FIELDS).to eq(declared)
@@ -698,6 +705,119 @@ RSpec.describe Lain::Sensitivity::Policy do
       row = File.join(cwd, "keys", "id_qa")
 
       expect(policy.filter.sift([row]) { |each| [each] }.withheld.map(&:reason)).to eq([:protected])
+    end
+  end
+
+  # A child's reads stay in its project, its related directories and its own
+  # tree; anything else parks for a human, whatever its name.
+  describe "#confined" do
+    around do |example|
+      Dir.mktmpdir("lain-policy-confined") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p(%w[home/notes project/lib worker elsewhere].map { File.join(@base, _1) })
+        example.run
+      end
+    end
+
+    let(:home) { File.join(@base, "home") }
+    let(:root) { File.join(@base, "project") }
+    let(:worker) { File.join(@base, "worker") }
+    let(:rules) { Lain::Sensitivity::Rules.new(related: ["~/notes"]) }
+    let(:policy) do
+      described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:, rules:), home:, root:)
+    end
+    let(:confined) { policy.confined(roots: [worker]) }
+
+    def read(path) = call("read_file", { "path" => path })
+    def glob(path, pattern) = call("glob", { "path" => path, "pattern" => pattern })
+
+    it "gates a read outside every root as outside the project" do
+      outside = File.join(@base, "elsewhere", "a.md")
+
+      expect(confined.gates?(read(outside), cwd: root)).to be(true)
+      expect(confined.judge(outside, cwd: root)).to have_attributes(level: :gated, reason: :outside_project)
+      expect(Lain::Sensitivity::Verdict::REASONS).to include(:outside_project)
+    end
+
+    it "leaves a read in the project, a related directory or the child's own root ungated" do
+      inside = [read("lib"), read(File.join(home, "notes", "a.md")), read(File.join(worker, "b.rb"))]
+
+      expect(inside.map { confined.gates?(_1, cwd: root) }).to eq([false, false, false])
+    end
+
+    it "gates every read tool that names a path outside, and leaves a write to the gate's other rules" do
+      outside = File.join(@base, "elsewhere")
+      reads = described_class::READ_TOOLS.map { call(_1, { "path" => outside }) }
+
+      expect(reads.map { confined.gates?(_1, cwd: root) }).to all(be(true))
+      expect(confined.gates?(call("write_file", { "path" => File.join(outside, "x"), "content" => "" }), cwd: root))
+        .to be(false)
+    end
+
+    it "gates a glob whose pattern climbs or reaches out of the roots, and one rooted at /" do
+      expect(confined.gates?(glob(".", "../../**/*.md"), cwd: root)).to be(true)
+      expect(confined.gates?(glob(".", "#{@base}/elsewhere/*.md"), cwd: root)).to be(true)
+      expect(confined.gates?(glob("/", "**/*.md"), cwd: root)).to be(true)
+      expect(confined.gates?(glob(".", "lib/**/*.rb"), cwd: root)).to be(false)
+    end
+
+    it "gates a link inside the project that lands outside it" do
+      File.symlink(File.join(@base, "elsewhere"), File.join(root, "out"))
+
+      expect(confined.gates?(read("out/a.md"), cwd: root)).to be(true)
+    end
+
+    it "keeps the policy's own denial of a path outside every root" do
+      key = File.join(home, ".ssh", "id_rsa").tap { FileUtils.mkdir_p(File.dirname(_1)) && File.write(_1, "k") }
+
+      expect(confined.judge(key, cwd: root)).to have_attributes(level: :denied, reason: :protected)
+    end
+
+    it "gates a sibling whose name only starts with the root's" do
+      sibling = File.join(@base, "project-other", "a.rb")
+
+      expect(confined.gates?(read(sibling), cwd: root)).to be(true)
+    end
+
+    it "fails closed on a link loop and on a directory it may not enter" do
+      skip "root enters a directory whatever its mode" if Process.uid.zero?
+
+      File.symlink("loop", File.join(root, "loop"))
+      locked = File.join(root, "locked").tap { FileUtils.mkdir_p(File.join(_1, "inner")) }
+      File.chmod(0o000, locked)
+
+      expect(confined.judge("loop", cwd: root)).to have_attributes(reason: :outside_project)
+      expect(confined.judge("locked/inner/a.rb", cwd: root)).to have_attributes(reason: :outside_project)
+    ensure
+      File.chmod(0o755, locked) if locked
+    end
+
+    it "keeps the policy's own denials, listing filter and name rules" do
+      expect(confined.denial(read(File.join(home, ".ssh", "id_rsa")), cwd: root)).to have_attributes(reason: :protected)
+      expect(confined.filter).to be(policy.filter)
+      expect(confined.gates?(read(".env"), cwd: root)).to be(true)
+      expect(confined.related?(File.join(home, "notes", "a.md"))).to be(true)
+    end
+
+    it "confines again with more roots, keeping the ones it had" do
+      again = confined.confined(roots: [File.join(@base, "elsewhere")])
+
+      expect([read(File.join(worker, "a.rb")), read(File.join(@base, "elsewhere", "a.md")), read("lib")]
+               .map { again.gates?(_1, cwd: root) }).to eq([false, false, false])
+    end
+
+    it "answers ordinary over the Null for a path inside its roots, and outside the project beyond them" do
+      null = described_class::Null.instance.confined(roots: [worker])
+
+      expect(null.judge(File.join(worker, "a.rb"), cwd: worker)).to be_ordinary
+      expect(null.judge(File.join(root, "a.rb"), cwd: worker)).to have_attributes(reason: :outside_project)
+    end
+
+    it "confines a policy with no project root to the roots it is given" do
+      rootless = described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: worker), home:)
+
+      expect(rootless.confined(roots: [worker]).gates?(read(File.join(root, "lib")), cwd: worker)).to be(true)
+      expect(rootless.confined(roots: [worker]).gates?(read("x.rb"), cwd: worker)).to be(false)
     end
   end
 end

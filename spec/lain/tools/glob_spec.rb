@@ -211,6 +211,26 @@ RSpec.describe Lain::Tools::Glob do
     end
   end
 
+  # Where a pattern's walk starts: its leading literal directories against the
+  # base, which a confined child's gate judges as well as the base itself.
+  describe ".walk_root" do
+    it "is the base for a pattern that starts with a wildcard" do
+      expect(described_class.walk_root("**/*.rb", "/p")).to eq("/p")
+    end
+
+    it "is the literal directories below the base" do
+      expect(described_class.walk_root("lib/**/*.rb", "/p")).to eq("/p/lib")
+    end
+
+    it "climbs out of the base" do
+      expect(described_class.walk_root("../../**/*.md", "/a/b/c")).to eq("/a")
+    end
+
+    it "is an absolute pattern's own directory" do
+      expect(described_class.walk_root("/etc/*.conf", "/p")).to eq("/etc")
+    end
+  end
+
   describe "a pattern ending in a slash" do
     before do
       touch("src", "sub", "a.rb")

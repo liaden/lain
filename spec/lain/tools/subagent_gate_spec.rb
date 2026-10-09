@@ -318,7 +318,7 @@ RSpec.describe "Subagent gating" do
 
       expect(listed(built))
         .to eq([*guards, Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
-      expect(runner_of(built).middleware.to_a.last(2).map { |layer| layer.instance_variable_get(:@sensitivity) })
+      expect(runner_of(built).middleware.to_a.last(2).map { |layer| layer.instance_variable_get(:@sensitivity).policy })
         .to all(be(path_policy))
     end
 
@@ -550,8 +550,9 @@ RSpec.describe "Subagent gating" do
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
       expect(child_layers.map(&:class)).to eq(parent_layers.map(&:class))
       expect(runner.handler).to be_a(Lain::Effect::Handler::Live)
+      expect(parent_layers.last.instance_variable_get(:@sensitivity)).to be(board.sensitivity)
+      expect(child_layers.last.instance_variable_get(:@sensitivity).policy).to be(board.sensitivity)
       [parent_layers, child_layers].each do |layers|
-        expect(layers.last.instance_variable_get(:@sensitivity)).to be(board.sensitivity)
         expect(layers.grep(Lain::Middleware::RedactSecretReads).first.ledger).to be(board.ledger)
       end
       expect(parent_layers.last.instance_variable_get(:@policy)).to be(board.policy_switch)

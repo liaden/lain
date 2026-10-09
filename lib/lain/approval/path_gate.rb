@@ -22,7 +22,7 @@ module Lain
       # Only calls that merely READ the path. The oracle is shown a path and a
       # tool, never a command or content, so a write, an edit or a bash whose
       # cwd is gated must stay with the surfaces that see the whole call.
-      READ_TOOLS = %w[read_file glob grep list_files ast_search file_symbols].freeze
+      READ_TOOLS = Sensitivity::Policy::READ_TOOLS
 
       # @param policy [Sensitivity::Policy]
       def initialize(policy)

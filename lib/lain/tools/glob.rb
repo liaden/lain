@@ -90,6 +90,24 @@ module Lain
         def no_matches_message(pattern, base)
           "glob: no matches for #{pattern.inspect} under #{base}"
         end
+
+        # Public so a confined child's gate judges the directory this tool
+        # really walks, read by the one rule that decides it.
+        #
+        # @param pattern [String] as the call wrote it
+        # @param base [String] absolute; the call's base directory
+        # @return [String] the directory the walk starts from
+        def walk_root(pattern, base) = File.expand_path(fixed_directories(pattern).join("/"), base)
+
+        # The last segment always stays in the matched part: a pattern naming
+        # one file is still a pattern.
+        #
+        # @param pattern [String]
+        # @return [Array<String>]
+        def fixed_directories(pattern)
+          segments = pattern.chomp("/").split("/", -1)
+          segments.first(segments.size - 1).take_while { !MAGIC.match?(_1) }
+        end
       end
 
       def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT, include: [])
@@ -145,26 +163,20 @@ module Lain
         [*BYTE_BOUND.fit(sorted.first(BOUND.limit), beside: trailers), *trailers]
       end
 
-      # The pattern's leading segments without wildcards name the directory to
-      # walk, so an absolute pattern or one climbing out via `../` walks that
-      # directory under its own ignore files. The last segment always stays in
-      # the matched part: a pattern naming one file is still a pattern. A
-      # trailing slash asks for directories only, as Dir.glob read it.
+      # The pattern's leading literal directories name the directory to walk,
+      # so an absolute pattern or one climbing out via `../` walks that
+      # directory under its own ignore files. A trailing slash asks for
+      # directories only, as Dir.glob read it.
       def listed(base, pattern)
-        fixed = fixed_directories(pattern)
+        fixed = self.class.fixed_directories(pattern)
         prefix = fixed.empty? ? "" : "#{fixed.join("/")}/"
-        walk = FileWalk.new(root: File.expand_path(fixed.join("/"), base), entries: @walk_limit.entries,
+        walk = FileWalk.new(root: self.class.walk_root(pattern, base), entries: @walk_limit.entries,
                             include: @include)
         files, directories = walk.relative_tree
         rest = pattern.delete_prefix(prefix)
         candidates = pattern.end_with?("/") ? directories.map { "#{_1}/" } : files + directories
         [candidates.select { File.fnmatch?(rest, _1, FNM_FLAGS) }.map { "#{prefix}#{_1}" },
          @walk_limit.notice(listed: walk.listed, read_bytes: 0)]
-      end
-
-      def fixed_directories(pattern)
-        segments = pattern.chomp("/").split("/", -1)
-        segments.first(segments.size - 1).take_while { !MAGIC.match?(_1) }
       end
     end
   end

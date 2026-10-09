@@ -468,7 +468,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         parent_policy = parent_layers.last.instance_variable_get(:@sensitivity)
 
         expect(parent_policy).to be(sensitivity)
-        expect(child_layers.last.instance_variable_get(:@sensitivity)).to be(parent_policy)
+        expect(child_layers.last.instance_variable_get(:@sensitivity).policy).to be(parent_policy)
       end
 
       # The tool guard, the fourth thing a child inherits over the board: the
@@ -796,7 +796,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         env.merge(result: Lain::Tool::Result.ok("passed on"))
       end
       expect(passed.fetch(:result)).to eq(Lain::Tool::Result.ok("passed on"))
-      expect(layers.last.instance_variable_get(:@sensitivity)).to be(Lain::Sensitivity::Policy::Null.instance)
+      expect(layers.last.instance_variable_get(:@sensitivity).policy).to be(Lain::Sensitivity::Policy::Null.instance)
       expect(layers.grep(Lain::Middleware::RedactSecretReads).first.queue)
         .to be(Lain::Middleware::RedactSecretReads::Unqueued.instance)
     end

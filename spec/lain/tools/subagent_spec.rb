@@ -2209,10 +2209,12 @@ RSpec.describe Lain::Tools::Subagent do
   # discriminator is the two RESULTS: a refusal names the approval, a permitted
   # read hands back the bytes.
   describe "a sensitive path a child names for itself" do
+    # The child works in the tmpdir, so with no policy on the seam it is
+    # confined to that tree and its reads there are ungated.
     around do |example|
       Dir.mktmpdir do |dir|
         @tmpdir = dir
-        example.run
+        Dir.chdir(dir) { example.run }
       end
     end
 
