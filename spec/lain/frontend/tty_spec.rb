@@ -442,6 +442,147 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  describe "soft wrapping at the terminal width" do
+    let(:colored) { Pastel.new(enabled: true) }
+    let(:terminal) { Class.new(StringIO) { def tty? = true }.new }
+    let(:output) { terminal }
+    let(:tty) { described_class.new(channel:, output:, input:, pastel: Pastel.new(enabled: false)) }
+    let(:wide_text) { "the quick brown fox jumps over the lazy dog" }
+
+    def respond(frontend, text)
+      frontend.render_response(Lain::Response.new(content: [{ "type" => "text", "text" => text }],
+                                                  stop_reason: :end_turn))
+    end
+
+    def body_lines = output.string.split("\n")[0..-2]
+
+    before { allow(TTY::Screen).to receive(:width).and_return(20) }
+
+    it "breaks a response between words" do
+      respond(tty, wide_text)
+
+      expect(body_lines).to eq(["the quick brown fox", "jumps over the lazy", "dog"])
+    end
+
+    it "breaks a status line between words, with the time on the first line only" do
+      stamped = described_class.new(channel:, output:, pastel: Pastel.new(enabled: false),
+                                    wall_clock: -> { Time.new(2026, 10, 8, 13, 14, 1) })
+
+      stamped.render_held("next please and then another")
+
+      expect(output.string.split("\n").first).to eq("13:14:01 held as")
+    end
+
+    it "keeps a coloured line of 18 visible characters on one line" do
+      styled = described_class.new(channel:, output:, input:, pastel: colored,
+                                   theme: Lain::Frontend::Theme.new(pastel: colored, detect: -> { 256 }))
+
+      styled.render_renderable(Lain::Renderable.new.with(:warm, "a" * 8).plain(" ").with(:warm, "b" * 9))
+
+      expect(body_lines.size).to eq(1)
+    end
+
+    it "wraps a command's answer too" do
+      tty.render_renderable(Lain::Renderable.new.plain(wide_text))
+
+      expect(body_lines).to eq(["the quick brown fox", "jumps over the lazy", "dog"])
+    end
+
+    it "keeps the indentation of a code block that fits" do
+      respond(tty, "```ruby\n  def run\n    work( now)\n  end\n```")
+
+      expect(body_lines).to eq(["```ruby", "  def run", "    work( now)", "  end", "```"])
+    end
+
+    it "leaves the rule exactly the width of the screen" do
+      respond(tty, "ok")
+
+      expect(output.string.split("\n").last).to eq("-" * 20)
+    end
+
+    it "wraps the body of a question the agent asks" do
+      tty.render_question(wide_text)
+
+      expect(output.string.split("\n").drop(1)).to eq(["the quick brown fox", "jumps over the lazy", "dog"])
+    end
+
+    it "wraps the document a plain chat prints for a question" do
+      tty.render_asked(announced("db", body: wide_text), from: "researcher")
+
+      expect(output.string.split("\n").map { |line| Lain::Ext::Prompt.width(line) }).to all(be <= 20)
+    end
+
+    it "wraps the inbox listing" do
+      row = Struct.new(:question, :from, :asked_at).new(announced("db", body: wide_text), "orchestrator", Time.at(880))
+
+      tty.drain_inbox([row], reader: ->(_prompt) { "" }) { |_answer| nil }
+
+      expect(output.string.split("\n").map { |line| Lain::Ext::Prompt.width(line) }).to all(be <= 20)
+    end
+
+    it "joins the rows of a note printed over a raw terminal with a carriage return" do
+      Sync do
+        tty.drawing(-> { false }) { tty.render_warning(wide_text) }
+      end
+
+      expect(output.string).to start_with("the quick brown fox\r\njumps over the lazy\r\ndog\n")
+    end
+
+    it "joins the rows of a closing line with a carriage return" do
+      closing = Class.new(String) { def closed = yield(("word " * 8).strip) }.new("[y/N] ")
+
+      Sync do |task|
+        released = Async::Notification.new
+        drawn = task.async { tty.drawing(-> { false }) { output.print("[y/N] ").then { released.wait } } }
+        tty.close_prompt(closing)
+        released.signal
+        drawn.wait
+      end
+
+      expect(output.string.gsub("\r\n", "")).not_to include("\n")
+    end
+
+    it "does not wrap a tool's streamed chunk, which is not a line" do
+      channel.push(tool_output(bytes: "x" * 50))
+      tty.drain_and_render
+
+      expect(output.string).to eq("[tu_1 stdout] #{"x" * 50}")
+    end
+
+    it "wraps every row of a stamped status line without stamping the continuations" do
+      stamped = described_class.new(channel:, output:, pastel: Pastel.new(enabled: false),
+                                    wall_clock: -> { Time.new(2026, 10, 8, 13, 14, 1) })
+
+      stamped.render_held("next please and then another")
+
+      expect(output.string.split("\n")).to eq(["13:14:01 held as", "your next prompt:", "next please and then",
+                                               "another"])
+    end
+
+    it "passes the lines of a fenced code block through whole" do
+      code = "x = [#{(1..12).to_a.join(", ")}]"
+      respond(tty, "intro words that are long enough\n```\n#{code}\n```")
+
+      expect(body_lines).to eq(["intro words that are", "long enough", "```", code, "```"])
+    end
+
+    it "leaves output that is not a terminal alone" do
+      piped = StringIO.new
+      described_class.new(channel:, output: piped, input:).render_response(
+        Lain::Response.new(content: [{ "type" => "text", "text" => wide_text }], stop_reason: :end_turn)
+      )
+
+      expect(piped.string).to start_with("#{wide_text}\n")
+    end
+
+    it "wraps a line-shaped channel event" do
+      channel.push(Lain::Telemetry::ProviderRetry.new(attempt: 1, will_retry_in: 2.0, status: 529, reason: wide_text))
+      tty.drain_and_render
+
+      expect(output.string.split("\n").map { |line| Lain::Ext::Prompt.width(line) }).to all(be <= 20)
+    end
+  end
+
   describe "the time on a status line" do
     let(:now) { Time.new(2026, 10, 8, 13, 14, 1) }
     let(:stamped) do

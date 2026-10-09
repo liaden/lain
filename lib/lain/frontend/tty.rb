@@ -125,7 +125,7 @@ module Lain
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
         @wall_clock = wall_clock
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
-        @inbox = Inbox.new(output:, pastel:, clock: wall_clock, stamp: method(:stamp))
+        @inbox = Inbox.new(output:, pastel:, clock: wall_clock, stamp: method(:stamp), fit: method(:wrapped))
         @notes = Notes.new(output:, writer: @countdown)
         # Built here, CLAIMED in #run: constructing a TTY must not rebind the
         # human's keys. Draws through {Countdown#draw}, the existing owner of
@@ -235,7 +235,11 @@ module Lain
       # would replace the stop that is climbing; so the failure goes to the
       # channel as a {PromptUnclosed} instead, and the stop carries on.
       def close_prompt(text)
-        text.closed { |note| @notes.close_row(@theme.paint(:warning, stamp(note))) } if text.respond_to?(:closed)
+        if text.respond_to?(:closed)
+          text.closed do |note|
+            @notes.close_row(wrapped(@theme.paint(:warning, stamp(note)), raw: true))
+          end
+        end
       rescue StandardError => e
         report_unclosed(e)
       end
@@ -281,7 +285,7 @@ module Lain
       # finished exchange rather than a concurrently-arriving stream.
       def render_question(question)
         @output.puts(@theme.paint(:question_label, "the agent asks:"))
-        @output.puts(@theme.paint(:question, question))
+        @output.puts(wrapped(@theme.paint(:question, question)))
         @output.flush
       end
 
@@ -409,7 +413,7 @@ module Lain
       # an extra flush per question.
       def render_line(token, text)
         noted do
-          @output.puts(@theme.paint(token, text))
+          @output.puts(wrapped(@theme.paint(token, text)))
           @output.flush
         end
       end
@@ -442,7 +446,20 @@ module Lain
       def render(event)
         decorator = Decorators.for(event)
         rendered = decorator&.render(@theme)
-        @countdown.print_above(rendered, line_shaped: decorator.line_shaped?) unless rendered.nil?
+        @countdown.print_above(fitted(rendered, decorator), line_shaped: decorator.line_shaped?) unless rendered.nil?
+      end
+
+      # A tool's streamed chunk is not a line, and breaking it would put a
+      # newline where the command did not.
+      def fitted(rendered, decorator) = decorator.line_shaped? ? wrapped(rendered) : rendered
+
+      # A pipe has no width of its own, and whatever reads it should decide.
+      # While a prompt is drawn the terminal is raw and a bare newline only
+      # moves down, so the rows are joined the way {Notes} ends its own lines.
+      def wrapped(text, raw: @notes.drawn?)
+        return text unless @output.tty?
+
+        Wrap.call(text, width: ::TTY::Screen.width, eol: raw ? "\r\n" : "\n")
       end
 
       # How a finished turn ENDS: the already-styled body, the rule beneath it,
@@ -453,7 +470,7 @@ module Lain
       # resolve `TTY` to this very class, since we are lexically inside a class
       # of the same name.
       def render_turn(styled)
-        @output.puts(styled)
+        @output.puts(wrapped(styled))
         @output.puts(rule)
         @output.flush
       end
@@ -644,11 +661,13 @@ module Lain
         #   every other TTY collaborator -- callers hand in the palette
         # @param clock [#call] absolute (wall) time for ages, {Warmth}'s seam
         # @param stamp [#call] puts the time on an arrival note
-        def initialize(output:, pastel:, clock:, stamp:)
+        # @param fit [#call] breaks a printed block to the terminal's width
+        def initialize(output:, pastel:, clock:, stamp:, fit: :itself.to_proc)
           @stamp = stamp
           @output = output
           @pastel = pastel
           @clock = clock
+          @fit = fit
         end
 
         # One line, never {TTY#render_question}'s modal block -- and one line
@@ -664,7 +683,7 @@ module Lain
         end
 
         def announce(note)
-          @output.puts(@pastel.yellow(@stamp.call(note)))
+          @output.puts(@fit.call(@pastel.yellow(@stamp.call(note))))
           @output.flush
         end
 
@@ -674,7 +693,7 @@ module Lain
         def document(question)
           return unless question.is_a?(Tools::AskHuman::Announcement)
 
-          @output.puts(document_for(question))
+          @output.puts(@fit.call(document_for(question).join("\n")))
           @output.flush
         end
 
@@ -688,7 +707,7 @@ module Lain
         def drain(items, reader:, answering:)
           return render_empty if items.empty?
 
-          @output.puts(listing(items, answering))
+          @output.puts(@fit.call(listing(items, answering).join("\n")))
           @output.flush
           answer = accepted(answering, reader)
           yield answer unless answer.empty?
@@ -727,7 +746,7 @@ module Lain
         end
 
         def refuse(error)
-          @output.puts(@pastel.yellow("that reply cannot be recorded -- #{error.message}"))
+          @output.puts(@fit.call(@pastel.yellow("that reply cannot be recorded -- #{error.message}")))
           @output.flush
         end
 
