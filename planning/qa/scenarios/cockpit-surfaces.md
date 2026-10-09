@@ -71,9 +71,9 @@ Checks:
 
    **The repro is a squeeze AND a restore, not just the squeeze, and the HUD must come back with
    no ask running and no key pressed.** Shrink the window below 13 rows, then grow it back: the
-   pane returns to its own floor either way **unless the human had grown it first**: after a
-   restore the pane holds the height it was grown to, so the check is "at or above the floor", or
-   the squeeze step must also cap it back first (round 22's B-8). The HUD row has to be repainted on that geometry
+   pane comes back at or above its floor, and **not necessarily at the height the human had grown it to** (round 23
+   re-drove this: grown to 12, shrunk to 6, the restore to a 50-row window left it at 20 rows, because the hook is a
+   minimum and tmux hands out the rest). So the check is "at or above the floor", never "back to the grown height". The HUD row has to be repainted on that geometry
    settling by itself, with nobody typing and nothing dispatching. And an **idle** pane must
    repaint nothing at all while sitting still — a poll that redraws on the clock rather than on a
    real geometry edge is the regression this guards against, so measure bytes, not eyeballing:
@@ -175,7 +175,8 @@ Checks:
     tmux -L "$QA_SOCK" show-options -g mouse               # unchanged from the recorded value
     ```
 
-    A first `lain up` against a fresh server prints a warning saying it set the server option
+    The option is necessary but not sufficient for Shift+Enter (check 12): the line editor also writes `\e[>4;1m` when a
+    prompt read opens and `\e[>4;0m` when it ends. A first `lain up` against a fresh server prints a warning saying it set the server option
     `extended-keys` (server-wide, not per session); a server already on `always` is left on `always`
     with no warning. With mouse on, the wheel over the chat pane scrolls its history, and **native text
     selection needs Shift-drag** (tmux owns the plain drag). Record that last sentence as expected, not
@@ -184,9 +185,9 @@ Checks:
     (`tmux -L "$QA_SOCK" send-keys -t <input> S-Enter`; if your tmux does not translate it, send the bytes
     `\e[13;2u`, and `\e[27;2;13~` for the xterm modifyOtherKeys form), type `cd` and press Enter: the
     one submitted line is `ab` newline `cd`, and a plain Enter submits. Read it back from the journal: the user turn's `content` text block (`method.md`'s turn reduction prints `role/text`) holds `ab\ncd`. Type `ab`, Shift+Enter, then
-    Backspace: the buffer is `ab` on one line again. Repeat at `command>` (park an approval, §5) and, in a
+    Backspace: the buffer is `ab` on one line again. Repeat at `command>` (park an approval, §5; **round 23 KEY-1, fixed**: Shift+Enter used to submit there and at `you>` unless tmux `extended-keys` was `always`, because nothing asked the terminal for the key, and now every prompt read does, `command>` included) and, in a
     `--no-nvim` chat, at `human>`. The hint row `Shift+Enter or Alt+Enter for a new line` is drawn once
-    per `you>` prompt, not at the other two. Alt+Enter does the same as Shift+Enter. Do it once from a
+    per `you>` prompt, not at the other two. Check the reset too: after the chat exits, a plain shell in the same tmux pane gets `\r` for Enter (`cat -v`, then Enter, shows `^M`). Alt+Enter does the same as Shift+Enter (**round 23, fixed in the line editor**: it also inserts a newline in vi command mode, after `/mode +vi` and Escape; before, `ESC CR` submitted the half-typed line there, `cd` became a held prompt and the pane kept drawing `ab` and `^[`). Do it once from a
     real keyboard, since a synthesized sequence only proves the binding.
     *Wrong looks like:* Shift+Enter submitting a half-typed line, or Backspace at the start of an empty
     second line doing nothing.
@@ -317,7 +318,10 @@ for one string across both will miss:
 | `lain://status` | `# lain status` / `no epic is mounted -- start the chat with --epic SLUG to see one here`, then `## fleet` / `(nothing running)` |
 | `lain://approval` | `(no approvals pending)` |
 
-**`lain://status` primes in every chat, epic or not, and that is the point.** Its epic half is a
+**`lain://status` primes in every chat, epic or not, and that is the point.** The `no epic is mounted` row is for a project
+with no epic in its epic home. If the home holds exactly one (the model's own `epic_write` can make one mid-round), a chat
+started with no `--epic` mounts it on its own and the buffer reads `# epic \`<slug>\`` with its issues instead, so clear the
+home or name a different one before checking the placeholder. Its epic half is a
 Null (`StatusView::Unmounted`) that answers with the sentence above, so a chat outside an epic gets
 a buffer explaining how to get one rather than no buffer at all — the same reasoning that put
 `lain://approval` in this loop. Both halves are always drawn: the epic lines, a blank, then the
@@ -925,11 +929,14 @@ the displayed figure is `5:00`.) Park `ls -la` and read each surface:
    `HH:MM:SS ... denied after 0:30 with no answer` (the cockpit form also names the call: `! agent asks to
    run bash(...)  -- denied after 0:30 with no answer`), the nvim buffer gets one `! agent  bash(...)  --
    denied after ...` line after its rows in the one rendering that drops the call, and the model's tool
-   result is an error carrying the same sentence. **Wrong looks like:** the lapse said twice, said
+   result is an error carrying the same sentence: `approval denied for tool "bash": denied after 0:30 with no
+   answer` (**round 23 B23-2, fixed**; the bare `approval denied for tool "bash"` is a human's `n`, so a lapse that
+   reads that way has lost its sentence). **Wrong looks like:** the lapse said twice, said
    on one surface only, or the old wording `decided by timeout: denied`.
 3. **A deny can carry a reason, and the model reads it.** Park another call and answer with a reason:
    at a plain `[y/N]`, `n stay inside the project` (also `no, ...`, `n: ...`); at nvim, `:LainDeny stay
-   inside the project`. The tool result the model sees is `approval denied for tool "bash": stay inside the
+   inside the project`. Since round 23 a `[y/N]` takes only a verdict (guard 4 below), so `n stay inside the project`
+   is a reasoned no and `stay inside the project` alone is prose, held for `you>`. The tool result the model sees is `approval denied for tool "bash": stay inside the
    project`, the journal's `approval_decision` holds `"reason"`, and the surface is `tty` or `nvim`. The
    `n` key with no text, a bare `n` or a bare `:LainDeny` sends a plain deny: today's sentence and
    **no** `reason` key. Control characters in the words (a newline, an ESC) become spaces, and words that are
@@ -953,6 +960,12 @@ the displayed figure is `5:00`.) Park `ls -la` and read each surface:
    answers below the whole question, after a blank line, indented 2 spaces, not inside it (expected ...,
    got ...)`. **Wrong looks like:** the old refusal that said only that the line cannot be edited.
    Known limit: a typed line identical to a rendered one is not flagged, only the surplus copy is.
+   **Round 23 j-8 and j-9, fixed.** A ticked option (`- [x]`) is not flagged as a bad indent (it was, on all 13 of
+   them). And a refused write never blocks nvim: a stray line, an untouched buffer (`:w` says nothing has been typed and
+   `:w!` submits it as it stands) or a compose that could not reach lain is answered on the review rail, the buffer
+   stays modified, and no hit-enter prompt appears. Check by running `nvim --server "$S" --remote-expr 1` right after
+   the refused `:w`: it answers at once. **Wrong looks like:** a Lua traceback in the message, or that command hanging
+   until a key reaches the nvim pane.
 7. **`/help` is columns.** Names in one aligned column, headings styled, descriptions wrapped under their
    own column; at 60 columns a long name pushes its description to the next row.
 
@@ -1000,11 +1013,16 @@ read is guarded three ways, and each guard is a check:
    scrollback (`tmux -L "$QA_SOCK" capture-pane -p -S -50`). **Catches B-3 returning:** the verdict and the model's first
    word on one line, or a `[y/N]` row that was overwritten.
 4. **A `[y/N]` takes only a verdict** (round 22's F-5: a paste during a `[y/N]` was read as "no" and
-   discarded). `y`, `yes`, `n`, `no` in any case, and an empty line, decide the approval; any other line
-   leaves the approval open and is held as the next prompt, said in one line. Paste `please also fix the
-   tests` at a parked `[y/N]` and check the call is still parked and the line comes back at `you>`. The
-   input pane's reader is stubbed in the spec, so this one needs a human in a live pane.
-4. **A question answered elsewhere retires.** A subagent question settled by another surface is
+   discarded; **round 22's fix never landed and round 23 B23-11 landed it**, so a round that ticked this box
+   from the older scenario text ticked a behaviour that did not exist). The grammar: `y`, `yes`, `n`, `no`,
+   `nope`, `nah`, in any case and with trailing punctuation (`yes!`, `no.`), an empty line, or `n <reason>` (also
+   `no, ...`, `n: ...`). Anything else, including a pasted block of several lines whatever its first line says,
+   leaves the approval open and is held as the next prompt, and one line says `a y or n answers the approval`.
+   Paste `please also fix the tests` at a parked `[y/N]` and check the call is still parked, no `approval_decision`
+   is journaled, and the line comes back at `you>`. Then paste `y` newline `rm -rf x` as one block: still
+   parked, held whole. A `/command` is held as well (`/goal off` is meant for the chat). The input pane's reader
+   is stubbed in the spec, so this one needs a human in a live pane.
+5. **A question answered elsewhere retires.** A subagent question settled by another surface is
    retired rather than re-queued, so no `human>` is drawn on the next dispatched lines. *(Prediction,
    not yet driven: round 17's F101 ghost was three `human>` prompts drawn mid-dispatch after an nvim
    answer.)*
@@ -1267,10 +1285,22 @@ What is worth checking:
   names comma-joined) from the moment the model asks for tools until their results are committed. Idle
   at `you>` carries neither. Ask for something that runs `grep` and `read_file` and watch the HUD row once a second
   with `tmux -L "$QA_SOCK" capture-pane -p -t <input>`. The published file does not tick: it is rewritten on a transition, so
-  a file that reads ` model` bare and a live reading with seconds are the same state. **Wrong looks like:**
+  a file that reads ` model` bare and a live reading with seconds are the same state. **Round 23 HUD-1 and
+  HUD-2, fixed.** The tool names come from the committed turn, so a parked call reads `"in_flight":{"kind":"tool","tools":["bash"]}`
+  and `tool:bash` (2 calls in one reply: both, comma-joined; a child's tool call never reaches the parent's HUD), where
+  before `tools` was `[]` on every park and run. A run that is interrupted clears the slot: `/stop` mid model call,
+  Ctrl-C then `s`, `s` at a parked `ask_human`, and a transport failure each leave `in_flight` null and the idle `you>`
+  free of `model:Ns` and `tool:`; before, `model:34s` counted up at an idle prompt. **Wrong looks like:**
   a segment that outlives its call, an empty `tool:` segment, or a header redrawing more than once a second
   during a fast tool loop (measure with the idle-pane byte count from §0 check 2 and a `pipe-pane` over
   the loop; the redraw rate was not measured on the card, so record the number).
+- **Round 23 HUD-3, fixed: the pane redraws the HUD in place, over an empty editor only.** At an idle `you>` a header change
+  with the same row count rewrites the header rows where they are: watch `capture-pane -p -S -200` over 5 changes and count 1
+  header row, not 5, with the prompt line intact. After an answered line the first idle tick prints the header once below the
+  echo and later changes rewrite it in place, so the in-flight segment and `fleet:N` now move during a typed ask (they froze
+  for 68 s before). While the human has typed anything the HUD holds still, wrapped draft or not, and catches up at the next
+  prompt; a header of another row count and a resize likewise wait for the next whole draw. **Wrong looks like:** stacked
+  header rows, a draft or cursor disturbed by a redraw, or a HUD frozen for a whole ask with an empty editor.
 - **`fleet:N` is an observation, not a check.** The trial read `fleet:0` after 2 one-shot subagents ran. The
   fix card found the count correct end to end (the spawn is journaled and published in one synchronous call) and
   could not reproduce it. While a one-shot child runs, record what `fleet:` reads and the clock time, and

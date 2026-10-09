@@ -79,14 +79,15 @@ to its trusted bytes plus one comment line, run `lain trust` (no `--user`) in `$
 Then re-trust the user file and write a project file with one wrong line:
 
 ```bash
-mkdir -p "$REPO/.lain" && printf 'middleware do\n  modle Trace\nend\n' > "$REPO/.lain/config.rb"
+mkdir -p "$REPO/.lain" && printf 'middleware do\n  modle String\nend\n' > "$REPO/.lain/config.rb"
 echo y | lain trust "$REPO"
 cd "$REPO" && lain chat --provider ollama --model qwen3-coder:30b < /dev/null; echo "exit=$?"
 ```
 
-Expected: refused naming `.lain/config.rb:2`, with `has no area :modle; known areas: model, tool,
-turn, repl, http`. Repeat with `turn SomeClassWithNoSettle` and with `http { }` (a block): each is
-refused at its own line. Remove the project file before step 4.
+Expected: refused naming `.lain/config.rb:2`, with `has no verb :modle; known verbs: model, tool,
+turn, repl, http`. Repeat with `turn SomeClass`, where `SomeClass` is defined in the same file and has neither `#call` nor
+`#settle`, and with `http { }` (a block): each is refused at its own line. A class defined in the user file is not
+visible to a project file, so naming one from there refuses as `uninitialized constant`, for the wrong reason. Remove the project file before step 4.
 
 ## 4. a tool middleware in a live cockpit runs outermost
 
@@ -127,11 +128,13 @@ middleware do
 end
 ```
 
+Put this entry and any other you added in this step in ONE `middleware do` block: a second block is refused as `declares
+middleware twice`.
+
 (Replace `TRACEPATH` with the value of `$TRACE`.) Drive 1 ordinary turn.
 
 Expected: a line `http post /api/chat Hash`: the body is still the caller's Hash because the
-entry sits ahead of JSON encoding, and the request is the streamed one. Kill the model server
-mid-turn once to force a retry, and confirm the line repeats for each attempt: entries run on every
+entry sits ahead of JSON encoding, and the request is the streamed one. Force a retry with a closed `--api-base` port or a severing proxy, never by killing the shared model server, and confirm the line repeats for each attempt: entries run on every
 attempt.
 
 ## Close-out

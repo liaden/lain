@@ -32,7 +32,8 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--provider` | `anthropic` | `anthropic`, `ollama`, or `ollama-cloud`. |
 | `--model` | the provider's own | Model id. Free-form string, not validated against a list. |
 | `--api-base` | Ollama's localhost | Overrides the Ollama base URL — for whichever of the chat and the summarizer is on Ollama (see [Compaction](#compaction-flags)). |
-| `--max-tokens` | `4096` | Per model turn. |
+| `--max-tokens` | `16384` | Per model turn. A cap, not a reservation: it changes nothing for a reply under it. A thinking model's reasoning counts against it, so a turn cut at the cap prints `model hit max_tokens before finishing` and then `raise --max-tokens (now N); a thinking model's reasoning counts against it`. |
+| `--secret-oracle` | off | A local model answers a parked read of a gated path, shown the path and region count, never the contents. The local qwen3:4b oracle was measured approving `.env` at 0.8 to 1.0 confidence (`planning/approval-layering-research-2026-10.md`), so an oracle approve is applied only when the path is gated for where it is (ordinary, exempt, `out_of_scope`, `outside_project`), checked when the surface claims the pending and again when it settles. A deny is always applied. `.env`, keys, named, configured, protected and malformed paths always wait for a human. Known gaps: a link repointed before the surface first claims the pending, and the oracle is never offered an `outside_project` park. |
 | `--context-pipeline` | unset | `default`, `reminder`, `cache-breakpoints`, `prune`, `dedupe-tool-calls`, `purge-failed-inputs`, or several joined by `+` and applied left to right. Which combinators render every request. A word **replaces** the default: `prune` alone sends no reminders and no cache breakpoints; `prune+default` keeps both. Unset renders the default and writes no `context_pipeline` key into the session header; a named pipeline, `default` included, is recorded. An unknown, empty or repeated part is refused at launch. |
 | `--temperature`, `--seed` | unset | Ride `Request#extra`. Ollama honors both; `--temperature 0` is the determinism recipe. |
 | `--auto-approve` | off | Wire an `auto_approver` role that judges pendings the human has not. Races the human's surfaces. |
@@ -59,8 +60,8 @@ tiers work.
 | Flag | Default | What it does |
 |---|---|---|
 | `--compact` / `--no-compact` | on | Summarize the history's head as it grows. |
-| `--compact-bytes` | `262144` | Droppable-head bytes above which a compaction is warranted. Roughly 64k tokens. |
-| `--compact-cap` | `1048576` | History bytes that force a compaction even while the prompt cache is warm. |
+| `--compact-bytes` | `262144` | Claimed bytes above which a compaction is warranted: the droppable head narrowed to the turns `--compact-strategy` can collapse, pins excluded. Roughly 64k tokens. |
+| `--compact-cap` | `1048576` | Claimed bytes that force a compaction even while the prompt cache is warm. Measured as `--compact-bytes` is, so turns the strategy would leave standing never trip it. |
 | `--compact-keep` | `20` | Trailing messages a compaction leaves verbatim. About the last 10 exchanges. |
 | `--compact-strategy` | **none** | `summarizing`, `elide`, `summarize-conversation`, `elide-tools`, or a `+`-joined composition of them. Which policy collapses a span — see [Collapse strategies](#collapse-strategies). Unset is not a synonym for any of them. |
 | `--summarizer-provider` | `ollama` | `anthropic`, `ollama`, or `ollama-cloud`. The summarizer is a **tier**, chosen independently of `--provider`. |
@@ -70,6 +71,12 @@ tiers work.
 Both provider flags are validated against the same set, and a typo in either is refused when the
 `Backend` is constructed — not at the first compacting turn, which under `--no-compact` never comes.
 A non-positive `--summarizer-max-tokens` is refused there too.
+
+**The signal counts only what the strategy can claim.** `summarize-conversation` claims conversational runs of 2 or more
+messages and `elide-tools` claims tool rounds, so under either alone a head made of the other kind is not counted. When the
+window fills and the strategy can claim none of the droppable turns, the compaction decision says so, naming the strategy,
+and, when the wider arm would claim what it left, suggests `--compact-strategy elide-tools+summarize-conversation` instead of
+`--compact-keep`. A pin keeps its turn through a compaction and is not counted either.
 
 ```bash
 lain --provider anthropic --summarizer-provider ollama    # frontier chat, free local summaries (default)
@@ -191,8 +198,11 @@ instead. `--nvim-socket=/tmp/x.sock` cannot be read that way.
 **Mouse and selection.** The session turns tmux's `mouse` on, so the wheel scrolls the chat pane's
 history. tmux then owns the mouse, and your terminal's native text selection needs Shift held
 while you drag. `lain up` also sets the tmux server option `extended-keys` to `on` when it reads
-`off`, which is what lets Shift+Enter reach the input pane, and it prints a notice when it does
-(the setting is server-wide).
+`off`, and it prints a notice when it does (the setting is server-wide). That option alone does not deliver Shift+Enter:
+the line editor also asks the terminal for it (`\e[>4;1m`) around every prompt read, `you>`, `command>`, `human>` and the
+`[y/N]` alike, and hands the terminal back its plain Enter (`\e[>4;0m`) afterwards, so other programs in the same tmux are
+unaffected. Alt+Enter inserts a newline too, in vi command mode as well. The input pane redraws the HUD in place only over
+an empty editor: while you are typing it holds still, and a resize waits for the next whole prompt.
 
 `lain up` `exec`s into tmux, replacing the process. From inside tmux it uses `switch-client`;
 from outside, `attach`.
@@ -346,6 +356,13 @@ a pull request. The local `epic/<slug>` branch stays for [`lain worktrees gc`](#
 anchored when the implementation gate approved it, found rather than named. A commit nobody approved
 therefore has no way to be landed by typing it — unrepresentable rather than merely refused.
 
+When it refuses, it says which thing is missing. `no worker commit is anchored for issue X of epic <slug>` means the driver
+never handed back a commit for that issue: re-run it through the driver. `no anchored commit carries an approved
+implementation gate for issue X` means a commit is anchored but nobody approved it, and the refusal names
+`lain epic submit implementation <slug> --issue X --digest <sha>`. `--digest` must be a commit in the repository; anything
+else is refused. The implementation gate's question reports what the project's suite did on that commit (`tests: 3 passed,
+1 error`, `tests: 4 passed`, or `tests: not run (why)`); a red result does not refuse the gate, the decision is yours.
+
 ### lain worktrees gc
 
 Reap lain's worker checkouts, anchors and merged epic branches whose work is safe elsewhere. No
@@ -419,6 +436,10 @@ under, and `lain survey` renders a tree and submits nothing; the in-session
 [`/survey`](#survey) is where it lives. `lain survey ./docs --permissive` answers
 `Unknown switches "--permissive"` — it names the switch you typed rather than reading the word
 as a path or inventing a verb for it.
+
+A tree outside the project is judged by the names below its own root, so `secrets/prod` is masked whole in the corpus, the
+notes and the briefs, and the docent that answers questions about the survey works inside the surveyed tree: a read it makes
+there meets the same name rule from that root.
 
 Two refusals worth meeting on paper first.
 
@@ -673,6 +694,13 @@ set you have not answered. See `:help lain-question`.
 
 Answer each pending tool approval `y/N`.
 
+**A `[y/N]` takes only a verdict.** At a plain-chat prompt (and the input pane's) the accepted answers are `y`, `yes`,
+`n`, `no`, `nope` and `nah`, in any case and with trailing punctuation (`yes!`), an empty line (a no), and `n <reason>`,
+`no, <reason>` or `n: <reason>`, which denies and hands the reason to the model. Anything else, including a `/command`
+and a pasted block of several lines whatever its first line says, leaves the approval open and is held as your next
+prompt, with one line saying `a y or n answers the approval`. A prompt that lapses on its clock tells the model so
+(`approval denied for tool "bash": denied after 5:00 with no answer`), where a human's `n` gives the bare sentence.
+
 ### /survey
 
 `/survey <path>` opens a survey of a directory in the editor this chat is **already** attached
@@ -848,9 +876,18 @@ tests preset: :rspec
 * `isolation`, `tests`: documented below.
 * `sensitivity`: `denied:`, `gated:` and `exempt:`, each a list of path globs, and `related:`, a
   list of directories (each starting with `~/` or `/`, and each must exist). A read under a related
-  directory masks its flagged regions without asking and never releases them; a file the path
+  directory masks its flagged regions without asking and never releases them ; a file the path
   rules gate or deny is still gated or denied. The verb refuses `/`, your home directory and any
   ancestor of it, an entry that is not a directory, and a path that is not clean.
+  Round 23: a spawned child's read of a path outside the project root, outside every `related` directory and outside its own working root is gated as `outside_project` (the tools: `read_file`, `list_files`, `glob` (its walk root too), `grep`, `ast_search`, `file_symbols`). Under `ask` it parks for the human. With the `auto_approve` layer the model judge or the human answers, whichever comes first. Under `/mode auto` it is approved like any gated call. A child that can never park (an approval judge, the epic adjudicator) is refused. The main agent's reads are unchanged. Known gaps, by ruling: a `grep` over the project follows a file link that points outside without parking, and in a chat with no project marker the root is the cwd, so a chat started in $HOME confines its children to all of $HOME.
+  Detected secret regions are masked in what `read_file`, `grep` and `ast_search` return: a `grep` or `ast_search` row
+  reads `<redacted:N>` in place with nothing parked, and a trailer says `read_file` on the file asks for their release.
+  A secret path is withheld from those rows, not masked.
+  A name names a secret when it holds `pass`, `passwd`, `passcode`, `token`, `private` or `auth` as its own word
+  (`vault-pass.txt`, `dbToken.txt`), `api key` or `api_keys`, or ends in `secret`, `password`, `credential` or `apikey`
+  (`mysecrets.txt`); `AUTHORS` and `tokenizer.json` are ordinary, and source and markdown files are excepted by extension.
+  `dbPasswordFile.txt` is a known miss and `libsecret` a known catch; a bare `pass` also gates compiler-pass files such as `*_pass.mlir` and `hlo/pass/`, by ruling. A directory named so counts below the project root,
+  below a checkout, and below the root of a `lain survey` of a tree outside the project.
 * `shell`: `exclude:`, a list of program names or globs the shell tool refuses. `exclude: %w[*]` is
   the strictest setting.
 * `search`: how `grep`, `glob`, `list_files` and `ast_search` walk the project. Searches list files

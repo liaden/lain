@@ -82,7 +82,7 @@ hand. That path is a hash; a driver that guesses it writes a second epic nobody 
 **Write `Blocks:`, never `Blocked by:`.** `Blocked by:` is derived from the `blocks` edges of the issues
 that block an issue, so writing it by hand is refused by name (`Epic::Document::DERIVED_LINKS`); a
 driver who follows an older version of this scenario and writes it gets that refusal, which is not a
-finding. The writable link fields are `Blocks`, `Related` and `Discovered from`.
+finding. The writable link fields are `Blocks`, `Related` and `Discovered from`, and each names issues by **backticked id**: `Blocks: `top`` reads, while a bare `Blocks: top` refuses with `line N: Blocks: top names no backticked issue id`.
 
 **Corrected by round 17: part of an issue's status IS in that tree.** `done` and `abandoned` are the
 heading marks `[x]` and `[!]` in `epic.md` — §2 and §8 set them by editing the mark. What is
@@ -295,7 +295,7 @@ itself, and with none the tools still exist). Ask for each in turn, and read the
 1. **`epic_write` writes one artifact and takes no path.** Input: `slug` (required, lowercase letters, digits
    and dashes), `artifact` (`research`, `epic`, `issue` or `plan`), `issue` (required for the last two) and
    `content` (the whole file, replacing what is there). Ask it to write `research` for slug `demo`: the file
-   lands at `<epic home>/demo/research.md`, nothing is written inside the project, and a `write` is journaled
+   lands at `<epic home>/demo/research.md`, nothing is written inside the project, and a `doc_written` record (`epic_slug`, `kind`, `path`, `byte_digest`) is journaled
    through the epic home. `issue` without an `issue` id, an `artifact` outside the four, and a slug with a
    capital or a slash are refused by name. It asks no tool approval, and it is exempt from `plan`-mode
    write confinement by name, since epic artifacts are planning documents; check that in `/mode plan`.
@@ -322,10 +322,10 @@ itself, and with none the tools still exist). Ask for each in turn, and read the
    the id grammar refuses where the issue is built, as an **error result** and with `epic.md` byte-identical.
    The chat's journal gains a `graph_revision` (`operation` is the verb). A refusal while a review holds
    `epic.md` is an error result, not an edit.
-5. **The tools are in every chat.** Read the first request's tool list: `epic_write`, `epic_graph`, `epic_submit`
-   follow `request_review` whether or not an epic is mounted. With none mounted, `epic_graph` add/split/merge
+5. **The tools are in every chat.** Read the first request's tool list: `epic_graph`, `epic_submit`, `epic_write`
+   (the list is alphabetical, so they come before `request_review`) whether or not an epic is mounted. With none mounted, `epic_graph` add/split/merge
    refuses by name. A **new** epic that `epic_write` creates mounts only after a restart; the model says so
-   and `/epic status` reports no mounted epic until then.
+   and `/implement-epic` answers `this chat is in no epic` until then (`/epic status` is not a command).
 6. **The skills name only what the agent can reach.** `/skill research-epic` (or the first user turn in the
    journal) holds the absolute epic home and names `epic_write` and `epic_submit`; it holds no `Epic::Home`,
    no `Lain::Epic` and no `lain epic submit` as something the agent runs. After a run, count `read_file`
@@ -345,7 +345,7 @@ peek(){ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
 ### 5a — `interactive` (the default)
 
 A `y/N` prompt on the command's terminal. `y`, `yes` and `approve` are affirmative; **everything
-else is a refusal**, which is the fail-closed default.
+else is a refusal**, which is the fail-closed default. The prompt lists the words (`Reply approve, approved, y, yes to approve, or deny, denied, n, no to deny; any other reply is recorded as unrecognised and denies. [y/N]`), so a gate approval cannot carry a reason: a reply with one is `unrecognised` and denies. This is the epic gate's own grammar, not the chat `[y/N]` of `cockpit-surfaces.md` §5, which holds prose instead of denying on it.
 
 **Corrected by round 17: the answers cannot be piped.** This section used to drive `printf 'y\n' |
 lain epic submit research`; an interactive gate refuses a stdin that is not a terminal before it
@@ -360,7 +360,7 @@ the jargon `… but this session is missing asker` (round 17). *Driven 2026-09-1
 `lain epic submit research < /dev/null` and `printf 'y\n' | lain epic submit research`, exit 1:
 
 ```
-epic stage "research" is configured for the "interactive" gate policy, but stdin is not a terminal, so nobody can answer it; add `gate :research, :hands_off` (or :deferred, whichever policies can run unattended) to the `epics` block of .lain/config.rb to decide it unattended
+epic stage "research" is configured for the "interactive" gate policy, but stdin is not a terminal, so nobody can answer it; add `gate :research, :hands_off` (or :deferred) to the `epics` block of .lain/config.rb to decide it unattended
 ```
 
 **And an unattended submit of a stage that is NOT interactive proceeds**, even when another stage
@@ -403,6 +403,14 @@ the collapse §5 warns about. **The uncertain branch is what to push on** — an
 anything is one that has stopped adjudicating. Drive it a second time against a deliberately
 ambiguous artifact (a `research.md` holding one sentence and no acceptance criteria) and confirm it
 parks rather than approving.
+
+**A human's deny is a deny, even over a deferral (round 23 g23-1, fixed).** `lain epic submit` reads the decision it just
+made, not the queue: with an earlier submit of the same artifact left parked (`policy: deferred`), a later `n` prints
+`denied`, and so does the `epic_submit` tool result a model reads. Before, the queue's old row made the command print
+`deferred … parked in demo/research … review it: lain epic queue` after the human's `n`, 2 of 2, while the journal held
+`interactive/human/false` and the queue was empty. Drive it: park a deferral (`gate :research, :deferred`, submit), switch to
+`interactive`, submit the same artifact, answer `n`. Expect `denied`, with no `review it: lain epic queue` line, and read the
+`gate_decision`: `policy: interactive`, `answered_by: human`, `approved: false`.
 
 What §9 CAN check is that a second terminal verdict on the same address is refused. Drive `approve`
 twice on one digest.
@@ -681,6 +689,33 @@ What to watch for:
 
 ### 10d — the gate during an unattended run
 
+**The tip's tests run before the implementation gate (round 23 g23-3, journal half fixed).** Once an issue is retired and its
+sha anchored, and before the gate is asked, the driver checks that sha out detached in a throwaway worktree (under
+`<worktree root>/tips`), runs the project's whole suite there with the declared `tests` preset, and journals one `tests_ran`
+record: `issue_id`, `sha`, `ran`, and counts `passed`, `failed`, `errors` (never names), or `ran: false` with a `why`. Drive
+it on `greet`'s red tip: the record reads `ran: true` with `errors` or `failed` above 0, where round 23's `NameError` outside
+examples was invisible to the gate. Check:
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
+  puts r.values_at("issue_id","sha","ran","passed","failed","errors","why").inspect if r["type"]=="tests_ran"}' "$JOURNAL"
+```
+
+- A load error (a `NameError` or `SyntaxError` while loading a spec file) counts once in `errors`, not twice.
+- A project with no `tests` preset, a harness that times out or cannot parse its result, and a failed checkout are each
+  journaled `ran: false` with the reason; the gate is still asked. A suite that could not run never withholds the question.
+- A `/stop` while the suite runs stops the run as it would a model call, journals no `tests_ran` and asks no gate.
+- The worktree is gone afterwards on every path (`git worktree list` shows no `tip-*` entry), and a human's other
+  worktrees are untouched (the cleanup never prunes).
+- The tests run on the sha the gate names, which is the post-retirement tip, not the actor's pre-rebase tree.
+- The human still decides: a red tip does not refuse the gate.
+- **The gate question carries the result (round 23 g23-3, fixed).** The implementation gate's fact line names the issue, the
+  sha and `tests: 3 passed, 1 error` (failed and errors appear only above 0, `1 error` singular), `tests: 4 passed`, or
+  `tests: not run (<why>)`. The evidence is not part of the gate's address, so re-asking over the same commit is the same
+  gate. Read the question in `lain://inbox` or the plain `human>` prompt on the red `greet` tip: it says the tests errored
+  before you answer. A `/stop` during the suite reports its own reason, `the run stopped while the suite was testing this
+  issue's commit, so it was left ungated and unlanded`, not an ordinary stop.
+
 At most **one** gate may be outstanding at a time, and a gate that is denied or times out must
 **withdraw its question**. Drive a denial and then confirm the next issue's gate still opens: a
 withdrawn question that was left outstanding killed the following gate, and it is invisible until
@@ -761,6 +796,15 @@ lain epic land export-stream         # lands one approved issue onto epic/<slug>
 lain epic land --resume export-stream
 ```
 
+**Round 23 g23-6, fixed: `land` names which thing is missing.** With no anchored worker commit for the issue it says `no
+worker commit is anchored for issue X of epic <slug>, so nothing landed -- re-run the issue through the epic driver, which
+anchors the work it hands back`; it no longer suggests `epic submit ... --digest`, which cannot create an anchor. With a
+commit anchored but no approved implementation gate it says `no anchored commit carries an approved implementation gate for
+issue X, so nothing landed --` followed by `lain epic submit implementation <slug> --issue X --digest <sha>` for each anchored
+sha. Drive both: a hand-committed fix with no driver run gets the first; an anchored issue whose gate was denied gets the
+second. And `epic submit implementation --digest` with a value that is not a commit in the repository (a wrong sha, a
+word) is refused: `the implementation digest <x> is not a commit in <root>`.
+
 `lain epic land` takes an **issue id, never a commit**. The SHA argument is gone: the commit it
 lands is the one anchored when the implementation gate approved it — found, not named. So confirm
 there is no way to type a commit at it, and that an issue whose implementation was never approved
@@ -828,7 +872,7 @@ one per epic, where there used to be a single shared `landing/` directory that m
 landing at once impossible. Confirm the path shape, and drive the case the old shape refused:
 
 ```bash
-ls "$(lain worktrees gc --dry-run 2>/dev/null >/dev/null; true)"   # or read the path off the run's output
+# `lain worktrees gc` has no --dry-run switch (it answers `Unknown switches "--dry-run"`), and a real run reaps; read the path off the run's own output
 find "${XDG_STATE_HOME:-$HOME/.local/state}/lain/worktrees" -maxdepth 3 -path '*/landings/*' -print
 ```
 

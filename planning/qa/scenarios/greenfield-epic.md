@@ -16,7 +16,7 @@ researcher role and its ceiling, the approval surfaces (deadline, deny reason, h
 HUD's in-flight segment, and the cockpit's nvim, tmux and transcript behavior under a real user
 config.
 
-**Cost:** spends real cloud quota. Budget about 40 completions for the whole journey, most of them
+**Cost:** spends real cloud quota. Budget about 150 completions for the whole journey (round 23 counted about 147: §6.3 alone is about 60 researcher completions), most of them
 the `/research-epic` interview and its two researchers. Sections 1, 2 and 7 cost nothing or one
 completion each and can be run alone. Run it on the free plan only if you want to see the width
 narrow (§6.6); the default width is 3 and a free plan allows 1.
@@ -62,8 +62,10 @@ freezing, the HUD lying, or an approval vanishing unseen?*
 
 ```bash
 cd "$QA/parent"
-lain up frugirl --create --socket "$QA_SOCK" --provider ollama-cloud --model glm-5.3
+lain up frugirl --create --socket "$QA_SOCK" -- --provider ollama-cloud --model glm-5.3
 ```
+
+Chat flags go after `--`; before it, `lain up` answers `Unknown switches "--provider", "--model"` and creates nothing.
 
 Checks:
 
@@ -72,8 +74,8 @@ Checks:
    **parent**. Re-run `lain up frugirl2 --socket "$QA_SOCK"` without the flag and the refusal names `--create`.
    *Wrong looks like:* the trial's refusal that said only that the directory does not exist, or a
    leaf made under a parent that was never there.
-2. **The model name is bare** (`glm-5.3`, no `:cloud` suffix) and the status line shows it on
-   `ollama-cloud`. `/help` lists `research-epic`, `plan-epic`, `iterate-epic` and
+2. **The model name is bare** (`glm-5.3`, no `:cloud` suffix); `/model` prints it. No status line or HUD segment names the
+   model or the provider, so do not look for one. `/help` lists `research-epic`, `plan-epic`, `iterate-epic` and
    `create-epic-issues`.
 3. **A launch notice says the width.** The chat pane prints, before the first prompt:
    `ollama-cloud runs up to 3 cloud requests at once; set LAIN_OLLAMA_CLOUD_CONCURRENCY to change
@@ -114,9 +116,13 @@ Checks:
    compare with the `ctx:` segment. No `~` and no `?` mark on a published window.
    *Wrong looks like:* a `~` on `ctx`, or a percentage more than an order of magnitude off.
 3. **Idle HUD has no in-flight segment**; during a turn it shows `model:Ns` (seconds climbing in the live reader, the chat's own HUD; the published state file shows a bare `model`), and
-   during a tool call `tool:<name>` (`tool:grep`). Take a prompt that makes the model run `grep`
+   during a tool call `tool:<name>` (`tool:grep`; several names comma-joined). Take a prompt that makes the model run `grep`
    and watch `tmux -L "$QA_SOCK" capture-pane -p` on the HUD row every second. The segment must appear, name the
-   tool, and be gone after the result.
+   tool, and be gone after the result. **Round 23 HUD-1 and HUD-2, fixed:** the names come from the committed turn
+   (`in_flight` in `state.json` reads `{"kind":"tool","tools":["grep"]}`, never `"tools":[]`), including a parked call
+   (`tool:bash` while the approval waits). And a run that is interrupted clears the slot: after `/stop` mid model call,
+   after Ctrl-C then `s`, after `s` at a parked `ask_human`, and after a transport failure (point `--api-base` at a
+   closed port) `state.json`'s `in_flight` is null and the idle `you>` carries neither `model:Ns` nor `tool:`.
    *Wrong looks like:* a HUD that reads the same for a 30 second model call as for idle. A redraw
    faster than once a second is a finding too (a redraw per tool call or token would flood the pane).
 4. **Observation, not a check: `fleet:N`.** The trial read `fleet:0` after two subagents ran. Counting
@@ -129,9 +135,9 @@ Checks:
 
 Checks, in the cockpit from §1:
 
-1. **Shift+Enter inserts a new line** at the `you>` prompt and at the question prompt, and plain
+1. **Shift+Enter inserts a new line** at the `you>` prompt, at `command>` and at the question prompt (**round 23 KEY-1, fixed**: the line editor asks the terminal for the key around each prompt read, so `extended-keys on` is enough), and plain
    Enter submits. A hint row `Shift+Enter or Alt+Enter for a new line` shows once per prompt.
-   Drive it with `tmux -L "$QA_SOCK" send-keys -t <input> S-Enter` and also with a real keyboard once.
+   Drive it with `tmux -L "$QA_SOCK" send-keys -t <input> S-Enter` and also with a real keyboard once. Alt+Enter inserts one as well, in vi command mode too.
    *Wrong looks like:* Shift+Enter submitting a half-typed line.
 2. **The chat pane writes to normal scrollback.** In the chat pane `tmux -L "$QA_SOCK" capture-pane -p -S -200`
    returns lines older than the screen, and the mouse wheel scrolls them. The pane does not enter
@@ -167,7 +173,9 @@ Checks:
    ends `; auto-denies in 0:25`; the nvim approval row shows `0:25 left`. All three carry a time.
    The nvim figure is a snapshot, not a ticking clock.
 2. **Let it lapse once.** After 25 seconds every surface says `denied after 0:25 with no answer`,
-   once. The model's tool result is an error that says the same.
+   once. The model's tool result is an error that says the same: `approval denied for tool "bash": denied after 0:25 with
+   no answer` (**round 23 B23-2, fixed**; before, it was the bare sentence a human's `n` gives, and the model could not
+   tell a lapse from a decision).
    *Wrong looks like:* the trial. The first `bash` call auto-denied after 300 seconds with the
    cockpit never having shown it, and the person learned only from the model's retry.
 3. **The timeout is the configured one.** The journal's approval record for the lapse is dated 25
@@ -179,18 +187,24 @@ Checks:
    has `"reason"`. In nvim, `:LainDeny stay inside the project` does the same, and the `n` key
    with no text sends a bare deny with no reason field.
    *Wrong looks like:* a bare `denied` that gives the model nothing, so it retries the same call.
-5. **Prose at `command>` is held with a reason.** While an approval is parked, type a free line at
+5. **Prose at a `[y/N]` is held, not answered (round 23 B23-11, fixed; plain chat).** Round 22's fix never landed, so check it
+   on a `--no-nvim` chat: at a parked `[y/N]` type `please also fix the tests`. The approval stays parked, the line is held as
+   the next prompt, and one line says `a y or n answers the approval`. A pasted block of several lines is held whole, even
+   when its first line is `y`. The accepted answers are `y`, `yes`, `n`, `no`, `nope`, `nah` in any case, each with trailing
+   punctuation (`yes!`), an empty line, and `n <reason>` (check 4). Nothing else decides it. Detail: `cockpit-surfaces.md` §5.
+   The cockpit's `[y/N]` is answered in nvim, so it needs this plain-chat leg.
+6. **Prose at `command>` is held with a reason.** While an approval is parked, type a free line at
    the `command>` prompt. The held notice says why it was held and where to answer (`/approve`,
    `/inbox` or the nvim buffer). It does not answer the approval, and typed prose never answers a
    question.
-6. **Path-shaped text is not a secret.** Ask the model to read a file holding these lines, each
+7. **Path-shaped text is not a secret.** Ask the model to read a file holding these lines, each
    one a false positive in the trial: `Cargo/Dioxus/clippy/deny/pre-commit`,
    `XDG_CONFIG_HOME/lain/config`, `github.com/lmcnulty/gender-voice-visualization_corpus`, and the
    64 character alphabet `ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/`.
    None parks for a release and none is masked. Then a line `config/prod/q8ZtLm2xR4vN7kPw9sYb`
    (a mixed-case key as the last segment) **still parks**.
    *Wrong looks like:* 5 of 5 flags false positives, as in the trial.
-7. **A related directory never prompts for a flagged region.** Add `sensitivity related: %w[<literal value of $QA>/parent/sibling]` to `.lain/config.rb`, `lain trust`, restart. Read a file in
+8. **A related directory never prompts for a flagged region.** Add `sensitivity related: %w[<literal value of $QA>/parent/sibling]` to `.lain/config.rb`, `lain trust`, restart. Read a file in
    `sibling/` that holds the real-looking key line from check 6: the read completes with the region
    masked and no release prompt, and the journal's redaction record shows released 0. A `.env`
    under that tree still parks at the read gate. `related: %w[/]` and `related: %w[~]` refuse at
@@ -245,12 +259,18 @@ Checks:
    `lain trust`, restart: `notes/a.md` is found. Delete `scratch` and
    `frugirl/.lain/config.rb` before §6.
 5. **A search can be stopped.** Start the grep over `$QA/parent/slow` and, while `tool:grep` shows,
-   send SIGTERM to the chat process (`kill -TERM <pid>`; this is the primary action). The chat
-   closes within about 1 second, `pgrep -af 'git .*ls-files'` is empty a few seconds later, and no
+   send SIGTERM to the chat process (`kill -TERM <pid>`; this is the primary action). **One SIGTERM opens the documented 60 second grace**, not an
+   instant exit (`closing in 60s`, with `[c] cancel [w] wait longer [r] respond then exit [s] stop this ask` in the input pane); send a second
+   SIGTERM, or take `s`, to see the stop. The chat then closes within about 1 second, `pgrep -af 'git .*ls-files'` is empty a few seconds later, and no
    `[git] <defunct>` is left under the chat's pid. Pressing `/stop` mid-search is a second,
    weaker try: the typed line may wait behind the turn, so record what it did rather than failing
    on it.
    *Wrong looks like:* a SIGTERM that is ignored until the walk finishes, or a leaked `git` child.
+
+   **Round 23 j-5, fixed: a pending close survives the end of the ask.** Send one SIGTERM mid-search and then let the search
+   finish on its own inside the 60 seconds. The countdown is not withdrawn, so the session closes when the ask ends: the
+   journal gets `session_closed` and the process exits, rather than returning to `you>` and staying alive. Controls: a SIGTERM
+   at an idle `you>` exits in about 200 ms, and a cancel (`c`) in the countdown keeps the session open.
 
 ## 6. A researcher on a sibling repository
 
@@ -311,14 +331,19 @@ Checks:
    scope, constraints, done), and it arrives at `lain://inbox`, then `lain://question` in the
    editor. In `lain://question`: `x` ticks an option, indented prose under it says why, `:w`
    submits. A line at column 0 that lain did not render is flagged and a hint row says where
-   answers go. Type one anyway.
+   answers go. Type one anyway. **Round 23 j-8 and j-9, fixed:** a ticked option (`- [x]`) is not flagged as a bad
+   indent (before, all of them were), and a `:w` that lain refuses (a stray line, an untouched buffer) is answered on the
+   review rail with the sentence on screen and the buffer left modified; it never raises a hit-enter prompt, so nvim stays
+   responsive (`nvim --server "$S" --remote-expr 1` answers at once after the refusal). The same holds for a compose write
+   that could not reach lain.
    *Wrong looks like:* a refusal that says only "cannot be edited". The refusal now says where
    answers belong.
 3. **A typed reply at `/inbox` also answers the set**, as prose, and the model's next turn says it
    received the answer in prose.
 4. **Greenfield grounding is honest.** There is no code to read. The model says so and does not
    search above `frugirl`. If it asks to look at `~/dev` or `$QA/parent`, that is a finding about
-   the skill's "do not search above the named paths" rule; deny it with a reason (§4.4) and watch
+   the skill's "do not search above the named paths" rule (**round 23 j-10, fixed**: a spawned child's read outside the project parks
+   as `outside_project`; the chat's own reads do not); deny it with a reason (§4.4) and watch
    what it does with the reason.
 5. **`epic_write` works with no epic.** The model calls `epic_write` with `artifact: research` and
    a lowercase dashed `slug`. The file appears at
@@ -328,23 +353,34 @@ Checks:
    gated; `epic_write` is not.
 6. **`epic_submit` reaches the gate in-process.** The model calls `epic_submit` with
    `stage: research`. With the default (interactive) policy a question arrives at `lain://inbox`.
-   Approve it with a reason. The tool result reads `approved <digest> by policy interactive`, the
+   Approve it (an approval cannot carry a reason: any reply but the bare words is recorded `unrecognised` and denies, and the
+   question says so). The tool result reads `approved <digest> by policy interactive`, the
    session file holds the stage record, and `lain epic queue` from a spare shell shows nothing
    pending afterwards. The chat was never blocked: the HUD and a sibling prompt kept updating
    while the gate waited.
    *Wrong looks like:* a model that tells you to run `lain epic submit` itself, an
    `epic_submit` that hangs the reactor while it waits, or a gate that is approved in a shell but
    never reaches the model.
+   **A human's deny reads as a deny (round 23 g23-1, fixed).** Run it again and answer `n`: the tool result says the gate was
+   denied, with no `deferred … parked in … review it: lain epic queue` line, even when an earlier submit of the same
+   artifact left a deferral parked. Before, the answer was printed as a deferral, 2 of 2.
 7. **An adjudicated stage is relayed, not faked.** Set `epics do gate :research, :adjudicated end`
    (`lain trust`, restart) and repeat the submit. The tool refuses and tells the model to ask
    **you** to run `lain epic submit research <slug>`; the model relays that sentence and stops. It
    does not loop on the tool.
 8. **A new epic needs a restart to mount.** After `epic_write` created the epic in this chat, the
-   model's final text says to restart the chat. `/epic status` (or the nvim epic view) reports no
-   mounted epic until you restart. After restart, with one epic in the home, it mounts on its own.
+   model's final text says to restart the chat. `/implement-epic` answers `this chat is in no epic` until you
+   restart (there is no `/epic status`; it answers `unknown skill "epic"`, and `lain epic status` from a shell refuses with `No epic
+   artifact at …/epic.md` until the plan stage writes one). After restart, with one epic in the home, it mounts on its own.
 9. **`epic_graph` adds an issue in-process.** After the research gate, `/plan-epic` runs the same
    way. Ask it to add one issue (`epic_graph` with `verb: add`) and then split it; the graph's
    issue files appear under the epic home and no `lain epic split` command is suggested.
+
+10. **The cap is roomy, and a cut names the flag (round 23 j-7, fixed).** `--max-tokens` now defaults to 16384 (it was 4096),
+    so glm-5.3's first `/research-epic` turn finishes instead of spending the cap thinking; `lain up -- --max-tokens 16384` is
+    no longer needed. To see the cut, relaunch with `-- --max-tokens 256` and send the same prompt: the chat prints `model hit
+    max_tokens before finishing` followed by `raise --max-tokens (now 256); a thinking model's reasoning counts against it`.
+    The flag changes nothing for a reply under the cap.
 
 ## 8. Close-out
 
@@ -371,5 +407,6 @@ left. Record per section: checks run, checks not reached and why, and every obse
 | Shift+Enter submitted; no scrollback; mid-word wrap; no times | 3.1 to 3.4 |
 | windows opened only at exit | 6.1 |
 | no in-flight HUD segment | 2.3 |
+| `/research-epic` on glm-5.3 spent a 4096-token cap thinking and said only `model hit max_tokens` | 7 (default now 16384; a cut turn names the flag) |
 | `lain` not on PATH; stale tmux env; missing directory refused | Needs, 1.1, 1.4 |
 | question buffer and `/help` gave no guidance | 7.2, 3.5 |

@@ -182,12 +182,24 @@ git -C "$T" init -q && git -C "$T" add -A          # the walk lists through `git
 |---|---|---|
 | `plain.rb` | listed | ordinary |
 | `deploy.pem` | **listed**, content rendered `<redacted:1>` | gated, not denied — masked by `Projection` on region detection, not by the path verdict |
-| `password.txt`, `secrets.yml`, `credentials.json`, `secrets/prod` (a name, or a directory below the root, that names a secret) | **listed**, corpus text is **1 placeholder** | name-gated (after round 22's S-1), so the file is listed but its content never enters the corpus. A note on it journals the placeholder as the evidence, projected line 1, and it stays masked for the whole survey: there is no release route on a survey, so a human reads the file in chat through the gate. A symlink such as `.env -> password.txt` is masked the same way. Code and `.md` files are never name-gated (`auth.py`, `docs/secrets.md` list normally) |
+| `password.txt`, `secrets.yml`, `credentials.json`, `secrets/prod` (a name, or a directory below the root, that names a secret) | **listed**, corpus text is **1 placeholder** | name-gated (after round 22's S-1), so the file is listed but its content never enters the corpus. A note on it journals the placeholder as the evidence, projected line 1, and it stays masked for the whole survey: there is no release route on a survey, so a human reads the file in chat through the gate. A symlink such as `.env -> password.txt` is masked the same way. Code and `.md` files are never name-gated (`auth.py`, `docs/secrets.md` list normally). **Round 23 I23-1, fixed: the directory rule holds outside the project root too.** A tree outside the root counts directory names below the surveyed root, so `secrets/prod` here is masked whole, exactly as it is inside a project; before, only the basename was judged and the file reached the note, the docent brief and the docent's own `read_file` raw. The surveyed root's own name and its ancestors never count. **Round 23 G-2 names:** `vault-pass.txt`, `pass.txt`, `api_keys.txt` and `mysecrets.txt` are name-gated here too; see `secret-boundary.md` §1 |
 | `.env`, `deploy.pem` (shape-gated) | listed, only the **detected regions** masked | these keep region masking and can be released. **Known follow-up, expected verdict and not a fix:** a shape-gated file with no detected region still enters the corpus raw |
 | `blob.bin` | withheld, `binary content` | a NUL in the first 8192 bytes |
 | `notes.txt` | withheld, **without naming what it is** (`a protected path`) | a symlink is two names for one file; denial is tested **before** containment, so this must not be disclosed as a scope note. Round 11: naming it as a key would itself disclose what the denial hides — the assertion is that it is NOT disclosed as `outside` |
 | `elsewhere.conf` | withheld, `outside` | resolves out of the tree the human pointed at |
 | `broken` | absent, silently | a broken link is skipped, exactly as a file that vanished mid-walk is |
+
+**The outside-root case (round 23 I23-1 and the docent half).** Plant the tree OUTSIDE the project, with `secrets/prod` holding a
+detector-positive token and `vault-pass.txt` beside it, and survey it. Expect all of these:
+
+- Both rows are listed with 1 placeholder as their corpus text, and the token is in no note, no docent brief and no
+  journal record (grep the session file for its body: 0 hits).
+- **The docent's child works inside the surveyed tree.** `Docent` is built with a spawn confined to the surveyed root as
+  the child's cwd and checkout, so a question that makes the child read `secrets/prod` meets the same name rule from that
+  root: the read parks for a human, and a denial keeps the value out of the record. Before the fix the child's base was
+  the project, the directory name was invisible to it, and it read the file raw.
+- A question that reads an ordinary file of the tree answers normally. Naming a file by an absolute path under the surveyed
+  root and by a path relative to it both resolve to the same file.
 
 Then the disclosure's own rule, both directions:
 

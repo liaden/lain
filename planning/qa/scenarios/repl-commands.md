@@ -57,6 +57,9 @@ reported, not sent to the model". A silent fallthrough would be the `StringInqui
 codebase rejects: a typo answered quietly. What the fallthrough still protects is the *skill*
 namespace -- a registered skill's `/word` dispatches, and only an unknown one refuses.
 
+**`/qa` is listed twice in `/help`:** it is both a registered command and a skill name, and the command wins, so the skill is
+not reachable by name. Record that as the known shape, not a missing implementation.
+
 **The one collision guarantee** is a wiring-time refusal, not a last-write-wins — two commands
 claiming one name raise at assembly. Nothing a driver types can provoke it, so note it as
 spec-covered and move on rather than hunting for it.
@@ -265,6 +268,15 @@ or pick a shorter shared prefix. It is the one refusal that cannot be provoked b
 and so the one most likely never to have run. **Round 17 measured the cost: no 4-hex collision in
 116 turns, so reaching it takes on the order of 300.** A "shorter shared prefix" is refused as too
 short before the ambiguity check runs, so budget the turns or record it as not reached.
+
+**Round 23 K23-1, fixed: pin the FIRST turn, under `summarize-conversation`.** The pin-effect check below is the only one that
+finds it. Launch `--compact-bytes 1500 --compact-keep 2 --compact-strategy summarize-conversation`, `/pin` the digest of
+the first prompt, then ask a few questions that each produce a few KB. Expect a `compaction` once a conversational run
+of 2 or more exists, the pinned first turn kept verbatim through it, and no stretch of `compaction_decision` records
+reading `would_not_shrink true` with `summary_hits 0` while the head grows. Before the fix the pin made the strategy
+claim nothing, 42 decisions deferred, and only `/unpin` unblocked it. A run that is all tool rounds under that strategy
+alone still has nothing to claim; its decision then names the strategy and `elide-tools+summarize-conversation`
+(`rails-blog.md` section 1).
 
 Success messages carry a 19-character digest prefix and the inverse command:
 `pinned <digest>... -- compaction keeps this turn (/unpin to release it)`. **Then verify the effect,
@@ -633,8 +645,8 @@ each other. Round 17 read `/mode` as `accept_edits: no layers active` while a go
 Since the discharging chunk's last cards the driver owns the layer: *driven 2026-09-14*, the goal
 above journaled `mode_switch` raising `goal` (`to_layers: ["goal"]`, `surface: goal`) as it started,
 `/mode` mid-drive answered `accept_edits: goal (GOAL)`, and `/goal off` journaled the lowering
-(`from_layers: ["goal"]`, `to_layers: []`). A goal that ends on `GOAL_COMPLETE` or the cap must lower
-it the same way *(prediction, not yet driven)*. (A no-op `policy_switch escalation -> escalation` journaled beside a
+(`from_layers: ["goal"]`, `to_layers: []`). A goal that ends on `GOAL_COMPLETE` lowers
+it the same way (driven in round 23: `goal reached: the agent signalled GOAL_COMPLETE`, then a `mode_switch` with `from_layers: ["goal"]`); the cap leg is not yet reached, since the model ends in iteration 1. (A no-op `policy_switch escalation -> escalation` journaled beside a
 layer flip is a recorded follow-up — noise for bench readers, not a finding.)
 
 ## 8 — `/meta`, and its three verbs behind one word
@@ -667,7 +679,7 @@ script is now checked with a parse that never evaluates it: `/meta run` refuses 
 by name (driven above, over a hand-planted prose file; **the planted "prose" must actually fail `ruby -c`**, or the refusal has nothing to fire on, so run `ruby -c` on it first), and a `/meta <prompt>` whose reply does not
 parse says `wrote <path>, but it does not parse as Ruby -- <role> answered with something other
 than code. Review it and try /meta again; /meta run would refuse to launch it as it stands.`
-*(Prediction, not yet driven: needs a model reply.)*
+*(Driven in round 23, for both the harness and the summarizer: a reply that was a shell `find ... -exec grep` line wrote the script and said this sentence.)*
 
 **Review the generated script before running it.** The usage line says so and the round should obey
 it — `/meta` generates something that then executes, and a QA round that pipes a model's output

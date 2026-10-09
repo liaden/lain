@@ -43,7 +43,7 @@ Expected shapes (round 4, all passing):
 
 **`--non-interactive` draws no alternate screen** (round 22's G-n1 and H-3: it drew the answer on the alternate
 screen and wiped it at exit, and the escapes reached a pipe). With `--non-interactive --prompt` on a terminal the
-answer or the refusal stays on the scrollback after exit, and redirected to a file stdout carries no `ESC[?1049h`.
+answer or the refusal stays on the scrollback after exit, and redirected to a file stdout carries no `ESC[?1049h`. **This check is for `--non-interactive` only** (A23-a3): an attended chat with stdout redirected, such as `lain chat --prompt ... </dev/null | tail`, still writes `ESC[?1049h`. Record that as the known shape, not as X-1 returning.
 
 **The trained maximum must arrive with NOTHING resident** — it rides `/api/show` on the same 2s
 probe connection as `/api/ps`, and only when `--num-ctx` is set. Verify residency is empty first, or
@@ -248,6 +248,9 @@ run --compact-strategy 'elide+summarizing'                   # refused at launch
 run --compact-strategy 'summarizing+elide-tools'             # any other composition: refused too
 run --compact-keep 0                                         # refused at launch, one line
 run --compact-keep -1
+run --compact-keep 1.5                                       # refused: a keep is a whole number (A23-a1)
+run --compact-bytes 0                                        # refused: above 0 only (also -1)
+run --compact-cap 0
 ```
 
 **A refused compaction flag leaves no session file behind, the same as §9.** Count the files around
@@ -275,12 +278,23 @@ Three things to read carefully, because each is a place a driver files the wrong
 - **Every composition except `elide-tools+summarize-conversation` is refused at launch** (round 21 refused
   `elide+summarizing`; round 22 found 6 other overlapping spellings launching and tearing an ask with
   `Overlap`, and they are refused now too). Both parts of `elide+summarizing` claim the whole span, so the refusal
-  names both and points at the pair that partitions it: `--compact-strategy "elide+summarizing":
-  "elide" and "summarizing" each claim the whole span and would overlap; compose
-  elide-tools+summarize-conversation instead, which partition it`. A pair that launches and then
+  names the value and points at the pair, as the live wording reads now:
+  `--compact-strategy "elide+summarizing" would overlap; the one composable pair is
+  elide-tools+summarize-conversation, in either order`. The older quoted sentence ("each claim the whole span ...
+  which partition it") is stale. A pair that launches and then
   fails every ask is the round-21 finding back.
 
 ### 7a — `--compact-fallback`, and what happens when no cut can make room
+
+**Round 23 K23-1, fixed: the compaction signal counts only what the configured strategy can claim, and the stall line names
+the strategy.** `--compact-bytes` and `--compact-cap` measure the droppable head narrowed to the turns the strategy would
+collapse, pins excluded. Under `--compact-strategy summarize-conversation` alone, an ask made of tool rounds has nothing
+claimable, so no signal fires on those bytes and the decision is not logged as a shrink failure. When the window still fills
+with nothing claimable, the decision's reason reads `but summarize-conversation claims none of the droppable turns`, and,
+only when the wider arm would claim what it left, ends `use --compact-strategy elide-tools+summarize-conversation, which
+claims tool rounds and conversation both, or start a new session`. The old tail, `lower --compact-keep, or start a new
+session`, appearing for a strategy that claims nothing is the defect back. Free to check with a short script over
+`Compaction::Head` and the `Diagnosis`; live, see `rails-blog.md` section 1.
 
 Round 18 gave the over-window wall a fallback, and a flag that chooses whether to take it. Two
 arms, resolved at LAUNCH like everything else here:

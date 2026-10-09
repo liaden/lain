@@ -162,6 +162,19 @@ that was too small, not of a broken strategy.** `rails new`, `bundle install`, `
 schema and `glob '**/*.rb'` all clear 2 KB easily — which is exactly why this act lives here and not
 in `bowling-ruby.md`, where it would produce that null every time.
 
+**Round 23 K23-1, fixed: the signal counts only what the configured strategy can claim.** Before, `Head#droppable` counted
+every unpinned turn while `summarize-conversation` claims only conversational runs of 2 or more, so an ask made of tool
+rounds (or a first-turn `/pin`) left it nothing to collapse and the journal read `would_not_shrink true`,
+`summary_hits 0` on 42 decisions while the head grew from 2 B to 95 KB. Now the head holds only the claimed turns. Drive
+it: `--compact-bytes 1500 --compact-keep 2 --compact-strategy summarize-conversation`, `/pin` the first prompt's digest,
+ask questions that each produce a few KB of conversation, and expect a compaction once a claimable run exists, with the
+pin surviving it. `/unpin` is no longer the way out. When the window still fills with nothing the strategy can claim
+(all tool rounds, under `summarize-conversation` alone), the decision's stall line names the strategy and, only when the
+wider arm would claim what it left, the pair: `but summarize-conversation claims none of the droppable turns` ... `use
+--compact-strategy elide-tools+summarize-conversation, which claims tool rounds and conversation both, or start a new
+session`. A stall line that blames `--compact-keep` while the strategy claims nothing is the old defect. The pair itself
+claims both kinds, so it is never told to widen.
+
 ### 1. Compaction, at last
 
 Do this **early in the act, not last** — it is the point of the scenario.
@@ -325,12 +338,13 @@ driven — this is integration check 7 of the discharging chunk)*:
 record — ten cuts under `summarize-conversation` rendering ten summaries — is closed and its old
 expectation is now the finding. Once more than one cut is held, a signal with nothing newly
 droppable commits one `collapse` cut over what they render between them, superseding them all.
-**A collapse is reachable only at `keep_last 2` with 2-message steps** (round 22's F-9; the collapse branch
-needs an empty droppable head, and with a larger `keep_last` each render adds at least an assistant and a user
-message, so the head holds 2 or more and declines as `would_not_shrink` first; `spec/lain/compaction/source_spec.rb`
-drives four held advances into one collapse at exactly that setting). A forward run at the default
-`keep_last` held 8 advance cuts and never collapsed, which is not a defect. Launch with `--compact-keep 2`
-and step in 2-message turns to reach it, or record it as not reached.
+**A collapse is not reached by a forward run; it is spec-only** (round 22's F-9, re-driven in round 23 as f-3). The collapse
+branch needs an empty droppable head, and a live forward run never has one: each render adds at least an assistant and a
+user message, so the head holds 2 or more and declines as `would_not_shrink` first.
+`spec/lain/compaction/source_spec.rb` reaches it only by raising signals on re-renders that add nothing (four held
+advances into one collapse at `keep_last 2`). Round 23 ran 10 two-message steps of 21 KB fillers at `--no-nvim
+--compact-keep 2` and held 4 advance cuts, `supersedes` 0 each, and 0 collapses, while held summaries accumulated 1 per cut.
+So record the check as **not reached** rather than looking for a recipe that reaches it, until the branch changes.
 Drive it: reach two held cuts, then keep going, and read the `compaction_cut` records —
 `"kind": "collapse"` with at least two addresses in `supersedes`, the rendered prompt shrinking
 rather than accumulating, and a collapse that would not shrink declined as `would_not_shrink`

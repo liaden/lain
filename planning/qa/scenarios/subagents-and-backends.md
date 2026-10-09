@@ -139,8 +139,8 @@ Three things to drive:
 4. **A one-shot child whose only output was a prose tool call fails rather than answering.** Ask
    for a subagent whose model responds with a bare tool-call envelope instead of an answer: the
    completion carries `lifecycle: failed`, `error: Lain::Tools::Subagent::MalformedAnswer`, and no
-   `result` key — the parent's tool call comes back `error: the child's turn was a tool call
-   written as prose, not an answer`, not delivered as though it were the child's findings.
+   `result` key; the parent's tool call comes back `malformed response from model: a tool call
+   written as prose, not an answer (see its malformed_response journal record)`, not delivered as though it were the child's findings.
    **Live on ollama 0.34.4 with qwen3-coder this child is unreachable** (round 22): ollama's parser
    answers 500 or cuts the stream before lain sees a prose envelope. The decoder now also strips
    tool-call markup from a reply, so a stripped one is the other thing to look for. Drive this item
@@ -154,9 +154,13 @@ they had read was lost. Three changes: a role declares its own ceiling (`researc
 declares none keeps 25), the researcher can `grep` and `glob` as well as `read_file`, `list_files`,
 `web_fetch` and `web_search`, and a child stopped by its ceiling hands the parent a partial report.
 
-1. **The researcher's tools and ceiling.** Spawn a researcher (`research_subagent`, from a chat) and read its
+1. **The researcher's tools and ceiling.** Spawn a researcher (the `subagent` tool, announced as the researcher, from a chat) and read its
    first request in the journal: the tool list holds `grep` and `glob`, and no write or shell tool. A role
    with no `max_iterations` (any other built-in) stops at 25. The researcher stops at 60.
+   **Round 23 j-10, fixed: the researcher's reads are confined.** A `glob`, `list_files`, `grep` or `ast_search` it aims
+   above the project, outside every `related` directory and outside its own working root parks for a human as
+   `outside_project` (`secret-boundary.md` section 3b); the same call from the chat itself does not. Reads inside the
+   project are unaffected.
 2. **The ceiling stop is a failure with a report.** Point a researcher at a tree it cannot finish: a sibling
    repository with 100 or more directories and the prompt "list every directory one at a time with
    `list_files`, never `glob` or `grep`, and report each name". A local model may finish or give up before 60;

@@ -815,11 +815,18 @@ The split is forced by *when the answer is available*: a path classifier can ans
 is opened, a region detector cannot until it has the bytes. So there are three places, and
 tier-1 `read_file`/`grep`/`glob`/`list_files` check nothing themselves.
 
-A file, or a directory below the root, whose name names a secret (whole words, any case: password,
-passwd, secret, token, credential, api key, private, auth) is gated for every reader; code and
-markdown files are excepted. With no root the base is cwd, and a call that runs in a checkout outside
-the root (a leased worker, `/mode plan`) also counts the names below that checkout. An
-ancestor of a base never counts, and an exemption that lifts a name is counted against the rule.
+A file, or a directory below the root, whose name names a secret is gated for every reader. The
+words are `pass`, `passwd`, `passcode`, `token`, `private` and `auth`, each its own word in the name
+(a separator or a lower-to-upper step such as `dbToken` starts one), plus `api key`.
+Four longer words, `secret`, `password`, `credential` and `apikey`, also match at the end of a longer
+name (`mysecrets.txt`, `1password`), since few ordinary words end in them. So `vault-pass.txt` and
+`api_keys.txt` gate, and `AUTHORS` does not. Source and markdown files are excepted, by extension
+(`.rb`, `.erb`, `.py`, `.ts`, `.vue`, `.go`, `.rs`, `.md` and the like). Known edges: `dbPasswordFile.txt`
+passes, because `Password` is neither at the end nor alone, and `libsecret` gates; a bare `pass` also gates compiler-pass files such as `*_pass.mlir` and `hlo/pass/`, by ruling. With no root the base
+is cwd, and a call that runs in a checkout outside the root (a leased worker, `/mode plan`) also counts
+the names below that checkout. A survey counts the directory names below its own root, wherever that
+root lies. An ancestor of a base never counts, and an exemption that lifts a name is counted against
+the rule.
 Such a file enters a survey masked whole and stays masked there; a file gated by its shape
 (`.env`, `*.pem`) keeps region masking and release.
 
@@ -840,6 +847,23 @@ name and target itself.
 | gate on the effect | `Sensitivity::Policy` | may this CALL happen? |
 | filter on the result | `Middleware::WithholdSecretPaths` → `Sensitivity::Filter` | which rows may the model see? |
 | mask on the content | `Middleware::RedactSecretReads` → `Sensitivity::Masking` | which BYTES may leave? |
+
+`read_file`, `grep` and `ast_search` are the readers of the mask step. A `grep` or `ast_search` result
+is scanned row by row; a detected region the ledger has not released for that file is masked in place
+(`<redacted:N>`), nothing parks, and the result ends with a trailer saying how many rows were masked and that
+`read_file` on the file asks for their release. A row scan never marks a file declined, so a file masked by
+a search still parks on its next `read_file`, and a PEM body, which cannot be detected one line at a time,
+is not masked there. The journal records each masked file as `search_redacted`, not `read_redacted`: replay
+folds every `read_redacted` into the masked read-set, and a search reads no file whole. `ast_search` rows
+under a secret path are withheld by `WithholdSecretPaths`, as `grep` rows are.
+
+A spawned child is also confined by path: `ToolGuard.working` wraps the board's policy in `Sensitivity::Policy::Confined`
+with the child's roots (the project root, the `related` directories and the worker's own checkout), so a read tool
+(`read_file`, `glob`, `grep`, `list_files`, `ast_search`, `file_symbols`) aimed anywhere else is gated as `outside_project`
+and parks, while the main agent's stack, built by `ToolGuard.stack`, reads where it likes. The gate and the listing filter
+share the one confined policy, so a listing never hides a path the child can read by name. Only the path a call names (and
+`glob`'s walk root) is judged: a `grep` that walks into a file link pointing outside reads through it unasked, a known gap,
+and a chat with no project marker takes the cwd as the root, so its confinement covers the whole cwd: a chat started in $HOME confines its children to all of $HOME. A never-parking child is refused rather than parked.
 
 A fourth table key, `related`, changes only the mask step. A read under a related directory has its
 flagged regions masked without a prompt and none is ever released, so a project's own notes

@@ -290,13 +290,13 @@ ask `PROGRAM_RUNNERS`, which is public and is their union.
 ### 2b — `deny` exists, and is now reachable in production
 
 **⚠️ CORRECTED — T4 and T6 are landed, and the "unreachable" half of this section's title is
-stale.** `board_build.rb:129` now constructs `Shell::Verdict.new(capability_set:
+stale.** `board_build.rb:156` now constructs `Shell::Verdict.new(capability_set:
 Config.shell_exclusions(root: project.root))`, so the grep this section used to lean on for its
 finding no longer prints nothing:
 
 ```bash
 command grep -rn 'capability_set' lib/ | command grep -v verdict.rb
-# lib/lain/cli/wiring/board_build.rb:129: Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root))
+# lib/lain/cli/wiring/board_build.rb:156: Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root))
 ```
 
 **This section's whole audit — half DRIVABLE and half awaiting a card — is `shell-terms.md` §2/§3's
@@ -520,7 +520,7 @@ triaged as a missing allowlist entry rather than as the design gap it is.
 
 **⚠️ CORRECTED — T4 and T6 are landed.** `Shell::Exclusions` exists (`shell/exclusions.rb`), a
 project's `shell exclude:` verb in `.lain/config.rb` is read, and `Config.shell_exclusions` wires it into the same
-`Shell::Verdict` that `Tools::Bash` and `Triage` both consult (`board_build.rb:129`, per §2b
+`Shell::Verdict` that `Tools::Bash` and `Triage` both consult (`board_build.rb:156`, per §2b
 above). The
 "BLOCKED ON" framing and the pre-state paragraph this section used to open with are stale; what
 follows is drivable today.

@@ -402,7 +402,7 @@ the one that was actually fatal:
 
 1. **A long single ask still stops.** 25 model calls inside one prompt raise `Budget::Exceeded`.
    Name a vehicle that forces serial calls, such as a chain of files where each read names the
-   next. "Call X 30 times" does not work: the model batches the calls into a few turns and the
+   next, under **unguessable file names** (a numbered chain lets the model skip ahead). "Call X 30 times" does not work: the model batches the calls into a few turns and the
    ceiling counts model calls, not tool calls.
 2. **The stop is SAID, in one line:** `error: loop ran 25 iterations, ceiling is 25`. Round 4's
    failure rendered *nothing at all* while the HUD kept reading `idle 0s`.
@@ -491,14 +491,18 @@ used to read `./big.txt` and `./mid.rb`; match on the size, the ceiling and the 
 standing for the project directory.
 
 ```
-<abs>/big.txt is 3000000 bytes, over the ceiling of 262144 -- instead, read part of it with read_file's offset and limit, or outline it with file_symbols or ast_search, or grep it for the lines you actually need
+<abs>/big.txt is 3000000 bytes, over the ceiling of 16384 -- instead, read part of it with read_file's offset and limit, or outline it with file_symbols or ast_search, or grep it for the lines you actually need
 
-<abs>/mid.rb is 300000 bytes, over the ceiling of 262144 -- instead, read it with read_file's offset and limit (a window covering the whole file counts as a complete read, so edit_file still accepts it), or outline it with file_symbols or ast_search, or grep it for the lines you actually need
+<abs>/mid.rb is 300000 bytes, over the ceiling of 16384 -- instead, read it with read_file's offset and limit (a window covering the whole file counts as a complete read, so edit_file still accepts it), or outline it with file_symbols or ast_search, or grep it for the lines you actually need
 
-the command's output (exit status: 1) is 200000 bytes, over the ceiling of 131072 -- instead, re-run it with the output narrowed through head, tail or grep, or redirect it to a file and read one window of that with read_file
+the command's output (exit status: 1) is 200000 bytes, over the ceiling of 16384 -- instead, re-run it with the output narrowed through head, tail or grep, or redirect it to a file and read one window of that with read_file
 ```
 
-**The difference between those first two is the whole design and is worth reading twice.** The
+**Round 23: the live ceiling is 16384 on all three, and windows add up, so the `big.txt`/`mid.rb` difference below no longer
+holds.** Any line-structured file over the ceiling, 3 MB and 300 KB alike, is offered the windowed advice; the live
+distinction is `one.json` against `lines.json` (below). Treat the paragraph that follows as history.
+
+**The difference between those first two was the whole design and was worth reading twice.** The
 smaller file is offered a *full-cover window* — advice that leads somewhere — because a window
 covering it would itself be admitted. The 3 MB one is not, because that advice would be refused in
 turn, and a refusal that names a move which is itself refused is a loop. **Both files offered the
