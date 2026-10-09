@@ -669,6 +669,52 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(git(repo, "worktree", "list", "--porcelain")).to include("worktree #{landing_checkout}\n")
     end
 
+    # The driver lands through a candidate commit verified in a scratch
+    # checkout, so a red verify leaves the epic's branch where it stood.
+    describe "with a verify command" do
+      let(:config) do
+        Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: hands_off),
+                         isolation: { "verify" => ["sh", "-c", verify] })
+      end
+
+      context "when it passes" do
+        let(:verify) { "exit 0" }
+
+        # From main, so the landing runs in lain's own checkout, and the
+        # scratch checkout is still the project's, where a drainer finds it.
+        it "lands the issue onto the epic's branch, verified in the project's scratch checkout" do
+          write_epic([issue("a")])
+          approve_plan("a")
+          git(repo, "switch", "-q", "main")
+          verify_tree = Lain::Isolation::VerifyCheckout.for(repo_root: repo, branch: "epic/demo", paths:, keep: []).path
+
+          result = driven(width: 1)
+
+          expect(result.landed.map(&:issue_id)).to eq(["a"])
+          expect(contains?(result.landed.first.sha)).to be(true)
+          expect(git(repo, "worktree", "list", "--porcelain")).to include("worktree #{verify_tree}\n")
+        end
+      end
+
+      context "when it fails" do
+        let(:verify) { "exit 1" }
+
+        it "reports the issue as declined and leaves the epic's branch where it was" do
+          write_epic([issue("a")])
+          approve_plan("a")
+          epic_branch
+          before = epic_tip
+
+          result = driven(width: 1)
+
+          expect(result.landed).to be_empty
+          expect(result.reported.map(&:issue_id)).to eq(["a"])
+          expect(result.reported.first.reason).to include("declined")
+          expect(epic_tip).to eq(before)
+        end
+      end
+    end
+
     # A lock that still holds is somebody else's run, or a human's: breaking
     # it would put two landings in one checkout.
     it "refuses to merge in a landing checkout something else still holds, and leaves that lock alone" do

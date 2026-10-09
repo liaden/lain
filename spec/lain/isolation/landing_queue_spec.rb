@@ -295,6 +295,67 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
     end
   end
 
+  # The queue the epic landings and the drainer build: the batch is a
+  # candidate commit verified in the project's scratch checkout, and the
+  # branch moves only once verification has not failed.
+  describe ".candidate" do
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@repo, ".state"), "HOME" => @repo }) }
+
+    def isolation(command) = Lain::Config::Isolation.from({ "verify" => ["sh", "-c", command] }, path: nil)
+
+    def candidate(command, **)
+      described_class.candidate(root: @repo, project_root: @repo, base:, journal:, isolation: isolation(command),
+                                paths:, **)
+    end
+
+    def verify_tree = Lain::Isolation::VerifyCheckout.for(repo_root: @repo, branch: "epic/demo", paths:, keep: []).path
+
+    before { File.write(File.join(@repo, ".git", "info", "exclude"), ".state/\n") }
+
+    it "lands a verified batch as one candidate, checked in the project's scratch checkout" do
+      w1 = worker("w1", "f" => "a\nB1\nc\n")
+      git("commit", "-q", "--allow-empty", "-m", "a sibling landed")
+
+      result = candidate("exit 0").call([w1])
+
+      expect(result.verification.outcome).to eq(:passed)
+      expect(contains?(w1.sha)).to be(true)
+      expect(git("worktree", "list", "--porcelain")).to include("worktree #{verify_tree}\n")
+      expect(handbacks.map { |record| record.outcome.to_s }).to eq(["merged"])
+    end
+
+    it "leaves the branch and the journal alone when verification fails" do
+      w1 = worker("w1", "f" => "a\nB1\nc\n")
+      before = tip
+
+      result = candidate("exit 1").call([w1])
+
+      expect(result.report("w1").kind).to eq(:declined)
+      expect(tip).to eq(before)
+      expect(handbacks).to be_empty
+    end
+
+    # A stand-in class, because the desk's own `lock:` keyword arrives with the drainer.
+    it "hands the desk a lock it was given, and none of its own otherwise" do
+      lock = Lain::FileLock.new(File.join(@repo, ".git", "held.lock"))
+      built = []
+      desk = instance_double(Lain::Isolation::CandidateDesk, strategy: Lain::Isolation::MergeStrategy::DEFAULT)
+      recorder = Class.new do
+        define_singleton_method(:new) do |**keywords|
+          built << keywords
+          desk
+        end
+      end
+      stub_const("Lain::Isolation::CandidateDesk", recorder)
+
+      candidate("exit 0", lock:)
+      candidate("exit 0")
+
+      expect(built.map { |keywords| keywords[:lock] }).to eq([lock, nil])
+      expect(built.last).not_to have_key(:lock)
+    end
+  end
+
   describe "the landing lock" do
     it "waits while another process -- a chat's handback, say -- holds the parent checkout" do
       w1 = worker("w1", "f" => "a\nB1\nc\n")

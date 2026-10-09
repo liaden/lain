@@ -33,7 +33,9 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
   def root = @root ||= File.join(File.realpath(@tmp), "project")
   def state_home = File.join(@tmp, "state")
   def paths = @paths ||= Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home, "HOME" => state_home })
-  def config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: {}))
+  def config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: {}), isolation: @isolation || {})
+
+  def verifying(*argv) = @isolation = { "verify" => argv }
   def sessions_dir = paths.sessions_dir
 
   def home(slug = "demo") = Lain::Epic::Home.resolve(config:, paths:, root:, slug:)
@@ -143,6 +145,106 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
     end
   end
 
+  # The batch is built as a candidate commit and verified in a scratch
+  # checkout, so nothing merges in a checkout anybody works in: epic/demo
+  # moves by fast-forward, and only once the verify command has passed.
+  describe "landing through a verified candidate" do
+    def merges = calls.select { |argv| argv.include?("merge") }
+
+    # A sibling landed after a's worker was cut, so the candidate is a merge
+    # commit rather than a's own commit.
+    def diverged_worker
+      sha = worker("a", "README" => "a's work\n")
+      commit("app/models/line.rb" => "class Line\nend\n")
+      session(plan_approval("a"), implementation_approval("a", sha))
+      sha
+    end
+
+    it "lands an approved issue only after its verify command passes, and the parent never merges" do
+      verifying("sh", "-c", "exit 0")
+      sha = diverged_worker
+
+      output = command.land("a", "demo")
+
+      expect(contains?(sha)).to be(true)
+      expect(progress.status("a")).to eq(Lain::Epic::DONE)
+      expect(output).to include("landed a at #{sha} onto epic/demo", "verification passed")
+      expect(merges).to all(include("--ff-only"))
+      expect(git("status", "--porcelain", "--untracked-files=no")).to eq("")
+    end
+
+    it "keeps the issue in flight and epic/demo where it was when the verify command fails" do
+      verifying("sh", "-c", "exit 1")
+      sha = diverged_worker
+      before = tip
+
+      output = command.land("a", "demo")
+
+      expect(tip).to eq(before)
+      expect(contains?(sha)).to be(false)
+      expect(progress.status("a")).to eq("in_flight")
+      expect(output).to include("nothing landed on epic/demo", "verification failed", "exited 1")
+    end
+
+    it "resumes a candidate landing that moved epic/demo and stopped before the transition, merging nothing" do
+      sha = diverged_worker
+      crashing = instance_double(Lain::Epic::Scribe)
+      allow(crashing).to receive(:issue_moved).and_raise(Interrupt)
+      allow(Lain::Epic::Scribe).to receive(:new).and_return(crashing)
+      expect { command.land("a", "demo") }.to raise_error(Interrupt)
+      landed = tip
+      allow(Lain::Epic::Scribe).to receive(:new).and_call_original
+      calls.clear
+
+      output = command.resume("a", "demo")
+
+      expect(contains?(sha)).to be(true)
+      expect(progress.status("a")).to eq(Lain::Epic::DONE)
+      expect(tip).to eq(landed)
+      expect(calls.flatten).not_to include("merge", "commit-tree")
+      expect(output).to include("resumed a at #{sha}")
+    end
+
+    # A drainer for epic/demo holds the branch's drain lock for its whole
+    # batch, and a landing from the command line is one more batch.
+    it "waits while a drainer holds epic/demo, names it, and lands once it lets go" do
+      allow(Lain::FileLock).to receive(:new).and_wrap_original do |original, path, **options|
+        original.call(path, **options, patience: 0.1)
+      end
+      sha = worker("a", "README" => "a's work\n")
+      session(plan_approval("a"), implementation_approval("a", sha))
+      drain = Lain::Isolation::MergeCoordinator::Home.for(repo_root: root, branch: "epic/demo").drain_lock
+      held, holding = IO.pipe
+      release, released = IO.pipe
+      drainer = fork do
+        [held, released].each(&:close)
+        drain.hold do
+          holding.puts(Process.pid)
+          release.wait_readable(10)
+        end
+        exit!(0)
+      end
+      [holding, release].each(&:close)
+      held.gets
+      notices = []
+      notice = lambda do |text|
+        notices << text
+        released.close
+      end
+
+      begin
+        described_class.new(root:, paths:, config:, shell_out_factory: recording, notice:).land("a", "demo")
+      ensure
+        released.close unless released.closed?
+        Process.wait(drainer)
+      end
+
+      expect(notices.size).to eq(1)
+      expect(notices.first).to include("landing drain", "pid=#{drainer}")
+      expect(contains?(sha)).to be(true)
+    end
+  end
+
   describe "an unapproved issue, or a misplaced test in the diff, blocks the landing" do
     it "refuses b naming the gate, refuses c listing the file and its right path, and leaves epic/demo alone" do
       worker("b", "README" => "b's work\n")
@@ -222,7 +324,14 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
                                                      .cut.tap(&)
     end
 
-    def lock_listed? = git("worktree", "list", "--porcelain").include?("locked")
+    def listed(path)
+      git("worktree", "list", "--porcelain").split("\n\n").find { |entry| entry.start_with?("worktree #{path}\n") }.to_s
+    end
+
+    # Only the landings checkout: the verify checkout stays locked between batches, for reuse.
+    def lock_listed? = listed(landings_path).include?("locked")
+
+    def verify_path = Lain::Isolation::VerifyCheckout.for(repo_root: root, branch: "epic/demo", paths:, keep: []).path
 
     it "lands from landings/demo, leaves the parent on main, and releases the checkout" do
       sha = worker("a", "README" => "a's work\n")
@@ -235,6 +344,8 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       expect(git("symbolic-ref", "HEAD")).to eq("refs/heads/main")
       expect(output).to include("landed a at #{sha} onto epic/demo")
       expect(lock_listed?).to be(false)
+      expect(listed(verify_path)).to include("detached")
+      expect(listed(verify_path)).not_to include("branch ")
     end
 
     it "cuts the checkout itself when none stands yet" do

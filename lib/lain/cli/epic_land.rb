@@ -3,7 +3,7 @@
 module Lain
   module CLI
     # `lain epic land ISSUE_ID [SLUG]`: land one approved issue's commit onto
-    # the epic's working branch in this checkout, and move the issue to done.
+    # the epic's working branch in this repository, and move the issue to done.
     # `--resume` finishes a landing that merged and then stopped. Nothing is
     # pushed; `lain epic finish` takes the epic to the remote, once. Returns
     # Strings and prints nothing.
@@ -30,8 +30,8 @@ module Lain
       # @param config [Config] `.lain/config.rb`, already read
       # @param epics [CLI::Epic] answers WHICH epic a bare invocation means
       # @param shell_out_factory [#call] every git subprocess the landing runs
-      # @param notice [#call] told who holds the parent checkout when a landing
-      #   waits on it for long
+      # @param notice [#call] told who holds the branch's landing drain, or the
+      #   parent checkout's lock, when a landing waits on it for long
       def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                      epics: Epic.new(root:, paths:, config:), shell_out_factory: Shell::Out.public_method(:new),
                      notice: Lain::Isolation::ParentLock::Silent)
@@ -66,7 +66,10 @@ module Lain
           @branch = "epic/#{epic_slug}"
         end
 
-        def landed(result) = result.landed.map { |entry| entry.done ? done(entry) : stopped(entry) }.join("\n")
+        def landed(result)
+          [*result.landed.map { |entry| entry.done ? done(entry) : stopped(entry) }, verified(result.verification)]
+            .join("\n")
+        end
 
         def resumed(result)
           result.landed.map do |entry|
@@ -92,6 +95,13 @@ module Lain
         end
 
         def moved(entry) = "  #{entry.issue_id} moved in_flight -> done"
+
+        # A failure's detail is already in each declined worker's line.
+        def verified(verification)
+          return "verification skipped: #{verification.detail}" if verification.outcome == :skipped
+
+          "verification #{verification.outcome} on #{verification.tip}"
+        end
 
         def stopped(entry)
           ["stopped #{entry.issue_id} at #{entry.sha} -- nothing landed on #{@branch}",
@@ -122,9 +132,9 @@ module Lain
         end
       end
 
-      # The queue merges only in a checkout standing on the epic's branch. A
-      # parent on another branch is not ours to switch, so lain lands from its
-      # own checkout, the one an epic run cuts.
+      # The landing runs from a checkout standing on the epic's branch, the one
+      # the branch fast-forwards in. A parent on another branch is not ours to
+      # switch, so lain lands from its own checkout, the one an epic run cuts.
       def landing_checkout(epic_slug, base)
         return Factory::LandingCheckout::InPlace.new(root: @root) if base.current_in?(checkout)
 
@@ -146,9 +156,9 @@ module Lain
       end
 
       def queue(base, journal, root)
-        Lain::Isolation::LandingQueue.new(repo_root: root, base:, journal:, retries: @config.isolation.rebase_retries,
-                                          strategy: Lain::Isolation::MergeStrategy.from(@config.isolation),
-                                          notice: @notice, shell_out_factory: @shell_out_factory)
+        Lain::Isolation::LandingQueue.candidate(root:, project_root: @root, base:, journal:,
+                                                isolation: @config.isolation, paths: @paths, notice: @notice,
+                                                shell_out_factory: @shell_out_factory)
       end
 
       def checkout = Lain::Isolation::Checkout.new(@root, shell_out_factory: @shell_out_factory)
