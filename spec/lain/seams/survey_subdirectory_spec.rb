@@ -118,7 +118,7 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
   end
 
   let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal, journal_path: nil) }
-  let(:env) { build_command_env(replies:, chronicle:) }
+  let(:env) { build_command_env(replies:, chronicle:, role_spawn: instance_double(Lain::Skill::RoleSpawn, within: nil)) }
 
   # A monorepo: the repository top at `@repo`, the human standing two
   # directories down in `@here`, and the greeter one further down still. The

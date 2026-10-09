@@ -146,7 +146,13 @@ RSpec.describe Lain::CLI::Command::Survey do
 
   # `journal_path: nil` is a chat recording to no file, so it resumed nothing.
   let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal, journal_path: nil) }
-  let(:env) { build_command_env(replies:, chronicle:) }
+  let(:env) { build_command_env(replies:, chronicle:, role_spawn: lending_spawn) }
+
+  # The docent's child is lent the surveyed tree when a survey opens, so an
+  # opened survey asks the run's role spawn to work `within` it.
+  let(:lending_spawn) do
+    instance_double(Lain::Skill::RoleSpawn).tap { |spawn| allow(spawn).to receive(:within).and_return(spawn) }
+  end
 
   around do |example|
     Dir.mktmpdir("lain-command-survey") do |made|
@@ -1007,7 +1013,8 @@ RSpec.describe Lain::CLI::Command::Survey do
       prior = StringIO.new
       held = Lain::Review::Submit::Outbox.new
       yield described_class.new(cwd: @root, outbox: held, ledger:, sensitivity:),
-            build_command_env(replies:, chronicle: chronicle_on(Lain::Journal.new(io: prior), nil)), held
+            build_command_env(replies:, chronicle: chronicle_on(Lain::Journal.new(io: prior), nil),
+                              role_spawn: lending_spawn), held
       File.write(File.join(dir, "earlier.ndjson"), prior.string)
     end
 
@@ -1016,7 +1023,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       current = File.join(dir, "resumed.ndjson")
       File.write(current, "#{JSON.generate("type" => Lain::SessionRecord::HEADER_TYPE,
                                            "resumed_from" => { "file" => "earlier.ndjson", "head" => "x" })}\n")
-      build_command_env(replies:, chronicle: chronicle_on(journal, current))
+      build_command_env(replies:, chronicle: chronicle_on(journal, current), role_spawn: lending_spawn)
     end
 
     def in_session_dir(&) = Dir.mktmpdir("lain-survey-resumed", &)
@@ -1119,13 +1126,19 @@ RSpec.describe Lain::CLI::Command::Survey do
     # `(role, context_mode, prompt)`. A recorder rather than a double, because
     # what has to be true is that the docent's OWN role and mode reach it -- an
     # `instance_double` that accepted anything would pass on a docent wired to
-    # the wrong arm.
+    # the wrong arm. `within` is recorded too: the root the child works in is
+    # the other half of what reaches it.
     def recording_spawn
-      lambda do |role, mode, brief|
+      lent = lent_roots
+      spawn = lambda do |role, mode, brief|
         asks << [role, mode, brief]
         result
       end
+      spawn.define_singleton_method(:within) { |worker_env| spawn.tap { lent << worker_env } }
+      spawn
     end
+
+    def lent_roots = (@lent_roots ||= [])
 
     # A note at line 3 of `notes.md`, in the shape
     # {Lain::Frontend::Neovim::ReviewWrite} normalizes off the wire. It is what
@@ -1170,8 +1183,9 @@ RSpec.describe Lain::CLI::Command::Survey do
 
       Sync do |task|
         supervisor = Lain::Supervisor.new.run(task)
-        parked = build_command_env(replies:, chronicle:, supervisor:,
-                                   role_spawn: ->(*) { Async::Notification.new.wait })
+        waiting = ->(*) { Async::Notification.new.wait }
+        waiting.define_singleton_method(:within) { |_worker_env| waiting }
+        parked = build_command_env(replies:, chronicle:, supervisor:, role_spawn: waiting)
         attached
         command.call(@root, parked)
         handover = editor.bound
@@ -1185,6 +1199,13 @@ RSpec.describe Lain::CLI::Command::Survey do
 
       expect(stopped).to include(Lain::Review::Docent::ROLE.to_s)
       expect(records.map { |entry| entry["type"] }).to include("docent_abandoned")
+    end
+
+    it "lends the docent's child the surveyed tree as its working root and its checkout" do
+      asked("why is the range inclusive?")
+
+      expect(lent_roots.map { |worker_env| [worker_env.cwd, worker_env.checkout] })
+        .to eq([[File.realpath(@root), File.realpath(@root)]])
     end
 
     it "reaches the run's role spawn with the docent's own role and mode" do

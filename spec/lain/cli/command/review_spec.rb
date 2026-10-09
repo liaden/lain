@@ -134,7 +134,7 @@ RSpec.describe Lain::CLI::Command::Review do
 
   # `journal_path: nil` is a chat recording to no file, so it resumed nothing.
   let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal, journal_path: nil) }
-  let(:env) { build_command_env(replies:, chronicle:) }
+  let(:env) { build_command_env(replies:, chronicle:, role_spawn: instance_double(Lain::Skill::RoleSpawn, within: nil)) }
 
   # A `main` and a `feature` carrying TWO commits, because `--base`'s default is
   # {Lain::Forge::Landing::BASE} and an example that overrides it has to be able

@@ -201,13 +201,15 @@ module Lain
           # default is read out of the strategy registry, so a scope that stops
           # shipping stops being the default, and it goes through `scope!` on
           # this one line whether the human named it or not.
-          scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
+          scope = scope_of(parsed)
           walk = Lain::Survey::Walk.new(root: parsed.path, sensitivity: @sensitivity)
-          banner = Review.not_carried_over(env, target_of(walk))
-          session = round(walk, ceilings, surface, env, policy:)
-          closing = Lain::Review::Handover::Closing.new(outbox: @outbox, rails: env.replies, surface:)
+          target = target_of(walk)
+          banner = Review.not_carried_over(env, target)
+          session = round(walk, ceilings, surface, env, policy:, target:)
+          closing = closing_for(env, surface)
           # The gesture rails, complete before a human can touch the sidebar.
-          env.replies.bind_changeset_review(handover(session, env, scope, surface, closing))
+          env.replies.bind_changeset_review(handover(session, env, scope, closing,
+                                                     docent_of(session, env, surface, target)))
           closing.drawing(session) { drawn_and_held(walk, session, scope, banner) }.tap { surface.focus }
         end
 
@@ -250,11 +252,11 @@ module Lain
         #
         # The TARGET journaled is the walk root's REALPATH, so `big`, `big/`,
         # `./big` and a link to it are the one tree they name.
-        def round(walk, ceilings, surface, env, policy:)
+        def round(walk, ceilings, surface, env, policy:, target:)
           source = Lain::Review::Source::Corpus.new(walk:, projection: @projection, bounds: ceilings, named_from: @cwd)
           Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source:),
                                      journal: env.chronicle.record_journal, source: self.class.source_name,
-                                     surface:, bounds: ceilings, policy:, target: target_of(walk))
+                                     surface:, bounds: ceilings, policy:, target:)
         end
 
         def target_of(walk) = File.realpath(walk.root)
@@ -277,14 +279,28 @@ module Lain
         # cannot ask anybody for -- a session takes it and forgets it. The DOCENT
         # is assembled here for the same reason: this is the one place holding
         # the round's changeset, the run's role spawn and the chat's own journal.
-        def handover(session, env, scope, surface, closing)
+        def handover(session, env, scope, closing, docent)
           view = env.replies.review_view
           view.reviewing(session.changeset)
-          docent = Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn: env.role_spawn,
-                                            journal: env.chronicle.record_journal, supervisor: env.supervisor)
           Lain::Review::Handover.new(session:, view:, docent:, closing:,
                                      redraw: Lain::Review::Handover::Redraw.new(scope:))
         end
+
+        def scope_of(parsed) = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
+
+        def closing_for(env, surface)
+          Lain::Review::Handover::Closing.new(outbox: @outbox, rails: env.replies, surface:)
+        end
+
+        def docent_of(session, env, surface, root)
+          spawn = env.role_spawn.within(worker_env_at(root))
+          Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn:,
+                                   journal: env.chronicle.record_journal, supervisor: env.supervisor)
+        end
+
+        # A tree outside the project is gated by names counted from ITS root, so
+        # the docent's child works there.
+        def worker_env_at(root) = Lain::WorkerEnv.new(cwd: root, env: {}, checkout: root)
 
         def drawn(walk, session, scope, banner)
           answer = session.present(scope:)

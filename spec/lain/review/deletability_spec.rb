@@ -165,7 +165,8 @@ module DeletionMap
                   "lib/lain/cli/command/surface.rb", "spec/lain/cli/command/review_spec.rb",
                   "spec/lain/cli/command/survey_spec.rb", "spec/lain/seams/survey_subdirectory_spec.rb",
                   "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb",
-                  "spec/lain/cli/command/introspect_spec.rb", "spec/lain/seams/critique_over_held_review_spec.rb"],
+                  "spec/lain/cli/command/introspect_spec.rb", "spec/lain/seams/critique_over_held_review_spec.rb",
+                  "spec/lain/seams/docent_outside_root_spec.rb"],
       edits: {
         # FIVE sites the constant sweep is blind to: two spell the verb as the
         # wire STRING, one is the command set pinned as a LITERAL (the wiring
