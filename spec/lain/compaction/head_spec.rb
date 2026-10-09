@@ -549,4 +549,79 @@ RSpec.describe Lain::Compaction::Head do
       expect(described_class.from_timeline(timeline: timeline_of(4), keep_last: 1)).to be_deeply_frozen
     end
   end
+
+  # The head counts what the configured strategy could claim, so a span the
+  # strategy cannot collapse never fires a byte threshold it could not relieve.
+  describe "a claimant" do
+    def claiming(ranges)
+      Class.new(Lain::Compaction::Strategy::Base) do
+        define_method(:propose_ranges) { |_messages, **| ranges }
+      end.new.freeze
+    end
+
+    def unaskable
+      Class.new(Lain::Compaction::Strategy::Base) do
+        def propose_ranges(*) = raise("the claimant was asked")
+      end.new.freeze
+    end
+
+    it "holds only the messages inside the ranges it claims" do
+      head = described_class.new(messages:, keep_last: 1, claimant: claiming([0..0, 2..2]))
+
+      expect(head.messages).to eq([messages[0], messages[2]])
+      expect(head.bytesize).to eq(Lain::Canonical.dump([messages[0], messages[2]]).bytesize)
+    end
+
+    it "is never asked about a span with nothing in it" do
+      expect(described_class.new(messages:, keep_last: messages.size, claimant: unaskable)).to be_empty
+    end
+
+    it "is unclaimed when there were droppable turns and the claimant took none of them" do
+      head = described_class.new(messages:, keep_last: 1, claimant: claiming([]))
+
+      expect(head).to be_empty
+      expect(head).to be_unclaimed
+    end
+
+    it "is not unclaimed when it claimed something, or had nothing to claim" do
+      expect(described_class.new(messages:, keep_last: 1, claimant: claiming([1..1]))).not_to be_unclaimed
+      expect(described_class.new(messages:, keep_last: messages.size, claimant: claiming([]))).not_to be_unclaimed
+    end
+
+    it "is not unclaimed when every droppable turn was pinned" do
+      pins = Lain::Context::PinnedMessages.new(messages[0..2])
+
+      expect(described_class.new(messages:, keep_last: 1, pins:, claimant: claiming([]))).not_to be_unclaimed
+    end
+
+    it "widens when a wider claimant takes what the claimant would not" do
+      head = described_class.new(messages:, keep_last: 1, claimant: claiming([]), widening: claiming([1..1]))
+
+      expect(head).to be_widens
+      expect(head).to be_empty
+    end
+
+    it "does not widen when the wider claimant takes nothing either" do
+      expect(described_class.new(messages:, keep_last: 1, claimant: claiming([]), widening: claiming([])))
+        .not_to be_widens
+    end
+
+    it "does not widen when the wider claimant takes only pinned turns" do
+      pins = Lain::Context::PinnedMessages.new([messages[0]])
+      head = described_class.new(messages:, keep_last: 1, pins:, claimant: claiming([]), widening: claiming([0..0]))
+
+      expect(head).to be_unclaimed
+      expect(head).not_to be_widens
+    end
+
+    it "never asks the wider claimant about a head that claimed something" do
+      head = described_class.new(messages:, keep_last: 1, claimant: claiming([0..0]), widening: unaskable)
+
+      expect(head).not_to be_widens
+    end
+
+    it "is never unclaimed without a claimant, which takes every unpinned turn" do
+      expect(described_class.new(messages:, keep_last: 1)).not_to be_unclaimed
+    end
+  end
 end

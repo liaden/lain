@@ -15,7 +15,7 @@ module Lain
       # {Summarizing::TEMPLATE} is a JOURNAL ADDRESS as well as a prompt:
       # rewording it silently re-keys every recorded answer, and the miss
       # surfaces on RESUME, after the model has already been paid. This
-      # subclass overrides {#propose_ranges} and nothing else, so the address is
+      # subclass overrides {#propose_claims} and nothing else, so the address is
       # the parent's by construction rather than by care, and a spec pins the
       # TEMPLATE by object IDENTITY so that any re-definition here fails whether
       # or not the wording happens to match. The corollary: a session may run
@@ -34,11 +34,12 @@ module Lain
       #
       # == Why each run goes back through the parent
       #
-      # {Summarizing#propose_ranges} asks the oracle first and proposes nothing
-      # when the answer does not come back, so a tier that is DOWN leaves those
-      # turns standing rather than collapsing them to nothing. Calling it once
-      # per run keeps that containment at RUN granularity -- one unanswerable
-      # stretch is left verbatim while its neighbours still collapse.
+      # {Summarizing#propose_ranges} asks the oracle about each claimed run and
+      # drops any whose answer does not come back, so a tier that is DOWN leaves
+      # those turns standing rather than collapsing them to nothing. One
+      # question per run keeps that containment at RUN granularity -- one
+      # unanswerable stretch is left verbatim while its neighbours still
+      # collapse.
       #
       # IT ALSO MULTIPLIES THE COST OF A REFUSED DERIVATION BY N, deliberately.
       # Under an oracle-backed strategy the model call is made and journalled
@@ -52,9 +53,10 @@ module Lain
         # @param messages [Array<Hash>] the rendered messages
         # @param span [Range] the droppable span, as message indices
         # @return [Array<Range>] the conversational runs of more than one
-        #   message that the oracle answered for, ascending and disjoint from
-        #   every tool-carrying message in the span
-        def propose_ranges(messages, span:)
+        #   message, ascending and disjoint from every tool-carrying message in
+        #   the span. {Summarizing#propose_ranges} keeps those the oracle
+        #   answers for.
+        def propose_claims(messages, span:)
           ToolMessages.conversational_runs(messages, span:, owner: name)
                       .flat_map { |run| super(messages, span: run) }
         end

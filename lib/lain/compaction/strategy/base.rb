@@ -60,13 +60,17 @@ module Lain
       # it obeys and exhibits the ones it does not.
       class Base
         # What a subclass may not redefine, and what to write instead.
-        SEALED = { ranges: "#propose_ranges, which #ranges validates", collapse: "#blocks" }.freeze
+        SEALED = { ranges: "#propose_ranges, which #ranges validates",
+                   claims: "#propose_claims, which #claims validates", collapse: "#blocks" }.freeze
 
         # What a refusal cites as the source of the ranges it refused. Supplied
         # here because THIS is the caller that called the hook: a partition
         # built from cut points or from a refinement names its own constructor
         # instead, so no refusal sends a reader to a hook nobody called.
         HOOK = "#propose_ranges"
+
+        # The same, for a refusal of what {#claims} was told.
+        CLAIM_HOOK = "#propose_claims"
 
         # Interned, because an anonymous class's `to_s` is a freshly built
         # MUTABLE String and this name is reachable from values that have to
@@ -116,6 +120,23 @@ module Lain
           raise NotImplementedError,
                 "strategy #{name} must implement #propose_ranges(messages, span: #{span.inspect}) -> Array<Range>"
         end
+
+        # What this strategy COULD collapse in `span`, asked without paying for
+        # it: the bytes a compaction signal measures, so a signal never fires
+        # over turns the configured policy would leave standing. A model-backed
+        # strategy's {#ranges} needs its oracle's answer, and a head is
+        # measured on every turn, deferring ones included.
+        #
+        # @param (see #ranges)
+        # @return (see #ranges)
+        def claims(messages, span:)
+          IntervalPartition.of(span, propose_claims(messages, span:), owner: name, provenance: CLAIM_HOOK).validated
+        end
+
+        # The hook {#claims} validates. A pure strategy's proposal is its claim,
+        # which is why this answers from {#propose_ranges}: one that never
+        # overrides it cannot drift from what it collapses.
+        def propose_claims(messages, span:) = propose_ranges(messages, span:)
 
         # @param messages [Array<Hash>] one range's worth of messages
         # @return [Array<Hash>] the content blocks that replace them

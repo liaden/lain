@@ -152,13 +152,17 @@ module Lain
 
         def misses = @answers.misses
 
-        # The whole span, whenever there is an answer for it. A range the oracle
+        # What it claims, wherever there is an answer for it. A range the oracle
         # could not answer is not proposed at all, which is how a tier that is
         # down leaves the derivation with those turns retained verbatim rather
         # than collapsed to nothing.
         def propose_ranges(messages, span:)
-          blocks(Array(messages[span])).empty? ? NO_RANGES : [span]
+          propose_claims(messages, span:).reject { |range| blocks(Array(messages[range])).empty? }
         end
+
+        # The span it would ask about, unasked: whether the oracle answers is a
+        # question for the turn that collapses, not for every turn that measures.
+        def propose_claims(_messages, span:) = span.none? ? NO_RANGES : [span]
 
         # @return [Array<Hash>] one text block, or none at all -- which is DROP,
         #   the unit, and is what an empty span and an unanswerable one both

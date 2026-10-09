@@ -112,6 +112,23 @@ module Lain
       # for why `+` rather than `|` or `,`, and for what a composition means.
       SEPARATOR = "+"
 
+      # The pair's canonical spelling, the one a stalled run is pointed at.
+      PAIR = PARTITIONING_PAIR.join(SEPARATOR).freeze
+
+      # A tier for a strategy only ever asked what it could claim. It raises
+      # outside {Lain::Error}, which {Compaction::Strategy::Summarizing} would
+      # contain as a tier that is down.
+      module Unasked
+        module_function
+
+        def ask(_inputs = {}) = raise("a claim asked the summarizer, which only a collapse may")
+
+        def model = "unasked"
+
+        def usage = {}
+      end
+      private_constant :Unasked
+
       # What a nil NAME means to this resolver, and nothing beyond that.
       #
       # IT IS NOT WHAT AN UNSET `--compact-strategy` MEANS. An unset flag means
@@ -129,6 +146,16 @@ module Lain
 
       # @return [Compaction::Strategy::Base] the resolved strategy
       def self.resolve(...) = new(...).strategy
+
+      # @param name [String, nil] a `--compact-strategy` value
+      # @return [Boolean] whether it names {PARTITIONING_PAIR}, in either order
+      def self.pair?(name) = name.is_a?(String) && name.split(SEPARATOR, -1).sort == PARTITIONING_PAIR.sort
+
+      # {PAIR} built for {Compaction::Strategy::Base#claims} alone, through the
+      # same mapping every resolution uses, over a tier that refuses to be asked.
+      #
+      # @return [Compaction::Strategy::Base]
+      def self.claiming_pair = resolve(PAIR, tier: ->(_definition) { Unasked })
 
       # @param name [String, nil] the `--compact-strategy` value -- one name
       #   from {STRATEGIES}, or several joined by {SEPARATOR}. nil means
@@ -197,7 +224,7 @@ module Lain
       def strategy_names = split_name.map { |part| validated(part) }.tap { |names| refuse_overlap(names) }
 
       def refuse_overlap(names)
-        return if names.one? || names.sort == PARTITIONING_PAIR.sort
+        return if names.one? || self.class.pair?(@name)
 
         raise Unknown, "--compact-strategy #{@name.inspect} would overlap; the one composable pair is " \
                        "#{PARTITIONING_PAIR.join(SEPARATOR)}, in either order"

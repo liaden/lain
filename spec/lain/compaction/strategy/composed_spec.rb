@@ -124,6 +124,28 @@ RSpec.describe Lain::Compaction::Strategy::Composed do
     end
   end
 
+  describe "the ranges two composed strategies could claim" do
+    def claiming(label, ranges, claims)
+      Class.new(Lain::Compaction::Strategy::Base) do
+        define_method(:name) { label }
+        define_method(:propose_ranges) { |_messages, **| ranges }
+        define_method(:propose_claims) { |_messages, **| claims }
+      end.new.freeze
+    end
+
+    let(:left) { claiming("Left", [], [0..1]) }
+    let(:right) { claiming("Right", [5..6], [4..6]) }
+
+    it "answers both operands' claims rather than their ranges" do
+      expect((right | left).claims(messages, span: 0..7)).to eq([0..1, 4..6])
+    end
+
+    it "refuses two claims that overlap" do
+      expect { (left | claiming("Wide", [], [1..2])).claims(messages, span: 0..7) }
+        .to raise_error(Lain::Compaction::Strategy::NotAPartition, /overlap/)
+    end
+  end
+
   describe "the partiality that is the contract" do
     it "refuses an overlap, naming both operands and the overlapping indices" do
       clashing = ComposedFixtures.marking("Right", [3..4])

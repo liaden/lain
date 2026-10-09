@@ -121,6 +121,42 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
       expect(chosen.policy).to be_a(Lain::Compaction::Strategy::Composed)
     end
 
+    it "names the composed pair as the wider arm for either half of it" do
+      chosen = %w[summarize-conversation elide-tools].map do |name|
+        described_class.resolve(backend: summarizing_backend, options: flags(compact_strategy: name))
+      end
+
+      expect(chosen.map(&:widened)).to eq(%w[elide-tools+summarize-conversation] * 2)
+      expect(chosen.map(&:widening)).to all(be_a(Lain::Compaction::Strategy::Composed))
+    end
+
+    it "names no wider arm for the pair in either spelling, or for the eager control arm" do
+      chosen = %w[elide-tools+summarize-conversation summarize-conversation+elide-tools]
+               .map { |name| flags(compact_strategy: name) } + [flags]
+      resolved = chosen.map { |options| described_class.resolve(backend: summarizing_backend, options:) }
+
+      expect(resolved.map { |collapse| [collapse.widened, collapse.widening] }).to eq([[nil, nil]] * 3)
+    end
+
+    # The remedy's word and the claimant that justifies it must name one arm,
+    # so both are read back through the one resolver that maps names to classes.
+    it "claims, through its widening, exactly what the arm it names resolves to" do
+      chosen = described_class.resolve(backend: summarizing_backend,
+                                       options: flags(compact_strategy: "summarize-conversation"))
+      tier = ->(_definition) { Struct.new(:ask, :model, :usage).new(nil, "m", {}) }
+      named = Lain::CLI::CompactionStrategy.resolve(chosen.widened, tier:)
+      text = ->(body) { { "type" => "text", "text" => body } }
+      span = [{ "role" => "user", "content" => [text.call("a")] },
+              { "role" => "assistant", "content" => [text.call("b")] },
+              { "role" => "assistant",
+                "content" => [{ "type" => "tool_use", "id" => "t", "name" => "read", "input" => {} }] },
+              { "role" => "user", "content" => [{ "type" => "tool_result", "tool_use_id" => "t", "content" => "ok" }] },
+              { "role" => "assistant", "content" => [text.call("c")] }]
+
+      expect(chosen.widening.claims(span, span: 0..4)).to eq(named.claims(span, span: 0..4))
+      expect(chosen.widening.claims(span, span: 0..4)).to eq([0..1, 2..3])
+    end
+
     # The policy is still nil for an un-flagged run -- naming a strategy is what
     # opts into the seam, and resolving one here would retire the eager tier in
     # silence. What is NOT nil is the name: that run is the control arm, and a

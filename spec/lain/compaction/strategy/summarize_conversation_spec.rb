@@ -193,6 +193,30 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     end
   end
 
+  describe "the runs it could claim, asked without the oracle" do
+    let(:strategy) { fixtures.strategy(oracle: Class.new { def ask(_inputs) = raise("the oracle was asked") }.new) }
+
+    it "claims the conversational runs it would propose" do
+      expect(strategy.claims(mixed, span: 0..10)).to eq([3..4, 7..10])
+    end
+
+    it "proposes only ranges inside what it claims, with an oracle that answers" do
+      answering = fixtures.strategy(oracle: fixtures.counting)
+      ranges = answering.ranges(mixed, span: 0..10)
+
+      expect(ranges).to eq([3..4, 7..10])
+      expect(ranges.flat_map(&:to_a) - answering.claims(mixed, span: 0..10).flat_map(&:to_a)).to be_empty
+    end
+
+    it "claims nothing in a span of tool rounds" do
+      expect(strategy.claims(fixtures.messages(fixtures.all_tool_blocks), span: 0..3)).to be_empty
+    end
+
+    it "claims the tool rounds too when composed with their complement" do
+      expect((fixtures.eliding_tools | strategy).claims(mixed, span: 0..10)).to eq([1..2, 3..4, 5..6, 7..10])
+    end
+  end
+
   describe "the questions the oracle is asked" do
     let(:tier) { fixtures.counting }
     let(:strategy) { fixtures.strategy(oracle: tier) }

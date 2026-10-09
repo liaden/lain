@@ -35,7 +35,7 @@ module Lain
       # class adds is a proposal that merges two and a {Base#blocks_for} that
       # forwards.
       class Composed < Base
-        # Two operands claiming the same index. A kind of {NotAPartition} --
+        # Two operands proposing the same index. A kind of {NotAPartition} --
         # their union is not one -- so every existing rescue site catches it
         # while the name still says which of the seven conditions was met and
         # by whom. Written out in full rather than through `strategy.rb`'s own
@@ -98,6 +98,13 @@ module Lain
           refuse_overlap(span, proposed)
           proposed.flat_map { |strategy, ranges| ranges.map { |range| Owned.of(range, strategy) } }
                   .sort_by(&:first)
+        end
+
+        # The operands' hooks and not their {#claims}: a claim is measured on
+        # every turn, {Base#claims} validates the merged answer once, and an
+        # overlap fails that check without a tag naming whose range it was.
+        def propose_claims(messages, span:)
+          [@left, @right].flat_map { |strategy| strategy.propose_claims(messages, span:) }.sort_by(&:first)
         end
 
         # Every leaf under this composition, in proposal order -- and never

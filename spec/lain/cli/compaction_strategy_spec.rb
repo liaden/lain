@@ -329,6 +329,27 @@ RSpec.describe Lain::CLI::CompactionStrategy do
     end
   end
 
+  describe "the partitioning pair" do
+    it "is recognized in either spelling, and nothing else is" do
+      names = ["elide-tools+summarize-conversation", "summarize-conversation+elide-tools",
+               "elide-tools", "summarize-conversation", "elide+summarizing", "", nil]
+
+      expect(names.map { |name| described_class.pair?(name) }).to eq([true, true, false, false, false, false, false])
+    end
+
+    it "resolves claim-only, claiming what the resolved pair claims, with no tier" do
+      claiming = described_class.claiming_pair
+
+      expect(claiming.claims(mixed, span: whole))
+        .to eq(resolve("elide-tools+summarize-conversation", tier: tier_factory).claims(mixed, span: whole))
+    end
+
+    it "refuses to be asked for a summary, outside the family a down tier is contained as" do
+      expect { described_class.claiming_pair.ranges(mixed, span: whole) }
+        .to raise_error(RuntimeError, /a claim asked the summarizer/)
+    end
+  end
+
   describe "the unset name" do
     # spec/docs_naming_spec.rb:92-106 pins that an unset --compact-strategy is
     # its OWN case, not a synonym for a strategy -- Backend::SpanSummarizer

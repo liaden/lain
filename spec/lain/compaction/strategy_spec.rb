@@ -185,6 +185,11 @@ RSpec.describe Lain::Compaction::Strategy do
         .to raise_error(Lain::Error, /propose_ranges/)
     end
 
+    it "refuses a subclass that redefines the validated claims, naming the hook to write" do
+      expect { Class.new(described_class::Base) { def claims(_messages, span:) = [span] } }
+        .to raise_error(Lain::Error, /propose_claims/)
+    end
+
     it "refuses a subclass that redefines the collapse, naming what to write" do
       expect { Class.new(described_class::Base) { def collapse(_messages) = "not a Replacement" } }
         .to raise_error(Lain::Error, /blocks/)
@@ -216,7 +221,7 @@ RSpec.describe Lain::Compaction::Strategy do
                     StrategyFixtures.marking.class, StrategyFixtures.tallying.class,
                     StrategyFixtures.counting.class]
 
-      questions = %i[ranges collapse]
+      questions = %i[ranges claims collapse]
       owners = strategies.flat_map do |subject|
         questions.map { |question| subject.instance_method(question).owner }
       end
@@ -272,6 +277,30 @@ RSpec.describe Lain::Compaction::Strategy do
         expect { StrategyFixtures.answering(proposal).ranges(span, span: 0..3) }
           .to raise_error(described_class::NotAPartition, /not a Range/)
       end
+    end
+  end
+
+  describe "the ranges a strategy could claim" do
+    it "answers a strategy's own proposal when it writes no claim hook" do
+      expect(StrategyFixtures.answering([0..1, 3..3]).claims(span, span: 0..3)).to eq([0..1, 3..3])
+    end
+
+    it "validates the claim as it validates the ranges" do
+      expect { StrategyFixtures.answering([7..9]).claims(span, span: 0..3) }
+        .to raise_error(described_class::NotAPartition, /7\.\.9/)
+    end
+
+    it "claims what every shipped pure strategy proposes" do
+      tools = [StrategyFixtures.message("a"),
+               { "role" => "assistant",
+                 "content" => [{ "type" => "tool_use", "id" => "t", "name" => "read", "input" => {} }] },
+               { "role" => "user",
+                 "content" => [{ "type" => "tool_result", "tool_use_id" => "t", "content" => "ok" }] },
+               StrategyFixtures.message("b", role: "assistant")]
+      pure = [described_class::Identity.new, described_class::Elide.new, described_class::ElideToolObservations.new]
+
+      expect(pure.map { |strategy| strategy.claims(tools, span: 0..3) })
+        .to eq(pure.map { |strategy| strategy.ranges(tools, span: 0..3) })
     end
   end
 

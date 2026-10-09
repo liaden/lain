@@ -96,10 +96,22 @@ module Lain
         # outside its own set by the time `#strategy` answers, so what is left
         # is exactly the flag's value, `+`-composition and all.
         #
+        # Any named arm that is not the pair carries the pair as the arm a
+        # stalled run is pointed at, with a claim-only build of it to show the
+        # pair would claim something. Neither travels for the pair, in either
+        # spelling, or for an unset flag.
+        #
         # @return [Compaction::Source::Collapse]
-        def collapse = Compaction::Source::Collapse.new(policy: strategy, name: @name)
+        def collapse
+          return Compaction::Source::Collapse.new(policy: strategy, name: @name) unless widens?
+
+          Compaction::Source::Collapse.new(policy: strategy, name: @name, widened: CompactionStrategy::PAIR,
+                                           widening: CompactionStrategy.claiming_pair)
+        end
 
         private
+
+        def widens? = !@name.nil? && !CompactionStrategy.pair?(@name)
 
         # The live tier, over the definition {CompactionStrategy} hands in and
         # never one of this object's own.

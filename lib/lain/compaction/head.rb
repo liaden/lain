@@ -18,12 +18,29 @@ module Lain
     # not a parallel rendering of the same turns.
     #
     # This head is the candidate span MINUS whatever the pin policy exempts,
-    # and the Compact it is paired with must be handed the SAME `pins` value.
-    # `compact.rb` partitions the drop set and the pinned messages SURVIVE, so
-    # a head that named them would be a superset of what is removed and Need
-    # would fire on bytes no compaction reclaims. One object, one policy, both
+    # and NARROWED to what the configured strategy claims: a pinned message
+    # SURVIVES a compaction, and so does a turn the strategy leaves standing, so
+    # a head that named either would be a superset of what is removed and Need
+    # would fire on bytes no compaction reclaims. The Compact or derivation it
+    # is paired with must be handed the SAME `pins` value. One policy, both
     # consumers.
     class Head
+      # The claimant a caller with no strategy to ask gets: every droppable
+      # turn, so the head is the candidate span minus its pins.
+      module Whole
+        module_function
+
+        def claims(_messages, span:) = [span]
+      end
+
+      # The wider claimant a caller with no wider arm gets: it claims nothing,
+      # so a head never {#widens?}.
+      module Nothing
+        module_function
+
+        def claims(*) = []
+      end
+
       # @param timeline [Lain::Timeline]
       # @param keep_last [Integer] the trailing messages a Compact keeps verbatim
       # @param pins [Context::PinnedMessages] the exemption policy, which must
@@ -61,12 +78,21 @@ module Lain
       #   unreachable-by-construction, which is worse than absent, since a spec
       #   aimed at it passes whether or not it is there.
       # @param pins [Context::PinnedMessages] see {.from_timeline}
-      def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE)
+      # @param claimant [#claims] what the configured strategy could collapse
+      #   ({Strategy::Base#claims}); the head holds only the turns it claims, so
+      #   a signal measured over it never fires on bytes no compaction reclaims
+      # @param widening [#claims] a wider arm's claimant, asked only when
+      #   `claimant` took nothing, for {#widens?}
+      def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE, claimant: Whole, widening: Nothing)
         # A `Boundary` is a pure function of `(messages, keep_last)`, which is
         # what makes "one answer, two consumers" hold across two objects that
         # cannot pass an instance between them: {Context::Compact} receives its
         # messages per `#call`, long after it was frozen.
         @boundary = Boundary.new(messages:, keep_last:)
+        unpinned = unpinned(messages, pins)
+        claimed = unpinned & claimed(messages, claimant)
+        @unclaimed = !unpinned.empty? && claimed.empty?
+        @widens = @unclaimed && unpinned.intersect?(claimed(messages, widening))
         # DEEP, because a value object whose elements a caller can still mutate
         # is one whose bytesize goes stale. By COPY, because freezing in place
         # reaches back into an array the caller still owns and -- since only
@@ -74,7 +100,7 @@ module Lain
         # nothing frozen at all when the slice is empty; two Heads over one
         # list at different `keep_last` is a thing a caller may well do. The
         # copy measures as noise beside the `Canonical.dump` below.
-        @messages = Ractor.make_shareable(droppable(messages, pins), copy: true)
+        @messages = Ractor.make_shareable(claimed.map { |index| messages[index] }, copy: true)
         @bytesize = Canonical.dump(@messages).bytesize
         freeze
       end
@@ -105,6 +131,13 @@ module Lain
       # one. Both drop nothing; only one is a shape a reader needs to know about.
       def declined? = @boundary.declined?
 
+      # Empty for a third reason: there were unpinned turns to drop and the
+      # strategy could collapse none of them, which no keep_last or unpin fixes.
+      def unclaimed? = @unclaimed
+
+      # Whether the wider arm would have claimed some of what this one left.
+      def widens? = @widens
+
       private
 
       # Slices at {Boundary}'s index, which is where {Context::Compact#call}
@@ -120,10 +153,17 @@ module Lain
       # Positions, never a per-message `Canonical.dump`: this runs on every
       # turn including the ~1.47 ms deferring ones, and the one dump this
       # object pays for is {#bytesize}.
-      def droppable(messages, pins)
-        candidates = messages[0...@boundary.index]
-        exempt = pins.indices_in(candidates)
-        exempt.empty? ? candidates : candidates.reject.with_index { |_, index| exempt.include?(index) }
+      def unpinned(messages, pins)
+        exempt = pins.indices_in(messages[0...@boundary.index])
+        (0...@boundary.index).reject { |index| exempt.include?(index) }
+      end
+
+      # An empty span is no question at all, and {Strategy::Base#claims}
+      # refuses the empty range a whole-span claim makes of it.
+      def claimed(messages, claimant)
+        return [] if @boundary.index.zero?
+
+        claimant.claims(messages, span: 0...@boundary.index).flat_map(&:to_a)
       end
     end
   end

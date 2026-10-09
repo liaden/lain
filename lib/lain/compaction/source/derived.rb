@@ -121,9 +121,12 @@ module Lain
         #   the run's own eager tier exactly as {Context::Compact} did (see
         #   {Held}) -- a default, not a Null: a real policy with a real answer.
         # @param journal [#<<] where the derivation edge and any refusal land
-        def initialize(keep_last:, strategy: nil, journal: Channel::Null.instance)
+        # @param widening [Strategy::Base, nil] a wider arm, asked only what it
+        #   could claim; nil when the run has none
+        def initialize(keep_last:, strategy: nil, journal: Channel::Null.instance, widening: nil)
           @keep_last = keep_last
           @strategy = strategy
+          @widening = widening
           @journal = journal
           @consecutive = 0
           @named = UNJOURNALED
@@ -150,6 +153,21 @@ module Lain
         def over(timeline, walk:, pins:, snapshot:, cut:)
           replayed(PinCuts.new(inner: @strategy || Held.new(snapshot), pins:), timeline, walk, cut)
         end
+
+        # What a {Head} measures: this run's policy cut at the pins, exactly as
+        # {#over} cuts it, so the head counts the ranges a derivation could
+        # collapse and asks it nothing that costs a model call.
+        #
+        # @param pins [Context::PinnedMessages] this turn's pin set
+        # @return [Strategy::Base] answers {Strategy::Base#claims}
+        def claimant(pins:) = PinCuts.new(inner: @strategy || CLAIMING, pins:)
+
+        # What a wider arm could claim, cut at the same pins: the evidence a
+        # stalled run's report needs before it recommends that arm.
+        #
+        # @param pins [Context::PinnedMessages] this turn's pin set
+        # @return [#claims] {Head::Nothing} when there is no wider arm
+        def widening(pins:) = @widening ? PinCuts.new(inner: @widening, pins:) : Head::Nothing
 
         # The held cuts re-written as one: the policy is offered the stretch
         # they already rendered -- their replacements, and the turns they
@@ -336,6 +354,11 @@ module Lain
         end
         private_constant :Held
 
+        # The default policy as a claimant. A claim never reads the snapshot,
+        # so it holds the empty one rather than taking this turn's.
+        CLAIMING = Held.new(SummarySnapshot.take(messages: [], eager: NoSummaries))
+        private_constant :CLAIMING
+
         # A policy cut at the pins: the span becomes one sub-span per
         # contiguous run of UNPINNED messages, and the inner policy is asked
         # about each. Everything a pin separates stays separated, and the
@@ -372,6 +395,12 @@ module Lain
           # neither of which subsumes the other.
           def propose_ranges(messages, span:)
             runs(span, @pins.indices_in(messages)).flat_map { |run| @inner.ranges(messages, span: run) }
+          end
+
+          # The inner hook, for {Composed#propose_claims}'s reason: the one
+          # validation is this object's own {Strategy::Base#claims}.
+          def propose_claims(messages, span:)
+            runs(span, @pins.indices_in(messages)).flat_map { |run| @inner.propose_claims(messages, span: run) }
           end
 
           def blocks(messages) = @inner.blocks(messages)

@@ -194,6 +194,29 @@ RSpec.describe Lain::Compaction::Strategy::Summarizing do
     end
   end
 
+  describe "the ranges it could claim" do
+    let(:unaskable) { Class.new { def ask(_inputs) = raise("the oracle was asked") }.new }
+    let(:claiming) { fixtures.strategy(oracle: unaskable) }
+
+    it "claims the whole of a span without asking the oracle" do
+      expect(claiming.claims(fixtures.span(3), span: 0..2)).to eq([0..2])
+      expect([claiming.hits, claiming.misses]).to eq([0, 0])
+    end
+
+    it "proposes only ranges inside what it claims, with an oracle that answers" do
+      answering = fixtures.deterministic
+      messages = fixtures.span(3)
+
+      expect(answering.ranges(messages, span: 0..2).flat_map(&:to_a) - answering.claims(messages, span: 0..2)
+        .flat_map(&:to_a)).to be_empty
+      expect(answering.ranges(messages, span: 0..2)).to eq([0..2])
+    end
+
+    it "claims nothing in an empty span" do
+      expect(claiming.claims([], span: 0...0)).to be_empty
+    end
+  end
+
   describe "the oracle it is addressed under" do
     # {Lain::Oracle::Definition#digest} folds the template as well as the tier,
     # so the span question is already a different oracle from the tool-result

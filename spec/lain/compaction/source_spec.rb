@@ -1277,6 +1277,14 @@ RSpec.describe Lain::Compaction::Source do
   describe "the collapse arm it can name" do
     def collapse(policy: nil, name: nil) = Lain::Compaction::Source::Collapse.new(policy:, name:)
 
+    it "names no wider arm unless one is given" do
+      wider = Lain::Compaction::Strategy::Elide.new
+      given = Lain::Compaction::Source::Collapse.new(name: "elide", widened: "wider", widening: wider)
+
+      expect([collapse(name: "elide").widened, collapse(name: "elide").widening]).to eq([nil, nil])
+      expect([given.widened, given.widening]).to eq(["wider", wider])
+    end
+
     def forcing(**overrides) = source(need: build_need(byte_threshold: 100), hard_cap: 100, **overrides)
 
     # The disjoint pair {Lain::CLI::CompactionStrategy} recommends, composed the
@@ -2540,6 +2548,145 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
+  # A strategy that cannot claim tool rounds must not be fired by them: the head
+  # counts only what the configured policy could collapse, and asking that is
+  # never paid for with a model call.
+  describe "a strategy that claims only part of what is droppable" do
+    let(:surface) { RecordingChannel.new }
+    let(:unaskable) { Class.new { def ask(_inputs) = raise("the oracle was asked") }.new }
+
+    def sink = Lain::Sink::IOAdapter.new(surface, tool_use_id: "spec:compaction", stream: :stderr)
+
+    def reported = surface.events.grep(Lain::Telemetry::ToolOutput).map(&:bytes)
+
+    def pair_name = "elide-tools+summarize-conversation"
+
+    def collapse(policy, name, widened: pair_name)
+      widening = widened && Lain::CLI::CompactionStrategy.claiming_pair
+      Lain::Compaction::Source::Collapse.new(policy:, name:, widened:, widening:)
+    end
+
+    def summarizing_conversation
+      collapse(Lain::Compaction::Strategy::SummarizeConversation.new(oracle: unaskable), "summarize-conversation")
+    end
+
+    def eliding_tools = collapse(Lain::Compaction::Strategy::ElideToolObservations.new, "elide-tools")
+
+    def the_pair
+      policy = Lain::Compaction::Strategy::ElideToolObservations.new |
+               Lain::Compaction::Strategy::SummarizeConversation.new(oracle: unaskable)
+      collapse(policy, pair_name, widened: nil)
+    end
+
+    def four_kb_result(index) = "r#{index}#{"x" * 4_000}"
+
+    def round(index)
+      id = "call-#{index}"
+      [["assistant", [{ "type" => "tool_use", "id" => id, "name" => "read", "input" => { "n" => index } }]],
+       ["user", [{ "type" => "tool_result", "tool_use_id" => id, "content" => four_kb_result(index) }]]]
+    end
+
+    def ask(text) = ["user", [{ "type" => "text", "text" => text }]]
+
+    def committed(turns)
+      turns.inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (role, content)|
+        line.commit(role:, content:)
+      end
+    end
+
+    def ten_tool_rounds = (1..10).flat_map { round(_1) }
+
+    def one_ask_of_tool_rounds(conversation: []) = committed([ask("read every file"), *conversation, *ten_tool_rounds])
+
+    def deciding(strategy, **overrides)
+      source(need: build_need(byte_threshold: 1_500), strategy:, sink:, **overrides)
+    end
+
+    it "does not fire a summarize-only strategy on tool bytes it cannot claim" do
+      line = one_ask_of_tool_rounds
+
+      context_for(deciding(summarizing_conversation), line)
+
+      expect(decisions.last["head_bytes"]).to be < 1_500
+      expect(decisions.last["signals"]).not_to include("token_threshold")
+      expect(decisions.last["compacted"]).to be(false)
+    end
+
+    it "weighs the conversational run it can claim without asking the oracle" do
+      run = [["assistant", [block(1)]], ["user", [block(2)]]]
+      line = one_ask_of_tool_rounds(conversation: run)
+
+      context_for(deciding(summarizing_conversation, need: build_need(byte_threshold: 500)), line)
+
+      expect(decisions.last["head_bytes"]).to be_between(500, 5_000)
+      expect(decisions.last["compacted"]).to be(false)
+      expect(decisions.last["signals"]).to include("token_threshold")
+    end
+
+    it "names the strategy and the composed pair when the window fills with nothing it can claim" do
+      built = deciding(summarizing_conversation, need: build_need(approaching_ratio: 0.8),
+                                                 context_window: window_book(8_192))
+
+      context_for(built, one_ask_of_tool_rounds, usage: 6_963)
+
+      expect(reported.join).to include("summarize-conversation claims none")
+        .and include("--compact-strategy #{pair_name}, which claims tool rounds and conversation both")
+    end
+
+    def answered_ask_then_running_ask
+      committed([ask("an older ask"), ["assistant", [block(1)]],
+                 ask("the running ask"), *round(1)])
+    end
+
+    def stalled_line(strategy, line, session: self.session)
+      built = deciding(strategy, need: build_need(approaching_ratio: 0.8), context_window: window_book(8_192))
+      context_for(built, line, usage: 6_963, session:)
+      reported.join
+    end
+
+    def answer_pinned_leaving_a_lone_turn
+      line = answered_ask_then_running_ask
+      [line, session_pinning(line.to_a[1].digest)]
+    end
+
+    it "names the pair to elide-tools when the conversation it cannot claim is a run the pair can" do
+      expect(stalled_line(eliding_tools, answered_ask_then_running_ask))
+        .to include("elide-tools claims none")
+        .and include("--compact-strategy #{pair_name}, which claims tool rounds and conversation both")
+    end
+
+    it "does not name the pair to summarize-conversation when only a lone turn is droppable" do
+      line, pinned = answer_pinned_leaving_a_lone_turn
+
+      expect(stalled_line(summarizing_conversation, line, session: pinned))
+        .to include("summarize-conversation claims none").and include("lower --compact-keep, or start a new session")
+      expect(reported.join).not_to include("--compact-strategy")
+    end
+
+    it "does not name the pair to elide-tools when only a lone turn is droppable" do
+      line, pinned = answer_pinned_leaving_a_lone_turn
+
+      expect(stalled_line(eliding_tools, line, session: pinned))
+        .to include("elide-tools claims none").and include("lower --compact-keep, or start a new session")
+      expect(reported.join).not_to include("--compact-strategy")
+    end
+
+    it "does not name the pair to the pair itself" do
+      line, pinned = answer_pinned_leaving_a_lone_turn
+
+      expect(stalled_line(the_pair, line, session: pinned))
+        .to include("#{pair_name} claims none").and include("lower --compact-keep, or start a new session")
+      expect(reported.join).not_to include("--compact-strategy")
+    end
+
+    it "counts the tool rounds under the composed pair, and compacts" do
+      context_for(deciding(the_pair, hard_cap: 1_500), one_ask_of_tool_rounds)
+
+      expect(decisions.last["head_bytes"]).to be > 30_000
+      expect(decisions.last["compacted"]).to be(true)
+    end
+  end
+
   # The TRUTH half of the report, addressable on its own. It used to be two
   # private methods inside the routing class, which is why the latch could only
   # ever be tested through the thing that routes it -- and why the predicate
@@ -2553,7 +2700,9 @@ RSpec.describe Lain::Compaction::Source do
       )
     end
 
-    def over(head, **fields) = Lain::Compaction::Source::Diagnosis.of(decision: decision(**fields), head:)
+    def over(head, arm: "eager", widened: nil, **fields)
+      Lain::Compaction::Source::Diagnosis.of(decision: decision(**fields), head:, arm:, widened:)
+    end
 
     def empty_head = Lain::Compaction::Head.new(messages: [], keep_last: 2)
 
@@ -2607,6 +2756,27 @@ RSpec.describe Lain::Compaction::Source do
 
       expect(line).to include("pinned")
       expect(line).to include("keep_last")
+    end
+
+    it "names the arm and the composed pair when the arm claimed none of what was droppable" do
+      unclaimed = Lain::Compaction::Head.new(messages: tool_pair + tool_pair, keep_last: 2,
+                                             claimant: Lain::Compaction::Strategy::Identity.new,
+                                             widening: Lain::Compaction::Strategy::Elide.new)
+      line = over(unclaimed, arm: "summarize-conversation", widened: "the-pair", signals: [:approaching_window]).line
+
+      expect(line).to include("summarize-conversation claims none")
+      expect(line).to include("--compact-strategy the-pair, which claims tool rounds and conversation both")
+      expect(line).not_to include("unpin")
+    end
+
+    it "falls back to keep_last when there is no wider arm to name" do
+      unclaimed = Lain::Compaction::Head.new(messages: tool_pair + tool_pair, keep_last: 2,
+                                             claimant: Lain::Compaction::Strategy::Identity.new,
+                                             widening: Lain::Compaction::Strategy::Elide.new)
+      line = over(unclaimed, arm: "summarize-conversation", signals: [:approaching_window]).line
+
+      expect(line).to include("lower --compact-keep, or start a new session")
+      expect(line).not_to include("--compact-strategy")
     end
 
     it "gives the operator something to do about it" do

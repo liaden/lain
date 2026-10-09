@@ -152,13 +152,23 @@ module Lain
         # The name is interned for {Strategy::Base#name}'s reason: an anonymous
         # class's `to_s` is a freshly built MUTABLE String, and this one is read
         # back into a journalled record.
-        def initialize(policy: nil, name: nil)
+        #
+        # @param policy [Strategy::Base, nil] what collapses a span
+        # @param name [String, nil] the arm's word, defaulting to the policy's
+        # @param widened [String, nil] the arm a stalled run is told to widen
+        #   to, named by the caller that knows the flag's words; nil when there
+        #   is none wider
+        # @param widening [Strategy::Base, nil] that arm, asked only what it
+        #   could claim
+        def initialize(policy: nil, name: nil, widened: nil, widening: nil)
           @policy = policy
           @name = -(name || policy&.name || Telemetry::Compaction::EAGER_CONTROL_ARM).to_s
+          @widened = widened && -widened.to_s
+          @widening = widening
           freeze
         end
 
-        attr_reader :policy, :name
+        attr_reader :policy, :name, :widened, :widening
       end
 
       # A turn whose derived chain the Messages API would have rejected, and
@@ -246,14 +256,23 @@ module Lain
       class Diagnosis
         # @param decision [CompactionDecision] this turn's, as it is journalled
         # @param head [Head] the span it was taken over, asked for
-        #   {Head#declined?} alone -- the one cause of an empty head this
-        #   object can ESTABLISH rather than guess
+        #   {Head#declined?} and {Head#unclaimed?} -- the two causes of an
+        #   empty head this object can ESTABLISH rather than guess
+        # @param arm [String] the collapse arm's name, which an unclaimed head
+        #   blames
+        # @param widened [String, nil] {Collapse#widened}, named only where
+        #   {Head#widens?} shows it would claim what the arm did not
         # @return [Diagnosis]
-        def self.of(decision:, head:) = new(decision:, declined: head.declined?)
+        def self.of(decision:, head:, arm:, widened:)
+          new(decision:, declined: head.declined?, unclaimed: head.unclaimed? && arm,
+              widened: head.widens? && widened)
+        end
 
-        def initialize(decision:, declined:)
+        def initialize(decision:, declined:, unclaimed: false, widened: nil)
           @decision = decision
           @declined = declined
+          @unclaimed = unclaimed
+          @widened = widened
           freeze
         end
 
@@ -280,8 +299,9 @@ module Lain
 
         def warranted? = @decision.signals.include?(Need::ApproachingWindow::KIND)
 
-        # {Head#empty?} is true for FOUR unrelated reasons and this object can
-        # only establish one of them. A declined boundary says so itself; the
+        # {Head#empty?} is true for FIVE unrelated reasons and this object can
+        # establish two of them. A declined boundary says so itself, and so does
+        # an unclaimed head, whose strategy could collapse none of it; the
         # other three -- a history shorter than `keep_last`, a droppable span
         # every message of which was pinned, and a history a held compaction
         # cut has already collapsed up to keep_last -- are indistinguishable
@@ -296,6 +316,7 @@ module Lain
         # history rather than for a shape this path is expected to meet.
         def cause
           return "but the boundary declined the only legal cut -- it would split a tool-use pair" if @declined
+          return "but #{@unclaimed} claims none of the droppable turns" if @unclaimed
 
           "and nothing is droppable -- every earlier turn is inside keep_last, pinned, or already compacted"
         end
@@ -304,8 +325,15 @@ module Lain
         # render of absence, which is not zero.
         def occupancy = "#{@decision.used_tokens || "--"}/#{@decision.window_tokens} tokens"
 
+        def widen
+          return "lower --compact-keep, or start a new session" unless @widened
+
+          "use --compact-strategy #{@widened}, which claims tool rounds and conversation both, or start a new session"
+        end
+
         def remedy
           return "lower --compact-keep so the cut falls clear of the pair, or start a new session" if @declined
+          return widen if @unclaimed
 
           "unpin a turn, lower --compact-keep, or start a new session"
         end
@@ -435,9 +463,11 @@ module Lain
         @eager = eager
         @reporting = Reporting.new(journal:, sink:)
         @collapse_strategy = arm.name
+        @widened = arm.widened
         @idle = IdleGap.new(clock:)
         @scheduling = Scheduling.new(hard_cap:, journal:, model:, price_book:)
-        @derived = Derived.new(keep_last: Compaction.validate_keep_last(keep_last), strategy: arm.policy, journal:)
+        @derived = Derived.new(keep_last: Compaction.validate_keep_last(keep_last), strategy: arm.policy,
+                               widening: arm.widening, journal:)
         @fallback = fallback
         @handed_off = false
       end
@@ -597,7 +627,8 @@ module Lain
       # The head is taken past the held cut: what a cut already collapsed is
       # not droppable again, so a threshold measures only what it has not.
       def decide(base:, held_cut:, usage:, session:, pins:)
-        head = Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:)
+        head = Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:,
+                        claimant: @derived.claimant(pins:), widening: @derived.widening(pins:))
         resolution = window_for(base)
         need = need_for(head:, usage:, session:, resolution:)
         occupancy = ContextWindow::Occupancy.of(used_tokens: usage, window_tokens: resolution.window_tokens)
@@ -824,7 +855,7 @@ module Lain
                                           window_tokens: occupancy.window_tokens,
                                           used_tokens: occupancy.used_tokens, provenance:,
                                           nothing_droppable: head.empty?)
-        @reporting.record(Diagnosis.of(decision:, head:))
+        @reporting.record(Diagnosis.of(decision:, head:, arm: @collapse_strategy, widened: @widened))
       end
 
       # Every miss this turn had was one the size gate declined outright --
