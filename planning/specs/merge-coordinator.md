@@ -1449,3 +1449,15 @@ Scenario: a lock path that is a directory is refused by name
   Then Paths::Unwritable is raised naming the path, and the block never ran
 ```
 - T10 landed `f9f56d29`.
+- T15 landed `2ea0896a`. T21 finished, in review (low). T20 and T8 implementing.
+- T21 approved (low) and landed `15d4ff06`.
+- T20 finished, in review (medium). Its implementer ran `pgrep -x sleep | xargs kill` once, which can kill sleeps it did not start; reviewer briefs now forbid killing any pid a probe did not record.
+- T20 approved (review 2) and landed `faaeaf86`. A second known flake recorded in `a316de70`
+  (typed-during-ask seam example, red under load 11 with a reviewer's probes running).
+- T8 review 1: REQUEST-CHANGES (the fast-forward obeyed user merge config: `mergeOptions=--squash`
+  journaled merged with the branch unmoved; a backward-moved branch re-landed). Rulings: desk: with
+  journal:/strategy: raising, skipped verification landing, and only landed workers journaled are all
+  upheld. Follow-up after T14: delete `ParentDesk` once no production code builds it, rather than
+  sharing its 6 methods with `CandidateDesk`.
+- T9 and T14 started on T8's unreviewed working copy to save a wave; T8's final files are recopied
+  into both before their reviews.
