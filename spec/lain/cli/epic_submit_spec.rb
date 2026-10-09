@@ -1022,6 +1022,48 @@ RSpec.describe Lain::CLI::EpicSubmit do
       write_epic
     end
 
+    def tip = "blake3:#{"d" * 64}"
+
+    it "writes what the tip's tests did into an implementation's question" do
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
+      home.plan("a").write("the plan for a\n")
+      command.submit("issue_plan", issue: "a")
+      screen = StringIO.new
+      tests = Lain::Telemetry::TestsRan.new(issue_id: "a", sha: tip, ran: true, passed: 3, errors: 1)
+
+      command(gates: hands_off.merge("implementation" => "interactive"), output: screen)
+        .submit("implementation", issue: "a", digest: tip, tests:)
+
+      expect(screen.string).to include("(issue a, #{tip}, tests: 3 passed, 1 error)")
+    end
+
+    it "carries the tests through a chat's guarded submit" do
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
+      home.plan("a").write("the plan for a\n")
+      command.submit("issue_plan", issue: "a")
+      screen = StringIO.new
+      tests = Lain::Telemetry::TestsRan.new(issue_id: "a", sha: tip, ran: true, passed: 4)
+      chronicle = instance_double(Lain::CLI::Chronicle, journal_path: File.join(sessions_dir, "chat.ndjson"))
+      inner = command(gates: hands_off.merge("implementation" => "interactive"), output: screen)
+
+      described_class::InChat.new(chronicle:, command: inner)
+                             .submit("implementation", issue: "a", digest: tip, tests:)
+
+      expect(screen.string).to include("(issue a, #{tip}, tests: 4 passed)")
+    end
+
+    it "says nothing ran for a hand submit given no tests" do
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
+      home.plan("a").write("the plan for a\n")
+      command.submit("issue_plan", issue: "a")
+      screen = StringIO.new
+
+      command(gates: hands_off.merge("implementation" => "interactive"), output: screen)
+        .submit("implementation", issue: "a", digest: tip)
+
+      expect(screen.string).to include("tests: not run")
+    end
+
     it "writes the artifact's own question to the injected output" do
       screen = StringIO.new
 

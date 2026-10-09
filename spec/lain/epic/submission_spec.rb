@@ -281,6 +281,43 @@ RSpec.describe Lain::Epic::Submission do
 
       expect(submission.gate_question).to include("implementation", "T7")
     end
+
+    describe "the tests its question reports" do
+      def ran(**counts) = Lain::Telemetry::TestsRan.new(issue_id: "T7", sha: "a" * 40, ran: true, **counts)
+
+      def asked(tests) = described_class.implementation(slug: "demo", issue_id: "T7", digest: "a" * 40, tests:)
+
+      it "names the sha and a red tip's counts" do
+        question = asked(ran(passed: 3, errors: 1)).gate_question
+
+        expect(question).to include("(issue T7, #{"a" * 40}, tests: 3 passed, 1 error)")
+      end
+
+      it "reads a green tip as its passes alone" do
+        expect(asked(ran(passed: 4)).gate_question).to include("(issue T7, #{"a" * 40}, tests: 4 passed)")
+      end
+
+      it "counts failures and pluralizes errors" do
+        expect(asked(ran(passed: 1, failed: 2,
+                         errors: 2)).gate_question).to include("tests: 1 passed, 2 failed, 2 errors")
+      end
+
+      it "says nothing ran when no run was given" do
+        expect(asked(nil).gate_question).to include("tests: not run")
+      end
+
+      it "says why when the suite could not run" do
+        unrun = Lain::Telemetry::TestsRan.unrun(issue_id: "T7", sha: "a" * 40, why: "no tests preset")
+
+        expect(asked(unrun).gate_question).to include("tests: not run (no tests preset)")
+      end
+
+      it "leaves the gate's address to the issue and the sha, whatever the tests did" do
+        digests = [nil, ran(passed: 4), ran(passed: 3, errors: 1)].map { |tests| asked(tests).digest }
+
+        expect(digests.uniq.size).to eq(1)
+      end
+    end
   end
 
   describe "construction" do

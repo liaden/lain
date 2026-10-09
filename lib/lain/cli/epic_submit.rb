@@ -175,10 +175,11 @@ module Lain
       # letting {Epic::Submission} refuse in its own vocabulary, one frame away
       # from the flag to pass.
       class Artifacts
-        def initialize(home:, issue: nil, digest: nil)
+        def initialize(home:, issue: nil, digest: nil, tests: nil)
           @home = home
           @issue = issue
           @digest = digest
+          @tests = tests
         end
 
         # An `else` that RAISES: {Epic::STAGES}' closure is enforced over there,
@@ -218,7 +219,8 @@ module Lain
         end
 
         def implementation(stage)
-          Lain::Epic::Submission.implementation(slug: @home.slug, issue_id: issue!(stage), digest: digest!(stage))
+          Lain::Epic::Submission.implementation(slug: @home.slug, issue_id: issue!(stage), digest: digest!(stage),
+                                                tests: @tests)
         end
 
         def issue!(stage)
@@ -518,9 +520,9 @@ module Lain
 
         # @return [String] the verdict, as {EpicSubmit#submit}
         # @raise [Lain::Error] when the session would not keep the decision
-        def submit(stage, slug = nil, issue: nil, digest: nil)
+        def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil)
           refuse_unkept!
-          @command.submit(stage, slug, issue:, digest:)
+          @command.submit(stage, slug, issue:, digest:, tests:)
         end
 
         private
@@ -542,13 +544,14 @@ module Lain
       # @param slug [String, nil] the epic; omitted resolves to the sole one
       # @param issue [String, nil] which issue, for the issue-scoped stages
       # @param digest [String, nil] the changeset address, for `implementation`
+      # @param tests [Telemetry::TestsRan, nil] what the suite did on that changeset, for `implementation`
       # @return [String] the verdict, rendered
       # @raise [Lain::Error] every refusal on this path: an unknown stage, an
       #   ambiguous home, a missing artifact, an unbuildable policy, or the
       #   stage boundary
-      def submit(stage, slug = nil, issue: nil, digest: nil)
+      def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil)
         staged = Lain::Epic::Stage.new(stage)
-        decide(staged, Artifacts.new(home: home(slug), issue:, digest:))
+        decide(staged, Artifacts.new(home: home(slug), issue:, digest:, tests:))
       end
 
       # The question an issue's launch asks before any work starts: is this

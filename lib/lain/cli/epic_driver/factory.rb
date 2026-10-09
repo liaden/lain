@@ -146,9 +146,10 @@ module Lain
 
           # @param issue_id [String] whose gate this is
           # @param sha [String] the anchored commit
+          # @param tests [Telemetry::TestsRan, nil] what the suite did on that commit
           # @return [Boolean] whether the gate approved this exact commit
-          def call(issue_id, sha:)
-            @submit.submit("implementation", @slug, issue: issue_id, digest: sha)
+          def call(issue_id, sha:, tests: nil)
+            @submit.submit("implementation", @slug, issue: issue_id, digest: sha, tests:)
             approved?(issue_id, sha)
           end
 
@@ -743,6 +744,9 @@ module Lain
 
         UNSETTLED = "the run stopped while its actor was still working, so this issue was left where it stood"
 
+        TESTS_STOPPED = "the run stopped while the suite was testing this issue's commit, so it was left " \
+                        "ungated and unlanded"
+
         UNPLANNED = "it is still pending, so its issue_plan has not been approved yet -- approve the plan and " \
                     "the issue moves itself into flight"
 
@@ -846,7 +850,7 @@ module Lain
           # The gate did not answer because the run ended first.
           STOPPED = :stopped
 
-          # @param gate [#call] `call(issue_id, sha:)`
+          # @param gate [#call] `call(issue_id, sha:, tests:)`
           # @param interrupt [#call] answers whether the run should stop
           # @param poll [Numeric] seconds between looking up from the wait
           def initialize(gate:, interrupt:, poll: POLL)
@@ -856,7 +860,7 @@ module Lain
           end
 
           # @return [Boolean, Symbol] the gate's answer, or {STOPPED}
-          def call(issue_id, sha:) = watching { @gate.call(issue_id, sha:) }
+          def call(issue_id, sha:, tests: nil) = watching { @gate.call(issue_id, sha:, tests:) }
 
           # A child the stopped block spawned is killed by that child's own
           # `ensure`.
@@ -1251,9 +1255,10 @@ module Lain
         # actor held is not the sha the gate names, and only an issue that
         # reaches its gate has a sha worth testing.
         def gated(entry, report)
-          return reported(entry, UNSETTLED) if tested(entry, report) == Asking::STOPPED
+          tests = tested(entry, report)
+          return reported(entry, TESTS_STOPPED) if tests == Asking::STOPPED
 
-          opened = @asking.call(entry.issue_id, sha: report.sha)
+          opened = @asking.call(entry.issue_id, sha: report.sha, tests:)
           return reported(entry, UNSETTLED) if opened == Asking::STOPPED
           return reported(entry, format(GATE_PARKED, sha: report.sha)) unless opened
 

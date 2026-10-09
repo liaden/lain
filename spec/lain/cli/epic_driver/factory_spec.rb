@@ -258,6 +258,18 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   # What a chat lends the epic it is seated in. The grading hook has to ride
   # these seams, or the hook the driver now owns is unreachable from the one
   # object a caller outside the chat actually holds.
+  describe "the implementation gate" do
+    let(:submit) { instance_double(Lain::CLI::EpicSubmit, submit: "approved") }
+    let(:gate) { described_class::Gate.new(submit:, slug: "demo", journals: -> { [] }) }
+    let(:tests) { Lain::Telemetry::TestsRan.new(issue_id: "a", sha: "abc", ran: true, passed: 4) }
+
+    it "submits the sha with the tests that ran on it" do
+      gate.call("a", sha: "abc", tests:)
+
+      expect(submit).to have_received(:submit).with("implementation", "demo", issue: "a", digest: "abc", tests:)
+    end
+  end
+
   describe "Seams#driver" do
     let(:conductor) { Class.new { def closed? = false }.new }
 
@@ -1031,7 +1043,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
       expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - began).to be < 30
       expect(result.reported.map(&:issue_id)).to eq(["a"])
-      expect(result.reported.first.reason).to eq(Lain::CLI::EpicDriver::Run::UNSETTLED)
+      expect(result.reported.first.reason).to eq(Lain::CLI::EpicDriver::Run::TESTS_STOPPED)
       expect { Process.kill(0, Integer(File.read(started))) }.to raise_error(Errno::ESRCH)
       expect(detached_worktrees).to be_empty
       expect(Dir.children(File.join(worktree_root, "tips"))).to be_empty

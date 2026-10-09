@@ -84,7 +84,7 @@ class RunSpecGate
 
   attr_reader :asked
 
-  def call(issue_id, sha:)
+  def call(issue_id, sha:, **)
     @asked << [issue_id, sha]
     sleep(@delay) unless @delay.nil?
     raise Lain::Error, "#{issue_id}'s gate could not be asked" if @raising.include?(issue_id)
@@ -159,8 +159,8 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
   # outstanding-set rule observable from up here.
   def gate_over(asker, timeout: 30)
     gate = Lain::Approval::Gate.new(journal: Lain::Journal.new(io: StringIO.new), timeout:)
-    lambda do |issue_id, sha:|
-      gate.call(Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha),
+    lambda do |issue_id, sha:, tests: nil|
+      gate.call(Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha, tests:),
                 asker:, stage: "implementation", epic_slug: "demo", issue_id:)
     end
   end
@@ -422,7 +422,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
                landing: landing&.call(RunSpecLanding.new(statuses)))
     end
 
-    def gate_torn_for(id) = ->(issue_id, sha:) { issue_id == id ? raise(torn_record) : !sha.nil? }
+    def gate_torn_for(id) = ->(issue_id, sha:, **) { issue_id == id ? raise(torn_record) : !sha.nil? }
 
     it "ends the run in words, keeping what already landed, when a later gate meets it" do
       run, _actors, landing = reading_b_torn(gate: gate_torn_for("b"))
@@ -1101,11 +1101,11 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
   # Retirement rebases the branch and anchors the sha the gate then names, so
   # the tip's suite runs on that sha: after retirement, before the gate.
   describe "testing the tip, between its retirement and its gate" do
-    def tested_into(log) = ->(issue_id, sha) { log << [:tested, issue_id, sha] }
+    def tested_into(log) = ->(issue_id, sha) { (log << [:tested, issue_id, sha]) && nil }
 
     def gated_into(log)
-      lambda do |issue_id, sha:|
-        log << [:gated, issue_id, sha]
+      lambda do |issue_id, sha:, tests: nil|
+        log << [:gated, issue_id, sha, tests]
         true
       end
     end
@@ -1118,7 +1118,18 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
 
       run.call
 
-      expect(log).to eq([[:graded, "a"], [:retired, "a"], [:tested, "a", "sha-a"], [:gated, "a", "sha-a"]])
+      expect(log).to eq([[:graded, "a"], [:retired, "a"], [:tested, "a", "sha-a"], [:gated, "a", "sha-a", nil]])
+    end
+
+    it "hands the gate the run the tip's tests journaled" do
+      log = []
+      ran = Lain::Telemetry::TestsRan.new(issue_id: "a", sha: "sha-a", ran: true, passed: 3, errors: 1)
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" }, reports: { "a" => anchored("sha-a") },
+                      tip_tests: ->(_issue_id, _sha) { ran }, gate: gated_into(log))
+
+      run.call
+
+      expect(log).to eq([[:gated, "a", "sha-a", ran]])
     end
 
     it "tests nothing when the actor committed nothing" do
@@ -1142,20 +1153,21 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       expect(log).to be_empty
     end
 
-    it "reports a tip whose suite the interrupt stopped as unsettled, and lands nothing" do
+    it "reports a tip whose suite the interrupt stopped as stopped mid-suite, and lands nothing" do
       stopped = false
       slow = lambda do |_issue_id, _sha|
         stopped = true
         sleep 5
       end
       run, _actors, landing = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" },
-                                       reports: { "a" => anchored("sha-a") }, gate: ->(_id, sha:) { sha },
+                                       reports: { "a" => anchored("sha-a") }, gate: ->(_id, sha:, **) { sha },
                                        tip_tests: slow, interrupt: -> { stopped })
 
       result = Sync { run.call }
 
       expect(landing.landed).to be_empty
-      expect(result.reported.map(&:reason)).to eq([described_class::UNSETTLED])
+      expect(result.reported.map(&:reason)).to eq([described_class::TESTS_STOPPED])
+      expect(described_class::TESTS_STOPPED).not_to include("actor")
     end
 
     it "lands as usual when no tip tests are given" do

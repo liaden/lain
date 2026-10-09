@@ -241,13 +241,28 @@ module Lain
 
       # The changeset address is checked as given, before it is composed: a
       # Hash would otherwise canonicalize into a real gate identity.
-      def self.implementation(slug:, issue_id:, digest:)
+      #
+      # `tests` is evidence for the human and stays out of the address, so a
+      # re-asked gate over the same commit is the same gate.
+      def self.implementation(slug:, issue_id:, digest:, tests: nil)
         issue_id = clean_issue_id(issue_id)
-        fact = "issue #{issue_id}"
+        fact = "issue #{issue_id}, #{digest}, tests: #{tests_said(tests)}"
         Contracts::Submission.check!(stage: "implementation", slug:, content_digest: digest, fact:)
         new(stage: "implementation", slug:, content_digest: implemented(digest, issue_id), fact:, issue_id:,
             changeset: digest)
       end
+
+      def self.tests_said(tests)
+        return "not run" if tests.nil?
+        return "not run (#{tests.why})" unless tests.ran
+
+        [count(tests.passed, "passed"), (count(tests.failed, "failed") if tests.failed.positive?),
+         (count(tests.errors, tests.errors == 1 ? "error" : "errors") if tests.errors.positive?)].compact.join(", ")
+      end
+
+      def self.count(number, word) = "#{number} #{word}"
+      private_class_method :count
+      private_class_method :tests_said
 
       def self.implemented(digest, issue_id) = Canonical.digest("changeset" => digest, "issue" => issue_id)
       private_class_method :implemented
