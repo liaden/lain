@@ -1,6 +1,6 @@
 # Greenfield trial fixes: search that cannot freeze the session, epic skills an agent can run, and a cockpit that behaves
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson). T7 is Rust and is reviewed with the Rust roster (Linus Torvalds, Raph Levien, Andrew Gallant, Frank McSherry, Ashley Williams).
@@ -1859,3 +1859,40 @@ After the last card lands:
 - 14:13 T9 hook red on 18 e2e examples in 5 journeys: the cassettes are stale because every chat request now carries epic_write. T9 unstaged and its files reverted from the main checkout; T9 re-records the e2e cassettes against the local ollama before landing. T10 and T11 add tools too, so each re-records as well.
 - 14:17 T9 re-recorded 6 cassettes (cockpit_approve, cockpit_deny, fork_resume, two_cockpits_a/b, wire_contract); all 8 e2e journeys replay green; requeued
 - 17:24 Checkpoint after a reboot. Landed: T1, T2, T3, T8, T13, T14, T16, T17, T21, T22, T24, T26, T29, T30, T32, T33, T34, T36, T37. Approved and queued: T4, T9 (e2e cassettes re-recorded), T39, T31, T15, T25, T23. In review: T10. In progress: T5 (stacked on T4), T11 (stacked on T10), T38 (stacked on T25). Not started: T6, T7, T12, T18, T19, T20, T27, T28, T35, T40, T41, T42.
+- 17:28 T4 hook: suite green, yard-lint red (WalkLimit docstring on both the Data.define line and the reopen). Main session moved the docstring onto the reopen; T4 requeued.
+- 17:29 T6 stop condition (git child left a zombie when its offload thread was killed): main session chose to fix Shell::Out#collect for every caller, terminating and reaping the child in ensure, as it already did on Timeout. T6 adds lib/lain/shell/out.rb and its spec.
+- 17:30 T10 rulings: in-chat submit refuses under --btw (ephemeral journal); only the submitted stage's own adjudicated policy refuses; an unanswered gate reads as no answer, not a denial; Wiring loads the project config once per start. For T41: planning/qa/scenarios/epic-tier.md:322 sample 'approved blake3:...' now ends 'by policy <name>'.
+- 17:31 T4 landed 475be718
+- 17:33 T11 approved; held until T10 lands (stacked).
+- 17:35 T9 landed ab9b7506 (with 6 re-recorded e2e cassettes)
+- 17:39 T12 approved; held until T10 and T11 land (stacked).
+- 17:48 T5 hook red: its new search_rules_spec passed the bare EpicMount::NoEpic class, which T9 (landed after T5's stack base) made an instance; main session switched it to SpecNulls.unmounted_epic and requeued.
+- 17:57 T5 landed dfdf0859; T39 landed 713786c6. Local ollama restarted after the reboot (. /mnt/nvme/opt/ollama-env.sh && ollama serve) for T10's cassette re-record.
+- 17:58 Third sighting of the e2e flake spec/e2e/stop_while_busy_spec.rb 'consumes the question when an ask parked on it is stopped' (T14, T16, T18 hooks). Per the procedure a repeat becomes a card: FLAKE1 started to find and fix the race. T18 requeued.
+- 18:05 T18 re-land red on two_cockpits and a web_fetch timing example: concurrent e2e runs from T10's cassette re-record and FLAKE1's load loop collided with the hook. Landings held (STOPPED) until both finish.
+- 18:07 T7 approved; held until T6 lands (stacked).
+- 18:15 T10 approved, re-based on main and its 6 e2e cassettes re-recorded (all 8 journeys replay green); queued after T18.
+- 18:29 T18 landed 123f0e43
+- 18:33 T10 hook red: T5's landed search_rules_spec built ToolsetBuild without the paths:/config: keywords T10 makes required; fixed in T10's commit with SpecNulls.unloaded_project; requeued.
+- 18:35 T35 approved; held until T20 lands (stacked).
+- 18:36 T10 landed 15a3d9b9
+- 18:41 T28 ruling: fenced code blocks are exempt from transcript wrapping (copyable code never gains newlines).
+- 18:48 T28 approved; to be re-based onto main once T20 and T35 land.
+- 18:49 FLAKE1 approved (spec harness fix for the stop_while_busy flake); queued first.
+- 19:01 T20 rulings: deny reasons accept punctuation separators and nope/nah; the [y/N] prompt text is unchanged. For T42: README.md:507 lists :LainDeny with no argument; document :LainDeny [reason] and 'n <why>'. For T41: cockpit-surfaces.md should cover a deny reason. Known gap: a reason typed at a secret-release prompt is journaled but not passed to the model.
+- 19:14 T20 approved (held behind T19). T19 pulled from the queue: its approval_surfaces_spec 'rings the terminal with the note while the notify layer is up' flakes (0.3s timeout is a multiple of the 0.05s poll tick).
+- 19:22 T11: 5 of 6 cassettes re-recorded; cockpit_deny fails to record 5 of 5 (final reply never drawn within 300s). Investigator (opus) started. T42 done, in review.
+- 19:23 Card text correction: T42 (and T5) name the search key max_entries, not max_files as the T42 card's criterion says.
+- 19:24 T6 landed 561e0a3e. Found: CLAUDE.md's hook-busy check '[p]re-commit (hook-impl|run)' never matches (the hook runs as python -mpre_commit hook-impl); landing gate corrected. T42 approved.
+- 19:31 FLAKE1 landed 30b5601f
+- 19:43 T11 approved: cockpit_deny re-recorded after an investigation found the journey's reply wait failed when the 110-column pane wrapped a word of the reply; cockpit_approval_spec now matches ignoring whitespace. Queued with T12 first.
+- 19:40 T7 landed 351a557b; 19:42 T31 landed 25f19cef; 19:45 T11 landed ec947f6c; 19:48 T12 landed b6a3efb2; 19:49 T15 landed b09418d3; 19:50 T25 landed 7c00420a
+- 19:52 T23 hook red on spec/e2e/cockpit_approval_spec.rb 'shows a fleet line above a you> line in an input pane at its floor height' (the pane's top row was the Shift+Enter hint, not the fleet header). Green alone on the hook's seed 6114 and in 5 of 5 whole-file runs; T23 touches no cockpit code. First sighting, recorded as a known flake. The session that ran the landings had ended; a new session adopted its queue.
+- 22:16 T23 landed 8ab75208
+- T38 hook red: spec/lain/cli/chat_flags_spec.rb found `up.rb` reading options[:create] undeclared on chat. Fixed in T38's commit by adding `create: %w[up]` to the spec's ELSEWHERE allowlist. T38 landed 24d97d91
+- T27 landed a4fe1ffe; T19 landed 467e629b; T20 landed a5cb8ae4; T35 landed 8c50d6da
+- T28 conflicted in lib/lain/frontend/tty.rb and its spec after T35 landed: both gave Inbox a collaborator (stamp:, fit:). Merged by hand to take both, the note stamped, colored, then fitted; 266 examples across tty, wrap, intake and prompt guard specs green. T28 landed 5d59e7bd
+- T40 landed 7bec405f; T41 landed 509e99ca; T42 landed 75af3f9b. Every card has landed.
+- Integration checks: `rake pspec` 22662 examples, 0 failures, 13 pending, 67s (22195 at the 12:35 base check). cargo test and clippy green; `rspec --tag core` 43 examples, 0 failures; rubocop, comment-census --check-tickets and zeitwerk-census --check clean; `pre-commit run --all-files` green. spec-census --check reads 185 > 184: the plan added 2 sole_raise_error shapes (T8, fixed in c0b36b35 to assert values), and the base 22957ea0 already read 185, so 1 over the ceiling predates this plan.
+- Close-out: all card worktrees and branches removed; `git worktree list` and `git branch --list` match the start apart from /home/tara/tmp/lain-qa-2026-10-08-tree, a QA session's tree, not this run's. Manual QA (check 5) and the frugirl rerun (check 6) are owed by the user.
+- Follow-ups not carded: the cockpit_approval fleet-line flake above; Alt+b/Alt+f in LineEditor#read eats the next character; 108 examples fail under LANG=C in Skill::Catalog.split_front_matter; CLAUDE.md's hook-busy pattern '[p]re-commit (hook-impl|run)' never matches the hook, which runs as python -mpre_commit hook-impl; a deny reason typed at a secret-release prompt is journaled but not passed to the model.
