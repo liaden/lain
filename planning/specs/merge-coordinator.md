@@ -1469,3 +1469,33 @@ Scenario: a lock path that is a directory is refused by name
   whichever checkout ran the landing and added `project_root:`; T12 keys it the same way.
 - T12 started on T9's unreviewed files; T16 started on T14's unreviewed files (same-file order on
   `factory.rb`: T16's diff is re-applied as a patch if T14 changes in review).
+- T12 stop: the drainer's held drain lock deadlocks against the queue's own desk.lock.hold (FileLock is not reentrant). Ruling: CandidateDesk gains `lock:` (default `home.drain_lock`), and Drain passes an already-held lock that only yields. CandidateDesk and its spec join T12's files. `plan-gap`.
+- T9 review 1: REQUEST-CHANGES. Rulings: past the cap only desk-declined reports get the moved detail (card step 2's "every worker is declined" is amended); `Outcome` gains `verifications` parallel to reports; `rebuild_cap` is per batch, with the remaining budget passed into halves.
+- T14 review 1: APPROVE-WITH-FIXES. Rulings: `project_root:` upheld (the drainer must carry the
+  enqueuing project's root explicitly to the detached process, never derive it from its cwd); the
+  candidate-queue builder moves to `Isolation::LandingQueue.candidate(...)` so the drainer does not
+  depend on the CLI tier. Follow-ups, not yet cards:
+  - a crash after the branch moves and before the handback record strands the issue (resume and a
+    fresh land both refuse); journal an intent before the move, or let resume accept a branch that
+    holds the approved commit;
+  - `epic land` may not need its own landings checkout now that the desk swaps an unheld ref;
+    consider with deleting `ParentDesk`;
+  - the epic driver waits on the drain lock with no notice;
+  - `lain epic land` exits 0 when nothing landed (reviewer recommends exit 1; touches `exe/lain`
+    and docs; needs the human's ruling);
+  - rename `VerifyCheckout.for`'s `repo_root:` to `project_root:`.
+- T9 approved (review 2) and landed `0edd0765`.
+- T16 finished: with nothing configured the handback record gains no checks field. Its factory.rb change (one layout passed through supervisor to retirement) is a patch over T14's file; review waits for T14 to land so the patch is reviewed on the real base. T13 started on T12's unreviewed files.
+- T14 fix round done (builder now `Isolation::LandingQueue.candidate`). In second review. Its implementer left 2 hung rspec processes (106738, 109341) it was not permitted to kill; raised with the human rather than killed by the main session.
+- T14 approved (review 2) and landed `809664ab`. For T12 when it adopts `LandingQueue.candidate`: add a defaulted `verify:` keyword; one rule for the verify-tree key (the reviewer recommends deriving it from root inside the builder, dropping `project_root:`); `@param lock` type is a #hold duck. T16 moved onto `809664ab`, factory patch re-applied, in review (high).
+- T12 review 1: REQUEST-CHANGES (a drain run from a linked worktree read that worktree's config and
+  landed unverified; 2 entries with one worker id gave the second a false merged; an entry enqueued
+  while `epic land` held the drain lock was stranded, a plan gap between T12 and T14). Rulings: the
+  repository's main worktree is the one root for the drainer's config, journal and verify-tree key,
+  through one public helper; `LandingQueue.candidate` keys by it too, drops `project_root:` and gains
+  a defaulted `verify:` (landed T14 files join T12); a batch takes distinct worker ids; a drainer that
+  loses `try` keeps trying while its spool has entries. Follow-up: a SIGKILLed drainer's verify
+  process outlives it in its own process group.
+- T13 review 1: REQUEST-CHANGES (with the wiring applied, cli_spec's command list and root_defaults_spec go red; wait on an unknown id hung). Ruling: wait reserves 0/1/2/130 and exits 64 on any refusal. The lib-scanning ratchet list gains `spec/lain/project/root_defaults_spec.rb` and `spec/lain/cli_spec.rb` (it pins exe/lain's Thor classes). Follow-up: a SIGKILLed drainer's reused pid reads as a live holder.
+- T13 approved (review 2; mechanical fixes applied). Lands after T12; its drain.rb snapshot is older, so it is rebased onto T12's landing and rerun first.
+- T12 review 2: APPROVE-WITH-FIXES (a bare repository's main_root is refused). Follow-up: `epic land` reads config from its own project root, so from a linked worktree with an untracked `.lain/` it skips verification while a drainer verifies.
