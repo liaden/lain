@@ -116,6 +116,7 @@ Offline and deterministic unless noted.
 * [lain improve](docs/commands.md#lain-improve): record what would make lain itself better.
 * [lain improvements](docs/commands.md#lain-improvements): the accumulated cross-project dogfood queue.
 * [lain epic](docs/commands.md#lain-epic): the epic tier — artifact home, issue graph, sign-off queue, and landing.
+* [lain land](docs/commands.md#lain-land): queue a commit for the merge coordinator, wait on it, see who is draining.
 * [lain worktrees gc](docs/commands.md#lain-worktrees-gc): reap worker checkouts and anchors whose work is safe elsewhere.
 * [lain bench variance](docs/commands.md#lain-bench-variance): determinism and divergence across recorded runs.
 * [lain bench sweep](docs/commands.md#lain-bench-sweep): 5-arm retrieval eval, [recall@k](docs/GLOSSARY.md#bm25-recallk) over the gold corpus.
@@ -759,21 +760,22 @@ defeats the next acquire. So uncommitted work in a worktree is **scratch**.
 
 *Committed* work is not. Before reclaim, `Worktree::Handback` captures the worker's `HEAD` to
 `refs/lain/worker/<id>` — outside `refs/heads/`, so it is not a branch and `add --detach` can never
-check it out — and then merges into the parent checkout only if that checkout is clean. A dirty
-parent is declined, never merged into. A conflict is reported with its paths and its ref, and the
-orchestrator spawns a `merge_resolver` subagent over a *fresh* Timeline root, so the conflict
-transcript never lands in its own context. That resolver holds `read_file`/`edit_file`/`write_file`/
-`grep` and deliberately **not** `bash`: with no tier-3 tool it never reaches the approval gate,
-which is what makes an unattended spawn safe. Handback never raises past its caller and never
-removes a worktree.
+check it out — and then queues that ref for the merge coordinator. The parent checkout is never
+merged into. The coordinator builds each batch as a candidate commit no checkout holds, runs the
+project's verify command on it in a scratch worktree, and moves the branch only on green, by
+fast-forward where a worktree holds it. A conflict is reported with its paths, and the work stays
+on its ref. The worker's tool result names the entry, and `lain land wait <id>` says whether it
+landed ([`docs/commands.md`](docs/commands.md#lain-land)). Handback never raises past its caller and
+never removes a worktree.
 
-**A worker brings itself current before it hands back.** It anchors its own `HEAD` first, rebases
+**A worker brings itself current before it hands back.** It runs its fast checks, then anchors its `HEAD` and rebases
 onto the working branch it was cut from, and verifies with `git cherry` that every patch survived —
-so a sibling that landed first cannot silently swallow this worker's commits. Handbacks are
-serialized per parent checkout by a lock taken on the repository's common git dir, which is one file
-shared by every worktree of the repo: the human's checkout and lain's own landing worktree take the
-same lock, so `lain epic land` cannot interleave with a live chat's merge. The retry count and the
-merge strategy are the `isolation` verb of `.lain/config.rb`.
+so a sibling that landed first cannot silently swallow this worker's commits. The checks are its
+changed specs and the mirror specs of its changed sources, then the lint. One
+drainer per branch lands the queue, and `lain epic land` takes turns with it on the same lock, so
+the full suite runs once per batch rather than once per worker. The retry count, the merge
+strategy, the verify and check commands and the batch size are the `isolation` verb of
+`.lain/config.rb`.
 
 Nothing is destroyed while it might still hold work. A dirty checkout is kept rather than released,
 and `lain worktrees gc` anchors a committed `HEAD` — plus a snapshot of any dirty state — under

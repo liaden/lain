@@ -138,9 +138,13 @@ from. Two things are true and worth knowing before you reach for it:
   resolves a real backend that nothing leases from. Actor-mode children are what
   [`/implement-epic`](#implement-epic) runs, and the epic driver builds its own worktree isolation
   over the epic's working branch rather than leasing through this flag.
-- **A chat's workers do hand their commits back.** A worker brings itself current first, and the
-  merge into the parent checkout is serialized across processes, so a `lain epic land` cannot
-  interleave with a live chat's merge. The `isolation` verb tunes both halves.
+- **A chat's workers do hand their commits back, through the merge coordinator.** A worker runs its
+  fast checks (`check`, and `lint` on the files `lint_files` selects) before it rebases onto the
+  branch, then queues for the coordinator and answers
+  `queued as <id>; lain land wait <id> --branch <branch>`. The parent checkout is never merged into,
+  so your uncommitted edits there never block a handback and no handback waits on another's merge.
+  [`lain land wait`](#lain-land) says when the work is on the branch. The `isolation` verb tunes the
+  checks, the rebase and the landing.
 - **One concurrent isolated run per project.** The worktree root is keyed on the repository and
   worker ids restart at 1 per process, so a second `--isolation worktree` run in the same repo
   reaps the first's live checkouts. That is a deliberate trade — it is what lets a *crashed* run's
@@ -363,6 +367,50 @@ implementation gate for issue X` means a commit is anchored but nobody approved 
 else is refused. The implementation gate's question reports what the project's suite did on that commit (`tests: 3 passed,
 1 error`, `tests: 4 passed`, or `tests: not run (why)`); a red result does not refuse the gate, the decision is yours.
 
+<<<<<<< ours
+||||||| base
+=======
+### lain land
+
+The merge coordinator's command line. A chat's workers queue through it on their own; you run it to
+land a commit by hand, or to see where a queued one stands. One drainer lands a branch's queue at a
+time, a batch of up to `batch_cap` entries per run of the suite named by `verify`, and the branch only
+ever fast-forwards to a commit that run passed.
+
+```bash
+lain land enqueue                       # queue HEAD for the main worktree's branch, start a drainer
+lain land enqueue abc123 --branch main --id export-stream
+lain land wait export-stream-3f2a --timeout 600
+lain land status
+lain land drain                         # what the detached drainer runs; useful by hand if none started
+```
+
+| Command | What it does |
+|---|---|
+| `lain land enqueue [REF]` | Anchor REF (default `HEAD`) under `refs/lain/worker/`, queue it, and start a detached drainer. Prints the entry id and its place in the queue. `--branch` names the branch (default the main worktree's checked-out branch, which must not be detached); `--id` names the worker (default this checkout's directory name). |
+| `lain land wait ID` | Block until the entry has a result. `--branch` names the queue it was put on; `--timeout` is in seconds. |
+| `lain land status` | The pending entries, and whether a drainer holds the branch's drain lock and for how long. A holder line whose process is gone is reported as stale, not as a drainer. |
+| `lain land drain` | Land every queued entry, a batch at a time, then exit. `--branch` and `--project` default as above. |
+
+**`lain land wait` exit codes:**
+
+| Exit | Meaning |
+|---|---|
+| `0` | The work is on the branch (or was already). |
+| `1` | It did not land; the output names why. |
+| `2` | The timeout passed and the entry is still queued. |
+| `130` | Interrupted with Ctrl-C. The entry stays queued unless it landed meanwhile. |
+| `64` | The id, repository or branch was refused: an id the queue never minted, a bare repository, a detached branch. |
+
+A malformed command line, such as a missing id, is Thor's usage error and exits `1`.
+
+**The coordinator's root is the repository's main worktree**, whichever linked worktree you run
+from: its `.lain/config.rb`, its journal and its verify worktree are the main one's. A bare
+repository is refused. `lain epic land` and the drainer share one verify worktree and take turns on
+the branch's drain lock, so a landing waits rather than racing the other. A verify run takes the
+suite lock, which is one lock per machine, so two repositories never run their suites at once.
+
+>>>>>>> theirs
 ### lain worktrees gc
 
 Reap lain's worker checkouts, anchors and merged epic branches whose work is safe elsewhere. No
@@ -1011,6 +1059,13 @@ checkout. `rerere.enabled=false` is pinned on the same line for the same reason.
 
 ```ruby
 isolation retain_days: 14, rebase_retries: 3
+```
+
+Landing through the coordinator adds a verify command and a batch size:
+
+```ruby
+isolation verify: ["bundle", "exec", "rake", "spec"], batch_cap: 4, verify_timeout: 900,
+          check: ["bundle", "exec", "rspec"], lint: ["bundle", "exec", "rubocop"], lint_files: ["**/*.rb"]
 ```
 
 A bad value is refused at `.lain/config.rb:LINE`, naming the key and what would have been legal:

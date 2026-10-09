@@ -810,6 +810,12 @@ lands is the one anchored when the implementation gate approved it — found, no
 there is no way to type a commit at it, and that an issue whose implementation was never approved
 refuses **before any forge intent is journaled**.
 
+**`epic land` ends with a verification line.** After the per-issue lines it prints either
+`verification skipped: <why>` (no `verify` argv in the `isolation` verb) or
+`verification <outcome> on <tip>`. It lands through the merge coordinator's candidate desk, so it
+shares the verify worktree and the branch's drain lock with `lain land`; drive it against a queued
+entry in `merge-coordinator.md` §5 rather than here.
+
 Two more:
 
 - **an unapproved plan refuses**, even when the implementation is approved — an implementation parked
