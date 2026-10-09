@@ -367,9 +367,6 @@ implementation gate for issue X` means a commit is anchored but nobody approved 
 else is refused. The implementation gate's question reports what the project's suite did on that commit (`tests: 3 passed,
 1 error`, `tests: 4 passed`, or `tests: not run (why)`); a red result does not refuse the gate, the decision is yours.
 
-<<<<<<< ours
-||||||| base
-=======
 ### lain land
 
 The merge coordinator's command line. A chat's workers queue through it on their own; you run it to
@@ -410,7 +407,6 @@ repository is refused. `lain epic land` and the drainer share one verify worktre
 the branch's drain lock, so a landing waits rather than racing the other. A verify run takes the
 suite lock, which is one lock per machine, so two repositories never run their suites at once.
 
->>>>>>> theirs
 ### lain worktrees gc
 
 Reap lain's worker checkouts, anchors and merged epic branches whose work is safe elsewhere. No
