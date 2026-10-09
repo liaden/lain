@@ -57,7 +57,16 @@ module Lain
         # somewhere the user did not ask for and say nothing about it.
         class NotADirectory < Error
           def initialize(path)
-            super("#{path} is not a directory -- `lain up [PATH]` opens the project directory you name")
+            super("#{path} is not a directory -- `lain up [PATH]` opens the project directory you name; " \
+                  "pass --create to make a missing one")
+          end
+        end
+
+        # `--create` makes one directory, never a chain: a mistyped parent
+        # would otherwise be silently built out as a tree nobody meant.
+        class MissingParent < Error
+          def initialize(parent)
+            super("#{parent} does not exist -- --create makes only the last directory, so create the parent first")
           end
         end
 
@@ -66,16 +75,32 @@ module Lain
         # directory is read.
         #
         # @param path [String, nil]
+        # @param create [Boolean] make a missing PATH (its parent must exist)
         # @return [Hash] the `cwd:` keyword this PATH makes, or none
         # @raise [NotADirectory]
-        def self.option(path) = path.nil? ? {} : { cwd: new(path).to_s }
+        # @raise [MissingParent]
+        def self.option(path, create: false) = path.nil? ? {} : { cwd: new(path, create:).to_s }
 
-        def initialize(path)
+        def initialize(path, create: false)
           @path = File.expand_path(path)
+          make_missing if create && !File.exist?(@path)
           raise NotADirectory, path unless File.directory?(@path)
         end
 
         def to_s = @path
+
+        private
+
+        def make_missing
+          parent = File.dirname(@path)
+          raise MissingParent, parent unless File.directory?(parent)
+
+          Dir.mkdir(@path)
+        rescue Errno::EEXIST
+          # A dangling symlink reads as absent to File.exist? yet blocks mkdir;
+          # the directory check that follows names it properly.
+          nil
+        end
       end
 
       DEFAULT_SESSION = "lain"
@@ -974,10 +999,12 @@ module Lain
       # @option options [String, nil] :socket tmux socket (-L), default socket when nil
       # @option options [Boolean] :nvim open the nvim + chat cockpit
       # @option options [String, nil] :nvim_socket an explicit nvim socket; derived when unset
+      # @option options [Boolean] :create make a missing PATH
       # @raise [Workdir::NotADirectory]
+      # @raise [Workdir::MissingParent]
       # @raise [Flags::SocketWithoutCockpit]
       def self.from_options(options, chat_args:, path: nil)
-        new(chat_args:, **Flags.new(options).to_h, **Workdir.option(path))
+        new(chat_args:, **Flags.new(options).to_h, **Workdir.option(path, create: options[:create]))
       end
 
       # Adopts `pane_id` as its own session's input pane. The session is asked

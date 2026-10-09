@@ -2674,6 +2674,63 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
 
       expect { described_class.from_options(up_options, chat_args: [], path: missing) }
         .to raise_error(Lain::CLI::Up::Workdir::NotADirectory, /#{Regexp.escape(missing)}/)
+      expect(File.exist?(missing)).to be(false)
+    end
+  end
+
+  it "names --create in the refusal of a missing PATH" do
+    scratch_dir do |dir|
+      expect { described_class.from_options(up_options, chat_args: [], path: File.join(dir, "nope")) }
+        .to raise_error(Lain::CLI::Up::Workdir::NotADirectory, /--create/)
+    end
+  end
+
+  it "creates a missing PATH with --create and opens the cockpit there" do
+    scratch_dir do |dir|
+      fresh = File.join(dir, "frugirl")
+      calls = tmux_calls(path: fresh, create: true)
+
+      expect(File.directory?(fresh)).to be(true)
+      expect(pinned_dirs(new_session_call(calls))).to eq([fresh])
+    end
+  end
+
+  it "leaves an existing PATH alone under --create" do
+    scratch_dir do |dir|
+      marker = File.join(dir, "keep")
+      File.write(marker, "x")
+
+      tmux_calls(path: dir, create: true)
+
+      expect(File.read(marker)).to eq("x")
+    end
+  end
+
+  it "refuses --create when the parent is missing, naming the parent, and creates nothing" do
+    scratch_dir do |dir|
+      parent = File.join(dir, "absent")
+      target = File.join(parent, "b")
+
+      expect { described_class.from_options(up_options(create: true), chat_args: [], path: target) }
+        .to raise_error(Lain::CLI::Up::Workdir::MissingParent, /#{Regexp.escape(parent)}/)
+      expect(File.exist?(parent)).to be(false)
+    end
+  end
+
+  it "refuses a dangling symlink under --create as not a directory, not a raw EEXIST" do
+    scratch_dir do |dir|
+      link = File.join(dir, "dangling")
+      File.symlink(File.join(dir, "gone"), link)
+
+      expect { described_class.from_options(up_options(create: true), chat_args: [], path: link) }
+        .to raise_error(Lain::CLI::Up::Workdir::NotADirectory, /dangling/)
+    end
+  end
+
+  it "still refuses a regular file under --create" do
+    Tempfile.create("lain-up-create-file") do |file|
+      expect { described_class.from_options(up_options(create: true), chat_args: [], path: file.path) }
+        .to raise_error(Lain::CLI::Up::Workdir::NotADirectory)
     end
   end
 end

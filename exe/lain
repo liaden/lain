@@ -1279,6 +1279,8 @@ class LainCLI < Thor
                              "The input pane under the chat transcript is there either way"
   method_option :nvim_socket, type: :string, banner: "PATH",
                               desc: "Listen on this nvim socket instead of the per-project one lain derives"
+  method_option :create, type: :boolean, default: false,
+                         desc: "Make PATH if it does not exist (its parent must)"
   def up(path = nil, *chat_args)
     # ENV.key?("TMUX") is THIS shell's own answer to "am I already an
     # attached tmux client" -- Up#attach_command turns that into the right
