@@ -1642,4 +1642,23 @@ RSpec.describe Lain::Sensitivity do
         .to raise_error(ArgumentError, /vibes/)
     end
   end
+
+  describe "a verdict the secret oracle may approve" do
+    def approvable?(level, reason) = Lain::Sensitivity::Verdict.new(level:, reason:).oracle_approvable?
+
+    it "is an ordinary file, or a path gated only by where it is" do
+      expect([approvable?(:ordinary, :none), approvable?(:gated, :out_of_scope),
+              approvable?(:gated, :outside_project)]).to all(be(true))
+    end
+
+    it "is a file the operator exempted, whose name gate was lifted on purpose" do
+      expect(approvable?(:ordinary, :exempt)).to be(true)
+    end
+
+    it "is never a path gated by name, by shape, by config, by protection, or as unreadable" do
+      reasons = %i[named credential configured protected malformed]
+
+      expect(reasons.map { approvable?(:gated, _1) }).to all(be(false))
+    end
+  end
 end

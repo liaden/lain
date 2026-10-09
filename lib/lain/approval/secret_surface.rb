@@ -70,6 +70,10 @@ module Lain
       # The one instance of it, built through {Declined} above.
       DECLINED = Declined.new(verdict: "defer", confidence: 0.0)
 
+      # The oracle's answer, beside the verdict on the pending's path taken when
+      # the sweep claimed it: the pre-ask half of the relink check {#settle} makes.
+      Judged = Data.define(:answer, :claimed)
+
       # @param oracle [#ask] a tier answering {Oracle::SecretRead.definition} --
       #   injected, so the surface depends on the message rather than on how the
       #   local model is assembled, and so a spec never needs an ollama.
@@ -77,9 +81,10 @@ module Lain
       # @param ask_timeout [Numeric] seconds one oracle call may take
       #   ({DEFAULT_ASK_TIMEOUT}). Every other keyword forwards to
       #   {QueueSurface} -- `poll_interval:`, `pruning:`, `journal:`.
-      # @param path_gate [#path_for] which parked calls stopped at the path gate,
-      #   before any region exists; none by default, so a surface built without
-      #   one judges regions only.
+      # @param path_gate [#path_for, #verdict_for] which parked calls stopped at
+      #   the path gate, before any region exists, and what the classifier says
+      #   of each path; none by default, so a surface built without one judges
+      #   regions only and never approves.
       def initialize(oracle:, threshold: DEFAULT_THRESHOLD, ask_timeout: DEFAULT_ASK_TIMEOUT,
                      path_gate: PathGate::NONE, **)
         super(**)
@@ -87,6 +92,18 @@ module Lain
         @oracle = oracle
         @threshold = Float(threshold)
         @ask_timeout = ask_timeout
+        @claimed = {}.compare_by_identity
+      end
+
+      # Every verdict is taken over the snapshot before the first ask, since an
+      # ask yields and a link may be repointed while it waits.
+      #
+      # @param queue [Approval::Queue]
+      # @return [void]
+      def sweep(queue)
+        @claimed = queue.select { |pending| mine?(pending) }.to_h { [_1, @path_gate.verdict_for(_1)] }
+                        .compare_by_identity
+        super
       end
 
       # Pendings that WOULD release sensitive regions, and only those -- the
@@ -112,15 +129,23 @@ module Lain
       # Only a confident, RECOGNISED verdict acts. `defer`, anything the schema
       # let through that is neither token, and any confidence below the
       # threshold all fall through as the no-op that leaves the pending to the
-      # human or the clock.
-      def settle(pending, answer)
-        pending.approve(surface: SURFACE) if confident?(answer, "approve")
+      # human or the clock. An approve also needs a path the classifier did not
+      # gate for what it is, judged before the ask and again at the answer, so
+      # a link repointed during the wait cannot slip through in either
+      # direction. A deny needs neither check, since refusing is always safe.
+      def settle(pending, judged)
+        answer = judged.answer
+        pending.approve(surface: SURFACE) if confident?(answer, "approve") && approvable?(judged.claimed, pending)
         pending.deny(surface: SURFACE) if confident?(answer, "deny")
       end
+
+      def approvable?(claimed, pending) = [claimed, @path_gate.verdict_for(pending)].all? { _1&.oracle_approvable? }
 
       def confident?(answer, verdict)
         answer.verdict.to_s.strip.downcase == verdict && answer.confidence.to_f >= @threshold
       end
+
+      def answer_for(pending) = Judged.new(claimed: @claimed[pending], answer: asked(pending))
 
       # Fail toward the human on EVERY failure a local model can produce --
       # server down, server wedged, reply not JSON, reply off-schema -- because
@@ -135,7 +160,7 @@ module Lain
       # -- but a tier that resolves LATE is foreseen, and against one of those
       # an await OUTSIDE the bound parks unbounded: measured at 2.00s against a
       # 0.2s bound.
-      def answer_for(pending)
+      def asked(pending)
         bounded { @oracle.ask(**inputs_for(pending)).await }
       rescue StandardError => e
         journal_declined(pending, e)

@@ -15,6 +15,7 @@ module Lain
       # class rather than a lambda so a caller asks `path_for` and never guards.
       class Absent
         def path_for(_pending) = nil
+        def verdict_for(_pending) = nil
       end
 
       NONE = Absent.new.freeze
@@ -43,13 +44,24 @@ module Lain
       #   where it lands when that differs -- the name alone says nothing about
       #   what a link opens -- when the gate parked it
       def path_for(pending)
-        return nil unless READ_TOOLS.include?(pending.tool.to_s)
-
-        path = pending.path
+        path = read_path(pending)
         path && gated?(pending) ? shown(path, pending.cwd) : nil
       end
 
+      # What the classifier says of the path a parked read names, from the cwd
+      # it resolved against, so a surface can ask what kind of gate it was.
+      #
+      # @param pending [Approval::Queue::Pending]
+      # @return [Sensitivity::Verdict, nil] nil for a pending no read tool made,
+      #   or one naming no path
+      def verdict_for(pending)
+        path = read_path(pending)
+        path && @policy.judge(path, cwd: pending.cwd, within: pending.within)
+      end
+
       private
+
+      def read_path(pending) = READ_TOOLS.include?(pending.tool.to_s) ? pending.path : nil
 
       def gated?(pending)
         effect = Effect::ToolCall.new(tool_use_id: pending.tool_use_id, name: pending.tool.to_s, input: pending.input)

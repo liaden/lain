@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
 require "stringio"
+require "tmpdir"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module SecretSurfaceSpecSupport
@@ -87,10 +89,16 @@ RSpec.describe Lain::Approval::SecretSurface do
   # whose bytes this surface must never send anywhere.
   let(:secret) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
   let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=#{secret}\n") }
-  let(:outstanding) { Lain::Approval::Queue::Outstanding.new(path: "/repo/.env", regions:) }
+  # An ordinary file holding a credential: the case the oracle exists for.
+  let(:path) { "/repo/config/app.yml" }
+  let(:outstanding) { Lain::Approval::Queue::Outstanding.new(path:, regions:) }
   let(:faults) { [] }
+  let(:sensitivity) do
+    Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project", rules: Lain::Sensitivity::Rules.empty)
+  end
+  let(:path_gate) { Lain::Approval::PathGate.new(Lain::Sensitivity::Policy.new(sensitivity:)) }
 
-  def effect(name = "read", input = { "path" => "/repo/.env" })
+  def effect(name = "read_file", input = { "path" => path })
     SecretSurfaceSpecSupport::Effect.new(name, input, "tu_#{name}")
   end
 
@@ -101,7 +109,7 @@ RSpec.describe Lain::Approval::SecretSurface do
   end
 
   def surface(tier, threshold: 0.8)
-    described_class.new(oracle: tier, threshold:, journal: faults)
+    described_class.new(oracle: tier, threshold:, journal: faults, path_gate:)
   end
 
   # Park ONE gated call, sweep the surface over it once, and answer with the
@@ -119,8 +127,7 @@ RSpec.describe Lain::Approval::SecretSurface do
     end
   end
 
-  # AC: "a confident safe verdict releases the pending."
-  it "approves a parked read on a confident approve, and signs the release with its own name" do
+  it "approves a region in an ordinary file on a confident approve, and signs the release with its own name" do
     settled = parked(surface(oracle(verdict: "approve", confidence: 0.95)))
 
     expect(settled.approved?).to be(true)
@@ -134,32 +141,61 @@ RSpec.describe Lain::Approval::SecretSurface do
     expect(settled.surface).to eq(described_class::SURFACE)
   end
 
+  it "never approves a region without a path gate to judge its path" do
+    settled = parked(described_class.new(oracle: oracle(verdict: "approve", confidence: 1.0), journal: faults))
+
+    expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+  end
+
   describe "a gated path that carries no regions yet" do
-    let(:sensitivity) do
-      Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project", rules: Lain::Sensitivity::Rules.empty)
-    end
-    let(:path_gate) { Lain::Approval::PathGate.new(Lain::Sensitivity::Policy.new(sensitivity:)) }
+    def gated_surface(tier) = surface(tier)
 
-    def gated_surface(tier) = described_class.new(oracle: tier, threshold: 0.8, journal: faults, path_gate:)
-
-    def park(built, path)
+    def park(built, path, after_sweep: nil)
       queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
       Sync do |task|
         gated = task.async { queue.adjudicate(effect("read_file", { "path" => path }), nil) }
-        task.with_timeout(1) { queue.dequeue }
+        pending = task.with_timeout(1) { queue.dequeue }
         built.sweep(queue)
+        after_sweep&.call(pending)
         task.with_timeout(2) { gated.wait }
       ensure
         gated&.stop
       end
     end
 
-    it "asks the oracle once, with the path and the tool, and runs the call on a confident approve" do
-      tier = oracle(verdict: "approve", confidence: 0.95)
-      settled = park(gated_surface(tier), ".env.local")
+    it "asks the oracle once about a name-gated path, with the path and the tool" do
+      tier = oracle(verdict: "defer", confidence: 1.0)
+      park(gated_surface(tier), ".env.local")
 
       expect(tier.asks).to eq([{ path: ".env.local".inspect, tool: "read_file", region_count: "0" }])
-      expect([settled.approved?, settled.surface]).to eq([true, described_class::SURFACE])
+    end
+
+    { ".env" => "a credential-shaped name", "secrets/notes.txt" => "a directory naming a secret" }.each do |path, why|
+      it "leaves #{path}, gated by #{why}, parked for the human on a certain approve" do
+        undecided = nil
+        settled = park(gated_surface(oracle(verdict: "approve", confidence: 1.0)), path,
+                       after_sweep: ->(pending) { undecided = !pending.decided? })
+
+        expect(undecided).to be(true)
+        expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+      end
+    end
+
+    it "denies .env on a confident deny" do
+      settled = park(gated_surface(oracle(verdict: "deny", confidence: 0.95)), ".env")
+
+      expect([settled.approved?, settled.surface]).to eq([false, described_class::SURFACE])
+    end
+
+    # A child's confined gate parks a read outside its roots, but the path gate
+    # asks the run's own policy, which does not gate it, so the oracle is never
+    # offered the call.
+    it "is not offered a read the run's own policy does not gate, as a child's outside-project park" do
+      tier = oracle(verdict: "approve", confidence: 1.0)
+      settled = park(gated_surface(tier), "/opt/elsewhere/notes.md")
+
+      expect(tier.asks).to be_empty
+      expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
     end
 
     it "never asks about a denied path" do
@@ -179,7 +215,7 @@ RSpec.describe Lain::Approval::SecretSurface do
 
     it "leaves a gated path to the human when built without a path gate" do
       tier = oracle(verdict: "approve", confidence: 0.95)
-      park(surface(tier), ".env.local")
+      park(described_class.new(oracle: tier, threshold: 0.8, journal: faults), ".env.local")
 
       expect(tier.asks).to be_empty
     end
@@ -235,7 +271,7 @@ RSpec.describe Lain::Approval::SecretSurface do
     it "journals the fault with the path it could not judge" do
       parked(surface(tier))
 
-      expect(faults.last).to include("type" => described_class::FAULT_TYPE, "path" => "/repo/.env",
+      expect(faults.last).to include("type" => described_class::FAULT_TYPE, "path" => path,
                                      "surface" => described_class::SURFACE)
       expect(faults.last["error"]).to include("closed")
     end
@@ -282,7 +318,7 @@ RSpec.describe Lain::Approval::SecretSurface do
 
       swept_with(built, count: 1)
 
-      expect(faults.last).to include("type" => described_class::FAULT_TYPE, "path" => "/repo/.env")
+      expect(faults.last).to include("type" => described_class::FAULT_TYPE, "path" => path)
       expect(faults.last["error"]).to include("Timeout")
     end
 
@@ -367,7 +403,7 @@ RSpec.describe Lain::Approval::SecretSurface do
 
       expect(tier.asks.size).to eq(1)
       expect(tier.asks.first.keys).to contain_exactly(:path, :tool, :region_count)
-      expect(tier.asks.first).to include(tool: "read", region_count: "1")
+      expect(tier.asks.first).to include(tool: "read_file", region_count: "1")
     end
 
     it "is never handed a region's bytes, which is what makes a local judge defensible at all" do
@@ -446,5 +482,119 @@ RSpec.describe Lain::Approval::SecretSurface do
     end
 
     expect(settled.surface).to eq(described_class::SURFACE)
+  end
+
+  # The regions of a credential-named file, held by the real read-side
+  # boundary: an approve here would journal a release and send the bytes.
+  describe "a region pending on .env, through the read boundary", :seam do
+    around do |example|
+      Dir.mktmpdir("lain-secret-surface") do |made|
+        @dir = File.realpath(made)
+        File.write(File.join(@dir, ".env"), "API_KEY=#{secret}\n")
+        example.run
+      end
+    end
+
+    let(:sensitivity) { Lain::Sensitivity.new(home: "/home/tester", cwd: @dir, rules: Lain::Sensitivity::Rules.empty) }
+    let(:released) { [] }
+    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.2) }
+    let(:boundary) do
+      Lain::Middleware::RedactSecretReads.new(ledger: Lain::Sensitivity::Ledger.new, queue:, journal: released)
+    end
+    let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @dir, env: {})) }
+
+    def read_env(built)
+      read = Lain::Effect::ToolCall.new(tool_use_id: "tu_env", name: "read_file", input: { "path" => ".env" })
+      Sync do |task|
+        watcher = task.async { built.watch(queue) }
+        Lain::Middleware::Stack.new([boundary]).call({ effect: read, context: session }) do |inner|
+          invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_env", context: inner.fetch(:context))
+          inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input, invocation))
+        end
+      ensure
+        watcher&.stop
+      end
+    end
+
+    it "journals no release and sends no bytes on a certain approve" do
+      tier = oracle(verdict: "approve", confidence: 1.0)
+      content = read_env(surface(tier)).fetch(:result).content
+
+      expect(tier.asks.size).to eq(1)
+      expect(released.grep(Lain::Telemetry::ReadReleased)).to be_empty
+      expect(content).not_to include(secret)
+    end
+  end
+
+  # The verdict is taken before the oracle is asked and again when it answers,
+  # so a link repointed during the wait cannot turn either one approvable.
+  describe "a link repointed while the oracle is asked" do
+    around do |example|
+      Dir.mktmpdir("lain-secret-surface-link") do |made|
+        @dir = File.realpath(made)
+        File.write(File.join(@dir, ".env"), "API_KEY=#{secret}\n")
+        File.write(File.join(@dir, "plain.txt"), "nothing\n")
+        example.run
+      end
+    end
+
+    let(:sensitivity) { Lain::Sensitivity.new(home: "/home/tester", cwd: @dir, rules: Lain::Sensitivity::Rules.empty) }
+    let(:link) { File.join(@dir, "notes.txt") }
+    let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @dir, env: {})) }
+
+    def point(target)
+      FileUtils.rm_f(link)
+      File.symlink(File.join(@dir, target), link)
+    end
+
+    def repointed(from:, to:)
+      point(from)
+      tier = SecretSurfaceSpecSupport::ScriptedOracle.new do
+        point(to)
+        { "verdict" => "approve", "confidence" => 1.0 }
+      end
+      queue = Lain::Approval::Queue.new(journal:, timeout: 0.1)
+      read = effect("read_file", { "path" => "notes.txt" })
+      Sync do |task|
+        gated = task.async { queue.adjudicate(read, session, outstanding: Lain::Approval::Queue::Outstanding.new(path: link, regions:)) }
+        task.with_timeout(1) { queue.dequeue }
+        surface(tier).sweep(queue)
+        task.with_timeout(2) { gated.wait }
+      ensure
+        gated&.stop
+      end
+    end
+
+    it "does not approve a link to .env repointed at an ordinary file" do
+      expect(repointed(from: ".env", to: "plain.txt").surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+    end
+
+    it "does not approve a link to an ordinary file repointed at .env" do
+      expect(repointed(from: "plain.txt", to: ".env").surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+    end
+
+    # Every verdict in a sweep is taken before its first ask, so an earlier
+    # pending's ask cannot repoint a later one's link ahead of its own check.
+    it "does not approve a later pending whose link an earlier ask in the same sweep repointed" do
+      point(".env")
+      File.write(File.join(@dir, "a.yml"), "API_KEY=#{secret}\n")
+      tier = SecretSurfaceSpecSupport::ScriptedOracle.new do |inputs|
+        point("plain.txt") if inputs[:path].include?("a.yml")
+        { "verdict" => "approve", "confidence" => 1.0 }
+      end
+      queue = Lain::Approval::Queue.new(journal:, timeout: 0.1)
+      first, later = Sync do |task|
+        parks = { "a.yml" => File.join(@dir, "a.yml"), "notes.txt" => link }.map do |path, held|
+          read = effect("read_file", { "path" => path })
+          outstanding = Lain::Approval::Queue::Outstanding.new(path: held, regions:)
+          task.async { queue.adjudicate(read, session, outstanding:) }.tap { task.with_timeout(1) { queue.dequeue } }
+        end
+        surface(tier).sweep(queue)
+        parks.map { |park| task.with_timeout(2) { park.wait } }
+      end
+
+      expect(first.surface).to eq(described_class::SURFACE)
+      expect(later.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+    end
   end
 end

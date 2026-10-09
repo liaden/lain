@@ -70,6 +70,37 @@ RSpec.describe Lain::Approval::PathGate do
     end
   end
 
+  describe "#verdict_for" do
+    it "answers the classifier's verdict for the path a read names" do
+      expect(gate.verdict_for(pending("read_file", { "path" => ".env" })).reason).to eq(:credential)
+      expect(gate.verdict_for(pending("grep", { "path" => "lib" }))).to be_ordinary
+    end
+
+    it "answers nil for a pending no read tool made" do
+      expect(gate.verdict_for(pending("edit_file", { "path" => ".env" }))).to be_nil
+    end
+
+    # A worker below a secret-named directory of its checkout counts that name
+    # from the checkout, as the gate that parked it did.
+    it "counts directory names from where the parked call's base is" do
+      Dir.mktmpdir("lain-path-gate-within") do |made|
+        base = File.realpath(made)
+        cwd = File.join(base, "secrets", "sub")
+        effect = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => "notes.txt" }, "tu_1")
+        parked = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, cwd:, within: base)
+        policy = Lain::Sensitivity::Policy.new(
+          sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/elsewhere", rules: Lain::Sensitivity::Rules.empty)
+        )
+
+        expect(described_class.new(policy).verdict_for(parked).reason).to eq(:named)
+      end
+    end
+
+    it "answers nil from a session with no path boundary" do
+      expect(described_class::NONE.verdict_for(pending("read_file", { "path" => "lib/lain.rb" }))).to be_nil
+    end
+  end
+
   # The gate parked the call on where its path LANDS, so this must judge the
   # landing too, against the cwd the parked call resolved from; otherwise a
   # link to a gated file is handed to a surface that never sees the path.
@@ -97,7 +128,7 @@ RSpec.describe Lain::Approval::PathGate do
       end
     end
 
-    it "is claimed by the secret surface, which asks the oracle about the link and settles it" do
+    it "is claimed by the secret surface, which asks the oracle about the link and judges where it lands" do
       oracle = PathGateSpecSupport::ApprovingOracle.new
       surface = Lain::Approval::SecretSurface.new(oracle:, threshold: 0.9, journal: [], path_gate: gate)
 
@@ -106,7 +137,7 @@ RSpec.describe Lain::Approval::PathGate do
       expect(claimed).to be(true)
       landing = File.join(@worker, ".env.local")
       expect(oracle.asks).to eq([{ path: "readme2.txt -> #{landing}".inspect, tool: "read_file", region_count: "0" }])
-      expect([settled.approved?, settled.surface]).to eq([true, Lain::Approval::SecretSurface::SURFACE])
+      expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
     end
   end
 

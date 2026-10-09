@@ -72,6 +72,11 @@ module Lain
         malformed: "a path that cannot be read lexically"
       }.freeze
       REASONS = EXPLANATIONS.keys.freeze
+      # Ordinary, or gated only by where a path is, never by what it is. A name, a shape or
+      # an operator's own rule is a judgement a path-and-tool oracle cannot
+      # overrule, and an unreadable path is never waved through. An exempted
+      # file is ordinary: the operator lifted its name gate on purpose.
+      ORACLE_APPROVABLE = %i[none exempt out_of_scope outside_project].freeze
 
       # Checked, not coerced, for the reason {Approval::Risk::Classification}
       # states: a wrong value answering the permissive question in silence is
@@ -101,6 +106,9 @@ module Lain
       def exempt? = reason == :exempt
       def named? = reason == :named
       def explanation = EXPLANATIONS.fetch(reason)
+
+      # Whether {Approval::SecretSurface} may apply an approve to a call this verdict gated.
+      def oracle_approvable? = ORACLE_APPROVABLE.include?(reason)
     end
 
     Anchors = Data.define(:home, :root, :base)
