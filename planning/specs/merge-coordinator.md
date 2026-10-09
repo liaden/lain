@@ -1,6 +1,6 @@
 # Merge coordinator: one merger per branch, the full suite once per batch
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -1499,3 +1499,39 @@ Scenario: a lock path that is a directory is refused by name
 - T13 review 1: REQUEST-CHANGES (with the wiring applied, cli_spec's command list and root_defaults_spec go red; wait on an unknown id hung). Ruling: wait reserves 0/1/2/130 and exits 64 on any refusal. The lib-scanning ratchet list gains `spec/lain/project/root_defaults_spec.rb` and `spec/lain/cli_spec.rb` (it pins exe/lain's Thor classes). Follow-up: a SIGKILLed drainer's reused pid reads as a live holder.
 - T13 approved (review 2; mechanical fixes applied). Lands after T12; its drain.rb snapshot is older, so it is rebased onto T12's landing and rerun first.
 - T12 review 2: APPROVE-WITH-FIXES (a bare repository's main_root is refused). Follow-up: `epic land` reads config from its own project root, so from a linked worktree with an untracked `.lain/` it skips verification while a drainer verifies.
+- T12 approved (review 2) and landed `9570c32e`. T13 moved onto it.
+- T13 landed `0fe1c07b` (rebased onto T12, using the public `MergeCoordinator.main_root`).
+- T16 review 1: REQUEST-CHANGES (checks ran during a stopped child's teardown, up to 20 minutes;
+  the driver's retirement path unpinned). Ruling: the sync duck gains `unasked`, which skips the
+  checks; `leases.rb` and `self_sync.rb` join T16. T16 rebased onto `0fe1c07b`, factory patch clean.
+  Follow-up: `WorkerChecks` raises on a non-UTF-8 changed filename.
+- T16 fix round done (sync duck gained `unasked`; the main session gave 3 spec sync doubles the method). In second review. T17 started on T16's current files.
+- T16 approved (review 2; 2 dead spec-double methods dropped) and landed `fd096017` after one hook failure caused by a stray directory the main session created (a zsh loop over an unsplit list); fixed and logged.
+- T17 finished and moved onto `fd096017`; in review (high). T19 started on T17's unreviewed files.
+- T19 approved (review 1 fixes, mechanical; README rewritten for the queued handback). Lands after T17. Checked: an untrusted .lain/config.rb makes the drainer refuse and land nothing (fails closed). Follow-up: that refusal shows only in drain.log, while enqueue says a drainer is landing it and wait blocks to its timeout.
+- T17 review 1: REQUEST-CHANGES. Rulings: a surrendered child anchors only and is declined with an
+  enqueue hint (overrides the card's "surrender anchors and enqueues"), so the spool holds only checked
+  work; each queued commit is held under its own `refs/lain/queued/<branch key>/<entry id>` from enqueue
+  to complete, managed in one place both enqueuers share; Spawner owns the drainer argv. Follow-ups:
+  `checks_failed?` as a message; drain.log counts batches run, not landed.
+- T17 review 2: APPROVE-WITH-FIXES (spool refusal spec, --id in the surrender hint, Home exposes git_dir and key). Follow-up: an optional entry id on the queued handback record and on landing_batch, so a queued handback joins its landing.
+- T17 approved (review 2) and landed `ca360e2a`, after one hook red on 3 terminal-timing specs while
+  the box was loaded by unrelated work (all 3 green alone); relanded on a quiet box at the human's word.
+- T19 landed `8aa42dd1`; the landing script patched `docs/commands.md` from the wrong base and left
+  conflict markers, fixed forward in `14c0f761`.
+- Close-out on `14c0f761`, quiet box: `rake pspec` 23,223 examples, 0 failures, 13 pending;
+  `rubocop` clean (1,921 files); `zeitwerk-census --check`, `comment-census --check-tickets` and
+  `--check-load-order` clean; `spec-census --check` fails at 186 > 184 assertions, the same 186 as
+  the plan's base `f66e073e`, so not caused by this plan. Worktrees and card branches match the start,
+  less the other session's T26 worktree, which it removed. Pids 106738 and 109341 (hung rspec left by an
+  implementer, not killed by the main session) are still running, for the human.
+- Manual pass owed by the human: `planning/qa/scenarios/merge-coordinator.md` against a throwaway
+  project with 2 chats in worktrees on 1 branch.
+- Follow-ups recorded above, not built: a crash between the branch move and the handback record
+  strands an epic issue; `epic land` may not need its landings checkout, with `ParentDesk` deleted;
+  the epic driver waits on the drain lock with no notice; `epic land` exits 0 when nothing landed
+  (needs the human's ruling); rename `VerifyCheckout.for`'s `repo_root:`; `epic land` reads config from
+  its own root; a SIGKILLed drainer's verify process outlives it, and its reused pid reads as live in
+  status; spool results and `.partial` files are never cleaned; `WorkerChecks` raises on a non-UTF-8
+  filename; an untrusted config's refusal shows only in `drain.log`; an entry id on queued handback
+  and `landing_batch` records; `checks_failed?` as a message; drain.log counts batches run.
