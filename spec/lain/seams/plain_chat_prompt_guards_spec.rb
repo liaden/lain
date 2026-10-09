@@ -774,6 +774,28 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       end
     end
 
+    # Prose is no verdict either: it is held for `you>` and the `[y/N]` asks again.
+    describe "prose typed at a [y/N] that preempted an empty you>" do
+      let(:shape) { "actor" }
+
+      it "decides nothing, is held, and is dispatched once the call is answered" do
+        terminal.await(/you> /)
+        terminal.typed
+        terminal.await(PlainChatPromptGuards::APPROVAL)
+        terminal.type("please also fix the tests\r")
+        terminal.await(/held as your next prompt: please also fix the tests/)
+        terminal.await(/a y or n answers the approval/)
+        terminal.await_asked_again_after("a y or n answers the approval")
+
+        expect(terminal.verdicts).to be_empty
+
+        terminal.type("n\r")
+        terminal.wait_for(what: "the held line dispatched") { terminal.dispatched == ["please also fix the tests"] }
+
+        expect(terminal.verdicts).to eq([%w[tty deny]])
+      end
+    end
+
     # `/approve` typed while the watcher's own `[y/N]` for the same call waits
     # behind it: one question for one call, and the prompt left over is taken
     # down in words once the call is decided rather than asked again.

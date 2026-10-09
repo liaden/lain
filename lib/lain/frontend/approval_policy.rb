@@ -49,13 +49,18 @@ module Lain
       # Anything else -- a bare "enter", "n", garbage, or EOF -- denies. Approving
       # a tier-3 shell command is the one decision in this whole harness that must
       # fail closed: an unrecognized keystroke is not consent.
-      AFFIRMATIVE = /\Ay(es)?\z/i
+      AFFIRMATIVE = /\Ay(es)?[[:punct:]]*\z/i
       private_constant :AFFIRMATIVE
+
+      VERDICT = /\A(?:y(?:es)?|no?|nope|nah)[[:punct:]]*\z/i
+      private_constant :VERDICT
 
       # The model reads the reason. Punctuation counts as a separator only when
       # space follows it or it touches the word, so "n ./build" keeps its path.
       REASONED_NO = /\A(?:nope|nah|no?)(?:(?:[[:punct:]]*\s+)+|[[:punct:]]+)(?<reason>\S.*)\z/i
       private_constant :REASONED_NO
+
+      REFUSED = "a y or n answers the approval"
 
       # How a prompt another surface decided ends its line.
       CLOSED = "decided by %<surface>s: %<verdict>s"
@@ -67,9 +72,6 @@ module Lain
       QUEUED = "! %<call>s  -- its y/N is asked next"
       DROPPED = "! %<call>s  -- %<outcome>s"
       CALL = "%<preamble>s%<requester>s asks to run %<tool>s(%<input>s)"
-
-      # What a line typed for the chat rather than for the prompt begins with.
-      COMMAND = "/"
 
       # The standalone reader's input when none is handed in: nothing is ever
       # typed there, so the answer is EOF and the call is denied.
@@ -114,12 +116,23 @@ module Lain
           yield format(DROPPED, call:, outcome:) if decided_elsewhere?
         end
 
-        # Whether `line` is an answer to this prompt at all. A `/command` is not:
-        # typed at the drawn prompt it was meant for the chat -- `/goal off` while
-        # a goal's iteration waits on this call -- and read as a verdict it was
-        # both a denial nobody gave and a command lost. The rail holds it for
-        # `you>` and asks again ({Intake#read}), so it still decides nothing.
-        def takes?(line) = !line.lstrip.start_with?(COMMAND)
+        # Whether `line` is an answer to this prompt at all: a verdict, or an
+        # empty line. Anything else was meant for the chat -- `/goal off` while
+        # a goal's iteration waits on this call, or a sentence for the model --
+        # and read as a verdict it was both a denial nobody gave and a line
+        # lost. A pasted block arrives as one string with its newlines, and is
+        # prose whatever its lines say. The rail holds it for `you>` and asks
+        # again ({Intake#read}), so it still decides nothing.
+        def takes?(line)
+          answer = line.strip
+          return false if answer.include?("\n")
+
+          answer.empty? || answer.match?(VERDICT) || answer.match?(REASONED_NO)
+        end
+
+        # Yields what is said after a refused line is held, so the human learns
+        # the prompt is still waiting and what answers it.
+        def refused = yield REFUSED
 
         # Told by the {Intake} when this prompt is drawn, which is when the
         # call's approval window starts running.

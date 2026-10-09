@@ -11,6 +11,8 @@ RSpec.describe Lain::Frontend::Intake do
 
       def render_held(text) = @said << [:held, text]
 
+      def render_note(text) = @said << [:note, text]
+
       def close_prompt(text) = text.respond_to?(:closed) && text.closed { |note| @said << [:closed, note] }
 
       def queue_prompt(text) = @said << [:queued, text.to_s]
@@ -269,6 +271,26 @@ RSpec.describe Lain::Frontend::Intake do
       end
 
       expect([answer, rail.take_held]).to eq(["n", "/goal off"])
+    end
+  end
+
+  describe "a prompt that explains why it refused a line" do
+    it "has the explanation said right after the held line" do
+      asked = Class.new(String) do
+        def takes?(line) = line == "n"
+        def refused = yield "only n answers"
+      end.new("[y/N] ")
+      Sync do |task|
+        task.async do
+          pumped_until(task) { rail.published.generation == 1 }
+          rail << line("chatter", 1)
+          pumped_until(task) { rail.published.generation == 2 }
+          rail << line("n", 2)
+        end
+        rail.read(:approval, asked)
+      end
+
+      expect(screen.said).to eq([[:held, "chatter"], [:note, "only n answers"]])
     end
   end
 

@@ -84,6 +84,7 @@ module Lain
       # The rail nobody is watching: holds and closings are told to no one.
       module Unseen
         def self.render_held(_text) = nil
+        def self.render_note(_text) = nil
         def self.close_prompt(_text) = nil
         def self.queue_prompt(_text) = nil
         def self.drop_prompt(_text) = nil
@@ -114,8 +115,8 @@ module Lain
       end
       private_constant :Heard, :REDRAWN, :STILL_DRAWN, :STEPPED_ASIDE, :Preempt, :Turn
 
-      # @param screen [#render_held, #close_prompt, #queue_prompt, #drop_prompt]
-      #   where the human is told a line was held, where a withdrawn prompt's
+      # @param screen [#render_held, #render_note, #close_prompt, #queue_prompt, #drop_prompt]
+      #   where the human is told a line was held and why its prompt refused it, where a withdrawn prompt's
       #   line is ended, and where a prompt waiting its turn is announced and,
       #   leaving unpublished, said to have gone
       # @param history [#remember] takes each line that reaches `you>`, whole --
@@ -298,6 +299,7 @@ module Lain
         return Heard.new(text: value.text) if answers?(prompt, text, value)
 
         hold(value.text)
+        text.refused { |note| @screen.render_note(note) } if text.respond_to?(:refused)
         stale?(prompt, value) ? STILL_DRAWN : REDRAWN
       end
 

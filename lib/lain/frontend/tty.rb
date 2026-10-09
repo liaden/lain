@@ -219,6 +219,10 @@ module Lain
       # reads as swallowed.
       def render_held(line) = render_warning(stamp(format(HELD, legible(line))))
 
+      # What the prompt that refused a held line says about itself, said right
+      # after {#render_held}.
+      def render_note(note) = render_warning(stamp(note))
+
       # Said after {#render_held} at `command>`, where the human most likely
       # meant the line as an answer.
       def render_held_not_an_answer(question:)

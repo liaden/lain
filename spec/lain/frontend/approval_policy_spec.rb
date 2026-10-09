@@ -92,7 +92,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(output.string).to include("researcher")
   end
 
-  %w[y yes Y YES Yes].each do |answer|
+  %w[y yes Y YES Yes y. yes!].each do |answer|
     it "approves on #{answer.inspect}" do
       approval = pending
       policy_for("#{answer}\n").decide(approval)
@@ -101,7 +101,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
   end
 
-  %w[n no N garbage].each do |answer|
+  %w[n no N].each do |answer|
     it "denies on #{answer.inspect}" do
       approval = pending
       policy_for("#{answer}\n").decide(approval)
@@ -128,7 +128,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(approval.reason).to eq("./build is generated")
   end
 
-  %w[n nope nah no. garbage].push("y stay", "nobody asked").each do |answer|
+  # The standalone reader's decision only; the Intake holds a line {Asked#takes?} refuses before it gets here.
+  %w[n nope nah no.].push("y stay", "nobody asked", "garbage").each do |answer|
     it "denies on #{answer.inspect} with no reason" do
       approval = pending
       policy_for("#{answer}\n").decide(approval)
@@ -743,8 +744,30 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       prompt
     end
 
-    it "takes a verdict of any kind, an empty line included" do
-      expect(%w[y yes n no maybe].push("").map { |line| asked.takes?(line) }).to all(be(true))
+    it "takes a verdict, an empty line and a reasoned no included" do
+      lines = ["y", "Yes", "n", "no", "N", "n not now", "No. not now", "n - stay inside", "", "  ",
+               "nope", "nah", "no.", "N.", "y.", "yes!"]
+
+      expect(lines.map { |line| asked.takes?(line) }).to all(be(true))
+    end
+
+    it "does not take prose, so it is held as the next prompt" do
+      lines = ["please also fix the tests", "maybe", "garbage", "yes please", "nobody asked", "y stay"]
+
+      expect(lines.map { |line| asked.takes?(line) }).to all(be(false))
+    end
+
+    it "does not take a pasted block, whatever its lines say" do
+      blocks = ["first line\nn", "n\nrm -rf x", "y\nand more", "n not now\nsecond"]
+
+      expect(blocks.map { |block| asked.takes?(block) }).to all(be(false))
+    end
+
+    it "says a y or n answers the approval when it refuses a line" do
+      said = []
+      asked.refused { |note| said << note }
+
+      expect(said).to eq(["a y or n answers the approval"])
     end
 
     it "does not take a /command, leading blanks or not" do
