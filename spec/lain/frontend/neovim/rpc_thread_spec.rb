@@ -1327,4 +1327,49 @@ RSpec.describe Lain::Frontend::Neovim, "the thread pane's write refusal", :nvim 
   ensure
     typed("\r")
   end
+
+  # The question pane's refusals used to be `error(...)` out of the autocmd,
+  # which raised the hit-enter prompt and queued every later request. The
+  # rpcrequest is replaced because the line-naming refusal is Ruby's, and what
+  # is under test is how the editor reports it.
+  describe "the question pane" do
+    before do
+      lua(<<~LUA, [])
+        vim.rpcrequest = function() error("line 3 has no slot in this grammar", 0) end
+        _G.__lain.set_question("lain://question", { "## Which?", "- [ ] `pg`" }, "blake3:c0ffee")
+        vim.api.nvim_buf_set_lines(vim.fn.bufnr("lain://question"), 0, -1, false,
+          { "## Which?", "- [ ] `pg`", "stray" })
+      LUA
+      attach_ui
+    end
+
+    it "refuses a write Ruby rejects on the rail, leaving nvim answering" do
+      typed(":w\r")
+      mode = settled_mode
+
+      expect(mode).to include("blocking" => false)
+      expect(messages).to include("lain: ").and include("line 3 has no slot")
+      expect(messages).not_to include("stack traceback")
+      expect(lua("return vim.bo[vim.fn.bufnr('lain://question')].modified", [])).to be(true)
+      expect(round_trip).to eq(2)
+    ensure
+      typed("\r")
+    end
+
+    it "refuses an untouched write on the rail with :w! last" do
+      lua(<<~LUA, [])
+        local buf = vim.fn.bufnr("lain://question")
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.b[buf].lain_question_rendered)
+      LUA
+      typed(":w\r")
+      mode = settled_mode
+
+      expect(mode).to include("blocking" => false)
+      expect(messages).to match(/:w!\s*\z/)
+      expect(lua("return vim.bo[vim.fn.bufnr('lain://question')].modified", [])).to be(true)
+      expect(round_trip).to eq(2)
+    ensure
+      typed("\r")
+    end
+  end
 end

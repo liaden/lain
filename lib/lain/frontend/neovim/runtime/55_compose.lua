@@ -91,14 +91,12 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
     local ok, err = pcall(vim.rpcrequest, chan, "lain_command", "compose", lines,
       vim.b[ev.buf].lain_compose_generation)
     if not ok then
-      -- Re-raised, not merely notified: a `:w` whose text reached nobody must
-      -- FAIL as a write. Erroring here is what leaves 'modified' set, so the
-      -- buffer keeps saying it holds unsaved text and nvim refuses to DISCARD
-      -- it -- `:bdelete`/`:bwipeout` answer E89, and a last-window quit is
-      -- refused. Note plain `:q` still succeeds: bufhidden = "hide" hides the
-      -- buffer rather than abandoning it, so quitting a window is not a
-      -- discard and nvim has nothing to object to.
-      error("lain: compose could not reach lain, buffer NOT saved: " .. tostring(err), 0)
+      -- Answered on the review rail and not raised: a raise leaves nvim behind a
+      -- hit-enter prompt. Leaving 'modified' set is what keeps nvim refusing to
+      -- DISCARD the buffer (`:bdelete`/`:bwipeout` answer E89), though plain `:q`
+      -- still succeeds: bufhidden = "hide" makes quitting a window a hide.
+      _G.__lain.review_refused("compose could not reach lain, buffer NOT saved: " .. tostring(err))
+      return
     end
     vim.bo[ev.buf].modified = false
   end,

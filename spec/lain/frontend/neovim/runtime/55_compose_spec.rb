@@ -78,7 +78,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       edit_compose(["text the human typed and thinks is saved"])
       result = write_compose
 
-      expect(result["ok"]).to be(false)
+      expect(result["ok"]).to be(true)
+      expect(messages).to include("lain: compose could not reach lain").and include("NOT saved")
+      expect(messages).not_to include("lain: lain:")
       expect(compose_state).to include("modified" => true)
     end
 
@@ -246,6 +248,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       return { ok = ok, err = tostring(err) }
     LUA
   end
+
+  def messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
 
   def edit_compose(lines)
     inspector.exec_lua(<<~LUA, [lines])

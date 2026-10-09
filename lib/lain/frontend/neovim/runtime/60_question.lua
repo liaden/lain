@@ -167,23 +167,22 @@ end
 -- What is NOT the same, and is the whole reason this buffer exists: this write
 -- can be REFUSED. Ruby parses the document synchronously inside this request,
 -- so a line the grammar has no slot for comes back as the request's ERROR
--- rather than as an ack, and erroring here leaves the buffer modified with the
+-- rather than as an ack, and refusing here leaves the buffer modified with the
 -- human's own text for them to go fix. Nothing re-renders over it. The two
 -- failures therefore share one path on purpose: "the grammar refused line 6"
 -- and "lain was not there" are both a `:w` that did not save, and the message
 -- carries which one it was.
 --
--- The message rides the ERROR rather than an nvim_echo. nvim 0.12 appends a lua
--- stack traceback under it -- naming a byte offset in an injected string, noise
--- no human can act on -- and `error(msg, 0)` does not suppress that. The dodge,
--- echoing the sentence then `error("", 0)`, would move the one thing a human
--- needs into `:messages`, where a scripted `:w` and a pcall cannot see it.
+-- The message rides `__lain.review_refused` and not an error. nvim 0.12 appends
+-- a lua stack traceback under a raise and raises the hit-enter prompt, which
+-- queues every non-fast RPC request until a key is pressed. Leaving 'modified'
+-- set is what makes the write not succeed, so no raise is needed.
 local question_group = vim.api.nvim_create_augroup("lain_question", { clear = true })
 
 -- The write nobody typed. `vim.v.cmdbang` is what `:w!` sets, and it is the
 -- override: declining every question stays possible and stays CHOSEN.
-local UNTOUCHED = "lain: nothing in this buffer has been typed, and a plain :w would answer every question as " ..
-  "unanswered -- which is a decision, not a default. Answer something, or use :w! to submit it as it stands."
+local UNTOUCHED = "nothing in this buffer has been typed, and a plain :w would answer every question as " ..
+  "unanswered -- which is a decision, not a default. Answer something, or submit it as it stands with :w!"
 
 local function untouched(buf, lines)
   return vim.v.cmdbang == 0 and vim.deep_equal(lines, vim.b[buf].lain_question_rendered)
@@ -195,12 +194,14 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
   callback = function(ev)
     local lines = vim.api.nvim_buf_get_lines(ev.buf, 0, -1, false)
     if untouched(ev.buf, lines) then
-      error(UNTOUCHED, 0)
+      _G.__lain.review_refused(UNTOUCHED)
+      return
     end
     local ok, err = pcall(vim.rpcrequest, chan, "lain_command", "question", lines,
       vim.b[ev.buf].lain_question_digest)
     if not ok then
-      error("lain: question NOT saved: " .. tostring(err), 0)
+      _G.__lain.review_refused("question NOT saved: " .. tostring(err))
+      return
     end
     vim.bo[ev.buf].modified = false
   end,

@@ -162,7 +162,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         opened_question(three)
 
         expect(buffer_lines("lain://question")).to eq(rendered(three))
-        expect(write_question["err"]).to include(":w!")
+        expect(write_question).to include("ok" => true)
+        expect(messages).to include(":w!")
       end
     end
 
@@ -196,8 +197,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         edit_question(typed)
         result = write_question
 
-        expect(result["ok"]).to be(false)
-        expect(result["err"]).to include("line #{typed.size}")
+        expect(result["ok"]).to be(true)
+        expect(messages).to include("line #{typed.size}").and include("lain: ")
+        expect(messages).not_to include("lain: lain:")
         expect(question_state).to include("modified" => true)
         expect(buffer_lines("lain://question")).to eq(typed)
         # Nothing was submitted, so the set is still the one this buffer answers.
@@ -218,8 +220,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
         result = write_question
 
-        expect(result["ok"]).to be(false)
-        expect(result["err"]).to include(":w!")
+        expect(result["ok"]).to be(true)
+        expect(messages).to match(/:w!\s*\z/)
         # The refusal never even reaches Ruby -- the editor knows the human
         # typed nothing -- so nothing can be queued, and a non-blocking pop is
         # the assertion rather than a timeout somebody has to wait out.
@@ -255,8 +257,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       edit_question(ticked)
       result = write_question
 
-      expect(result["ok"]).to be(false)
-      expect(result["err"]).to include("NOT saved")
+      expect(result["ok"]).to be(true)
+      expect(messages).to include("NOT saved")
       expect(question_state).to include("modified" => true)
     end
 
@@ -292,6 +294,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       return { ok = ok, err = tostring(err) }
     LUA
   end
+
+  def messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
 
   def edit_question(lines)
     inspector.exec_lua(<<~LUA, [lines])
