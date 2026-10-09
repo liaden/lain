@@ -23,7 +23,9 @@ RSpec.describe Lain::Config do
     it "gives the worktree lifecycle its ruled defaults" do
       Dir.mktmpdir do |root|
         expect(described_class.load(root:).isolation.to_h)
-          .to eq(retain_days: 7, rebase_retries: 1, diff_algorithm: "histogram", conflict_style: "zdiff3")
+          .to eq(retain_days: 7, rebase_retries: 1, diff_algorithm: "histogram", conflict_style: "zdiff3",
+                 verifier: "command", verify: [], verify_timeout: 1800, verify_keep: ["target/"],
+                 batch_cap: 8, rebuild_cap: 3, check: [], lint: [], lint_files: [], check_retries: 1)
       end
     end
   end

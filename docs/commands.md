@@ -994,6 +994,16 @@ table is optional and an absent one behaves exactly like the defaults below.
 | `rebase_retries` | `1` | How many times a worker retries its self-rebase before handing back. At least 0 — and `0` is how a project turns worker self-sync off entirely. |
 | `diff_algorithm` | `histogram` | `histogram`, `patience`, `minimal`, or `myers`. Reaches git as `-X diff-algorithm=<value>`. |
 | `conflict_style` | `zdiff3` | `zdiff3`, `diff3`, or `merge`. Reaches git as `-c merge.conflictStyle=<value>`. |
+| `verifier` | `command` | The strategy that judges a landing batch. Only `command` exists. |
+| `verify` | `[]` | Argv for the full suite, as a list of non-empty strings. `[]` skips verification. |
+| `verify_timeout` | `1800` | Seconds the full suite may run. A whole number, at least 1. |
+| `verify_keep` | `["target/"]` | Relative paths the scratch worktree reset keeps. |
+| `batch_cap` | `8` | Most queued entries landed in one batch. At least 1. |
+| `rebuild_cap` | `3` | Times a batch is rebuilt after the branch tip moves. At least 0. |
+| `check` | `[]` | Argv for the fast-tier test command; changed and mirror test paths are appended. |
+| `lint` | `[]` | Argv for the fast-tier lint command; changed files are appended. |
+| `lint_files` | `[]` | Globs a changed file must match to be handed to `lint`. `[]` hands it every changed file. |
+| `check_retries` | `1` | Times a worker is asked to fix a failed fast-tier check. At least 0. |
 
 Both merge knobs ride **lain's own command line**, never your `git config`: a worker's merge should
 not depend on the machine it ran on, and it must not rewrite a setting the human chose for their own
