@@ -2011,11 +2011,16 @@ RSpec.describe Lain::StatusFeed do
 
   describe "work in flight" do
     let(:at) { Time.utc(2026, 10, 8, 12, 0, 0) }
-    let(:feed) { described_class.new(path:, clock: -> { at }) }
+    let(:feed) { described_class.new(path:, clock: -> { at }).tap { |built| built.bind_store(store) } }
 
-    def tool_turn(*names)
+    let(:store) { CoreGraph.store }
+
+    # The record the tee carries when a model round stops asking for tools.
+    def tool_usage(*names)
       content = names.map { |name| { "type" => "tool_use", "id" => "tu_#{name}", "name" => name, "input" => {} } }
-      Lain::Event.turn(role: "assistant", content:)
+      digest = CoreGraph.timeline(store:).commit(role: :assistant, content:).head_digest
+      Lain::Telemetry::TurnUsage.new(digest:, model: "claude-x", stop_reason: :tool_use,
+                                     usage: { "input_tokens" => 1, "output_tokens" => 1 })
     end
 
     def published = JSON.parse(File.read(path))
@@ -2029,7 +2034,7 @@ RSpec.describe Lain::StatusFeed do
 
     it "names the tool once the agent awaits tools for a grep call" do
       feed.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
-      feed << tool_turn("grep")
+      feed << tool_usage("grep")
       feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
 
       expect(hud(now: at)).to include(" tool:grep").and(satisfy { |line| !line.include?("model:") })
@@ -2037,9 +2042,49 @@ RSpec.describe Lain::StatusFeed do
 
     it "names the tools when the turn lands after the transition" do
       feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
-      feed << tool_turn("grep", "read_file")
+      feed << tool_usage("grep", "read_file")
 
       expect(hud(now: at)).to include(" tool:grep,read_file")
+    end
+
+    it "names the tools of a tool_use turn read from the bound store" do
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+      feed << tool_usage("read_file", "grep")
+
+      expect(published["in_flight"]).to include("kind" => "tool", "tools" => %w[read_file grep])
+    end
+
+    it "names no tools and raises nothing when the bound store cannot read the head" do
+      broken = instance_double(Lain::Store)
+      allow(broken).to receive_messages(key?: true)
+      allow(broken).to receive(:fetch).and_raise(Lain::Store::MissingObject, "gone")
+      feed.bind_store(broken)
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+
+      expect { feed << tool_usage("grep") }.not_to raise_error
+      expect(published["in_flight"]).to include("kind" => "tool", "tools" => [])
+    end
+
+    it "names no tools when no store is bound" do
+      unbound = described_class.new(path:, clock: -> { at })
+      unbound.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+
+      expect { unbound << tool_usage("grep") }.not_to raise_error
+    end
+
+    it "keeps the names a tool_use turn gave through the transition that follows it" do
+      feed << tool_usage("grep")
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+
+      expect(published["in_flight"]).to include("tools" => ["grep"])
+    end
+
+    it "ignores the content of a turn whose usage did not stop on tool_use" do
+      digest = tool_usage("grep").digest
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+      feed << turn_usage(digest:)
+
+      expect(published["in_flight"]).to include("tools" => [])
     end
 
     it "carries neither segment once the agent is awaiting the user again" do
@@ -2050,7 +2095,7 @@ RSpec.describe Lain::StatusFeed do
     end
 
     it "forgets the tool names when the agent returns to the model" do
-      feed << tool_turn("grep")
+      feed << tool_usage("grep")
       feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
       feed.on_transition(from: :awaiting_tools, to: :awaiting_model, event: :tools_done)
 
@@ -2064,7 +2109,7 @@ RSpec.describe Lain::StatusFeed do
     end
 
     it "forgets the tool names after a later model round ends in a tool_use stop with no blocks" do
-      feed << tool_turn("grep")
+      feed << tool_usage("grep")
       feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
       feed.on_transition(from: :awaiting_tools, to: :awaiting_model, event: :dispatch)
       feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
@@ -2073,7 +2118,7 @@ RSpec.describe Lain::StatusFeed do
     end
 
     it "lists a tool asked for twice once" do
-      feed << tool_turn("grep", "grep", "read_file")
+      feed << tool_usage("grep", "grep", "read_file")
       feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
 
       expect(hud(now: at)).to include(" tool:grep,read_file ")
@@ -2096,12 +2141,21 @@ RSpec.describe Lain::StatusFeed do
     end
 
     it "clears the slot of a parked tool call when the run is interrupted" do
-      feed << tool_turn("ask_human")
+      feed << tool_usage("ask_human")
       feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
 
       feed << Lain::Telemetry::RunInterrupted.new(head: nil, reason: :transport)
 
       expect(published["in_flight"]).to be_nil
+    end
+
+    it "shows no tools for the next run's tool slot after an interrupt, until its own turn names them" do
+      feed << tool_usage("grep")
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+      feed << Lain::Telemetry::RunInterrupted.new(head: nil, reason: :stopped)
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+
+      expect(published["in_flight"]).to include("kind" => "tool", "tools" => [])
     end
 
     it "is its own transition listener, so the chat's Instrumentation can carry it" do

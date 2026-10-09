@@ -406,6 +406,7 @@ module Lain
     def observe_commit(event)
       observe_usage(event)
       @inbox.committed(event.digest)
+      @tool_names = tool_names_in(event.digest) if event.stop_reason == :tool_use
     end
 
     # A nil `usage` is ignored rather than wrapped. {Telemetry::TurnUsage}'s
@@ -565,23 +566,25 @@ module Lain
         @inbox.arrived(event)
       when :turn
         @inbox.retire(event.causal_parents)
-        named = tool_names_in(event)
-        @tool_names = named unless named.empty?
       end
     end
 
-    # The tools a committed turn asked for: the transition announces only that
-    # tools are awaited, and the turn is where their names are journaled.
-    def tool_names_in(event)
-      Array(event.body&.fetch("content", nil)).filter_map do |block|
+    # The transition announces only that tools are awaited; the turn is where
+    # the names are journaled. Wide rescue for {Inbox#cited_by_chain}'s reason:
+    # the tee re-raises into the agent loop.
+    def tool_names_in(digest)
+      Array(@store.fetch(digest).body&.fetch("content", nil)).filter_map do |block|
         block["name"] if block.is_a?(Hash) && block["type"] == "tool_use"
       end
+    rescue StandardError
+      []
     end
 
     # An interrupted run ends without the transition that would clear the slot.
     def interrupted
       remeasure
       @flight = nil
+      @tool_names = []
     end
 
     def in_flight_slot

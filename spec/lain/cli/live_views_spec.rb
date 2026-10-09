@@ -238,4 +238,98 @@ RSpec.describe Lain::CLI::LiveViews do
         .to be(Lain::Agent::TransitionListener::Null)
     end
   end
+
+  describe "the tools in flight, through the real chronicle, tee, store and agent" do
+    let(:real_chronicle) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new)) }
+    let(:state_path) { File.join(Dir.mktmpdir, "state.json") }
+    let(:feed) { Lain::StatusFeed.new(path: state_path) }
+    let(:seen) { [] }
+    let(:state_reader) { -> { File.exist?(state_path) ? JSON.parse(File.read(state_path)) : {} } }
+
+    # A tool that reports what the published state says while it is running,
+    # which is when a parked call is on screen.
+    def spying_tool(tool_name, seen, reader)
+      Class.new(Lain::Tool) do
+        define_method(:name) { tool_name }
+        define_method(:description) { "spy" }
+        define_method(:input_schema) { { type: :object, properties: {} } }
+        define_method(:perform) do |_input, _context|
+          seen << reader.call
+          Lain::Tool::Result.ok("ok")
+        end
+      end.new
+    end
+
+    def attach_live_views
+      @attach_live_views ||= described_class.new(options: { journal: true }, chronicle: real_chronicle,
+                                                 status_feed: feed)
+    end
+
+    def agent_for(provider, *tools)
+      attach_live_views
+      agent = Lain::Agent.new(provider:, toolset: Lain::Toolset.new(tools),
+                              context: Lain::Context.new(model: "m", max_tokens: 10, system: "s"),
+                              instrumentation: real_chronicle.instrumentation)
+      feed.bind_store(agent.timeline.store)
+      agent
+    end
+
+    def replies(*responses) = Lain::Provider::Mock.new(responses:)
+
+    def tool_reply(*names)
+      Lain::Response.new(content: names.map do |n|
+        { "type" => "tool_use", "id" => "tu_#{n}", "name" => n, "input" => {} }
+      end,
+                         stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 1, output_tokens: 1))
+    end
+
+    def spawn_reply
+      Lain::Response.new(content: [{ "type" => "tool_use", "id" => "tu_sub", "name" => "subagent",
+                                     "input" => { "prompt" => "go" } }],
+                         stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 1, output_tokens: 1))
+    end
+
+    def done_reply
+      Lain::Response.new(content: [{ "type" => "text", "text" => "done" }], stop_reason: :end_turn,
+                         usage: Lain::Usage.new(input_tokens: 1, output_tokens: 1))
+    end
+
+    it "names a bash call in state.json and the HUD while the tool runs" do
+      agent = agent_for(replies(tool_reply("bash"), done_reply), spying_tool("bash", seen, state_reader))
+
+      agent.ask("go")
+
+      expect(seen.first.fetch("in_flight")).to include("kind" => "tool", "tools" => ["bash"])
+      expect(seen.first.fetch("hud")).to include("tool:bash")
+    end
+
+    it "names both calls of one reply" do
+      agent = agent_for(replies(tool_reply("read_file", "grep"), done_reply),
+                        spying_tool("read_file", seen, state_reader), spying_tool("grep", seen, state_reader))
+
+      agent.ask("go")
+
+      expect(seen.first.dig("in_flight", "tools")).to eq(%w[read_file grep])
+    end
+
+    it "never names a tool a child called, since the child's records do not reach the tee" do
+      attach_live_views
+      child_context = Lain::Context.new(model: "m", max_tokens: 10, system: "s")
+      parent = nil
+      seam = Lain::Tools::Subagent::Seam.new(provider: replies(tool_reply("grep"), done_reply),
+                                             context_factory: -> { child_context }, parent: -> { parent.timeline },
+                                             tool_middleware: ToolRegistry::UNGUARDED,
+                                             telemetry: real_chronicle.instrumentation.journal)
+      subagent = Lain::Tools::Subagent.new(
+        seam:, toolset: Lain::Toolset.new([spying_tool("grep", seen, state_reader)]), max_depth: 1,
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: %w[grep])
+      )
+      parent = agent_for(replies(spawn_reply, done_reply), subagent)
+
+      parent.ask("go")
+
+      expect(seen).not_to be_empty
+      expect(seen.flat_map { |state| state.dig("in_flight", "tools").to_a }).to eq(["subagent"])
+    end
+  end
 end
