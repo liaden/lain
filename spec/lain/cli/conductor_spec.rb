@@ -1147,6 +1147,80 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
+  # A countdown still running when the ask answers is the human's terminate
+  # and nothing they did since withdrew it, so the session ends with the ask.
+  describe "an ask that finishes inside the grace window" do
+    it "closes the session with reason exit" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals:)
+      outcome = nil
+
+      Sync do |task|
+        driver = task.async do
+          entered.dequeue
+          Process.kill("TERM", Process.pid)
+          pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
+          release.enqueue(true)
+        end
+        outcome = conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        driver.wait
+      end
+
+      expect([outcome.closed?, conductor.closed?, chronicle.events.last]).to eq([true, true, %i[close exit]])
+    ensure
+      signals.uninstall
+    end
+
+    it "leaves the session open when the cancel is still queued as the ask ends" do
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals:)
+      outcome = nil
+
+      Sync do |task|
+        outcome = conductor.supervise(task, -> { Lain::Timeline.empty }) do
+          task.yield # the block starts before supervise routes signals
+          Process.kill("INT", Process.pid)
+          pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
+          rail << Lain::Frontend::Intake::Signal.new(name: :cancel)
+          "answered"
+        end
+      end
+
+      expect([outcome.response, outcome.closed?, conductor.closed?]).to eq(["answered", false, false])
+    ensure
+      signals.uninstall
+    end
+
+    it "leaves the session open when the countdown was cancelled first" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_conductor(grace: 60, clock: -> { 1000.0 }, signals:)
+      outcome = nil
+
+      Sync do |task|
+        driver = task.async do
+          entered.dequeue
+          Process.kill("INT", Process.pid)
+          pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }
+          rail << Lain::Frontend::Intake::Signal.new(name: :cancel)
+          pumped_until(task, reason: "the countdown cancelled") { !conductor.counting_down? }
+          release.enqueue(true)
+        end
+        outcome = conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        driver.wait
+      end
+
+      expect([outcome.closed?, conductor.closed?]).to eq([false, false])
+    ensure
+      signals.uninstall
+    end
+  end
+
   # The expiry-during-reply path (the PTY probe is the evidence for the
   # terminal-restore half). A run parks inside the model call while a reply is
   # outstanding at human>; a SIGTERM arms grace, the jumped clock expires it, and

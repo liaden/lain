@@ -181,7 +181,7 @@ module Lain
         shutdown = @shutdown = build_shutdown(run)
         coordinator, ticker_task = start_shutdown(task, shutdown)
         response = run.wait
-        settle(shutdown, coordinator)
+        settle_ask(task, shutdown, coordinator)
         Outcome.new(response: @stopped || response, closed: shutdown.state == :closed)
       ensure
         @supervising = false
@@ -534,6 +534,18 @@ module Lain
       # coordinator finish; otherwise retire it through its pipe.
       def settle(shutdown, coordinator)
         shutdown.dispose unless closing?(shutdown)
+        coordinator.wait
+      end
+
+      # A countdown still running when the ask answers was never withdrawn, so
+      # the terminate it records is honoured as a clean exit. The yield first
+      # lets the coordinator read a cancel queued as the ask ended.
+      # A cancel still in transit on the pane socket is out of its reach.
+      def settle_ask(task, shutdown, coordinator)
+        task.yield
+        return settle(shutdown, coordinator) unless shutdown.state == :grace
+
+        shutdown.signal(:wait_responses)
         coordinator.wait
       end
 

@@ -71,7 +71,8 @@ module InputPaneSocket
       done = File.join(dir, "done")
       outcome = conductor.supervise(task, -> { Lain::Timeline.empty }) do
         File.write(File.join(dir, "asking"), "")
-        Async::Task.current.sleep(0.05) until File.exist?(done)
+        # The cancel key is still crossing the pane's socket when the spec writes done.
+        Async::Task.current.sleep(0.05) until File.exist?(done) && !conductor.counting_down?
         "answered"
       end
       log.puts(JSON.generate({ "response" => outcome.response, "closed" => outcome.closed? }))
