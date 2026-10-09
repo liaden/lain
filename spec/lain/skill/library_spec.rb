@@ -109,7 +109,7 @@ RSpec.describe Lain::Skill::Library do
         paths = Lain::Paths.new(env: xdg)
         backend = Lain::CLI::Backend.new({ provider: "ollama" }, root:, paths:)
 
-        expect { backend.slots }.not_to raise_error
+        expect(backend.slots).to be_a(Lain::Prompt::Slots)
       end
     end
   end

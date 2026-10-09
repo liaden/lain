@@ -67,7 +67,7 @@ RSpec.describe Lain::Prompt::LockedBinding do
 
   describe Lain::Prompt::Purity do
     it "accepts a read of a declared local" do
-      expect { described_class.check!("epic_home", "t", locals: [:epic_home]) }.not_to raise_error
+      expect(described_class.check!("epic_home", "t", locals: [:epic_home])).to be_nil
     end
 
     it "rejects the same read when it is not declared" do
