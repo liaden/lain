@@ -69,7 +69,9 @@ RSpec.describe Lain::Isolation::ParentLock, :seam do
     end
 
     expect(notices.size).to eq(1)
-    expect(notices.first).to include("pid=#{holder}")
+    expect(notices.first).to match(
+      /\Awaiting on pid=#{holder} .* for the parent checkout's lock \(#{Regexp.escape(lock.path)}\)\z/
+    )
   end
 
   it "waits while another process holds it, then proceeds" do

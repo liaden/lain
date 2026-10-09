@@ -76,9 +76,7 @@ module Lain
       # @param patience [Numeric] seconds of waiting before the waiter is told who holds it
       def initialize(path:, sleeper: ->(seconds) { sleep(seconds) }, interval: INTERVAL, patience: PATIENCE)
         @path = path
-        @sleeper = sleeper
-        @interval = interval
-        @told_after = [(patience / interval.to_f).ceil, 1].max
+        @file_lock = path && FileLock.new(path, sleeper:, interval:, patience:, label: "the parent checkout's lock")
         @monitor = Monitor.new
         @depth = 0
       end
@@ -87,41 +85,14 @@ module Lain
       #   wait outlasts the patience; never the process's own streams
       # @return the block's value
       def hold(notice: Silent, &block)
-        @monitor.synchronize { @depth.zero? && @path ? locked(notice, &block) : counted(&block) }
+        @monitor.synchronize { @depth.zero? && @file_lock ? locked(notice, &block) : counted(&block) }
       end
 
       private
 
-      # Only the outermost hold takes the file lock; closing the file on the
-      # block's way out, a cancel mid-sleep included, is what releases it.
+      # Only the outermost hold takes the file lock.
       def locked(notice, &block)
-        File.open(@path, File::RDWR | File::CREAT, 0o600) do |file|
-          waited(file, notice)
-          claimed(file) { counted(&block) }
-        end
-      end
-
-      def waited(file, notice)
-        tries = 0
-        until file.flock(File::LOCK_EX | File::LOCK_NB)
-          notice.call(waiting_on) if (tries += 1) == @told_after
-          @sleeper.call(@interval)
-        end
-      end
-
-      def claimed(file)
-        file.truncate(0)
-        file.write("pid=#{Process.pid} command=#{[$PROGRAM_NAME, *ARGV].join(" ")}\n")
-        file.flush
-        yield
-      ensure
-        file.truncate(0)
-      end
-
-      def waiting_on
-        holder = File.read(@path).strip
-        "waiting on #{holder.empty? ? "a holder that has not named itself yet" : holder} for the parent " \
-          "checkout's lock (#{@path})"
+        @file_lock.hold(notice:) { counted(&block) }
       end
 
       def counted
