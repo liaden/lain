@@ -285,6 +285,52 @@ RSpec.describe Lain::SessionRecord::Replay do
       expect(File.read(path)).to eq("line 1\ntwo\n")
     end
 
+    describe "after a search masked the file" do
+      let(:token) { "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5" }
+      let(:approvals_io) { StringIO.new }
+
+      before { File.write(path, "line 1\nline 2\ntoken: #{token}\n") }
+
+      def guard(queue)
+        Lain::Middleware::RedactSecretReads.new(ledger: Lain::Sensitivity::Ledger.new, queue:, journal:)
+      end
+
+      def through(guard, name, input, tool, session)
+        Sync do
+          Lain::Middleware::Stack.new([guard]).call(
+            { effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_#{name}", name:, input:), context: session }
+          ) do |inner|
+            invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_#{name}", context: inner.fetch(:context))
+            inner.merge(result: tool.call(inner.fetch(:effect).input, invocation))
+          end.fetch(:result).content
+        end
+      end
+
+      def searched
+        recorded
+        unqueued = Lain::Middleware::RedactSecretReads::Unqueued.instance
+        through(guard(unqueued), "grep", { "pattern" => "ghp_", "path" => path }, Lain::Tools::Grep.new,
+                Lain::Session.new)
+      end
+
+      it "resumes with the edit its read earned still allowed" do
+        expect(searched).to include("<redacted:1>")
+
+        expect(resume_and_edit).to include("is_error" => false)
+        expect(File.read(path)).to start_with("line 1\ntwo\n")
+      end
+
+      it "still parks a read_file of the file after the resume" do
+        searched
+        queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: approvals_io), timeout: 0.1)
+        resumed = described_class.new(journal_io.string.each_line).session
+
+        through(guard(queue), "read_file", { "path" => path }, Lain::Tools::ReadFile.new, resumed)
+
+        expect(Lain::Journal.records(approvals_io.string.lines, type: "approval_pending").to_a.length).to eq(1)
+      end
+    end
+
     it "withholds a read no recorded turn delivered, as a round torn before its results landed" do
       Lain::Session.new(journal:).record_read(path, tool_use_id: "tu_torn")
 

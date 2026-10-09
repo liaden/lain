@@ -142,6 +142,58 @@ RSpec.describe Lain::CLI::ToolGuard do
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
+    describe "a grep through the main agent's stack" do
+      let(:token) { "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5" }
+
+      around do |example|
+        Dir.mktmpdir do |made|
+          @project = made
+          FileUtils.mkdir_p(File.join(made, "config"))
+          File.write(File.join(made, "config", "settings.yml"), "name: app\n  token: #{token}\n")
+          example.run
+        end
+      end
+
+      def grep_through(path)
+        stack = described_class.stack(chronicle, ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true)))
+        call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "grep",
+                                          input: { "pattern" => "ghp_", "path" => path })
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @project, env: {}))
+        Sync do
+          stack.call({ effect: call, tool: Lain::Tools::Grep.new, context: session }) do |passed|
+            invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: passed.fetch(:context))
+            passed.merge(result: Lain::Tools::Grep.new.call(passed.fetch(:effect).input, invocation))
+          end.fetch(:result).content
+        end
+      end
+
+      it "masks the token in a directory grep's row" do
+        content = grep_through("config")
+
+        expect(content).to include("settings.yml:2:  token: <redacted:1>")
+        expect(content).not_to include(token)
+      end
+
+      it "masks the token in an absolute single-file grep's row" do
+        absolute = File.join(@project, "config", "settings.yml")
+
+        content = grep_through(absolute)
+
+        expect(content).to include("#{absolute}:2:  token: <redacted:1>")
+        expect(content).not_to include(token)
+      end
+
+      # Today's behaviour, pinned so a change to it is seen: the listing filter
+      # cannot read a relative single-file row back to its path and withholds
+      # it as malformed. That fails closed, and is tracked apart from masking.
+      it "withholds a relative single-file grep's row before masking sees it" do
+        content = grep_through("config/settings.yml")
+
+        expect(content).to include("1 match withheld (malformed)")
+        expect(content).not_to include(token)
+      end
+    end
+
     # Everything the guards are built over is ONE value on the board, so a
     # board answering nothing else is enough to build the stack from.
     it "reads every input off the board's one value" do

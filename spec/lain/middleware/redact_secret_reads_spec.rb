@@ -966,6 +966,262 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     end
   end
 
+  describe "a grep or ast_search result" do
+    let(:token) { "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5" }
+    let(:settings) { File.join(dir, "config", "settings.yml") }
+
+    before do
+      FileUtils.mkdir_p(File.dirname(settings))
+      File.write(settings, "name: app\n  token: #{token}\n")
+    end
+
+    def search(input, name: "grep", tool: Lain::Tools::Grep.new, tool_use_id: "tu_grep")
+      Sync do
+        dispatch(Lain::Effect::ToolCall.new(tool_use_id:, name:, input:), tool:).fetch(:result).content
+      end
+    end
+
+    def grep(path, **) = search({ "pattern" => "ghp_", "path" => path }, **)
+
+    def rows(content) = content.lines(chomp: true)
+
+    def searches = journal.grep(Lain::Telemetry::SearchRedacted)
+
+    it "masks a token in an ordinary file in its row" do
+      content = grep("config")
+
+      expect(rows(content).first).to eq("settings.yml:2:  token: <redacted:1>")
+      expect(content).not_to include(token)
+    end
+
+    it "ends the result with a line saying how many rows were masked and how to ask for release" do
+      trailer = rows(grep("config")).last
+
+      expect(trailer).to include("1 row was masked", "read_file on a file may ask")
+      expect(trailer).to include("multi-line secret")
+    end
+
+    it "parks nothing" do
+      grep("config")
+
+      expect(parks).to be_empty
+    end
+
+    it "leaves read_file able to ask for the region it masked" do
+      grep("config")
+
+      read(settings, tool_use_id: "tu_2") { |q| approve(q) }
+
+      expect(parks.length).to eq(1)
+    end
+
+    it "carries a region released through read_file as written, and keeps the release" do
+      read(settings) { |q| approve(q) }
+
+      content = grep("config")
+      later = read(settings, tool_use_id: "tu_3").fetch(:result).content
+
+      expect(rows(content)).to eq(["settings.yml:2:  token: #{token}"])
+      expect(later).to include(token)
+      expect(parks.length).to eq(1)
+    end
+
+    it "keeps a denied region masked, and asks nobody again" do
+      read(settings) { |q| q.dequeue.deny(surface: "spec") }
+
+      content = grep("config")
+
+      expect(rows(content).first).to eq("settings.yml:2:  token: <redacted:1>")
+      expect(parks.length).to eq(1)
+    end
+
+    it "keys a single-file grep on the model's spelling, the entry read_file uses" do
+      digest = Lain::Sensitivity::Regions.detect(token).first.digest
+      ledger.release(settings, [Lain::Sensitivity::Regions.detect(token).first])
+
+      content = grep("config/settings.yml")
+
+      expect(ledger.released?(settings, digest)).to be(true)
+      expect(rows(content)).to eq(["config/settings.yml:2:  token: #{token}"])
+    end
+
+    it "masks a single-file grep nobody released" do
+      expect(rows(grep("config/settings.yml")).first).to eq("config/settings.yml:2:  token: <redacted:1>")
+    end
+
+    # The row carries the token twice, in the matched line and in the
+    # capture, and ordinals count per result in row order.
+    it "masks an ast_search capture carrying a secret" do
+      FileUtils.mkdir_p(File.join(dir, "lib"))
+      File.write(File.join(dir, "lib", "conf.rb"), "TOKEN = \"#{token}\"\n")
+
+      content = search({ "pattern" => "TOKEN = $VALUE", "language" => "ruby", "path" => "lib/conf.rb" },
+                       name: "ast_search", tool: Lain::Tools::AstSearch.new)
+
+      expect(rows(content).first).to eq('lib/conf.rb:1:TOKEN = "<redacted:1>" {VALUE="\"<redacted:2>\""}')
+      expect(content).not_to include(token)
+    end
+
+    it "journals a masked file as search_redacted once, however often it is searched" do
+      2.times { |n| grep("config", tool_use_id: "tu_#{n}") }
+
+      expect(searches).to contain_exactly(an_object_having_attributes(path: settings, regions: 1, released: 0))
+      expect(redactions).to be_empty
+    end
+
+    # A key-only shape is found by its key, which the capture does not repeat,
+    # so the capture is masked by the bytes the line's region holds.
+    it "masks an ast_search capture holding a secret found only by its key" do
+      FileUtils.mkdir_p(File.join(dir, "lib"))
+      File.write(File.join(dir, "lib", "conf.rb"), "PASSWORD = \"Zx9!qLm2Vb7#rT4w\"\n")
+
+      content = search({ "pattern" => "PASSWORD = $V", "language" => "ruby", "path" => "lib/conf.rb" },
+                       name: "ast_search", tool: Lain::Tools::AstSearch.new)
+
+      expect(content).not_to include("Zx9!qLm2Vb7#rT4w")
+      expect(rows(content).first).to eq('lib/conf.rb:1:PASSWORD = "<redacted:1>" {V="\\"<redacted:2>\\""}')
+    end
+
+    it "masks the escaped spelling of a secret the capture quotes" do
+      FileUtils.mkdir_p(File.join(dir, "lib"))
+      File.write(File.join(dir, "lib", "conf.rb"), "PASSWORD = 'Zx9\"qLm2Vb7\\rT4w'\n")
+
+      content = search({ "pattern" => "PASSWORD = $V", "language" => "ruby", "path" => "lib/conf.rb" },
+                       name: "ast_search", tool: Lain::Tools::AstSearch.new)
+
+      expect(content).not_to include("Zx9", "rT4w")
+    end
+
+    it "keeps every release of a file when the rows show only some of its regions" do
+      File.write(settings, "  token: #{token}\n  password: Zx9qLm2Vb7rT4wKp\n")
+      read(settings) { |q| approve(q) }
+
+      search({ "pattern" => "ghp_", "path" => "config" })
+      read(settings, tool_use_id: "tu_3")
+
+      expect(parks.length).to eq(1)
+    end
+
+    it "keys a row on the file it names when the matched text holds a label separator" do
+      File.write(settings, "url http://h:8443:x token: #{token}\n")
+
+      content = grep("config")
+
+      expect(rows(content).first).to eq("settings.yml:1:url http://h:8443:x token: <redacted:1>")
+      expect(searches.map(&:path)).to eq([settings])
+    end
+
+    it "keys a row on a file whose name holds a line-number field" do
+      odd = File.join(dir, "config", "a:1:b.yml")
+      File.write(odd, "  token: #{token}\n")
+      File.write(settings, "name: app\n")
+
+      content = grep("config")
+
+      expect(rows(content).first).to eq("a:1:b.yml:1:  token: <redacted:1>")
+      expect(searches.map(&:path)).to eq([odd])
+    end
+
+    it "numbers the placeholders across rows" do
+      second = "ghp_QQQQaB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1"
+      third = "ghp_RRRRaB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1"
+      File.write(settings, "  token: #{token}\n  a: #{second} b: #{third}\n")
+
+      content = grep("config")
+
+      expect(rows(content).take(2))
+        .to eq(["settings.yml:1:  token: <redacted:1>", "settings.yml:2:  a: <redacted:2> b: <redacted:3>"])
+    end
+
+    it "counts only the rows it masked" do
+      File.write(settings, "  token: #{token}\nghp_ is a prefix\n")
+
+      expect(rows(grep("config")).last).to start_with("1 row was masked")
+    end
+
+    it "journals no second record for a file a denied read already masked" do
+      read(settings) { |q| q.dequeue.deny(surface: "spec") }
+
+      grep("config")
+
+      expect(redactions.length).to eq(1)
+      expect(searches).to be_empty
+    end
+
+    it "journals how many of the file's regions in the rows were released" do
+      File.write(settings, "  token: #{token}\n  password: Zx9qLm2Vb7rT4wKp\n")
+      ledger.release(settings, [Lain::Sensitivity::Regions.detect(token).first])
+
+      search({ "pattern" => "token|password", "path" => "config" })
+
+      expect(searches).to contain_exactly(an_object_having_attributes(path: settings, regions: 2, released: 1))
+    end
+
+    # A short value recurs in ordinary words, so masking its every occurrence
+    # would spell it back out by where the placeholders fall.
+    it "masks a 1-character netrc password where it was found, and nowhere else" do
+      File.write(settings, "machine example.com login joel password a\n")
+
+      content = search({ "pattern" => "machine", "path" => "config" })
+
+      expect(rows(content).first).to eq("settings.yml:1:machine example.com login joel password <redacted:1>")
+    end
+
+    it "masks a secret that contains another region as 1 placeholder" do
+      File.write(settings, "token: #{token}\nsecret: Qz7w#{token}TAILzQ8w\n")
+
+      content = grep("config")
+
+      expect(rows(content).take(2)).to eq(["settings.yml:1:token: <redacted:1>", "settings.yml:2:secret: <redacted:2>"])
+    end
+
+    it "masks a line-anchored shape in a row" do
+      File.write(settings, "account default\npassword Zx9qLm2Vb7rT4wKp\n")
+
+      content = search({ "pattern" => "password", "path" => "config" })
+
+      expect(rows(content).first).to eq("settings.yml:2:password <redacted:1>")
+    end
+
+    it "masks a non-ASCII secret in a row" do
+      File.write(settings, "password: \"Zx9ü!qLm2Vb7#rT4w\"\n")
+
+      Sync do
+        result = dispatch(Lain::Effect::ToolCall.new(tool_use_id: "tu_g", name: "grep",
+                                                     input: { "pattern" => "password", "path" => "config" }),
+                          tool: Lain::Tools::Grep.new).fetch(:result)
+
+        expect(result).not_to be_error
+        expect(rows(result.content).first).to eq('settings.yml:1:password: "<redacted:1>"')
+      end
+    end
+
+    it "leaves a result with no regions byte-identical" do
+      File.write(settings, "name: app\n")
+
+      expect(search({ "pattern" => "name", "path" => "config" })).to eq("settings.yml:1:name: app")
+    end
+
+    describe "under a related directory" do
+      subject(:middleware) { described_class.new(ledger:, queue:, journal:, related: classifier) }
+
+      let(:classifier) do
+        Lain::Sensitivity.new(home: dir, cwd: dir,
+                              rules: Lain::Sensitivity::Rules.from({ "related" => ["~/pitchcraft"] }))
+      end
+
+      it "masks a netrc password field" do
+        FileUtils.mkdir_p(File.join(dir, "pitchcraft"))
+        File.write(File.join(dir, "pitchcraft", "hosts"), "machine example.com login joel password Zx9!qLm2Vb7#rT4w\n")
+
+        content = search({ "pattern" => "machine", "path" => "pitchcraft" })
+
+        expect(rows(content).first).to eq("hosts:1:machine example.com login joel password <redacted:1>")
+        expect(parks).to be_empty
+      end
+    end
+  end
+
   describe "the absolute-path contract the ledger enforces" do
     it "resolves a relative path against the reading worker's cwd, never the process's" do
       write("notes.txt", one_secret)

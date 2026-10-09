@@ -67,6 +67,11 @@ module Lain
       # in this set -- that is the path boundary's job.
       GUARDED_TOOLS = Set["read_file"].freeze
 
+      # A row is a partial view, so its regions are masked and never parked: a park per
+      # matched file would turn one search into a queue of prompts, and
+      # `read_file` stays the way to ask.
+      ROW_TOOLS = Set["grep", "ast_search"].freeze
+
       # The provider content-block key this can read. Anything else in an Array
       # result is bytes this detector cannot see -- see {Scan}.
       TEXT = "text"
@@ -150,8 +155,8 @@ module Lain
       #   everything, wearing this codebase's Null idiom as camouflage.
       # @param queue [#adjudicate] where a read parks for release, or
       #   {Unqueued} when a run wires none. Required for the same reason.
-      # @param journal [#<<] where {Telemetry::ReadRedacted} and
-      #   {Telemetry::ReadReleased} land
+      # @param journal [#<<] where {Telemetry::ReadRedacted},
+      #   {Telemetry::SearchRedacted} and {Telemetry::ReadReleased} land
       # @param requester [String, nil] the child a read is asked for, as its
       #   gate names it; nil for the parent, whose context names nobody
       # @param related [#related?] answers whether an absolute path lies under
@@ -175,6 +180,11 @@ module Lain
         # not the Set they point at, and this is the run's accumulating
         # answer-memory -- {Sensitivity::Ledger}'s own posture, for its reason.
         @declined = Set.new
+        # Kept apart from `@declined` because a row mask is not a ruling: a
+        # file masked in a search must still park on its next `read_file`. Two
+        # parallel searches can both journal the same mask, the race
+        # `@declined` accepts for its extra prompt.
+        @row_masked = Set.new
         super()
         freeze
       end
@@ -206,7 +216,7 @@ module Lain
       def call(env, &app)
         effect = env.fetch(:effect)
         carried = downstream(env, &app)
-        return carried unless GUARDED_TOOLS.include?(effect.name)
+        return carried unless GUARDED_TOOLS.include?(effect.name) || ROW_TOOLS.include?(effect.name)
 
         guarded(carried, effect)
       end
@@ -222,6 +232,7 @@ module Lain
         # A failed read carries a message, never file bytes, so there is nothing
         # here to mask and no read to record.
         return carried if result.error?
+        return searched(carried, effect, result) if ROW_TOOLS.include?(effect.name)
 
         adjudicate(carried, effect, result)
       rescue StandardError => e
@@ -352,6 +363,40 @@ module Lain
         record(Telemetry::ReadRedacted) { redaction(effect, withheld) } unless declined?(withheld)
         withheld.unreleased.each { @declined << [withheld.path, _1.digest] }
         carried.merge(result: Tool::Result.ok(withheld.scan.mask(withheld.unreleased)))
+      end
+
+      # `complete: false`, because a row is a partial view: a complete reconcile
+      # would drop the releases for every region the rows do not show.
+      def searched(carried, effect, result)
+        rows = rows_in(carried, effect, result.content)
+        found = rows.regions
+        unreleased = found.to_h { |path, regions| [path, @ledger.outstanding(path, regions, complete: false)] }
+        return carried if unreleased.values.all?(&:empty?)
+
+        record_row_masks(effect, found, unreleased)
+        carried.merge(result: Tool::Result.ok(rows.mask(unreleased)))
+      end
+
+      def rows_in(carried, effect, content)
+        cwd = (carried.fetch(:context) || Session::Null.instance).worker_env.cwd
+        Rows.new(content, base: Session.normalize_path(effect.input[PATH_INPUT], cwd:), cwd:)
+      end
+
+      # {#mask}'s state-transition rule, over a set of its own so that nothing
+      # here reads as a ruling to the next `read_file`. A {Telemetry::SearchRedacted},
+      # never a {Telemetry::ReadRedacted}, so a resume does not fold it into a mask.
+      def record_row_masks(effect, found, unreleased)
+        unreleased.reject { |path, held| row_masked?(path, held) }.each do |path, held|
+          record(Telemetry::SearchRedacted) do
+            Telemetry::SearchRedacted.new(tool_use_id: effect.tool_use_id, path:, regions: found[path].length,
+                                          released: found[path].length - held.length)
+          end
+          held.each { @row_masked << [path, _1.digest] }
+        end
+      end
+
+      def row_masked?(path, held)
+        held.all? { |region| [@row_masked, @declined].any? { _1.include?([path, region.digest]) } }
       end
 
       def redaction(effect, withheld)
@@ -495,6 +540,125 @@ module Lain
 
           block.merge(key => text)
         end
+      end
+
+      # A directory target labels a row relative to the walked root and a file
+      # target with the model's own spelling, so a row's file is its label
+      # resolved against the root or the worker's cwd: the key `read_file` uses.
+      class Rows
+        TRAILER = "%<count>d %<noun>s masked: read_file on a file may ask for the release of its regions. " \
+                  "A multi-line secret, such as a PEM body, cannot be detected one line at a time " \
+                  "and is not masked here."
+
+        Span = Data.define(:start, :length)
+
+        # Byte offsets, because {Sensitivity::Masking} walks a row as bytes.
+        class Span
+          def finish = start + length
+
+          def reaches?(other) = other.start <= finish
+
+          def |(other) = Span.new(start:, length: [finish, other.finish].max - start)
+        end
+
+        Row = Data.define(:prefix, :text, :path, :regions)
+
+        # A region masks where it was found. Its bytes can recur in the row: an
+        # ast_search capture quotes the matched value, escaped as `inspect`
+        # escapes it, and a key-only shape is not found again there because the
+        # capture does not repeat the key. Only a value of substance is sought
+        # again, since a short one recurs in ordinary words and the placeholders
+        # would spell it back out.
+        class Row
+          # @return [Array(String, Boolean)] the row as sent, and whether it masked anything
+          def masked(unreleased, ordinals)
+            spans = spans(unreleased)
+            [prefix + ::Lain::Sensitivity::Masking.render(text, spans, ordinals:), spans.any?]
+          end
+
+          private
+
+          def spans(unreleased)
+            withheld = unreleased.to_set(&:digest)
+            found = regions.select { withheld.include?(_1.digest) }.map { Span.new(start: _1.start, length: _1.length) }
+            coalesced(found + recurrences(unreleased))
+          end
+
+          def recurrences(unreleased)
+            haystack = text.b
+            unreleased.map(&:bytes).select { _1.bytesize >= ::Lain::Sensitivity::Regions::SUBSTANCE_LENGTH }
+                      .flat_map { spellings(_1) }.uniq.flat_map { occurrences(haystack, _1) }
+          end
+
+          def spellings(bytes) = [bytes.b, String.new(bytes, encoding: Encoding::UTF_8).inspect[1..-2].b]
+
+          def occurrences(haystack, needle)
+            Enumerator.produce(haystack.byteindex(needle)) { haystack.byteindex(needle, _1 + needle.bytesize) }
+                      .take_while(&:itself).map { Span.new(start: _1, length: needle.bytesize) }
+          end
+
+          # Masking walks ascending, non-overlapping spans, and an escaped
+          # spelling can overlap a raw one.
+          def coalesced(spans)
+            spans.sort_by(&:start).inject([]) do |kept, span|
+              kept.last&.reaches?(span) ? [*kept[..-2], kept.last | span] : [*kept, span]
+            end
+          end
+        end
+
+        Line = Data.define(:text)
+
+        # A cap or skip trailer names no file, so there is nothing in it to key.
+        class Line
+          def path = nil
+
+          def masked(_unreleased, _ordinals) = [text, false]
+        end
+
+        # @param content [String] the tool's rows, newline-joined
+        # @param base [String] the search target, resolved
+        # @param cwd [String] the worker's cwd, against which a file target's label resolves
+        def initialize(content, base:, cwd:)
+          @directory = File.directory?(base)
+          @anchor = @directory ? base : cwd
+          @base = base
+          @rows = content.split("\n", -1).map { row_of(_1) }
+          freeze
+        end
+
+        # @return [Hash{String => Array<Sensitivity::Regions::Region>}] every region per file, in row order
+        def regions = matches.group_by(&:path).transform_values { |rows| rows.flat_map(&:regions) }
+
+        # @param unreleased [Hash{String => Array<#digest>}] the regions to withhold, per file
+        # @return [String] the rows with those regions masked, and the trailer saying so
+        def mask(unreleased)
+          ordinals = (1..).each
+          rendered = @rows.map { _1.masked(unreleased.fetch(_1.path, []), ordinals) }
+          masked = rendered.count(&:last)
+          [*rendered.map(&:first), format(TRAILER, count: masked, noun: masked == 1 ? "row was" : "rows were")]
+            .join("\n")
+        end
+
+        private
+
+        def matches = @rows.grep(Row)
+
+        # A row whose file cannot be found keys on its first reading, so it still masks.
+        def row_of(text)
+          fields = text.split(Middleware::WithholdSecretPaths::Matches::SEPARATOR, -1)
+          labels = Middleware::WithholdSecretPaths::MATCHES.paths_in(text)
+          return Line.new(text:) if labels.empty?
+
+          label = labels.find { file?(resolved(_1)) } || labels.first
+          at = label.count(Middleware::WithholdSecretPaths::Matches::SEPARATOR) + 2
+          text = fields.drop(at).join(":")
+          Row.new(prefix: "#{fields.take(at).join(":")}:", text:, path: resolved(label),
+                  regions: Scan.new(text).regions)
+        end
+
+        def resolved(label) = Session.normalize_path(label, cwd: @anchor)
+
+        def file?(path) = @directory ? File.file?(path) : path == @base
       end
     end
   end

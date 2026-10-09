@@ -16,9 +16,11 @@ module Lain
     # credential-shaped memory_write is withheld before it ever reaches the
     # recorder: a memory, once indexed, replays into every future context, and
     # there is no un-indexing it. {Middleware::RedactSecretReads} is its mirror
-    # on the read side -- a region masked out of a `read_file` result never
-    # reaches an Event, a digest or the prompt-cache prefix. The two guard
-    # disjoint tools, so their order carries no constraint to get wrong.
+    # on the read side -- a region masked out of a `read_file`, `grep` or
+    # `ast_search` result never reaches an Event, a digest or the prompt-cache
+    # prefix. It and {Middleware::WithholdSecretPaths} both see `grep` and
+    # `ast_search`, and it runs outside that filter so it scans only the rows
+    # the filter kept.
     #
     # {Middleware::GuardTestLayout} holds the writing tools against the
     # project's test layout, and is disjoint from all three.
