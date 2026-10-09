@@ -1,6 +1,6 @@
 # QA round 23 fixes: every reader masks, the HUD tells the truth, and a gate says what it knows
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1189,3 +1189,77 @@ Spec file: none (documentation; checked by the next manual QA round)
   `bundle exec rubocop <files>`, `bundle exec yard-lint <files>`, `bin/comment-census --check-tickets`. The suite cannot
   run beside other tests: TMPDIR is shared, so each worktree gets its own `TMPDIR=$HOME/tmp/lain/<card>` and a copy of
   `lib/lain/lain.so`. No path needs user approval.
+- 2026-10-09: T1, T3, T4, T5, T8, T14, T16, T18, T20, T21 started, worktrees cut at `db19eb92`.
+- 2026-10-09: T18 scope widened by the main session to `spec/lain/cli_spec.rb:1090`, which pins the default through `ModelFlags.declare`.
+- 2026-10-09: T5 scope widened to `lib/lain/cli/command/survey.rb`: the survey root is dropped in `Review::Source::Corpus`,
+  and the handover is the one place that holds it. The handover passes a spawn already scoped `within` the root.
+- 2026-10-09: T20 scope widened to `strategy/base.rb`, `summarizing.rb`, `summarize_conversation.rb`, `composed.rb` and
+  `source/derived.rb`: `Summarizing#propose_ranges` asks the oracle, so the head needs a separate claimable-ranges query
+  that never does.
+- 2026-10-09: T8 handed back; review started.
+- 2026-10-09: T21, T14, T16 handed back; reviews started. T2, T11, T15 started at `db19eb92`.
+- 2026-10-09: approved: T14 (APPROVE), T18 (docs row deferred to T26, which owns `docs/commands.md`), T8 and T21 and T16
+  (mechanical fixes applied, no second review), T4 (APPROVE). T8's review named a non-`Lain::Error` escaping
+  `Repl::Ask#attempt` as a stop path with no `RunInterrupted`; the process exits, so no HUD is left stale. Not a card.
+- 2026-10-09: T3, T5, T11 handed back; reviews started. New briefs take a shared `flock` on `~/tmp/lain/suite.lock` around
+  every rspec run; a landing commit holds it exclusively.
+- 2026-10-09: landed T14 `7b528bfa`, T18 `4fef6dc3`, T8 `78cb77ed`, T21 `7acf72d0`, T4 `b261db82`, T16 `138cda10`,
+  T11 `bf8c2167`. Each hook green; the runtime log named 929 files, 930 from T4's new seam on.
+- 2026-10-09: T15 scope widened to `spec/lain/seams/input_pane_socket_spec.rb`, whose cancel raced the ask's end.
+  T5 widened to the RoleSpawn doubles in `review_spec.rb` and `survey_subdirectory_spec.rb`.
+- 2026-10-09: T9, T10, T12, T13, T19, T22 started at `bf8c2167`.
+- 2026-10-09: landed T2 `463bfaa4`, T15 `cf1e6fa6`, T19 `c551e8ba`. Worktrees of all 10 landed cards removed.
+- 2026-10-09: T3 ruling from the user: bare `pass` stays a secret word; compiler-pass files gating is the accepted cost.
+  T3's review also widened `EXCEPTED` with camelCase source extensions and unanchored the suffix words.
+- 2026-10-09: T1 review (REQUEST-CHANGES) found a key-only secret leaking through an ast_search capture, and that
+  `read_redacted` from a grep made a file unwritable after `--resume`. Fix round adds `Telemetry::SearchRedacted`.
+  Found and left open, predating this plan: a relative single-file `grep` is withheld as `malformed` by
+  `WithholdSecretPaths#reading` plus `Policy#landed`. It fails closed.
+- 2026-10-09: T22 approved scope: `Adapter::Rspec#errors_of` counted "No examples found." as a second error.
+  T12 approved scope: `intake.rb`. T20 widened again: `Collapse` and `CLI::Backend::SpanSummarizer`.
+- 2026-10-09: landed T9 `889da90b`, T5 `578bca0c`, T3 `fd0fc274`, T17 `49c28777`, T12 `debf7868`, T20 `ceb375f2`,
+  T1 `10f01f37`, T13 `6fd5870c`, T10 `c591bb78`. T10's first landing went red on
+  `spec/e2e/cockpit_approval_spec.rb:87` (the header adopted below an echo stacked a row and scrolled the fleet line
+  off a floor-height pane); red alone, so a card failure, fixed by its implementer and green on the next hook.
+  T12's first commit failed only the message lint (subject 73 chars). T1's tool_guard comment was adjusted at landing to
+  say WithholdSecretPaths also sees `ast_search`, which T2 added on main.
+- 2026-10-09: T12 ruling: bare `nope`, `nah`, `no.`, `y.` decide; `yes please` is held. T10 accepted narrowing: the
+  HUD rewrites in place only over an empty editor, so it holds still while a human types.
+- 2026-10-09: T7, T25 started at `10f01f37`. T26 part 1 started there, for the landed cards only. T22 in second review.
+- 2026-10-09: landed T25 `9d55b3bc`. T26 parts 1 and 1.5 written (16 files), held to land last with part 2.
+- 2026-10-09: landed T22 `aea9c4ab` (2 review rounds: a repo-wide worktree prune, an uninterruptible tip suite, positional rspec error text). T23 started.
+- 2026-10-09: T7 ruling from the user: a child's `outside_project` read follows the rules of any gated call. `ask` alone
+  parks for the human; `ask` + `auto_approve` lets the model judge or the human answer first; `/mode auto` approves it
+  as today; `--secret-oracle` may approve it, so T6's table stands. Follow-up, not in this plan: `/mode auto` should
+  escalate a call it cannot call safe or unsafe to a human, and `--secret-oracle` should become the default cheap first
+  triage. Recorded for a later `/create-plan`.
+- 2026-10-09: on the user's ask for more parallel work, T6 and T24 started stacked: each worktree is `aea9c4ab` plus the
+  unlanded files of its dependency (T7, T23), snapshotted under `~/tmp/lain/<card>/base/` so the card's own diff can be
+  taken against that snapshot at landing. T26 part 2 continues for T22 and T25.
+- 2026-10-09: landed T23 `8c9fe7a8`. T24's work was 3-way merged onto it in place (the T23 files it was stacked on changed in review); merges clean.
+- 2026-10-09: landed T24 `9bfe6eff`. T6 in high-depth review; T7 in high-depth review.
+- 2026-10-09: T7 review findings left open by ruling, for a follow-up: (a) a confined child's `grep` over the project
+  follows a file link pointing outside (`Tools::Grep::Files` walks with `links: true`) and returns its content unparked;
+  pinned as a known gap. (b) Under `--secret-oracle` the oracle is never offered an `outside_project` park, because
+  `PathGate` judges over the unconfined policy; the fix is for the gate to stamp the pending with the verdict it parked
+  on. Both belong with the approval-layering follow-up. (c) In a chat with no project marker the project root is the
+  cwd, so a child of a chat started in `$HOME` is confined to all of `$HOME`; by the card's design, flagged to the user.
+- 2026-10-09: a reviewer's own `rake pspec` beside other agents went red once on `spec/lain/cli/epic_submit_spec.rb`
+  "Ctrl-C through the real CLI exits 130, with the fail-closed decision already journaled"; green alone twice. Not a
+  quiet-box run, so not evidence; watched for in the landing suites.
+- 2026-10-09: T6 review found a link repointed between park and the oracle's answer could release a gated file's region.
+  The surface now requires the verdict to be approvable both when it claims the pending and when it settles. Still open,
+  for the follow-up: a repoint before the surface first claims the pending; the fix is for `RedactSecretReads` to judge
+  the landing it actually read and carry that verdict on the pending. Also left: journaling an oracle approve the
+  classifier withheld, so a calibration bench can tell it from a lost race.
+- 2026-10-09: found by T7's second review, predating this plan: under `LC_ALL=C`, `Skill::Catalog.split_front_matter` and a `File.readlines` in `tool_guard_spec` raise invalid byte sequence (main reproduces: 8 failures). `bin/spec-census --check` reads assertions 186 > ceiling 184 on main too. Neither is a card here.
+- 2026-10-09: landed T7 `e4dc6b8f` (2 review rounds). T6 restacked onto it through a staged 3-way merge (6 own files, no conflicts, backup kept); second review started.
+- 2026-10-09: landed T6 `47902e7c` (2 review rounds; the claimed verdict is now taken in the same pass as the claim). T26 final part started.
+- 2026-10-09: landed T26 `90e6d2ed`. All 26 cards landed.
+- 2026-10-09: close-out. Integration checks on main `90e6d2ed`: `rake pspec` at 12 workers on a quiet box,
+  22,945 examples, 0 failures, 13 pending, and the runtime log names 937 files (929 at the start, plus the new spec
+  files); `rubocop` 1,884 files, no offenses; `bin/comment-census --check-tickets` and `--check-load-order` clean;
+  `bin/zeitwerk-census` every tier 0. No Rust file changed, so cargo was not rerun. Worktrees and branches this run
+  made are all removed; the `mc-*` worktrees and branches belong to another session's plan, as do the pre-existing
+  `flake/review`, `spike/combined`, `spike/combined2` and `lain-qa-2026-10-08-tree`. Manual QA is still owed by the
+  user, as the Integration checks section lists.

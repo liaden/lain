@@ -1986,11 +1986,14 @@ XDG path relative, which put machine state back inside the user's repository)
    handbacks; secret-detector false positives and related directories; approval deadlines and deny
    reasons; cloud windows and width; and the cockpit under a real nvim config. 42 cards, with a new
    `greenfield-epic` manual QA scenario.
-55. **Planned (2026-10-09)**: `planning/specs/qa-round-23-fixes.md`, the QA round-23 discharge
+55. **Done (2026-10-09)**: `planning/specs/qa-round-23-fixes.md`, the QA round-23 discharge
    (`planning/qa-findings-round23-2026-10-09.md`) over every finding rated MEDIUM or higher: grep and
    ast_search mask secrets, the secret-name rule and the survey root, the oracle and child read scope,
    the live HUD, lapses, `[y/N]`, newline keys, nvim write refusals, `--max-tokens`, compaction that
    measures what it can claim, and 3 epic-gate fixes. 26 cards, panel-reviewed; F-8 stays deferred.
+   All 26 landed, `7b528bfa..90e6d2ed`. Follow-ups: approval layering (`/mode auto` escalating an unsure
+   call, the secret oracle as first triage; `planning/approval-layering-research-2026-10.md`), a child's
+   grep through a link out of the project, and a link repointed before the oracle claims a pending.
 
 ## Map of the documents
 
