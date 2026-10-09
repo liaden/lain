@@ -53,8 +53,20 @@ module Lain
     private
 
     # Closing the file on the way out, a cancel mid-sleep included, is what releases the flock.
-    def opened(&block)
-      File.open(@path, File::RDWR | File::CREAT, 0o600, &block)
+    def opened
+      file = open_file
+      begin
+        yield file
+      ensure
+        file.close
+      end
+    end
+
+    # Only the open is rescued, so an error from the held block is never renamed.
+    def open_file
+      File.open(@path, File::RDWR | File::CREAT, 0o600)
+    rescue SystemCallError => e
+      raise Paths::Unwritable.new(@path, e)
     end
 
     def waited(file, notice)

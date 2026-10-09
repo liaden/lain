@@ -34,6 +34,25 @@ RSpec.describe Lain::FileLock, :seam do
     Process.wait(pid) if pid
   end
 
+  it "refuses a lock path that is a directory by name, without running the block" do
+    FileUtils.mkdir_p(@path)
+    ran = false
+
+    expect { described_class.new(@path).hold { ran = true } }
+      .to raise_error(Lain::Paths::Unwritable, /#{Regexp.escape(@path)}/)
+    expect(ran).to be(false)
+  end
+
+  it "refuses an unopenable path by name from try as well" do
+    FileUtils.mkdir_p(@path)
+
+    expect do
+      described_class.new(@path).try do
+        :never
+      end
+    end.to raise_error(Lain::Paths::Unwritable, /#{Regexp.escape(@path)}/)
+  end
+
   it "holds the flock for the block, answers its value, and clears the holder after" do
     lock = described_class.new(@path)
     during = lock.hold { [free?, lock.holder] }
