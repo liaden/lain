@@ -25,9 +25,9 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
   let(:resolver) { described_class::Resolver::Standing }
   let(:verified) { [] }
   let(:verify) do
-    lambda do |tip|
-      verified << tip
-      described_class::Verification.new(outcome: :passed, tip:)
+    lambda do |candidate|
+      verified << candidate
+      described_class::Verification.new(outcome: :passed, tip: candidate.sha)
     end
   end
   # Built by name rather than read off HEAD, so an example that switches the
@@ -97,7 +97,7 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
       expect(asked).to eq([{ id: "w3", tip: result.report("w2").sha, holding_w2: true }])
       expect(spawned.size).to eq(1)
       expect(spawned.first).to include(role: :merge_resolver, mode: :fresh)
-      expect(verified).to eq([tip])
+      expect(verified.map(&:sha)).to eq([tip])
       expect([w1, w2, w3].map(&:sha)).to all(satisfy { |sha| contains?(sha) })
       expect(result.report("w3").kind).to eq(:resolved)
     end
@@ -119,6 +119,7 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
       expect(handbacks.map(&:ref)).to eq([w1.ref, w2.ref])
       expect(handbacks.map(&:sha)).to eq([w1.sha, tip])
       expect(handbacks.map(&:strategy)).to all(eq(Lain::Isolation::MergeStrategy::DEFAULT.to_s))
+      expect(verified).to eq([Lain::Isolation::Candidate.new(sha: tip, path: @repo)])
     end
 
     it "gives the one resolver every leftover, in the intended order" do
@@ -268,6 +269,18 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
     end
   end
 
+  describe "verification" do
+    it "is skipped, saying so, when no verify is given" do
+      w1 = worker("w1", "f" => "a\nB1\nc\n")
+
+      result = described_class.new(repo_root: @repo, base:).call([w1])
+
+      expect(result.verification).to eq(described_class::Verification.new(
+                                          outcome: :skipped, tip:, detail: Lain::Isolation::Verifier::Skipped::DETAIL
+                                        ))
+    end
+  end
+
   describe "the landing lock" do
     it "waits while another process -- a chat's handback, say -- holds the parent checkout" do
       w1 = worker("w1", "f" => "a\nB1\nc\n")
@@ -294,9 +307,9 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
       w1 = worker("w1", "f" => "a\nB1\nc\n")
       during = nil
       queue = described_class.new(repo_root: @repo, base:, journal:,
-                                  verify: lambda { |tip|
+                                  verify: lambda { |candidate|
                                     during = free?
-                                    described_class::Verification.new(outcome: :passed, tip:)
+                                    described_class::Verification.new(outcome: :passed, tip: candidate.sha)
                                   })
 
       queue.call([w1])

@@ -18,9 +18,10 @@ module Lain
     # B integrates against A, and a resolution that satisfies each pair need
     # not satisfy the whole. Verification then runs once, over the result.
     #
-    # ONE MERGER PER PARENT CHECKOUT, ACROSS PROCESSES. The run holds the
-    # repository's {ParentLock}, the same lock a chat's handback takes, so `lain
-    # epic land` and a live chat never merge into one checkout at once.
+    # ONE MERGER PER DESK, ACROSS PROCESSES. The run holds its desk's lock;
+    # the default {ParentDesk}'s is the repository's {ParentLock}, the same lock
+    # a chat's handback takes, so `lain epic land` and a live chat never merge
+    # into one checkout at once.
     class LandingQueue
       # A queue that cannot run at all: no branch to land onto, or a parent
       # checkout standing somewhere else.
@@ -83,33 +84,29 @@ module Lain
         def self.call(_worker, **) = nil
       end
 
-      # No suite wired: the result says so rather than claiming a pass.
-      module Verify
-        def self.call(tip) = Verification.new(outcome: :skipped, tip:, detail: "no verification is configured")
-      end
-
       # @param repo_root [String] the parent checkout, which must stand on `base`
       # @param base [WorkingBranch] the branch every worker lands onto
+      # @param desk [#lock, nil] where workers land, answering every message
+      #   {ParentDesk} does; nil builds a {ParentDesk} from the other keywords
       # @param journal [#<<] where each landing's {Telemetry::Handback} lands
       # @param strategy [MergeStrategy] how probes and merges are spelt
       # @param retries [Integer] `rebase_retries`: how many times a stale worker
       #   is asked to re-sync; 0 asks none
       # @param resolver [#call] `call(stale, desk)` answering one {Landed} per
       #   stale worker; called at most once per run, with every leftover in order
-      # @param verify [#call] `call(tip)` answering a {Verification}; called
-      #   once per run in which anything landed
+      # @param verify [#call] `call(candidate)` answering a {Verification} for
+      #   a {Candidate}; called once per run in which anything landed
       # @param notice [#call] told who holds the parent checkout's lock when a
       #   landing waits on it for long
       # @param shell_out_factory [#call] builds the subprocess runner
-      def initialize(repo_root:, base:, journal: Channel::Null.instance, strategy: MergeStrategy::DEFAULT, retries: 1,
-                     resolver: Resolver::Standing, verify: Verify, notice: ParentLock::Silent,
+      def initialize(repo_root:, base:, desk: nil, journal: Channel::Null.instance, strategy: MergeStrategy::DEFAULT,
+                     retries: 1, resolver: Resolver::Standing, verify: Verifier::Skipped, notice: ParentLock::Silent,
                      shell_out_factory: Shell::Out.public_method(:new))
         raise Refused, "a landing queue needs a named working branch to land onto; none was given" if base.name.empty?
 
         root = File.expand_path(repo_root)
-        @desk = Desk.new(repo_root: root, base:, journal:, strategy:, shell_out_factory:)
+        @desk = desk || ParentDesk.new(repo_root: root, base:, journal:, strategy:, shell_out_factory:)
         @probe = Probe.new(parent: Checkout.new(root, shell_out_factory:), strategy:)
-        @lock = ParentLock.for(repo_root: root, shell_out_factory:)
         @retries = Integer(retries)
         @resolver = resolver
         @verify = verify
@@ -121,20 +118,21 @@ module Lain
       #   re-synced commit to land instead, or nil. Whatever it answers lands
       #   as the worker's work, so a caller gating what may land gates it here.
       # @return [Result] one {Landed} per worker, in the order given
-      # @raise [Refused] when the parent checkout is not on the working branch
+      # @raise [Refused] when the desk is not ready, as when the parent
+      #   checkout is not on the working branch
       def call(workers, resync: Resync)
-        @lock.hold(notice: @notice) { settle(workers.to_a, resync) }
+        @desk.lock.hold(notice: @notice) { settle(workers.to_a, resync) }
       end
 
       private
 
       def settle(workers, resync)
-        @desk.ensure_on_branch!
+        @desk.ready!
         landed, stale = integrate(workers)
         resynced, leftovers = resynced(stale, resync)
         resolved = leftovers.empty? ? [] : @resolver.call(leftovers, @desk)
         outcomes = landed + resynced + resolved
-        Result.new(landed: ordered(workers, outcomes), verification: verified(outcomes))
+        @desk.conclude(verified(outcomes), ordered(workers, outcomes))
       end
 
       # Passes over the waiting workers in order, for as long as a pass lands
@@ -185,7 +183,7 @@ module Lain
       def verified(outcomes)
         return Verification.new(outcome: :skipped, tip: @desk.tip, detail: NOTHING_LANDED) if outcomes.none?(&:moved?)
 
-        @verify.call(@desk.tip)
+        @verify.call(@desk.candidate)
       end
     end
 
@@ -229,14 +227,15 @@ module Lain
       end
 
       # The parent checkout, as the queue and its resolver act on it: merge a
-      # worker's commit, conclude or abandon that merge, and journal what each
+      # worker's commit, continue or abandon that merge, and journal what each
       # landing came to.
-      class Desk
+      class ParentDesk
         STANDS = "the conflict stands; the work waits on its ref"
 
         def initialize(repo_root:, base:, journal:, strategy:, shell_out_factory:)
           @repo_root = repo_root
           @base = base
+          @lock = ParentLock.for(repo_root:, shell_out_factory:)
           @journal = journal
           @strategy = strategy
           @parent = Checkout.new(repo_root, shell_out_factory:)
@@ -247,13 +246,20 @@ module Lain
                                              shell_out_factory:)
         end
 
+        # @return [ParentLock] held for the whole run, against a chat's handback
+        attr_reader :lock
+
         attr_reader :repo_root
 
         def branch = @base.name
 
         def tip = @base.tip
 
-        def ensure_on_branch!
+        # @return [Candidate] the parent itself, already standing on the tip
+        def candidate = Candidate.new(sha: tip, path: @repo_root)
+
+        # @raise [Refused] when the parent checkout is not on the working branch
+        def ready!
           return if @base.current_in?(@parent)
 
           raise Refused, "#{@repo_root} is on #{standing}, not the working branch #{branch}; the landing queue " \
@@ -291,6 +297,11 @@ module Lain
           moved = @parent.update_ref(worker.ref, commit, worker.sha, reason: "lain landing queue: re-synced")
           moved.exitstatus.zero? ? worker.with(sha: commit) : worker
         end
+
+        # Every merge already landed in the parent, so the outcomes stand as
+        # they are whatever the verification said.
+        # @return [Result]
+        def conclude(verification, outcomes) = Result.new(landed: outcomes, verification:)
 
         private
 
