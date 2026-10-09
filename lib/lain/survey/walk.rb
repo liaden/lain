@@ -191,7 +191,7 @@ module Lain
         return linked(relative, absolute) if entry.symlink?
         return nil unless entry.file?
 
-        admit(relative, absolute, entry.size, verdict_for(absolute))
+        admit(relative, absolute, entry.size, verdict_for(absolute, within: @root))
       rescue SystemCallError
         # Vanished, unreadable, or a broken link, between the listing and here.
         # Skipped the way a real grep skips what it cannot read: one bad file
@@ -203,7 +203,7 @@ module Lain
       # "not listed" -- the honest answer for a name pointing at nothing.
       def linked(relative, absolute)
         target = File.realpath(absolute)
-        verdict = verdict_for(absolute, target)
+        verdict = verdict_for(absolute, target, within: @root)
         return Withheld.denied(relative, verdict) if verdict.denied?
         return Withheld.outside(relative) unless within?(target)
         return nil unless File.stat(absolute).file?
@@ -216,8 +216,8 @@ module Lain
       # and there is no second table to keep in step. Within a level a `named`
       # verdict wins, because a survey masks it whole: `.env -> password.txt`
       # is the password file. Other ties keep the first name, the link's own.
-      def verdict_for(*names)
-        names.map { @sensitivity.classify(_1) }
+      def verdict_for(*names, within:)
+        names.map { @sensitivity.classify(_1, within:) }
              .max_by { [Sensitivity::Verdict::LEVELS.index(_1.level), _1.named? ? 1 : 0] }
       end
 

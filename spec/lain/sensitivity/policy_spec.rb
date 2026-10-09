@@ -534,6 +534,20 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
+  describe "#classify within a tree" do
+    it "reads a secret directory name below that tree, though it sits outside the project" do
+      expect(policy.classify("/srv/other/secrets/prod", within: "/srv/other")).to have_attributes(named?: true)
+    end
+
+    it "judges the same path ordinary without the tree" do
+      expect(policy.classify("/srv/other/secrets/prod")).to be_ordinary
+    end
+
+    it "is accepted and ignored by the Null" do
+      expect(described_class::Null.instance.classify("/srv/other/secrets/prod", within: "/srv/other")).to be_ordinary
+    end
+  end
+
   describe "#related?" do
     let(:rules) { Lain::Sensitivity::Rules.from({ "related" => ["~/dev/pitchcraft"] }) }
 

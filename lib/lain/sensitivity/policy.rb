@@ -106,7 +106,7 @@ module Lain
         def gates?(_effect, **) = false
         def denial(_effect, **) = nil
 
-        def classify(_path) = ORDINARY.verdict
+        def classify(_path, **) = ORDINARY.verdict
 
         # Nothing is related, so a flagged region still asks.
         def related?(_path) = false
@@ -165,8 +165,10 @@ module Lain
       # {Lain::Survey::Walk} classifies through the run's own boundary.
       #
       # @param path [String] as a caller spells it; the classifier resolves it
+      # @param within [String, nil] a directory outside the project whose own
+      #   directory names count as secret names, as a survey root's do
       # @return [Sensitivity::Verdict]
-      def classify(path) = @sensitivity.classify(path)
+      def classify(path, within: nil) = @sensitivity.classify(path, within:)
 
       # Asked by {Middleware::RedactSecretReads}, so the mask reads the same
       # `sensitivity` table the gate does.

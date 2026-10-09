@@ -97,6 +97,47 @@ RSpec.describe Lain::Survey::Walk do
     end
   end
 
+  describe "a tree outside the project the classifier is anchored on" do
+    subject(:walk) { described_class.new(root:, sensitivity: policy) }
+
+    let(:policy) { Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project)) }
+    let(:project) { File.join(@project, "app") }
+
+    around do |example|
+      Dir.mktmpdir("lain-survey-project") do |made|
+        @project = File.realpath(made)
+        FileUtils.mkdir_p(File.join(@project, "app"))
+        example.run
+      end
+    end
+
+    it "masks a secret-named directory's files whole, as it would under the project" do
+      write("secrets/prod", "value\n")
+      write("credentials/x", "value\n")
+      write("docs/readme.md")
+
+      expect(%w[secrets/prod credentials/x].map { listing(_1).verdict }).to all(have_attributes(named?: true))
+      expect(listing("docs/readme.md").verdict).to be_ordinary
+    end
+
+    it "classifies a link by the survey root too" do
+      write("secrets/prod", "value\n")
+      File.symlink(File.join(root, "secrets/prod"), File.join(root, "alias.txt"))
+
+      expect(listing("alias.txt").verdict).to have_attributes(named?: true)
+    end
+  end
+
+  describe "the same files under the project root" do
+    let(:sensitivity) { Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root)) }
+
+    it "projects a secret-named directory as before" do
+      write("secrets/prod", "value\n")
+
+      expect(listing("secrets/prod").verdict).to have_attributes(named?: true)
+    end
+  end
+
   # A link is TWO names for one file, and classifying only the one the walk
   # discovered is how a `.netrc` reaches a corpus wearing the name `notes.txt`.
   # The amplification is what makes this the walk's problem and not the read
