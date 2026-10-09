@@ -38,17 +38,24 @@ local function is_indented(line)
   return line:sub(1, 2) == "  " and line:match("%S") ~= nil
 end
 
+-- A ticked option is still the rendered row, so both sides compare with the mark unticked.
+local function unticked(line)
+  return (line:gsub("^(%- %[)x(%])", "%1 %2"))
+end
+
 -- The rows lain did not render: a line's occurrences past its rendered count.
 -- The limit is that a typed line is indistinguishable from an identical rendered one, so only the surplus copy is flagged.
 local function typed_rows(buf, lines)
   local budget = {}
   for _, line in ipairs(vim.b[buf].lain_question_rendered or {}) do
+    line = unticked(line)
     budget[line] = (budget[line] or 0) + 1
   end
   local typed = {}
   for row, line in ipairs(lines) do
-    if (budget[line] or 0) > 0 then
-      budget[line] = budget[line] - 1
+    local key = unticked(line)
+    if (budget[key] or 0) > 0 then
+      budget[key] = budget[key] - 1
     else
       typed[row] = true
     end

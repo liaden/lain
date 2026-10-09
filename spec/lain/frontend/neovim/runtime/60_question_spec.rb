@@ -145,6 +145,52 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
+    it "raises no mark when options are ticked" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        opened_question(three)
+
+        lines = buffer_lines("lain://question")
+        edit_question(lines.map { |line| line.sub("- [ ] `pg`", "- [x] `pg`").sub("- [ ] `30d`", "- [x] `30d`") })
+        expect(question_errors).to eq([])
+      end
+    end
+
+    it "still marks a line typed at column 0 after options are ticked" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        opened_question(three)
+
+        lines = buffer_lines("lain://question").map { |line| line.sub("- [ ] `pg`", "- [x] `pg`") }
+        edit_question(lines + ["", "extra"])
+        expect(question_errors).to eq([lines.size + 2])
+      end
+    end
+
+    it "marks an option row ticked with a capital X" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        opened_question(three)
+
+        lines = buffer_lines("lain://question")
+        row = lines.index { |line| line.include?("- [ ] `pg`") }
+        edit_question(lines.each_with_index.map { |line, i| i == row ? line.sub("- [ ]", "- [X]") : line })
+        expect(question_errors).to eq([row + 1])
+      end
+    end
+
+    it "marks a ticked option whose label was edited" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        opened_question(three)
+
+        lines = buffer_lines("lain://question")
+        row = lines.index { |line| line.include?("- [ ] `pg`") }
+        edit_question(lines.each_with_index.map { |line, i| i == row ? "#{line.sub("- [ ]", "- [x]")} edited" : line })
+        expect(question_errors).to eq([row + 1])
+      end
+    end
+
     it "flags a typed duplicate of a rendered line but not the rendered one" do
       frontend.run do
         wait_until_editor { buffer_lines("lain://journal").any? }
