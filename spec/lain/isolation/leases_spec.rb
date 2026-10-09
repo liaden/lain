@@ -131,6 +131,10 @@ RSpec.describe Lain::Isolation::Leases do
           recorded << [:sync, worker_id, worker.askable?]
           found
         end
+        define_method(:unasked) do |_lease, worker_id:|
+          recorded << [:unasked, worker_id]
+          found
+        end
         define_method(:editorless) { |worker_env| worker_env }
       end.new
     end
@@ -151,7 +155,7 @@ RSpec.describe Lain::Isolation::Leases do
       expect { syncing.hold("subagent", journal:) { raise Lain::Error, "the ceiling" } }
         .to raise_error(Lain::Error, "the ceiling")
 
-      expect(calls).to eq([[:sync, worker, false], [:surrender, worker, outcome]])
+      expect(calls).to eq([[:unasked, worker], [:surrender, worker, outcome]])
     end
 
     it "syncs a stopped block's checkout too" do
@@ -161,7 +165,24 @@ RSpec.describe Lain::Isolation::Leases do
         parked.stop
       end
 
-      expect(calls).to eq([[:sync, worker, false], [:surrender, worker, outcome]])
+      expect(calls).to eq([[:unasked, worker], [:surrender, worker, outcome]])
+    end
+
+    # The fast checks ask the worker to fix its red, and run for as long as
+    # the project's check takes: neither belongs in a teardown.
+    it "never runs the checks for a dispatch that did not return" do
+      checks = Class.new do
+        attr_reader :ran
+
+        def call(*, **) = (@ran = true)
+      end.new
+      checked = described_class.new(backend:, handoff:, sync: Lain::Isolation::Checked.new(checks:, sync:))
+
+      expect { checked.hold("subagent", journal:) { raise Lain::Error, "the ceiling" } }
+        .to raise_error(Lain::Error, "the ceiling")
+
+      expect(checks.ran).to be_nil
+      expect(calls).to eq([[:unasked, worker], [:surrender, worker, outcome]])
     end
 
     # The sync is git subprocesses, so a suspension point, and a second stop --
@@ -172,10 +193,10 @@ RSpec.describe Lain::Isolation::Leases do
       entered = false
       recorded = calls
       slow = Class.new do
-        define_method(:call) do |_lease, worker:, worker_id:|
+        define_method(:unasked) do |_lease, worker_id:|
           entered = true
           sleep 0.2
-          recorded << [:sync, worker_id, worker.askable?]
+          recorded << [:sync, worker_id]
           Lain::Isolation::SelfSync::Result::NONE
         end
         define_method(:editorless) { |worker_env| worker_env }

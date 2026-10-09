@@ -55,7 +55,8 @@ module Lain
       # {Isolation::WorkerHandoff} a one-shot child's lease ends in -- the same
       # one the {Supervisor} surrenders a crashed actor through, so the two
       # lanes cannot hand work back to different places -- and the
-      # {Isolation::SelfSync} that rebases a child onto the working branch
+      # {Isolation::Checked} sync that runs the project's fast checks, then the
+      # {Isolation::SelfSync} that rebases a child onto the working branch,
       # before that handback runs. {Wiring#handback} builds it.
       #
       # Reopened rather than declared in a `Data.define ... do` block: a
@@ -884,9 +885,11 @@ module Lain
       def handback_over(base, settings)
         strategy = Isolation::MergeStrategy.from(settings)
         resolver = Handback::LateResolver.new(role_spawn: -> { role_spawn })
+        sync = Isolation::SelfSync.new(base:, strategy:, retries: settings.rebase_retries)
+        checks = Isolation::Checked.configured(base:, layout: Config.test_layout(root:), settings:)
         Handback.new(handoff: Isolation::WorkerHandoff.over(repo_root: fleet_isolation.repo_root, base:,
                                                             journal: durable_journal, strategy:, resolver:),
-                     sync: Isolation::SelfSync.new(base:, strategy:, retries: settings.rebase_retries))
+                     sync: Isolation::Checked.new(checks:, sync:))
       end
 
       def isolation_settings = config.isolation

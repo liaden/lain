@@ -168,6 +168,7 @@ class SubagentSpecSync
   def result = @result ||= Lain::Isolation::SelfSync::Result.new(outcome: :current)
 
   def editorless(worker_env) = worker_env.with(env: worker_env.env.merge("GIT_EDITOR" => "true"))
+  def unasked(lease, worker_id:) = call(lease, worker: Lain::Isolation::SelfSync::Unaskable, worker_id:)
 end
 
 # A stand-in named for the one tool that lets a child run git: whether a

@@ -121,6 +121,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback::Retirement do
       expect(records.map(&:outcome)).to eq([:declined])
       expect(records.first).to have_attributes(worker_key: "worker-3", ref: worker_ref("worker-3"))
       expect(records.first.sync).not_to be_nil
+      expect(records.first.checks).to be_nil
     ensure
       lease&.release
     end
@@ -159,6 +160,26 @@ RSpec.describe Lain::Isolation::Worktree::Handback::Retirement do
       expect(run_git(@repo_root, "rev-parse", worker_ref("worker-5 refused #{mine}"))).to eq(mine)
     ensure
       lease&.release
+    end
+
+    # Built as the epic driver builds it: the project's `isolation` lint, run
+    # in the actor's own checkout before the anchor.
+    it "carries the actor's checks onto its retirement record" do
+      Dir.mktmpdir("lain-retire-lint") do |logs|
+        log = File.join(logs, "lint.log")
+        settings = Lain::Config::Isolation.from({ "lint" => ["sh", "-c", "pwd > #{log}"] }, path: nil)
+        checks = Lain::Isolation::Checked.configured(base: backend.base, layout: Lain::TestLayout::None, settings:)
+        checked = described_class.over(isolation: backend, journal:, checks:)
+        lease = backend.acquire("worker-6")
+        commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+        checked.settled(lease, worker: Lain::Isolation::SelfSync::Unaskable, worker_id: "worker-6")
+
+        expect(journal.grep(Lain::Telemetry::Handback).first.checks).to include("outcome" => "passed")
+        expect(File.read(log).strip).to eq(File.realpath(lease.worker_env.cwd))
+      ensure
+        lease&.release
+      end
     end
   end
 end

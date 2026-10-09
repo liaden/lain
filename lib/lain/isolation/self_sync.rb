@@ -141,6 +141,7 @@ module Lain
       # environment left exactly as it was leased.
       module Null
         def self.call(_lease, **) = Result::NONE
+        def self.unasked(_lease, **) = Result::NONE
         def self.editorless(worker_env) = worker_env
       end
 
@@ -182,6 +183,14 @@ module Lain
         Run.new(tree: Tree.new(path, shell_out_factory: @shell_out_factory), worker:, base: @base,
                 strategy: @strategy, retries: @retries, anchor: Worktree::Handback::Naming.new(worker_id).ref).call
       end
+
+      # The sync a dispatch that never returned gets on its way out: lain's
+      # own attempt, with nobody left to ask.
+      #
+      # @param lease [#origin] the worker's lease; its checkout is the one rebased
+      # @param worker_id [Object] names the ref the commits are anchored under
+      # @return [Result]
+      def unasked(lease, worker_id:) = call(lease, worker: Unaskable, worker_id:)
 
       # One sync of one checkout, and the state that takes: the attempts so
       # far, the HEAD it found, every path a rebase conflicted on, and whether

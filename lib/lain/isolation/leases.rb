@@ -248,7 +248,7 @@ module Lain
       # runs while an exception climbs, so a failure of its own reads as no
       # sync rather than replacing that exception.
       def unasked(lease, worker)
-        @sync.call(lease, worker: SelfSync::Unaskable, worker_id: worker)
+        @sync.unasked(lease, worker_id: worker)
       rescue StandardError
         SelfSync::Result::NONE
       end

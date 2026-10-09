@@ -66,4 +66,63 @@ RSpec.describe Lain::Telemetry::Handback do
     expect { described_class.new(worker_key: "w-1", outcome: :probably_fine) }
       .to raise_error(ArgumentError, /outcome/)
   end
+
+  describe "the fast checks that ran before the sync" do
+    let(:attempts) { [{ "by" => "lain", "outcome" => "passed", "command" => "" }] }
+    let(:checks) { Lain::Isolation::WorkerChecks::Result.new(outcome: :passed, attempts:).to_record }
+
+    def through_the_journal(record)
+      read = JSON.parse(JSON.generate(record.to_journal)).except("type")
+      described_class.new(**read.transform_keys(&:to_sym))
+    end
+
+    it "carries the checks' outcome, attempts and detail, deeply frozen" do
+      record = described_class.new(worker_key: "w-1", outcome: :merged, **checks)
+
+      expect(record.checks).to eq("outcome" => "passed", "attempts" => attempts, "detail" => "")
+      expect(record).to be_deeply_frozen
+    end
+
+    # A journal hands the record back String-keyed, and it must load as the
+    # record that was written.
+    it "reads back from the journal as the record that was written" do
+      record = described_class.new(worker_key: "w-1", outcome: :merged, **checks)
+
+      expect(through_the_journal(record)).to eq(record)
+    end
+
+    # The line a session file held before checks rode the record.
+    it "loads a journal line written before checks existed with checks nil" do
+      line = '{"ts":"2026-10-01T00:00:00.000000Z","type":"handback","worker_key":"w-1","outcome":"merged",' \
+             '"ref":"refs/lain/worker/w-1","strategy":"conflict_style=zdiff3 diff_algorithm=histogram",' \
+             '"fast_forward":true,"sha":null,"sync":"synced","attempts":[],"dirty":false,"path":null,"detail":""}'
+      read = Lain::Journal.records([line], type: "handback").first.except("ts", "type")
+
+      expect(described_class.new(**read.transform_keys(&:to_sym)).checks).to be_nil
+    end
+
+    # Held verbatim so telemetry depends on the isolation tier for nothing,
+    # which makes this the one place a drift between the two shows.
+    it "admits exactly the outcomes the fast tier can reach" do
+      expect(Lain::Telemetry::Carriers::Handback::CHECKS)
+        .to eq(Lain::Isolation::WorkerChecks::Result::OUTCOMES.map(&:to_s))
+    end
+
+    it "records no checks by default, and journals no checks key" do
+      record = described_class.new(worker_key: "w-1", outcome: :declined)
+
+      expect(record.checks).to be_nil
+      expect(record.to_journal).not_to have_key("checks")
+    end
+
+    it "refuses checks with an outcome no fast tier can reach" do
+      expect { described_class.new(worker_key: "w-1", outcome: :merged, checks: { outcome: :probably_fine }) }
+        .to raise_error(ArgumentError, /checks/)
+    end
+
+    it "refuses checks that are not a table" do
+      expect { described_class.new(worker_key: "w-1", outcome: :merged, checks: "passed") }
+        .to raise_error(ArgumentError, /checks/)
+    end
+  end
 end

@@ -207,9 +207,9 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   def factory_over(mounted, actors: nil, record: Lain::CLI::Chronicle::Null.new, grading: nil, asker: nil,
-                   endpoint: nil, ladder: nil, interrupt: -> { false })
+                   endpoint: nil, ladder: nil, interrupt: -> { false }, journal: Lain::Channel::Null.instance)
     described_class.for(mount: mounted, chronicle: record, paths:, root: repo, library: backend.library,
-                        journal: Lain::Channel::Null.instance, toolset_build:, asker:, config:, actors:, endpoint:,
+                        journal:, toolset_build:, asker:, config:, actors:, endpoint:,
                         ladder:, interrupt:, **(grading ? { grading: } : {}))
   end
 
@@ -225,9 +225,10 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   # The loop, over real git, with scripted actors in real leased checkouts.
-  def driven(width: 2, grading: nil, files: {}, idle: [], slug: "demo", interrupt: -> { false })
-    factory_over(mount(slug), actors: scripted(files:, idle:, slug:), record: chronicle, grading:, interrupt:)
-      .run(width:)
+  def driven(width: 2, grading: nil, files: {}, idle: [], slug: "demo", interrupt: -> { false },
+             journal: Lain::Channel::Null.instance)
+    factory_over(mount(slug), actors: scripted(files:, idle:, slug:), record: chronicle, grading:, interrupt:,
+                              journal:).run(width:)
   end
 
   def worktree_root = Lain::CLI::IsolationBackend.worktree_root(repo, paths:)
@@ -628,6 +629,33 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
       expect(result.landed.map(&:issue_id)).to eq(%w[a b])
       expect(Lain::Config).to have_received(:test_layout).once
+    end
+
+    # The project's lint runs in each actor's own checkout before retirement
+    # anchors it, and what it found rides the retirement's handback record.
+    describe "with an isolation lint" do
+      let(:lint_log) { File.join(paths.sessions_dir, "lint.log") }
+      let(:lint) { "echo \"$(git log -1 --format=%s)|$(pwd)\" >> #{lint_log}" }
+      let(:config) do
+        Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: hands_off),
+                         isolation: { "lint" => ["sh", "-c", lint] })
+      end
+
+      it "lints each actor's leased checkout and journals the checks on its retirement" do
+        write_epic([issue("a"), issue("b")])
+        %w[a b].each { |id| approve_plan(id) }
+        journal = RecordingChannel.new
+
+        result = driven(width: 1, journal:)
+
+        linted = File.readlines(lint_log, chomp: true).map { |line| line.split("|") }
+        expect(result.landed.map(&:issue_id)).to eq(%w[a b])
+        expect(linted.map(&:first)).to eq(["work for a", "work for b"])
+        expect(linted.map(&:last)).to all(start_with("#{worktree_root}/"))
+        expect(linted.map(&:last).uniq.size).to eq(2)
+        expect(journal.events.grep(Lain::Telemetry::Handback).map { |record| record.checks["outcome"] })
+          .to eq(%w[passed passed])
+      end
     end
 
     # Each epic lands in a checkout of its own, so an earlier epic's checkout

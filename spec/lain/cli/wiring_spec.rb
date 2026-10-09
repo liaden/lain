@@ -1709,7 +1709,7 @@ RSpec.describe Lain::CLI::Wiring do
           write_config(repo, config)
         end
 
-        def spawn_dev(wiring, notice: ->(_line) {})
+        def spawn_dev(wiring, notice: ->(_line) {}, backend: self.backend)
           recorder, session = wiring.run_state(nil)
           wiring.wire_agent(channel:, recorder:, session:, backend:, notice:)
           Sync { wiring.role_spawn.call(:dev, :fresh, "work") }
@@ -1769,6 +1769,46 @@ RSpec.describe Lain::CLI::Wiring do
           end
 
           expect(Lain::Skill::RoleSpawn).to have_received(:new).once
+        end
+
+        # The child commits while the branch moves under it, so a lint that
+        # ran after the rebase would have logged a different HEAD.
+        def committing_provider
+          Class.new(Lain::Provider::Mock) do
+            def complete(request, on_stream_started: nil)
+              step = super
+              step.respond_to?(:call) ? step.call(request) : step
+            end
+          end.new(responses: [->(_request) { commit_and_move }])
+        end
+
+        def commit_in(dir, file)
+          File.write(File.join(dir, file), "#{file}\n")
+          git_out(dir, "add", file)
+          git_out(dir, "commit", "-q", "-m", file)
+          git_out(dir, "rev-parse", "HEAD")
+        end
+
+        def commit_and_move
+          @worktree = record.events.grep(Lain::Telemetry::IsolationLease).find { |lease| lease.kind == :acquired }.path
+          @committed = commit_in(@worktree, "work.txt")
+          commit_in(Dir.pwd, "moved.txt")
+          Lain::Response.new(content: [{ "type" => "text", "text" => "done" }], stop_reason: :end_turn)
+        end
+
+        it "runs the configured lint in the child's checkout before its rebase, and journals the checks" do
+          logged = in_throwaway_repo do |repo, state|
+            log = File.join(state, "lint.log")
+            on_feat(repo, config: %(isolation lint: ["sh", "-c", "pwd > #{log}; git rev-parse HEAD >> #{log}"]\n))
+            spawn_dev(wiring_with("worktree"),
+                      backend: offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                                         mock: committing_provider, root: repo))
+            File.readlines(log, chomp: true)
+          end
+
+          expect(logged).to eq([@worktree, @committed])
+          expect(handbacks.map(&:sync)).to eq([:synced])
+          expect(handbacks.first.checks).to include("outcome" => "passed")
         end
       end
     end

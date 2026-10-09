@@ -1,18 +1,24 @@
 # frozen_string_literal: true
 
+require "json"
+
 module Lain
   module Telemetry
     module Carriers
       # A handback record must name the worker whose work it disposed of and
       # land on one of the outcomes the operation can reach. The kinds are
-      # {Isolation::Worktree::Handback::Outcome::KINDS}, and the sync outcomes
-      # {Isolation::SelfSync::Result::OUTCOMES}, held verbatim here rather than
+      # {Isolation::Worktree::Handback::Outcome::KINDS}, the sync outcomes
+      # {Isolation::SelfSync::Result::OUTCOMES} and the checks outcomes
+      # {Isolation::WorkerChecks::Result::OUTCOMES}, held verbatim here rather than
       # referenced, so telemetry depends on the isolation tier for nothing (the
       # same reason {SeamDecision} holds {Plan::SIZES} verbatim).
       class Handback < Declarative::Carrier
+        CHECKS = %w[passed fixed failed skipped dirty].freeze
+
         attribute :worker_key
         attribute :outcome
         attribute :sync
+        attribute :checks
         validates :worker_key, presence: { message: "must name the worker handed back, got nil" }
         validates :outcome, inclusion: { in: %i[nothing_to_do merged conflicted declined failed],
                                          message: "must be one of nothing_to_do/merged/conflicted/declined/" \
@@ -20,6 +26,16 @@ module Lain
         validates :sync, inclusion: { in: %i[current synced conflicted lost dirty disabled failed], allow_nil: true,
                                       message: "must be one of current/synced/conflicted/lost/dirty/disabled/" \
                                                "failed, got %<value>s" }
+        validate :checks_reached
+
+        private
+
+        def checks_reached
+          return if checks.nil? || (checks.is_a?(Hash) && CHECKS.include?(checks["outcome"]))
+
+          errors.add(:checks, "must be nil or a table whose outcome is one of #{CHECKS.join("/")}, " \
+                              "got #{checks.inspect}")
+        end
       end
     end
 
@@ -46,26 +62,41 @@ module Lain
     # same checkout path {IsolationLease} already records -- and `detail` why
     # it ended as it did.
     #
+    # `checks` is what the {Isolation::WorkerChecks} made of the checkout
+    # before that sync, String-keyed as a journal reads it back, and nil when
+    # none were configured, on an epic-lane surrender, or when the record
+    # predates them.
+    #
     # Emitted by {Isolation::Worktree::Handback} itself rather than by a
     # decorator: handback is a one-shot operation whose whole product IS the
     # outcome, so there is no forwarding duck to wrap.
     Handback = Data.define(:worker_key, :outcome, :ref, :strategy, :fast_forward, :sha,
-                           :sync, :attempts, :dirty, :path, :detail) do
+                           :sync, :attempts, :dirty, :path, :detail, :checks) do
       include Journalable
 
       def initialize(worker_key:, outcome:, ref: nil, strategy: nil, fast_forward: false, sha: nil,
-                     sync: nil, attempts: [], dirty: false, path: nil, detail: "")
+                     sync: nil, attempts: [], dirty: false, path: nil, detail: "", checks: nil)
         outcome = outcome.to_sym
         sync = sync&.to_sym
-        Carriers::Handback.check!(worker_key:, outcome:, sync:)
+        checks = stringified(checks)
+        Carriers::Handback.check!(worker_key:, outcome:, sync:, checks:)
 
         super(worker_key: worker_key.to_s.dup.freeze, outcome:, ref: Freezable::Fields.pinned(ref),
               strategy: Freezable::Fields.pinned(strategy),
               fast_forward: Freezable::Fields.boolean!(fast_forward, "fast_forward"),
               sha: Freezable::Fields.pinned(sha), sync:, attempts: Ractor.make_shareable(attempts.map(&:dup)),
               dirty: Freezable::Fields.boolean!(dirty, "dirty"), path: Freezable::Fields.pinned(path),
-              detail: -detail.to_s)
+              detail: -detail.to_s, checks: Ractor.make_shareable(checks))
       end
+
+      # With no checks the line is byte-identical to the pre-checks line, so old pins and readers see no change.
+      def to_journal = checks.nil? ? super.except("checks") : super
+
+      private
+
+      # Through JSON, so a fresh record holds exactly what its journal line
+      # reads back as, and holds a copy rather than the caller's Hash.
+      def stringified(checks) = checks.is_a?(Hash) ? JSON.parse(JSON.generate(checks)) : checks
     end
   end
 end

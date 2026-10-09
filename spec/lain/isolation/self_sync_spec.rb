@@ -237,6 +237,16 @@ RSpec.describe Lain::Isolation::SelfSync, :seam do
       expect(reachable?(c1)).to be(true)
     end
 
+    # The sync a dispatch that never returned gets: lain's own attempt, and
+    # nobody asked.
+    it "syncs unasked as it syncs a worker that cannot be asked" do
+      result = sync.unasked(lease, worker_id: "worker-1")
+
+      expect(result.outcome).to eq(:conflicted)
+      expect(result.attempts).to eq([attempt("lain", 1, "conflicted")])
+      expect(anchored).to eq(c1)
+    end
+
     it "does not ask a worker that holds no shell" do
       worker = SelfSyncSpecWorker.new
 
@@ -497,6 +507,7 @@ RSpec.describe Lain::Isolation::SelfSync, :seam do
       expect(null.call(lease, worker: askable(SelfSyncSpecWorker.new), worker_id: "w"))
         .to be(described_class::Result::NONE)
       expect(null.editorless(env)).to be(env)
+      expect(null.unasked(lease, worker_id: "w")).to be(described_class::Result::NONE)
     end
   end
 end

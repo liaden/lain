@@ -468,16 +468,17 @@ module Lain
         # so the issue's implementation gate stands between the work and the
         # branch. It is also what makes every adopted actor's environment
         # editorless, so a rebase it is asked to finish opens no editor.
-        def retirement
+        def retirement(layout = self.layout)
           Lain::Isolation::Worktree::Handback::Retirement.over(isolation:, journal: @journal, strategy:,
-                                                               retries: settings.rebase_retries)
+                                                               retries: settings.rebase_retries,
+                                                               checks: checks(layout))
         end
 
         # FRESH per call: one reactor per Supervisor life, so driving the same
         # epic twice in one chat is a second run rather than an AlreadyRunning
         # refusal.
-        def supervisor
-          Lain::Supervisor.new(journal: @journal, isolation:, retirement:)
+        def supervisor(layout = self.layout)
+          Lain::Supervisor.new(journal: @journal, isolation:, retirement: retirement(layout))
         end
 
         # WHICH ATTEMPT AN ISSUE'S NEXT LAUNCH TAKES, read from the repository
@@ -513,7 +514,8 @@ module Lain
           holding(landing_checkout) do |checkout|
             Sync do |task|
               discarded = earlier.call(resumed:)
-              fleet = supervisor.run(task)
+              layout = self.layout
+              fleet = supervisor(layout).run(task)
               begin
                 loop_over(fleet, checkout, layout, width:, budget:).call.with(discarded:)
               ensure
@@ -658,6 +660,8 @@ module Lain
         def strategy = Lain::Isolation::MergeStrategy.from(settings)
 
         def settings = config.isolation
+
+        def checks(layout) = Lain::Isolation::Checked.configured(base: isolation.base, layout:, settings:)
 
         def config = @config ||= @optional.fetch(:config) || Lain::Config.load(root: @root)
 

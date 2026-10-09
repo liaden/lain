@@ -168,14 +168,16 @@ module Lain
           #   with, so an actor resolves the markers a merge would have shown it
           # @param retries [Integer] how often a conflicted actor is asked to
           #   rebase its own work; 0 rebases nothing
+          # @param checks [#call] the fast checks run before the sync, from
+          #   {Checked.configured}
           def self.over(isolation:, journal: Channel::Null.instance, strategy: MergeStrategy::DEFAULT,
-                        retries: 1)
+                        retries: 1, checks: Checked::Unchecked)
             base = isolation.base
-            new(sync: SelfSync.new(base:, strategy:, retries:), journal:, strategy:,
+            new(sync: Checked.new(checks:, sync: SelfSync.new(base:, strategy:, retries:)), journal:, strategy:,
                 anchor: Anchor.new(parent: Checkout.new(isolation.repo_root), base:))
           end
 
-          # @param sync [#call, #editorless] {SelfSync}
+          # @param sync [#call, #editorless] {SelfSync}, or {Checked} around one
           # @param anchor [#standing, #anchor] {Anchor}: what the worker's ref holds
           #   before any sync, and the anchoring after it
           # @param journal [#<<] where the {Telemetry::Handback} record lands
