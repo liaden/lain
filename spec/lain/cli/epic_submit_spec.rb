@@ -1038,6 +1038,17 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(gate_decisions.map { |record| record["approved"] }).to eq([false])
     end
 
+    it "prints denied, not parked, when a human denies over an earlier deferral of the same digest" do
+      session("parked.ndjson", decision(digest: research_digest, stage: "research"))
+
+      said = command(gates: hands_off.merge("research" => "interactive"), input: tty("n\n")).submit("research")
+
+      expect(said).to start_with("denied")
+      expect(said).not_to include("parked")
+      queue = Lain::Approval::SignoffQueue.from_journal(journal_records)
+      expect(queue.parked("alpha", "research")).to be_empty
+    end
+
     # An asker that cannot speak is not an asker. A TTY input with nowhere to
     # write the question used to reach `nil.write` from inside the reactor --
     # a NoMethodError, not a {Lain::Error}, so it escaped `exe/lain`'s rescue

@@ -290,11 +290,21 @@ module Lain
         # @return [Numeric, nil] the window, in seconds, that closed on this
         #   digest's gate with nobody answering; nil when somebody answered
         def expired(digest)
-          decision = @decided.reverse.find { |decided| decided.artifact_digest == digest }
+          decision = latest(digest)
           decision.latency if decision&.answered_by == Approval::Gate::TIMEOUT_SURFACE
         end
 
+        # @param digest [String] the submitted artifact's address
+        # @return [Boolean] whether this command's own latest decision on the digest deferred it
+        def deferred?(digest)
+          latest(digest)&.policy == Approval::SignoffQueue::DEFERRED_POLICY
+        end
+
         def each(&block) = SessionJournals.new(dir: @dir, types: [Approval::SignoffQueue::JOURNAL_TYPE]).each(&block)
+
+        private
+
+        def latest(digest) = @decided.reverse.find { |decided| decided.artifact_digest == digest }
       end
 
       # One submission, decided and reported. Its own object because reaching a
@@ -343,17 +353,17 @@ module Lain
            "  #{@stage} for epic #{slug} (#{@submission.fact})", "  #{@advance.call}"].join("\n")
         end
 
-        # Parked or plainly denied is read off the QUEUE, not off the policy's
-        # name: a deferral IS a denial that left something for a human to sign
-        # off, and reading the policy would be a second opinion on what
-        # deferring means.
+        # The queue can still hold an item parked by an earlier command, so this
+        # call's own decision says whether it deferred; the queue only supplies the item.
         def refused
           window = @journal.expired(@submission.digest)
           return unanswered(window) if window
 
-          parked = @queue.parked(slug, @stage.name).find { |item| item.artifact_digest == @submission.digest }
+          parked = @journal.deferred?(@submission.digest) && parked_item
           parked ? deferred(parked) : denied
         end
+
+        def parked_item = @queue.parked(slug, @stage.name).find { |item| item.artifact_digest == @submission.digest }
 
         def deferred(item)
           ["deferred #{item.artifact_digest}",

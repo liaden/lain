@@ -100,6 +100,27 @@ RSpec.describe Lain::Tools::EpicSubmit do
     end
   end
 
+  context "when a human denies over an earlier deferral of the same digest" do
+    it "starts with denied" do
+      parked = Lain::Approval::GateDecision.new(
+        artifact_digest: Lain::Epic::Submission.research(text: "# findings\n", slug: "frugirl-mvp").digest,
+        epic_slug: "frugirl-mvp", stage: "research", approved: false, answered_by: "deferred",
+        policy: "deferred", latency: 1.0
+      )
+      FileUtils.mkdir_p(paths.sessions_dir)
+      File.open(File.join(paths.sessions_dir, "parked.ndjson"), "w") { |io| Lain::Journal.new(io:).record(parked) }
+
+      result = Sync do |task|
+        call = task.async { tool.call({ "stage" => "research", "slug" => "frugirl-mvp" }, invocation) }
+        task.yield until ask_human.pending?
+        ask_human.reply("deny", ask_human.last_question.digest)
+        call.wait
+      end
+
+      expect(result.content).to start_with("denied")
+    end
+  end
+
   context "when the submitted stage is adjudicated" do
     let(:gates) { every_stage("hands_off").merge("research" => "adjudicated") }
 
