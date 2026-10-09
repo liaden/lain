@@ -81,3 +81,37 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Home, :seam do
     end
   end
 end
+
+RSpec.describe Lain::Isolation::MergeCoordinator, ".main_root", :seam do
+  around do |example|
+    Dir.mktmpdir("lain-coordinator-root") do |base|
+      @repo = File.join(File.realpath(base), "repo")
+      @linked = File.join(File.realpath(base), "linked")
+      FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", FileUtils.mkdir_p(@repo).first)
+      example.run
+    end
+  end
+
+  def main_root(dir) = described_class.main_root(dir, shell_out_factory: Lain::Shell::Out.public_method(:new))
+
+  it "answers the main worktree from a linked worktree and from deep inside the main one" do
+    Lain::Isolation::Checkout.new(@repo).run("worktree", "add", "--detach", @linked)
+    FileUtils.mkdir_p(File.join(@repo, "sub", "deep"))
+
+    expect([main_root(@linked), main_root(File.join(@repo, "sub", "deep")), main_root(@repo)]).to eq([@repo] * 3)
+  end
+
+  it "refuses a bare repository, which has no main worktree to verify in, naming it" do
+    bare = File.join(File.dirname(@repo), "bare.git")
+    Lain::Shell::Out.new("git", "clone", "-q", "--bare", @repo, bare,
+                         environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command
+
+    expect { main_root(bare) }.to raise_error(Lain::Error, /#{Regexp.escape(bare)}.*bare/)
+  end
+
+  it "refuses a directory in no repository, naming it" do
+    Dir.mktmpdir("lain-coordinator-nowhere") do |nowhere|
+      expect { main_root(nowhere) }.to raise_error(Lain::Error, /#{Regexp.escape(nowhere)}/)
+    end
+  end
+end

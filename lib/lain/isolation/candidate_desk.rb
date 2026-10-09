@@ -18,14 +18,18 @@ module Lain
 
       # @param repo_root [String] any checkout of the repository
       # @param base [WorkingBranch] the branch the batch lands onto
-      # @param home [MergeCoordinator::Home] the branch's home, whose drain lock the run holds
+      # @param home [MergeCoordinator::Home] the branch's home, which names the candidate ref
       # @param checkout [VerifyCheckout] the scratch worktree a candidate is verified in
       # @param journal [#<<] where each landed worker's {Telemetry::Handback} goes
       # @param strategy [MergeStrategy] how probes and merges are spelt
       # @param shell_out_factory [#call] builds the subprocess runner
-      def initialize(repo_root:, base:, home:, checkout:, journal:, strategy:, shell_out_factory:)
+      # @param lock [#hold] what the run holds; the home's drain lock unless a
+      #   caller already holds that one itself
+      def initialize(repo_root:, base:, home:, checkout:, journal:, strategy:, shell_out_factory:,
+                     lock: home.drain_lock)
         @base = base
         @home = home
+        @lock = lock
         @checkout = checkout
         @journal = journal
         @strategy = strategy
@@ -44,8 +48,8 @@ module Lain
 
       attr_reader :strategy
 
-      # @return [FileLock]
-      def lock = @home.drain_lock
+      # @return [#hold]
+      attr_reader :lock
 
       def branch = @base.name
 

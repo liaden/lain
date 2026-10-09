@@ -236,6 +236,41 @@ RSpec.describe Lain::Isolation::CandidateDesk, :seam do
     end
   end
 
+  describe "a lock given to the desk" do
+    let(:given) do
+      Class.new do
+        attr_reader :held
+
+        def initialize = @held = 0
+
+        def hold(**)
+          @held += 1
+          yield
+        end
+      end.new
+    end
+    let(:desk) do
+      described_class.new(
+        repo_root: @repo, base:, journal:, strategy: Lain::Isolation::MergeStrategy::DEFAULT, lock: given,
+        home: Lain::Isolation::MergeCoordinator::Home.for(repo_root: @repo, branch:),
+        checkout: Lain::Isolation::VerifyCheckout.for(repo_root: @repo, branch:, paths:, keep: []),
+        shell_out_factory: Lain::Shell::Out.public_method(:new)
+      )
+    end
+
+    it "is the one the queue holds, and the drain lock stays free" do
+      w1 = worker("w1", g: "new\n")
+      drain_free = []
+      verify = verdict(:passed) do
+        drain_free << Lain::Isolation::MergeCoordinator::Home.for(repo_root: @repo, branch:).drain_lock.try { nil }
+      end
+
+      queue_class.new(repo_root: @repo, base:, desk:, verify:).call([w1])
+
+      expect([given.held, drain_free, contains?(w1.sha)]).to eq([1, [true], true])
+    end
+  end
+
   describe "a branch checked out nowhere" do
     let(:branch) { "side" }
 

@@ -303,9 +303,8 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
 
     def isolation(command) = Lain::Config::Isolation.from({ "verify" => ["sh", "-c", command] }, path: nil)
 
-    def candidate(command, **)
-      described_class.candidate(root: @repo, project_root: @repo, base:, journal:, isolation: isolation(command),
-                                paths:, **)
+    def candidate(command, root: @repo, **)
+      described_class.candidate(root:, base:, journal:, isolation: isolation(command), paths:, **)
     end
 
     def verify_tree = Lain::Isolation::VerifyCheckout.for(repo_root: @repo, branch: "epic/demo", paths:, keep: []).path
@@ -335,7 +334,6 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
       expect(handbacks).to be_empty
     end
 
-    # A stand-in class, because the desk's own `lock:` keyword arrives with the drainer.
     it "hands the desk a lock it was given, and none of its own otherwise" do
       lock = Lain::FileLock.new(File.join(@repo, ".git", "held.lock"))
       built = []
@@ -353,6 +351,40 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
 
       expect(built.map { |keywords| keywords[:lock] }).to eq([lock, nil])
       expect(built.last).not_to have_key(:lock)
+    end
+  end
+
+  describe ".candidate run from a linked worktree" do
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@repo, ".state"), "HOME" => @repo }) }
+
+    before { File.write(File.join(@repo, ".git", "info", "exclude"), ".state/\n") }
+
+    it "verifies in the scratch checkout keyed by the main worktree" do
+      linked = File.join(@repo, ".state", "linked")
+      git("worktree", "add", "-q", "--detach", linked)
+      w1 = worker("w1", "f" => "a\nB1\nc\n")
+
+      described_class.candidate(root: linked, base:, journal:, paths:,
+                                isolation: Lain::Config::Isolation.from({ "verify" => %w[true] }, path: nil))
+                     .call([w1])
+
+      keyed = Lain::Isolation::VerifyCheckout.for(repo_root: @repo, branch: "epic/demo", paths:, keep: []).path
+      expect(git("worktree", "list", "--porcelain")).to include("worktree #{keyed}\n")
+    end
+
+    it "judges the candidate by a verify it is given in place of the configured one" do
+      w1 = worker("w1", "f" => "a\nB1\nc\n")
+      judged = []
+      verify = lambda do |candidate|
+        judged << candidate.sha
+        Lain::Isolation::LandingQueue::Verification.new(outcome: :passed, tip: candidate.sha)
+      end
+
+      described_class.candidate(root: @repo, base:, journal:, paths:, verify:,
+                                isolation: Lain::Config::Isolation.from({ "verify" => %w[false] }, path: nil))
+                     .call([w1])
+
+      expect([judged.size, contains?(w1.sha)]).to eq([1, true])
     end
   end
 

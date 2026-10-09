@@ -94,30 +94,31 @@ module Lain
       # is the branch's drain lock, so `lain epic land` and a drainer of the
       # same branch take turns.
       #
-      # @param root [String] the checkout the landing runs from
-      # @param project_root [String] the project's own root, which keys the
-      #   scratch checkout so every landing of the branch reuses one
+      # @param root [String] any checkout of the repository; the scratch
+      #   checkout is keyed by its main worktree, so every landing of the
+      #   branch reuses one
       # @param base [WorkingBranch] the branch the batch lands onto
       # @param journal [#<<] where each landed worker's handback record goes
       # @param isolation [Config::Isolation] merge strategy, retries and verification
       # @param paths [Paths] where the scratch checkout and the suite lock live
       # @param notice [#call] told who holds the branch's landing drain, or the
       #   parent checkout's lock, when a landing waits on it for long
-      # @param lock [FileLock, nil] a drain lock the caller already holds, handed
+      # @param lock [#hold, nil] a drain lock the caller already holds, handed
       #   to the desk in place of its own; nil lets the desk take its own
       # @param shell_out_factory [#call] builds every git and verify subprocess
+      # @param verify [#call] judges the candidate; the configured verifier unless given
       # @return [LandingQueue]
-      def self.candidate(root:, project_root:, base:, journal:, isolation:, paths:, notice: ParentLock::Silent,
-                         lock: nil, shell_out_factory: Shell::Out.public_method(:new))
-        checkout = VerifyCheckout.for(repo_root: project_root, branch: base.name, paths:, keep: isolation.verify_keep,
-                                      shell_out_factory:)
+      def self.candidate(root:, base:, journal:, isolation:, paths:, notice: ParentLock::Silent, lock: nil,
+                         shell_out_factory: Shell::Out.public_method(:new),
+                         verify: Verifier.from(isolation, paths:, shell_out_factory:))
+        checkout = VerifyCheckout.for(repo_root: MergeCoordinator.main_root(root, shell_out_factory:),
+                                      branch: base.name, paths:, keep: isolation.verify_keep, shell_out_factory:)
         desk = CandidateDesk.new(
           repo_root: root, base:, journal:, checkout:, strategy: MergeStrategy.from(isolation), shell_out_factory:,
           home: MergeCoordinator::Home.for(repo_root: root, branch: base.name, shell_out_factory:),
           **(lock ? { lock: } : {})
         )
-        new(repo_root: root, base:, desk:, retries: isolation.rebase_retries, notice:, shell_out_factory:,
-            verify: Verifier.from(isolation, paths:, shell_out_factory:))
+        new(repo_root: root, base:, desk:, retries: isolation.rebase_retries, notice:, shell_out_factory:, verify:)
       end
 
       # @param repo_root [String] the parent checkout, which must stand on `base`

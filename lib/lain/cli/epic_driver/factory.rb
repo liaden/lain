@@ -173,7 +173,6 @@ module Lain
           # @param slug [String] the epic
           # @param root [String] the checkout that stands on the epic's branch,
           #   which is lain's own wherever the human's does not
-          # @param project_root [String] the project's own root
           # @param paths [Paths] where the session journals are read from
           # @param base [Isolation::WorkingBranch] `epic/<slug>`
           # @param config [Config::Isolation] the merge strategy, retry count and verification
@@ -182,10 +181,9 @@ module Lain
           # @param submit [EpicSubmit] re-checks the plan approval at land time
           # @param layout [TestLayout] the PROJECT's, never read from `root`: lain's
           #   own checkout is cut by git, so a gitignored config never reaches it
-          def initialize(slug:, root:, project_root:, paths:, base:, config:, journal:, epics:, submit:, layout:)
+          def initialize(slug:, root:, paths:, base:, config:, journal:, epics:, submit:, layout:)
             @slug = slug
             @root = root
-            @project_root = project_root
             @paths = paths
             @base = base
             @config = config
@@ -218,7 +216,7 @@ module Lain
           def landed_records = records(Lain::Forge::LocalLanding::LANDED).to_a
 
           def queue
-            Lain::Isolation::LandingQueue.candidate(root: @root, project_root: @project_root, base: @base,
+            Lain::Isolation::LandingQueue.candidate(root: @root, base: @base,
                                                     journal: @journal, isolation: @config, paths: @paths)
           end
 
@@ -583,7 +581,7 @@ module Lain
         # The landing runs in LAIN'S OWN checkout, never the human's -- see
         # {#landing_checkout}.
         def landing(checkout, layout)
-          Landing.new(slug:, root: checkout.root, project_root: @root, paths: @paths, base: working_branch,
+          Landing.new(slug:, root: checkout.root, paths: @paths, base: working_branch,
                       config: settings, journal: record, epics:, submit:, layout:)
         end
 

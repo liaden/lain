@@ -156,7 +156,7 @@ module Lain
       end
 
       def queue(base, journal, root)
-        Lain::Isolation::LandingQueue.candidate(root:, project_root: @root, base:, journal:,
+        Lain::Isolation::LandingQueue.candidate(root:, base:, journal:,
                                                 isolation: @config.isolation, paths: @paths, notice: @notice,
                                                 shell_out_factory: @shell_out_factory)
       end
