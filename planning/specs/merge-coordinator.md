@@ -1395,3 +1395,57 @@ throwaway project with 2 chats in worktrees on 1 branch, and confirm these by ha
   T3's 10-line table change re-applied as a patch in each. At landing, T3's docs change goes in as a
   patch, never a whole-file copy.
 - T8 stop condition fired (git lists a deleted worktree as `prunable` but still holding the branch). Human ruling: a prunable worktree does not count; the branch moves by `update-ref` CAS. T8 resumed. Human approved landing: the other session is done.
+- T1 landed e27b72d2.
+- Landed on `main`: T1 `e27b72d2`, T2 `203eef16`, T3 `e64e82ed`, T6 `1094d341`, T7 `8ad5d983`,
+  T11 `6d137731`, T18 `5219dd7a`, T4 `16a644c1`, T5 `36cc9f1e`. Plan committed `cb46c236`. A known
+  flake was recorded in `480ea115` (Shift+Enter line editor example, red in T2's first hook run).
+- T10's landing hook went red on `spec/lain/run_clock_spec.rb`: `spool.rb` named `CLOCK_MONOTONIC`,
+  which only `RunClock::MONOTONIC` may. Back to T10's implementer. Later briefs name every spec that
+  scans `lib/` source (`run_clock_spec`, `error_taxonomy_discipline_spec`, `lib_null_defaults_spec`,
+  `project_dir_spec`, `output_discipline_spec`, `zeitwerk_spec`).
+- User 2026-10-09: parallelize the rest. Agents keep running their own spec files during landings;
+  a red hook goes through the flaky-test procedure rather than waiting for an idle box.
+
+### T20: A timeout kills the whole process group, and a verify run sees no GIT_ context          [risk: medium]
+
+**Depends on:** none (T4 landed)
+**Files:** `lib/lain/shell/out.rb`, `spec/lain/shell/out_spec.rb`, `lib/lain/isolation/worktree.rb` (`GIT_CONTEXT_SCRUB` only), and the spec that pins that constant
+**Reachable from:** `Isolation::Verifier::Command#call` → `Shell::Out#run_command` on timeout; every `Shell::Out` caller with `timeout:`
+
+`Shell::Out#terminate` sends KILL only when the group leader outlives the grace period, so a
+grandchild that ignores TERM survives a timeout after the suite lock is free, and 2 suites overlap.
+After reaping the leader, poll the group (`Process.kill(0, -pgid)`) until the grace ends, then KILL
+the group. A grandchild that called `setsid` is out of reach and out of scope.
+`GIT_CONTEXT_SCRUB` gains the remaining repository-locating variables (`GIT_OBJECT_DIRECTORY`,
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`,
+`GIT_DISCOVERY_ACROSS_FILESYSTEM`, and any others git documents as changing which repository a
+command sees). Never a blanket `GIT_*` scrub: `GIT_CONFIG_GLOBAL` is set on purpose in specs.
+
+```gherkin
+Scenario: a grandchild that ignores TERM does not outlive a timeout
+  Given a command that starts a background child trapping TERM and sleeping 30, then waits
+  When it runs with timeout 1
+  Then Shell::Out::Timeout is raised and no process of that group is alive afterwards
+
+Scenario: a verify command cannot see another repository's objects
+  Given GIT_OBJECT_DIRECTORY set in the caller's environment
+  When a verify command runs git cat-file in its checkout
+  Then it succeeds against the checkout's own objects
+```
+
+### T21: FileLock refuses an unopenable lock file by name          [risk: low]
+
+**Depends on:** none (T1 landed)
+**Files:** `lib/lain/file_lock.rb`, `spec/lain/file_lock_spec.rb`
+
+A lock file that cannot be opened (a read-only directory, a directory where the file should be)
+raises `Paths::Unwritable` naming the path, as `SuiteLock.for` does for its directory, rather than
+a bare `Errno` that skips `exe/lain`'s `Lain::Error` rescues.
+
+```gherkin
+Scenario: a lock path that is a directory is refused by name
+  Given a FileLock whose path is an existing directory
+  When hold is called
+  Then Paths::Unwritable is raised naming the path, and the block never ran
+```
+- T10 landed `f9f56d29`.
