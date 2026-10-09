@@ -562,7 +562,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         verdict_row = rows.index { |row| row.match?(/-- denied after \d+:\d\d with no answer/) }
         expect(verdict_row).to be > prompt_row
         expect(rows[(prompt_row + 1)...verdict_row]).to all(match(/\A\s*\z/))
-        expect(rows[verdict_row].lstrip).to start_with("-- denied after")
+        expect(rows[verdict_row].lstrip).to match(/\A\d\d:\d\d:\d\d -- denied after/)
         expect(terminal.verdicts).to eq([%w[timeout deny]])
         expect(terminal.dispatched).to eq(["run the tests", "y"])
       end

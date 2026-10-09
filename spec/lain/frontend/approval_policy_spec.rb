@@ -47,6 +47,29 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(output.string).to include("bash(").and include("auto-denies in 5:00")
   end
 
+  it "stamps the prompt with the time it is drawn, not the time it was built" do
+    times = [Time.new(2026, 10, 8, 13, 14, 1), Time.new(2026, 10, 8, 13, 19, 1)].each
+    seen = nil
+    described_class.new(output:, pastel: Pastel.new(enabled: false), wall_clock: -> { times.next },
+                        reader: ->(prompt) { (seen = prompt) && "n\n" }).decide(pending)
+
+    expect(seen.stamped).to start_with("13:14:01 agent asks")
+  end
+
+  it "stamps the prompt the standalone reader prints" do
+    described_class.new(output:, input: StringIO.new("n\n"), pastel: Pastel.new(enabled: false),
+                        wall_clock: -> { Time.new(2026, 10, 8, 13, 14, 1) }).decide(pending)
+
+    expect(output.string).to start_with("13:14:01 agent asks")
+  end
+
+  it "stamps from the real clock when none is injected" do
+    seen = nil
+    described_class.new(output:, reader: ->(prompt) { (seen = prompt) && "n\n" }).decide(pending)
+
+    expect(seen.stamped).to match(/\A\d\d:\d\d:\d\d /)
+  end
+
   it "closes a prompt the clock denied with the full window and no mention of a surface" do
     lapsed = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, timeout: 300)
     asked = described_class::Asked.new("approve? ", lapsed)
@@ -786,7 +809,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     # the half this example exists for -- with nothing outstanding, no preamble
     # reaches the human at all.
     it "renders the ordinary prompt, byte for byte, when the pending discloses nothing" do
-      expect(rendered(pending)).to eq("agent asks (auto-denies in 5:00): approve bash(#{effect.input.inspect})? [y/N] ")
+      expect(rendered(pending))
+        .to eq("agent asks (auto-denies in 5:00): approve bash(#{effect.input.inspect})? [y/N] ")
     end
 
     # A link's name says nothing about what it opens, so the human is shown
@@ -860,7 +884,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     describe "no two of this process's ApprovalPolicys can ask a different question" do
       it "takes no collaborator that could carry release state" do
         expect(described_class.instance_method(:initialize).parameters)
-          .to eq([%i[key output], %i[key input], %i[key pastel], %i[key reader]])
+          .to eq([%i[key output], %i[key input], %i[key pastel], %i[key reader], %i[key wall_clock]])
       end
 
       it "asks the identical question from every constructor shape lib/ builds" do
@@ -875,8 +899,9 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
         texts = shapes.map do |kwargs|
           sink = StringIO.new
-          described_class.new(output: sink, pastel: Pastel.new(enabled: false), **kwargs).decide(disclosing)
-          asked.pop || sink.string
+          described_class.new(output: sink, pastel: Pastel.new(enabled: false),
+                              wall_clock: -> { Time.at(1_000) }, **kwargs).decide(disclosing)
+          asked.pop&.stamped || sink.string
         end
 
         expect(texts.uniq).to eq([texts.first])

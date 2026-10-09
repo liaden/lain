@@ -85,11 +85,16 @@ module Lain
       # stream beside the one the prompt was drawn on; so the prompt carries the
       # sentence and the terminal asks for it on the way out.
       class Asked < String
-        def initialize(text, pending)
+        def initialize(text, pending, wall_clock: -> { Time.now })
           super(text)
           @pending = pending
+          @wall_clock = wall_clock
           freeze
         end
+
+        # The text as drawn, asked when the prompt reaches the head: one queued
+        # behind another would otherwise carry the time it began to wait.
+        def stamped = "#{@wall_clock.call.strftime("%H:%M:%S")} #{self}"
 
         # Yields the sentence ending this prompt's line when its call was
         # decided anywhere else -- a timeout, an oracle, the editor, or another
@@ -151,7 +156,8 @@ module Lain
       # queue's fail-closed timer can still fire). The standalone reader asks
       # `input:`, which is no terminal unless one is handed in -- stdin is the
       # pump's to read -- so a policy nobody wired denies.
-      def initialize(output: $stdout, input: NoTerminal, pastel: Pastel.new, reader: nil)
+      def initialize(output: $stdout, input: NoTerminal, pastel: Pastel.new, reader: nil, wall_clock: -> { Time.now })
+        @wall_clock = wall_clock
         @output = output
         @input = input
         @pastel = pastel
@@ -203,7 +209,7 @@ module Lain
       # called with no reactor under it.
       def read_until_decided(pending)
         Sync do |task|
-          asked = Asked.new(@pastel.yellow.bold(prompt_for(pending)), pending)
+          asked = Asked.new(@pastel.yellow.bold(prompt_for(pending)), pending, wall_clock: @wall_clock)
           reading = task.async(finished: false) { @reader.call(asked) }
           letting_go = task.async { let_go(pending, reading) }
           reading.wait
@@ -285,7 +291,7 @@ module Lain
       end
 
       def prompt_and_read(prompt)
-        @output.print(prompt)
+        @output.print(prompt.stamped)
         @output.flush
         @input.gets
       end

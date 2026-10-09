@@ -230,7 +230,7 @@ module Lain
       def read(kind, text, header: "", keys: {})
         turn = Turn.new(Thread::Queue.new, kind, text, false, false)
         enter(turn)
-        asked = Prompt.new(kind:, text:, header:, keys:, generation: 0)
+        asked = Prompt.new(kind:, text: text.respond_to?(:stamped) ? text.stamped : text, header:, keys:, generation: 0)
         kind == RECALLED ? recalled(held_line || answered(turn, asked, text)) : answered(turn, asked, text)
       ensure
         unwinding do

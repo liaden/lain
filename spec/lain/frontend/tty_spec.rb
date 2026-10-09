@@ -442,6 +442,90 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  describe "the time on a status line" do
+    let(:now) { Time.new(2026, 10, 8, 13, 14, 1) }
+    let(:stamped) do
+      described_class.new(channel:, output:, pastel: Pastel.new(enabled: false), wall_clock: -> { now })
+    end
+    let(:speaking) do
+      Class.new(String) do
+        def queued = yield("! agent asks to run bash(\"ls\")")
+        def closed = yield("-- denied after 5:00 with no answer")
+        def dropped = yield("! agent asks to run bash(\"ls\")  -- decided by timeout: denied")
+      end.new("[y/N] ")
+    end
+
+    it "formats the injected wall clock as HH:MM:SS ahead of the text" do
+      expect(stamped.stamp("hello")).to eq("13:14:01 hello")
+    end
+
+    it "starts a held-line notice with the time" do
+      stamped.render_held("next please")
+
+      expect(output.string).to start_with("13:14:01 held as your next prompt: next please")
+    end
+
+    it "starts a queued approval's arrival with the time" do
+      stamped.queue_prompt(speaking)
+
+      expect(output.string).to start_with("13:14:01 ! agent asks to run")
+    end
+
+    it "starts a dropped approval's line with the time" do
+      stamped.drop_prompt(speaking)
+
+      expect(output.string).to start_with("13:14:01 ! agent asks to run")
+    end
+
+    it "gives a timeout its own time, read when it lapses" do
+      times = [Time.new(2026, 10, 8, 13, 14, 1), Time.new(2026, 10, 8, 13, 19, 1)].each
+      clocked = described_class.new(channel:, output:, pastel: Pastel.new(enabled: false), wall_clock: lambda {
+        times.next
+      })
+
+      clocked.queue_prompt(speaking)
+      clocked.close_prompt(speaking)
+
+      expect(output.string.lines.map { |line| line[/\A\d\d:\d\d:\d\d/] }).to eq(%w[13:14:01 13:19:01])
+    end
+
+    it "starts the line saying a held line did not answer with the time" do
+      stamped.render_held_not_an_answer(question: false)
+
+      expect(output.string).to start_with("13:14:01 ")
+    end
+
+    it "starts a question's arrival line with the time" do
+      stamped.render_arrival("which one?")
+
+      expect(output.string).to start_with("13:14:01 ? ")
+    end
+
+    it "rings the bell with the stamped summons" do
+      rung = []
+      belled = described_class.new(channel:, output:, pastel: Pastel.new(enabled: false),
+                                   wall_clock: -> { now }, tmux: ->(note) { rung << note },
+                                   layers: -> { Lain::Mode::LayerSet.new([:notify]) })
+
+      belled.queue_prompt(speaking)
+
+      expect(rung.first).to start_with("13:14:01 ")
+    end
+
+    it "stamps from the real clock when none is injected" do
+      described_class.new(channel:, output:, pastel: Pastel.new(enabled: false)).render_held("x")
+
+      expect(output.string).to match(/\A\d\d:\d\d:\d\d held as your next prompt/)
+    end
+
+    it "writes the model's reply without a time" do
+      stamped.render_response(Lain::Response.new(content: [{ "type" => "text", "text" => "plain prose" }],
+                                                 stop_reason: :end_turn))
+
+      expect(output.string).to start_with("plain prose")
+    end
+  end
+
   describe "#render_held_not_an_answer" do
     it "says the held line did not answer the question and names /inbox and :LainReply" do
       tty.render_held_not_an_answer(question: true)
@@ -531,7 +615,7 @@ RSpec.describe Lain::Frontend::TTY do
       tty.render_arrival(handback, from: "chat")
 
       expect(output.string).to include("over the ceiling of #{ceiling}").and include("type `send`")
-      expect(output.string.bytesize).to be < (handback.bytesize / 100)
+      expect(output.string.bytesize).to be < (handback.bytesize / 50)
       expect(output.string.chomp).not_to match(line_break)
     end
 
@@ -586,8 +670,9 @@ RSpec.describe Lain::Frontend::TTY do
   # without having drawn: the prompt supplies the words, when it has any.
   describe "the rail's queued and dropped prompts" do
     let(:raised) { [] }
+    let(:at_one) { Time.new(2026, 10, 8, 13, 14, 1) }
     let(:plain) do
-      described_class.new(channel:, output:, pastel: Pastel.new(enabled: false),
+      described_class.new(channel:, output:, pastel: Pastel.new(enabled: false), wall_clock: -> { at_one },
                           layers: -> { Lain::Mode::LayerSet.new(raised) }, tmux: ->(_note) {})
     end
     let(:speaking) do
@@ -608,7 +693,7 @@ RSpec.describe Lain::Frontend::TTY do
     it "prints a dropped prompt's line whole" do
       plain.drop_prompt(speaking)
 
-      expect(output.string).to eq("! agent asks to run bash(\"ls\")  -- decided by timeout: denied\n")
+      expect(output.string).to eq("13:14:01 ! agent asks to run bash(\"ls\")  -- decided by timeout: denied\n")
     end
 
     it "says nothing for a prompt with nothing to say" do
@@ -628,7 +713,10 @@ RSpec.describe Lain::Frontend::TTY do
         def closed = yield("! agent asks to run bash(\"ls\")  -- decided by timeout: denied")
       end.new("[y/N] ")
     end
-    let(:plain) { described_class.new(channel:, output:, pastel: Pastel.new(enabled: false)) }
+    let(:plain) do
+      described_class.new(channel:, output:, pastel: Pastel.new(enabled: false),
+                          wall_clock: -> { Time.new(2026, 10, 8, 13, 14, 1) })
+    end
 
     def close_then_stream
       Sync do |task|
@@ -644,13 +732,14 @@ RSpec.describe Lain::Frontend::TTY do
     it "puts the verdict on its own row, ended before the next output" do
       close_then_stream
 
-      expect(output.string).to include("-- decided by timeout: denied\r\nI apologize")
+      expect(output.string).to include("13:14:01 ! agent asks to run bash(\"ls\")  -- decided by timeout: denied\r\n" \
+                                       "I apologize")
     end
 
     it "leaves the drawn row in the scrollback" do
       close_then_stream
 
-      expect(output.string).to start_with("[y/N] \r\n! agent asks")
+      expect(output.string).to start_with("[y/N] \r\n13:14:01 ! agent asks")
     end
   end
 
@@ -1757,7 +1846,7 @@ RSpec.describe Lain::Frontend::TTY do
       expect(submitted).to eq(typed.inspect)
       shows(/note 14 of the fleet/)
       expect(rows(/note \d+ of the fleet/).map { |row| row[/note (\d+)/, 1].to_i }).to eq((0..14).to_a)
-      expect(rows(/of the fleet/)).to all(start_with("? researcher note"))
+      expect(rows(/of the fleet/)).to all(match(/\A\d\d:\d\d:\d\d \? researcher note/))
     end
   end
 end

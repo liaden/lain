@@ -88,7 +88,8 @@ module Lain
       #   default through too, so the three renderers of one feed cannot name
       #   three different files. Injectable so specs use a tmpdir
       # @param wall_clock [#call] absolute time source for {#prompt}'s warmth
-      #   snapshot, separate from `clock:` above -- {StatusFeed} publishes an
+      #   snapshot and for the time {#stamp} puts on a status line,
+      #   separate from `clock:` above -- {StatusFeed} publishes an
       #   absolute deadline (wall time), while `clock:` is {RunClock::MONOTONIC}
       #   and answers a different question. There is deliberately no shared
       #   WALL constant to pair with it -- see {RunClock::MONOTONIC}
@@ -122,8 +123,9 @@ module Lain
         build_prompt_stack(prompt_renderer:, history_path:)
         @bell = Bell.new(output:, raised: -> { layers.call.include?(:notify) }, tmux:)
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
+        @wall_clock = wall_clock
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
-        @inbox = Inbox.new(output:, pastel:, clock: wall_clock)
+        @inbox = Inbox.new(output:, pastel:, clock: wall_clock, stamp: method(:stamp))
         @notes = Notes.new(output:, writer: @countdown)
         # Built here, CLAIMED in #run: constructing a TTY must not rebind the
         # human's keys. Draws through {Countdown#draw}, the existing owner of
@@ -206,18 +208,21 @@ module Lain
       # is fed by `reline(…, true)` and is not this.
       def remember(line) = @history.append(line)
 
+      # The model's prose is content, not a status line, and is never stamped.
+      def stamp(text) = "#{@wall_clock.call.strftime("%H:%M:%S")} #{text}"
+
       # Whether the `vi` layer is up at this read.
       def vi? = @layers.call.include?(:vi)
 
       # A line the human typed that was neither a command nor an answer, kept
       # for `you>` ({Intake#hold}) -- said, since a line nobody was told about
       # reads as swallowed.
-      def render_held(line) = render_warning(format(HELD, legible(line)))
+      def render_held(line) = render_warning(stamp(format(HELD, legible(line))))
 
       # Said after {#render_held} at `command>`, where the human most likely
       # meant the line as an answer.
       def render_held_not_an_answer(question:)
-        render_warning(question ? HELD_BESIDE_QUESTION : HELD_BESIDE_APPROVAL)
+        render_warning(stamp(question ? HELD_BESIDE_QUESTION : HELD_BESIDE_APPROVAL))
       end
 
       def render_discarded(partial) = render_warning(format(DISCARDED, legible(partial)))
@@ -230,7 +235,7 @@ module Lain
       # would replace the stop that is climbing; so the failure goes to the
       # channel as a {PromptUnclosed} instead, and the stop carries on.
       def close_prompt(text)
-        text.closed { |note| @notes.close_row(@theme.paint(:warning, note)) } if text.respond_to?(:closed)
+        text.closed { |note| @notes.close_row(@theme.paint(:warning, stamp(note))) } if text.respond_to?(:closed)
       rescue StandardError => e
         report_unclosed(e)
       end
@@ -238,13 +243,13 @@ module Lain
       # A prompt waiting its turn behind another ({Intake#read}) is announced
       # as a summons, when it has words for it ({ApprovalPolicy::Asked}).
       def queue_prompt(text)
-        text.queued { |note| render_summons(note) } if text.respond_to?(:queued)
+        text.queued { |note| render_summons(stamp(note)) } if text.respond_to?(:queued)
       end
 
       # A waiting prompt that left without drawing says so in a line of its own,
       # having no row to end. Guarded for {#close_prompt}'s reason.
       def drop_prompt(text)
-        text.dropped { |note| render_warning(note) } if text.respond_to?(:dropped)
+        text.dropped { |note| render_warning(stamp(note)) } if text.respond_to?(:dropped)
       rescue StandardError => e
         report_unclosed(e)
       end
@@ -638,7 +643,9 @@ module Lain
         # @param pastel [Pastel] presentation stays out of this class, as with
         #   every other TTY collaborator -- callers hand in the palette
         # @param clock [#call] absolute (wall) time for ages, {Warmth}'s seam
-        def initialize(output:, pastel:, clock:)
+        # @param stamp [#call] puts the time on an arrival note
+        def initialize(output:, pastel:, clock:, stamp:)
+          @stamp = stamp
           @output = output
           @pastel = pastel
           @clock = clock
@@ -657,7 +664,7 @@ module Lain
         end
 
         def announce(note)
-          @output.puts(@pastel.yellow(note))
+          @output.puts(@pastel.yellow(@stamp.call(note)))
           @output.flush
         end
 

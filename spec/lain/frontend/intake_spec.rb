@@ -313,6 +313,30 @@ RSpec.describe Lain::Frontend::Intake do
       expect(prompt.drawn_times).to eq(1)
     end
 
+    it "is drawn with the time it reached the head, not the time it began to wait" do
+      now = Time.new(2026, 10, 8, 13, 14, 1)
+      pending = Lain::Approval::Queue::Pending.new(
+        effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {}),
+        requester: "agent", clock: -> { 0 }
+      )
+      waiting = Lain::Frontend::ApprovalPolicy::Asked.new("[y/N] ", pending, wall_clock: -> { now })
+      drawn = nil
+
+      Sync do |task|
+        question = task.async { rail.read(:human, "human> ") }
+        pumped_until(task) { rail.published.kind == :human }
+        reading = task.async { rail.read(:approval, waiting) }
+        settle_for(task, 0.02)
+        now += 300
+        question.stop
+        pumped_until(task) { rail.published.kind == :approval }
+        drawn = rail.published.text
+        reading.stop
+      end
+
+      expect(drawn).to eq("13:19:01 [y/N] ")
+    end
+
     it "starts the call's clock through the real approval prompt" do
       pending = Lain::Approval::Queue::Pending.new(
         effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: {}),
