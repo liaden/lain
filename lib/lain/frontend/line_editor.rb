@@ -63,6 +63,11 @@ module Lain
       NEWLINE_MODES = %i[emacs vi_insert vi_command].freeze
       NEWLINE_SEQUENCES = ["\e[13;2u", "\e[27;2;13~", "\e\r"].map { |sequence| sequence.bytes.freeze }.freeze
 
+      # xterm's modifyOtherKeys: tmux sends Shift+Enter as a distinct key only
+      # to a program that asked, and the reset hands the next program its plain CR.
+      KEY_REPORTING_ON = "\e[>4;1m"
+      KEY_REPORTING_OFF = "\e[>4;0m"
+
       # Reline's own indicators are "(cmd)"/"(ins)"; lain's bracketed form
       # matches {TTY::Countdown}'s "[c] cancel", so the two pieces of
       # bottom-of-screen furniture read as one interface rather than two.
@@ -200,8 +205,10 @@ module Lain
         # globally, a second LineEditor's construction silently disarmed the
         # first one's notifier.
         self.class.registry.reporting_to(@notify) do
-          buffer = ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) }
-          buffer && accept(buffer)
+          reporting_shift_enter do
+            buffer = ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) }
+            buffer && accept(buffer)
+          end
         end
       end
 
@@ -230,6 +237,21 @@ module Lain
       def accept(buffer)
         warn_about_vi_command_mode unless submit?(buffer)
         join_continuations(buffer)
+      end
+
+      def reporting_shift_enter
+        terminal = ::Reline.core.output
+        terminal.write(KEY_REPORTING_ON) if terminal.tty?
+        yield
+      ensure
+        reset_key_reporting(terminal)
+      end
+
+      # A dead terminal must not replace the exception the read is already unwinding with.
+      def reset_key_reporting(terminal)
+        terminal.write(KEY_REPORTING_OFF) if terminal&.tty?
+      rescue SystemCallError, IOError
+        nil
       end
 
       def configure

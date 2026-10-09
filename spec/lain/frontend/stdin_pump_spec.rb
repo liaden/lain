@@ -257,6 +257,23 @@ RSpec.describe Lain::Frontend::StdinPump do
       expect(pumped(terminal) { rail.read(:command, "command> ") }).to eq("/approve")
       expect(Lain::Frontend::LineEditor).not_to have_received(:typed_ahead)
     end
+
+    it "asks the terminal for Shift+Enter around a command> read as around any other" do
+      master, slave = PTY.open
+      allow(Reline.core).to receive(:output).and_return(slave)
+      during = nil
+      allow(Reline).to receive(:readmultiline) do
+        during = master.read_nonblock(64)
+        "/approve"
+      end
+
+      pumped(terminal) { rail.read(:command, "command> ") }
+
+      expect([during, master.read_nonblock(64)]).to eq(["\e[>4;1m", "\e[>4;0m"])
+    ensure
+      slave&.close
+      master&.close
+    end
   end
 
   # What was typed while nothing drew at all -- a standing goal drives turns with

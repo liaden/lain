@@ -151,6 +151,81 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect(described_class.new.read("> ")).to eq("one\ntwo\nthree")
     end
 
+    describe "asking the terminal for Shift+Enter" do
+      let(:request) { "\e[>4;1m" }
+      let(:reset) { "\e[>4;0m" }
+
+      def written_during
+        master, slave = PTY.open
+        allow(Reline.core).to receive(:output).and_return(slave)
+        yield
+        slave.close
+        master.read_nonblock(1024)
+      rescue Errno::EIO
+        ""
+      ensure
+        master&.close
+      end
+
+      it "writes the request before the read and the reset after it, on a terminal" do
+        allow(Reline).to receive(:readmultiline).and_return("hi")
+        bytes = written_during { described_class.new.read("> ") }
+
+        expect(bytes).to eq("#{request}#{reset}")
+      end
+
+      it "has written the request by the time readmultiline runs" do
+        master, slave = PTY.open
+        allow(Reline.core).to receive(:output).and_return(slave)
+        during = nil
+        allow(Reline).to receive(:readmultiline) do
+          during = master.read_nonblock(1024)
+          "hi"
+        end
+
+        described_class.new.read("> ")
+
+        expect(during).to eq(request)
+      ensure
+        slave&.close
+        master&.close
+      end
+
+      it "resets after an exception" do
+        allow(Reline).to receive(:readmultiline).and_raise(Interrupt)
+        bytes = written_during { expect { described_class.new.read("> ") }.to raise_error(Interrupt) }
+
+        expect(bytes).to end_with(reset)
+      end
+
+      it "resets at EOF" do
+        allow(Reline).to receive(:readmultiline).and_return(nil)
+        bytes = written_during { described_class.new.read("> ") }
+
+        expect(bytes).to end_with(reset)
+      end
+
+      it "lets the read's own exception through when the reset cannot be written" do
+        dead = instance_double(IO, tty?: true)
+        calls = 0
+        allow(dead).to receive(:write) { (calls += 1) == 1 ? 1 : raise(Errno::EIO) }
+        allow(Reline.core).to receive(:output).and_return(dead)
+        allow(Reline).to receive(:readmultiline).and_raise(Interrupt)
+
+        expect { described_class.new.read("> ") }.to raise_error(Interrupt)
+      end
+
+      it "writes nothing to an output that is not a terminal" do
+        output = StringIO.new
+        allow(Reline.core).to receive(:output).and_return(output)
+        allow(Reline).to receive(:readmultiline).and_return("hi")
+
+        described_class.new.read("> ")
+
+        expect(output.string).to eq("")
+      end
+    end
+
     # Specified rather than accidental: the rule is "a line ENDING in a
     # backslash", so a backslash followed by a space is not one, and submits
     # with the backslash left in as ordinary text. Deliberate -- tolerating
@@ -931,8 +1006,8 @@ RSpec.describe Lain::Frontend::LineEditor do
 
     it "runs the hook it is given before the read draws, and puts the previous one back" do
       previous = -> {}
-      Reline.pre_input_hook = previous
       seen = nil
+      Reline.pre_input_hook = previous
 
       described_class.before_first_draw(-> { :swept }) { seen = Reline.pre_input_hook.call }
 
