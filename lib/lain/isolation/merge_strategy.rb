@@ -33,8 +33,18 @@ module Lain
       # would refuse an unsigned worker commit (all verified on git 2.55).
       BEHAVIOUR = %w[--ff --no-squash --commit --no-verify-signatures].freeze
 
+      FORWARD = %w[--ff-only --no-squash --no-verify-signatures --no-autostash --quiet].freeze
+
       # @return [Array<String>] git's arguments after `git -C <dir>`
       def merge(ref) = [*style, "merge", *BEHAVIOUR, "--no-edit", *algorithm, ref]
+
+      # Moving a branch forward to a commit already built and verified, so
+      # `branch.<b>.mergeOptions = --squash` cannot leave it unmoved,
+      # `merge.verifySignatures` cannot refuse an unsigned merge lain made,
+      # and `merge.autoStash` cannot stash and re-apply the user's edits.
+      #
+      # @return [Array<String>] git's arguments after `git -C <dir>`
+      def fast_forward(commit) = [*style, "merge", *FORWARD, commit]
 
       # @return [Array<String>] git's arguments after `git -C <dir>`
       def rebase(upstream) = [*style, "rebase", *algorithm, upstream]

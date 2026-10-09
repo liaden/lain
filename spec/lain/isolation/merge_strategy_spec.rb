@@ -33,6 +33,15 @@ RSpec.describe Lain::Isolation::MergeStrategy do
               "-z", "--name-only", "--no-messages", "-X", "diff-algorithm=histogram", "a" * 40, "b" * 40])
   end
 
+  # A landing moves a branch only forward, so whatever `branch.<b>.mergeOptions`,
+  # `merge.verifySignatures` or `merge.autoStash` say, it must not squash,
+  # refuse an unsigned candidate, or stash and re-apply the user's edits.
+  it "spells a fast-forward that user merge config cannot turn into anything else" do
+    expect(strategy.fast_forward("a" * 40))
+      .to eq(["-c", "merge.conflictStyle=zdiff3", "-c", "rerere.enabled=false", "merge", "--ff-only", "--no-squash",
+              "--no-verify-signatures", "--no-autostash", "--quiet", "a" * 40])
+  end
+
   it "is built from the [isolation] table" do
     isolation = Lain::Config::Isolation.from({ "conflict_style" => "diff3", "diff_algorithm" => "patience" },
                                              path: "config.toml")

@@ -278,6 +278,20 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
       expect(result.verification).to eq(described_class::Verification.new(
                                           outcome: :skipped, tip:, detail: Lain::Isolation::Verifier::Skipped::DETAIL
                                         ))
+      expect(result.stale_tip).to be(false)
+    end
+  end
+
+  describe "a desk given" do
+    let(:desk) { described_class::ParentDesk.new(repo_root: @repo, base:, journal:, strategy:, shell_out_factory:) }
+    let(:strategy) { Lain::Isolation::MergeStrategy::DEFAULT }
+    let(:shell_out_factory) { Lain::Shell::Out.public_method(:new) }
+
+    it "refuses a journal or a strategy beside it, since the desk carries its own" do
+      [{ journal: }, { strategy: }].each do |extra|
+        expect { described_class.new(repo_root: @repo, base:, desk:, **extra) }
+          .to raise_error(ArgumentError, /desk/)
+      end
     end
   end
 

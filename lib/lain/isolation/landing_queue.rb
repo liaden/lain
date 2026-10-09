@@ -65,8 +65,12 @@ module Lain
         end
       end
 
-      Result = Data.define(:landed, :verification) do
-        def initialize(landed:, verification:) = super(landed: landed.dup.freeze, verification:)
+      # `stale_tip` says the branch moved while the batch was being verified,
+      # so nothing landed and the batch is worth building again.
+      Result = Data.define(:landed, :verification, :stale_tip) do
+        def initialize(landed:, verification:, stale_tip: false)
+          super(landed: landed.dup.freeze, verification:, stale_tip: Freezable::Fields.boolean!(stale_tip, "stale_tip"))
+        end
 
         # @raise [KeyError] for a worker that was never queued
         def report(id)
@@ -88,8 +92,12 @@ module Lain
       # @param base [WorkingBranch] the branch every worker lands onto
       # @param desk [#lock, nil] where workers land, answering every message
       #   {ParentDesk} does; nil builds a {ParentDesk} from the other keywords
-      # @param journal [#<<] where each landing's {Telemetry::Handback} lands
-      # @param strategy [MergeStrategy] how probes and merges are spelt
+      # @param journal [#<<, nil] where each landing's {Telemetry::Handback}
+      #   lands; only for the {ParentDesk} built here, since a given desk
+      #   journals for itself
+      # @param strategy [MergeStrategy, nil] how probes and merges are spelt;
+      #   only for the {ParentDesk} built here, since probes take a given
+      #   desk's own
       # @param retries [Integer] `rebase_retries`: how many times a stale worker
       #   is asked to re-sync; 0 asks none
       # @param resolver [#call] `call(stale, desk)` answering one {Landed} per
@@ -99,14 +107,16 @@ module Lain
       # @param notice [#call] told who holds the parent checkout's lock when a
       #   landing waits on it for long
       # @param shell_out_factory [#call] builds the subprocess runner
-      def initialize(repo_root:, base:, desk: nil, journal: Channel::Null.instance, strategy: MergeStrategy::DEFAULT,
-                     retries: 1, resolver: Resolver::Standing, verify: Verifier::Skipped, notice: ParentLock::Silent,
+      # @raise [ArgumentError] when a desk comes with a journal or a strategy
+      #   of its own, which the queue would otherwise drop
+      def initialize(repo_root:, base:, desk: nil, journal: nil, strategy: nil, retries: 1,
+                     resolver: Resolver::Standing, verify: Verifier::Skipped, notice: ParentLock::Silent,
                      shell_out_factory: Shell::Out.public_method(:new))
         raise Refused, "a landing queue needs a named working branch to land onto; none was given" if base.name.empty?
 
         root = File.expand_path(repo_root)
-        @desk = desk || ParentDesk.new(repo_root: root, base:, journal:, strategy:, shell_out_factory:)
-        @probe = Probe.new(parent: Checkout.new(root, shell_out_factory:), strategy:)
+        @desk = desk ? given(desk, journal, strategy) : built(root, base, journal, strategy, shell_out_factory)
+        @probe = Probe.new(parent: Checkout.new(root, shell_out_factory:), strategy: @desk.strategy)
         @retries = Integer(retries)
         @resolver = resolver
         @verify = verify
@@ -126,13 +136,25 @@ module Lain
 
       private
 
+      def given(desk, journal, strategy)
+        return desk if journal.nil? && strategy.nil?
+
+        raise ArgumentError, "a landing queue given a desk takes its journal and strategy from that desk; " \
+                             "pass them to the desk instead"
+      end
+
+      def built(root, base, journal, strategy, shell_out_factory)
+        ParentDesk.new(repo_root: root, base:, journal: journal || Channel::Null.instance,
+                       strategy: strategy || MergeStrategy::DEFAULT, shell_out_factory:)
+      end
+
       def settle(workers, resync)
         @desk.ready!
         landed, stale = integrate(workers)
         resynced, leftovers = resynced(stale, resync)
         resolved = leftovers.empty? ? [] : @resolver.call(leftovers, @desk)
         outcomes = landed + resynced + resolved
-        @desk.conclude(verified(outcomes), ordered(workers, outcomes))
+        @desk.conclude(verified(outcomes), ordered(workers, outcomes), notice: @notice)
       end
 
       # Passes over the waiting workers in order, for as long as a pass lands
@@ -191,7 +213,8 @@ module Lain
       # Whether a commit integrates with a tip, asked of git without touching
       # the parent's index or working tree.
       class Probe
-        Probed = Data.define(:verdict, :paths, :detail)
+        # `tree` is the merged tree a clean merge wrote, and "" for every other verdict.
+        Probed = Data.define(:verdict, :paths, :detail, :tree)
 
         def initialize(parent:, strategy:)
           @parent = parent
@@ -215,7 +238,7 @@ module Lain
         # first writes a tree first, so the tree is what tells them apart.
         def written(shell)
           fields = shell.stdout.split("\0")
-          return probed(:clean) if shell.exitstatus.zero?
+          return probed(:clean, tree: fields.first) if shell.exitstatus.zero?
           return probed(:conflicted, paths: conflicted(fields)) if WorkingBranch::FULL_SHA.match?(fields.first.to_s)
 
           probed(:failed, detail: "git merge-tree failed (exit #{shell.exitstatus}): #{shell.stderr.strip}")
@@ -223,7 +246,7 @@ module Lain
 
         def conflicted(fields) = fields.drop(1).reject(&:empty?).uniq.map { |path| path.force_encoding(FILESYSTEM) }
 
-        def probed(verdict, paths: [], detail: "") = Probed.new(verdict:, paths:, detail:)
+        def probed(verdict, paths: [], detail: "", tree: "") = Probed.new(verdict:, paths:, detail:, tree:)
       end
 
       # The parent checkout, as the queue and its resolver act on it: merge a
@@ -249,7 +272,7 @@ module Lain
         # @return [ParentLock] held for the whole run, against a chat's handback
         attr_reader :lock
 
-        attr_reader :repo_root
+        attr_reader :repo_root, :strategy
 
         def branch = @base.name
 
@@ -300,8 +323,9 @@ module Lain
 
         # Every merge already landed in the parent, so the outcomes stand as
         # they are whatever the verification said.
+        # The run already holds the lock a notice would be told about.
         # @return [Result]
-        def conclude(verification, outcomes) = Result.new(landed: outcomes, verification:)
+        def conclude(verification, outcomes, **) = Result.new(landed: outcomes, verification:)
 
         private
 
