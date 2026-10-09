@@ -1461,3 +1461,11 @@ Scenario: a lock path that is a directory is refused by name
   sharing its 6 methods with `CandidateDesk`.
 - T9 and T14 started on T8's unreviewed working copy to save a wave; T8's final files are recopied
   into both before their reviews.
+- T8 fix round done; merge_strategy.rb and its spec joined T8 (MergeStrategy#fast_forward, the one home for the merge hardening). In second review. T9 finished; review waits on T8's final files.
+- T14 stop condition fired (epic_land_spec's parent-on-another-branch examples saw the verify worktree's lock). Main-session ruling: narrow the assertion to the landings worktree, plus assert the verify worktree is detached and holds no branch; the verify lock outliving a batch is by design.
+- T8 approved (review 2; one WHAT comment line dropped by the main session) and landed `a4888bee`.
+  `merge_strategy.rb` gained `#fast_forward`, the one home for the merge-config hardening.
+- T9 and T14 moved onto `a4888bee`; both in review (high). T14 found the verify tree was keyed by
+  whichever checkout ran the landing and added `project_root:`; T12 keys it the same way.
+- T12 started on T9's unreviewed files; T16 started on T14's unreviewed files (same-file order on
+  `factory.rb`: T16's diff is re-applied as a patch if T14 changes in review).
