@@ -121,7 +121,7 @@ module Lain
         end
       end
 
-      # `grep`: `path:lineno:text`. A colon is legal in a path AND in the matched
+      # `grep` and `ast_search`: `path:lineno:text`. A colon is legal in a path AND in the matched
       # text, so there is no split that is right in every case -- every split
       # whose middle field is a line number is a reading, and
       # {Sensitivity::Filter} withholds the row if any of them is sensitive.
@@ -130,7 +130,9 @@ module Lain
       # 200 matches` trailer is the only one, and it names no file, so it is left
       # alone. The no-match sentinel used to fall into this same fail-open case
       # BY COINCIDENCE (it carries exactly one colon); `no_rows?` makes that
-      # survival a designed property.
+      # survival a designed property. `ast_search`'s no-match sentence is never
+      # recognised by `no_rows?`, so it is split like a row and can only
+      # over-withhold.
       class Matches < Rows
         ONE = "match"
         MANY = "matches"
@@ -168,7 +170,7 @@ module Lain
       # returns a list of paths under some other name is unguarded by design
       # until it earns a place here. `bash` listing a directory with `ls` is
       # deliberately NOT in this set -- that is the path boundary's job.
-      GUARDED_TOOLS = { "glob" => GLOB, "list_files" => LIST_FILES, "grep" => MATCHES }.freeze
+      GUARDED_TOOLS = { "glob" => GLOB, "list_files" => LIST_FILES, "grep" => MATCHES, "ast_search" => MATCHES }.freeze
 
       ROW = "\n"
       WITHHELD = "%<count>d %<noun>s withheld (%<reasons>s)"

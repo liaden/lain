@@ -138,6 +138,52 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
+  describe "an ast_search whose rows include a gated path" do
+    def ast_search(**options)
+      run("ast_search", Lain::Tools::AstSearch.new,
+          { "pattern" => "def $NAME", "language" => "ruby", "path" => "." }, **options)
+    end
+
+    before do
+      write("lib/a.rb", "def alpha; end\n")
+      write("id_rsa.rb", "def hidden; end\n")
+    end
+
+    it "drops the row under the gated path and says one match was withheld" do
+      shown = content(ast_search)
+
+      expect(shown).to include("lib/a.rb:1:")
+      expect(shown).not_to include("id_rsa.rb")
+      expect(shown).to end_with("1 match withheld (credential)")
+    end
+
+    it "returns the tool's own output when nothing is gated" do
+      File.delete(File.join(dir, "id_rsa.rb"))
+
+      expect(content(ast_search)).to eq(content(ast_search(subject_stack: unguarded)))
+    end
+
+    def captures_search(**options)
+      run("ast_search", Lain::Tools::AstSearch.new,
+          { "pattern" => "puts($ARG)", "language" => "ruby", "path" => "." }, **options)
+    end
+
+    it "keeps a row whose capture holds a line-number-shaped field" do
+      write("lib/b.rb", "puts(\"a:5:b\")\n")
+
+      expect(content(captures_search)).to include("lib/b.rb:1:")
+    end
+
+    it "withholds a row with captures under a gated path" do
+      write("id_rsa.rb", "puts(\"x\")\n")
+
+      shown = content(captures_search)
+
+      expect(shown).not_to include("id_rsa.rb")
+      expect(shown).to end_with("1 match withheld (credential)")
+    end
+  end
+
   # A walk follows a linked base, so `keys -> ~/.ssh` lists the key under a name
   # no rule matches. The run's filter is the policy's, which judges each row
   # where it lands.
