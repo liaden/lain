@@ -189,12 +189,13 @@ RSpec.describe Lain::Frontend::LineEditor do
   describe "a newline that does not submit" do
     before { described_class.load_inputrc }
 
+    typing_modes = %i[emacs vi_insert]
     {
       "CSI-u Shift+Enter" => "\e[13;2u",
       "modifyOtherKeys Shift+Enter" => "\e[27;2;13~",
       "Alt+Enter" => "\e\r"
     }.each do |name, sequence|
-      described_class::NEWLINE_MODES.each do |mode|
+      typing_modes.each do |mode|
         it "inserts a newline on #{name} in #{mode} mode" do
           config.editing_mode = mode
           editor = multiline_editor
@@ -203,6 +204,31 @@ RSpec.describe Lain::Frontend::LineEditor do
 
           expect(editor.whole_buffer).to eq("ab\ncd")
         end
+      end
+    end
+
+    it "inserts a newline on Alt+Enter in vi command mode and submits nothing" do
+      config.editing_mode = :vi_insert
+      editor = multiline_editor
+      typing(editor, "ab")
+      config.editing_mode = :vi_command
+
+      typing(editor, "\e\r")
+      config.editing_mode = :vi_insert
+      typing(editor, "cd")
+
+      expect(editor.whole_buffer).to eq("ab\ncd")
+      expect(editor.finished?).to be(false)
+    end
+
+    ["\e[13;2u", "\e[27;2;13~", "\e\r"].product(%i[emacs vi_insert vi_command]).each do |sequence, mode|
+      it "expands #{sequence.inspect} to key_newline in #{mode} mode" do
+        config.editing_mode = mode
+        stroke = Reline::KeyStroke.new(config, Encoding::UTF_8)
+
+        keys, = stroke.expand(sequence.bytes)
+
+        expect(keys.map(&:method_symbol)).to eq([:key_newline])
       end
     end
 

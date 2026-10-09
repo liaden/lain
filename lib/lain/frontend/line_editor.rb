@@ -58,9 +58,10 @@ module Lain
 
       # What terminals send for Shift+Enter, which Reline would otherwise
       # swallow whole as an unknown escape sequence: CSI-u and xterm's
-      # modifyOtherKeys. Alt+Enter (ESC CR) is already Reline's own newline key.
-      NEWLINE_MODES = %i[emacs vi_insert].freeze
-      NEWLINE_SEQUENCES = ["\e[13;2u", "\e[27;2;13~"].map { |sequence| sequence.bytes.freeze }.freeze
+      # modifyOtherKeys. Alt+Enter (ESC CR) is Reline's own newline key in emacs and
+      # vi insert only; vi command mode needs it bound here.
+      NEWLINE_MODES = %i[emacs vi_insert vi_command].freeze
+      NEWLINE_SEQUENCES = ["\e[13;2u", "\e[27;2;13~", "\e\r"].map { |sequence| sequence.bytes.freeze }.freeze
 
       # Reline's own indicators are "(cmd)"/"(ins)"; lain's bracketed form
       # matches {TTY::Countdown}'s "[c] cancel", so the two pieces of
