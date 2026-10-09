@@ -309,7 +309,9 @@ module Lain
     # `password.txt`, `secrets/prod`, `.secrets/x`. Whole words in any case,
     # which no {Rule} can say: `inside` is one literal segment and `name` a
     # case-sensitive glob. Whole words because a substring also catches
-    # `AUTHORS` and `tokenizer.json`.
+    # `AUTHORS`, `tokenizer.json` and `compass.yml`; only the long words,
+    # which few ordinary words end in, may follow other letters (`mysecrets`,
+    # `1password`).
     #
     # Only below the base, because a path is absolute by the time it is judged
     # and a project rooted under `~/private/` would otherwise gate every file
@@ -319,17 +321,29 @@ module Lain
     # `lib/auth/token.rb` name the code that handles a secret, and a doc about
     # one is prose. Data files are not.
     class NameRule
-      WORDS = %w[password passwords passwd secret secrets token tokens credential credentials apikey private
-                 auth].freeze
+      WORDS = %w[passwd pass passcode passcodes token tokens private auth].freeze
+      SUFFIXES = %w[secret password credential apikey].freeze
       # Asked of the name as it stands rather than of a split copy, because
       # every classify pays for it: a word is bounded by anything but a letter
-      # or a digit, and `api key` is one word across a separator within a name.
-      WORD = %r{(?<![A-Za-z0-9])(?:#{WORDS.join("|")}|api[^A-Za-z0-9/]+key)(?![A-Za-z0-9])}i
-      EXCEPTED = /\.(?:rb|py|ts|tsx|js|jsx|go|rs|java|kt|c|h|cc|cpp|sh|lua|ex|exs|swift|md)\z/i
-      # Every word in every data extension, and a few files under a named
+      # or a digit, a suffix word on the right only, and `api key` is one word
+      # across a separator within a name.
+      # A lower-to-upper step starts a word too (`dbToken`), and it alone is
+      # case-sensitive, since under `/i` every letter is lowercase.
+      WORD = %r{
+        (?:
+          (?:(?<![A-Za-z0-9])|(?-i:(?<=[a-z])(?=[A-Z])))(?:#{WORDS.join("|")}|api[^A-Za-z0-9/]+keys?)
+          |(?:#{SUFFIXES.join("|")})s?
+        )
+        (?![A-Za-z0-9])
+      }ix
+      EXCEPTED = /\.(?:rb|erb|py|pyi|ts|tsx|js|jsx|vue|svelte|go|rs|java|kt|kts|scala|cs|php|dart|c|h|cc|cpp|hpp|hh|hxx
+                    |m|mm|sh|lua|ex|exs|swift|md)\z/ix
+      # Every stem in every data extension, and a few files under a named
       # directory, so an exemption that lifts any of them is counted here.
       DATA = %w[txt toml yml yaml json env tfvars csv ini conf cfg xml properties].freeze
-      SPECIMENS = [*[*WORDS, "api_key"].product(DATA), *%w[secrets/config secrets/notes secrets/prod].product(DATA)]
+      STEMS = [*WORDS, *SUFFIXES.flat_map { |word| [word, "#{word}s"] }, "api_key", "api_keys", "mysecrets",
+               "dbToken"].freeze
+      SPECIMENS = [*STEMS.product(DATA), *%w[secrets/config secrets/notes secrets/prod].product(DATA)]
                   .map { |name, extension| "#{name}.#{extension}".freeze }.freeze
       LABEL = Verdict::EXPLANATIONS.fetch(:named)
       # Its own reason rather than `credential`, because a survey masks such a

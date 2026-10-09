@@ -452,10 +452,15 @@ RSpec.describe Lain::Sensitivity do
   describe "gated by a name or a directory that names a secret" do
     ["password.txt", "Password.TXT", "secrets/prod", ".secrets/x", "my-secrets/x", "credentials/x", "private/x",
      "auth/x", "api_key.txt", "secrets.toml", "passwords.txt", "secrets.yml", "secrets.yaml", "credentials.json",
-     ".git-credentials", ".vault-token"].each do |path|
+     ".git-credentials", ".vault-token", "vault-pass.txt", "pass.txt", "passcode.txt", "api_keys.txt", "api_keys.json",
+     "apikeys.txt", "mysecrets.txt", "api_keys/prod", "dbPassword.txt", "dbToken.txt", "vaultPass.yml"].each do |path|
       it "gates #{path}" do
         expect(classify(path)).to have_attributes(level: :gated, reason: :named)
       end
+    end
+
+    it "gates a suffix word that follows a digit" do
+      expect(classify("#{home}/.config/1Password/1password.sqlite")).to have_attributes(level: :gated, reason: :named)
     end
 
     # A name outranks a credential store's own entry, so a survey masks the
@@ -481,7 +486,10 @@ RSpec.describe Lain::Sensitivity do
     end
 
     ["AUTHORS", "README", "lib/session.rb", "lib/auth/token.rb", "token.ts", "tokenizer.json", "compass.yml",
-     "spec/fixtures/sessions/a.ndjson"].each do |path|
+     "spec/fixtures/sessions/a.ndjson", "passport.txt", "mytoken.txt", "getPassword.php", "JsonToken.cs",
+     "AuthToken.hpp", "useAuth.vue", "getPassword.kts", "PasswordField.dart", "useAuth.svelte", "TokenStore.scala",
+     "authToken.hh", "AuthToken.hxx", "dbToken.m", "dbToken.mm", "apiKeys.pyi",
+     "app/views/passwords/new.html.erb"].each do |path|
       it "leaves #{path} ordinary" do
         expect(classify(path)).to be_ordinary
       end
@@ -1063,7 +1071,7 @@ RSpec.describe Lain::Sensitivity do
     it "counts every exemption that lifts a name-gated data file against the name rule" do
       probe = Lain::Sensitivity::Rules::PROBE
       name_rule = described_class::GATED.grep(described_class::NameRule)
-      %w[*.csv *s.csv notes.txt secrets.toml *.ini].each do |pattern|
+      %w[*.csv *s.csv notes.txt secrets.toml *.ini my*.txt db*.txt *_keys.json].each do |pattern|
         exemption = Lain::Sensitivity::Rules.from({ "exempt" => [pattern] }).exempt.first
 
         expect(described_class::GATED.select { |gated| exemption.lifts?(gated, probe) }).to eq(name_rule), pattern

@@ -642,7 +642,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
     it "abstains on a data file whose name, or a directory's below the root, names a secret" do
       in_tree do |root, home|
         names = %w[password.txt Password.TXT secret.txt token.txt api_key.txt credentials secrets/prod.yml
-                   private/notes.txt]
+                   private/notes.txt vault-pass.txt]
         names.each { |name| on_disk(root, name, "hunter2\n") }
         commands = names.map { |name| "cat #{name}" }
         expect_allowed_by_the_verdict(*commands)
