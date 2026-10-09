@@ -40,6 +40,23 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(output.string).to include("researcher").and include("bash").and include("rm -rf /tmp/x")
   end
 
+  it "says in the question how long the human has before it auto-denies" do
+    slow = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, timeout: 300)
+    policy_for("n\n").decide(slow)
+
+    expect(output.string).to include("bash(").and include("auto-denies in 5:00")
+  end
+
+  it "closes a prompt the clock denied with the full window and no mention of a surface" do
+    lapsed = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, timeout: 300)
+    asked = described_class::Asked.new("approve? ", lapsed)
+    lapsed.deny(surface: Lain::Approval::Queue::TIMEOUT_SURFACE)
+    closing = []
+    asked.closed { |note| closing << note }
+
+    expect(closing).to eq(["-- denied after 5:00 with no answer"])
+  end
+
   it "separates a fleet: two requesters ask two different questions" do
     parent = StringIO.new
     described_class.new(output: parent, input: StringIO.new("n\n")).decide(pending_from("agent"))
@@ -400,7 +417,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
         watcher&.stop
       end
 
-      expect(closing_of(asked.dequeue(timeout: 0))).to eq(["-- decided by timeout: denied"])
+      expect(closing_of(asked.dequeue(timeout: 0))).to eq(["-- denied after 0:01 with no answer"])
     end
 
     # A `[y/N]` that waits its turn behind another prompt has no row of its own
@@ -426,7 +443,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       end
 
       expect(dropping_of(asked.dequeue(timeout: 0)))
-        .to contain_exactly(a_string_including("bash(", "echo call_1", "decided by timeout: denied"))
+        .to contain_exactly(a_string_including("bash(", "echo call_1", "denied after 0:01 with no answer"))
     end
 
     it "has nothing to say on dropping a prompt whose call is still undecided" do
@@ -576,7 +593,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   # again as the outer task finishes. A closing line that waits for the writer
   # lock yields in between, and the second stop used to land inside it.
   describe "a window that closes while another fiber holds the writer" do
-    let(:note) { "-- decided by timeout: denied" }
+    let(:note) { "-- denied after 0:01 with no answer" }
     let(:journal) { Lain::Journal.new(io: StringIO.new) }
     let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.2) }
     let(:channel) { Lain::Channel.new }
@@ -742,7 +759,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     # the half this example exists for -- with nothing outstanding, no preamble
     # reaches the human at all.
     it "renders the ordinary prompt, byte for byte, when the pending discloses nothing" do
-      expect(rendered(pending)).to eq("agent asks: approve bash(#{effect.input.inspect})? [y/N] ")
+      expect(rendered(pending)).to eq("agent asks (auto-denies in 5:00): approve bash(#{effect.input.inspect})? [y/N] ")
     end
 
     # A link's name says nothing about what it opens, so the human is shown
@@ -755,8 +772,9 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
         read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => "readme2.txt" })
         linked = Lain::Approval::Queue::Pending.new(effect: read, requester: "agent", clock: -> { 0.0 }, cwd: root)
 
+        target = File.join(root, ".env.local").inspect
         expect(rendered(linked))
-          .to start_with(%("readme2.txt" -> #{File.join(root, ".env.local").inspect}: agent asks: approve read_file))
+          .to start_with(%("readme2.txt" -> #{target}: agent asks (auto-denies in 5:00): approve read_file))
       end
     end
 

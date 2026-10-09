@@ -208,6 +208,79 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
+  describe "how long a parked call has left" do
+    def pending_at(now, timeout: 300)
+      effect = tool_call
+      described_class::Pending.new(effect:, requester: "agent", clock: -> { now.call }, timeout:)
+    end
+
+    it "counts the window from the park until a surface draws it" do
+      now = 100.0
+      pending = pending_at(-> { now })
+      now = 160.0
+
+      expect(pending.remaining).to eq(240.0)
+      expect(pending.remaining_face).to eq("4:00")
+    end
+
+    it "restarts the window at the draw, as the queue's own timer does" do
+      now = 100.0
+      pending = pending_at(-> { now })
+      now = 160.0
+      pending.drawn
+      now = 190.0
+
+      expect(pending.remaining_face).to eq("4:30")
+    end
+
+    it "never reads below nothing" do
+      now = 0.0
+      pending = pending_at(-> { now })
+      now = 999.0
+
+      expect(pending.remaining).to eq(0)
+      expect(pending.remaining_face).to eq("0:00")
+    end
+
+    it "names the wall-clock moment it fires, so a render that goes stale stays true" do
+      now = 100.0
+      wall = Time.new(2026, 10, 8, 13, 15, 0, "+00:00")
+      effect = tool_call
+      pending = described_class::Pending.new(effect:, requester: "agent", clock: -> { now }, timeout: 300,
+                                             wall: -> { wall + (now - 100.0) })
+      now = 160.0
+      first = pending.fires_at_face
+      now = 220.0
+
+      expect(first).to eq("13:20:00")
+      expect(pending.fires_at_face).to eq(first)
+    end
+
+    it "rounds a part second up, so the face never says a call is out of time while it is not" do
+      expect(pending_at(-> { 0.0 }, timeout: 299.2).remaining_face).to eq("5:00")
+    end
+
+    it "names the whole window and the sentence a lapse is reported in" do
+      pending = pending_at(-> { 0.0 }, timeout: 125)
+
+      expect(pending.window_face).to eq("2:05")
+      expect(pending.lapse).to eq("denied after 2:05 with no answer")
+    end
+
+    it "is given the queue's timeout by the queue that admits it" do
+      timed = described_class.new(journal:, timeout: 90)
+      seen = nil
+
+      Sync do |task|
+        run = task.async { timed.call(tool_call, nil) }
+        seen = timed.dequeue.tap { |pending| pending.deny(surface: "tty") }
+        run.wait
+      end
+
+      expect(seen.window_face).to eq("1:30")
+    end
+  end
+
   describe "decisions are journaled evidence" do
     it "journals surface, verdict, and decision latency" do
       now = 100.0
@@ -790,8 +863,8 @@ RSpec.describe Lain::Approval::Queue do
     # collaborator here has one) fails right here.
     it "takes no ledger, so `decide` has nothing to release into" do
       expect(described_class::Pending.instance_method(:initialize).parameters)
-        .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key outstanding], %i[key humans_only],
-                %i[key cwd], %i[key within]])
+        .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key timeout],
+                %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

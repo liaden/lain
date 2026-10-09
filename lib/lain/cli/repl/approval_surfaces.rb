@@ -127,7 +127,9 @@ module Lain
           # sentence every human surface leads with. The buffer is a format
           # argument rather than interpolated here, so the caller that knows
           # which buffer it is fills it in.
-          NOTE = "! %<preamble>s%<requester>s asks to run %<tool>s(%<input>s)  -- answer in %<buffer>s, or /approve"
+          NOTE = "! %<preamble>s%<requester>s asks to run %<tool>s(%<input>s)  " \
+                 "-- answer in %<buffer>s, or /approve; auto-denies in %<window>s"
+          LAPSED = "! %<requester>s asks to run %<tool>s(%<input>s)  -- %<lapse>s"
           UNANNOUNCED = "the chat could not announce a parked call (%<failure>s) -- lain://approval still lists it"
 
           def initialize(notice:)
@@ -149,6 +151,7 @@ module Lain
           # is met on the next tick rather than inside this one.
           def sweep(queue)
             parked = queue.reject(&:decided?)
+            @announced.select(&:timed_out?).each { |pending| lapse(pending) }
             @announced.keep_if { |pending| parked.include?(pending) }
             parked.select { |pending| @announced.add?(pending) }.each { |pending| announce(pending) }
           end
@@ -161,7 +164,17 @@ module Lain
           def announce(pending)
             @notice.call(format(NOTE, preamble: pending.outstanding.preamble, requester: pending.requester,
                                       tool: pending.tool, input: pending.input.inspect,
-                                      buffer: Frontend::Neovim::ApprovalView::BUFFER))
+                                      buffer: Frontend::Neovim::ApprovalView::BUFFER, window: pending.window_face))
+          rescue StandardError => e
+            report(e)
+          end
+
+          # The chat is the only place a cockpit's human is looking when the
+          # clock denies a call, so the denial is said here as well as in the
+          # approval list.
+          def lapse(pending)
+            @notice.call(format(LAPSED, requester: pending.requester, tool: pending.tool,
+                                        input: pending.input.inspect, lapse: pending.lapse))
           rescue StandardError => e
             report(e)
           end

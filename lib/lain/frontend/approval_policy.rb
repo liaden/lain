@@ -53,14 +53,14 @@ module Lain
       private_constant :AFFIRMATIVE
 
       # How a prompt another surface decided ends its line.
-      CLOSED = "-- decided by %<surface>s: %<verdict>s"
+      CLOSED = "decided by %<surface>s: %<verdict>s"
 
       # A prompt waiting behind another has no line yet, so both what it says on
       # arriving and what it says when decided before it drew name the call.
       # The input is `inspect`ed for {CLI::Repl::ApprovalSurfaces::Arrivals}' reason:
       # a newline in a model-written command cannot break the line.
       QUEUED = "! %<call>s  -- its y/N is asked next"
-      DROPPED = "! %<call>s  #{CLOSED}".freeze
+      DROPPED = "! %<call>s  -- %<outcome>s"
       CALL = "%<preamble>s%<requester>s asks to run %<tool>s(%<input>s)"
 
       # What a line typed for the chat rather than for the prompt begins with.
@@ -92,7 +92,7 @@ module Lain
         # asks while the read is ending, which is before an answer typed at
         # THIS prompt is recorded, so a decided call is always someone else's.
         def closed
-          yield format(CLOSED, surface: @pending.surface, verdict:) if decided_elsewhere?
+          yield "-- #{outcome}" if decided_elsewhere?
         end
 
         # Yields the one line announcing this prompt while it waits its turn.
@@ -101,7 +101,7 @@ module Lain
         # Yields the line saying how its call was decided when this prompt left
         # the queue without ever drawing, and nothing while it is undecided.
         def dropped
-          yield format(DROPPED, call:, surface: @pending.surface, verdict:) if decided_elsewhere?
+          yield format(DROPPED, call:, outcome:) if decided_elsewhere?
         end
 
         # Whether `line` is an answer to this prompt at all. A `/command` is not:
@@ -132,6 +132,10 @@ module Lain
         end
 
         def verdict = @pending.approved? ? "approved" : "denied"
+
+        def outcome
+          @pending.timed_out? ? @pending.lapse : format(CLOSED, surface: @pending.surface, verdict:)
+        end
       end
 
       # `reader:` is the conductor seam: `(prompt) -> String, nil` owns BOTH the
@@ -261,7 +265,8 @@ module Lain
       # string a turn produced. The real question still ENDS the rendering, which
       # is the property the escaped path above relies on.
       def prompt_for(pending)
-        "#{pending.outstanding.preamble}#{landing(pending)}#{pending.requester} asks: " \
+        "#{pending.outstanding.preamble}#{landing(pending)}#{pending.requester} " \
+          "asks (auto-denies in #{pending.window_face}): " \
           "approve #{pending.tool}(#{pending.input.inspect})? [y/N] "
       end
 

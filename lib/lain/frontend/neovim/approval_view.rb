@@ -375,8 +375,13 @@ module Lain
         # post leaves `@shown` alone and the next sweep RETRIES rather than
         # treating the lost rendering as the state of the editor.
         def render(parked)
-          @shown = parked if posted(parked)
+          @shown = parked if posted(parked, lapsed_from(@shown))
         end
+
+        # What the clock denied since the last drawing: a row that left the
+        # parked set unanswered would otherwise just vanish. Said in the one
+        # rendering that follows, since the next set is no longer holding it.
+        def lapsed_from(shown) = (shown || []).select(&:timed_out?)
 
         # The ONE rule that keeping a rendering needs: a stamp is handed out
         # only once the editor has TAKEN the lines it names. A refused post is a
@@ -395,8 +400,8 @@ module Lain
         # must not have the other.
         # @return [Integer, nil] the stamp the editor took, or nothing when it
         #   refused the post
-        def posted(parked)
-          rendering = rendering_of(parked)
+        def posted(parked, lapsed = [])
+          rendering = rendering_of(parked, lapsed)
           generation = @renderings.remember(owners: rendering.owners)
           return @renderings.forget(generation) unless taken?(rendering, generation)
 
@@ -420,14 +425,18 @@ module Lain
         # calling it again per LINE a wrapped item spans -- once measured at a
         # 64KB heredoc wrapping to 699 rows -- is 699 allocations of a string
         # that size for one command nobody asked to see re-cut.
-        def rendering_of(parked)
-          return Rendering.new(lines: EMPTY.dup, owners: [], calls: [], call_index: []) if parked.empty?
+        def rendering_of(parked, lapsed)
+          notes = lapsed.flat_map { |pending| Fold.lines(lapse_note(pending)) }
+          return Rendering.new(lines: EMPTY + notes, owners: [], calls: [], call_index: []) if parked.empty?
 
           calls = parked.map { |pending| call_of(pending) }
           items = parked.zip(calls).map { |pending, call| lines_for(pending, call) }
-          Rendering.new(lines: items.flatten(1) + ["", HINT], owners: owners_for(items, parked),
+          Rendering.new(lines: items.flatten(1) + notes + ["", HINT], owners: owners_for(items, parked),
                         calls:, call_index: call_index_for(items))
         end
+
+        # Names the call because the row it described is gone from the list.
+        def lapse_note(pending) = "! #{pending.requester}  #{call_of(pending)}  -- #{pending.lapse}"
 
         # One entry per LINE, the pending it belongs to -- what {ListView}
         # resolves a cursor through, and never sent across the wire itself.
@@ -487,7 +496,8 @@ module Lain
         # the result through here and through {#lines_for}, so an item that
         # wraps into many rows still runs `.inspect` on its input once.
         def summary_for(pending, call)
-          "#{pending.requester}  #{pending.outstanding.preamble}#{call}".lstrip
+          deadline = "#{pending.remaining_face} left, denies at #{pending.fires_at_face}"
+          "#{pending.requester}  #{pending.outstanding.preamble}#{call}  #{deadline}".lstrip
         end
       end
     end

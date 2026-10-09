@@ -84,10 +84,10 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   # state it.
   def asked_by(requester) = Lain::Approval::PolicySwitch::Requested.new(nil, requester)
 
-  def gated(timeout: 0.4, await: false, calls: [effect], requesters: nil,
-            outstanding: Lain::Approval::Queue::Outstanding::NONE, &block)
+  def gated(timeout: 0.4, await: false, calls: [effect], requesters: nil, clock: Lain::RunClock::MONOTONIC,
+            outstanding: Lain::Approval::Queue::Outstanding::NONE, wall: Time.method(:now), &block)
     Sync do |task|
-      queue = Lain::Approval::Queue.new(journal:, timeout:)
+      queue = Lain::Approval::Queue.new(journal:, timeout:, clock:, wall:)
       asking = requesters || calls.map { "agent" }
       parked = calls.zip(asking).map do |call, requester|
         task.async { queue.adjudicate(call, asked_by(requester), outstanding:).approved? }
@@ -125,6 +125,52 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
   # The stamp on the buffer the human is looking at.
   def generation = rpc.last[:generation]
+
+  describe "the deadline a row is drawn against" do
+    let(:later) { ApprovalViewSpecSupport::SpyRpc.new }
+
+    it "shows the time left on the window, read from the pending's own clock" do
+      now = 1000.0
+      gated(timeout: 300, clock: -> { now }) do |queue|
+        now = 1060.0
+        described_class.new(rpc: later).sweep(queue)
+      end
+
+      expect(later.last[:lines].first).to include("4:00 left")
+    end
+
+    it "names when the call fires, from the injected wall clock" do
+      now = 1000.0
+      start = Time.new(2026, 10, 8, 13, 15, 0, "+00:00")
+      gated(timeout: 300, clock: -> { now }, wall: -> { start + (now - 1000.0) }) do |queue|
+        now = 1060.0
+        described_class.new(rpc: later).sweep(queue)
+      end
+
+      expect(later.last[:lines].first).to include("4:00 left, denies at 13:20:00")
+    end
+
+    it "drops a row the clock denied and says so once, in the chat's own words" do
+      gated(timeout: 0.2) do |queue|
+        spun_until { queue.none? }
+        3.times { view.sweep(queue) }
+      end
+
+      said = rpc.posts.flat_map { |post| post[:lines] }.grep(/denied after 0:01 with no answer/)
+      expect(said.size).to eq(1)
+      expect(said.first).to include("bash(")
+      expect(rpc.last[:rows]).to eq(0)
+    end
+
+    it "does not report a call a person denied as a lapse" do
+      gated(await: true) do |queue|
+        view.decide(1, "deny", generation:)
+        view.sweep(queue)
+      end
+
+      expect(rpc.posts.flat_map { |post| post[:lines] }.grep(/with no answer/)).to be_empty
+    end
+  end
 
   describe "the round trip that was never written" do
     it "resolves the parked call with the verdict pressed in the editor" do
@@ -228,7 +274,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
         expect(rpc.last[:rows]).to eq(0)
       end
 
-      expect(rpc.last[:lines]).to eq(described_class::EMPTY)
+      expect(rpc.last[:lines]).to start_with(*described_class::EMPTY)
     end
 
     it "drops the expired row from the next rendering rather than leaving it answerable" do
@@ -239,7 +285,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       end
 
       expect(rpc.last[:rows]).to eq(0)
-      expect(rpc.last[:lines]).to eq(described_class::EMPTY)
+      expect(rpc.last[:lines]).to start_with(*described_class::EMPTY)
     end
 
     # The poll interval is 60 seconds here on purpose: only the watch's OWN
@@ -403,7 +449,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       it "leaves an ordinary row exactly as it was, bar the actor it now names" do
         gated(timeout: window, requesters: %w[researcher]) { |_queue| nil }
 
-        expect(rpc.last[:lines].first).to eq("researcher  bash(#{{ "command" => "pwd" }.inspect})")
+        expect(rpc.last[:lines].first).to match(/\Aresearcher  bash\(.*  \d:\d\d left, denies at \d\d:\d\d:\d\d\z/)
       end
     end
 

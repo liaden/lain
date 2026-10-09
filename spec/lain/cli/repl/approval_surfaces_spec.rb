@@ -237,6 +237,24 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(notes).to contain_exactly(a_string_including("! agent asks to run bash(", "ls", "/approve"))
     end
 
+    it "says in the announcement how long the call has before it auto-denies" do
+      fan_out(attached: editor)
+
+      expect(notes).to contain_exactly(a_string_including("auto-denies in 0:01"))
+    end
+
+    it "says once, in the chat, that the clock denied a call nobody answered" do
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        task.with_timeout(2) { task.async { queue.call(effect, nil) }.wait }
+        task.sleep(0.2)
+        watched.each(&:stop)
+      end
+
+      expect(output.string.scan("denied after 0:01 with no answer").size).to eq(1)
+      expect(output.string.lines.grep(/denied after/).join).to include("bash(")
+    end
+
     # A watch stopped and started again over the same parked call -- a chat
     # whose conversation restarts its surfaces -- does not announce it twice:
     # "this just arrived" is false by then.
@@ -300,7 +318,14 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     it "rings the terminal with the note while the notify layer is up" do
       raised << :notify
 
-      fan_out(attached: editor)
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        gated = task.async { queue.call(effect, nil) }
+        pumped_until(task, reason: "the note rang") { displayed.any? }
+        queue.first.approve(surface: Lain::Frontend::Neovim::ApprovalView::SURFACE)
+        task.with_timeout(2) { gated.wait }
+        watched.each(&:stop)
+      end
 
       expect(output.string.count("\a")).to eq(1)
       expect(displayed).to contain_exactly(a_string_including("asks to run bash(", "/approve"))

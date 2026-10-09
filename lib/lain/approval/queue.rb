@@ -121,7 +121,7 @@ module Lain
       # the coordination bug {Promise::AlreadyResolved} names.
       class Pending
         attr_reader :requester, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd,
-                    :within
+                    :within, :timeout
 
         # Defaulting here is NOT the ledger's no-default rule bent: a defaulted
         # LEDGER lets a forgotten injection become a second ledger whose
@@ -143,8 +143,10 @@ module Lain
         # judging that path lands it where the gate did; absent, it is the
         # process's, as for a call made with no session. `within` is where the
         # gate counted directory names from, see {Sensitivity::Policy.base_of}.
-        def initialize(effect:, requester:, clock:, outstanding: Outstanding::NONE, humans_only: false,
-                       cwd: ::Lain::Session.cwd_of(nil), within: cwd)
+        def initialize(effect:, requester:, clock:, timeout: DEFAULT_TIMEOUT, outstanding: Outstanding::NONE,
+                       humans_only: false, cwd: ::Lain::Session.cwd_of(nil), within: cwd, wall: -> { Time.now })
+          @timeout = timeout
+          @wall = wall
           @humans_only = humans_only == true
           @cwd = cwd
           @within = within
@@ -192,6 +194,32 @@ module Lain
 
         # @return [Numeric, nil] the clock reading at the first {#drawn}
         def drawn_at = @drawn
+
+        # Seconds until the queue denies this call unasked. The window runs from
+        # the draw when a surface drew it and from the park otherwise, which is
+        # the queue's own rule in {Queue#await_decision}. It reads the clock
+        # the queue was built with, so a view showing it stays a projection.
+        #
+        # @return [Numeric]
+        def remaining = [(drawn_at || @asked_at) + @timeout - @clock.call, 0].max
+
+        # @return [String] {#remaining} as minutes and seconds, rounded up
+        def remaining_face = Queue.face(remaining)
+
+        # The wall-clock moment the call is denied at. {#remaining_face} is true
+        # only at the instant it is read, and a view that does not redraw would
+        # keep showing it; this does not move, so a stale render stays true.
+        #
+        # @return [String] HH:MM:SS on the injected wall clock
+        def fires_at_face = (@wall.call + remaining).strftime("%H:%M:%S")
+
+        # @return [String] the whole window, in {#remaining_face}'s spelling
+        def window_face = Queue.face(@timeout)
+
+        # The sentence every surface says when the clock, and nobody, decided.
+        # Here for the reason {Outstanding#preamble} is on its value: two
+        # surfaces word it, and two copies are how they come to disagree.
+        def lapse = "denied after #{window_face} with no answer"
 
         # The path this call's input names, read from the table
         # {Sensitivity::Policy} classifies by, and only a String: a value the
@@ -243,11 +271,14 @@ module Lain
       # @param timeout [Numeric] seconds an unanswered pending waits before the
       #   fail-closed denial
       # @param clock [#call] monotonic seconds, injectable so specs pin latency
-      def initialize(journal:, requester: REQUESTER, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC)
+      # @param wall [#call] the time of day, as a Time, for naming when a call fires
+      def initialize(journal:, requester: REQUESTER, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC,
+                     wall: -> { Time.now })
         @journal = journal
         @requester = requester
         @timeout = timeout
         @clock = clock
+        @wall = wall
         @arrivals = Async::Queue.new
         # A plain Array with NO LOCK, on purpose: every @parked mutation is
         # straight-line Ruby with no yield point, and a fiber only interleaves
@@ -256,6 +287,14 @@ module Lain
         # queue_concurrency_spec.rb can only pass by adding a lock here, the
         # claim has failed -- escalate, don't patch.
         @parked = []
+      end
+
+      # @param seconds [Numeric]
+      # @return [String] minutes and seconds, a part second rounded up so a
+      #   face never reads out of time while the call still has some
+      def self.face(seconds)
+        whole = seconds.ceil
+        format("%<minutes>d:%<seconds>02d", minutes: whole / 60, seconds: whole % 60)
       end
 
       # Gate's policy seam. Parking here is safe inside tool dispatch because
@@ -329,7 +368,7 @@ module Lain
       # yield point between them.
       def admit(effect, context, outstanding)
         pending = Pending.new(effect:, requester: Queue.requester_for(context, @requester), clock: @clock,
-                              outstanding:, humans_only: Escalation.barred?(context),
+                              timeout: @timeout, wall: @wall, outstanding:, humans_only: Escalation.barred?(context),
                               cwd: ::Lain::Session.cwd_of(context),
                               within: ::Lain::Sensitivity::Policy.base_of(context))
         record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }

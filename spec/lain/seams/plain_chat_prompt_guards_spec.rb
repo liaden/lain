@@ -548,7 +548,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
       it "ends its line with who decided it and how, and a y typed afterwards decides nothing" do
         typed_ahead("")
-        terminal.await(/decided by timeout: denied/)
+        terminal.await(/denied after \d+:\d\d with no answer/)
         terminal.await(/you> /)
 
         terminal.type("y\r")
@@ -559,10 +559,10 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         # lands first it ends the prompt's row itself.
         rows = terminal.text.lines
         prompt_row = rows.rindex { |row| row.match?(PlainChatPromptGuards::APPROVAL) }
-        verdict_row = rows.index { |row| row.include?("-- decided by timeout: denied") }
+        verdict_row = rows.index { |row| row.match?(/-- denied after \d+:\d\d with no answer/) }
         expect(verdict_row).to be > prompt_row
         expect(rows[(prompt_row + 1)...verdict_row]).to all(match(/\A\s*\z/))
-        expect(rows[verdict_row].lstrip).to start_with("-- decided by timeout: denied")
+        expect(rows[verdict_row].lstrip).to start_with("-- denied after")
         expect(terminal.verdicts).to eq([%w[timeout deny]])
         expect(terminal.dispatched).to eq(["run the tests", "y"])
       end
@@ -601,10 +601,10 @@ RSpec.describe "a plain chat's inline prompts", :seam do
           terminal.await(/human> /)
           terminal.wait_for(what: "the window to decide the call") { terminal.verdicts == [%w[timeout deny]] }
           terminal.type("postgres\r")
-          terminal.await(/decided by timeout: denied/)
+          terminal.await(/denied after \d+:\d\d with no answer/)
 
           expect(terminal.verdicts).to eq([%w[timeout deny]])
-          expect(terminal.screen.lines.grep(/decided by timeout: denied/).join).to include("rm -rf build")
+          expect(terminal.screen.lines.grep(/denied after \d+:\d\d with no answer/).join).to include("rm -rf build")
         end
       end
     end
@@ -967,7 +967,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
 
       expect(output.string.lines).to include(
         a_string_including("! agent asks to run bash(", "rm -rf build", "its y/N is asked next"),
-        a_string_including("! agent asks to run bash(", "rm -rf build", "-- decided by timeout: denied")
+        a_string_including("! agent asks to run bash(", "rm -rf build", "-- denied after 0:01 with no answer")
       )
       expect(Lain::Journal.records(journal_io.string.lines, type: "approval_decision").map { |r| r["surface"] }.to_a)
         .to eq(["timeout"])
