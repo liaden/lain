@@ -156,6 +156,12 @@ that chunk `draft` and unlanded, was corrected on 2026-09-14.)
 |---|---|---|
 | [`config-middleware.md`](scenarios/config-middleware.md) | Does an untrusted `~/.config/lain/config.rb` refuse a real launch **before a session record exists**, does `lain trust --user` bind exact bytes, does a configured tool member run outermost in a live cockpit and again, on its own instance, in a spawned child, and does an `http` entry see a real streamed Ollama request as a Hash? Steps 1 to 3 need no model; steps 4 to 6 need a live local model. | cheap to minutes |
 
+**Added 2026-10-08**: the journey from the first real trial on the cloud arm:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`greenfield-epic.md`](scenarios/greenfield-epic.md) | Can a person start in an empty directory (`lain up <dir> --create` on `--provider ollama-cloud`), interview, research and reach an approved research gate through `epic_write` and `epic_submit` **without the process freezing on a search above the project, the HUD guessing its window, a researcher losing its work at the ceiling, or an approval auto-denying unseen**? Each section names the failure it was written for. | quota, about 40 completions |
+
 ## Automated by `spec/e2e`
 
 Since 2026-10-03, `spec/e2e/` runs this checkout's real `exe/lain` (a plain chat, and a `lain up` cockpit with tmux and nvim) against a stand-in for ollama that replays recorded turns, or plays scripted ones, in `rake pspec` and the commit hook. Each section it drives carries an **Automated by** line naming the spec and its examples, and a **Still needs a human** half. That line is the list: this table only says where to look. A full round skips the automated half and always drives the human half; a round the user scopes to a named scenario or section drives it whole.
