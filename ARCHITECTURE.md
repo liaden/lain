@@ -685,6 +685,17 @@ has a model-controlled command string, so neither gates. Tier 3 is a String comm
 controls the command string**, not read-versus-write, which is why `write_file` does not gate and
 `bash` does.
 
+**Searches list what git would show, and run off the reactor.** `grep`, `glob`, `list_files` and
+`ast_search` take their files from `Lain::FileWalk`, a lazy `Enumerator` that lists a repository
+with `git ls-files --cached --others --exclude-standard`, nested repositories included. A search
+therefore honors ignore files, and a `search include:` glob in `.lain/config.rb` re-includes ignored
+paths on purpose. `Tool::Bounds::WalkLimit` caps one walk by entries listed and bytes read, and the
+result names the truncation. `Dir.glob` and `File.foreach` never yield to the scheduler, so each
+search body runs inside `Tool::Offload.call`: a thread joined from the tool's fiber, killed and
+joined when the fiber is stopped. `Shell::Out` terminates and reaps its git child when the thread
+dies, so a stopped walk leaves no process behind. The daemon arm of `grep` is IO already and stays on
+the reactor.
+
 `#parallel_safe?` is the concurrency axis: reads only, no `Session` write-set mutation, no
 process-global state. `Agent::ToolRunner#gather` fans a contiguous run of safe tools out as
 sibling fibers; every unsafe tool is a barrier that runs alone, in wire order.
@@ -830,6 +841,13 @@ name and target itself.
 | filter on the result | `Middleware::WithholdSecretPaths` → `Sensitivity::Filter` | which rows may the model see? |
 | mask on the content | `Middleware::RedactSecretReads` → `Sensitivity::Masking` | which BYTES may leave? |
 
+A fourth table key, `related`, changes only the mask step. A read under a related directory has its
+flagged regions masked without a prompt and none is ever released, so a project's own notes
+directory does not park every read at the gate. It does not change what the path rules gate or deny.
+The loader refuses `/`, the home directory and its ancestors, an entry that is not a directory, and
+an unclean path; the home-ancestor check is lexical, so a home reached through a symlinked parent can
+be related by its other spelling, which only suppresses prompts because masking still applies.
+
 The invariant is **one compiled `[sensitivity]` table per run, and one object that answers about
 a path**. The claim that stood here before — "`Policy` holds the only `Filter.new` in `lib/`" —
 was true and too narrow: a second FILTER was hard to build, but a second CLASSIFIER was not, and
@@ -891,22 +909,33 @@ secret-SHAPED. The name is matched as a substring, because `DATABASE_PASSWORD` h
 boundary before `PASSWORD`; a value-shape test alone would not do, because a named passphrase is
 low-entropy — exactly the secret a shape test structurally cannot see.
 
-With the gate, the substance floor and the thresholds, over the same three globs:
+With the gate, the substance floor, the thresholds and the shape rules below, over the same three
+globs (re-measured on 2026-10-08, when the tree had grown to 284, 845 and 993 files):
 
 | corpus | files with a region | regions | pattern / entropy |
 |---|---|---|---|
-| markdown | 28 of 134 (20.9%) | 57 | 7 / 50 |
-| `lib/**/*.rb` | 36 of 602 (6.0%) | 53 | 52 / 1 |
-| `spec/**/*.rb` | 63 of 581 (10.8%) | 262 | 218 / 44 |
+| markdown | 43 of 284 (15.1%) | 83 | 33 / 50 |
+| `lib/**/*.rb` | 57 of 845 (6.7%) | 80 | 80 / 0 |
+| `spec/**/*.rb` | 153 of 993 (15.4%) | 717 | 627 / 90 |
 
 The floor sits at the recall-preserving end of its plausible range: at 8 rather than 6 it buys
 back 2, 4 and 20 regions of noise (mostly 6–7 byte fragments like `test")`) and pays for them
 with `hunter2`. What remains in `lib/` is Ruby whose variable happens to be named `token`,
 `session` or `pass` over a substantial value — not a credential among them; the entropy residual
-is blake3 fixtures in `spec/`, correctly hash-shaped, and long URLs and paths in markdown,
-because `/`, `-` and `_` are all base64url characters. Recorded rather than special-cased: a
-documented residual beats a rule nobody can reason about, and every region has a release path
-whose cost is one decision, held to one by the digest.
+is hash-shaped fixtures in `spec/`, correctly so, plus URLs and paths in markdown that carry a
+mixed-case segment or a hex key, and hyphen-joined identifiers, because `/`, `-` and `_` are all
+base64url characters. Every region has a release path whose cost is one decision, held to one by
+the digest.
+
+Two shape rules cut the false positives that entropy cannot separate, since a slash-joined path
+scores 4.21 to 4.40 bits per character against 4.66 for an AWS-shaped secret. A token candidate
+made of at least 2 slash-joined segments, each word-shaped (lowercase, UPPER_SNAKE or Capitalized)
+and none a hex or base36 key by itself, is not a secret; so `Cargo/Dioxus/clippy/deny` and
+`XDG_CONFIG_HOME/lain/config` pass, and `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` and a hex key
+inside a URL path still fire. A candidate whose runs of 16 or more ascending characters cover more
+than half of it, like the base64 alphabet literal, is not a secret either. The accepted cost is a
+secret made only of lowercase slash-joined words; and about 3 git SHAs in URLs stay flagged as keys. Over
+2,423 files of this repo the entropy regions went from 857 to 634 with none gained.
 
 Note that `regions.rb` and its spec are IN that corpus. Measuring a change to the detector
 against a corpus containing the detector is how a review once produced a false finding: an edit

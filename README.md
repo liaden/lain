@@ -472,10 +472,14 @@ chat`:
 | `↑` / `↓` | walk **this session's** lines. The durable file at `$XDG_STATE_HOME/lain/history` is still appended per accepted line, but it is never read back: it is one pool shared by every project and every concurrent `lain up` pane, so recalling from it merged panes you were not sitting in |
 | `C-g` | hand the draft to `lain://compose` in the editor; `:w` there puts the composed text back at the prompt, where you press `<CR>` to send it |
 | `C-x` | completion menu for the token under the cursor |
+| `Shift+Enter` / `Alt+Enter` | insert a newline instead of submitting, at every prompt. A hint row above the prompt says so once per `you>`. Under the cockpit, Shift+Enter needs tmux's `extended-keys`, which `lain up` turns on |
 | `\` at end of line | continue onto another line instead of submitting. Emacs and vi *insert* mode only — vi command mode submits on `<CR>` regardless, a Reline limitation |
 | `C-c` | open the grace window; a second `C-c` interrupts now |
 | `c` / `w` / `r` / `s` | inside that window: cancel, extend, wait for responses, or **stop the running ask** and keep the session. An idle `you>` countdown offers only `c` and `w`, since there is no ask to stop |
 | `C-d` | EOF — end the session |
+
+With the cockpit's tmux mouse on, the wheel scrolls the chat pane's history and your terminal's
+native text selection needs Shift held while you drag.
 
 `C-g` and `C-x` are the only two control keys free across all three keymaps lain binds (emacs,
 vi_insert, vi_command), which is why there is no third.
@@ -504,7 +508,7 @@ a note may be left:
 | `lain://question` | `:w` | submit the set. `:w!` declines the whole set |
 | `lain://compose` | `:w` | send the draft back to the prompt |
 | `lain://timeline` | `p` | `:LainPin` — pin the turn under the cursor so compaction may not elide it |
-| `lain://approval` | `y` / `n` | `:LainApprove` / `:LainDeny` for the call under the cursor |
+| `lain://approval` | `y` / `n` | `:LainApprove` / `:LainDeny [reason]` for the call under the cursor. The `n` key denies without a reason; `:LainDeny` takes the words after it as the reason, and the model reads them in the tool result. At the `[y/N]` prompt in a plain chat, `n <why>` does the same |
 | `lain://review` (the sidebar) | `<CR>` | `:LainReviewOpen` — open the file under the cursor at its first hunk |
 | `lain://review` (the sidebar) | `x` / `u` | `:LainReviewMark reviewed` / `unreviewed`. Two keys and never a toggle: a toggle would have to be computed from rows that may already have moved |
 | a review thread | `:w` | send what you typed under the conversation to the docent as a question |
@@ -632,7 +636,7 @@ There is nothing to fall back to, so lain says so and stops rather than guessing
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `Provider::AnthropicRaw`, `Provider::Anthropic` | Required for the Claude path. Refused before construction if unset. |
 | `OLLAMA_API_KEY` | `Provider::Ollama` on its cloud deployment | Required for `--provider ollama-cloud`. Create one at [ollama.com/settings/keys](https://ollama.com/settings/keys). Refused before construction if unset, and the refusal names the variable without quoting its value. Four guards (`#inspect`, `#pretty_print`, and both `#instance_variables`) keep the key out of a rendered deployment or configuration; they do **not** cover a header Hash once it has left the object, which is documented where that Hash is built. |
-| `LAIN_OLLAMA_CLOUD_CONCURRENCY` | the cloud deployment's admission gate | How many cloud requests may be in flight. Defaults to **1**, the only width safe on every plan; a typo raises rather than degrading. |
+| `LAIN_OLLAMA_CLOUD_CONCURRENCY` | the cloud deployment's admission gate | How many cloud requests may be in flight. Defaults to **3**; a typo raises rather than degrading. A concurrency 429 from the server narrows the width to the plan's limit for the rest of the process (see [Providers](#providers)), and a cloud launch prints the width at startup. |
 | `LAIN_STREAM_DEBUG` | the SSE accumulator | Dumps raw stream frames while debugging a provider. |
 | `LAIN_INTEGRATION`, `LAIN_OLLAMA`, `LAIN_OLLAMA_CLOUD`, `LAIN_SPIKE` | the test suite | Opt in to the specs that cost money, need a local Ollama, spend Ollama Cloud quota, or run a spike. |
 
@@ -839,8 +843,12 @@ exe/lain bench arms --provider ollama-cloud FIXTURE
 With `OLLAMA_API_KEY` unset the arm refuses before it constructs anything, and the refusal names
 the variable, the flag that asked for it, and where a key comes from. `--api-base` still moves the
 arm, but the cloud deployment **requires https** — it will not send a bearer token in plaintext.
-Concurrency is one request at a time by default, which is safe on every plan;
-`LAIN_OLLAMA_CLOUD_CONCURRENCY` raises it.
+Concurrency starts at 3 requests at once; `LAIN_OLLAMA_CLOUD_CONCURRENCY` sets another width.
+When the server answers a request with a concurrency 429 that carries `x-ratelimit-max-concurrent`,
+the gate narrows to that number and the narrowing is journaled. It only lowers, never raises. A plan
+with no server queue can fail the requests already in flight past its limit before the narrowing
+lands; later requests run at the narrowed width. A cloud launch prints the width in force and the
+variable that changes it, and names `LAIN_PROVIDER_CONCURRENCY` when that variable set the width.
 
 > **The cloud arm is not a reproducible bench arm.** Measured against a live subscription on
 > 2026-08-24: `temperature 0`, a fixed seed and warm runs returned **three distinct completions

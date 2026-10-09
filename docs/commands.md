@@ -151,6 +151,7 @@ if it is not a directory. Flags after `--` are forwarded to [`lain chat`](#lain-
 ```bash
 lain up                                        # editor | transcript over input pane, + HUD
 lain up ~/dev/other-project                    # ...in that one instead
+lain up ~/dev/new-project --create             # make it first if it is missing
 lain up --no-nvim                              # no nvim pane; still transcript over input pane
 lain up --nvim-socket /tmp/lain-abc123.sock    # explicit nvim socket
 lain up -- --provider ollama --no-compact
@@ -173,6 +174,7 @@ tmux's own arithmetic run, rather than squeezing the transcript out of existence
 | `--session` | `Up::DEFAULT_SESSION` | tmux session name. Also the input socket's name, so two cockpits on one project do not collide. |
 | `--socket` | tmux's default | tmux socket (`-L`). |
 | `--nvim` / `--no-nvim` | on | Add the nvim pane beside the chat. The input pane is there either way. |
+| `--create` | off | Make `PATH` when it does not exist. Only the last directory is made, so its parent must exist; without the flag a missing `PATH` is refused and the refusal names `--create`. |
 | `--nvim-socket PATH` | derived | Listen on this nvim socket instead of the per-project one lain derives. Must be absolute — the socket is the one name both panes have to agree on, and a relative one resolves against whichever pane reads it. |
 
 One directory feeds all four of the places `up` names one: every pane's `-c`, the nvim socket's
@@ -185,6 +187,12 @@ launch, because nothing else in the program names it.
 --nvim-socket -- --provider ollama` is refused, because the option parser skips the separator and
 takes `--provider` as the socket — which would silently forward the `PATH` you typed to `chat`
 instead. `--nvim-socket=/tmp/x.sock` cannot be read that way.
+
+**Mouse and selection.** The session turns tmux's `mouse` on, so the wheel scrolls the chat pane's
+history. tmux then owns the mouse, and your terminal's native text selection needs Shift held
+while you drag. `lain up` also sets the tmux server option `extended-keys` to `on` when it reads
+`off`, which is what lets Shift+Enter reach the input pane, and it prints a notice when it does
+(the setting is server-wide).
 
 `lain up` `exec`s into tmux, replacing the process. From inside tmux it uses `switch-client`;
 from outside, `attach`.
@@ -306,6 +314,7 @@ lain epic queue                                    # what is parked for sign-off
 lain epic approve DIGEST --reason 'read it'
 lain epic land export-stream                       # land one approved issue, locally
 lain epic finish                                   # every issue done -> one pull request
+lain epic finish --local                           # ...or one merge commit in main, no remote
 ```
 
 | Command | What it does |
@@ -318,10 +327,20 @@ lain epic finish                                   # every issue done -> one pul
 | `lain epic split ID [SLUG]` | Replace one issue with several. `--into` is required and takes comma-separated ids. |
 | `lain epic merge LEFT RIGHT [SLUG]` | Replace two issues with one. `--as` is required and names the id it takes; `--title` overrides the combined title. |
 | `lain epic land ISSUE_ID [SLUG]` | Land one approved issue onto the epic's working branch, pushing nothing. `--resume` finishes a landing that merged and then stopped. |
-| `lain epic finish [SLUG]` | Take an epic whose every issue is done to `main` as one pull request, then delete its remote branch. |
+| `lain epic finish [SLUG]` | Take an epic whose every issue is done to `main` as one pull request, then delete its remote branch. `--local` merges it into `main` in this repository instead: no remote, no pull request, nothing pushed. |
 
 The three graph verbs are journaled as a `graph_revision`, so a restructuring is part of the record
 rather than an unexplained change to a file.
+
+**`lain epic finish --local`** is for a repository with no remote. The base branch is always `main`.
+It must be the branch checked out in the project root, with no uncommitted changes to tracked
+files, and no untracked file standing where the merge would write. Otherwise the command refuses
+before merging anything and names what to fix. The merge is computed in the object store with
+`git merge-tree`, so a conflict is found without touching your checkout: the command stops, names
+the conflicting paths, and `main` has not moved. A clean merge becomes one merge commit, and `main`
+is fast-forwarded to it. If `main` already holds the epic's tip, the command says so and merges
+nothing. The journal records the merge as `local_merge`, so a later remote finish never reads it as
+a pull request. The local `epic/<slug>` branch stays for [`lain worktrees gc`](#lain-worktrees-gc) to reap.
 
 **`lain epic land` names an issue, never a commit.** It takes no SHA: the commit it lands is the one
 anchored when the implementation gate approved it, found rather than named. A commit nobody approved
@@ -794,8 +813,8 @@ End the session. Same as a bare `quit`.
 
 ## Configuration (config.rb)
 
-`.lain/config.rb` is Ruby, evaluated once per launch, with 7 verbs: `epics`, `approval`,
-`isolation`, `sensitivity`, `shell`, `tests` and `middleware`. Each verb may appear once, and every
+`.lain/config.rb` is Ruby, evaluated once per launch, with 8 verbs: `epics`, `approval`,
+`isolation`, `sensitivity`, `shell`, `search`, `tests` and `middleware`. Each verb may appear once, and every
 one is optional. Each is read by its own **strict** reader: an unknown key is refused by name,
 listing the keys that do exist, because a restricting table has to refuse a typo loudly rather than
 silently leave the restriction off.
@@ -809,24 +828,37 @@ is never refused: every table is then at its default.
 epics home: :repo, width: 3 do
   gate :research, :hands_off
 end
-approval do
+approval timeout: 900 do
   allow "bash", command: "bundle exec rspec"
   deny_tool "web_fetch"
 end
 isolation retain_days: 14
-sensitivity gated: %w[secrets.yml]
+sensitivity gated: %w[secrets.yml], related: %w[~/notes]
 shell exclude: %w[curl]
+search include: %w[planning/notes/*.md], max_entries: 50_000, max_bytes: 100_000_000
 tests preset: :rspec
 ```
 
 * `epics`: `home:` (`:xdg` by default, or `:repo` to keep epics under `.lain/epics/`), `width:`, and
   one `gate stage, policy` line per stage in the block.
 * `approval`: `allow "tool", field: value` and `deny "tool", field: value` match one tool call by
-  input; `deny_tool "tool"` refuses a whole tool and takes no fields.
+  input; `deny_tool "tool"` refuses a whole tool and takes no fields. `timeout:` is how many
+  seconds a parked call waits for an answer before it is denied (300 by default); it must be a
+  finite number above 0, and the prompt, `lain://approval` and the chat show the time left.
 * `isolation`, `tests`: documented below.
-* `sensitivity`: `denied:`, `gated:` and `exempt:`, each a list of path globs.
+* `sensitivity`: `denied:`, `gated:` and `exempt:`, each a list of path globs, and `related:`, a
+  list of directories (each starting with `~/` or `/`, and each must exist). A read under a related
+  directory masks its flagged regions without asking and never releases them; a file the path
+  rules gate or deny is still gated or denied. The verb refuses `/`, your home directory and any
+  ancestor of it, an entry that is not a directory, and a path that is not clean.
 * `shell`: `exclude:`, a list of program names or globs the shell tool refuses. `exclude: %w[*]` is
   the strictest setting.
+* `search`: how `grep`, `glob`, `list_files` and `ast_search` walk the project. Searches list files
+  the way `git ls-files --exclude-standard` does, so they skip what git's ignore rules exclude.
+  `include:` is a list of globs, relative to the repository top, that name ignored files a search
+  should still read; a glob that leaves the project is refused. `max_entries:` (20,000 by default)
+  caps the files one walk lists and `max_bytes:` (200 MiB by default) the bytes it reads; both are
+  positive integers, and a search that hits one says it was cut short.
 * `middleware`: documented [below](#middleware).
 
 ### middleware
