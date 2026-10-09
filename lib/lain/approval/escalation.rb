@@ -721,7 +721,8 @@ module Lain
           authority = @automatic.include?(pending.surface) ? :automatic : :human
           return Ruling.allow(rung: NAME, because: "#{APPROVED} (#{pending.surface})", authority:) if pending.approved?
 
-          Ruling.deny(rung: NAME, because: "#{REFUSED} (#{pending.surface})", authority:, said: pending.reason)
+          Ruling.deny(rung: NAME, because: "#{REFUSED} (#{pending.surface})", authority:,
+                      said: pending.timed_out? ? pending.lapse : pending.reason)
         end
       end
     end

@@ -653,6 +653,12 @@ RSpec.describe Lain::Approval::Queue do
       expect(result).to have_attributes(is_error: true)
       expect(runs).to be_empty
     end
+
+    it "tells the model the call lapsed, in the window's own words" do
+      result = Sync { gate_over([]).call(tool_call("dangerous")) }
+
+      expect(result.content).to eq('approval denied for tool "dangerous": denied after 0:01 with no answer')
+    end
   end
 
   describe "a pending that was drawn after it parked" do
