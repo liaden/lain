@@ -425,9 +425,9 @@ module Lain
         @tty_factory.call(channel:, input: Lain::Frontend::StdinPump.keys(@stdin),
                           prompt_renderer: prompt_renderer(agent, notice),
                           layers: @switchboard.mode_switch.method(:layers),
-                          alternate_screen: attended?).then do |tty|
+                          alternate_screen: alternate_screen?).then do |tty|
           @human_line = tty.method(:render_summons)
-          notices_on_screen = attended? && Lain::Frontend::StdinPump.terminal?(@stdin)
+          notices_on_screen = alternate_screen? && Lain::Frontend::StdinPump.terminal?(@stdin)
           notices_on_screen ? ScreenNotices.new(tty, startup) : tty
         end
       end
@@ -460,6 +460,9 @@ module Lain
       end
 
       def input_socket_name = Lain::CLI::InputSocket.named(options[:input])
+
+      # A pane reads the human, so the transcript scrolls in normal scrollback.
+      def alternate_screen? = attended? && input_socket_name.nil?
 
       # History is a line editor's: the pane's, over a socket, or this
       # terminal's. What a pipe feeds a chat is a script, not what a human

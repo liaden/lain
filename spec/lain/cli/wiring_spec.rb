@@ -2442,6 +2442,33 @@ RSpec.describe Lain::CLI::Wiring do
         expect(screen.index(mismatch)).to be > screen.index(Lain::Frontend::TTY::ALTERNATE_SCREEN_ON)
       end
 
+      # A cockpit chat's notices stay in scrollback, so they are said once and not repeated.
+      it "stays on normal scrollback and says a notice once when a pane reads the human" do
+        said = []
+        screen = StringIO.new
+        Dir.mktmpdir do |dir|
+          paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+          path = Lain::CLI::InputSocket.path(name: "wiring-scrollback", paths:, cwd: Dir.pwd)
+          stdin = StringIO.new
+          allow(stdin).to receive(:tty?).and_return(true)
+          allow(status_feed).to receive(:state).and_return({})
+          factory = lambda do |channel:, alternate_screen: true, **|
+            Lain::Frontend::TTY.new(channel:, output: screen, history_path: File.join(dir, "history"),
+                                    alternate_screen:)
+          end
+          wiring = described_class.new(options: { grace: 5, input: "socket:wiring-scrollback" }, chronicle:,
+                                       status_feed:, paths:, stdin:, tty_factory: factory, conductor_opener:)
+          pane = Thread.new { end_the_chat_from_a_pane(path) }
+          wiring.run(backend:, resumed: resumed_with_notice, nvim: nil) { |line| said << line }
+          wiring.conductor.close(reason: :exit)
+          pane.join
+        end
+
+        expect(screen.string).not_to include("\e[?1049h")
+        expect(said.count(mismatch)).to eq(1)
+        expect(screen.string).not_to include(mismatch)
+      end
+
       it "draws no alternate screen under --non-interactive, and says a notice once" do
         stdin = StringIO.new("quit\n")
         allow(stdin).to receive(:tty?).and_return(true)
