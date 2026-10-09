@@ -68,6 +68,8 @@ module Lain
         RESENDING = "the prompt at the head has no answer on this chain, so this ask carries it too -- " \
                     "/rewind 1 before asking to leave it out"
 
+        RAISE_MAX_TOKENS = "raise --max-tokens (now %d); a thinking model's reasoning counts against it"
+
         NOTHING_FOLDED = -> {}
         private_constant :NOTHING_FOLDED
 
@@ -79,7 +81,14 @@ module Lain
           failure = response.failure
           @tty.render_response(response) unless failure.withholds_text? || response.text.empty?
           @tty.render_error(failure.message)
+          remedy_for(failure).each { |line| @tty.render_error(line) }
           nil
+        end
+
+        def remedy_for(failure)
+          return [] unless failure.stop_reason == ::Lain::StopReason::MAX_TOKENS
+
+          [format(RAISE_MAX_TOKENS, @agent.context.max_tokens)]
         end
 
         # A torn ask: journal the turns that did commit, anchor the stop, then

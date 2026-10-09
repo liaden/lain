@@ -10,7 +10,8 @@ require "stringio"
 # session record.
 RSpec.describe Lain::CLI::Repl::Ask do
   let(:timeline) { instance_double(Lain::Timeline, head_digest: "sha-head") }
-  let(:agent) { instance_double(Lain::Agent, timeline:) }
+  let(:context) { instance_double(Lain::Context, max_tokens: 4096) }
+  let(:agent) { instance_double(Lain::Agent, timeline:, context:) }
   let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil, render_response: nil) }
   let(:chronicle) { instance_double(Lain::CLI::Chronicle::Null, catch_up: nil, interrupted: nil, replaced: nil) }
   let(:ask) { described_class.new(agent:, tty:, chronicle:) }
@@ -138,6 +139,24 @@ RSpec.describe Lain::CLI::Repl::Ask do
       ask.settle(stopped(:max_tokens, ""))
 
       expect(tty).to have_received(:render_error).with("model hit max_tokens before finishing")
+    end
+
+    it "names the flag on the line under the max_tokens error" do
+      ask.settle(stopped(:max_tokens, ""))
+
+      expect(tty).to have_received(:render_error).with("model hit max_tokens before finishing").ordered
+      expect(tty).to have_received(:render_error)
+        .with("raise --max-tokens (now 4096); a thinking model's reasoning counts against it").ordered
+    end
+
+    it "keeps the flag out of the Failure message a subagent's parent reads" do
+      expect(stopped(:max_tokens, "").failure.message).not_to include("--max-tokens")
+    end
+
+    it "adds no remedy line to other failures" do
+      ask.settle(stopped(:refusal, ""))
+
+      expect(tty).to have_received(:render_error).once
     end
 
     it "prints partial text and then the error line for max_tokens after some text" do
