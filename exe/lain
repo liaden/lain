@@ -610,6 +610,49 @@ class LainCLI < Thor
     def gc = render { Lain::CLI::Worktrees.new(root: Lain::Project::Resolver.default_project.root).gc }
   end
 
+  # The land subcommand, on the same thin-wiring rule as epic: Lain::CLI::Land
+  # queues, drains and reports, and answers a String. `wait` owns its exit
+  # status, so a script can branch on it: 0 landed, 1 not landed, 2 timed out,
+  # 130 interrupted, and 64 when the id, the repository or the branch is
+  # refused. A malformed command line is Thor's usage error and exits 1.
+  class Land < Thor
+    include Boundary
+
+    def self.exit_on_failure? = true
+
+    method_option :branch, type: :string, desc: "The branch to land on; defaults to the main worktree's"
+    method_option :id, type: :string, desc: "The worker's name; defaults to this checkout's directory name"
+    desc "enqueue [REF]", "Anchor REF (default HEAD), queue it for landing, and start a drainer"
+    def enqueue(ref = "HEAD")
+      render { Lain::CLI::Land.new(cwd: Dir.pwd).enqueue(ref, branch: options[:branch], id: options[:id]) }
+    end
+
+    method_option :branch, type: :string, desc: "The branch whose queue is drained; defaults to the main worktree's"
+    method_option :project, type: :string, desc: "The project root; defaults to this checkout's main worktree"
+    desc "drain", "Land every queued entry for the branch, a batch at a time"
+    def drain
+      render { Lain::CLI::Land.new(cwd: Dir.pwd).drain(branch: options[:branch], project: options[:project]) }
+    end
+
+    method_option :branch, type: :string, desc: "The branch the entry was queued for"
+    method_option :timeout, type: :numeric, desc: "Seconds to wait before exiting 2"
+    desc "wait ID", "Wait for a queued entry's result: exit 0 landed, 1 not landed, 2 timed out, " \
+                    "130 interrupted, 64 id, repository or branch refused"
+    def wait(id)
+      exit_status do
+        waiting = Lain::CLI::Land.new(cwd: Dir.pwd, sink: $stdout)
+        waiting.wait(id, branch: options[:branch], timeout: options[:timeout])
+      end
+    rescue Thor::Error => e
+      warn(e.message)
+      exit 64
+    end
+
+    method_option :branch, type: :string, desc: "The branch whose queue is shown"
+    desc "status", "List the queued entries and the drainer holding the drain lock"
+    def status = render { Lain::CLI::Land.new(cwd: Dir.pwd).status(branch: options[:branch]) }
+  end
+
   # The review subcommand, on the same thin-wiring rule as epic: Lain::CLI::Review
   # resolves the source, opens the round, and returns a String; this class parses
   # argv and says it.
@@ -841,6 +884,9 @@ class LainCLI < Thor
 
   desc "worktrees SUBCOMMAND", "lain's worker checkouts: gc reaps the ones whose work is safe elsewhere"
   subcommand "worktrees", Worktrees
+
+  desc "land SUBCOMMAND ...ARGS", "queue commits for the merge coordinator"
+  subcommand "land", Land
 
   desc "review [open] TARGET", "Review a pull request or a branch: `lain review 4821`, " \
                                "`lain review feature/foo`. Say `open` when the target " \
