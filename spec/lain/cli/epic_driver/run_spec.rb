@@ -177,7 +177,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
   # The loop, assembled over the fakes an example set up.
   def run_over(issues:, statuses:, reports:, landing: nil, gate: RunSpecGate.new, refusals: {}, retiring: [],
                width: 2, budget: nil, attempts: nil, grading: nil, log: [], red_only: nil, subjects: plans,
-               qa_gate: nil)
+               qa_gate: nil, tip_tests: nil, interrupt: nil)
     live = { now: 0 }
     supervisor = RunSpecSupervisor.new(reports, live, raising: retiring, log:)
     actors = RunSpecActors.new(supervisor, live, refusals:)
@@ -186,7 +186,8 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
                               landing: settled, width:, budget:,
                               red_only: red_only || described_class::Identical,
                               **(attempts ? { attempts: } : {}), **(grading ? { grading: } : {}),
-                              **(qa_gate ? { qa_gate: } : {}))
+                              **(qa_gate ? { qa_gate: } : {}), **(tip_tests ? { tip_tests: } : {}),
+                              **(interrupt ? { interrupt: } : {}))
     [run, actors, settled, supervisor]
   end
 
@@ -1094,6 +1095,73 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
 
       expect(result.landed).to be_empty
       expect(result.reported.map(&:reason).join).to include("the grader could not run the suite")
+    end
+  end
+
+  # Retirement rebases the branch and anchors the sha the gate then names, so
+  # the tip's suite runs on that sha: after retirement, before the gate.
+  describe "testing the tip, between its retirement and its gate" do
+    def tested_into(log) = ->(issue_id, sha) { log << [:tested, issue_id, sha] }
+
+    def gated_into(log)
+      lambda do |issue_id, sha:|
+        log << [:gated, issue_id, sha]
+        true
+      end
+    end
+
+    it "grades, retires, tests the anchored sha, then asks the gate, in that order" do
+      log = []
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" }, reports: { "a" => anchored("sha-a") },
+                      grading: ->(issue_id, _row) { log << [:graded, issue_id] }, log:,
+                      tip_tests: tested_into(log), gate: gated_into(log))
+
+      run.call
+
+      expect(log).to eq([[:graded, "a"], [:retired, "a"], [:tested, "a", "sha-a"], [:gated, "a", "sha-a"]])
+    end
+
+    it "tests nothing when the actor committed nothing" do
+      log = []
+      empty = Lain::Isolation::WorkerHandoff::Report.new(kind: :nothing_to_do, ref: nil, sha: nil)
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" }, reports: { "a" => empty },
+                      tip_tests: tested_into(log))
+
+      run.call
+
+      expect(log).to be_empty
+    end
+
+    it "tests nothing when the tip carries only the red step, since no gate opens" do
+      log = []
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" }, reports: { "a" => anchored("red-a") },
+                      tip_tests: tested_into(log))
+
+      run.call
+
+      expect(log).to be_empty
+    end
+
+    it "reports a tip whose suite the interrupt stopped as unsettled, and lands nothing" do
+      stopped = false
+      slow = lambda do |_issue_id, _sha|
+        stopped = true
+        sleep 5
+      end
+      run, _actors, landing = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" },
+                                       reports: { "a" => anchored("sha-a") }, gate: ->(_id, sha:) { sha },
+                                       tip_tests: slow, interrupt: -> { stopped })
+
+      result = Sync { run.call }
+
+      expect(landing.landed).to be_empty
+      expect(result.reported.map(&:reason)).to eq([described_class::UNSETTLED])
+    end
+
+    it "lands as usual when no tip tests are given" do
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" }, reports: { "a" => anchored("sha-a") })
+
+      expect(run.call.landed.map(&:issue_id)).to eq(["a"])
     end
   end
 

@@ -207,10 +207,10 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   def factory_over(mounted, actors: nil, record: Lain::CLI::Chronicle::Null.new, grading: nil, asker: nil,
-                   endpoint: nil, ladder: nil)
+                   endpoint: nil, ladder: nil, interrupt: -> { false })
     described_class.for(mount: mounted, chronicle: record, paths:, root: repo, library: backend.library,
                         journal: Lain::Channel::Null.instance, toolset_build:, asker:, config:, actors:, endpoint:,
-                        ladder:, **(grading ? { grading: } : {}))
+                        ladder:, interrupt:, **(grading ? { grading: } : {}))
   end
 
   # Where a local model is served, taken from the deployment rather than spelt
@@ -225,8 +225,9 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   # The loop, over real git, with scripted actors in real leased checkouts.
-  def driven(width: 2, grading: nil, files: {}, idle: [], slug: "demo")
-    factory_over(mount(slug), actors: scripted(files:, idle:, slug:), record: chronicle, grading:).run(width:)
+  def driven(width: 2, grading: nil, files: {}, idle: [], slug: "demo", interrupt: -> { false })
+    factory_over(mount(slug), actors: scripted(files:, idle:, slug:), record: chronicle, grading:, interrupt:)
+      .run(width:)
   end
 
   def worktree_root = Lain::CLI::IsolationBackend.worktree_root(repo, paths:)
@@ -955,6 +956,85 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       end
 
       expect_gated(gated)
+    end
+  end
+
+  # Retirement rebases the actor's branch, so the tree the gate names is the
+  # anchored sha, not the checkout the actor held: that sha is what is tested.
+  describe "testing the anchored tip before the implementation gate" do
+    def chat_records = File.readlines(File.join(paths.sessions_dir, "chat.ndjson")).map { |line| JSON.parse(line) }
+
+    def anchored_sha(issue_id) = git(repo, "rev-parse", anchor_ref(issue_id))
+
+    def anchor_ref(issue_id) = Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{issue_id}.1").ref
+
+    def broken_spec = "# frozen_string_literal: true\n\nUndefinedOrderHelper.install\n"
+
+    def detached_worktrees = git(repo, "worktree", "list", "--porcelain").split("\n\n").grep(/^detached$/)
+
+    it "journals a red tip's run against the anchored sha, before the gate's question, and leaves no worktree" do
+      write_epic([issue("a")])
+      approve_plan("a")
+
+      driven(width: 1, files: { "spec/unit/models/order_spec.rb" => broken_spec })
+
+      records = chat_records
+      ran = records.index { |row| row["type"] == "tests_ran" }
+      gated = records.index { |row| row["type"] == "gate_decision" && row["stage"] == "implementation" }
+      expect(records.fetch(ran)).to include("issue_id" => "a", "sha" => anchored_sha("a"), "ran" => true,
+                                            "errors" => 1)
+      expect(ran).to be < gated
+      expect(detached_worktrees).to be_empty
+    end
+
+    it "journals that nothing ran, and why, when the project declares no tests preset" do
+      git(repo, "rm", "-q", ".lain/config.rb")
+      git(repo, "commit", "-q", "-m", "declare no tests preset")
+      write_epic([issue("a")])
+      approve_plan("a")
+
+      driven(width: 1)
+
+      ran = chat_records.select { |row| row["type"] == "tests_ran" }
+      expect(ran.map { |row| row.slice("issue_id", "ran") }).to eq([{ "issue_id" => "a", "ran" => false }])
+      expect(ran.first["why"]).to include("no tests preset")
+    end
+
+    # A preset with no adapter yet is a suite lain cannot run, which the gate
+    # reports; it is no reason to refuse the whole run.
+    it "journals that nothing ran, naming the preset, when the declared preset has no adapter" do
+      File.write(File.join(repo, ".lain/config.rb"), "tests preset: :minitest, source_roots: %w[app]\n")
+      git(repo, "commit", "-q", "-am", "declare the minitest preset")
+      trust_project(repo, paths:)
+      trust_project(repo)
+      write_epic([issue("a")])
+      approve_plan("a")
+
+      driven(width: 1)
+
+      ran = chat_records.select { |row| row["type"] == "tests_ran" }
+      expect(ran.map { |row| row.slice("issue_id", "ran") }).to eq([{ "issue_id" => "a", "ran" => false }])
+      expect(ran.first["why"]).to include("minitest")
+    end
+
+    # A human who closes the session mid-suite is not kept waiting out the
+    # harness's bound: the suite's child is killed and its checkout removed.
+    it "stops a slow suite when the run is interrupted, leaving no child and no worktree" do
+      started = File.join(@root, "suite-started")
+      slow = "File.write(#{started.inspect}, Process.pid.to_s)\nsleep 60\n"
+      write_epic([issue("a")])
+      approve_plan("a")
+      began = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      result = driven(width: 1, files: { "spec/unit/models/order_spec.rb" => slow },
+                      interrupt: -> { File.exist?(started) })
+
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - began).to be < 30
+      expect(result.reported.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.first.reason).to eq(Lain::CLI::EpicDriver::Run::UNSETTLED)
+      expect { Process.kill(0, Integer(File.read(started))) }.to raise_error(Errno::ESRCH)
+      expect(detached_worktrees).to be_empty
+      expect(Dir.children(File.join(worktree_root, "tips"))).to be_empty
     end
   end
 

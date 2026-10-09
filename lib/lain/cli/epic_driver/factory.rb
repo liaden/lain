@@ -86,6 +86,8 @@ module Lain
         # force-removes the old tree.
         LANDING = "landings"
 
+        TIPS = "tips"
+
         # The skill every QA rung is briefed with, which is the whole of what this
         # driver renders for a checkpoint.
         QA_SKILL = "qa"
@@ -534,7 +536,12 @@ module Lain
                   actors: actors(fleet, layout), supervisor: fleet, gate:, landing: landing(checkout, layout), width:,
                   budget:, attempts:, red_only: RedOnly.new(git: parent, base: working_branch),
                   interrupt: @optional.fetch(:interrupt), grading: @optional.fetch(:grading) || Run::Ungraded,
-                  qa_gate: qa_gate(checkout))
+                  qa_gate: qa_gate(checkout), tip_tests: tip_tests(layout))
+        end
+
+        def tip_tests(layout)
+          TipTests.new(repo_root: @root, harness: DeclaredHarness.for(layout), journal: record,
+                       tmp: File.join(worktree_root, TIPS))
         end
 
         # QA runs WHERE THE CLUSTER LANDED: lain's own landing checkout, standing
@@ -849,11 +856,18 @@ module Lain
           end
 
           # @return [Boolean, Symbol] the gate's answer, or {STOPPED}
-          def call(issue_id, sha:)
-            task = Async::Task.current?
-            return @gate.call(issue_id, sha:) if task.nil?
+          def call(issue_id, sha:) = watching { @gate.call(issue_id, sha:) }
 
-            awaited(task.async { @gate.call(issue_id, sha:) })
+          # A child the stopped block spawned is killed by that child's own
+          # `ensure`.
+          #
+          # @yieldreturn [Object] the answer
+          # @return [Object] the block's answer, or {STOPPED}
+          def watching(&work)
+            task = Async::Task.current?
+            return yield if task.nil?
+
+            awaited(task.async(&work))
           end
 
           private
@@ -883,6 +897,12 @@ module Lain
         # `#call`, never a type.
         module Ungraded
           def self.call(_issue_id, _registration) = nil
+        end
+
+        # The tip-tests hook's Null, for a loop driven without a project to
+        # run: it tests nothing and journals nothing.
+        module Untested
+          def self.call(_issue_id, _sha) = nil
         end
 
         # One issue's work, from the launch that started it to the retirement
@@ -979,9 +999,13 @@ module Lain
         # @param qa_gate [#call] `call(checkpoint, graph) -> QaGate::Verdict`,
         #   asked of each {Epic::QaCheckpoint} as it becomes ready. The Null holds
         #   every checkpoint, because in an epic QA is not optional
+        # @param tip_tests [#call] `call(issue_id, sha)`, the project's suite run
+        #   on the anchored sha just before its gate is asked -- see {#gated}
         def initialize(progress:, plans:, actors:, supervisor:, gate:, landing:, red_only:, width:, budget: nil,
-                       interrupt: -> { false }, attempts: nil, grading: Ungraded, qa_gate: QaGate::Unaudited)
+                       interrupt: -> { false }, attempts: nil, grading: Ungraded, qa_gate: QaGate::Unaudited,
+                       tip_tests: Untested)
           @qa_gate = qa_gate
+          @tip_tests = tip_tests
           @progress = progress
           @plans = plans
           @actors = actors
@@ -1220,12 +1244,23 @@ module Lain
           return reported(entry, unkept(report)) if report.sha.nil?
           return reported(entry, format(NO_WORK, sha: report.sha)) if @red_only.call(entry.launch.tests.sha, report.sha)
 
+          gated(entry, report)
+        end
+
+        # TESTED AFTER RETIREMENT, because retirement rebases: the tree the
+        # actor held is not the sha the gate names, and only an issue that
+        # reaches its gate has a sha worth testing.
+        def gated(entry, report)
+          return reported(entry, UNSETTLED) if tested(entry, report) == Asking::STOPPED
+
           opened = @asking.call(entry.issue_id, sha: report.sha)
           return reported(entry, UNSETTLED) if opened == Asking::STOPPED
           return reported(entry, format(GATE_PARKED, sha: report.sha)) unless opened
 
           land(entry, report)
         end
+
+        def tested(entry, report) = @asking.watching { @tip_tests.call(entry.issue_id, report.sha) }
 
         def unkept(report) = report.kind == :failed ? "#{ANCHOR_REFUSED} (#{report.detail})" : NOTHING_COMMITTED
 
@@ -1264,6 +1299,27 @@ module Lain
         def reported(entry, reason) = @reported << Reported.new(issue_id: entry.issue_id, reason:)
 
         def result = Result.new(landed: @landed, reported: @reported, stopped: @stopped, audited: @audited)
+      end
+
+      # The suite runner a project's declared tests preset names, as a
+      # `root -> TestHarness`, for every step that runs the project's tests:
+      # never one detected from files. The adapter is resolved per call, so a
+      # preset with no adapter yet raises where that step can report it rather
+      # than when the run is built.
+      module DeclaredHarness
+        UNDECLARED = "the project declares no tests preset, so there is no suite to run"
+
+        # @param layout [TestLayout] the project's, resolved from its root
+        # @return [#call] `root -> Grader::TestHarness`, raising {Lain::Error}
+        #   for a layout not in force or a preset with no adapter
+        def self.for(layout)
+          return ->(_root) { raise Lain::Error, UNDECLARED } unless layout.in_force?
+
+          lambda do |root|
+            adapter = Lain::Grader::TestHarness::Adapter.for(layout.preset.name).call(root)
+            Lain::Grader::TestHarness.new(root, adapter:)
+          end
+        end
       end
 
       # An issue's red step, run in the checkout its actor holds before the
@@ -1312,7 +1368,7 @@ module Lain
           @role_spawn = role_spawn
           @layout = layout
           @test_layout = test_layout
-          @harness = harness || method(:declared_harness)
+          @harness = harness || DeclaredHarness.for(layout)
           @shell_out_factory = shell_out_factory
         end
 
@@ -1421,11 +1477,6 @@ module Lain
         def branch_of(worker_env)
           Lain::Isolation::Checkout.new(worker_env.cwd, shell_out_factory: @shell_out_factory)
                                    .symbolic_head.delete_prefix("refs/heads/")
-        end
-
-        def declared_harness(root)
-          adapter = Lain::Grader::TestHarness::Adapter.for(@layout.preset.name).call(root)
-          Lain::Grader::TestHarness.new(root, adapter:)
         end
 
         def ran(target, worker_env) = @harness.call(worker_env.cwd).run(worker_env, paths: [target])

@@ -114,6 +114,10 @@ module Lain
         # RSpec via its JSON formatter written to a file. A failing example is
         # named by its `full_description` so `#why` reads.
         class Rspec
+          # The line rspec quotes a failure on, whatever leads the message ("An
+          # error occurred ...", "While loading ... a `raise SyntaxError`"), and
+          # whether or not it is coloured; its notes carry no such line.
+          ERROR_MESSAGE = %r{^(?:\e\[[\d;]*m)*Failure/Error:}
           def command(out_path:, paths: [])
             ["rspec", "--format", "json", "--out", out_path, *paths]
           end
@@ -139,12 +143,13 @@ module Lain
           # document's `messages` -- rspec routes it through the formatter, so
           # it lands in the FILE, not on stderr. Those messages are the real
           # diagnostic; the generic label is a fallback for a count with no text.
+          # The summary's count is the number, and only messages quoting a
+          # failure describe one: rspec's notes ("Run options: ...", "No
+          # examples found.") share the list, before and after the errors.
           def errors_of(report)
             count = report.dig("summary", "errors_outside_of_examples_count").to_i
-            return [] if count.zero?
-
-            messages = report.fetch("messages", [])
-            messages.empty? ? Array.new(count) { |i| "error outside of examples ##{i + 1}" } : messages
+            described = report.fetch("messages", []).grep(ERROR_MESSAGE)
+            described + (described.size...count).map { |i| "error outside of examples ##{i + 1}" }
           end
         end
 
