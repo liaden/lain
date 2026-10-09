@@ -129,6 +129,7 @@ module Lain
         ENDPOINT_FLAG = "--api-base"
 
         API_KEY_ENV_KEY = Provider::Ollama::Deployment::API_KEY_ENV_KEY
+        ADMISSION_ENV_KEY = Provider::Admission::ENV_KEY
 
         # NOT the local default `qwen3:4b`, which does not exist on the cloud at
         # all, so inheriting it would make a bare `--provider ollama-cloud` a
@@ -162,6 +163,17 @@ module Lain
         end
 
         def cloud? = @name == CLOUD
+
+        # The key is read only to build the deployment that declares the width
+        # and never reaches the text. The gate is asked rather than recomputed,
+        # so the notice cannot disagree with the one the provider will enter.
+        #
+        # @return [Array<String>] empty for the local arm
+        def startup_notices
+          return [] unless cloud?
+
+          [width_notice(gate.width)]
+        end
 
         # @param channel [Lain::Channel] where retries and stalls are narrated
         # @param queue [Boolean] the caller's willingness to wait for a slot
@@ -201,6 +213,29 @@ module Lain
         end
 
         def key = ENV.fetch(API_KEY_ENV_KEY, nil)
+
+        def gate
+          declared = Provider::Ollama::Deployment.cloud(api_key: key).admission_width
+          Provider::Admission.for(endpoint: @api_base || Provider::Ollama::Deployment::CLOUD_API_BASE, width: declared)
+        end
+
+        def width_notice(width)
+          if width.infinite?
+            return "ollama-cloud runs with no limit on cloud requests; #{ADMISSION_ENV_KEY}=0 set that."
+          end
+
+          "ollama-cloud runs up to #{width} cloud requests at once; set #{width_variable} to change it. " \
+            "It narrows on a concurrency refusal from the server."
+        end
+
+        def width_variable
+          if ENV.fetch(ADMISSION_ENV_KEY,
+                       "").empty?
+            Provider::Ollama::Deployment::CONCURRENCY_ENV_KEY
+          else
+            ADMISSION_ENV_KEY
+          end
+        end
 
         def flag = self.class.flag_for(chat: @chat)
 

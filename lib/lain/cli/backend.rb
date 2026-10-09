@@ -406,6 +406,12 @@ module Lain
       # Whether this run's chat provider is the hosted ollama arm.
       def cloud? = provider_name == OllamaTier::CLOUD
 
+      # What this run tells the operator about its provider before the first
+      # prompt; the tier owns the decision, so callers do not branch on a name.
+      #
+      # @return [Array<String>]
+      def startup_notices = OllamaTier::NAMES.include?(provider_name) ? ollama_tier(provider_name).startup_notices : []
+
       # `--num-ctx`, through the same {Ceiling} both `--max-tokens` flags go
       # through, and OPTIONAL: unset means "serve the model's own". What is NOT
       # a real answer is a non-positive one, and `0` is where this bit --

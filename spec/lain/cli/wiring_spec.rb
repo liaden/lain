@@ -2345,6 +2345,32 @@ RSpec.describe Lain::CLI::Wiring do
         expect(state.instance_variable_get(:@mode).current).to eq(Lain::Mode.new)
       end
 
+      def startup_notices_for(provider)
+        notices = []
+        cloud_backend = offline_backend_class.new({ provider:, model: nil, max_tokens: 64 },
+                                                  mock: mock_provider, root: backend_root)
+        Lain::Provider::Admission.reset!
+        with_env("OLLAMA_API_KEY" => "sk-ollama-test", "LAIN_PROVIDER_CONCURRENCY" => nil) do
+          seen = []
+          Dir.mktmpdir do |dir|
+            wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                                         tty_factory: recording_factory(dir, seen), conductor_opener:,
+                                         stdin: StringIO.new("quit\n"))
+            wiring.run(backend: cloud_backend, resumed: nil, nvim: nil) { |notice| notices << notice }
+            wiring.conductor.close(reason: :exit)
+          end
+        end
+        notices
+      end
+
+      it "tells a cloud chat its width at startup" do
+        expect(startup_notices_for("ollama-cloud").join).to include("cloud requests at once")
+      end
+
+      it "says nothing about cloud width to a local chat" do
+        expect(startup_notices_for("ollama").join).not_to include("cloud requests")
+      end
+
       # A project config that does not parse is reported through the same
       # startup-notice seam a resumed chat's notices use, and the chat is still
       # usable -- today's prompt, not a crash.

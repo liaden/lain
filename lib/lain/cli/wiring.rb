@@ -289,7 +289,7 @@ module Lain
         @notice = notice || SILENT
         recorder, session = run_state(resumed)
         agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
-        startup = [*resumed&.notices, *memory_notices(recorder, resumed)]
+        startup = [*resumed&.notices, *memory_notices(recorder, resumed), *backend.startup_notices]
         startup.each(&notice)
         tty = open_terminal(agent, notice, startup)
         rail = Lain::Frontend::Intake.new(screen: tty, history: history_for(tty))
