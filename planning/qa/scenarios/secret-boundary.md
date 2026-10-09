@@ -419,6 +419,85 @@ holds the released text, **journaled as released**, because the release ledger i
 review NEW window still shows the line unmasked, by the human's ruling (it is the human's own editable
 file), so do not file that.
 
+### 4c: slash-joined words and alphabet literals are not secrets, and a real key still is *(2026-10-08 trial fixes, needs a model for the reads)*
+
+The trial flagged 5 of 5 files it read, every one a false positive: a Cargo/clippy path, an
+`XDG_CONFIG_HOME/lain/config` string, a corpus path (twice) and a base64 alphabet literal. The entropy
+detector scores slash-joined words at 4.21 to 4.40 bits per character against the 4.2 floor, and an AWS
+secret key at 4.66, so no threshold separates them. The detector now judges each slash-separated segment alone.
+
+Write 4 files in the scratch project, each a single line of text (obviously public or documented values only):
+
+```bash
+printf 'see com/lmcnulty/gender-voice-visualization_corpus for the data\n' > path.txt
+printf 'XDG_CONFIG_HOME/lain/config\n'                                     > envpath.txt
+printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\n' > alphabet.txt
+printf 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n'                          > aws.txt
+```
+
+`aws.txt` is the documented example key from AWS's own docs. Ask the model to `read_file` each, and read the
+`read_redacted` records (the §4 reduction):
+
+1. **`path.txt`, `envpath.txt` and `alphabet.txt` come back unmasked and park nothing.** No `read_redacted`
+   record for them, no `approval_pending`, and the bytes appear in the journaled result.
+2. **`aws.txt` is still masked**: one region, `<redacted:1>` in the result, `released=0`, and a release
+   prompt (§4 item 1 and 2). If it is not flagged, the exemption has swallowed a real key shape, which is the
+   boundary's worst failure for this change, so stop and report it before anything else.
+3. **A path-embedded key is still flagged.** A slash-joined token with a segment that is itself a hex or
+   base36 run is not exempt (a ruling made while the card ran, narrower than the card). Put
+   `config/3f2a9c1e8b7d4a6f5e0c1b2a9d8e7f60/application` on a line: it is flagged. Expect that
+   a git SHA inside a URL is flagged too (about 3 of those in the measured corpus); that is the accepted
+   cost, so do not file it.
+4. **A secret split into short lowercase segments is given up for the path rule.** The detector cannot tell
+   such a secret from a path. Record it if you try one, do not file it.
+5. **A key glued to an alphabet run still goes.** `ABCDEFGHIJKLMNOPQRSTUVWXYZwJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY`
+   is masked, because the alphabet run covers less than half of the token.
+
+**Wrong looks like:** any of the first 3 files parking for a release (the trial), or `aws.txt` reading clean.
+
+### 4d: a `related` directory masks without asking and never releases *(2026-10-08 trial fixes, needs a model for the reads)*
+
+A project that works beside a sibling tree (the trial's `~/dev/frugirl` reading `~/dev/belle-curves`) was
+asked about every flagged region in it. `sensitivity related:` names those trees. It changes no verdict: the
+path classifier, the listing filter and the mask all run as before, and only the prompt goes.
+
+```ruby
+# .lain/config.rb
+sensitivity related: %w[/abs/path/to/sibling]      # or home-anchored: ~/dev/sibling
+```
+
+`lain trust --yes`, relaunch, and put `aws.txt` (from 4c) and a `.env` into the sibling:
+
+1. **A flagged region under a related tree is masked, with no approval parked.** `read_file` of
+   `sibling/aws.txt` completes at once with `<redacted:1>` in the result, `read_redacted` journals
+   `regions=1 released=0`, there is no `approval_pending` for it, and no `read_released` record ever
+   appears for that path. The same file **outside** the related tree parks as in §4, so the config is the
+   only difference.
+2. **Masking is not releasing.** Nothing a human types can release a region in a related tree, because
+   nothing asks. If the model needs the bytes, it cannot have them. Confirm the journaled request holds no
+   byte of the key's body (the §4 item 3 grep).
+3. **A gated name under the tree still gates.** `read_file sibling/.env` parks at the read gate exactly
+   as it does anywhere else. Related does not lift the path classifier. (The card said "denied"; what
+   shipped is the usual gate, and a `denied` path stays denied.)
+4. **The entry is validated at load, naming the entry and the reason**, each exit 1 with no session file:
+
+   ```ruby
+   sensitivity related: %w[/]            # must name a specific tree, not the filesystem root, ...
+   sensitivity related: %w[~]            # the home directory is refused too, and so is any ancestor of it
+   sensitivity related: %w[dev/sibling]  # is a directory, home-anchored ("~/dev/app") or absolute ("/srv/app")
+   sensitivity related: %w[/abs/file.txt]  # an existing file: takes directories, and this is not one
+   sensitivity related: %w[/abs/a/../b]  # is not a clean directory path: no empty, `.` or `..` segment
+   ```
+
+   A directory that does not exist yet passes (a project may declare a sibling it has not cloned).
+   The ancestor-of-home test is lexical: a home reached through a symlinked parent could be related by its
+   other spelling. That only suppresses a prompt, and masking still applies, so record it rather than file it.
+5. **A prefix is not a tree.** With `related: %w[/abs/sibling]`, a file in `/abs/sibling-other/` still
+   parks. The match is on the directory plus a separator.
+
+**Wrong looks like:** a flagged read under the tree that parks, a `read_released` record for a related path, a
+`.env` read that completes unmasked, or `related: %w[/]` loading.
+
 ## 5 — The unliftable rung, and `/mode auto`
 
 `Escalation::Triage` inspects a `bash` call's **argv** for protected paths and rules `the command's

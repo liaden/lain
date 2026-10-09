@@ -86,6 +86,34 @@ absent. Also: the cloud arm performs **no `--num-ctx` refusal at all**, because
 the hosted `Deployment#model_metadata?` is `false`: `--num-ctx 999999999` on the cloud arm constructs,
 as documented (round 22 drove it). Both are recorded follow-ups.
 
+### 3b. A bare cloud model name finds its published window *(costs 1 completion per arm)*
+
+The 2026-10-08 trial launched `--model glm-5.3` and the journal recorded `"window_tokens":8192,
+"provenance":"guessed"`: every cloud row is keyed with a `:cloud` or `-cloud` tag, and the lookup looked for
+a table key inside the name the user typed. ollama.com accepts both `glm-5.3` and `glm-5.3:cloud`. A guessed
+8,192 window made the HUD read `ctx:~72%` at under 1% of the real use and kept window-pressure compaction off.
+
+```bash
+lain chat --provider ollama-cloud --model glm-5.3          # take one turn, then read the journal
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
+  puts "window=#{r["window_tokens"]} prov=#{r["provenance"].inspect}" if r["type"]=="compaction_decision"}' "$JOURNAL"
+```
+
+1. **`glm-5.3` resolves to the `glm-5.3:cloud` row: 1,000,000 tokens, `published`.** Read the row in
+   `CLOUD_WINDOWS` rather than trusting this figure, since the table moves.
+2. **A size-tagged row is found from its bare name**: `--model gemma4:31b` reads 256,000, `published`.
+3. **The longest key wins**: `--model glm-5.3-flash` resolves to the `glm-5.3-flash:cloud` row, not
+   the `glm-5.3` one.
+4. **A name in no row still guesses**: a made-up name reads `8192`, `guessed`.
+5. **The lookup is cloud-arm only.** The same bare names on the local arm (`--provider ollama --model
+   gpt-oss:20b`) stay `guessed` unless the resident model reports its own window, because a local tag that
+   shares a name with a cloud row would otherwise be told an authoritative window it does not have.
+   *Wrong looks like:* `window=8192 prov="guessed"` on the cloud arm with a bare name, or a local model
+   reading `published` from a cloud row.
+6. **The HUD agrees.** `ctx` is `used / window` with no `~` mark once the window is published (compute it
+   from the journal's first turn and read the HUD row). `greenfield-epic.md` §2 drives this on the full
+   journey; this step is the same check taken alone.
+
 ## 4. Windows come from the weights, not the library page
 
 If you are adding or refreshing a row in `ContextWindow::CLOUD_WINDOWS`, the published label is
@@ -146,16 +174,75 @@ invisible to a frame **count**. Read the bytes.
 **Expected and normal:** a *failed* round trip leaves one empty aborted frame per attempt — four
 for a retried 500. That is the retry envelope working, not corruption.
 
-## 6. Saturation and the 429 *(costs real quota — skip unless you are testing this specifically)*
+## 6. Width, the launch notice and the 429 *(§6a costs nothing; §6b costs real quota or needs a stub)*
 
 The plan's grounding took "1 / 3 / 10 concurrent models" from the pricing page. **The wire says
 otherwise:** a 429 carries `x-ratelimit-max-concurrent: 4` and `x-ratelimit-queue-limit: 15`, plus
-`retry-after` in integer seconds — and **no reset header**, which is why lain leaves
-`rate_limit_reset_header` nil and lets faraday-retry honour `Retry-After` on its own.
+`retry-after` in integer seconds, and **no reset header**, which is why lain leaves
+`rate_limit_reset_header` nil and lets faraday-retry honour `Retry-After` on its own. Only a 429 carries
+the headers, so a session's real plan limit is learned on a refusal.
 
-The hosted `Deployment` declares an admission width of **1** by default, raised by
-`LAIN_OLLAMA_CLOUD_CONCURRENCY`. That is deliberately below the plan's real capacity: safe on every
-tier, and a caller who knows better can say so.
+The hosted `Deployment` declares an admission width of **3** by default (it was 1 until 2026-10-08, when the
+trial's serialized subagents showed 1 was below what a paid plan allows), raised or lowered by
+`LAIN_OLLAMA_CLOUD_CONCURRENCY`. `LAIN_PROVIDER_CONCURRENCY` overrides it, and `0` there means unbounded.
+An earlier version of this section said the default was 1; a driver reading that sentence anywhere else
+(the README still does until the docs card lands) has the stale one.
+
+### 6a. The launch says how many requests will run at once
+
+```bash
+lain chat --provider ollama-cloud                                   # read the startup lines
+LAIN_OLLAMA_CLOUD_CONCURRENCY=1 lain chat --provider ollama-cloud
+LAIN_PROVIDER_CONCURRENCY=2 lain chat --provider ollama-cloud
+LAIN_PROVIDER_CONCURRENCY=0 lain chat --provider ollama-cloud
+lain chat --provider ollama                                         # the local arm
+```
+
+1. Default: `ollama-cloud runs up to 3 cloud requests at once; set LAIN_OLLAMA_CLOUD_CONCURRENCY to change
+   it. It narrows on a concurrency refusal from the server.`
+2. With the cloud variable at 1 the line says `up to 1`. With `LAIN_PROVIDER_CONCURRENCY=2` it says `up to 2` and
+   names **that** variable, because that one is in force. With `0` it reads `ollama-cloud runs with no limit on
+   cloud requests; LAIN_PROVIDER_CONCURRENCY=0 set that.`
+3. The local arm prints no such line, and `OLLAMA_API_KEY`'s value appears in no startup line.
+   *Wrong looks like:* a notice naming a width other than the one a fan-out then uses, or the line missing from a cockpit's
+   chat pane.
+
+### 6b. A concurrency 429 narrows the endpoint, and the journal says so *(costs real quota, or a stub)*
+
+Two ways to force it, and say which you used:
+
+- **A plan whose limit is below the width.** On a plan with `max-concurrent` of 1 (a Free key), ask for a fan-out
+  of 3 subagents. The first refusal names the limit and the endpoint narrows. The reviewer's stub probe saw
+  2 of 3 requests fail after their retries on a plan with no server queue, with later requests running at the
+  narrowed width; whether a real Free plan has a server queue is **unprobed**, so record what you see.
+- **A stub endpoint.** An https server (the arm refuses a plaintext base) that answers the first requests with
+  429, the header `x-ratelimit-max-concurrent: 1`, `retry-after: 1`, and a body saying too many concurrent
+  requests, then 200. Trust its certificate with `SSL_CERT_FILE`, pass `--api-base https://127.0.0.1:<port>`.
+  No such stub is checked in. Copy the response shape from `spec/lain/provider/ollama/retry_tap_spec.rb` (the webmock example near line 355): status 429, body `{"error":"too many concurrent requests"}`, headers `x-ratelimit-max-concurrent: 1` (the spec's refusal helper also sends `x-ratelimit-active`, `x-ratelimit-queue-limit` and `x-ratelimit-queued`), then a 200 with `{}`. The same file's `slow down` and `context length exceeded` bodies, with no concurrency header, are the other-reason 429s of item 5.
+
+Read the journal:
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+  puts r.slice("type","endpoint","from_width","to_width","max_concurrent","active","queue_limit","queued").to_json \
+    if %w[admission_narrowed provider_retry].include?(r["type"])}' "$JOURNAL"
+```
+
+1. **One `admission_narrowed` record** with `from_width: 3`, `to_width: 1` and the header values as sent
+   (`nil` where a header was absent), written once per refusal that moved the width.
+2. **The retried request is sent once by faraday-retry**, not twice: the stub's request count for that call
+   is the original plus 1 retry, with a `provider_retry` record per retry.
+3. **Narrowing never widens.** A later 429 reporting `max-concurrent: 3` leaves the width at 1 and writes no
+   second record.
+4. **An explicit setting is the ceiling.** With `LAIN_OLLAMA_CLOUD_CONCURRENCY=2` and a server reporting
+   3, the width stays 2.
+5. **A 429 for another reason is not concurrency.** A 429 whose headers carry no `max-concurrent` (or a
+   context-length body) leaves the width alone and raises as before.
+6. **`LAIN_PROVIDER_CONCURRENCY=0` ignores it**: a concurrency 429 raises nothing new and admission stays
+   unbounded.
+7. **After the retries are spent** (5) the request fails with the 429 named, as it did before.
+   *Wrong looks like:* a width that stays 3 after a refusal that named 1, a narrowing record on every retry,
+   or a width that grows back.
 
 ## 7. What this arm is NOT for
 

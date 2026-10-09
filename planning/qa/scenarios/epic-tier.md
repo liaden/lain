@@ -281,6 +281,56 @@ two different issues and approve one: the other must still read as unapproved. A
 leaked across issues would let one issue's sign-off land another's code, and it is invisible on
 screen because both rows show the same changeset.
 
+### 4c: The same stages from a chat: `epic_write`, `epic_submit`, `epic_graph` *(2026-10-08 trial fixes)*
+
+The trial's agent could not reach the epic home or the gate: the skill told it to call `Epic::Home.resolve`
+and run `lain epic submit`, neither of which a chat can do, so it read lain's own source instead. A chat now
+carries 3 epic tools beside `request_review`, with or without a mounted epic, and the epic skills render the
+absolute epic home into their text. `greenfield-epic.md` §7 drives the whole journey from an empty directory;
+this section drives each tool against the hand-written epic of §0, with a model behind it.
+
+Start a chat in the §0 project (`--epic demo` mounts it; without the flag one epic in the home mounts by
+itself, and with none the tools still exist). Ask for each in turn, and read the tool results and the journal.
+
+1. **`epic_write` writes one artifact and takes no path.** Input: `slug` (required, lowercase letters, digits
+   and dashes), `artifact` (`research`, `epic`, `issue` or `plan`), `issue` (required for the last two) and
+   `content` (the whole file, replacing what is there). Ask it to write `research` for slug `demo`: the file
+   lands at `<epic home>/demo/research.md`, nothing is written inside the project, and a `write` is journaled
+   through the epic home. `issue` without an `issue` id, an `artifact` outside the four, and a slug with a
+   capital or a slash are refused by name. It asks no tool approval, and it is exempt from `plan`-mode
+   write confinement by name, since epic artifacts are planning documents; check that in `/mode plan`.
+   A symlinked segment in the home path is refused. **While `request_review` holds the file** (a review
+   of `epic.md` open and unread), `epic_write` of `epic` refuses rather than regenerating a human's unread
+   edits.
+2. **`epic_submit` puts a stage in front of its gate, in-process.** Input: `stage` (`research`, `epic_plan` or
+   `issue_plan`; `implementation` is not offered, since only the driver holds a changeset address), `slug` and
+   `issue` (required for `issue_plan`). With the default `interactive` policy the question arrives at
+   `lain://inbox` and the tool waits; answer it. The tool result is the same text `lain epic submit` prints,
+   starting `approved blake3:… by policy interactive`; the session file holds a `gate_decision` with
+   `policy: interactive` and `answered_by` that is not `eof`. The chat's HUD and prompts keep updating while the
+   gate waits. If nobody answers within the gate's window the gate denies and nothing advances. With
+   `gate :research, :hands_off` the result says `by policy hands_off` and no question appears.
+   **Wrong looks like:** a result with no policy named, a hang that freezes the HUD, or an answer given in a
+   shell that never reaches the model.
+3. **An `adjudicated` stage is relayed, not faked.** With `gate :research, :adjudicated`, the tool refuses with
+   `the research gate is adjudicated, and a chat cannot build the adjudication spike prompt it needs; ask the
+   user to run `lain epic submit research demo` from a shell`. The model relays the sentence and stops.
+4. **`epic_graph` edits the graph in-process.** Input: `verb` (`add`, `split` or `merge`), `slug` (required) and
+   the verb's own fields: `add` takes `id`, `title`, optional `discovered_from`; `split` takes `id` and `into`;
+   `merge` takes `left`, `right`, `as` and optionally `title`. A missing field names itself; an
+   unknown verb lists `add, split, merge`. The edit is §8's, so the preamble survives, edges rewrite and
+   the id grammar refuses where the issue is built, as an **error result** and with `epic.md` byte-identical.
+   The chat's journal gains a `graph_revision` (`operation` is the verb). A refusal while a review holds
+   `epic.md` is an error result, not an edit.
+5. **The tools are in every chat.** Read the first request's tool list: `epic_write`, `epic_graph`, `epic_submit`
+   follow `request_review` whether or not an epic is mounted. With none mounted, `epic_graph` add/split/merge
+   refuses by name. A **new** epic that `epic_write` creates mounts only after a restart; the model says so
+   and `/epic status` reports no mounted epic until then.
+6. **The skills name only what the agent can reach.** `/skill research-epic` (or the first user turn in the
+   journal) holds the absolute epic home and names `epic_write` and `epic_submit`; it holds no `Epic::Home`,
+   no `Lain::Epic` and no `lain epic submit` as something the agent runs. After a run, count `read_file`
+   paths under the lain checkout: it is 0.
+
 ## 5 — The four policies
 
 One epic, one stage, re-run under each gate policy (`gate :research, <policy>` in the `epics` block, then `lain trust --yes`). Read the journaled `gate_decision`
@@ -316,10 +366,11 @@ epic stage "research" is configured for the "interactive" gate policy, but stdin
 **And an unattended submit of a stage that is NOT interactive proceeds**, even when another stage
 still is. Round 17 found `research` as `:hands_off` refused because `implementation` was left
 interactive (fork E2). *Driven 2026-09-14*, `gate :research, :hands_off` and nothing
-else, `< /dev/null`, exit 0:
+else, `< /dev/null`, exit 0 (the first line gained ` by policy <name>` on 2026-10-08, so a reader of the
+verdict, the model above all, sees which policy decided; `hands_off` here):
 
 ```
-approved blake3:…
+approved blake3:… by policy hands_off
   research for epic demo (42 bytes)
   research completed, epic_plan started
 ```
@@ -730,6 +781,43 @@ lain epic finish
 Takes an epic whose every issue is done to `main` as one pull request, then deletes its remote
 branch. Check that a re-run over an already-`MERGED` PR reads as done rather than opening a second,
 and that moving the `epic/<slug>` tip and finishing again is treated as a **new** finish.
+
+### 12b: `lain epic finish --local`, for a repository with no remote *(2026-10-08 trial fixes)*
+
+The trial's project had no remote and no forge, so the only finish, a pull request, was unreachable.
+`--local` merges `epic/<slug>` into `main` in this repository and pushes nothing. It needs no GitHub repo, so
+drive it on the throwaway project of §0 once every issue has landed (the §12 `land` loop):
+
+```bash
+git remote -v                         # prints nothing: there is no remote
+lain epic finish --local              # or: lain epic finish demo --local
+git log --oneline --merges -1; git status --short; git branch --list 'epic/*'
+```
+
+1. **The merge is one commit on `main`, and the output says nothing was pushed.** Expected, in this order:
+   `finished demo at <sha>`, `  branch epic/demo`, `  merged into main at <sha>; nothing was pushed`. `git log
+   --merges -1` shows the merge; `main` holds the files of every landed issue; the working tree is clean. The
+   merge is computed in the object store and `main` is then fast-forwarded, so a conflict is found
+   without touching anyone's checkout. The local `epic/demo` branch stays for `lain worktrees gc`.
+2. **The journal records a `local_merge`, not a pull request.** A `forge_intent` with `action: local_merge`
+   (`head: epic/demo`, `base: main`, `sha`) and its `forge_outcome`, and no `pr_create`, `pr_merge`,
+   `promote` or `branch_delete`. A plain `lain epic finish` afterwards must not read the local merge as its
+   own remote merge.
+3. **A re-run changes nothing.** Run it again: `main` already holds the epic tip, so the answer is an
+   observed success and no second merge commit appears (`git rev-list --count main` unchanged).
+4. **Refusals, each before anything merges.** An issue not yet landed: `epic demo is not finished: <id> is
+   <status> -- every issue lands on epic/demo first (`lain epic land ISSUE_ID demo`), and nothing merged into
+   main`. No `epic/<slug>` branch: `there is no epic/demo branch in <root> -- nothing merged into main`.
+   `main` not checked out: `main must be checked out in <root> to finish locally, and <branch or "a detached
+   HEAD"> is -- nothing merged`. Uncommitted changes to tracked files: `<root> has uncommitted changes (<paths>)
+   -- commit or stash them; nothing merged`. Untracked files standing where the merge writes also refuse.
+5. **A conflict stops with `main` unmoved.** Change the same line of a file on `main` and on `epic/demo`, then
+   finish: the output reads `stopped demo ...`, names `conflicted` and the paths, and says `main did not move`;
+   `git rev-parse main` is the same before and after. Resolve, then re-run `lain epic finish --local`.
+6. **Without `--local`, a repository with no remote cannot finish.** `lain epic finish` runs the remote path and
+   fails at the push; record the text, which this section has not seen.
+   *Wrong looks like:* a pull request attempt from `--local`, a second merge commit on a re-run, or `main`
+   moving on a refusal.
 
 **Known gap, and not a finding:** a merge whose handback record never reached the journal refuses
 both `land` and `--resume` — **with the same refusal** (round 17) — and there is no command to adopt

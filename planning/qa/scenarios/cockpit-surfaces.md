@@ -44,9 +44,9 @@ is a cockpit whose human split a shell into it:
 
 ```bash
 for o in @lain_editor_pane @lain_chat_pane @lain_input_pane; do
-  printf '%s=%s\n' "$o" "$(tmux show-options -v -t lain "$o")"
+  printf '%s=%s\n' "$o" "$(tmux -L "$QA_SOCK" show-options -v -t lain-qa "$o")"
 done
-tmux list-panes -t lain:chat -F '#{pane_id} #{pane_height} #{pane_current_command}'
+tmux -L "$QA_SOCK" list-panes -t lain-qa:chat -F '#{pane_id} #{pane_height} #{pane_current_command}'
 ```
 
 `@lain_editor_pane` is recorded as the **empty string** under `--no-nvim`, or when the cockpit
@@ -57,7 +57,7 @@ Checks:
 
 1. **Three panes exist**, and `lain up --no-nvim` in a second session gives two.
 2. **The input pane is seated at a floor, not a fixed height.** It starts at 6 rows. Grow it
-   (`tmux resize-pane -t <input> -y 12`) and it **stays** at 12 across a later layout change;
+   (`tmux -L "$QA_SOCK" resize-pane -t <input> -y 12`) and it **stays** at 12 across a later layout change;
    shrink it below 6 and the next `window-layout-changed` puts it back to 6. In a window shorter
    than 13 rows the hook stands aside rather than squeezing the transcript away — check that by
    resizing the client small and confirming the transcript still has rows. **Detach and
@@ -79,7 +79,7 @@ Checks:
    real geometry edge is the regression this guards against, so measure bytes, not eyeballing:
 
    ```bash
-   tmux pipe-pane -t <input> -o "cat >> $QA/records/idle-input-pane-$$.raw"   # ~10s with nothing happening
+   tmux -L "$QA_SOCK" pipe-pane -t <input> -o "cat >> $QA/records/idle-input-pane-$$.raw"   # ~10s with nothing happening
    wc -c "$QA/records/idle-input-pane-$$.raw"                                  # must read 0
    ```
 
@@ -137,7 +137,7 @@ Checks:
    words.
 8. **Every prompt is answered in the input pane** — `you>`, `[y/N]`, `human>`, the countdown.
    Nothing is typed into the chat pane.
-9. **The pane is an ordinary command.** Kill it (`tmux kill-pane -t <input>`) and the chat stays
+9. **The pane is an ordinary command.** Kill it (`tmux -L "$QA_SOCK" kill-pane -t <input>`) and the chat stays
    alive; `lain input --name lain` in a new pane reconnects to the same socket and is redrawn
    with the current prompt and HUD, not left blank until something changes. The socket is
    `$XDG_RUNTIME_DIR/lain/input-<project-hash>-<session>.sock` (`lain up` passes the tmux session
@@ -147,6 +147,74 @@ Checks:
    either one reaches the chat exactly once. The refusal lives on the other side: a second
    **chat** trying to bind a socket a live chat already holds is refused by name rather than
    stealing it, while a stale file left by a dead chat is rebound.
+10. **`:LainStart` exists under a config that resets `runtimepath`** (2026-10-08 trial: a lazy.nvim
+    default, `performance.rtp.reset = true`, drops the `--cmd` rtp entry, and the cockpit's nvim came up
+    with no `:LainStart` and said nothing). The sandbox redirects `XDG_CONFIG_HOME`, so put the
+    config where the sandboxed nvim reads it, then start the cockpit:
+
+    ```bash
+    mkdir -p "$XDG_CONFIG_HOME/nvim"
+    printf 'vim.opt.runtimepath = { vim.env.VIMRUNTIME }\n' > "$XDG_CONFIG_HOME/nvim/init.lua"
+    lain up    # then, once the editor pane is up:
+    nvim --server "$S" --remote-expr "exists(':LainStart')"     # must read 2
+    nvim --server "$S" --remote-expr "execute('messages')" | tail -3   # ends with the attached line (§3)
+    ```
+
+    Repeat once with the file removed (a clean config) and the layout must open the same way.
+    *Wrong looks like:* `0` from `exists`, or a cockpit whose nvim pane stays an empty buffer while the
+    chat says it attached. The case where the plugin directory itself is missing (nvim prints
+    `lain: the nvim plugin is not at <path>, so :LainStart is unavailable`, and `lain up` warns first)
+    needs an install without `plugin/nvim`; it is not driven here, and `spec/plugin/nvim_plugin_spec.rb`
+    holds it.
+11. **The session has mouse on and the server has extended keys on, and the user's globals did not move.**
+    Record `tmux -L "$QA_SOCK" show-options -g mouse` before `lain up`, then after:
+
+    ```bash
+    tmux -L "$QA_SOCK" show-options -t lain-qa mouse          # on
+    tmux -L "$QA_SOCK" show-options -s extended-keys       # on
+    tmux -L "$QA_SOCK" show-options -g mouse               # unchanged from the recorded value
+    ```
+
+    A first `lain up` against a fresh server prints a warning saying it set the server option
+    `extended-keys` (server-wide, not per session); a server already on `always` is left on `always`
+    with no warning. With mouse on, the wheel over the chat pane scrolls its history, and **native text
+    selection needs Shift-drag** (tmux owns the plain drag). Record that last sentence as expected, not
+    as a finding.
+12. **Shift+Enter and Backspace at every prompt.** At `you>` in the input pane, type `ab`, send Shift+Enter
+    (`tmux -L "$QA_SOCK" send-keys -t <input> S-Enter`; if your tmux does not translate it, send the bytes
+    `\e[13;2u`, and `\e[27;2;13~` for the xterm modifyOtherKeys form), type `cd` and press Enter: the
+    one submitted line is `ab` newline `cd`, and a plain Enter submits. Read it back from the journal: the user turn's `content` text block (`method.md`'s turn reduction prints `role/text`) holds `ab\ncd`. Type `ab`, Shift+Enter, then
+    Backspace: the buffer is `ab` on one line again. Repeat at `command>` (park an approval, §5) and, in a
+    `--no-nvim` chat, at `human>`. The hint row `Shift+Enter or Alt+Enter for a new line` is drawn once
+    per `you>` prompt, not at the other two. Alt+Enter does the same as Shift+Enter. Do it once from a
+    real keyboard, since a synthesized sequence only proves the binding.
+    *Wrong looks like:* Shift+Enter submitting a half-typed line, or Backspace at the start of an empty
+    second line doing nothing.
+    *Observation, not a check:* after Alt+b or Alt+f the next typed character was not inserted in the one
+    real pty that was tried, with or without the new bindings. Record whether it still happens.
+13. **The chat pane writes to normal scrollback, and the history stays reachable.** With an input
+    pane attached the chat pane does not enter the alternate screen. Take 3 or 4 turns, then:
+
+    ```bash
+    tmux -L "$QA_SOCK" capture-pane -p -t <chat> -S -200 | wc -l      # more lines than the pane has rows
+    ```
+
+    and scroll with the mouse wheel. To see the control sequence itself, `tmux -L "$QA_SOCK" pipe-pane -t <chat> -o
+    "cat >> $QA/records/chat-$$.raw"` before a restart of the chat, then `grep -c $'\e\\[?1049h'` on it
+    must read 0. A plain `lain chat` with no input pane **does** use the alternate screen, so the
+    same grep there reads 1 or more, and that is correct.
+    *Wrong looks like:* `capture-pane` returning only the visible screen, a wheel that does nothing, or
+    history that vanishes when the chat exits. An older version of this scenario expected the
+    alternate screen in the cockpit chat; it no longer holds.
+14. **Prose wraps at word boundaries, after a resize.** `tmux -L "$QA_SOCK" resize-pane -t <chat> -x 60`, then take a
+    turn whose answer is a long paragraph, and make the model print a line that has leading
+    indentation. No word is split across 2 rows except one longer than the pane, a wrapped
+    indented line keeps its indent on the continuation, and growing the pane back wraps the next turn
+    at the new width. A line inside a fenced code block is **not** wrapped (the terminal does it).
+    Tool output chunks are not word-wrapped either, since breaking them would add newlines the command did not
+    write. In a non-tty capture (`tmux -L "$QA_SOCK" pipe-pane` output read as a file, or `lain chat < /dev/null`
+    piped to a file) nothing is wrapped.
+    *Wrong looks like:* `configur` on one row and `ation` on the next, or a code line cut mid-token.
 
 **Three round-22 behaviours of the input pane, each a quick look.** The pane redraws its header only where
 it is: after an answered `[y/N]` nothing is written over the echoed answer, and the next prompt draws the
@@ -732,7 +800,7 @@ and `b:lain_approval_calls` held `bash({"command" => "ls -la"})`. Then, at that 
 
 | typed | pane | journal |
 |---|---|---|
-| `yes please` | `held as your next prompt: yes please` | **no** `approval_decision`; after the line settled, `yes please` was committed as the next user turn |
+| `yes please` | `HH:MM:SS held as your next prompt: yes please`, then a second line `that does not answer the approval: /approve answers it` (with a question parked it reads `that does not answer the question: /inbox lists it, and :LainReply answers it`) | **no** `approval_decision`; after the line settled, `yes please` was committed as the next user turn |
 | `/approve` | `agent asks: approve bash({"command" => "ls -la"})? [y/N]` — `/approve` owns the terminal for its line | — |
 | `y` (at that prompt) | the dispatching line continues | `approval_decision surface=tty verdict=approve`, then `escalation rung=surfaces … (tty)` |
 
@@ -836,6 +904,58 @@ The whole prompt, as `/approve` draws it in a cockpit and as the plain chat draw
 
     <requester> asks: approve <tool>(<input>)? [y/N]
 
+### The deadline, the reason, the held notice and the stamps *(2026-10-08 trial fixes)*
+
+The trial's first `bash` call auto-denied after 300 seconds with no surface having shown it, and a deny
+gave the model nothing to read. Make the wait short so each check is quick: write `approval timeout: 30` in
+`.lain/config.rb`, run `lain trust --yes`, relaunch. (`approval timeout:` takes a number of seconds above 0;
+`0`, a negative number and a non-number refuse at load. Without the line the window is 300 seconds, and
+the displayed figure is `5:00`.) Park `ls -la` and read each surface:
+
+| surface | what it says |
+|---|---|
+| plain chat prompt (`--no-nvim`) | `HH:MM:SS agent asks (auto-denies in 0:30): approve bash(...)? [y/N]` |
+| cockpit chat arrival note | starts with `HH:MM:SS` and ends `; auto-denies in 0:30` |
+| nvim `lain://approval` row | `agent  <call>  0:30 left, denies at HH:MM:SS`; the sensitive-region warning, if any, stays ahead of the call, and a long call cuts the deadline from the first line (it stays in the folded item beneath) |
+
+1. **The nvim figure is a snapshot.** `0:30 left` does not tick (it is re-rendered only when the parked set
+   moves), so do not file a countdown that sits still. The `denies at` clock time is fixed and is the
+   figure to check against `date +%T`.
+2. **A lapse is said once on every surface.** Let it run out. The chat pane gets one line,
+   `HH:MM:SS ... denied after 0:30 with no answer` (the cockpit form also names the call: `! agent asks to
+   run bash(...)  -- denied after 0:30 with no answer`), the nvim buffer gets one `! agent  bash(...)  --
+   denied after ...` line after its rows in the one rendering that drops the call, and the model's tool
+   result is an error carrying the same sentence. **Wrong looks like:** the lapse said twice, said
+   on one surface only, or the old wording `decided by timeout: denied`.
+3. **A deny can carry a reason, and the model reads it.** Park another call and answer with a reason:
+   at a plain `[y/N]`, `n stay inside the project` (also `no, ...`, `n: ...`); at nvim, `:LainDeny stay
+   inside the project`. The tool result the model sees is `approval denied for tool "bash": stay inside the
+   project`, the journal's `approval_decision` holds `"reason"`, and the surface is `tty` or `nvim`. The
+   `n` key with no text, a bare `n` or a bare `:LainDeny` sends a plain deny: today's sentence and
+   **no** `reason` key. Control characters in the words (a newline, an ESC) become spaces, and words that are
+   all blank count as no reason.
+   **Wrong looks like:** a bare `approval denied for tool "bash"` after a typed reason, so the model
+   retries the same call.
+4. **The held notice says why and where to answer.** With an approval parked, type `yes please` at
+   `command>`: the line is held for `you>` (stamped), followed by `that does not answer the approval:
+   /approve answers it`. With a question parked (`ask_human`, §5b) the second line is `that does not answer
+   the question: /inbox lists it, and :LainReply answers it`. Neither line answers anything.
+5. **Status lines carry the time they happened.** The held line, the approval arrival, a dropped
+   prompt and the closing line of a decided one each start with `HH:MM:SS`; the drawn `[y/N]` is stamped at
+   the moment it is drawn, which is later than its arrival when another prompt was ahead of it. Assistant
+   prose is not stamped. A question arrival's tmux bell message is also not stamped (only the printed line is);
+   record it if you see otherwise.
+6. **The question buffer says where answers go.** Open a question (`ask_human` with an options question and
+   a free-text one) in `lain://question`. A virtual row `answer here, indented 2 spaces` shows under a
+   question with no answer yet; a line you type at column 0 (not a rendered row) is highlighted as an
+   error; an indented line under the question clears both. Write an answer **inside** a rendered question
+   body and `:w`: the refusal reads `... renders its body verbatim and reads only your answer, so write
+   answers below the whole question, after a blank line, indented 2 spaces, not inside it (expected ...,
+   got ...)`. **Wrong looks like:** the old refusal that said only that the line cannot be edited.
+   Known limit: a typed line identical to a rendered one is not flagged, only the surplus copy is.
+7. **`/help` is columns.** Names in one aligned column, headings styled, descriptions wrapped under their
+   own column; at 60 columns a long name pushes its description to the next row.
+
 ### The plain chat keeps its inline prompt, with three guards
 
 **Run this on `--no-nvim` too.** There is no second surface there, round 4 found a permanent wedge
@@ -861,20 +981,23 @@ read is guarded three ways, and each guard is a check:
    (`method.md`) still binds.
 2. **A prompt decided elsewhere is closed in words.** When the timeout, `--secret-oracle` or
    another surface decides the pending the TTY is reading, the read stops and the prompt line ends
-   with `-- decided by <surface>: <verdict>`. *Driven 2026-09-14* by leaving `ls -la` parked for the
-   300 s window: the prompt line became
+   with `-- decided by <surface>: <verdict>`; **a lapse of the clock is the exception and says
+   `denied after M:SS with no answer` instead** (2026-10-08: the old `decided by timeout: denied` told
+   nobody how long the wait was). *Driven 2026-09-14* by leaving `ls -la` parked for the
+   300 s window, before that wording changed: the prompt line became
 
        agent asks: approve bash({"command" => "ls -la"})? [y/N] -- decided by timeout: denied
 
-   and the journal read `approval_decision surface=timeout verdict=deny timed_out=true
-   latency=300.0…`. A `n` typed after that line is not an approval decision — round 17's F106 turned
+   and today it ends `denied after 5:00 with no answer`. Either way the journal reads `approval_decision
+   surface=timeout verdict=deny timed_out=true latency=300.0…`. A `n` typed after that line is not an approval decision — round 17's F106 turned
    it into a chat prompt under a prompt that still looked live.
-3. **The closing line ends the drawn prompt row first** (round 20's B-3: `-- decided by timeout: denied`
+3. **The closing line ends the drawn prompt row first** (round 20's B-3: the timeout verdict
    was printed on the chat fiber while Reline still owned the `[y/N]` row, so the next streamed text
    glued onto it, `deniedI apologize`). Leave a `[y/N]` parked until the timeout decides it while the model
-   goes on to stream text, then read the raw pane: the output holds `-- decided by timeout: denied`
+   goes on to stream text, then read the raw pane: the output holds the verdict (`denied after M:SS with no
+   answer`, which now starts with an `HH:MM:SS` stamp)
    **followed by a line break** before the model's next words, and the `[y/N]` row itself is still in the
-   scrollback (`tmux capture-pane -p -S -50`). **Catches B-3 returning:** the verdict and the model's first
+   scrollback (`tmux -L "$QA_SOCK" capture-pane -p -S -50`). **Catches B-3 returning:** the verdict and the model's first
    word on one line, or a `[y/N]` row that was overwritten.
 4. **A `[y/N]` takes only a verdict** (round 22's F-5: a paste during a `[y/N]` was read as "no" and
    discarded). `y`, `yes`, `n`, `no` in any case, and an empty line, decide the approval; any other line
@@ -1138,6 +1261,21 @@ What is worth checking:
   reading for the rest of the session — silence that is just as dishonest.
 - `ctx N%` must agree with the status feed's `occupancy` (`$XDG_STATE_HOME/lain/status/<hash>/state.json`,
   not `.lain/state.json` since round 13) and the journal's `compaction_decision`.
+- **A model call or a tool in flight shows in the HUD** (2026-10-08: a 30 second model call read the same as
+  idle). The HUD file (`state.json`) and the input pane header carry ` model` while a model call is
+  outstanding (the live reading in the chat adds the seconds, ` model:12s`), and ` tool:grep` (several
+  names comma-joined) from the moment the model asks for tools until their results are committed. Idle
+  at `you>` carries neither. Ask for something that runs `grep` and `read_file` and watch the HUD row once a second
+  with `tmux -L "$QA_SOCK" capture-pane -p -t <input>`. The published file does not tick: it is rewritten on a transition, so
+  a file that reads ` model` bare and a live reading with seconds are the same state. **Wrong looks like:**
+  a segment that outlives its call, an empty `tool:` segment, or a header redrawing more than once a second
+  during a fast tool loop (measure with the idle-pane byte count from §0 check 2 and a `pipe-pane` over
+  the loop; the redraw rate was not measured on the card, so record the number).
+- **`fleet:N` is an observation, not a check.** The trial read `fleet:0` after 2 one-shot subagents ran. The
+  fix card found the count correct end to end (the spawn is journaled and published in one synchronous call) and
+  could not reproduce it. While a one-shot child runs, record what `fleet:` reads and the clock time, and
+  again after it completes. A reading of 0 while a child is running is a new finding with a timestamp;
+  a matching reading is recorded and closes nothing.
 - **The layer lighters, all four of which now mean something** (round 17's F104 found them lighters
   and nothing else). Each is checked against the behaviour it names, not just its letters:
   - `AA` means the automatic approver is really on. `method.md` bans raising that layer during a

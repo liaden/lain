@@ -146,6 +146,46 @@ Three things to drive:
    tool-call markup from a reply, so a stripped one is the other thing to look for. Drive this item
    with a stand-in endpoint that emits the envelope, and say so.
 
+### 2b: A researcher's ceiling, and what a ceiling stop hands back *(2026-10-08 trial fixes)*
+
+The trial spawned 2 researchers on a sibling repository. Each listed one directory per iteration, hit
+`loop ran 25 iterations, ceiling is 25`, and the parent's tool result held only that string, so everything
+they had read was lost. Three changes: a role declares its own ceiling (`researcher` has 60, and a role that
+declares none keeps 25), the researcher can `grep` and `glob` as well as `read_file`, `list_files`,
+`web_fetch` and `web_search`, and a child stopped by its ceiling hands the parent a partial report.
+
+1. **The researcher's tools and ceiling.** Spawn a researcher (`research_subagent`, from a chat) and read its
+   first request in the journal: the tool list holds `grep` and `glob`, and no write or shell tool. A role
+   with no `max_iterations` (any other built-in) stops at 25. The researcher stops at 60.
+2. **The ceiling stop is a failure with a report.** Point a researcher at a tree it cannot finish: a sibling
+   repository with 100 or more directories and the prompt "list every directory one at a time with
+   `list_files`, never `glob` or `grep`, and report each name". A local model may finish or give up before 60;
+   if it does, say so and use a role you can tighten, rather than recording a pass. When it hits the
+   ceiling, the parent's tool result is an **error** that:
+   - starts with `loop ran 60 iterations, ceiling is 60`;
+   - then lists `Files it read before stopping:` as `- path` lines (only `read_file` calls that
+     succeeded, each path once; a read the boundary withheld or that errored is not listed);
+   - then `Searches it ran:` as `- grep PATTERN in PATH` lines (grep, glob and list_files, deduplicated);
+   - then `Its last text block:` followed by the child's last non-empty assistant text;
+   - stays under 16 KiB in all, with a `- and N more` line where a list was cut.
+   The report is built from the child's own timeline: **no further model request is sent for it**, so count
+   the requests after the ceiling and expect 0 for that child.
+3. **The lifecycle still records the failure.** The completion `message` carries `lifecycle: failed` and
+   `error: Lain::Agent::Budget::Exceeded`, and no `result` key (§2's reduction). The fleet count comes back
+   down. *Wrong looks like:* the bare ceiling sentence with nothing after it, `settled`, or a second model
+   request for the stopped child.
+4. **A ceiling hit in a child that runs the parent's own loop is not rewritten.** If the budget is exceeded
+   outside `agent.ask` (the self-sync path) the error propagates as itself. This is a unit-level property;
+   record whether any chat path reaches it.
+5. **The HUD while the child runs.** The `model` segment is present during the child's model calls, and
+   `tool:grep` (or `tool:read_file`) during its tool rounds (`cockpit-surfaces.md` §7 owns the segment; check
+   here only that it follows the child's loop as well as the parent's, and that it is gone once the child
+   finishes).
+6. **`fleet:N` is an observation, not a check.** While each researcher runs and after it ends, record what
+   the HUD's `fleet:` reads and the time. The trial read `fleet:0` after 2 had run; the fix investigation
+   found counting correct end to end and could not reproduce it. A 0 while a child runs is a finding with a
+   timestamp. A reading that matches is recorded and closes nothing.
+
 A write that cannot land is itself journaled, as `ending_not_recorded` naming the spawn and which
 record was lost, rather than dropped silently.
 
@@ -363,8 +403,17 @@ Then, inside tmux, spawn two subagents and check:
 
 - **one window per spawn**, named by the spawn's digest (round 17: `subagent-a6bd8454`) rather than
   by an index. Two concurrent spawns of **different** prompts must now open **two** windows — round
-  17's F97 opened one for both — and the HUD's `fleet` must count two until each completes.
-  *(Prediction, not yet driven.)*
+  17's F97 opened one for both — and the HUD's `fleet` should count two until each completes (an
+  observation, not a check, per §2b item 6).
+  *(The two-window half is a prediction, not yet driven.)*
+- **the window opens while the child runs, not at chat exit** (2026-10-08: a spawn seen from a thread with no
+  reactor task was queued and its window appeared only when the chat closed). Give the child a task that takes
+  30 seconds or more and poll `tmux -L "$QA_SOCK" list-windows -t lain-qa -F '#{window_name}'`: a `subagent-<digest8>` window
+  (or `<role>-<digest8>`) must appear within a few seconds of the spawn record, before the child finishes. At most 4
+  windows open per turn; the rest are named in a notice rather than dropped. When the child ends its window title
+  gains `[done]`, `[stopped]` or, for one that raised (a ceiling stop, §2b), `[failed]`, so a window
+  over a child that hit its ceiling does not read as work that came back.
+  **Wrong looks like:** the window appearing only after the chat quits, or a ceiling-stopped child's window titled `[done]` instead of `[failed]`.
 - a window whose actor **finished** says so rather than sitting on a dead tail;
 - **closing a window does not kill the actor.** The window is an observer; if closing it stops the
   work, `lain watch`'s read-only claim is false in the one place it is easiest to break.
