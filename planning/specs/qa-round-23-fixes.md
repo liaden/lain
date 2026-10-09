@@ -1,6 +1,6 @@
 # QA round 23 fixes: every reader masks, the HUD tells the truth, and a gate says what it knows
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1179,3 +1179,13 @@ Spec file: none (documentation; checked by the next manual QA round)
   B23-11, KEY-1 from a real keyboard, j-5, K23-1, j-10 and g23-1/3/6.
 
 ## Execution log
+
+- 2026-10-09: base `main` at `9cee4880`. Worktrees at start: `/home/tara/dev/lain` (main),
+  `/home/tara/tmp/lain-qa-2026-10-08-tree` (detached `b6a3efb2`, not this run's). Grounding re-checked:
+  `git diff fd807376 9cee4880` touches only `ROADMAP.md` and this plan, so no cited line has moved.
+- Hook: `bundle exec rake compile check` (pspec at 12 workers plus a whole-repo rubocop, about 70s), `yard-lint --staged`,
+  `bin/lint-gherkin-docs` on staged plan docs, `bin/lint-commit-msg` (subject 72 chars, no period, no dashes, no
+  trailers), the pre-commit-hooks whitespace set, and the cargo hooks on Rust paths. Agent-runnable on its own paths:
+  `bundle exec rubocop <files>`, `bundle exec yard-lint <files>`, `bin/comment-census --check-tickets`. The suite cannot
+  run beside other tests: TMPDIR is shared, so each worktree gets its own `TMPDIR=$HOME/tmp/lain/<card>` and a copy of
+  `lib/lain/lain.so`. No path needs user approval.
