@@ -87,7 +87,7 @@ module Lain
         @rail = Intake.new(screen: tty)
         @drawn = NOTHING_DRAWN
         @reported = @client = nil
-        @quit = @idle = @settled = @answered = false
+        @quit = @idle = @settled = @answered = @resized = @below_echo = false
         @shown = @wanted = ""
         @pump = StdinPump::Idle
         @relay = Relay.new
@@ -186,6 +186,7 @@ module Lain
         @quit ? :quit : farewell
       ensure
         stop_drawing
+        @adopted = 0
         @client = nil
         close_quietly(client)
       end
@@ -239,11 +240,12 @@ module Lain
       # a cooked one hands over a finished line with no editor to open.
       def idle(task, client, header)
         @wanted = header
-        return restyled if @idle
+        return headed if @idle
 
         @shown = @answered ? "" : @drawn["header"].to_s
         stop_drawing
         @idle = true
+        @below_echo = @answered
         @drawing = task.async { unprompted(client) }
       end
 
@@ -253,10 +255,33 @@ module Lain
       # to read that row back. A header of another row count would move the
       # input row, so it waits for the next prompt, which draws it whole.
       def restyled
-        rows = @wanted.split("\n")
-        return if !@settled || rows.empty? || @wanted == @shown || rows.size != @shown.split("\n").size
+        return if !@settled || @resized || @wanted == @shown || !same_rows?(@shown, @wanted)
 
         @shown = @wanted
+        rewrite(@wanted)
+      end
+
+      # After an answered line the echo's row count is unknown, so the first
+      # idle tick prints the header whole below it and adopts that as drawn;
+      # every later change is then a known distance above the cursor.
+      def headed
+        return restyled unless @below_echo
+
+        return if @wanted.empty? || !@settled
+
+        @below_echo = false
+        @shown = @wanted
+        @adopted = @wanted.split("\n").size
+        @tty.print_prompt("#{CLEAR_ROW}#{@wanted}\n")
+      end
+
+      def same_rows?(shown, wanted)
+        rows = wanted.split("\n")
+        !rows.empty? && rows.size == shown.split("\n").size
+      end
+
+      def rewrite(header)
+        rows = header.split("\n")
         @tty.print_prompt("\e7\e[#{rows.size}A#{rows.map { |row| "#{CLEAR_ROW}#{row}\n" }.join}\e8")
       end
 
@@ -274,7 +299,7 @@ module Lain
         # lost wakeup, while not waiting would drop every line for certain.
         @pump.exclusively do
           @settled = true
-          restyled
+          headed
           typeahead.listen(kept: -> { @carried || StdinPump::Typeahead::NOTHING }) { |typed| sent(client, typed) }
         end
       end
@@ -286,15 +311,39 @@ module Lain
         end
         # A finished line's echoed newline moved the cursor off the input row, so
         # the rows above are no longer a known distance away.
-        @shown = "" if typed.lines.any?
+        forget_rows if typed.lines.any?
         @carried = typed
+      end
+
+      def forget_rows
+        @shown = ""
+        @adopted = 0
       end
 
       def prompted(task, client, frame)
         @layers.replace(Array(frame["layers"]).map(&:to_sym))
+        return reheaded(frame) if reheading?(frame)
         return if drawing_already?(frame)
 
         redraw(task, client, frame)
+      end
+
+      # A new header under the prompt already drawn is rewritten in place, never
+      # printed again: a second print stacks a row per change. Whatever cannot be
+      # rewritten safely -- a draft in the editor, a header of another row count,
+      # a window that moved -- waits for the next prompt, which draws whole. A
+      # prompt drawn with no header has no rows to stack on, so it redraws.
+      def reheading?(frame)
+        frame["kind"] != "countdown" && @drawn["generation"] == frame["generation"] &&
+          frame["header"] != @drawn["header"] && !@drawn["header"].to_s.empty?
+      end
+
+      def reheaded(frame)
+        header = frame["header"].to_s
+        return if editing? || @resized || !same_rows?(@drawn["header"].to_s, header)
+
+        rewrite(header)
+        @drawn = frame
       end
 
       # The THIRD thing that can call for a draw, and neither of the other two
@@ -310,6 +359,7 @@ module Lain
       # half-typed line gets the header back on the next tick.
       def repainted(task, client)
         moved = @geometry.moved!
+        @resized ||= moved
         frame = @drawn
         redraw(task, client, frame) if moved && !frame.equal?(NOTHING_DRAWN) && !editing?
       end
@@ -322,7 +372,7 @@ module Lain
         @geometry.painted
         stop_drawing
         @drawn = frame
-        @answered = false
+        @answered = @resized = false
         @reported = nil
         @drawing = task.async { drawn(client, frame) }
       end
@@ -344,6 +394,7 @@ module Lain
       # line editor fixes its prompt to one line, and the chat's own renderer
       # has already decided what the row above it says.
       def drawn(client, frame)
+        retracted
         return counted(client, frame) if frame["kind"] == "countdown"
 
         hint_for(frame)
@@ -362,6 +413,13 @@ module Lain
         return if header.to_s.empty?
 
         @tty.print_prompt("#{CLEAR_ROW}#{header}\n")
+      end
+
+      # A header adopted below an answered echo is taken back before the next
+      # whole draw, so the two do not stack.
+      def retracted
+        @tty.print_prompt("\e[#{@adopted}A") if @adopted.to_i.positive?
+        @adopted = 0
       end
 
       def hint_for(frame)

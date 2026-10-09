@@ -157,6 +157,21 @@ RSpec.describe Lain::Frontend::InputPane do
     expect(settles { screen.string.include?("ctx:42%") || nil }).to be(true)
   end
 
+  it "rewrites a ticking 1-row header in place at an idle prompt, stacking no rows" do
+    chat = open_pane
+    publish(chat, { "header" => "model:0s" })
+    settles { screen.string.include?("model:0s") || nil }
+    screen.truncate(0) && screen.rewind
+
+    (1..5).each do |tick|
+      publish(chat, { "header" => "model:#{tick}s" })
+      settles { screen.string.include?("model:#{tick}s") || nil }
+    end
+
+    in_place = (1..5).map { |tick| "\e7\e[1A\r\e[Kmodel:#{tick}s\n\e8" }.join
+    expect(screen.string).to eq(in_place)
+  end
+
   # The fleet tree rides this same header, which is what makes it live: a
   # child's turn count moving republishes the prompt, so a pane sitting at an
   # untouched `you>` shows the new count with nothing typed at it.
@@ -418,7 +433,7 @@ RSpec.describe Lain::Frontend::InputPane do
       expect(screen.string).to eq("")
     end
 
-    it "draws nothing over an answered approval's echo, and draws the header whole at the next prompt" do
+    it "rewrites the header in place below an answered approval's echo, and redraws whole at the next prompt" do
       # A real pty read of the answer timed out here, so the echo itself is not exercised.
       allow(Reline).to receive(:readmultiline).and_return("y", nil)
       chat = open_pane
@@ -432,12 +447,145 @@ RSpec.describe Lain::Frontend::InputPane do
 
       say(chat, { "v" => "unpublished", "header" => "fleet:2\nrow b" })
       say(chat, { "v" => "context", "commands" => ["after"] })
+      in_place = "\e7\e[2A\r\e[Kfleet:2\n\r\e[Krow b\n\e8"
+      expect(settles { screen.string.empty? ? nil : screen.string }).to eq(in_place)
       settles { commands == ["after"] || nil }
-      expect(screen.string).to eq("")
+      screen.truncate(0) && screen.rewind
 
       publish(chat, { "generation" => 8, "header" => "fleet:2\nrow b" })
       hint = "\r\e[K#{described_class::MULTILINE_HINT}\n"
-      expect(settles { screen.string.include?("row b") ? screen.string : nil }).to eq("#{hint}\r\e[Kfleet:2\nrow b\n")
+      expect(settles { screen.string.include?("row b") ? screen.string : nil })
+        .to eq("\e[2A#{hint}\r\e[Kfleet:2\nrow b\n")
+    end
+
+    it "keeps the HUD live below an answered line's echo, drawing it once and then rewriting it in place" do
+      allow(Reline).to receive(:readmultiline).and_return("list the files", nil)
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      next_frame(chat, of: "line")
+      say(chat, { "v" => "unpublished", "header" => "model:1s" })
+      expect(settles { screen.string.end_with?("\r\e[Kmodel:1s\n") || nil }).to be(true)
+
+      say(chat, { "v" => "unpublished", "header" => "model:4s" })
+
+      expect(settles { screen.string.end_with?("\e7\e[1A\r\e[Kmodel:4s\n\e8") || nil }).to be(true)
+      expect(screen.string.scan("model:1s").size).to eq(1)
+    end
+
+    it "writes nothing over any draft in the editor, wrapped or not" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      settles { screen.string.include?("model:0s") || nil }
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(false)
+      Enumerator.produce { next_frame(chat, of: "touch") }.find { |touch| !touch["untouched"] }
+      screen.truncate(0) && screen.rewind
+
+      publish(chat, { "generation" => 3, "header" => "model:1s" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+
+      expect(screen.string).to eq("")
+    end
+
+    it "writes nothing over a 1-character draft either, since the row count cannot be read" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      settles { screen.string.include?("model:0s") || nil }
+      keyboard.write("x")
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(false)
+      Enumerator.produce { next_frame(chat, of: "touch") }.find { |touch| !touch["untouched"] }
+      screen.truncate(0) && screen.rewind
+
+      publish(chat, { "generation" => 3, "header" => "model:1s" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+
+      expect(screen.string).to eq("")
+    end
+
+    it "rewrites in place again once a whole redraw followed the resize" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      settles { screen.string.include?("model:0s") || nil }
+      window.script([6, 80])
+      settles { screen.string.scan("model:0s").size > 1 || nil }
+      screen.truncate(0) && screen.rewind
+
+      publish(chat, { "generation" => 3, "header" => "model:1s" })
+
+      expect(settles { screen.string.empty? ? nil : screen.string }).to eq("\e7\e[1A\r\e[Kmodel:1s\n\e8")
+    end
+
+    it "holds a same-row header while a resize is pending behind a draft the human just discarded" do
+      moves = Queue.new
+      armed = false
+      stub_const("ScriptedMoves", Module.new)
+      ScriptedMoves.define_singleton_method(:moved!) { armed.tap { |moved| moves << moved } }
+      ScriptedMoves.define_singleton_method(:painted) { nil }
+      slow = described_class.new(path:, tty:, input: reader, commands:, layers:, tick: 0.3, geometry: ScriptedMoves)
+      @running = Thread.new { slow.run }
+      server.timeout = 5
+      chat = server.accept.tap { |client| client.timeout = 5 }
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      settles { screen.string.include?("model:0s") || nil }
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(false)
+      armed = true
+      Enumerator.produce { moves.pop(timeout: 5) }.find { |moved| moved || moved.nil? }
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(true)
+      screen.truncate(0) && screen.rewind
+
+      publish(chat, { "generation" => 3, "header" => "model:1s" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+
+      expect(screen.string).to eq("")
+    end
+
+    it "takes the header it adopted below an echo back before the next prompt draws, so the two do not stack" do
+      allow(Reline).to receive(:readmultiline).and_return("list the files", nil)
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      next_frame(chat, of: "line")
+      say(chat, { "v" => "unpublished", "header" => "model:1s" })
+      settles { screen.string.end_with?("\r\e[Kmodel:1s\n") || nil }
+      screen.truncate(0) && screen.rewind
+
+      publish(chat, { "kind" => "human", "text" => "[y/N] ", "generation" => 4, "header" => "model:2s" })
+
+      expect(settles { screen.string.include?("model:2s") ? screen.string : nil }).to eq("\e[1A\r\e[Kmodel:2s\n")
+    end
+
+    it "draws a header that first arrived empty once a later idle tick has one" do
+      allow(Reline).to receive(:readmultiline).and_return("list the files", nil)
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      next_frame(chat, of: "line")
+      say(chat, { "v" => "unpublished", "header" => "" })
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      settles { commands == ["idle"] || nil }
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "model:1s" })
+
+      expect(settles { screen.string.empty? ? nil : screen.string }).to eq("\r\e[Kmodel:1s\n")
+    end
+
+    it "draws nothing in place after the pane was resized, leaving the header to the next prompt" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:1" })
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      settles { commands == ["idle"] || nil }
+      window.script([6, 80])
+      sleep(0.2)
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:2" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+
+      expect(screen.string).to eq("")
     end
 
     it "redraws nothing for an unchanged header" do
