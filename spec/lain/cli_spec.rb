@@ -1087,7 +1087,7 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
 
   it "falls back to the built-in default when the environment says nothing" do
     expect(profile_under({ "LAIN_PROVIDER" => nil }, []).provider).to eq("anthropic")
-    expect(options_under({ "LAIN_MAX_TOKENS" => nil }, [])["max_tokens"]).to eq(4_096)
+    expect(options_under({ "LAIN_MAX_TOKENS" => nil }, [])["max_tokens"]).to eq(16_384)
   end
 
   it "reads the numeric band as numbers, not strings" do

@@ -143,6 +143,37 @@ RSpec.describe "lain chat's flag surface" do
   # hash in a unit spec proves none of the three.
   def parse(*argv) = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse(argv)
 
+  describe "--max-tokens" do
+    def max_tokens_under(env)
+      seen = []
+      with_env(env) do
+        probe = Class.new(Thor) do
+          def self.exit_on_failure? = true
+          LainCLI::ModelFlags.declare(self)
+          desc "probe", "capture parsed options"
+          define_method(:probe) { seen << options }
+        end
+        probe.start(["probe"], debug: true)
+      end
+      seen.first[:max_tokens]
+    end
+
+    it "defaults a chat to 16384, which the backend's context carries to the request" do
+      expect(max_tokens_under("LAIN_MAX_TOKENS" => nil)).to eq(16_384)
+      expect(parse[:max_tokens]).to eq(16_384)
+      expect(Lain::CLI::Backend.new(parse("--provider", "ollama"), root: Dir.pwd).context.max_tokens).to eq(16_384)
+    end
+
+    it "lets LAIN_MAX_TOKENS win over the default" do
+      expect(max_tokens_under("LAIN_MAX_TOKENS" => "2048")).to eq(2_048)
+    end
+
+    it "leaves bench record on its own default" do
+      record = LainCLI::Bench.commands.fetch("record").options.fetch(:max_tokens)
+      expect(record.default).to eq(Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens))
+    end
+  end
+
   describe "the declared flags cover what the code reads" do
     it "declares every option key the CLI objects read" do
       undeclared = resolved.reject { |read| declared.include?(read.key) || ChatFlags::ELSEWHERE.key?(read.key) }
