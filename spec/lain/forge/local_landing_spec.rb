@@ -74,7 +74,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
   def worker(id, files)
     git("switch", "-q", "--detach", tip)
     sha = commit(files)
-    ref = Lain::Isolation::Worktree::Handback::Naming.new(id).ref
+    ref = Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.1").ref
     git("update-ref", ref, sha)
     git("switch", "-q", "epic/demo")
     [sha, ref]
@@ -332,10 +332,45 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       expect(contains?(unapproved)).to be(false)
     end
 
-    it "refuses when no anchored commit carries an approval, naming the gate" do
-      worker("a", "README" => "a's work\n")
+    it "refuses an anchored commit no gate approved, naming lain epic submit implementation with its sha" do
+      sha, = worker("a", "README" => "a's work\n")
 
-      expect { landing.anchored("a") }.to raise_error(Lain::Approval::Gate::NotApproved, /implementation gate/)
+      expect { landing.anchored("a") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+        expect(error.message).to include("implementation gate", sha,
+                                         "lain epic submit implementation demo --issue a --digest #{sha}")
+      }
+    end
+
+    it "refuses an approved commit nobody anchored, naming the driver and not epic submit" do
+      git("switch", "-q", "--detach", tip)
+      sha = commit("README" => "hand made\n")
+      git("switch", "-q", "epic/demo")
+      approve("a", sha)
+
+      expect { landing.anchored("a") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+        expect(error.message).to include("no worker commit is anchored for issue a", "driver")
+        expect(error.message).not_to include("epic submit")
+      }
+    end
+
+    it "does not take the anchor of an issue whose id continues this one's after a dot" do
+      worker("a.1", "README" => "a.1's work\n")
+
+      expect { landing.anchored("a") }.to raise_error(Lain::Approval::Gate::NotApproved, /no worker commit is anchored/)
+    end
+
+    it "finds an anchor for an id Naming rewrites, one with a double dot" do
+      sha, = worker("a..b", "README" => "a..b's work\n")
+
+      expect { landing.anchored("a..b") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+        expect(error.message).to include(sha)
+      }
+    end
+
+    it "does not take another issue's anchor for this issue's" do
+      worker("ab", "README" => "ab's work\n")
+
+      expect { landing.anchored("a") }.to raise_error(Lain::Approval::Gate::NotApproved, /no worker commit is anchored/)
     end
 
     it "refuses two different approved commits for one issue, naming both" do

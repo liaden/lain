@@ -175,8 +175,9 @@ module Lain
       # letting {Epic::Submission} refuse in its own vocabulary, one frame away
       # from the flag to pass.
       class Artifacts
-        def initialize(home:, issue: nil, digest: nil, tests: nil)
+        def initialize(home:, root:, issue: nil, digest: nil, tests: nil)
           @home = home
+          @root = root
           @issue = issue
           @digest = digest
           @tests = tests
@@ -232,8 +233,19 @@ module Lain
                        "lain epic submit #{stage} --issue ID"
         end
 
+        def commit!(digest)
+          return digest if commit?(digest)
+
+          raise Error, "the implementation digest #{digest} is not a commit in #{@root}"
+        end
+
+        def commit?(digest)
+          digest.match?(/\A\h{40,64}\z/) &&
+            Lain::Isolation::Checkout.new(@root).run("cat-file", "-e", "#{digest}^{commit}").exitstatus.zero?
+        end
+
         def digest!(stage)
-          return @digest unless @digest.to_s.strip.empty?
+          return commit!(@digest) unless @digest.to_s.strip.empty?
 
           # The implementation stage gates a CHANGESET, and no artifact in the epic
           # home addresses one. Nothing here re-hashes a working tree to invent it:
@@ -551,7 +563,7 @@ module Lain
       #   stage boundary
       def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil)
         staged = Lain::Epic::Stage.new(stage)
-        decide(staged, Artifacts.new(home: home(slug), issue:, digest:, tests:))
+        decide(staged, Artifacts.new(home: home(slug), root: @root, issue:, digest:, tests:))
       end
 
       # The question an issue's launch asks before any work starts: is this
@@ -564,7 +576,7 @@ module Lain
       # @return [String] the approved issue_plan digest
       # @raise [PlanNotApproved] naming the plan digest that carries no approval
       def ensure_plan_approved!(issue, slug = nil)
-        plan = Artifacts.new(home: home(slug), issue:).submission(Lain::Epic::Stage.new("issue_plan"))
+        plan = Artifacts.new(home: home(slug), root: @root, issue:).submission(Lain::Epic::Stage.new("issue_plan"))
         ensure_approved!(Approval::SignoffQueue.from_journal(journals.to_a), plan)
       end
 

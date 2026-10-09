@@ -176,7 +176,7 @@ module Lain
       # which work lands to whichever the listing happened to name first.
       def approved_commit(issue_id, candidates)
         approved = candidates.select { |sha, _| approved?(issue_id, sha) }.group_by(&:first)
-        raise Approval::Gate::NotApproved, unanchored(issue_id) if approved.empty?
+        raise Approval::Gate::NotApproved, missing_approval(issue_id, candidates) if approved.empty?
         raise Ambiguous, ambiguous(issue_id, approved.keys) unless approved.one?
 
         sha, found = approved.first
@@ -224,9 +224,33 @@ module Lain
           "has not landed yet can land"
       end
 
+      def missing_approval(issue_id, candidates)
+        shas = candidates.select { |_, ref| anchored_for?(issue_id, ref) }.map(&:first).uniq
+        shas.empty? ? unanchored(issue_id) : unapproved(issue_id, shas)
+      end
+
       def unanchored(issue_id)
-        "no worker commit anchored for epic #{@epic_slug} carries an approved implementation gate for issue " \
-          "#{issue_id}, so nothing landed -- #{approve(issue_id, "SHA")}"
+        "no worker commit is anchored for issue #{issue_id} of epic #{@epic_slug}, so nothing landed -- re-run the " \
+          "issue through the epic driver, which anchors the work it hands back"
+      end
+
+      def unapproved(issue_id, shas)
+        "no anchored commit carries an approved implementation gate for issue #{issue_id}, so nothing landed -- " \
+          "#{shas.map { |sha| approve(issue_id, sha) }.join("; or ")}"
+      end
+
+      # The driver names an issue's anchors `issue.<slug>.<id>.<attempt>` through
+      # Naming. Asking Naming for a sample ref gets its slugging of an odd id for
+      # free; an epic slug holds no dot and the attempt is digits, so another id
+      # cannot match.
+      def anchored_for?(issue_id, ref)
+        naming = Isolation::Worktree::Handback::Naming
+        sample = naming.new("issue.#{@epic_slug}.#{issue_id}.1").ref.delete_prefix("#{naming::REF_NAMESPACE}/")
+        stem = sample.sub(/-\h+\z/, "")
+        name = ref.to_s.delete_prefix("#{naming::REF_NAMESPACE}/")
+        return name.start_with?(stem) if stem.length >= naming::SLUG_LIMIT
+
+        name.match?(/\A#{Regexp.escape(stem.delete_suffix("1"))}\d+-\h+\z/)
       end
 
       def ambiguous(issue_id, shas)

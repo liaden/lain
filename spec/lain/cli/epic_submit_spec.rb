@@ -74,6 +74,16 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
   def home(slug = "alpha") = Lain::Epic::Home.resolve(config:, paths:, root:, slug:)
 
+  # An implementation's digest names a commit in the project's repository.
+  def commit_sha
+    @commit_sha ||= begin
+      SeedRepo.git(root, "init", "-q")
+      SeedRepo.git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+                   "commit", "-q", "--allow-empty", "-m", "work")
+      SeedRepo.git(root, "rev-parse", "HEAD").stdout.strip
+    end
+  end
+
   def research_text = "the research, such as it is\n"
 
   def write_research(text = research_text, slug: "alpha") = home(slug).research.write(text)
@@ -182,7 +192,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       home.plan("a").write("the plan for a\n")
       command.submit("issue_plan", issue: "a")
 
-      command.submit("implementation", issue: "a", digest: "blake3:#{"f" * 64}")
+      command.submit("implementation", issue: "a", digest: commit_sha)
 
       expect(stage_events).to eq([%w[issue_plan started]])
       expect(submitted_decisions.map { |record| record.values_at("stage", "issue_id", "approved") })
@@ -255,7 +265,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     def deferring = command(gates: hands_off.merge("issue_plan" => "deferred"))
-    def changeset = "blake3:#{"e" * 64}"
+    def changeset = commit_sha
     def parked_plans = Lain::Approval::SignoffQueue.from_journal(journal_records).parked("alpha", "issue_plan")
 
     it "opens b's implementation gate while a's issue_plan is parked" do
@@ -1022,7 +1032,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       write_epic
     end
 
-    def tip = "blake3:#{"d" * 64}"
+    def tip = commit_sha
 
     it "writes what the tip's tests did into an implementation's question" do
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
@@ -1323,7 +1333,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     def criteria_digest_of(outcome) = Lain::Gherkin::Criteria.parse(criteria(outcome)).digest
-    def changeset = "blake3:#{"c" * 64}"
+    def changeset = commit_sha
 
     def plan_digest(outcome)
       Lain::Epic::Submission.issue_plan(text: "the plan for a\n", slug: "alpha", issue_id: "a",
@@ -1402,6 +1412,28 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     it "refuses when no issue is named" do
       expect { command.submit("issue_plan") }.to raise_error(Lain::Error, /issue_plan/)
+    end
+
+    it "refuses an implementation digest that names no commit in the repository" do
+      commit_sha
+      missing = "e" * 40
+
+      expect { command.submit("implementation", issue: "a", digest: missing) }
+        .to raise_error(Lain::Error, /#{missing}.*not a commit/)
+    end
+
+    it "refuses a revision name or an option where a commit is wanted" do
+      commit_sha
+
+      %w[HEAD --foo].each do |digest|
+        expect { command.submit("implementation", issue: "a", digest:) }
+          .to raise_error(Lain::Error, /#{Regexp.escape(digest)}.*not a commit/)
+      end
+    end
+
+    it "refuses an implementation digest in a project that is not a repository" do
+      expect { command.submit("implementation", issue: "a", digest: "blake3:#{"e" * 64}") }
+        .to raise_error(Lain::Error, /not a commit/)
     end
 
     it "refuses an implementation with no changeset address" do

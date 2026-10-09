@@ -76,7 +76,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
   def worker(id, files)
     git("switch", "-q", "--detach", tip)
     sha = commit(files)
-    git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new(id).ref, sha)
+    git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.1").ref, sha)
     git("switch", "-q", "epic/demo")
     sha
   end
