@@ -14,7 +14,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spawner do
 
   let(:spawned) { [] }
   let(:recording) { ->(argv, **options) { spawned << [argv, options] } }
-  let(:log) { File.join(@dir, "home", "drain.log") }
+  let(:log) { File.join(@dir, Lain::Isolation::MergeCoordinator::DIRECTORY, "home", "drain.log") }
 
   def spawner(program: "/opt/lain/exe/lain", spawn: recording) = described_class.new(spawn:, program:)
 
@@ -53,6 +53,24 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spawner do
 
   # The default spawn, so no double stands between the spawner and a real
   # child: a stand-in program named lain records how it was started.
+  describe "#drain" do
+    let(:home) { Lain::Isolation::MergeCoordinator::Home.new(git_dir: @dir, key: "home") }
+
+    it "starts `lain land drain` for the branch and project, from the project, logging into the home" do
+      started = spawner.drain(branch: "feat", root: "/repo", home:)
+
+      expect(started).to be(true)
+      expect(spawned.sole).to eq([[RbConfig.ruby, "/opt/lain/exe/lain", "land", "drain", "--branch", "feat",
+                                   "--project", "/repo"],
+                                  { chdir: "/repo", in: File::NULL, out: [log, "a"], err: [log, "a"], pgroup: true }])
+    end
+
+    it "answers false when nothing was started, and BY_HAND says how to drain instead" do
+      expect(spawner(program: "/usr/bin/rspec").drain(branch: "feat", root: "/repo", home:)).to be(false)
+      expect(format(described_class::BY_HAND, branch: "feat")).to eq("run `lain land drain --branch feat` to land it")
+    end
+  end
+
   it "runs a real detached child with the arguments, in the directory, leading its own group" do
     program = File.join(@dir, "lain")
     seen = File.join(@dir, "seen")

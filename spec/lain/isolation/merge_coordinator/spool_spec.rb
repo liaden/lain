@@ -8,12 +8,21 @@ require "tmpdir"
 RSpec.describe Lain::Isolation::MergeCoordinator::Spool do
   around do |example|
     Dir.mktmpdir("lain-spool") do |dir|
-      @home = Lain::Isolation::MergeCoordinator::Home.new(dir:)
+      @home = Lain::Isolation::MergeCoordinator::Home.new(git_dir: dir, key: "main-0123456789ab")
       example.run
     end
   end
 
-  def spool = described_class.new(@home)
+  def spool = described_class.new(@home, refs: unheld)
+
+  # These examples are about the files, and their shas name no commit, so no
+  # ref is held for them; the git-backed examples below hold real ones.
+  def unheld
+    Class.new do
+      def hold(_id, _sha) = nil
+      def release(_id) = nil
+    end.new
+  end
 
   def worker(id) = Lain::Isolation::LandingQueue::Worker.new(id:, ref: "refs/lain/worker/#{id}", sha: "a" * 40)
 
@@ -44,7 +53,11 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spool do
 
   it "answers entries from many processes oldest first, each process's in the order it wrote them" do
     pids = Array.new(8) do |process|
-      in_child { 25.times { |n| described_class.new(@home).enqueue(worker("p#{process}-w#{n.to_s.rjust(2, "0")}")) } }
+      in_child do
+        25.times do |n|
+          described_class.new(@home, refs: unheld).enqueue(worker("p#{process}-w#{n.to_s.rjust(2, "0")}"))
+        end
+      end
     end
 
     expect(reap(pids)).to all(eq(0))
@@ -55,7 +68,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spool do
 
   it "keeps what was enqueued: the worker, its ref and sha, and the wall-clock time" do
     stamp = Time.at(1_700_000_000, 250, :millisecond)
-    entry = described_class.new(@home, wall_clock: -> { stamp }).enqueue(worker("w1"))
+    entry = described_class.new(@home, refs: unheld, wall_clock: -> { stamp }).enqueue(worker("w1"))
 
     expect(spool.pending).to eq([entry])
     expect(entry.worker).to eq(worker("w1"))
@@ -63,7 +76,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spool do
   end
 
   it "keeps enqueue order inside one process even when the clock does not move" do
-    still = described_class.new(@home, clock: -> { 1_000.0 })
+    still = described_class.new(@home, refs: unheld, clock: -> { 1_000.0 })
     ids = Array.new(10) { |n| "w#{n}" }
     ids.each { |id| still.enqueue(worker(id)) }
 
@@ -189,7 +202,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spool do
     done = File.join(@home.dir, "done")
     reader = in_child do
       File.write(ready, "")
-      described_class.new(@home).pending until File.exist?(done)
+      described_class.new(@home, refs: unheld).pending until File.exist?(done)
     end
     begin
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
@@ -219,10 +232,72 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spool do
     expect(Dir.children(@home.dir)).to be_empty
   end
 
+  describe "the ref each queued commit is held under" do
+    around do |example|
+      Dir.mktmpdir("lain-spool-repo") do |repo|
+        @repo = File.realpath(repo)
+        FileUtils.cp_r("#{SeedRepo.at({ "f" => "a\n" })}/.", @repo)
+        @home = Lain::Isolation::MergeCoordinator::Home.for(repo_root: @repo, branch: "main")
+        example.run
+      end
+    end
+
+    def held = SeedRepo.git(@repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/lain/queued/").stdout
+    def seed = SeedRepo.git(@repo, "rev-parse", "HEAD").stdout.strip
+    def queued(id) = Lain::Isolation::MergeCoordinator::Spool.new(@home).enqueue(worker(id).with(sha: seed))
+
+    it "holds the commit under a ref named for the branch and the entry, from enqueue until complete" do
+      entry = queued("w1")
+      held_while_queued = held
+
+      described_class.new(@home).complete(entry.id, result_for(entry.id))
+
+      expect(held_while_queued).to eq("refs/lain/queued/#{@home.key}/#{entry.id} #{seed}\n")
+      expect(held).to be_empty
+    end
+
+    it "lets the ref go when pending deletes an entry a stopped drainer completed" do
+      entry = queued("w1")
+      FileUtils.mkdir_p(@home.results)
+      File.write(File.join(@home.results, "#{entry.id}.json"), "{}")
+
+      expect(described_class.new(@home).pending).to be_empty
+      expect(held).to be_empty
+    end
+
+    it "refuses, writing no entry, when git will not write the ref" do
+      missing = "1" * 40
+
+      expect { described_class.new(@home).enqueue(worker("w1").with(sha: missing)) }
+        .to raise_error(Lain::Error, /could not hold #{missing}/)
+      expect(Dir.glob("*", base: @home.entries)).to be_empty
+      expect(held).to be_empty
+    end
+
+    it "refuses, writing no entry, when the ref already exists" do
+      Lain::Isolation::MergeCoordinator::Spool::QueuedRefs.for(@home).tap do |refs|
+        allow(refs).to receive(:ref).and_return("refs/lain/queued/#{@home.key}/taken")
+        refs.hold("taken", seed)
+        spool = described_class.new(@home, refs:)
+
+        expect { spool.enqueue(worker("w1").with(sha: seed)) }.to raise_error(Lain::Error, /could not hold/)
+      end
+      expect(Dir.glob("*", base: @home.entries)).to be_empty
+    end
+
+    it "holds no ref for an entry that could not be written" do
+      FileUtils.mkdir_p(@home.dir)
+      File.write(@home.entries, "a file where the entries directory goes")
+
+      expect { queued("w1") }.to raise_error(SystemCallError)
+      expect(held).to be_empty
+    end
+  end
+
   it "never lets a reader see half a result" do
     entry = spool.enqueue(worker("w1"))
     whole = result_for(entry.id, detail: "x" * 4_000_000)
-    writer = in_child { described_class.new(@home).complete(entry.id, whole) }
+    writer = in_child { described_class.new(@home, refs: unheld).complete(entry.id, whole) }
 
     reads = []
     reads << spool.result(entry.id) until Process.wait(writer, Process::WNOHANG)

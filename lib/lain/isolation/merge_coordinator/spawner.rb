@@ -15,6 +15,9 @@ module Lain
         # Detached, so the submitter never waits on the child or leaves it a zombie.
         SPAWN = ->(argv, **options) { Process.detach(Process.spawn(*argv, **options)) }
 
+        # What a submitter says when {#drain} started nothing.
+        BY_HAND = "run `lain land drain --branch %<branch>s` to land it"
+
         # @param spawn [#call] starts `argv` with `Process.spawn` options
         # @param program [String] the launching binary
         # @param ruby [String] the interpreter that runs it
@@ -39,6 +42,18 @@ module Lain
           true
         rescue SystemCallError
           false
+        end
+
+        # The drainer is handed its project on the command line rather than
+        # finding one from its directory, so it journals and verifies for the
+        # submitter's project however it was started.
+        # @param branch [String] the branch whose queue is drained
+        # @param root [String] the repository's main worktree
+        # @param home [Home] the branch's coordinator home, where the log goes
+        # @return [Boolean] whether a drainer was started
+        def drain(branch:, root:, home:)
+          call(["land", "drain", "--branch", branch, "--project", root], chdir: root,
+                                                                         log: File.join(home.dir, "drain.log"))
         end
 
         private

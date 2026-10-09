@@ -952,6 +952,20 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       lease&.release
     end
 
+    # A caller queues the commit it was told, never what the ref holds by the
+    # time it reads it back; the record still names nothing as landed.
+    it "names the commit it anchored, on the first write and the idempotent second, and journals no landed SHA" do
+      lease = backend.acquire("worker-1")
+      commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+      shas = [handback.anchor(lease, worker_id: "worker-1").sha, handback.anchor(lease, worker_id: "worker-1").sha]
+
+      expect(shas).to eq([commit, commit])
+      expect(journal.grep(Lain::Telemetry::Handback).map(&:sha)).to eq([nil, nil])
+    ensure
+      lease&.release
+    end
+
     it "writes no ref for a worktree that never moved" do
       lease = backend.acquire("worker-1")
 

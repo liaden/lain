@@ -1695,10 +1695,9 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       # The chat path's handback: a one-shot child's lease ends in the run's
-      # WorkerHandoff, onto the branch the chat launched on, with the strategy
-      # the project's `[isolation]` table names -- and the Supervisor holds the
-      # same handoff, so a crashed actor's commits are anchored rather than
-      # kept by nothing.
+      # handoff, queued for the branch the chat launched on -- and the
+      # Supervisor holds the same handoff, so a crashed actor's commits are
+      # anchored rather than kept by nothing.
       describe "the handback a worker's work comes home through" do
         def git_out(dir, *args) = SeedRepo.git(dir, *args).stdout.strip
 
@@ -1717,13 +1716,40 @@ RSpec.describe Lain::CLI::Wiring do
 
         def handbacks = record.events.grep(Lain::Telemetry::Handback)
 
-        it "hands a one-shot child's lease back with the strategy the project's config names" do
-          in_throwaway_repo do |repo|
-            on_feat(repo, config: %(isolation conflict_style: :diff3\n))
-            spawn_dev(wiring_with("worktree"))
+        def recording_spawner
+          Class.new do
+            attr_reader :calls
+
+            def initialize
+              @calls = []
+              @started = true
+            end
+
+            def drain(branch:, root:, **)
+              @calls << [branch, root]
+              @started
+            end
+          end.new
+        end
+
+        it "queues a one-shot child's commit for the chat's branch, asks for a drainer, and merges nothing" do
+          spawner = recording_spawner
+          allow(Lain::Isolation::MergeCoordinator::Spawner).to receive(:new).and_return(spawner)
+          root, result, tip, pending = in_throwaway_repo do |repo|
+            on_feat(repo)
+            answer = spawn_dev(wiring_with("worktree"),
+                               backend: offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                                                  mock: committing_provider, root: repo))
+            home = Lain::Isolation::MergeCoordinator::Home.for(repo_root: repo, branch: "feat")
+            [repo, answer, git_out(repo, "rev-parse", "feat"),
+             Lain::Isolation::MergeCoordinator::Spool.new(home).pending]
           end
 
-          expect(handbacks.map(&:strategy)).to eq(["conflict_style=diff3 diff_algorithm=histogram"])
+          expect(tip).to eq(@moved)
+          expect(pending.map { |entry| entry.worker.ref }).to eq([handbacks.first.ref])
+          expect(spawner.calls).to eq([["feat", root]])
+          id = pending.first.id
+          expect(result.content).to include("queued as #{id}").and include("lain land wait #{id}")
         end
 
         it "syncs each child with the rebase retries the project's config names" do
@@ -1755,10 +1781,7 @@ RSpec.describe Lain::CLI::Wiring do
           expect(anchored).to eq(worker.commit)
         end
 
-        # The handoff is built before the toolset, and its resolver is the
-        # toolset's RoleSpawn -- read late, through a thunk, so the run still
-        # constructs exactly one.
-        it "builds one RoleSpawn for the run, which the handoff's resolver reads late" do
+        it "builds one RoleSpawn for the run" do
           allow(Lain::Skill::RoleSpawn).to receive(:new).and_call_original
 
           in_throwaway_repo do |repo|
@@ -1792,7 +1815,7 @@ RSpec.describe Lain::CLI::Wiring do
         def commit_and_move
           @worktree = record.events.grep(Lain::Telemetry::IsolationLease).find { |lease| lease.kind == :acquired }.path
           @committed = commit_in(@worktree, "work.txt")
-          commit_in(Dir.pwd, "moved.txt")
+          @moved = commit_in(Dir.pwd, "moved.txt")
           Lain::Response.new(content: [{ "type" => "text", "text" => "done" }], stop_reason: :end_turn)
         end
 
@@ -4277,7 +4300,7 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
   end
 end
 
-# How the chat handoff finds the repository a worker's work merges back into.
+# How the chat handoff finds the repository a worker's work is anchored in.
 # It used to derive that separately from the {Lain::Isolation::Worktree}
 # backend that actually cut the worker checkouts -- a second, git-shelled
 # `rev-parse --show-toplevel` that can disagree with the backend's own answer
@@ -4331,7 +4354,7 @@ RSpec.describe Lain::CLI::Wiring, "the handback a worker's work comes home on", 
       handback = nil
       expect { handback = handback_of_chat }.not_to raise_error
 
-      expect(handback.handoff.instance_variable_get(:@repo_root)).to eq(@repo)
+      expect(handback.handoff.repo_root).to eq(@repo)
     end
   end
 end

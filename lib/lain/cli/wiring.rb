@@ -52,7 +52,8 @@ module Lain
       Handback = Data.define(:handoff, :sync)
 
       # How a worker's work comes home on the chat path: the
-      # {Isolation::WorkerHandoff} a one-shot child's lease ends in -- the same
+      # {Isolation::MergeCoordinator::Handoff} a one-shot child's lease ends in,
+      # queueing its commits for the working branch -- the same
       # one the {Supervisor} surrenders a crashed actor through, so the two
       # lanes cannot hand work back to different places -- and the
       # {Isolation::Checked} sync that runs the project's fast checks, then the
@@ -62,15 +63,6 @@ module Lain
       # Reopened rather than declared in a `Data.define ... do` block: a
       # constant there is lexically scoped to the enclosing class.
       class Handback
-        # The resolver a conflict spawns is the run's ONE {Skill::RoleSpawn},
-        # which {ToolsetBuild} builds after the {Supervisor} holding this
-        # handoff. So it is read at call time, never captured, and never built
-        # twice: a second RoleSpawn would be a second answer to which seam a
-        # child spawns over.
-        LateResolver = Data.define(:role_spawn) do
-          def call(role_name, context_mode, prompt) = role_spawn.call.call(role_name, context_mode, prompt)
-        end
-
         # The sync defaults to nothing, which is what a handoff with no
         # working branch needs.
         def initialize(handoff:, sync: Isolation::SelfSync::Null) = super
@@ -863,8 +855,6 @@ module Lain
       # the {Supervisor}'s crashed actors and {ToolsetBuild}'s one-shot children
       # -- so the two cannot hand work back to different places.
       #
-      # The Supervisor is built before the toolset, so the resolver reads the
-      # run's {Skill::RoleSpawn} through a thunk at call time.
       # Built from the fleet's isolation, which names the working branch, and
       # from the project's `isolation` table, which names the merge strategy
       # and the rebase retries. With no branch named no checkout was cut, so
@@ -879,16 +869,15 @@ module Lain
         end
       end
 
-      # The repository a handback merges into is the backend's OWN -- the same
+      # The repository a handback anchors into is the backend's OWN -- the same
       # one it cut worker checkouts from -- never a root re-derived here, which
       # could disagree with it under GIT_CEILING_DIRECTORIES.
       def handback_over(base, settings)
         strategy = Isolation::MergeStrategy.from(settings)
-        resolver = Handback::LateResolver.new(role_spawn: -> { role_spawn })
         sync = Isolation::SelfSync.new(base:, strategy:, retries: settings.rebase_retries)
         checks = Isolation::Checked.configured(base:, layout: Config.test_layout(root:), settings:)
-        Handback.new(handoff: Isolation::WorkerHandoff.over(repo_root: fleet_isolation.repo_root, base:,
-                                                            journal: durable_journal, strategy:, resolver:),
+        Handback.new(handoff: Isolation::MergeCoordinator::Handoff.over(repo_root: fleet_isolation.repo_root,
+                                                                        branch: base.name, journal: durable_journal),
                      sync: Isolation::Checked.new(checks:, sync:))
       end
 

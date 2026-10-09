@@ -57,11 +57,6 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
 
   def git(*args, dir: repo) = SeedRepo.git(dir, *args).stdout.strip
 
-  def contains?(commit, branch = "feat")
-    Lain::Shell::Out.new("git", "-C", repo, "merge-base", "--is-ancestor", commit, branch,
-                         environment: SeedRepo::SCRUB).run_command.exitstatus.zero?
-  end
-
   def commit(dir, file, body, message)
     File.write(File.join(dir, file), body)
     git("add", file, dir:)
@@ -99,27 +94,36 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
 
   def handbacks = record.events.grep(Lain::Telemetry::Handback)
 
-  it "brings a child's commit back to the branch the chat launched on" do
-    script.push(works)
-
-    dispatch(wired)
-
-    expect(contains?(@c1)).to be(true)
-    expect(handbacks.map(&:outcome)).to eq([:merged])
-    expect(handbacks.last.fast_forward).to be(true)
+  def queued
+    Lain::Isolation::MergeCoordinator::Spool.new(
+      Lain::Isolation::MergeCoordinator::Home.for(repo_root: repo, branch: "feat")
+    ).pending.map { |entry| entry.worker.sha }
   end
 
-  it "anchors the work and names the dirty files, rather than merging into a human's uncommitted edits" do
+  it "queues a child's commit for the branch the chat launched on, and merges nothing" do
+    script.push(works)
+    seed = git("rev-parse", "feat")
+
+    result = dispatch(wired)
+
+    expect(git("rev-parse", "feat")).to eq(seed)
+    expect(git("rev-parse", handbacks.last.ref)).to eq(@c1)
+    expect(queued).to eq([@c1])
+    expect(handbacks.map(&:outcome)).to eq([:queued])
+    expect(result.content).to include("lain land wait")
+  end
+
+  it "queues the work past a human's uncommitted edits, and leaves those edits alone" do
     script.push(works(file: "README", body: "worker\n"))
     seed = git("rev-parse", "feat")
     File.write(File.join(repo, "README"), "human edit\n")
 
-    result = dispatch(wired)
+    dispatch(wired)
 
-    expect(result.content).to include("uncommitted").and include("README")
     ref = handbacks.last.ref
     expect(ref).to start_with("refs/lain/worker/")
     expect(git("rev-parse", ref)).to eq(@c1)
+    expect(queued).to eq([@c1])
     expect(git("rev-parse", "feat")).to eq(seed)
     expect(File.read(File.join(repo, "README"))).to eq("human edit\n")
   end
@@ -202,7 +206,7 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
       end
     end
 
-    it "rebases a child's commit onto the moved branch, so it comes back as a fast-forward" do
+    it "rebases a child's commit onto the moved branch before it is queued" do
       script.push(lambda do |_request|
         @c1 = commit(worktree, "work.txt", "c1\n", "c1")
         @tip = commit(repo, "notes.txt", "moved\n", "T")
@@ -212,15 +216,15 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
       dispatch(wired)
 
       expect(handbacks.first.sync).to eq(:synced)
-      expect(git("rev-parse", "feat^")).to eq(@tip)
-      expect(git("show", "feat:work.txt")).to eq("c1")
-      expect(git("rev-parse", "feat")).not_to eq(@c1)
-      expect(handbacks.first.fast_forward).to be(true)
-      expect(handbacks.first.sha).to eq(git("rev-parse", "feat"))
+      rebased = git("rev-parse", handbacks.first.ref)
+      expect(git("rev-parse", "#{rebased}^")).to eq(@tip)
+      expect(git("show", "#{rebased}:work.txt")).to eq("c1")
+      expect(queued).to eq([rebased])
+      expect(git("rev-parse", "feat")).to eq(@tip)
     end
 
-    it "asks a child whose rebase conflicts once, records the attempt and its words, then spawns a merge_resolver" do
-      script.push(conflicting, text("I could not rebase it"), text("resolved"))
+    it "asks a child whose rebase conflicts once, records the attempt and its words, then queues it unresolved" do
+      script.push(conflicting, text("I could not rebase it"))
 
       dispatch(wired)
 
@@ -228,8 +232,9 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
       expect(handbacks.first.attempts)
         .to eq([attempt("lain", 1, "conflicted"), attempt("worker", 1, "conflicted")])
       expect(handbacks.first.detail).to eq("I could not rebase it")
-      expect(handbacks.first.outcome).to eq(:conflicted)
-      expect(resolver_briefs).to eq(1)
+      expect(handbacks.first.outcome).to eq(:queued)
+      expect(resolver_briefs).to eq(0)
+      expect(queued).to eq([@c1])
       expect(git("rev-parse", "feat")).to eq(@tip)
     end
 
@@ -238,15 +243,15 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
         write_config(repo, "isolation rebase_retries: 0\n")
       end
 
-      it "asks for no rebase, and the handback merges as before" do
-        script.push(conflicting, text("resolved"))
+      it "asks for no rebase, and queues the worker's commit as it was" do
+        script.push(conflicting)
 
         dispatch(wired)
 
         expect(asked_to_rebase).to eq(0)
         expect(handbacks.first.sync).to eq(:disabled)
-        expect(handbacks.first.outcome).to eq(:conflicted)
-        expect(resolver_briefs).to eq(1)
+        expect(handbacks.first.outcome).to eq(:queued)
+        expect(queued).to eq([@c1])
       end
     end
 
@@ -266,7 +271,7 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
       expect(handbacks.first).to have_attributes(sync: :dirty, dirty: true, path:)
       expect(result.content).to include("the worker left uncommitted changes at #{path}; they were not handed back")
       expect(git("rev-parse", "#{@c1}^")).to eq(seed)
-      expect(contains?(@c1)).to be(true)
+      expect(queued).to eq([@c1])
     end
   end
 end

@@ -18,6 +18,46 @@ module Lain
       class Spool
         ID = /\A\d{20}-\d+-\h{4}\z/
 
+        # Each queued commit under a ref of its own, from enqueue until its
+        # result is written. A worker ref is reused by the next handback under
+        # the same worker id, so it cannot be what keeps a queued commit from
+        # gc; this ref is, and nobody else writes it.
+        class QueuedRefs
+          NAMESPACE = "refs/lain/queued"
+
+          # @param home [Home] whose git dir and branch key place the refs
+          # @param shell_out_factory [#call] builds the git subprocess
+          # @return [QueuedRefs]
+          def self.for(home, shell_out_factory: Shell::Out.public_method(:new))
+            new(git_dir: home.git_dir, key: home.key, shell_out_factory:)
+          end
+
+          # @param git_dir [String] the repository's common git directory
+          # @param key [String] the branch's key, as its {Home} names it
+          # @param shell_out_factory [#call] builds the git subprocess
+          def initialize(git_dir:, key:, shell_out_factory: Shell::Out.public_method(:new))
+            @git = Checkout.new(git_dir, shell_out_factory:)
+            @key = key
+          end
+
+          # @param id [String] as {Spool#enqueue} minted it
+          # @return [String] the ref the entry's commit is held under
+          def ref(id) = "#{NAMESPACE}/#{@key}/#{id}"
+
+          # @param id [String] as {Spool#enqueue} minted it
+          # @param sha [String] the commit to hold
+          # @raise [Lain::Error] when git will not write the ref
+          def hold(id, sha)
+            write = @git.update_ref(ref(id), sha, "", reason: "lain land: queued")
+            raise Error, "could not hold #{sha} at #{ref(id)}: #{write.stderr.strip}" unless write.exitstatus.zero?
+          end
+
+          # A ref left behind keeps one landed commit from gc and nothing
+          # more, so a failed delete is not worth failing a completed landing.
+          # @param id [String] as {Spool#enqueue} minted it
+          def release(id) = @git.run("update-ref", "-d", ref(id))
+        end
+
         Entry = Data.define(:id, :worker, :enqueued_at) do
           def initialize(id:, worker:, enqueued_at:) = super(id: -id.to_s, worker:, enqueued_at: Float(enqueued_at))
         end
@@ -63,19 +103,24 @@ module Lain
         # @param home [Home] whose entries and results directories hold the files
         # @param clock [#call] answers monotonic seconds, which order the ids
         # @param wall_clock [#call] answers the Time an entry is enqueued at
-        def initialize(home, clock: RunClock::MONOTONIC, wall_clock: -> { Time.now })
+        # @param refs [#hold, #release] holds each queued commit under its own ref; see {QueuedRefs}
+        def initialize(home, clock: RunClock::MONOTONIC, wall_clock: -> { Time.now }, refs: QueuedRefs.for(home))
           @home = home
           @clock = clock
           @wall_clock = wall_clock
+          @refs = refs
           @last_ns = 0
         end
 
+        # The commit is held before the entry exists, so no drainer can read
+        # an entry whose commit nothing keeps.
         # @param worker [LandingQueue::Worker]
         # @return [Entry]
+        # @raise [Lain::Error] when the commit cannot be held
         def enqueue(worker)
           entry = Entry.new(id: next_id, worker:, enqueued_at: @wall_clock.call.to_f)
-          write_whole(entry_path(entry.id), JSON.generate(worker: worker.to_h, enqueued_at: entry.enqueued_at))
-          entry
+          @refs.hold(entry.id, worker.sha)
+          written(entry)
         end
 
         # An entry that already has a result was completed by a drainer that
@@ -86,7 +131,7 @@ module Lain
           completed, waiting = Dir.glob("*.json", base: @home.entries).sort
                                   .map { |name| entry_named!(File.basename(name, ".json")) }
                                   .partition { |id| File.exist?(result_path(id)) }
-          completed.each { |id| FileUtils.rm_f(entry_path(id)) }
+          completed.each { |id| finished(id) }
           waiting.filter_map { |id| read_entry(id) }
         end
 
@@ -100,7 +145,7 @@ module Lain
 
           write_whole(result_path(id), JSON.generate(report: result.report.to_h,
                                                      verification: result.verification&.to_h, batch: result.batch))
-          FileUtils.rm_f(entry_path(id))
+          finished(id)
         end
 
         # @param id [String]
@@ -136,6 +181,19 @@ module Lain
         def next_id
           @last_ns = [(@clock.call * 1_000_000_000).to_i, @last_ns + 1].max
           format("%<ns>020d-%<pid>d-%<salt>s", ns: @last_ns, pid: Process.pid, salt: SecureRandom.hex(2))
+        end
+
+        def written(entry)
+          write_whole(entry_path(entry.id), JSON.generate(worker: entry.worker.to_h, enqueued_at: entry.enqueued_at))
+          entry
+        rescue StandardError
+          @refs.release(entry.id)
+          raise
+        end
+
+        def finished(id)
+          FileUtils.rm_f(entry_path(id))
+          @refs.release(id)
         end
 
         # An entry completed between the listing and the read is gone, and no longer pending.

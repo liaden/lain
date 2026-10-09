@@ -33,14 +33,14 @@ module Lain
       # is named the same way here as in the handback record, and the slug plus
       # fingerprint keeps it path-safe and injective where the raw name, with
       # its slashes, is neither.
-      Home = Data.define(:dir) do
+      Home = Data.define(:git_dir, :key) do
         # @param repo_root [String] any directory inside the repository
         # @param branch [String] the branch the coordinator lands onto
         # @param shell_out_factory [#call] builds the subprocess that finds the common git dir
         # @return [Home]
         # @raise [Lain::Error] when repo_root is in no repository
         def self.for(repo_root:, branch:, shell_out_factory: Shell::Out.public_method(:new))
-          new(dir: File.join(common_dir(File.expand_path(repo_root), shell_out_factory), DIRECTORY, key(branch)))
+          new(git_dir: common_dir(File.expand_path(repo_root), shell_out_factory), key: key(branch))
         end
 
         def self.common_dir(root, shell_out_factory)
@@ -55,6 +55,9 @@ module Lain
 
         def self.key(branch) = File.basename(Worktree::Handback::Naming.new(branch).ref)
         private_class_method :common_dir, :key
+
+        # @return [String] the home itself, under the repository's common git dir
+        def dir = File.join(git_dir, DIRECTORY, key)
 
         # @return [String] where queued entries are written
         def entries = File.join(dir, "entries")

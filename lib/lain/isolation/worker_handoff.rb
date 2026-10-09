@@ -88,7 +88,9 @@ module Lain
       # the parent did not already have), `:merged`, `:resolved` (it conflicted,
       # the resolver settled it, `paths` names the files it settled and `detail`
       # carries what it said), `:conflicted` (the conflict STANDS -- the merge
-      # was abandoned and `ref` still holds the work), `:declined`, or `:failed`.
+      # was abandoned and `ref` still holds the work), `:queued` (the work is
+      # on `ref` and waits for the merge coordinator; `detail` names the entry),
+      # `:declined`, or `:failed`.
       # `paths` is always an Array and `detail` always a String, so no caller
       # writes a nil guard; `ref` is nil only when nothing was ever anchored.
       #
@@ -105,10 +107,10 @@ module Lain
       # constant there is lexically scoped to the enclosing module, not the Data
       # class.
       class Report
-        KINDS = %i[nothing_to_do merged resolved conflicted declined failed].freeze
+        KINDS = %i[nothing_to_do merged resolved conflicted queued declined failed].freeze
 
-        # The kinds that moved the parent's tip. Declared beside {KINDS} so a
-        # seventh kind that also lands is one edit, not a hunt for every caller
+        # The kinds that moved the parent's tip. Declared beside {KINDS} so
+        # another kind that also lands is one edit, not a hunt for every caller
         # that spelled the pair out -- both of which failed silently, reporting
         # work as skipped over a branch that had in fact moved.
         MOVED = %i[merged resolved].freeze
@@ -142,6 +144,7 @@ module Lain
           when :merged then "handback merged the worker's commits#{at_ref}"
           when :resolved then detailed("handback conflict resolved in #{paths.join(", ")}, then merged#{at_ref}")
           when :conflicted then detailed("the handback conflict STANDS unresolved; the work is on #{ref}")
+          when :queued then detailed("the worker's commits are on #{ref}, not yet on the branch")
           else detailed("handback #{kind}#{at_ref}")
           end
         end

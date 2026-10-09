@@ -191,7 +191,9 @@ module Lain
         #
         # `sha` is the full SHA that landed in the parent on `:merged` -- the
         # worker's own commit on a fast-forward, the merge commit otherwise --
-        # and nil everywhere else. `fast_forward` is MEASURED, the parent's new
+        # and the commit an anchor-only outcome wrote to `ref` (which the
+        # handback record still journals as nil, since nothing landed), and nil
+        # everywhere else. `fast_forward` is MEASURED, the parent's new
         # HEAD against the worker's commit, because a user's `merge.ff = false`
         # turns what looks like a fast-forward into a merge commit.
         #
@@ -480,10 +482,12 @@ module Lain
           return outcome(:nothing_to_do, key) if @parent.ancestor?(commit)
 
           held = @parent.target(ref)
-          return outcome(:nothing_to_do, key, ref:, detail: ANCHOR_ONLY) if held == commit
+          return outcome(:nothing_to_do, key, ref:, sha: commit, detail: ANCHOR_ONLY) if held == commit
 
           write = @parent.update_ref(ref, commit, held, reason: ANCHORED)
-          ok?(write) ? outcome(:declined, key, ref:, detail: ANCHOR_ONLY) : failed(key, "update-ref #{ref}", write)
+          return failed(key, "update-ref #{ref}", write) unless ok?(write)
+
+          outcome(:declined, key, ref:, sha: commit, detail: ANCHOR_ONLY)
         end
 
         # Ref first, then the merge -- and the merge only if there is an anchor
@@ -562,11 +566,14 @@ module Lain
         def journaled(outcome, synced = {})
           @journal << Telemetry::Handback.new(worker_key: outcome.worker_key, outcome: outcome.kind, ref: outcome.ref,
                                               strategy: @strategy.to_s, fast_forward: outcome.fast_forward,
-                                              sha: outcome.sha, **synced)
+                                              sha: landed(outcome), **synced)
           outcome
         rescue StandardError
           outcome
         end
+
+        # The record's SHA names what landed in the parent, and an anchor landed nothing.
+        def landed(outcome) = outcome.anchor_only? ? nil : outcome.sha
 
         def ok?(shell) = shell.exitstatus.zero?
       end

@@ -49,6 +49,14 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Home, :seam do
     expect(entered).to be(true)
   end
 
+  it "is the repository's common git dir and the branch's key, its directory derived from both" do
+    resolved = home(@repo, "epic/demo")
+
+    expect([resolved.git_dir, resolved.key])
+      .to eq([File.join(@repo, ".git"), File.basename(Lain::Isolation::Worktree::Handback::Naming.new("epic/demo").ref)])
+    expect(resolved.dir).to eq(File.join(@repo, ".git", Lain::Isolation::MergeCoordinator::DIRECTORY, resolved.key))
+  end
+
   it "names entries and results beside the lock inside the home" do
     resolved = home(@repo, "main")
 

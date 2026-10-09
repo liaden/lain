@@ -7,7 +7,8 @@ module Lain
     module Carriers
       # A handback record must name the worker whose work it disposed of and
       # land on one of the outcomes the operation can reach. The kinds are
-      # {Isolation::Worktree::Handback::Outcome::KINDS}, the sync outcomes
+      # {Isolation::Worktree::Handback::Outcome::KINDS} plus the merge
+      # coordinator's `queued`, the sync outcomes
       # {Isolation::SelfSync::Result::OUTCOMES} and the checks outcomes
       # {Isolation::WorkerChecks::Result::OUTCOMES}, held verbatim here rather than
       # referenced, so telemetry depends on the isolation tier for nothing (the
@@ -20,9 +21,9 @@ module Lain
         attribute :sync
         attribute :checks
         validates :worker_key, presence: { message: "must name the worker handed back, got nil" }
-        validates :outcome, inclusion: { in: %i[nothing_to_do merged conflicted declined failed],
-                                         message: "must be one of nothing_to_do/merged/conflicted/declined/" \
-                                                  "failed, got %<value>s" }
+        validates :outcome, inclusion: { in: %i[nothing_to_do merged conflicted queued declined failed],
+                                         message: "must be one of nothing_to_do/merged/conflicted/queued/" \
+                                                  "declined/failed, got %<value>s" }
         validates :sync, inclusion: { in: %i[current synced conflicted lost dirty disabled failed], allow_nil: true,
                                       message: "must be one of current/synced/conflicted/lost/dirty/disabled/" \
                                                "failed, got %<value>s" }

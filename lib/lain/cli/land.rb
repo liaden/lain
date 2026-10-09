@@ -27,7 +27,7 @@ module Lain
       # @param cwd [String] the checkout the command runs in
       # @param paths [Paths] where the drainer's journal and verify tree live
       # @param sink [#puts] where {#wait} says what became of the entry
-      # @param spawner [#call] starts the detached drainer; see {Isolation::MergeCoordinator::Spawner}
+      # @param spawner [#drain] starts the detached drainer; see {Isolation::MergeCoordinator::Spawner}
       # @param drain_for [#call] builds the drainer, as {Isolation::MergeCoordinator::Drain.for}
       # @param shell_out_factory [#call] builds every git subprocess
       # @param clock [#call] monotonic seconds, which time {#wait}'s timeout
@@ -151,9 +151,9 @@ module Lain
       end
 
       def drainer(root, branch, home)
-        args = ["land", "drain", "--branch", branch, "--project", root]
-        started = @spawner.call(args, chdir: root, log: File.join(home.dir, "drain.log"))
-        started ? "a drainer is landing it" : "run `lain land drain --branch #{branch}` to land it"
+        return "a drainer is landing it" if @spawner.drain(branch:, root:, home:)
+
+        format(Isolation::MergeCoordinator::Spawner::BY_HAND, branch:)
       end
 
       # The result is written before the entry is deleted, so an id with

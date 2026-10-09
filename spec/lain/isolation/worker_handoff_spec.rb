@@ -1106,4 +1106,20 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
       expect(discarding.reclaim(nil, worker_id: "worker-1").kind).to eq(:nothing_to_do)
     end
   end
+
+  describe "a queued handback" do
+    let(:queued) do
+      described_class::Report.new(kind: :queued, ref: "refs/lain/worker/w-1",
+                                  detail: "queued as 1-2-ab; lain land wait 1-2-ab")
+    end
+
+    it "says the work is on its ref and not yet on the branch, then how to wait for it" do
+      expect(queued.summary).to eq("the worker's commits are on refs/lain/worker/w-1, not yet on the branch -- " \
+                                   "queued as 1-2-ab; lain land wait 1-2-ab")
+    end
+
+    it "has not moved the branch" do
+      expect(queued.moved?).to be(false)
+    end
+  end
 end
