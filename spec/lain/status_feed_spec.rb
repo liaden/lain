@@ -2087,6 +2087,23 @@ RSpec.describe Lain::StatusFeed do
       expect(File.exist?(path)).to be(false)
     end
 
+    it "clears a model call in flight when the run is interrupted" do
+      feed.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
+
+      feed << Lain::Telemetry::RunInterrupted.new(head: nil, reason: :stopped)
+
+      expect(published["in_flight"]).to be_nil
+    end
+
+    it "clears the slot of a parked tool call when the run is interrupted" do
+      feed << tool_turn("ask_human")
+      feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
+
+      feed << Lain::Telemetry::RunInterrupted.new(head: nil, reason: :transport)
+
+      expect(published["in_flight"]).to be_nil
+    end
+
     it "is its own transition listener, so the chat's Instrumentation can carry it" do
       instrumentation = Lain::Agent::Instrumentation.new(transition_listener: feed.transition_listener)
       instrumentation.transition_listener.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)

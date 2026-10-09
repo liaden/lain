@@ -285,7 +285,7 @@ module Lain
       # about a number the Source owns.
       @derivation_refusal_streak = event.consecutive if event.is_a?(Compaction::Source::DerivationRefused)
       @derivation_refusal_streak = 0 if event.is_a?(Telemetry::ContextDerived)
-      remeasure if event.is_a?(Telemetry::RunInterrupted)
+      interrupted if event.is_a?(Telemetry::RunInterrupted)
       # Matched by class, for {#turn_usage?}'s reason. It is the one record the
       # fleet reads that is not an {Event}, and {Telemetry::ChildProgress} says
       # why the facts a tree needs ride beside a spawn rather than in it.
@@ -576,6 +576,12 @@ module Lain
       Array(event.body&.fetch("content", nil)).filter_map do |block|
         block["name"] if block.is_a?(Hash) && block["type"] == "tool_use"
       end
+    end
+
+    # An interrupted run ends without the transition that would clear the slot.
+    def interrupted
+      remeasure
+      @flight = nil
     end
 
     def in_flight_slot

@@ -223,6 +223,16 @@ RSpec.describe Lain::CLI::LiveViews do
       expect(hud).not_to include("model")
     end
 
+    it "drops the model segment when the chronicle journals an interrupted run" do
+      real_chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 10, system: "s"),
+                           toolset: Lain::Toolset.new([]))
+      listener.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
+
+      real_chronicle.interrupted(head: nil, reason: :stopped)
+
+      expect(hud).not_to include("model")
+    end
+
     it "leaves a chronicle nobody listened on with the Null listener" do
       expect(Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new)).instrumentation.transition_listener)
         .to be(Lain::Agent::TransitionListener::Null)
