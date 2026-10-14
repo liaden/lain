@@ -139,6 +139,31 @@ RSpec.describe Lain::Provider::Ollama::Deployment do
     end
   end
 
+  describe "the stream stall grace" do
+    def stall_of(deployment) = deployment.apply(Lain::Provider::HTTP::Configuration.new).stream_stall_timeout
+
+    let(:local) { described_class.local }
+    let(:cloud) { described_class.cloud(api_key: "sk-test") }
+
+    around { |example| with_env("LAIN_STREAM_STALL_TIMEOUT" => nil, &example) }
+
+    it "sits 5s under the request timeout on both arms" do
+      expect([stall_of(local), stall_of(cloud)]).to eq([295, 115])
+    end
+
+    it "yields to a number in the environment" do
+      with_env("LAIN_STREAM_STALL_TIMEOUT" => "7") { expect([stall_of(local), stall_of(cloud)]).to eq([7, 7]) }
+    end
+
+    it "yields to 0 as the off switch" do
+      with_env("LAIN_STREAM_STALL_TIMEOUT" => "0") { expect([stall_of(local), stall_of(cloud)]).to eq([nil, nil]) }
+    end
+
+    it "reads a blank variable as unset" do
+      with_env("LAIN_STREAM_STALL_TIMEOUT" => " ") { expect([stall_of(local), stall_of(cloud)]).to eq([295, 115]) }
+    end
+  end
+
   describe "the hosted arm" do
     subject(:deployment) { described_class.cloud(api_key: key) }
 

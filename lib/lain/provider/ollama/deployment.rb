@@ -113,6 +113,12 @@ module Lain
         LOCAL_REQUEST_TIMEOUT = 300
         LOCAL_MAX_RETRIES = 3
 
+        # Net::HTTP's read timeout would otherwise race the stall clock and win,
+        # surfacing a retried timeout instead of a named stall.
+        STALL_MARGIN = 5
+
+        STALL_ENV = "LAIN_STREAM_STALL_TIMEOUT"
+
         # The cloud base for the same native endpoints -- not the `/v1/...`
         # OpenAI-compat surface, which is a different wire.
         CLOUD_API_BASE = "https://ollama.com"
@@ -303,6 +309,8 @@ module Lain
 
         def request_timeout = local? ? LOCAL_REQUEST_TIMEOUT : CLOUD_REQUEST_TIMEOUT
 
+        def stream_stall_timeout = request_timeout - STALL_MARGIN
+
         def max_retries = local? ? LOCAL_MAX_RETRIES : CLOUD_MAX_RETRIES
 
         # `/api/ps` lists LOADED RUNNERS -- a concept a serverless host does not
@@ -337,6 +345,7 @@ module Lain
           config.ollama_api_key = api_key
           config.request_timeout = request_timeout
           config.max_retries = max_retries
+          config.stream_stall_timeout = stream_stall_timeout unless stall_env_set?
           config
         end
 
@@ -378,6 +387,8 @@ module Lain
         def deconstruct = to_h.values
 
         private
+
+        def stall_env_set? = !Blankness.blank?(ENV.fetch(STALL_ENV, nil))
 
         # nil on the loopback arm, because it holds no key and saying it holds a
         # withheld one would be a lie in the other direction.

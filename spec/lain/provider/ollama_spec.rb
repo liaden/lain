@@ -157,6 +157,12 @@ RSpec.describe Lain::Provider::Ollama do
       expect(endpoint_of(provider)).to eq("https://staging.example")
     end
 
+    it "builds its configuration with a stall grace under the deployment's request timeout" do
+      with_env("LAIN_STREAM_STALL_TIMEOUT" => nil) do
+        expect(cloud.instance_variable_get(:@config).stream_stall_timeout).to eq(115)
+      end
+    end
+
     # The deployment states the envelope, and the two arms disagree about it:
     # 300s/3 is a local model thinking for six minutes, 120s/5 is a metered
     # host whose ordinary failure is a 429.
