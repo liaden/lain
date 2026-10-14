@@ -70,6 +70,8 @@ module Lain
 
         RAISE_MAX_TOKENS = "raise --max-tokens (now %d); a thinking model's reasoning counts against it"
 
+        WAIT_LONGER = "set LAIN_STREAM_STALL_TIMEOUT to wait longer (in seconds; 0 turns the stall check off)"
+
         NOTHING_FOLDED = -> {}
         private_constant :NOTHING_FOLDED
 
@@ -98,6 +100,7 @@ module Lain
         def refuse(error)
           record_interruption(error)
           @tty.render_error(error.message)
+          @tty.render_error(WAIT_LONGER) if Agent::StopReason.for(error) == :stalled_stream
           nil
         end
 

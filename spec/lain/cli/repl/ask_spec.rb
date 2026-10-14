@@ -208,6 +208,20 @@ RSpec.describe Lain::CLI::Repl::Ask do
       expect(chronicle).to have_received(:interrupted).with(head: "sha-head", reason: :stalled_stream)
     end
 
+    it "follows a stall's error with the variable that waits longer" do
+      ask.settle(wrapped_stall)
+
+      expect(tty).to have_received(:render_error).with("no chunk for 30.0s").ordered
+      expect(tty).to have_received(:render_error)
+        .with("set LAIN_STREAM_STALL_TIMEOUT to wait longer (in seconds; 0 turns the stall check off)").ordered
+    end
+
+    it "adds no remedy line to a transport error that is not a stall" do
+      ask.settle(Lain::Provider::Ollama::PreWireError.new("connection refused"))
+
+      expect(tty).to have_received(:render_error).once
+    end
+
     it "says why by type: a ceiling, a refusal, a stop, a transport failure, or torn" do
       over_window = Lain::Middleware::RequestBudget::OverWindow.new("refused", prompt_tokens: 9, window_tokens: 8,
                                                                                source: "ollama")
