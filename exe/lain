@@ -532,6 +532,9 @@ class LainCLI < Thor
     desc "status [SLUG]", "Where one epic stands: ready issues and remaining waves, folded from the Journal"
     def status(slug = nil) = render { Lain::CLI::Epic.new.status(slug, mermaid: options[:mermaid]) }
 
+    desc "show [DOC] [SLUG]", "Print one of an epic's documents: research (the default), epic, issues/ID or plans/ID"
+    def show(doc = "research", slug = nil) = render { Lain::CLI::Epic.new.show(doc, slug) }
+
     method_option :discovered_from, type: :string, desc: "The live issue this one grew out of, if any"
     desc "add ID TITLE [SLUG]", "Add a new issue to the epic graph, journaled as a graph_revision"
     def add(id = nil, title = nil, slug = nil)

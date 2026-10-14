@@ -55,6 +55,9 @@ module Lain
       # A slug was given and the home holds no such epic.
       class UnknownEpic < Error; end
 
+      # A document name was given that names no kind of epic document.
+      class UnknownDocument < Error; end
+
       # `merge` was asked to fold in a side that has already finished, or is in
       # flight: silently reopening it under the merged id would erase that
       # progress, so the caller is told which side and what it already is.
@@ -206,6 +209,20 @@ module Lain
 
         resolved = chosen(slug, slugs, container, command: "epic status")
         mermaid ? Lain::Epic::Mermaid.render(progress(resolved)) : report(resolved)
+      end
+
+      # One of an epic's documents, verbatim.
+      #
+      # @param doc [String] `research`, `epic`, `issues/ID` or `plans/ID`
+      # @param slug [String, nil] the epic; omitted resolves to the sole one
+      # @return [String] the document's bytes
+      # @raise [UnknownDocument] for any other name
+      # @raise [Lain::Error] a missing document, an unresolvable epic, or an
+      #   unwritable id
+      def show(doc = "research", slug = nil)
+        slugs = slugs_in(container)
+        resolved = chosen(slug, slugs, container, command: "epic show")
+        document(home_for(resolved), doc).read
       end
 
       # WHICH epic a bare command means: the sole one in the home, or the named
@@ -383,6 +400,17 @@ module Lain
 
         raise Ambiguous, "#{container} holds #{slugs.size} epics (#{listed(slugs)}) -- " +
                          format(REMEDY, command:)
+      end
+
+      def document(home, doc)
+        kind, id = doc.split("/", 2)
+        case [kind, id]
+        in ["research", nil] then home.research
+        in ["epic", nil] then home.epic
+        in ["issues", String] then home.issue(id)
+        in ["plans", String] then home.plan(id)
+        else raise UnknownDocument, "no document #{doc.inspect} -- name one of research, epic, issues/ID or plans/ID"
+        end
       end
 
       def listed(slugs) = slugs.map { |slug| "`#{slug}`" }.join(", ")

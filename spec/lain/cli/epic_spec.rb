@@ -1083,4 +1083,51 @@ RSpec.describe Lain::CLI::Epic do
       expect { command.status }.to raise_error(Lain::Error, /issue "ghost"/)
     end
   end
+
+  describe "#show" do
+    def home_for(slug) = Lain::Epic::Home.resolve(config:, paths:, root:, slug:)
+
+    def show_via_cli(*argv)
+      with_env("XDG_STATE_HOME" => state_home, "HOME" => state_home) do
+        Dir.chdir(root) { capture_stdout { LainCLI.start(["epic", "show", *argv], debug: true) } }
+      end
+    end
+
+    def capture_stdout
+      original = $stdout
+      $stdout = StringIO.new
+      yield
+      $stdout.string
+    ensure
+      $stdout = original
+    end
+
+    before { home_for("frugirl").research.write("# Research\n") }
+
+    it "prints the sole epic's research through the command line" do
+      expect(show_via_cli).to include("# Research")
+    end
+
+    it "prints an issue plan by its home path" do
+      home_for("frugirl").plan("a1").write("the a1 plan\n")
+
+      expect(command.show("plans/a1")).to eq("the a1 plan\n")
+    end
+
+    it "prints an issue document by its home path" do
+      home_for("frugirl").issue("a1").write("the a1 issue\n")
+
+      expect(command.show("issues/a1")).to eq("the a1 issue\n")
+    end
+
+    it "names the missing file and the epic home" do
+      expect { command.show("epic", "frugirl") }
+        .to raise_error(Lain::Error, /epic\.md.*#{Regexp.escape(container)}|#{Regexp.escape(container)}.*epic\.md/)
+    end
+
+    it "lists the document names it accepts when given an unknown one" do
+      expect { command.show("notes") }
+        .to raise_error(Lain::CLI::Epic::UnknownDocument, %r{research.*epic.*issues/ID.*plans/ID})
+    end
+  end
 end
