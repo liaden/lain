@@ -370,6 +370,12 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   green alone and 3 of 3 runs of its file with that seed: `Lain::Frontend::LineEditor#read, and the
   submit predicate asking the terminal for Shift+Enter resets after an exception`.
 
+  Added 2026-10-14, red once in a pre-commit suite (seed 48225, an implementer's spec run beside
+  it) with `expected "\e[>4;1m" to end with "\e[>4;0m"`, and green alone and 3 of 3 runs of its file
+  with that seed: `Lain::Frontend::LineEditor#read, and the submit predicate asking the terminal
+  for Shift+Enter resets at EOF`. It is the second example of that group on this list, so the
+  group's reset is worth a card of its own.
+
   Added 2026-09-29, red once in a whole-suite run (seed 59509) and green 3 of 3 alone. It counts
   every descriptor in `/proc/self/fd`, so anything else live in the same worker process moves the
   count: `Lain::Agent the graph CoreGraph hands out by default runs to completion holding no file
