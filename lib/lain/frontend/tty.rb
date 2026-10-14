@@ -50,6 +50,9 @@ module Lain
       HELD = "held as your next prompt: %s"
       HELD_BESIDE_QUESTION = "that does not answer the question: /inbox lists it, and :LainReply answers it"
       HELD_BESIDE_APPROVAL = "that does not answer the approval: /approve answers it"
+      # A reply can be tens of kilobytes on one line; the echo is a reminder, not a copy.
+      ECHO_WIDTH = 120
+      ANSWERED = "answered lain's questions"
       DISCARDED = "discarded: %s -- finish that line and it is held as your next prompt"
 
       NO_LAYERS = -> { Mode::LayerSet.empty }
@@ -236,6 +239,11 @@ module Lain
         first, *rest = legible_lines(text)
         render_line(:prompt, stamp("you> #{first}"))
         rest.each { |row| render_line(:prompt, "#{" " * stamp("you> ").length}#{row}") }
+      end
+
+      def render_answer_echo(lines)
+        render_line(:prompt, stamp(ANSWERED))
+        lines.each { |line| render_line(:prompt, "  #{legible(line.truncate(ECHO_WIDTH))}") }
       end
 
       def render_discarded(partial) = render_warning(format(DISCARDED, legible(partial)))

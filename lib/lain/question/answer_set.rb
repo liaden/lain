@@ -88,7 +88,10 @@ module Lain
       # A String, because that is what a {Tool::Result} carries -- and a
       # {Reply}, so a reader deciding something from what the human wrote reads
       # {#words} rather than the grammar the rendering wraps them in.
-      def render = Reply.new(Rendering.new(self).to_s, words:)
+      def render
+        rendering = Rendering.new(self)
+        Reply.new(rendering.to_s, words:, summary: rendering.summary)
+      end
 
       # What the human wrote, unrendered: the prose reply, or every comment the
       # answers carry. Selections are not words, so a set answered only by
@@ -204,9 +207,13 @@ module Lain
       # them -- an epic gate asking approve or deny -- used to read the
       # rendering instead, and the rendering of "approve" is not "approve".
       class Reply < String
-        def initialize(rendering, words:)
+        # @return [Array<String>] one line per question, for the human's own transcript
+        attr_reader :summary
+
+        def initialize(rendering, words:, summary: [].freeze)
           super(rendering)
           @words = words.dup.freeze
+          @summary = summary.map { |line| line.dup.freeze }.freeze
           freeze
         end
 
@@ -231,6 +238,8 @@ module Lain
 
         def to_s = (@set.prose? ? spoken : selections).join("\n\n")
 
+        def summary = @set.prose? ? ["(in prose) #{first_line(@set.text)}"] : @set.map { |answer| digest(answer) }
+
         private
 
         def spoken
@@ -238,6 +247,21 @@ module Lain
            "Questions asked: #{@set.questions.ids.map { |id| "`#{id}`" }.join(", ")}",
            "Reply:\n#{quoted(@set.text)}"]
         end
+
+        def digest(answer)
+          question = @set.questions.fetch(answer.question_id)
+          "#{answer.question_id}: #{outcome(answer, question)}"
+        end
+
+        def outcome(answer, question)
+          return "(unanswered)" unless answer.answered?
+
+          return first_line(answer.comment) if question.free_text? || !answer.selected?
+
+          labels(answer, question).join(", ")
+        end
+
+        def first_line(prose) = prose.split(/\r\n|\r|\n/).first.to_s
 
         def selections = [counted, *@set.map { |answer| section(answer) }]
 

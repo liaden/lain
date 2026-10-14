@@ -184,6 +184,34 @@ RSpec.describe Lain::Question::AnswerSet do
     end
   end
 
+  describe "the summary beside the rendering" do
+    it "has one line per question: the id, then the chosen labels" do
+      expect(answered.render.summary).to eq(["deploy: Ship now", "reviewers: Sandi, Aaron"])
+    end
+
+    it "says a question nobody answered is unanswered rather than leaving it out" do
+      expect(described_class.new(questions:, answers: [chose_yes]).render.summary)
+        .to eq(["deploy: Ship now", "reviewers: (unanswered)"])
+    end
+
+    it "shows the first line of a free-text answer" do
+      free = Lain::Question::Set.new(questions: [Lain::Question.new(id: "why", body: "Why?")])
+      answer = Lain::Question::Answer.new(question_id: "why", comment: "because\nof the migration")
+
+      expect(described_class.new(questions: free, answers: [answer]).render.summary).to eq(["why: because"])
+    end
+
+    it "is one line naming the prose when the whole set was answered in prose" do
+      reply = described_class.new(questions:, text: "both, later\nthanks").render
+
+      expect(reply.summary).to eq(["(in prose) both, later"])
+    end
+
+    it "is frozen" do
+      expect(answered.render.summary).to be_frozen
+    end
+  end
+
   describe "rendering for the model" do
     it "names each question, its chosen labels, and the comment" do
       rendered = answered.render

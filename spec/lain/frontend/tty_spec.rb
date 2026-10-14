@@ -612,6 +612,26 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string.lines).to eq(["13:14:01 you> one\n", "              two\n", "              three\n"])
     end
 
+    it "echoes an answered set as a stamped heading over one line per question" do
+      stamped.render_answer_echo(["device-sync: Haven't decided", "out-of-scope: Barcode scanning, Pantry inventory"])
+
+      expect(output.string.lines).to eq(["13:14:01 answered lain's questions\n",
+                                         "  device-sync: Haven't decided\n",
+                                         "  out-of-scope: Barcode scanning, Pantry inventory\n"])
+    end
+
+    it "cuts an answer line too long to be a reminder" do
+      stamped.render_answer_echo(["why: #{"x" * 5_000}"])
+
+      expect(output.string.bytesize).to be < 300
+    end
+
+    it "shows a control character in an answer echo rather than sending it to the screen" do
+      stamped.render_answer_echo(["why: a\e[201~b"])
+
+      expect(output.string).not_to include("\e")
+    end
+
     it "shows a control character the human typed rather than sending it to the screen" do
       stamped.render_prompt_echo("a\e[201~b")
 

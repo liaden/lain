@@ -102,12 +102,14 @@ RSpec.describe "a human's reply handed back", :seam do
   # announce-once guard on its own would have been worse than the silence:
   # the handback's BYTES are the whole oversized reply, and the note is one
   # line. Measured against the reply rather than a constant, so it is the
-  # relationship being pinned and not a width.
+  # relationship being pinned and not a width. The transcript's answer echo may
+  # show the reply's first line, cut to the echo width, so what is excluded is
+  # any run of the reply longer than that.
   it "says all of that without putting the reply itself in the scrollback" do
     exchange(oversized, "send")
 
     expect(output.string.bytesize).to be < oversized.bytesize
-    expect(output.string).not_to include("OVERSIZED-BODY")
+    expect(output.string).not_to include(oversized[0, Lain::Frontend::TTY::ECHO_WIDTH + 1])
   end
 
   # Where "shown their own text again" is served. The one-line note above the

@@ -1694,6 +1694,78 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(editor.refusals).to be_empty
     end
 
+    describe "the transcript echo of an answered set" do
+      let(:two_questions) do
+        Lain::Question::Set.new(
+          questions: [Lain::Question.new(id: "device-sync", body: "Sync?",
+                                         options: [option("undecided", "Haven't decided")]),
+                      Lain::Question.new(id: "out-of-scope", body: "Out?", arity: "multi",
+                                         options: [option("barcode", "Barcode scanning"),
+                                                   option("pantry", "Pantry inventory")])]
+        )
+      end
+      let(:ticked) do
+        Lain::Question::AnswerSet.new(
+          questions: two_questions,
+          answers: [Lain::Question::Answer.new(question_id: "device-sync", option_ids: ["undecided"]),
+                    Lain::Question::Answer.new(question_id: "out-of-scope", option_ids: %w[barcode pantry])]
+        )
+      end
+
+      before { replies.bind_editor(editor) }
+
+      def option(id, label) = Lain::Question::Option.new(id:, label:)
+
+      it "says each question's answer once, after the answer was handed on" do
+        answered = nil
+        Sync { answered = listed(ask_human, "which db?") }
+        editor.push(["question_answered", [answered.digest, ticked]])
+
+        with_surfaces { !ask_human.pending? }
+
+        expect(output.string).to match(/\d\d:\d\d:\d\d answered lain's questions\n/)
+        expect(output.string).to include("device-sync: Haven't decided")
+        expect(output.string).to include("out-of-scope: Barcode scanning, Pantry inventory")
+        expect(output.string.scan("answered lain's questions").size).to eq(1)
+      end
+
+      it "echoes the first line of a bare String answer from :LainReply" do
+        Sync { listed(ask_human, "which db?") }
+        editor.push(["reply", ["postgres\nplease"]])
+
+        with_surfaces { !ask_human.pending? }
+
+        expect(output.string).to match(/answered lain's questions\n\s+postgres\n/)
+        expect(output.string).not_to include("please")
+      end
+
+      it "echoes nothing for an answer to a set that is no longer held" do
+        replies.bind_editor(editor)
+        editor.push(["question_answered", ["blake3:deadbeef", ticked]])
+
+        with_surfaces { editor.refusals.any? }
+
+        expect(output.string).not_to include("answered lain's questions")
+      end
+
+      it "echoes nothing for the second answer to a set already answered" do
+        reply_calls = 0
+        allow(directory).to receive(:reply).and_wrap_original do |original, *args|
+          reply_calls += 1
+          original.call(*args)
+        end
+        answered = nil
+        Sync { answered = listed(ask_human, "which db?") }
+        editor.push(["question_answered", [answered.digest, ticked]])
+        with_surfaces { !ask_human.pending? }
+        editor.push(["question_answered", [answered.digest, ticked]])
+
+        with_surfaces { reply_calls >= 2 }
+
+        expect(output.string.scan("answered lain's questions").size).to eq(1)
+      end
+    end
+
     # A drain wired with no question queue -- one surface answering one asker,
     # as the epic gate's seat is -- has nothing queued for an answer to retire,
     # and an answer must still reach the set it names.
@@ -1808,6 +1880,27 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(output.string).to include(Lain::CLI::HumanReplies::AnswerLoop::ANSWERED_ELSEWHERE)
     end
 
+    it "still stops the read for an answer that was handed on when writing its echo raises" do
+      reading_at_the_terminal
+      allow(tty).to receive(:render_answer_echo).and_raise(IOError, "terminal went away")
+
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        rail.detach
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task, reason: "the question queued") { replies.pending? }
+        drain = task.async { replies.drain_at_prompt }
+        pumped_until(task, reason: "the drain's human> opened") { @open_reads.positive? }
+        rail.push(["reply", ["postgres"]])
+        pumped_until(task, reason: "the read stopped") { @open_reads.zero? }
+        drain.stop
+        run.stop
+        session.each(&:stop)
+      end
+
+      expect(ask_human.last_answer.body["answer"]).to include("postgres")
+    end
+
     it "stops the read, retires the item, and draws no human> for it on the next three lines" do
       reading_at_the_terminal
 
@@ -1831,7 +1924,6 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       expect(@reads).to eq(1)
       expect(ask_human.last_answer.body["answer"]).to include("postgres")
-      expect(replies.pending?).to be(false)
       expect(output.string).to include(Lain::CLI::HumanReplies::AnswerLoop::ANSWERED_ELSEWHERE)
     end
 

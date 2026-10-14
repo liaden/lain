@@ -381,9 +381,10 @@ module Lain
       def deliver(answer, digest)
         open = @reads.on(digest).each(&:claim)
         queued = @queued.on(digest)
-        handed_on(answer, digest)
+        delivered = handed_on(answer, digest)
         handed = true
         settled(digest, open, queued)
+        echo(answer) if delivered
       ensure
         open&.each { |read| handed ? read.settle : read.release }
       end
@@ -392,6 +393,11 @@ module Lain
         @ask_human.reply(answer, digest)
       rescue Lain::Promise::AlreadyResolved
         nil
+      end
+
+      def echo(answer)
+        lines = answer.respond_to?(:summary) ? answer.summary : [answer.to_s.lines.first.to_s.chomp]
+        @tty.render_answer_echo(lines)
       end
 
       # What "this set is DONE" means to everything that lists it, in ONE place
