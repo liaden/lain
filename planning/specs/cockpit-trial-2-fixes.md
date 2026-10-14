@@ -1,6 +1,6 @@
 # Cockpit trial 2 fixes: the cloud arm finishes a long write, notes reach a running agent, and the transcript shows both sides
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -925,3 +925,8 @@ After the last card lands:
 5. Rerun the frugirl trial: a fresh empty `~/dev/frugirl` with the same `.lain/config.rb`, `lain up ~/dev/frugirl -- --provider ollama-cloud --model glm-5.3`, `/research-epic` with the vision on the prompt, a mid-run note, and the research gate reached. Compare against the 2026-10-09 session record.
 
 ## Execution log
+
+- 2026-10-14 start. Base `main` at `c7f0846f`. Grounding was `deda26a3`; only this plan and `ROADMAP.md` changed since, so no card's code moved.
+- `git worktree list` at start: `/home/tara/dev/lain c7f0846f [main]`, `/home/tara/tmp/lain-qa-2026-10-08-tree b6a3efb2 (detached HEAD)`. Branches: `flake/review`, `main`, `spike/combined`, `spike/combined2`.
+- Commit checks (`.pre-commit-config.yaml`): whitespace, EOF, yaml, merge-conflict and shebang hooks; `bundle exec rake compile check` (rubocop over the repo plus `rake pspec`, about 60s); `bundle exec yard-lint --staged`; `bin/lint-gherkin-docs` on staged plan docs; `bin/lint-commit-msg` (subject 72 chars max, no period, no dashes, no trailers); `bin/lint-price-freshness`. Rust hooks only on Rust files. Agent-runnable: `bundle exec rubocop <paths>`, `bundle exec yard-lint <paths>`, `bundle exec rspec <spec paths>`.
+- The suite shares `TMPDIR` and is not safe beside other tests: landings run on a quiet box. No paths need user approval.
