@@ -30,10 +30,15 @@ module Lain
       # `snapshots:` is a {SnapshotSlot}, read at every settle rather than
       # captured here, so a posture flip between two turns reaches the next
       # snapshot.
-      def initialize(runner:, snapshots:, journal: Channel::Null.instance)
+      # `display:` is where the human hears which files a round wrote, and
+      # `display_as:` the role that record names.
+      def initialize(runner:, snapshots:, journal: Channel::Null.instance, display: Channel::Null.instance,
+                     display_as: "lain")
         @runner = runner
         @snapshots = snapshots
         @journal = journal
+        @display = display
+        @display_as = display_as
       end
 
       # `rescue`/`else` rather than a `begin` around the commit: an `else` body
@@ -85,8 +90,20 @@ module Lain
         committed = settled(delivery, timeline, session, &commit)
         delivered(session, committed)
         yield committed
+        report_writes(session)
         @snapshots.write(timeline: committed, paths: session.writes, pre_images: session.pre_images)
         session.settle_pre_images
+      end
+
+      # Before the snapshot write, which can raise, and before the settle that
+      # clears what it reads.
+      def report_writes(session)
+        paths = session.round_writes
+        return if paths.empty?
+
+        record = Telemetry::FilesWritten.new(role: @display_as, paths:)
+        @journal << record
+        @display << record
       end
 
       # Only the commit is covered, never the yield or the snapshot after it:

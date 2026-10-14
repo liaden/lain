@@ -38,6 +38,25 @@ RSpec.describe Lain::Tools::EpicWrite do
       .to eq(["r\n", epic_md, "i\n", "p\n"])
   end
 
+  describe "the round's write report" do
+    let(:session) { Lain::Session.new.open_pre_images }
+    let(:invocation) { Lain::Tool::Invocation.new(context: session) }
+
+    it "names each document by its slug and home-relative path, outside the snapshot write-set" do
+      write(slug: "frugirl-mvp", artifact: "research", content: "r\n")
+      write(slug: "frugirl-mvp", artifact: "issue", issue: "a1", content: "i\n")
+
+      expect(session.round_writes).to eq(["frugirl-mvp/research.md", "frugirl-mvp/issues/a1.md"])
+      expect(session.writes).to eq([])
+    end
+
+    it "names nothing for a write that was refused" do
+      write(slug: "frugirl-mvp", artifact: "epic", content: "### a1: not a heading\n")
+
+      expect(session.round_writes).to eq([])
+    end
+  end
+
   describe "an epic.md, parsed before it is written" do
     it "says how many issues the epic tier will read from it" do
       result = write(slug: "frugirl-mvp", artifact: "epic", content: epic_md)

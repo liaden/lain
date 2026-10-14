@@ -172,6 +172,8 @@ module Lain
     #   files a turn's tools wrote, as a causal-only Store event; a read-only
     #   turn lands nothing. A slot rather than a writer, so a posture flip can
     #   change the writer under a delivery built once.
+    # @param display [#<<] where the human is told which files a tool round wrote
+    # @param display_as [String] the role that report names
     # @param instrumented [Hash{Symbol => Object}] the seven keywords a run
     #   REPORTS through (`turn_middleware:`, `transition_listener:`, etc.),
     #   accepted directly so every call site that predates `instrumentation:`
@@ -183,7 +185,7 @@ module Lain
                    session: Session.new, mailbox: Context::Mailbox::Null,
                    budget: Budget.new, request_override: RequestOverride::None,
                    snapshot_slot: SnapshotSlot.new, context_window: ContextWindow.default,
-                   **instrumented)
+                   display: Channel::Null.instance, display_as: "lain", **instrumented)
       super() # state_machines sets the initial state through the super chain.
       @toolset = toolset
       @context = context
@@ -193,7 +195,7 @@ module Lain
       @context_window = context_window
       wire_callers(request_override:, instrumentation:, instrumented:,
                    model_caller:, tool_runner:, accounting:, provider:, handler:)
-      seed_run_state(session, snapshot_slot, budget)
+      seed_run_state(session, snapshot_slot, budget, display:, display_as:)
     end
 
     # Append a user turn and run until the loop settles.
@@ -507,10 +509,11 @@ module Lain
     # sits with the counter it bounds -- `#step` checks it and increments
     # `@iterations` on the next line. The zero is what an Agent that has never
     # run reports; #run_loop re-seeds it per run, the scope the ceiling bounds.
-    def seed_run_state(session, snapshot_slot, budget)
+    def seed_run_state(session, snapshot_slot, budget, display:, display_as:)
       @transition_listener = @instrumentation.transition_listener
       @session = session
-      @deliveries = ToolDelivery.new(runner: tool_runner, journal: @instrumentation.journal, snapshots: snapshot_slot)
+      @deliveries = ToolDelivery.new(runner: tool_runner, journal: @instrumentation.journal, snapshots: snapshot_slot,
+                                     display:, display_as:)
       @budget = budget
       @iterations = 0
       @dispatch_lock = Monitor.new

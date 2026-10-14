@@ -426,6 +426,22 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  describe "the files a tool round wrote" do
+    it "reports a real write_file to the display channel, by display_as, relative to the project root" do
+      Dir.mktmpdir do |dir|
+        worker_env = Lain::WorkerEnv.new(cwd: dir, env: {})
+        display = []
+        a = agent([tool_response(["tu_1", "write_file", { "path" => "notes.md", "content" => "hi\n" }]),
+                   text_response],
+                  toolset: CoreGraph.toolset([Lain::Tools::WriteFile.new]),
+                  session: Lain::Session.new(worker_env:), display:, display_as: "sage")
+        a.ask("write it")
+
+        expect(display).to eq([Lain::Telemetry::FilesWritten.new(role: "sage", paths: ["notes.md"])])
+      end
+    end
+  end
+
   # The window a tear strands a tool_use in is #perform_tools: the
   # assistant turn is committed and its results are not. What the Agent owns
   # here is WHEN the cancellation is committed, not what it says -- the block

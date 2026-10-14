@@ -576,7 +576,7 @@ module Lain
       # rather than rebuilt, which would lose the read-set, pin-set and todo
       # list replay just restored.
       def session_over(recorder, resumed)
-        return Lain::Session.new(memory: recorder, worker_env: chat_env) if resumed.nil?
+        return Lain::Session.new(memory: recorder, worker_env: chat_env, root:) if resumed.nil?
 
         resumed.session.watch_memory(recorder)
       end
@@ -659,6 +659,7 @@ module Lain
         agent = nil
         Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: live, session:,
                         timeline:, request_override: Lain::Agent::RequestOverride.new, # ResendBridge's slot
+                        display: channel,
                         snapshot_slot: snapshot_slot(board, session:, journal: chronicle.record_journal, channel:),
                         **backing(backend, channel, -> { agent.timeline }, board:)).tap { |built| agent = built }
       end

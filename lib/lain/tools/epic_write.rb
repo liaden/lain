@@ -55,16 +55,22 @@ module Lain
 
       protected
 
-      def perform(input, _invocation)
+      def perform(input, invocation)
         parsed = parsed_issues(input)
-        artifact = ARTIFACTS.fetch(input.artifact).call(@homes.for(input.slug), input.issue)
+        home = @homes.for(input.slug)
+        artifact = ARTIFACTS.fetch(input.artifact).call(home, input.issue)
         journaled_write(artifact, input.content)
+        session_of(invocation).record_document(document_name(home, artifact))
         Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{artifact.path}#{parsed}")
       rescue Lain::Error, SystemCallError => e
         Tool::Result.error(e.message)
       end
 
       private
+
+      def document_name(home, artifact)
+        "#{home.slug}/#{artifact.path.delete_prefix("#{home.path}#{File::SEPARATOR}")}"
+      end
 
       # An epic.md is read back by every epic command, so one they would refuse
       # is refused here, at write time, rather than at their next read.

@@ -57,17 +57,19 @@ module Lain
     #   stood at spawn, and they are already in the parent's record. Its
     #   plan-step count starts at the most those cuts consumed, so a step the
     #   child completes is pending against them as it would be against none.
+    # @param root [String, nil] the project root paths are shown relative to;
+    #   the checkout, then the worker's cwd, when absent
     # @raise [UnrecordedParent] when a seeded cut's parent is not seeded before it
     def initialize(memory: Memory::Recorder.new, worker_env: WorkerEnv.default,
-                   journal: Channel::Null.instance, scope: Unconfined, seeded_cuts: [])
+                   journal: Channel::Null.instance, scope: Unconfined, seeded_cuts: [], root: nil)
       @journal = journal
+      @root = root
       @reads = ReadSet.new
       @writes = Set.new
+      @documents = []
       @pre_images = PreImages::Closed
       @pins = Set.new
-      @todo_reminder = nil
-      @todo_items = []
-      @plan_step_completed = false
+      start_todos
       @compaction_cuts = [].freeze
       @cuts_by_address = {}
       seeded_cuts.each { |cut| hold_cut(cut) }
@@ -345,7 +347,28 @@ module Lain
     # @return [self]
     def settle_pre_images
       @pre_images = PreImages::Closed
+      @documents = []
       self
+    end
+
+    # A document a tool wrote outside the project's files, named as the human
+    # should read it. Kept apart from {#record_write}: a document is not part
+    # of the snapshot's write-set, which an undo puts back.
+    #
+    # @param path [String] the display name, `<slug>/<path in the epic home>`
+    # @return [self]
+    def record_document(path)
+      @documents << -path
+      self
+    end
+
+    # What the open round wrote, in write order and ready to show: a path under
+    # the root relative to it, any other absolute with the home directory as
+    # `~`, then the documents as named.
+    #
+    # @return [Array<String>]
+    def round_writes
+      [*@pre_images.to_h.keys.map { |path| display_path(path) }, *@documents]
     end
 
     # What `path` held before the open turn first wrote it. The block reads it
@@ -729,6 +752,12 @@ module Lain
 
     private
 
+    def start_todos
+      @todo_reminder = nil
+      @todo_items = []
+      @plan_step_completed = false
+    end
+
     def hold_cut(cut)
       unless cut.parent.nil? || @cuts_by_address.key?(cut.parent)
         raise UnrecordedParent,
@@ -764,6 +793,15 @@ module Lain
 
     def labeled_manifest(index)
       -"#{MANIFEST_HEADING}\n#{Memory::Manifest.new(index).to_reminder}"
+    end
+
+    def display_path(path)
+      env = worker_env
+      root = File.join(env.checkout || @root || env.cwd, "")
+      home = File.join(env.env.fetch("HOME") { Dir.home }, "")
+      return path.delete_prefix(root) if path.start_with?(root)
+
+      path.start_with?(home) ? "~/#{path.delete_prefix(home)}" : path
     end
 
     # Against the WORKER's cwd, not the process's: under isolation those differ,
@@ -1020,6 +1058,12 @@ module Lain
       #
       # @return [self]
       def record_write(_path, **) = self
+
+      # @return [self]
+      def record_document(_path) = self
+
+      # @return [Array]
+      def round_writes = [].freeze
 
       # @return [self]
       def open_pre_images = self

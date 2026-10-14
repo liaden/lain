@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
 require "json"
+require "tmpdir"
 
 # The snapshot duck, plus a hook so a stop can be made to land ON the settled
 # path -- the case the `rescue`/`else` split exists to keep out of the
@@ -68,6 +70,7 @@ RSpec.describe Lain::Agent::ToolDelivery do
                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
                   .commit(role: :assistant, content: response.content)
   end
+  let(:display) { [] }
 
   # Every `let` these examples drive is forced BEFORE any reactor opens. RSpec
   # memoizes a `let` under a Mutex, and a Mutex taken inside an `Async` task is
@@ -77,10 +80,20 @@ RSpec.describe Lain::Agent::ToolDelivery do
   # of an already-memoized `let` never takes the lock, which is why forcing them
   # here is the whole fix. (watchdog.rb's header records the same class of trap,
   # found the expensive way.)
-  before { [response, timeline, session, snapshots, journal, raised] }
+  before do
+    [response, timeline, session, snapshots, journal, raised]
+    display
+  end
 
   def delivery_over(handler, slot: snapshots)
-    described_class.new(runner: Lain::Agent::ToolRunner.new(handler:), snapshots: slot, journal:)
+    described_class.new(runner: Lain::Agent::ToolRunner.new(handler:), snapshots: slot, journal:, display:)
+  end
+
+  def writing(*paths)
+    Lain::Effect::Handler::Mock.new do |effect, _|
+      paths.each { |path| session.record_pre_image(path) { nil }.record_write(path) } if effect.tool_use_id == "tu_1"
+      Lain::Tool::Result.ok("ran #{effect.tool_use_id}")
+    end
   end
 
   def echoing = Lain::Effect::Handler::Mock.new { |effect, _| Lain::Tool::Result.ok("ran #{effect.tool_use_id}") }
@@ -115,6 +128,71 @@ RSpec.describe Lain::Agent::ToolDelivery do
       perform(echoing)
 
       expect(journal.grep(Lain::Telemetry::ToolCancelled)).to be_empty
+    end
+  end
+
+  describe "the files a round wrote" do
+    let(:dir) { Dir.mktmpdir }
+    let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: { "HOME" => "/home/me" })) }
+
+    after { FileUtils.remove_entry(dir) }
+
+    it "sends 1 record to the journal and the display channel, in write order" do
+      perform(writing("lib/a.rb", "lib/b.rb"))
+
+      expect(journal.grep(Lain::Telemetry::FilesWritten))
+        .to eq([Lain::Telemetry::FilesWritten.new(role: "lain", paths: ["lib/a.rb", "lib/b.rb"])])
+      expect(display).to eq(journal.grep(Lain::Telemetry::FilesWritten))
+    end
+
+    it "carries the role the delivery was built to report as" do
+      Sync do
+        described_class.new(runner: Lain::Agent::ToolRunner.new(handler: writing("lib/a.rb")), snapshots:, journal:,
+                            display:, display_as: "sage").perform(response, timeline:, session:) { nil }
+      end
+
+      expect(display.map(&:role)).to eq(["sage"])
+    end
+
+    it "sends the record before the snapshot write, so a snapshot that raises still reports" do
+      failing = ToolDeliverySpecSupport::Snapshots.new { raise Lain::Error, "snapshot failed" }
+      expect { perform(writing("lib/a.rb"), slot: failing) }.to raise_error(Lain::Error, "snapshot failed")
+
+      expect(display.map(&:paths)).to eq([["lib/a.rb"]])
+    end
+
+    it "names an epic document by its slug" do
+      handler = Lain::Effect::Handler::Mock.new do |_effect, _|
+        session.record_document("frugirl/research.md")
+        Lain::Tool::Result.ok("ran")
+      end
+      perform(handler)
+
+      expect(display.first.paths).to include("frugirl/research.md")
+    end
+
+    it "sends nothing for a round that only read" do
+      perform(echoing)
+
+      expect(display).to be_empty
+      expect(journal.grep(Lain::Telemetry::FilesWritten)).to be_empty
+    end
+
+    it "sends nothing for a cancelled round" do
+      handler = Lain::Effect::Handler::Mock.new do |effect, _|
+        session.record_pre_image("lib/a.rb") { nil }.record_write("lib/a.rb")
+        raise Async::Stop if effect.tool_use_id == "tu_2"
+
+        Lain::Tool::Result.ok("ran")
+      end
+      Sync do
+        delivery_over(handler).perform(response, timeline:, session:) { nil }
+      rescue Async::Stop => e
+        raised << e
+      end
+
+      expect(raised).not_to be_empty
+      expect(display).to be_empty
     end
   end
 

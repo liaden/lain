@@ -731,6 +731,74 @@ RSpec.describe Lain::Session do
     end
   end
 
+  describe "#round_writes" do
+    subject(:session) { described_class.new(worker_env: Lain::WorkerEnv.new(cwd: "/work/app", env: { "HOME" => "/home/me" })) }
+
+    def write(path)
+      session.record_pre_image(path) { nil }
+      session.record_write(path)
+    end
+
+    it "lists the open round's writes in write order, relative to the project root" do
+      session.open_pre_images
+      write("/work/app/lib/b.rb")
+      write("lib/a.rb")
+
+      expect(session.round_writes).to eq(["lib/b.rb", "lib/a.rb"])
+    end
+
+    it "shows a path outside the root absolute, with the home directory as ~" do
+      session.open_pre_images
+      write("/home/me/notes/a.md")
+      write("/etc/other.conf")
+
+      expect(session.round_writes).to eq(["~/notes/a.md", "/etc/other.conf"])
+    end
+
+    it "does not take a sibling directory sharing the root's prefix for a path under it" do
+      session.open_pre_images
+      write("/work/app2/a.rb")
+
+      expect(session.round_writes).to eq(["/work/app2/a.rb"])
+    end
+
+    it "names a document as given and keeps it out of the write-set" do
+      session.open_pre_images
+      write("lib/a.rb")
+      session.record_document("frugirl/research.md")
+
+      expect(session.round_writes).to eq(["lib/a.rb", "frugirl/research.md"])
+      expect(session.writes).to eq(["/work/app/lib/a.rb"])
+    end
+
+    describe "started in a subdirectory of the project" do
+      subject(:session) do
+        described_class.new(worker_env: Lain::WorkerEnv.new(cwd: "/work/app/lib/sub", env: {}), root: "/work/app")
+      end
+
+      it "shows a write outside the cwd but inside the root, and one inside the cwd, relative to the root" do
+        session.open_pre_images
+        write("/work/app/README.md")
+        write("a.rb")
+
+        expect(session.round_writes).to eq(["README.md", "lib/sub/a.rb"])
+      end
+    end
+
+    it "is empty once the round settles" do
+      session.open_pre_images
+      write("lib/a.rb")
+      session.record_document("frugirl/research.md")
+      session.settle_pre_images
+
+      expect(session.round_writes).to eq([])
+    end
+
+    it "is empty for a round that wrote nothing" do
+      expect(session.open_pre_images.round_writes).to eq([])
+    end
+  end
+
   describe "#reminders" do
     it "is empty before any todo_write lands" do
       expect(session.reminders).to eq([])
@@ -1132,6 +1200,11 @@ RSpec.describe Lain::Session do
       expect { null.record_write("/tmp/app.rb") }.not_to raise_error
       expect(null.written?("/tmp/app.rb")).to be(false)
       expect(null.writes).to eq([])
+    end
+
+    it "keeps the round's write report a no-op: documents record nothing, round_writes stays empty" do
+      expect { null.record_document("frugirl/research.md") }.not_to raise_error
+      expect(null.round_writes).to eq([])
     end
 
     it "keeps write_todos a no-op that never raises" do

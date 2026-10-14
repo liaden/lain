@@ -383,6 +383,35 @@ RSpec.describe Lain::CLI::Wiring do
     wiring.wire_agent(channel:, recorder:, session:, backend:)
   end
 
+  # The record tee never reaches the transcript, so a write is told to the
+  # human only through the channel the TTY drains.
+  it "hands the main agent the transcript's channel as where written files are told" do
+    displays = []
+    allow(Lain::Agent).to receive(:new).and_wrap_original do |original, **kwargs|
+      displays << kwargs[:display]
+      original.call(**kwargs)
+    end
+
+    wire_agent
+
+    expect(displays.first).to equal(channel)
+  end
+
+  # A chat started in a subdirectory still names its writes from the project
+  # root, which is where the human reads paths from.
+  it "names the chat's writes relative to the project root when its cwd is below it" do
+    shown = Dir.mktmpdir do |dir|
+      sub = File.join(dir, "lib", "sub").tap { |path| FileUtils.mkdir_p(path) }
+      project = Lain::Project.new(root: dir, cwd: sub, kind: :project, detected_by: :flag)
+      _, session = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, project:).run_state(nil)
+      written = File.join(dir, "lib", "other.rb")
+      session.open_pre_images.record_pre_image(written) { nil }.record_write(written)
+      session.round_writes
+    end
+
+    expect(shown).to eq(["lib/other.rb"])
+  end
+
   # The epic mount, the toolset's gate submitter, the board and the isolation
   # settings all read `.lain/config.rb` through one reader, so they cannot
   # read two different files.
