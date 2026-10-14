@@ -80,10 +80,9 @@ module Lain
       def self.process_input = $stdin
 
       # A cut line would otherwise travel on as a different prompt than the one typed.
-      def self.uncut(lines, screen)
-        cut, kept = lines.partition { |line| line.bytesize >= CUT_AT }
-        screen.render_warning(CUT_NOTICE) if cut.any?
-        kept
+      def self.uncut(typed, screen)
+        screen.render_warning(CUT_NOTICE) if typed.cut.positive?
+        typed.lines
       end
 
       def self.terminal?(input) = input.respond_to?(:tty?) && input.tty?
@@ -249,12 +248,12 @@ module Lain
       # a `command>` takes it for its own line, an answer holds it. Holding it
       # here would send a `/approve` typed just ahead of a parked call to `you>`.
       def forwarded(typed)
-        lifted, others = whole(typed.lines).partition { |line| @rail.lifts?(Intake::Line.new(text: line, generation: 0)) }
+        lifted, others = whole(typed).partition { |line| @rail.lifts?(Intake::Line.new(text: line, generation: 0)) }
         lifted.each { |line| @rail << Intake::Line.new(text: line, generation: Intake::Unpublished.generation) }
         @unfinished = Typeahead.pending(others, typed.partial)
       end
 
-      def whole(lines) = StdinPump.uncut(lines, @screen)
+      def whole(typed) = StdinPump.uncut(typed, @screen)
 
       def serve(prompt)
         return @rail << Intake::Eof.new if @ended
@@ -433,14 +432,70 @@ module Lain
         # key's `\e[A` or `\eOA`, or a bare escape.
         KEY_SEQUENCE = /\e(?:\[[\d;?]*[@-~]|O.)?/
 
+        # A paste still arriving has no end marker yet.
+        PASTE = /(\e\[200~(?:.*?\e\[201~|.*\z))/m
+        PASTE_MARKER = /\e\[20[01]~/
+        PASTE_ENDED = /\A\e\[200~(?<body>.*)\e\[201~\z/m
+
         # Whole lines and whatever followed the last line end, keeping only
         # what says something: Enter is what a human presses at a prompt that
         # appears mid-stream, and an arrow key typed ahead is not the start of
-        # a line the next answer should be joined to.
-        Typed = Data.define(:lines, :partial) do
+        # a line the next answer should be joined to. A paste is text: its
+        # markers go and a line end inside it does not end a line.
+        Typed = Data.define(:lines, :partial, :cut) do
+          def initialize(lines:, partial:, cut: 0) = super
+
           def self.from(bytes)
-            *lines, partial = bytes.b.force_encoding(Encoding::UTF_8).scrub.split(LINE_END, -1)
-            new(lines: lines.select { |line| said?(line) }.freeze, partial: (said?(partial.to_s) ? partial : "").freeze)
+            text, cut = uncut(bytes.b.force_encoding(Encoding::UTF_8).scrub)
+            *lines, partial = pieces(text)
+            new(lines: lines.select { |line| said?(line) }.freeze, partial: (said?(partial.to_s) ? partial : "").freeze,
+                cut:)
+          end
+
+          # The kernel cuts a raw line, markers included, so a cut inside a paste refuses the paste from the line it
+          # began on; keeping its remainder would leave the paste open over every line after it.
+          def self.uncut(text)
+            *raw, tail = text.split(/(\r\n|\r|\n)/, -1).each_slice(2).to_a
+            kept = []
+            opened = nil
+            cut = 0
+            raw.each do |pair|
+              if pair.first.bytesize < CUT_AT
+                kept << pair
+                opened = opening(pair.first, kept.size - 1, opened)
+              else
+                kept.slice!(opened..) if opened
+                opened = nil
+                cut += 1
+              end
+            end
+            ["#{kept.join}#{tail&.first}", cut]
+          end
+
+          def self.opening(line, index, opened)
+            marker = line.scan(PASTE_MARKER).last
+            return opened unless marker
+
+            marker == "\e[200~" ? (opened || index) : nil
+          end
+
+          # The odd pieces of a split on a captured pattern are the pastes.
+          def self.pieces(text)
+            text.split(PASTE, -1).each_with_object([+""]).with_index do |(chunk, lines), index|
+              index.odd? ? lines.last << pasted(chunk) : typed(lines, chunk)
+            end
+          end
+
+          def self.typed(lines, chunk)
+            first, *rest = chunk.split(LINE_END, -1)
+            lines.last << first.to_s
+            lines.concat(rest.map(&:+@))
+          end
+
+          # An unfinished paste keeps its markers and line ends, for the next sweep to complete.
+          def self.pasted(chunk)
+            ended = PASTE_ENDED.match(chunk)
+            ended ? ended[:body].chomp.gsub(LINE_END, "\n") : chunk
           end
 
           def self.said?(text) = !Blankness.blank?(text.gsub(KEY_SEQUENCE, "").gsub(/[[:cntrl:]]/, ""))

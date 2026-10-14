@@ -822,6 +822,94 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
   end
 
+  describe Lain::Frontend::StdinPump::Typeahead::Typed, ".from" do
+    it "takes a paste after a command as one line with no markers" do
+      typed = described_class.from("/research-epic \e[200~para one\npara two\n\e[201~\r")
+
+      expect([typed.lines, typed.partial]).to eq([["/research-epic para one\npara two"], ""])
+    end
+
+    it "keeps a paste still arriving in the partial, markers and all" do
+      typed = described_class.from("\e[200~a\nb")
+
+      expect([typed.lines, typed.partial]).to eq([[], "\e[200~a\nb"])
+    end
+
+    it "leaves a typed U+10FFFF alone as text" do
+      typed = described_class.from("a\u{10FFFF}b\r")
+
+      expect(typed.lines).to eq(["a\u{10FFFF}b"])
+    end
+
+    it "keeps the lines typed before and after a paste" do
+      typed = described_class.from("one\r\e[200~x\ny\e[201~\rtwo\r")
+
+      expect(typed.lines).to eq(%W[one x\ny two])
+    end
+  end
+
+  describe Lain::Frontend::StdinPump::Typeahead::Typed, "counting the terminal's cut" do
+    it "refuses a whole paste when one of its raw lines reaches the cut, and reads the next line normally" do
+      typed = described_class.from("\e[200~short\n#{"a" * 4095}\rnext\r")
+
+      expect([typed.lines, typed.cut]).to eq([["next"], 1])
+    end
+
+    it "counts the marker bytes toward the cut" do
+      typed = described_class.from("\e[200~#{"a" * 4089}\n\e[201~\r")
+
+      expect([typed.lines, typed.cut]).to eq([[], 1])
+    end
+
+    it "refuses the line a cut paste began, typed prefix and all" do
+      typed = described_class.from("/x \e[200~#{"a" * 4095}\rnext\r")
+
+      expect([typed.lines, typed.cut]).to eq([["next"], 1])
+    end
+
+    it "keeps a paste whose raw lines are each under the cut though the whole is over it" do
+      typed = described_class.from("\e[200~#{"a" * 4000}\n#{"a" * 4000}\n#{"a" * 4000}\e[201~\r")
+
+      expect([typed.lines.map(&:bytesize), typed.cut]).to eq([[12_002], 0])
+    end
+
+    it "keeps a typed line between two cut pastes" do
+      typed = described_class.from("pre\r\e[200~x\r#{"a" * 4095}\rkeep\r\e[200~y\r#{"b" * 4095}\r")
+
+      expect([typed.lines, typed.cut]).to eq([%w[pre keep], 2])
+    end
+
+    it "closes a paste at its end marker, so a later cut line takes nothing before it" do
+      typed = described_class.from("\e[200~a\rb\e[201~\r#{"c" * 4100}\rd\r")
+
+      expect([typed.lines, typed.cut]).to eq([%W[a\nb d], 1])
+    end
+
+    it "keeps a line of 4094 bytes, one under the cut" do
+      typed = described_class.from("#{"a" * 4094}\r")
+
+      expect([typed.lines.map(&:bytesize), typed.cut]).to eq([[4094], 0])
+    end
+  end
+
+  describe ".uncut" do
+    let(:screen) { instance_double(Lain::Frontend::TTY, render_warning: nil) }
+
+    it "says once that the terminal cut what it dropped, and returns the lines kept" do
+      typed = Lain::Frontend::StdinPump::Typeahead::Typed.new(lines: ["kept"].freeze, partial: "", cut: 2)
+
+      expect(described_class.uncut(typed, screen)).to eq(["kept"])
+      expect(screen).to have_received(:render_warning).with(described_class::CUT_NOTICE).once
+    end
+
+    it "says nothing when nothing was cut" do
+      typed = Lain::Frontend::StdinPump::Typeahead::Typed.new(lines: ["kept"].freeze, partial: "", cut: 0)
+
+      expect(described_class.uncut(typed, screen)).to eq(["kept"])
+      expect(screen).not_to have_received(:render_warning)
+    end
+  end
+
   describe ".keys" do
     it "offers the countdown one key at a time from the pump's terminal, and nothing from a stream" do
       keys = described_class.keys(StringIO.new("c"))

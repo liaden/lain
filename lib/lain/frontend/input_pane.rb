@@ -306,7 +306,7 @@ module Lain
 
       # A partial line, one ended by Ctrl-D, waits for the rest of it.
       def sent(client, typed)
-        StdinPump.uncut(typed.lines, @tty).each do |line|
+        StdinPump.uncut(typed, @tty).each do |line|
           emit(client, { "v" => "line", "text" => line, "generation" => 0 })
         end
         # A finished line's echoed newline moved the cursor off the input row, so

@@ -633,6 +633,36 @@ RSpec.describe Lain::Frontend::InputPane do
       expect([next_frame(chat, of: "line")["text"], next_frame(chat, of: "line")["text"]]).to eq(%w[first second])
     end
 
+    it "sends a bracketed paste of two lines as one line with no markers" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("\e[200~para one\npara two\n\e[201~\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("para one\npara two")
+    end
+
+    it "sends a bracketed paste of 6000 bytes whole or cut with a notice, never with a marker" do
+      chat = open_pane
+      unpublished(chat)
+      body = Array.new(40) { "#{"x" * 149}\n" }.join.chomp
+
+      keyboard.write("\e[200~#{body}\n\e[201~\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq(body)
+    end
+
+    it "refuses a too-long pasted segment with the cut notice and still sends the line typed after it" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("\e[200~#{"a" * 4200}\n\e[201~\r")
+      keyboard.write("after\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("after")
+      expect(screen.string).to include("cut by the terminal")
+    end
+
     it "joins a partial line ended by Ctrl-D to what is typed after it" do
       reads = watch_idle_reads
       chat = open_pane
