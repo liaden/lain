@@ -509,11 +509,12 @@ module Lain
       def bind_hud_store(agent) = agent.timeline.store.tap { |store| @status_feed.bind_store(store) }
 
       # What the Repl builds its editor from, as the one set it is: the views
-      # to attach, the Store and Session its buffers read, and the epic
-      # lain://status draws. {ReviewSeams}' splatted-hash shape, for the same
-      # reason -- the keywords travel together.
+      # to attach, the Store and Session its buffers read, the epic
+      # lain://status draws, and where a written epic document is read back.
+      # {ReviewSeams}' splatted-hash shape, for the same reason -- the keywords
+      # travel together.
       def editor_seams(nvim, agent, session)
-        { nvim:, store: bind_hud_store(agent), session:, epic: epic_status }
+        { nvim:, store: bind_hud_store(agent), session:, epic: epic_status, epic_docs: epic_mount.homes }
       end
 
       # The backend a run leases every worker's WorkerEnv from -- the actors a

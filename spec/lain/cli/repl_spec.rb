@@ -1363,6 +1363,18 @@ RSpec.describe Lain::CLI::Repl do
       Timeout.timeout(10) { repl_over(tty_for(dir)).run(nvim: nil, store: nil, session: nil) }
     end
 
+    it "hands the epic docs reader to the frontend it attaches" do
+      docs = Object.new
+      allow(Lain::Frontend::Neovim).to receive(:new).and_return(nil)
+      allow(conductor).to receive(:read_prompt).and_return(nil)
+      Dir.mktmpdir do |dir|
+        nvim = { channel: Lain::Channel.new, socket_path: "unused" }
+        Timeout.timeout(10) { repl_over(tty_for(dir)).run(nvim:, store: nil, session: nil, epic_docs: docs) }
+      end
+
+      expect(Lain::Frontend::Neovim).to have_received(:new).with(hash_including(epic_docs: docs))
+    end
+
     # THE REGRESSION. Nothing but the prompt read is running: no ask, no
     # #respond, no surface #respond starts. The gesture must still be answered.
     it "answers a gesture that arrives while the human sits idle at you>, with no ask in flight" do

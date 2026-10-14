@@ -19,16 +19,18 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
 
   let(:rpc) do
     Class.new do
-      attr_reader :views, :renders, :approvals
+      attr_reader :views, :renders, :approvals, :epic_docs
 
       def initialize
         @views = []
         @renders = []
         @approvals = []
+        @epic_docs = []
       end
 
       def post_view(name, lines, editable: false, generation: nil) = @views << [name, lines, editable, generation]
       def post_render(lines) = @renders << lines
+      def set_epic_doc(name, lines) = @epic_docs << [name, lines]
 
       # lain://approval's own inlet, and the reason it is a SEPARATE method
       # rather than a fourth `post_view`: the runtime writes b:lain_approval_rows
@@ -270,6 +272,25 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
       expect { surfaces.post(malformed) }.not_to raise_error
       expect(posted(Lain::Frontend::Neovim::StatusView::NAME)).to include(a_string_including("fleet unavailable"))
       expect(rpc.names).to include(Lain::Frontend::Neovim::Buffers::WORKSPACE)
+    end
+  end
+
+  describe "an epic document write" do
+    it "posts the document on the epic doc rail under its lain://epic name" do
+      artifact = Struct.new(:read).new("# Research\n")
+      docs = Struct.new(:home) { def for(_slug) = home }.new(Struct.new(:research).new(artifact))
+      surfaces = described_class.new(rpc:, approval_view:, epic_docs: docs)
+
+      surfaces.post(Lain::Epic::DocWritten.new(epic_slug: "frugirl", kind: "research", path: "research.md",
+                                               byte_digest: "blake3:x"))
+
+      expect(rpc.epic_docs).to eq([["lain://epic/frugirl/research.md", ["# Research"]]])
+    end
+
+    it "posts nothing for an ordinary event" do
+      surfaces.post(tool_output("x"))
+
+      expect(rpc.epic_docs).to be_empty
     end
   end
 

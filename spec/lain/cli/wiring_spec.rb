@@ -3618,15 +3618,17 @@ RSpec.describe Lain::CLI::Wiring do
       # and the Repl is where that view lands. The Repl's own `#run` is stubbed
       # because the conversation is not the claim -- what the example reads is
       # the seam hash a real assembly composed on its way to one.
-      def epic_handed_to_editor(chat)
+      def seams_handed_to_editor(chat)
         seen = {}
         allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
           original.call(**kwargs).tap { |repl| allow(repl).to receive(:run) { |**seams| seen.replace(seams) } }
         end
         chat.run(backend:, resumed: nil, nvim: nil)
         chat.conductor.close(reason: :exit)
-        seen.fetch(:epic)
+        seen
       end
+
+      def epic_handed_to_editor(chat) = seams_handed_to_editor(chat).fetch(:epic)
 
       def write_demo
         graph = Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "the a issue")])
@@ -3661,6 +3663,12 @@ RSpec.describe Lain::CLI::Wiring do
 
       it "hands the editor the unmounted null when the chat is in no epic" do
         expect(epic_handed_to_editor(seated)).to equal(Lain::Frontend::Neovim::StatusView::Unmounted)
+      end
+
+      # An epic_write in a chat seated in no epic still writes a document the
+      # human should be able to read where it was made.
+      it "hands the editor an epic documents reader when the chat is in no epic" do
+        expect(seams_handed_to_editor(seated).fetch(:epic_docs)).to be_a(Lain::CLI::EpicMount::Homes)
       end
     end
   end

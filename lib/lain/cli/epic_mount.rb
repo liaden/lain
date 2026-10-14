@@ -42,6 +42,7 @@ module Lain
         # @param homes [Homes] where epic_write resolves a home per call, and
         #   which epic_graph edits through
         def initialize(homes:)
+          @homes = homes
           @epic_write = Lain::Tools::EpicWrite.new(homes:)
           @epic_graph = Lain::Tools::EpicGraph.new(epics: homes.epics)
           freeze
@@ -52,6 +53,9 @@ module Lain
         def tools(submitter:) = [@epic_write, @epic_graph, Lain::Tools::EpicSubmit.new(submitter:)]
 
         def mounted? = false
+
+        # @return [Homes] where a written epic document is read back through
+        attr_reader :homes
       end
 
       # The journaled home for any slug, guarded by the reviews every session
@@ -276,6 +280,11 @@ module Lain
         )
       end
 
+      # @return [Homes] where a written epic document is read back through
+      def homes
+        @homes ||= Homes.new(journal: @journal, root: @root, paths: @paths, config: @config, mounted: home)
+      end
+
       private
 
       # `editor:` is deliberately not passed, and it is a finding rather than an
@@ -305,10 +314,6 @@ module Lain
       def epic_write = Lain::Tools::EpicWrite.new(homes:)
 
       def epic_graph = Lain::Tools::EpicGraph.new(epics: homes.epics)
-
-      def homes
-        @homes ||= Homes.new(journal: @journal, root: @root, paths: @paths, config: @config, mounted: home)
-      end
 
       # {Epic::Review.from_journal} and not {Review.new}, so a chat restarted
       # while a human still holds a file goes on refusing to overwrite it.

@@ -30,6 +30,14 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     LUA
   end
 
+  def epic_doc_lines(name)
+    inspector.exec_lua(<<~LUA, [name])
+      local buf = vim.fn.bufnr(...)
+      if buf == -1 then return {} end
+      return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    LUA
+  end
+
   def messages
     inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
   end
@@ -127,6 +135,25 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
         wait_until { journal_lines.any? { |line| line.include?("t9") } }
         expect(journal_lines).to eq(["[t9 stdout] a", "[t9 stdout]", "[t9 stdout]", "[t9 stdout] c"])
+      end
+    end
+  end
+
+  describe "an epic document written during the chat" do
+    it "appears as a read-only lain://epic buffer, read through the docs reader it was given" do
+      Dir.mktmpdir do |tmp|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(tmp, "state"), "HOME" => tmp })
+        config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg))
+        homes = Lain::CLI::EpicMount::Homes.new(journal: [], root: File.join(tmp, "project"), paths:, config:)
+        homes.for("frugirl").research.write("# Research\n")
+        frontend = described_class.new(channel:, socket_path: @socket, epic_docs: homes)
+
+        frontend.run do
+          channel.push(Lain::Epic::DocWritten.new(epic_slug: "frugirl", kind: "research", path: "research.md",
+                                                  byte_digest: "blake3:x"))
+
+          wait_until { epic_doc_lines("lain://epic/frugirl/research.md") == ["# Research"] }
+        end
       end
     end
   end

@@ -115,6 +115,13 @@ RSpec.describe Lain::CLI::EpicMount do
       expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_graph epic_submit])
     end
 
+    it "exposes the homes a document read resolves through, mounted or not" do
+      create_epic("alpha")
+
+      expect(mount_for.homes).to respond_to(:for)
+      expect(mount_for(options: { epic: "nope" }).homes).to respond_to(:for)
+    end
+
     # The whole reason --epic exists: the sole-epic default cannot answer, and
     # guessing would hand a human somebody else's document to review.
     it "offers no review tool, and says which epics are here, when several are and none was named" do

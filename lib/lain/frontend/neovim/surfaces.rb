@@ -37,6 +37,9 @@ module Lain
         # @param epic [#lines] what lain://status draws ({StatusView}),
         #   {StatusView::Unmounted} by default
         #
+        # @param epic_docs [#for] the chat's epic homes, which {EpicDocView} reads a
+        #   written document through; {EpicDocView::NoHomes} by default
+        #
         # The other three views are INJECTED and merely defaulted: `store:`,
         # `session:`, `journal:`, `questions:` and `epic:` exist only to build
         # those defaults.
@@ -51,12 +54,13 @@ module Lain
         def initialize(rpc:, approval_view:, store: Buffers::DetachedStore.instance,
                        session: Session::Null.instance, journal: Channel::Null.instance,
                        questions: InboxView::Unwired, journal_view: JournalView.new, buffers: nil,
-                       request_buffer: nil, epic: StatusView::Unmounted)
+                       request_buffer: nil, epic: StatusView::Unmounted, epic_docs: EpicDocView::NoHomes)
           @rpc = rpc
           @journal_view = journal_view
           @buffers = buffers || Buffers.new(store:, session:, questions:, epic:)
           @request_buffer = request_buffer || RequestBuffer.new(journal:)
           @approval_view = approval_view
+          @epic_doc_view = EpicDocView.new(homes: epic_docs)
         end
 
         # The read-only view set, and the line -> digest indexes the editor's
@@ -101,6 +105,7 @@ module Lain
           lines = @journal_view.lines(event)
           @rpc.post_render(lines) unless lines.empty?
           post_views(@buffers.updates(event))
+          post_epic_doc(event)
           # The editable view is posted with editable: true, so the runtime leaves
           # the buffer modifiable for the human -- a read-only post would flip it
           # nomodifiable and lock out the edit :LainResend depends on.
@@ -115,6 +120,11 @@ module Lain
         def resend(lines) = @request_buffer.resend(lines)
 
         private
+
+        def post_epic_doc(event)
+          doc = @epic_doc_view.update(event)
+          @rpc.set_epic_doc(*doc) if doc
+        end
 
         # The ONE place a rendering's stamp rides along:
         # {Buffers#generation_of} answers it for the view that has one and

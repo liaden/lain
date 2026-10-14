@@ -123,9 +123,12 @@ module Lain
       # @param epic [#lines] what lain://status draws: {StatusView::Mounted}
       #   for a chat seated in an epic, which {CLI::Wiring} resolves, and
       #   {StatusView::Unmounted} by default, whose buffer says none is mounted
+      # @param epic_docs [#for] the chat's epic homes, which a written document is
+      #   read back through for its `lain://epic/...` buffer
       def initialize(channel:, socket_path:, version: Lain::VERSION, protocol: nil,
                      store: Buffers::DetachedStore.instance, session: Session::Null.instance,
                      journal: Channel::Null.instance, resend_bridge: Unbridged, epic: StatusView::Unmounted,
+                     epic_docs: EpicDocView::NoHomes,
                      compose_notify: SILENT, question_notify: SILENT,
                      render_capacity: RenderQueue::DEFAULT_CAPACITY)
         @channel = channel
@@ -154,7 +157,7 @@ module Lain
         # drifted apart silently, with every live assertion still passing --
         # which is why {Surfaces} takes it WITHOUT a default.
         @surfaces = Surfaces.new(rpc: @rpc, store:, session:, journal:, questions: @question_view,
-                                 approval_view: @approval_view, epic:)
+                                 approval_view: @approval_view, epic:, epic_docs:)
         @resender = Resender.new(channel:, rpc: @rpc, bridge: resend_bridge,
                                  request_buffer: @surfaces.request_buffer)
       end

@@ -152,10 +152,11 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
     expect(inlet.set_review(["  M lib/lain/agent.rb"], 3, %w[old new])).to be_nil
     expect(inlet.open_changeset("lib/lain/agent.rb", ["was"], 12, revisions)).to be_nil
     expect(inlet.set_thread("anchor-1", ["why this way?"])).to be_nil
+    expect(inlet.set_epic_doc("lain://epic/a/research.md", ["# R"])).to be_nil
     expect(inlet.review_focus).to be_nil
     expect(inlet.review_settled).to be_nil
     expect(inlet.question_settled("blake3:c0ffee", "09:05")).to be_nil
-    expect(wakes.size).to eq(12)
+    expect(wakes.size).to eq(13)
   end
 
   # An editor that stopped draining and an editor that died are ONE fact from a
@@ -172,6 +173,7 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
       sidebar: inlet.set_review(["  M lib/lain/agent.rb"], 3, %w[old new]),
       changeset: inlet.open_changeset("lib/lain/agent.rb", ["was"], 12, revisions),
       thread: inlet.set_thread("anchor-1", ["why this way?"]),
+      epic_doc: inlet.set_epic_doc("lain://epic/a/research.md", ["# R"]),
       focus: inlet.review_focus,
       settled: inlet.review_settled }
   end
@@ -184,6 +186,7 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
       sidebar: described_class::SIDEBAR_DETACHED,
       changeset: described_class::CHANGESET_DETACHED,
       thread: described_class::THREAD_DETACHED,
+      epic_doc: described_class::EPIC_DOC_DETACHED,
       focus: described_class::FOCUS_DETACHED,
       settled: described_class::SETTLE_UNREPORTED }
   end
@@ -504,6 +507,19 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
 
     expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::DISPATCH,
                                                    ["set_thread", ["anchor-1", ["why this way?"]]])
+  end
+
+  it "sends an epic document keyed by its lain://epic name" do
+    queue = described_class.new
+    session = instance_double(Neovim::Session)
+    client = instance_double(Neovim::Client, session:)
+    allow(session).to receive(:notify)
+
+    queue.post(:epic_doc, "lain://epic/a/research.md", ["# R"])
+    queue.drain(client)
+
+    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::DISPATCH,
+                                                   ["set_epic_doc", ["lain://epic/a/research.md", ["# R"]]])
   end
 
   # The flag itself, at the object that carries it: every OTHER producer here is

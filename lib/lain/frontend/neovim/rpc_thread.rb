@@ -233,6 +233,11 @@ module Lain
           # while an id is a stamp Ruby minted and can hand back unchanged.
           thread: Rail.new(lua: "set_thread", params: "anchor, lines", blocking: false),
 
+          # An epic document drawn read-only beside the human's window. The name
+          # is the dynamic `lain://epic/<slug>/<path>`, so the lua half creates
+          # the buffer on first sight rather than owning a fixed one.
+          epic_doc: Rail.new(lua: "set_epic_doc", params: "name, lines", blocking: false),
+
           # Whole-buffer replace for lain://approval. No buffer NAME, for
           # {review_sidebar}'s reason -- the list is a singleton, so the lua half
           # names its own -- and a THIRD argument no other view sends: how many of
@@ -407,6 +412,7 @@ module Lain
         SIDEBAR_DETACHED = "rendering a changeset review needs an attached editor"
         CHANGESET_DETACHED = "opening a changed file for review needs an attached editor"
         THREAD_DETACHED = "showing a review thread needs an attached editor"
+        EPIC_DOC_DETACHED = "showing an epic document needs an attached editor"
         FOCUS_DETACHED = "putting you in front of a review needs an attached editor"
 
         # The one refusal nobody reads: this leg exists to carry a notice INTO
@@ -492,6 +498,8 @@ module Lain
         end
 
         def set_thread(anchor_id, lines) = post(:thread, anchor_id, lines, refusal: THREAD_DETACHED)
+
+        def set_epic_doc(name, lines) = post(:epic_doc, name, lines, refusal: EPIC_DOC_DETACHED)
 
         def review_focus = post(:review_focus, refusal: FOCUS_DETACHED)
 
@@ -1129,7 +1137,7 @@ module Lain
         # never nvim.
         def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_question, :question_settled,
                        :open_review, :review_refused, :set_review, :review_focus, :review_settled, :open_changeset,
-                       :set_thread, :set_approval
+                       :set_thread, :set_approval, :set_epic_doc
 
         # Stop the loop, wake it out of its select, join, and close the fds this
         # thread owns. Idempotent enough for a defensive double call.

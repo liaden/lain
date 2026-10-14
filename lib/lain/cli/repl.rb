@@ -81,8 +81,11 @@ module Lain
       #
       # `epic:` is what the editor's lain://status draws, resolved by {Wiring};
       # like `store:` and `session:` it reaches only the frontend built here.
-      def run(nvim:, store:, session:, first_prompt: nil, epic: Lain::Frontend::Neovim::StatusView::Unmounted)
-        frontend = attach_editor(nvim, store:, session:, epic:)
+      # `epic_docs:` rides beside it: the homes a written epic document is read
+      # back through.
+      def run(nvim:, store:, session:, first_prompt: nil, epic: Lain::Frontend::Neovim::StatusView::Unmounted,
+              epic_docs: Lain::Frontend::Neovim::EpicDocView::NoHomes)
+        frontend = attach_editor(nvim, store:, session:, epic:, epic_docs:)
         @replies.bind_editor(frontend&.command_inbox, views: frontend&.buffers, approvals: frontend&.approval_view)
         # The frontend ITSELF, not a piece of it: a changeset review needs three
         # things no single collaborator answers -- where the diff is drawn, the
@@ -122,10 +125,10 @@ module Lain
       # is built BY the frontend, so nil means there is nothing to construct
       # rather than a capability left unwired, and it is what leaves the fourth
       # watch fiber unspawned for a headless chat.
-      def attach_editor(nvim, store:, session:, epic:)
+      def attach_editor(nvim, store:, session:, epic:, epic_docs:)
         bridge = nvim && ResendBridge.new(agent: @agent, record: @chronicle,
                                           journal: nvim.fetch(:journal, Lain::Channel::Null.instance))
-        frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, epic:, resend_bridge: bridge,
+        frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, epic:, epic_docs:, resend_bridge: bridge,
                                                       compose_notify: @tty.method(:render_warning), **nvim)
         @surfaces.bind_editor(frontend&.approval_view)
         frontend
