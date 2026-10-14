@@ -166,6 +166,11 @@ module Lain
           # the editor takes.
           question: Rail.new(lua: "set_question", params: "name, lines, digest", blocking: false),
 
+          # The last submitted set is answered and nothing follows it. Not
+          # blocking, and posted outside {QuestionView}'s lock, for {question}'s
+          # reason.
+          question_settled: Rail.new(lua: "set_question_settled", params: "digest, at", blocking: false),
+
           review: Rail.new(lua: "open_review", params: "path, generation, epic_slug", blocking: false),
 
           review_refusal: Rail.new(lua: "review_refused", params: "message", blocking: false),
@@ -457,6 +462,10 @@ module Lain
 
         def open_question(lines, digest)
           post(:question, QuestionView::BUFFER, lines, digest, refusal: QuestionView::DETACHED)
+        end
+
+        def question_settled(digest, at)
+          post(:question_settled, digest, at, refusal: QuestionView::DETACHED)
         end
 
         def open_review(path, generation, epic_slug)
@@ -1118,8 +1127,8 @@ module Lain
         # the queue-and-wake pair ({RenderInlet}, which documents each). Safe
         # from any thread: they touch only the {RenderQueue} and the wake pipe,
         # never nvim.
-        def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_question, :open_review,
-                       :review_refused, :set_review, :review_focus, :review_settled, :open_changeset,
+        def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_question, :question_settled,
+                       :open_review, :review_refused, :set_review, :review_focus, :review_settled, :open_changeset,
                        :set_thread, :set_approval
 
         # Stop the loop, wake it out of its select, join, and close the fds this

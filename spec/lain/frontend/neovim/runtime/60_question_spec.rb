@@ -324,6 +324,88 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         expect(frontend.question_view).not_to be_open
       end
     end
+
+    describe "settling the last submitted set" do
+      let(:at) { Time.new(2026, 10, 14, 9, 5, 0) }
+
+      def submit_and_settle(set: asked, settled_digest: digest)
+        opened_question(set)
+        edit_question(ticked)
+        expect(write_question).to include("ok" => true)
+        next_command(frontend)
+        frontend.question_view.settled(settled_digest, at:)
+      end
+
+      it "closes the window lain opened and keeps the answered document readable" do
+        frontend.run do
+          wait_until_editor { buffer_lines("lain://journal").any? }
+          submit_and_settle
+
+          wait_until_editor { question_windows.empty? }
+          lines = buffer_lines("lain://question")
+          expect(lines.first).to eq("answered at 09:05; your answers went to the agent")
+          expect(lines.drop(1)).to eq(ticked)
+          expect(question_state).to include("modifiable" => false, "modified" => false)
+        end
+      end
+
+      it "ignores a settle for a set the buffer no longer holds" do
+        frontend.run do
+          wait_until_editor { buffer_lines("lain://journal").any? }
+          submit_and_settle(settled_digest: "blake3:older")
+
+          editor_round_trip
+          expect(buffer_lines("lain://question")).to eq(ticked)
+          expect(question_state).to include("modifiable" => true)
+          expect(question_windows.size).to eq(1)
+        end
+      end
+
+      it "leaves a window the human opened showing the answered document" do
+        frontend.run do
+          wait_until_editor { buffer_lines("lain://journal").any? }
+          opened_question(asked)
+          swap_for_human_window
+          edit_question(ticked)
+          expect(write_question).to include("ok" => true)
+          next_command(frontend)
+          frontend.question_view.settled(digest, at:)
+
+          wait_until_editor { question_state["modifiable"] == false }
+          expect(question_windows.size).to eq(1)
+        end
+      end
+
+      it "keeps lain's window when it is the only one in its tabpage, rather than closing the tab" do
+        frontend.run do
+          wait_until_editor { buffer_lines("lain://journal").any? }
+          opened_question(asked)
+          own_tabpage
+          edit_question(ticked)
+          expect(write_question).to include("ok" => true)
+          next_command(frontend)
+          frontend.question_view.settled(digest, at:)
+
+          wait_until_editor { question_state["modifiable"] == false }
+          expect(question_windows.size).to eq(1)
+          expect(tabpage_count).to eq(2)
+        end
+      end
+
+      it "restores a writable buffer when the next set reuses it" do
+        frontend.run do
+          wait_until_editor { buffer_lines("lain://journal").any? }
+          submit_and_settle
+          wait_until_editor { question_state["modifiable"] == false }
+
+          expect(frontend.question_view.open(three, "blake3:next")).to be_nil
+          wait_until_editor { question_state["digest"] == "blake3:next" }
+
+          expect(question_state).to include("modifiable" => true)
+          expect(buffer_lines("lain://question")).to eq(rendered(three))
+        end
+      end
+    end
   end
 
   # `:w` from inside the question buffer -- the human's own gesture. Returned as
@@ -418,6 +500,35 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       return win and vim.api.nvim_win_get_cursor(win) or nil
     LUA
   end
+
+  def question_windows
+    inspector.exec_lua("return vim.fn.win_findbuf(vim.fn.bufnr('lain://question'))", [])
+  end
+
+  # Gives the buffer a window lain did not open, then closes the one it did.
+  def swap_for_human_window
+    inspector.exec_lua(<<~LUA, [])
+      local buf = vim.fn.bufnr("lain://question")
+      for _, win in ipairs(vim.fn.win_findbuf(buf)) do vim.api.nvim_win_close(win, true) end
+      vim.cmd("botright split")
+      vim.api.nvim_win_set_buf(0, buf)
+      return true
+    LUA
+  end
+
+  def own_tabpage
+    inspector.exec_lua(<<~LUA, [])
+      vim.api.nvim_set_current_win(vim.fn.win_findbuf(vim.fn.bufnr("lain://question"))[1])
+      vim.cmd("wincmd T")
+      vim.w.lain_question_opened = true
+      return true
+    LUA
+  end
+
+  def tabpage_count = inspector.exec_lua("return #vim.api.nvim_list_tabpages()", [])
+
+  # Lets rails already posted run before the caller asserts nothing happened.
+  def editor_round_trip = inspector.exec_lua("return vim.wait(300, function() return false end)", [])
 
   # ]] and [[ as the QUESTION buffer defines them. nvim's own markdown ftplugin
   # maps both, so "the motion works" is not evidence lain bound anything.

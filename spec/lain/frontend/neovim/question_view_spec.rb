@@ -3,7 +3,7 @@
 require "timeout"
 
 # The Ruby half of the question round trip. The object is {Compose}'s buffer
-# discipline with one half removed and one substituted -- there is no #settle,
+# discipline with one half removed and one substituted -- there is no wait-for-settle handshake,
 # because nothing waits for a question, and the generation stamp is the set's
 # own content digest (ruling 6) rather than a hand-rolled counter.
 #
@@ -45,6 +45,11 @@ RSpec.describe Lain::Frontend::Neovim::QuestionView do
         @refusal
       end
 
+      def question_settled(digest, at)
+        (@settled ||= []) << [digest, at]
+      end
+
+      def settled = @settled || []
       def documents = @opened.map(&:first)
       def digests = @opened.map(&:last)
     end
@@ -324,6 +329,25 @@ RSpec.describe Lain::Frontend::Neovim::QuestionView do
       expect(posted_during).to eq(["digest-a"])
       expect(handed.size).to eq(1)
       expect(subject.digest).to eq("digest-b")
+    end
+  end
+
+  describe "#settled" do
+    it "tells the editor which digest was answered and the wall time as HH:MM" do
+      view.settled("digest-a", at: Time.new(2026, 10, 14, 9, 5, 0))
+
+      expect(attached.settled).to eq([["digest-a", "09:05"]])
+    end
+
+    it "is safe to call from inside another view's write, because it takes no lock" do
+      subject = view
+      subject.open(asked, "digest-a")
+
+      expect { subject.settled("digest-a", at: Time.now) }.not_to raise_error
+    end
+
+    it "does nothing against the editor that is not there" do
+      expect(view(rpc: described_class::Detached).settled("digest-a", at: Time.now)).to be_nil
     end
   end
 

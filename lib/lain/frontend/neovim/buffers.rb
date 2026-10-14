@@ -213,6 +213,7 @@ module Lain
           @inbox = inbox || InboxView.new(store:, questions:)
           @timeline = timeline || TimelineView.new(store:, session:)
           @status = StatusView.new(epic:)
+          @questions = questions
           @session = session
           @last_reminders = nil
           @last_payload = nil
@@ -231,6 +232,12 @@ module Lain
 
         # See {InboxView#open_next} -- the advance after a submitted document.
         def open_next = @inbox.open_next
+
+        # The submitted set was the last one: tells the question surface to mark
+        # it answered, whatever the inbox lists.
+        # @param digest [String]
+        # @param at [Time]
+        def question_settled(digest, at:) = @questions.settled(digest, at:)
 
         # :LainReply's Ruby end. It is what makes an ANSWER name its own
         # question: the editor sends the row it was typed on and

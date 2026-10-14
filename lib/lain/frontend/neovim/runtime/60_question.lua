@@ -155,16 +155,49 @@ function _G.__lain.set_question(name, lines, digest)
   local buf = question_buf(name)
   vim.b[buf].lain_question_digest = digest
   vim.b[buf].lain_question_rendered = lines
+  vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modified = false
   local win = vim.fn.win_findbuf(buf)[1]
   if win == nil then
     win = vim.api.nvim_open_win(buf, true, { split = "below", win = 0 })
+    vim.w[win].lain_question_opened = true
   else
     vim.api.nvim_set_current_win(win)
   end
   vim.api.nvim_win_set_cursor(win, { 1, 0 })
   announce_render(name, buf)
+end
+
+local function last_window_of_its_tab(win)
+  return #vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(win)) == 1
+end
+
+-- The submitted set was the last one: mark the buffer answered and read-only,
+-- and close the window lain opened for it. Acts only while the buffer still
+-- holds the digest that was settled, because the agent may have asked again
+-- and set_question drawn the next set before this rail ran. The buffer stays
+-- hidden with the answers in it, so `:buffer lain://question` shows them.
+-- A repeated rail is a no-op: the buffer is already read-only.
+--
+-- Counted per TABPAGE, for the reason close_opened_windows in
+-- the approval view gives: closing a tab's last window closes the tab.
+function _G.__lain.set_question_settled(digest, at)
+  local buf = vim.fn.bufnr(QUESTION)
+  if buf == -1 or vim.b[buf].lain_question_digest ~= digest or not vim.bo[buf].modifiable then
+    return
+  end
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  table.insert(lines, 1, "answered at " .. at .. "; your answers went to the agent")
+  vim.b[buf].lain_question_rendered = lines
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modified = false
+  vim.bo[buf].modifiable = false
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    if vim.w[win].lain_question_opened and not last_window_of_its_tab(win) then
+      vim.api.nvim_win_close(win, false)
+    end
+  end
 end
 
 -- The question round trip's return leg. Same gesture as compose -- `:w`

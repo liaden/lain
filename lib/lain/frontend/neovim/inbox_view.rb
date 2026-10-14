@@ -158,6 +158,7 @@ module Lain
           module_function
 
           def open(_set, _digest) = "no question surface is wired to this inbox, so nothing opens from it"
+          def settled(_digest, **) = nil
         end
 
         # @param store [Lain::Store] resolves a TurnUsage's head so the chain's

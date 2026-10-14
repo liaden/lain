@@ -104,6 +104,7 @@ module Lain
           module_function
 
           def open_question(_lines, _digest) = DETACHED
+          def question_settled(_digest, _at) = nil
         end
 
         # No set is open. The {Sink::Null} shape: it answers no digest at all,
@@ -227,6 +228,18 @@ module Lain
             held
           end
           @notify.call(ABANDONED_NOTICE) if closed
+          nil
+        end
+
+        # The last submitted set had no successor: the editor marks that set
+        # answered, if it is still the one on screen. Takes no lock, so the
+        # caller can run after the write has returned.
+        #
+        # @param digest [String] the set that was answered
+        # @param at [Time] when it was answered
+        # @return [void]
+        def settled(digest, at:)
+          @rpc.question_settled(digest, at.strftime("%H:%M"))
           nil
         end
 

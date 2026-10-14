@@ -85,6 +85,7 @@ module Lain
         def self.open_next = Nothing
         def self.pin(_line) = Nothing
         def self.answered(_digest) = nil
+        def self.question_settled(_digest, **) = nil
 
         # No rendering was ever handed out, so no line names a set in one.
         def self.answering(_line, **) = Nothing
@@ -534,7 +535,7 @@ module Lain
       def answer_document(args)
         digest, answers = args
         deliver(answers.render, digest)
-        advance
+        advance(digest)
       end
 
       # One document submitted, so open the next set the human owes an answer to.
@@ -548,10 +549,13 @@ module Lain
       # else pops.
       #
       # It needs no argument, because {#deliver} has already told the views
-      # which sets were answered. Its outcome is deliberately NOT echoed: the
+      # which sets were answered. Its outcome is NOT echoed as a sentence: the
       # human asked for no particular set, and a set it could not open keeps its
-      # row, so pressing enter on that row is what asks for a sentence.
-      def advance = @views.open_next
+      # row, so pressing enter on that row is what asks for a sentence. When none
+      # opened, the editor is told the submitted set is settled instead.
+      def advance(submitted)
+        @views.question_settled(submitted, at: Time.now) unless @views.open_next.opened?
+      end
 
       def pop_command
         @editor.pop(true)

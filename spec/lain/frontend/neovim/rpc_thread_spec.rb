@@ -154,7 +154,8 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
     expect(inlet.set_thread("anchor-1", ["why this way?"])).to be_nil
     expect(inlet.review_focus).to be_nil
     expect(inlet.review_settled).to be_nil
-    expect(wakes.size).to eq(11)
+    expect(inlet.question_settled("blake3:c0ffee", "09:05")).to be_nil
+    expect(wakes.size).to eq(12)
   end
 
   # An editor that stopped draining and an editor that died are ONE fact from a
@@ -210,6 +211,15 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
   # while saying nothing about the sentence just added.
   it "gives every surface a distinct sentence" do
     expect(own_words.values.uniq.size).to eq(own_words.size)
+  end
+
+  it "refuses a question settle without blocking when the queue is full" do
+    inlet = described_class.new(waker:, capacity: 1)
+    inlet.post_render(["fills the one slot"])
+
+    answered = Timeout.timeout(2) { inlet.question_settled("blake3:c0ffee", "09:05") }
+
+    expect(answered).to eq(Lain::Frontend::Neovim::QuestionView::DETACHED)
   end
 
   # {QuestionView} posts from INSIDE its own lock, so a blocking push here
@@ -351,6 +361,20 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
 
     expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::DISPATCH,
                                                    ["open_review", ["/epics/alpha/epic.md", 7, "alpha"]])
+  end
+
+  it "sends a question-settled command carrying the digest and the time" do
+    queue = described_class.new
+    session = instance_double(Neovim::Session)
+    client = instance_double(Neovim::Client, session:)
+    allow(session).to receive(:notify)
+
+    queue.post(:question_settled, "blake3:c0ffee", "09:05")
+    queue.drain(client)
+
+    expect(session).to have_received(:notify).with(
+      "nvim_exec_lua", described_class::DISPATCH, ["set_question_settled", ["blake3:c0ffee", "09:05"]]
+    )
   end
 
   it "sends a question-open render command carrying the buffer, the document and the digest" do

@@ -80,6 +80,12 @@ class RecordingQuestionEditor
     @refusal
   end
 
+  def question_settled(digest, at)
+    settled << [digest, at]
+    nil
+  end
+
+  def settled = @settled ||= []
   def documents = @opened.map(&:first)
   def digests = @opened.map(&:last)
 end
@@ -3046,12 +3052,9 @@ RSpec.describe Lain::CLI::HumanReplies do
         expect(first).not_to be_nil
       end
 
-      # "Returns to the inbox" is the absence of a second document plus a view
-      # holding no set: the human is left where the remaining rows are. The
-      # advance says nothing on this path on purpose -- see
-      # {Lain::CLI::HumanReplies#advance} -- so a stray warning would be the
-      # failure, not the silence.
-      it "returns to the inbox when the last set is submitted" do
+      # The last set has no successor, so the editor is told the submitted
+      # digest is settled and nothing else opens.
+      it "settles the submitted set in the editor when the last set is submitted" do
         only = list(ask_human, "which db?")
         open_first
         submit_open_document(only.digest)
@@ -3059,9 +3062,21 @@ RSpec.describe Lain::CLI::HumanReplies do
         surfaces_settle
 
         expect(nvim.opened.size).to eq(1)
+        expect(nvim.settled.map(&:first)).to eq([only.digest])
+        expect(nvim.settled.first.last).to match(/\A\d\d:\d\d\z/)
         expect(question_view).not_to be_open
         expect(editor.refusals).to be_empty
         expect(renderings.last.join("\n")).to include("which db?")
+      end
+
+      it "settles nothing while a next set opens in place" do
+        first = list(ask_human, "which db?")
+        list(other_asker, "deploy now?")
+        open_first
+        submit_open_document(first.digest)
+        with_surfaces { nvim.opened.size > 1 }
+
+        expect(nvim.settled).to be_empty
       end
 
       # Ruling 2 is what makes this hold: {QuestionView#open} refuses while a

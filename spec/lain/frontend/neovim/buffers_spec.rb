@@ -850,3 +850,25 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 end
+
+RSpec.describe Lain::Frontend::Neovim::Buffers, "#question_settled" do
+  let(:rpc) do
+    Class.new do
+      attr_reader :settled
+
+      def initialize = @settled = []
+      def question_settled(digest, at) = @settled << [digest, at]
+    end.new
+  end
+  let(:question_view) { Lain::Frontend::Neovim::QuestionView.new(rpc:) }
+
+  it "hands the submitted digest and time to the question surface" do
+    described_class.new(questions: question_view).question_settled("blake3:abc", at: Time.new(2026, 10, 14, 17, 30, 0))
+
+    expect(rpc.settled).to eq([["blake3:abc", "17:30"]])
+  end
+
+  it "does nothing when no question surface is wired" do
+    expect(described_class.new.question_settled("blake3:abc", at: Time.now)).to be_nil
+  end
+end
