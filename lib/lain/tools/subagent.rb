@@ -1173,7 +1173,7 @@ module Lain
         # seam being spawned INTO rather than recomputing. The four travel
         # together because the asker needs the other three before the Agent
         # that owns them exists.
-        Chain = Data.define(:base, :timeline, :feed, :escalation) do
+        Chain = Data.define(:base, :timeline, :feed, :escalation, :spawn) do
           # A correlation is a chain's ROOT digest, and an `:inherit` spawn is
           # `parent.fork`, so child and parent share a root PERMANENTLY -- the
           # child's own future correlation is therefore the SAME STRING as
@@ -1298,7 +1298,8 @@ module Lain
         def own_chain(parent, progress, &timeline)
           base = @policy.prefix.base_timeline(parent:, store: parent.store)
           Chain.new(base:, timeline:, escalation: Chain.escalation_road(base, parent, @seam.escalation),
-                    feed: TurnFeed.new(observer: progress.watching(@seam.observer), base: base.head_digest))
+                    feed: TurnFeed.new(observer: progress.watching(@seam.observer), base: base.head_digest),
+                    spawn: progress.spawn)
         end
 
         # A spawn that raises past this point (a Context that will not render,
@@ -1382,13 +1383,22 @@ module Lain
         # parent's in-flight `request_sent`, cache-waste would count it, and the
         # ledger would price it as the parent's spend.
         def spawn_agent(chain, union, allowed, (pipeline_source, session))
+          mailbox = child_mailbox(chain)
           Agent.new(
             provider: @seam.provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
-            timeline: chain.base, turn_middleware: recorded_turns(chain),
+            timeline: chain.base, turn_middleware: recorded_turns(chain, mailbox),
             model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed),
-            session:, budget: @budget, journal: Channel::Null.instance, pipeline_source:
+            session:, budget: @budget, journal: Channel::Null.instance, pipeline_source:, mailbox:
           )
+        end
+
+        # Addressed to the spawn digest, which only a one-shot dispatch knows
+        # before the Agent is built; any other spawn gets no inbox.
+        def child_mailbox(chain)
+          return Context::Mailbox::Null if chain.spawn.nil?
+
+          Context::Mailbox::Live.new(recipient: ->(_timeline) { chain.spawn }, observer: @seam.observer)
         end
 
         # The child's model phase, and its one member: a prompt the provider
@@ -1453,8 +1463,9 @@ module Lain
         # returns to catch up afterwards. The timeline rides a thunk because the
         # turn env carries the PRE-step snapshot, and is late-bound because the
         # middleware must exist before the Agent that runs it.
-        def recorded_turns(chain)
+        def recorded_turns(chain, mailbox)
           Middleware::Stack.new([*@seam.middleware.members(:turn),
+                                 WrapUp.new(mailbox:, ceiling: @budget.max_iterations),
                                  Middleware::JournalTurns.new(scribe: chain.feed, timeline: chain.timeline)])
         end
 

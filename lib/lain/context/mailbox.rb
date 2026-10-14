@@ -100,6 +100,10 @@ module Lain
         def self.folded = []
 
         def self.over(context) = context
+
+        def self.post(**) = nil
+
+        def self.pending?(_timeline) = false
       end
 
       def initialize(snapshot:)

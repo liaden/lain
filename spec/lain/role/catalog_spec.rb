@@ -25,6 +25,13 @@ RSpec.describe Lain::Role::Catalog do
     it "searches the tree beside reading and fetching" do
       expect(described_class.fetch(:researcher).only).to include(:grep, :glob, :read_file, :list_files)
     end
+
+    it "is told it works to an iteration budget and writes findings as text as it goes" do
+      framing = Lain::Prompt::Slots.shipped_role_templates.fetch("researcher")
+
+      expect(framing).to include("iteration budget")
+      expect(framing).to include("findings as text as you go")
+    end
   end
 
   # The grant is the epic seam's to make: a chat attenuates every child from a

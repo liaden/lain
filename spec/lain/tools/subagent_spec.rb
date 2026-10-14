@@ -605,6 +605,62 @@ RSpec.describe Lain::Tools::Subagent do
       end
     end
 
+    context "when a researcher-sized ceiling nears" do
+      def reading = tool_response(["r1", "read_file", { "path" => "Gemfile" }])
+
+      def warned(provider)
+        parent_agent = nil
+        tool = described_class.new(provider:, context_factory: -> { child_context }, toolset: union,
+                                   policy: spawn_policy, parent: -> { parent_agent.timeline },
+                                   budget: Lain::Agent::Budget.new(max_iterations: 8), max_depth: 3,
+                                   tool_middleware: ToolRegistry::UNGUARDED, observer: record)
+        parent_agent = loop_parent(tool)
+        parent_agent.ask("please spawn")
+        parent_agent.timeline.to_a[2].content.first
+      end
+
+      def mailbox_requests(provider)
+        provider.requests.each_index.select { |i| provider.requests[i].messages.to_s.include?("<mailbox>") }
+      end
+
+      it "carries one note naming the remaining iterations, on the 4th request only" do
+        provider = mock(reading)
+        warned(provider)
+
+        expect(provider.requests.size).to eq(8)
+        expect(mailbox_requests(provider)).to eq([3])
+        expect(provider.requests[3].messages.to_s).to include("5 of 8")
+      end
+
+      it "journals the note as a message to the child's spawn digest" do
+        warned(mock(reading))
+
+        note = record.messages.find { |message| message.from == "lain" }
+        expect(note.to).to eq(record.spawn.digest)
+        expect(note.body).to have_key("text")
+        expect(note.body).not_to include("lifecycle", "result")
+      end
+
+      it "is admitted by lain watch's lineage filter for that child" do
+        warned(mock(reading))
+        filter = Lain::CLI::Watch::LineageFilter.new(selector: record.spawn.digest)
+        filter.admit?({ "type" => "message", "kind" => "spawn", "digest" => record.spawn.digest })
+        note = record.messages.find { |message| message.from == "lain" }
+
+        expect(filter.admit?({ "type" => "message", "digest" => note.digest, "from" => note.from, "to" => note.to,
+                               "causal_parents" => [] })).to be(true)
+      end
+
+      it "hands the parent a text block the child wrote after the warning" do
+        late = Lain::Response.new(content: [{ "type" => "text", "text" => "findings so far" },
+                                            { "type" => "tool_use", "id" => "r9", "name" => "read_file",
+                                              "input" => { "path" => "Gemfile" } }], stop_reason: :tool_use)
+        result = warned(mock(reading, reading, reading, late, reading))
+
+        expect(result["content"]).to include("findings so far")
+      end
+    end
+
     it "retires the spawn from the fleet the HUD publishes" do
       dispatched_by_parent
 
@@ -3776,7 +3832,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "starts a child's turn stack with the configured middleware" do
       stack = children_built(middleware: configured).first[:turn_middleware]
 
-      expect(stack.to_a.map(&:class)).to eq([stamp, Lain::Middleware::JournalTurns])
+      expect(stack.to_a.map(&:class)).to eq([stamp, described_class::WrapUp, Lain::Middleware::JournalTurns])
     end
 
     it "builds a new member for every child" do
@@ -3803,7 +3859,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect([built[:model_middleware].to_a.map(&:class), built[:turn_middleware].to_a.map(&:class)])
         .to eq([[Lain::Middleware::RequestBudget, Lain::Middleware::ResolveAttachments],
-                [Lain::Middleware::JournalTurns]])
+                [described_class::WrapUp, Lain::Middleware::JournalTurns]])
     end
   end
 end

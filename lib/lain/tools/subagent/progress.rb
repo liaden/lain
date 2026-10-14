@@ -20,11 +20,16 @@ module Lain
       # not be lost, and a scribe that refuses a turn must not leave a live row
       # claiming it landed.
       class Progress
+        # @return [String] the `:spawn` digest this dispatch's rows hang on
+        attr_reader :spawn
+
         # A dispatch with nowhere to tell: an actor's launch, a spawn built
         # outside the one-shot path. The observer passes through untouched, so
         # no call site asks whether there is a progress to report to.
         module Null
           def self.watching(observer) = observer
+
+          def self.spawn = nil
         end
 
         # @param spawn [String] the `:spawn` digest this dispatch's rows hang on

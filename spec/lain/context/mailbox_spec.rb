@@ -269,5 +269,10 @@ RSpec.describe Lain::Context::Mailbox do
       base = Lain::Context.new(model: "m", max_tokens: 64)
       expect(described_class.over(base)).to be(base)
     end
+
+    it "drops a posted note and never reports one pending" do
+      expect(described_class.post(from: "lain", text: "hi")).to be_nil
+      expect(described_class.pending?(Lain::Timeline.empty(store: Lain::Store.new))).to be(false)
+    end
   end
 end
