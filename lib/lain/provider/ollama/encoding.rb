@@ -149,10 +149,17 @@ module Lain
           return [{ role: message["role"], content: blocks.to_s }] unless blocks.is_a?(Array)
 
           record_tool_names(blocks, names)
-          results = blocks.select { |block| block_type(block) == TOOL_RESULT }
-          return results.map { |block| tool_message(block, names) } unless results.empty?
+          results, beside = blocks.partition { |block| block_type(block) == TOOL_RESULT }
+          return [assistant_or_user(message, blocks)] if results.empty?
 
-          [assistant_or_user(message, blocks)]
+          results.map { |block| tool_message(block, names) } + beside_results(message, beside)
+        end
+
+        # A tool message has no room for anything but its result, and a reminder
+        # rides beside the results after a tool round; it follows them as its own
+        # user message rather than being dropped on the wire.
+        def beside_results(message, blocks)
+          blocks.empty? ? [] : [assistant_or_user(message, blocks)]
         end
 
         # role:"tool" messages carry `tool_name`, never an id. When two parallel

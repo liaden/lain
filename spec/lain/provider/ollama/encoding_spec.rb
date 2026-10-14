@@ -204,6 +204,55 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
     end
   end
 
+  describe "text beside tool results" do
+    let(:tool_uses) do
+      [{ "type" => "tool_use", "id" => "call_1", "name" => "read_file", "input" => {} },
+       { "type" => "tool_use", "id" => "call_2", "name" => "grep", "input" => {} }]
+    end
+    let(:results) do
+      [{ "type" => "tool_result", "tool_use_id" => "call_1", "content" => "one" },
+       { "type" => "tool_result", "tool_use_id" => "call_2", "content" => "two" }]
+    end
+    let(:mailbox) { "<mailbox>\nhuman | hi\n</mailbox>" }
+
+    def round(results_message)
+      encoder.encode(request(messages: [{ role: "user", content: [{ "type" => "text", "text" => "look" }] },
+                                        { role: "assistant", content: tool_uses },
+                                        { role: "user", content: results_message }]))[:messages].drop(2)
+    end
+
+    it "sends the text after the tool messages, as one user message" do
+      expect(round(results + [{ "type" => "text", "text" => mailbox }]))
+        .to eq([{ role: "tool", tool_name: "read_file", content: "one" },
+                { role: "tool", tool_name: "grep", content: "two" },
+                { role: "user", content: mailbox }])
+    end
+
+    it "sends a message of only tool results as the tool messages alone" do
+      expect(round(results)).to eq([{ role: "tool", tool_name: "read_file", content: "one" },
+                                    { role: "tool", tool_name: "grep", content: "two" }])
+    end
+
+    it "sends an empty user message as one empty user message" do
+      expect(encoder.encode(request(messages: [{ role: "user", content: [] }]))[:messages])
+        .to eq([{ role: "user", content: "" }])
+    end
+
+    it "carries a session reminder rendered by a real Context through a tool round" do
+      store = Lain::Store.new
+      timeline = Lain::Timeline.empty(store:)
+                               .commit(role: :user, content: [{ "type" => "text", "text" => "look" }])
+                               .commit(role: :assistant, content: tool_uses)
+                               .commit(role: :user, content: results)
+      context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64, stream: false)
+      rendered = context.render(timeline:, toolset: Lain::Toolset.new,
+                                workspace: Lain::Workspace.new(reminders: ["todo: finish M1"]))
+
+      expect(encoder.encode(rendered)[:messages].last)
+        .to eq(role: "user", content: "<workspace>todo: finish M1</workspace>")
+    end
+  end
+
   # Ollama takes an image as base64 in the message's own `images` array, never
   # as a content block -- and a `role: "tool"` message may carry one, probed
   # live: the model read back a codeword only the picture carried, where the
