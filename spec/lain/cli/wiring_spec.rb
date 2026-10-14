@@ -2009,6 +2009,34 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    # A cockpit's prompt is typed in another pane, so the transcript is the only
+    # place the chat pane can show it; a plain chat's terminal already shows it.
+    it "echoes a line typed in the input pane into the transcript, and not a line typed here" do
+      transcripts = Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        path = Lain::CLI::InputSocket.path(name: "wiring-echo", paths:, cwd: Dir.pwd)
+        allow(status_feed).to receive(:state).and_return({})
+        outputs = []
+        factory = lambda do |channel:, **|
+          Lain::Frontend::TTY.new(channel:, output: StringIO.new.tap { |io| outputs << io },
+                                  history_path: File.join(dir, "history"))
+        end
+        cockpit = described_class.new(options: { grace: 5, input: "socket:wiring-echo" }, chronicle:, status_feed:,
+                                      paths:, stdin: StringIO.new, tty_factory: factory, conductor_opener:)
+        pane = Thread.new { type_at_you_from_a_pane(path, "quit") }
+        cockpit.run(backend:, resumed: nil, nvim: nil)
+        cockpit.conductor.close(reason: :exit)
+        pane.join
+        plain = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                                    tty_factory: factory, conductor_opener:)
+        plain.run(backend:, resumed: nil, nvim: nil)
+        plain.conductor.close(reason: :exit)
+        outputs.map { |io| io.string.include?("you> quit") }
+      end
+
+      expect(transcripts).to eq([true, false])
+    end
+
     # Answers the first `you>` a pane is shown with `text`, as a human typing
     # there would, then goes away.
     def type_at_you_from_a_pane(path, text)

@@ -991,10 +991,15 @@ module Lain
         @replies.bind_commands(@command_surface.commands)
         # Held, not merely returned: #exit_status asks the Repl what the
         # conversation reached, and the exe reads that after #run has returned.
-        @repl = Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:,
-                         supervisor:, middleware: @command_surface.middleware, attended: attended?,
-                         commands: @command_surface.commands, auto_surface:,
-                         secret_surface: secret_surface(backend), goal_driver:, input:)
+        @repl = repl_over(agent:, tty:, backend:, input:)
+      end
+
+      def repl_over(agent:, tty:, backend:, input:)
+        Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:,
+                 supervisor:, middleware: @command_surface.middleware, attended: attended?,
+                 commands: @command_surface.commands, auto_surface:,
+                 secret_surface: secret_surface(backend), goal_driver:, input:,
+                 echo_input: attended? && !input_socket_name.nil?)
       end
 
       # Its own method because it is a DIFFERENT unnamed object, which the

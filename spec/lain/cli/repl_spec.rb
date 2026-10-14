@@ -777,6 +777,83 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
+  describe "echoing the prompt typed in another pane" do
+    let(:tty) { instance_spy(Lain::Frontend::TTY) }
+    let(:dispatched) { [] }
+    let(:replies) { instance_double(Lain::CLI::HumanReplies, take_held: nil) }
+    let(:commands) do
+      Struct.new(:dispatched) do
+        def dispatch(text) = (dispatched << text) && nil
+        def serves_replies?(_text) = false
+      end.new(dispatched)
+    end
+
+    def repl(conductor, **)
+      described_class.new(agent: instance_double(Lain::Agent, timeline: nil), tty:, replies:, commands:,
+                          chronicle: Lain::CLI::Chronicle::Null.new, conductor:, **)
+    end
+
+    def reading(*lines)
+      instance_double(Lain::CLI::Conductor, closed?: false, read_prompt: nil).tap do |conductor|
+        allow(conductor).to receive(:read_prompt).and_return(*lines, nil)
+      end
+    end
+
+    it "echoes a line read at you> when asked to" do
+      repl(reading("say hi"), echo_input: true).converse
+
+      expect(tty).to have_received(:render_prompt_echo).with("say hi").once
+    end
+
+    it "echoes each later line read at you> too" do
+      repl(reading("one", "two"), echo_input: true).converse
+
+      expect(tty).to have_received(:render_prompt_echo).with("one").ordered
+      expect(tty).to have_received(:render_prompt_echo).with("two").ordered
+    end
+
+    it "echoes before the line is dispatched" do
+      order = []
+      allow(tty).to receive(:render_prompt_echo) { order << :echo }
+      allow(commands).to receive(:dispatch) { order << :dispatch }
+
+      repl(reading("say hi"), echo_input: true).converse
+
+      expect(order).to eq(%i[echo dispatch])
+    end
+
+    it "echoes nothing by default" do
+      repl(reading("say hi")).converse
+
+      expect(tty).not_to have_received(:render_prompt_echo)
+    end
+
+    it "does not echo a seeded first prompt" do
+      repl(reading, echo_input: true).converse(first_prompt: "seed")
+
+      expect(tty).not_to have_received(:render_prompt_echo)
+    end
+
+    it "does not echo a held line, though it dispatches" do
+      allow(replies).to receive(:take_held).and_return("held one", nil)
+
+      repl(reading, echo_input: true).converse(first_prompt: "seed")
+
+      expect(dispatched).to eq(["seed", "held one"])
+      expect(tty).not_to have_received(:render_prompt_echo)
+    end
+
+    it "does not echo a goal-driven prompt" do
+      driver = instance_double(Lain::CLI::GoalDriver, active?: false, settle_pin: nil)
+      allow(driver).to receive(:poll).and_return("keep going", nil)
+
+      repl(reading, echo_input: true, goal_driver: driver).converse(first_prompt: "seed")
+
+      expect(dispatched).to eq(["seed", "keep going"])
+      expect(tty).not_to have_received(:render_prompt_echo)
+    end
+  end
+
   # A standing goal answers the next prompt itself, so `you>` never reads while
   # it drives and a `/goal off` typed meanwhile waited in the terminal until the
   # cap. Between iterations the Repl asks the terminal for what was typed, and

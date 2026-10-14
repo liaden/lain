@@ -600,6 +600,24 @@ RSpec.describe Lain::Frontend::TTY do
       expect(stamped.stamp("hello")).to eq("13:14:01 hello")
     end
 
+    it "echoes a typed prompt after the time, as you>" do
+      stamped.render_prompt_echo("say hi")
+
+      expect(output.string).to eq("13:14:01 you> say hi\n")
+    end
+
+    it "indents the continuation lines of a pasted paragraph under the first" do
+      stamped.render_prompt_echo("one\ntwo\nthree")
+
+      expect(output.string.lines).to eq(["13:14:01 you> one\n", "              two\n", "              three\n"])
+    end
+
+    it "shows a control character the human typed rather than sending it to the screen" do
+      stamped.render_prompt_echo("a\e[201~b")
+
+      expect(output.string).not_to include("\e")
+    end
+
     it "starts a held-line notice with the time" do
       stamped.render_held("next please")
 

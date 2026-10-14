@@ -18,13 +18,17 @@ module Lain
       # nothing reads a second line, so the run ends where an attended one would
       # go back to the prompt.
       #
+      # `echo_input:` is on for a chat whose lines arrive from a separate input
+      # pane, where the transcript would otherwise never show what was asked.
+      #
       # `input:` is the producer that feeds the conductor's rail, started for
       # the conversation by {#run} -- {Frontend::StdinPump} for a chat at a
       # terminal, and nothing for one that reads no line.
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
                      supervisor: Lain::Supervisor::Null,
                      middleware: Lain::Middleware::Stack.new, auto_surface: nil, secret_surface: nil,
-                     goal_driver: Lain::CLI::GoalDriver::Null, attended: true, input: Lain::Frontend::StdinPump::Idle)
+                     goal_driver: Lain::CLI::GoalDriver::Null, attended: true, input: Lain::Frontend::StdinPump::Idle,
+                     echo_input: false)
         @agent = agent
         @tty = tty
         @input = input
@@ -35,6 +39,7 @@ module Lain
         @commands = commands
         @goal_driver = goal_driver
         @attended = attended
+        @echo_input = echo_input
         name_lifetimes(replies:, supervisor:, approvals:, auto_surface:, secret_surface:, tty:, conductor:)
       end
 
@@ -53,7 +58,7 @@ module Lain
       # in for ONLY the first read; an unattended conversation is the same shape
       # with the reading taken out at both ends, so the seed is its only line.
       def converse(first_prompt: nil)
-        text = first_prompt || (prompt.read if reads_a_line?)
+        text = first_prompt || (read_line if reads_a_line?)
         text = next_text(dispatch(text)) while continue?(text)
       end
 
@@ -143,6 +148,12 @@ module Lain
         ComposedPrompt.new(conductor: @conductor, tty: @tty, compose:).tap(&:bind_key)
       end
 
+      # The cockpit's input pane shows the human their line only in its own
+      # pane; echoing here puts it in the transcript.
+      def read_line
+        prompt.read.tap { |text| @tty.render_prompt_echo(text) if @echo_input && text }
+      end
+
       def continue?(text) = text && !@conductor.closed? && !farewell?(text)
 
       # :quit ends the conversation through the SAME exit a bare "quit" takes: a
@@ -163,7 +174,7 @@ module Lain
         return if action == :quit || !reads_a_line?
 
         @goal_driver.settle_pin(@agent.timeline)
-        held_line || driven_prompt || prompt.read
+        held_line || driven_prompt || read_line
       end
 
       # A line delivered while the driver chose the iteration is dispatched

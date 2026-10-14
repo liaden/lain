@@ -229,6 +229,15 @@ module Lain
         render_warning(stamp(question ? HELD_BESIDE_QUESTION : HELD_BESIDE_APPROVAL))
       end
 
+      # What the human typed in another pane, said back so the transcript reads as
+      # a conversation. One line per row: a bare newline inside a drawn prompt
+      # only moves down, and {#render_line} already ends each row correctly.
+      def render_prompt_echo(text)
+        first, *rest = legible_lines(text)
+        render_line(:prompt, stamp("you> #{first}"))
+        rest.each { |row| render_line(:prompt, "#{" " * stamp("you> ").length}#{row}") }
+      end
+
       def render_discarded(partial) = render_warning(format(DISCARDED, legible(partial)))
 
       # A read stopped under a prompt it DREW -- the call decided elsewhere --
@@ -427,6 +436,8 @@ module Lain
       # The human's own bytes, said back: a control character they typed ahead
       # -- a Ctrl-D, a paste bracket -- is shown rather than sent to the screen.
       def legible(text) = text.gsub(/[[:cntrl:]]/) { |char| char.dump[1..-2] }
+
+      def legible_lines(text) = text.split("\n", -1).map { |row| legible(row) }
 
       # The background render loop: blocking drain of the Channel so live tool
       # output (a running bash command's stdout) renders as it arrives rather
