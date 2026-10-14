@@ -1497,6 +1497,16 @@ RSpec.describe Lain::Sensitivity do
       expect(sensitivity.related?("/srv/shared")).to be(false)
     end
 
+    it "answers in-tree for the directory itself and below it, not for a sibling sharing the prefix" do
+      sensitivity = described_class.new(home:, cwd:, rules: related("~/dev/pitchcraft"))
+
+      expect(sensitivity.in_related_tree?("#{home}/dev/pitchcraft")).to be(true)
+      expect(sensitivity.in_related_tree?("#{home}/dev/pitchcraft/notes.md")).to be(true)
+      expect(sensitivity.in_related_tree?("#{home}/dev/pitchcraft-old")).to be(false)
+      expect(sensitivity.in_related_tree?("#{home}/dev/pitchcraft/../other")).to be(false)
+      expect(sensitivity.in_related_tree?("/srv/shared/a\0b")).to be(false)
+    end
+
     it "accepts one trailing separator on either anchor" do
       sensitivity = described_class.new(home:, cwd:, rules: related("~/dev/pitchcraft/", "/srv/shared/"))
 

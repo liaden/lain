@@ -125,6 +125,8 @@ module Lain
         # Nothing is related, so a flagged region still asks.
         def related?(_path) = false
 
+        def in_related_tree?(_path) = false
+
         # {Filter::Null}, which already means "withholds nothing" -- so the
         # Null's third answer needs no third object. A policy that gates
         # nothing listing everything is the same posture said once more.
@@ -207,7 +209,7 @@ module Lain
         # Every spelling is of where the path lands, so a link that leaves is
         # judged at its target; a related directory is matched as configured.
         def held?(named)
-          Landing.of(named, cwd: File::SEPARATOR, **@anchors).any? { under_root?(_1) || @policy.related?(_1) }
+          Landing.of(named, cwd: File::SEPARATOR, **@anchors).any? { under_root?(_1) || @policy.in_related_tree?(_1) }
         rescue Landing::Dangling, SystemCallError, ArgumentError, EncodingError
           false
         end
@@ -277,6 +279,10 @@ module Lain
       # @param path [String] absolute
       # @return [Boolean] whether it lies under a `related` directory
       def related?(path) = @sensitivity.related?(path)
+
+      # @param path [String] absolute
+      # @return [Boolean] whether it is a `related` directory or lies under one
+      def in_related_tree?(path) = @sensitivity.in_related_tree?(path)
 
       # The stricter of the path as written and every spelling of where it
       # lands. The literal is asked first, so a denied name costs no syscall.

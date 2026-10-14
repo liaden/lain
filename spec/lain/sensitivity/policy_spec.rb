@@ -566,6 +566,10 @@ RSpec.describe Lain::Sensitivity::Policy do
     it "answers false on the Null, so a run that wired no classifier still asks" do
       expect(described_class::Null.instance.related?("#{home}/dev/pitchcraft/notes.md")).to be(false)
     end
+
+    it "answers false to in_related_tree? on the Null" do
+      expect(described_class::Null.instance.in_related_tree?("#{home}/dev/pitchcraft")).to be(false)
+    end
   end
 
   # The Null answers it too, because a run that wired no classifier must still
@@ -771,6 +775,28 @@ RSpec.describe Lain::Sensitivity::Policy do
       key = File.join(home, ".ssh", "id_rsa").tap { FileUtils.mkdir_p(File.dirname(_1)) && File.write(_1, "k") }
 
       expect(confined.judge(key, cwd: root)).to have_attributes(level: :denied, reason: :protected)
+    end
+
+    it "leaves list_files, glob and grep on a related directory itself ungated" do
+      notes = File.join(home, "notes")
+      walks = [call("list_files", { "path" => notes }), glob(notes, "**/*.md"),
+               call("grep", { "path" => notes, "pattern" => "x" })]
+
+      expect(walks.map { confined.gates?(_1, cwd: root) }).to eq([false, false, false])
+    end
+
+    it "gates a related directory's sibling that shares its prefix" do
+      old = File.join(home, "notes-old")
+
+      expect(confined.judge(old, cwd: root)).to have_attributes(level: :gated, reason: :outside_project)
+      expect(confined.gates?(call("list_files", { "path" => old }), cwd: root)).to be(true)
+    end
+
+    it "keeps related? false and in_related_tree? true for the related directory itself, which masking relies on" do
+      notes = File.join(home, "notes")
+
+      expect([policy.related?(notes), policy.related?(File.join(notes, "a.md"))]).to eq([false, true])
+      expect([policy.in_related_tree?(notes), policy.in_related_tree?(File.join(notes, "a.md"))]).to eq([true, true])
     end
 
     it "gates a sibling whose name only starts with the root's" do

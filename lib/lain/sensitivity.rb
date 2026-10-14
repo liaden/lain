@@ -905,6 +905,13 @@ module Lain
     # @return [Boolean]
     def related?(path) = under_related?(text!(path))
 
+    # {#related?} plus the related directory itself, which a walk may name
+    # even though masking treats it as no file.
+    #
+    # @param path [String, Pathname] as on {#classify}
+    # @return [Boolean]
+    def in_related_tree?(path) = under_related?(text!(path), itself: true)
+
     private
 
     # The line this class draws, and it has two sides. A wrong TYPE is the
@@ -935,9 +942,9 @@ module Lain
       MALFORMED
     end
 
-    def under_related?(written)
+    def under_related?(written, itself: false)
       clean = lexical(written)
-      @related.any? { |directory| clean.start_with?("#{directory}#{ROOT}") }
+      @related.any? { |directory| clean.start_with?("#{directory}#{ROOT}") || (itself && clean == directory) }
     rescue ArgumentError, EncodingError
       false
     end
