@@ -54,6 +54,13 @@ RSpec.describe Lain::Context::Mailbox do
       empty = described_class.new(snapshot: snapshot([other]))
       expect(empty.call(conversation)).to eq(conversation)
     end
+
+    it "leaves the conversation unchanged when no pending message carries text" do
+      payload = Lain::Event::Payload.new(kind: :message, body: { "answer" => "yes" })
+      answer = Lain::Event.new(kind: :message, from: "human", to: "parent", payload_digest: payload.digest,
+                               body: payload.body)
+      expect(described_class.new(snapshot: snapshot([answer])).call(conversation)).to eq(conversation)
+    end
   end
 
   # Scenario: the parent folds deliberately -- the fold rides AFTER the last
@@ -165,6 +172,16 @@ RSpec.describe Lain::Context::Mailbox do
       expect(snap).to be_frozen
       expect(snap.pending).to be_frozen
     end
+
+    it "folds itself into the tail of a Context it lays over, after the cache breakpoint" do
+      base = Lain::Context.new(model: "m", max_tokens: 64)
+      timeline = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: user("go")["content"])
+      request = snapshot(pending).over(base).render(timeline:, toolset: Lain::Toolset.new([]))
+
+      expect(request.messages.last["content"].last).to eq(
+        "type" => "text", "text" => "<mailbox>\nactor | first\nactor | second\nactor | third\n</mailbox>"
+      )
+    end
   end
 
   # The Agent's read-side of its inbox. `capture(timeline)` is the ONE live read
@@ -246,6 +263,11 @@ RSpec.describe Lain::Context::Mailbox do
       snap = described_class.capture(Lain::Timeline.empty(store: Lain::Store.new))
       expect(snap.folded).to eq([])
       expect(snap.pending).to eq([])
+    end
+
+    it "lays over a Context by answering that same Context" do
+      base = Lain::Context.new(model: "m", max_tokens: 64)
+      expect(described_class.over(base)).to be(base)
     end
   end
 end

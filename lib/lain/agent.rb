@@ -152,8 +152,10 @@ module Lain
     # @param session [Session] the run's mutable scratch state (files read, the
     #   todo list) -- deliberately off the Timeline, so forking or rewinding can
     #   never resurrect or lose one.
-    # @param mailbox [Context::Mailbox] pending actor messages folded into the
-    #   rendered tail. Defaults to the Null combinator, which folds nothing.
+    # @param mailbox [#capture] the inbox whose per-turn snapshot folds pending
+    #   messages into the rendered tail ({Context::Mailbox::Source} for an
+    #   actor's log, {Context::Mailbox::Live} for a chat's notes). Defaults to
+    #   {Context::Mailbox::Null}, which folds nothing.
     # @param budget [Budget] the ceilings that bound this autonomous loop; a
     #   budget stop is the harness deciding to halt, not a model outcome.
     # @param request_override [RequestOverride] the one-shot slot a frontend
@@ -524,8 +526,14 @@ module Lain
       # read at commit would claim that arrival as a causal parent of a turn
       # that never rendered it, marking it consumed and losing it. Consumed only
       # by a successful commit, so a raised dispatch re-captures and re-folds.
+      # A dispatch that renders nothing (a resend) claims nothing either.
       inbox = @mailbox.capture(@timeline)
-      call_model(on_stream_started).tap { |response| commit_and_account(response, inbox) }
+      claimed = Context::Mailbox::Null
+      render = lambda {
+        claimed = inbox
+        render_request(inbox)
+      }
+      call_model(on_stream_started, render).tap { |response| commit_and_account(response, claimed) }
     end
 
     # The commit, its record and its TurnUsage, shielded as ONE atom against
@@ -611,9 +619,9 @@ module Lain
     # compaction decision reads ({Accounting#observe_refusal}). The turn it
     # stands on is named once, here, and rides the model phase so the refusal
     # record carries the same answer to every live view.
-    def call_model(on_stream_started)
+    def call_model(on_stream_started, render)
       dispatch!
-      attempt(Event.stands_on(@timeline.head), on_stream_started)
+      attempt(Event.stands_on(@timeline.head), on_stream_started, render)
     end
 
     # A retry only where something can make room, and each way of making it
@@ -637,9 +645,9 @@ module Lain
     # render that was not sent has still journaled its compaction decision,
     # a record of a render no provider saw; that is accepted, because the
     # decision is the only place the reason it came out unchanged is read.
-    def attempt(stands_on, on_stream_started, spent: [], refused: nil)
+    def attempt(stands_on, on_stream_started, render, spent: [], refused: nil)
       sent = nil
-      @request_override.deliver(render: -> { render_request }) do |request|
+      @request_override.deliver(render:) do |request|
         raise refused.error if refused&.digest == request.digest
 
         sent = request.digest
@@ -648,15 +656,15 @@ module Lain
     rescue WindowExceeded => e
       raise if e.equal?(refused&.error)
 
-      retry_refused(e, sent, stands_on, on_stream_started, spent)
+      retry_refused(RefusedRender.new(error: e, digest: sent), stands_on, on_stream_started, render, spent)
     end
 
-    def retry_refused(error, sent, stands_on, on_stream_started, spent)
-      accounting.observe_refusal(prompt_tokens: error.prompt_tokens, head: stands_on)
+    def retry_refused(refused, stands_on, on_stream_started, render, spent)
+      accounting.observe_refusal(prompt_tokens: refused.error.prompt_tokens, head: stands_on)
       room = room_after(spent)
-      raise error unless room
+      raise refused.error unless room
 
-      attempt(stands_on, on_stream_started, spent: [*spent, room], refused: RefusedRender.new(error:, digest: sent))
+      attempt(stands_on, on_stream_started, render, spent: [*spent, room], refused:)
     end
 
     # A handoff is asked first because the source commits one only when an
@@ -684,10 +692,14 @@ module Lain
     # Accounting's LAST-turn reading, never its cumulative `#usage`: cumulative
     # input tokens only ever grow, so a window detector fed them latches on and
     # never clears.
-    def render_request
-      turn_context = @instrumentation.pipeline_source.context_for(base: @context, timeline: @timeline,
-                                                                  usage: accounting.last_turn_usage(on: @timeline),
-                                                                  session: @session)
+    #
+    # The inbox lays its fold over the Context the source chose, after it
+    # chose, so compaction never sees a note.
+    def render_request(inbox)
+      turn_context = inbox.over(@instrumentation.pipeline_source.context_for(
+                                  base: @context, timeline: @timeline,
+                                  usage: accounting.last_turn_usage(on: @timeline), session: @session
+                                ))
       turn_context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
     end
 

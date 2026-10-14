@@ -41,13 +41,29 @@ module Lain
         # The pending :message events for the recipient, in log order.
         attr_reader :pending
 
-        def initialize(recipient:, events:)
-          @pending = Event::Projection.new(events).pending(recipient).to_a.freeze
+        # @param recipient [String, nil] whose messages are pending
+        # @param events [Enumerable<Event>] the log `recipient`'s pending set
+        #   is derived from
+        # @param pending [Array<Event>] given whole by an inbox that judges
+        #   pending itself ({Live}), in place of the derivation
+        def initialize(recipient: nil, events: [], pending: Event::Projection.new(events).pending(recipient).to_a)
+          @pending = pending.dup.freeze
           freeze
         end
 
         # The digests the assistant commit stamps as this turn's causal_parents.
         def folded = pending.map(&:digest)
+
+        # The turn's Context with this fold behind its pipeline. Applied after
+        # the per-turn source chose that Context, so compaction never sees the
+        # fold. Not Ractor-shareable: the lambda closes over a Context that may
+        # hold the live `/model` slot, and it lives for 1 turn.
+        #
+        # @param context [Context]
+        # @return [Context]
+        def over(context)
+          context.with_pipeline(->(workspace) { context.pipeline_for(workspace) >> Mailbox.new(snapshot: self) })
+        end
       end
 
       # {#capture} is the ONE live read of the mutable {Tools::Subagent::Log},
@@ -74,14 +90,16 @@ module Lain
       # The Agent's default inbox: nothing folds and every assistant commit
       # records causal_parents [], keeping the default path's turn digest
       # byte-identical to a pre-mailbox turn. One module satisfies both ducks
-      # (`capture` answers itself, an empty snapshot), so the Agent writes no
-      # `if mailbox` guard.
+      # (`capture` answers itself, an empty snapshot whose `over` answers the
+      # Context unchanged), so the Agent writes no `if mailbox` guard.
       module Null
         def self.capture(_timeline) = self
 
         def self.pending = []
 
         def self.folded = []
+
+        def self.over(context) = context
       end
 
       def initialize(snapshot:)
@@ -94,16 +112,15 @@ module Lain
         return messages if messages.empty?
         return messages unless MessageEnvelope.wrap(messages.last).user?
 
-        pending = @snapshot.pending
-        return messages if pending.empty?
+        lines = @snapshot.pending.filter_map { |event| line_for(event) }
+        return messages if lines.empty?
 
-        append_to_last(messages, [mailbox_block(pending)])
+        append_to_last(messages, [mailbox_block(lines)])
       end
 
       private
 
-      def mailbox_block(pending)
-        lines = pending.filter_map { |event| line_for(event) }
+      def mailbox_block(lines)
         { "type" => "text", "text" => "<mailbox>\n#{lines.join("\n")}\n</mailbox>" }
       end
 

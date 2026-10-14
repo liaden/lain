@@ -96,26 +96,52 @@ module A1PipelineSources
   end
 end
 
-# The `mailbox:` duck, as the only thing that can exercise it: a per-turn
-# snapshot slot that is BOTH the Agent's mailbox ({#capture}) and the tail of
-# its Context pipeline ({#call}). Production wires no non-Null mailbox today --
-# {Lain::Context::Mailbox::Null} captures itself and folds nothing, so with it
-# in the slot every capture/render/commit ordering renders identically and the
-# invariant below is invisible. In a module body for the reason
-# A1PipelineSources is.
-module A1MailboxSeam
-  # Deliberately NOT frozen, unlike every other combinator: the per-turn
-  # snapshot slot is the point, and its single writer is the Agent's own fiber.
-  class Seam < Lain::Context::Combinator
-    def initialize(source:)
+# A tool that posts a note to the running agent while it runs, standing in for
+# a line typed into the input pane during a tool round. In a module body for
+# the reason A1PipelineSources is.
+module LiveNotes
+  class Posting < Lain::Tool
+    def initialize(post)
       super()
-      @source = source
-      @snapshot = Lain::Context::Mailbox::Null
+      @post = post
     end
 
-    def capture(timeline) = @snapshot = @source.capture(timeline)
+    def name = "posting"
+    def description = "Runs while a note arrives."
+    def input_schema = { type: :object, properties: {} }
 
-    def call(messages) = Lain::Context::Mailbox.new(snapshot: @snapshot).call(messages)
+    def perform(_input, _context)
+      @post.call
+      Lain::Tool::Result.ok("ran")
+    end
+  end
+
+  class Witness
+    attr_reader :renders
+
+    def initialize = @renders = 0
+
+    def context_for(base:, **)
+      witness = self
+      SimpleDelegator.new(base).tap do |stand_in|
+        stand_in.define_singleton_method(:render) do |**args|
+          witness.rendered!
+          __getobj__.render(**args)
+        end
+      end
+    end
+
+    def rendered! = @renders += 1
+  end
+
+  class Tag < Lain::Context::Combinator
+    include Lain::Context::TailInjection
+
+    def call(messages) = append_to_last(messages, [{ "type" => "text", "text" => "<tag/>" }])
+  end
+
+  class Tagging
+    def context_for(base:, **) = base.with_pipeline(->(workspace) { Lain::Context.pipeline(workspace) >> Tag.new })
   end
 end
 
@@ -1645,9 +1671,9 @@ RSpec.describe Lain::Agent do
   # parent of a turn that never rendered it, marking it consumed and losing it
   # from every future fold".
   #
-  # These drive a real Agent over a real Timeline; the seam is the only double,
-  # because production wires no non-Null mailbox and a Null one makes every
-  # ordering of capture, render and commit look the same.
+  # These drive a real Agent over a real Timeline and a real inbox: a
+  # {Lain::Context::Mailbox::Source} over an actor's log here, and the
+  # {Lain::Context::Mailbox::Live} a chat posts notes into below.
   describe "the per-turn mailbox snapshot" do
     let(:store) { CoreGraph.store }
     let(:log) { Lain::Tools::Subagent::Log.new }
@@ -1657,37 +1683,30 @@ RSpec.describe Lain::Agent do
                .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
     end
     let(:recipient) { Lain::Event::ChainWriter.correlation_of(parent_timeline) }
-    let(:seam) { A1MailboxSeam::Seam.new(source: Lain::Context::Mailbox::Source.new(recipient:, log:)) }
 
     def note(text)
       lineage = Lain::Tools::Subagent::Lineage.new(policy: CoreGraph.spawn_policy, log:)
       lineage.note(parent_timeline, from: "actor", to: recipient, text:, causal_parents: [])
     end
 
-    # The seam rides the Agent's mailbox: slot AND the tail of its Context
-    # pipeline -- one object, both ducks.
-    def seam_context
-      klass = Class.new(Lain::Context)
-      stage = seam
-      klass.define_singleton_method(:pipeline) { |workspace| Lain::Context.pipeline(workspace) >> stage }
-      klass.new(model: "parent", max_tokens: 128)
+    def source_agent(provider)
+      described_class.new(provider:, toolset: CoreGraph.toolset([]), context: CoreGraph.context(model: "parent"),
+                          timeline: parent_timeline,
+                          mailbox: Lain::Context::Mailbox::Source.new(recipient:, log:))
     end
 
-    def seam_agent(provider)
-      described_class.new(provider:, toolset: CoreGraph.toolset([]),
-                          context: seam_context, timeline: parent_timeline, mailbox: seam)
+    def mailboxes(request)
+      request.messages.last["content"].filter_map { |block| block["text"] }.grep(/\A<mailbox>/)
     end
 
-    def mailbox_text(request)
-      request.messages.last["content"].filter_map { |block| block["text"] }.join("\n")
-    end
+    def assistant_parents(agent) = agent.timeline.to_a.select { |turn| turn.role == "assistant" }.map(&:causal_parents)
 
     # A Mailbox combinator binds its snapshot at construction, so a pipeline
     # built ONCE would re-fold turn 1's stale snapshot on turn 2 and never see
     # what arrived in between.
     it "folds each turn's OWN frozen snapshot -- no stale pipeline-construction binding" do
       provider = CoreGraph.provider(text_response("turn one"), text_response("turn two"))
-      a = seam_agent(provider)
+      a = source_agent(provider)
 
       first_note = note("before turn one")
       a.ask("first")
@@ -1695,9 +1714,8 @@ RSpec.describe Lain::Agent do
       a.ask("second")
 
       first_request, second_request = provider.requests
-      expect(mailbox_text(first_request)).to include("before turn one")
-      expect(mailbox_text(second_request)).to include("between turns")
-      expect(mailbox_text(second_request)).not_to include("before turn one")
+      expect(mailboxes(first_request)).to eq(["<mailbox>\nactor | before turn one\n</mailbox>"])
+      expect(mailboxes(second_request)).to eq(["<mailbox>\nactor | between turns\n</mailbox>"])
 
       # Render/commit agreement rides the same per-turn snapshot: each
       # assistant commit consumed exactly the digests its own render folded.
@@ -1720,22 +1738,181 @@ RSpec.describe Lain::Agent do
           response
         end
       end.new(responses: [text_response("turn one"), text_response("turn two")])
-      a = seam_agent(provider)
+      a = source_agent(provider)
 
       pre_note = note("before the turn")
       a.ask("first")
       a.ask("second")
 
       first_request, second_request = provider.requests
-      expect(mailbox_text(first_request)).to include("before the turn")
-      expect(mailbox_text(first_request)).not_to include("mid-turn arrival")
-      expect(mailbox_text(second_request)).to include("mid-turn arrival")
+      expect(mailboxes(first_request)).to eq(["<mailbox>\nactor | before the turn\n</mailbox>"])
+      expect(mailboxes(second_request)).to eq(["<mailbox>\nactor | mid-turn arrival\n</mailbox>"])
 
       turns = a.timeline.to_a
       # Turn 1's commit consumed exactly its render's fold -- never the note
       # that arrived during the round trip; turn 2 consumed the straggler.
       expect(turns[3].causal_parents).to eq([pre_note.digest])
       expect(turns[5].causal_parents).to eq([mid_note.digest])
+    end
+
+    describe "with Mailbox::Null, the default" do
+      it "renders through the very Context the per-turn source returned, and folds nothing" do
+        witness = LiveNotes::Witness.new
+        provider = CoreGraph.provider(tool_response(["tu_1", "echo", { "text" => "x" }]), text_response)
+        a = described_class.new(provider:, toolset:, context:, pipeline_source: witness)
+        a.ask("hi")
+
+        expect(witness.renders).to eq(provider.requests.size)
+        expect(assistant_parents(a)).to eq([[], []])
+      end
+    end
+
+    # The production shape: a chat's notes, folded between tool rounds and
+    # checked on the ollama wire.
+    describe "with a Mailbox::Live" do
+      let(:journaled) { [] }
+      let(:live) do
+        Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
+                                         observer: journaled.method(:<<))
+      end
+      let(:encoder) { Class.new { include Lain::Provider::Ollama::Encoding }.new }
+
+      def post(text) = live.post(from: "human", text:)
+
+      def live_agent(provider, toolset: CoreGraph.toolset([]), **)
+        described_class.new(provider:, toolset:, context:, mailbox: live, **)
+      end
+
+      def mailbox_texts(request)
+        request.messages.flat_map { |message| Array(message["content"]) }
+               .filter_map { |block| block.is_a?(Hash) && block["text"] }.grep(/<mailbox>/)
+      end
+
+      def recording(*outcomes)
+        Class.new(Lain::Provider::Mock) do
+          define_method(:complete) do |request, **|
+            requests << request
+            outcome = outcomes.shift || raise("script exhausted")
+            outcome.is_a?(Exception) ? raise(outcome) : outcome
+          end
+        end.new
+      end
+
+      it "reaches the model on the wire in the request after the tool round, and only there" do
+        provider = CoreGraph.provider(tool_response(["tu_1", "posting", {}]), text_response("answered"),
+                                      text_response("again"))
+        a = live_agent(provider, toolset: CoreGraph.toolset([LiveNotes::Posting.new(-> { post("use Syncthing") })]))
+        a.ask("go")
+        a.ask("more")
+
+        first, second, third = provider.requests.map { |request| encoder.encode(request)[:messages] }
+        tool_at = second.index { |message| message[:role] == "tool" }
+        beside = second[(tool_at + 1)..].find { |message| message[:role] == "user" }
+        expect(beside[:content]).to include("<mailbox>\nhuman | use Syncthing\n</mailbox>")
+        expect([first, third].flatten.map { |message| message[:content] }.grep(/Syncthing/)).to eq([])
+
+        answered = a.timeline.to_a[3]
+        expect(answered.causal_parents).to eq(journaled.map(&:digest))
+        expect(journaled.map { |event| event.body.fetch("text") }).to eq(["use Syncthing"])
+      end
+
+      it "folds behind the pipeline the per-turn source chose, not the class default" do
+        provider = CoreGraph.provider(text_response)
+        a = live_agent(provider, pipeline_source: LiveNotes::Tagging.new)
+        post("note")
+        a.ask("first")
+
+        tail = provider.last_request.messages.last["content"].filter_map { |block| block["text"] }
+        expect(tail.grep(/<tag|<mailbox>/)).to eq(["<tag/>", "<mailbox>\nhuman | note\n</mailbox>"])
+      end
+
+      it "folds the same words posted twice into 2 requests" do
+        provider = CoreGraph.provider(text_response("one"), text_response("two"))
+        a = live_agent(provider)
+        post("continue")
+        a.ask("first")
+        post("continue")
+        a.ask("second")
+
+        expect(provider.requests.map { |request| mailbox_texts(request) })
+          .to eq([["<mailbox>\nhuman | continue\n</mailbox>"]] * 2)
+        expect(assistant_parents(a)).to eq(journaled.map { |note| [note.digest] })
+      end
+
+      it "addresses a note posted before the chat's first commit at the first request, and folds it there" do
+        provider = CoreGraph.provider(text_response)
+        a = live_agent(provider)
+        post("early")
+        a.ask("first")
+
+        expect(mailbox_texts(provider.last_request)).to eq(["<mailbox>\nhuman | early\n</mailbox>"])
+        expect(journaled.map(&:to)).to eq([a.timeline.correlation])
+      end
+
+      it "keeps a note posted during the provider round trip out of that request and commit, and folds it next" do
+        inject = -> { post("mid-dispatch") }
+        provider = Class.new(Lain::Provider::Mock) do
+          define_method(:complete) do |request, **|
+            super(request).tap { inject.call if requests.size == 1 }
+          end
+        end.new(responses: [text_response("one"), text_response("two")])
+        a = live_agent(provider)
+        a.ask("first")
+        a.ask("second")
+
+        expect(provider.requests.map { |request| mailbox_texts(request) })
+          .to eq([[], ["<mailbox>\nhuman | mid-dispatch\n</mailbox>"]])
+        expect(assistant_parents(a)).to eq([[], journaled.map(&:digest)])
+      end
+
+      it "claims no note for a resend it never rendered, and folds the note into the next rendered request" do
+        override = Lain::Agent::RequestOverride.new
+        provider = CoreGraph.provider(text_response("resent"), text_response("rendered"))
+        a = live_agent(provider, request_override: override)
+        override.queue(context.render(timeline: CoreGraph.timeline.commit(role: :user, content: [
+                                                                            { "type" => "text", "text" => "edited" }
+                                                                          ]),
+                                      toolset: CoreGraph.toolset([])))
+        post("hold on")
+        a.ask("first")
+        a.ask("second")
+
+        expect(provider.requests.map { |request| mailbox_texts(request) })
+          .to eq([[], ["<mailbox>\nhuman | hold on\n</mailbox>"]])
+        expect(assistant_parents(a)).to eq([[], journaled.map(&:digest)])
+      end
+
+      # A first prompt that stalls is stranded, and the next ask folds it into a
+      # turn with no parent: a chain with a new root. The note captured for the
+      # stalled request still folds into the one that answers.
+      it "folds a note captured for a stalled first request into the request that follows it" do
+        provider = recording(RuntimeError.new("stalled"), text_response("answered"))
+        a = live_agent(provider)
+        post("use Syncthing")
+        expect { a.ask("first") }.to raise_error(RuntimeError, "stalled")
+        stalled_root = a.timeline.correlation
+        a.ask("again")
+
+        expect(a.timeline.correlation).not_to eq(stalled_root)
+        expect(provider.requests.map { |request| mailbox_texts(request) })
+          .to eq([["<mailbox>\nhuman | use Syncthing\n</mailbox>"]] * 2)
+        expect(a.timeline.head.causal_parents).to eq(journaled.map(&:digest))
+      end
+
+      # The turn that folded the note is gone from the chain, so the context
+      # that saw it is gone too: the note folds again.
+      it "refolds a note whose consuming turn a rewind past the root removed" do
+        provider = CoreGraph.provider(text_response("one"), text_response("two"))
+        a = live_agent(provider)
+        post("again please")
+        a.ask("first")
+        a.rewind(2)
+        a.ask("over")
+
+        expect(provider.requests.map { |request| mailbox_texts(request) })
+          .to eq([["<mailbox>\nhuman | again please\n</mailbox>"]] * 2)
+        expect(a.timeline.head.causal_parents).to eq(journaled.map(&:digest))
+      end
     end
   end
 
