@@ -259,10 +259,13 @@ RSpec.describe Lain::Compaction::Source do
   # the history and its rewrite dump to the same size, 84 inflates by one byte
   # and 86 saves one. Re-measured to the byte rather than loosened to a range,
   # which is what makes it still able to fail loudly.
-  def neutral_pad = 85
+  # MOVED A THIRD TIME, 85 -> 70: an attestation now carries a 12 character
+  # digest, so the rewrite saves 59 bytes less per dropped message; the five
+  # filler bodies went from 100 to 30 characters to give that back.
+  def neutral_pad = 70
 
   def crossover_timeline(pad)
-    bodies = (1..5).map { |index| "pad#{index}-#{"m" * 100}" } + ["Z" * pad, "tail-a", "tail-b"]
+    bodies = (1..5).map { |index| "pad#{index}-#{"m" * 30}" } + ["Z" * pad, "tail-a", "tail-b"]
     bodies.each_with_index.inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (body, index)|
       line.commit(role: role_at(index + 1), content: [{ "type" => "text", "text" => body }])
     end

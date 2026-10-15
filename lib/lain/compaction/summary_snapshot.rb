@@ -62,6 +62,8 @@ module Lain
       # The body of a line with no summary behind it. The attestation carries
       # the facts; this says only that the bytes are gone.
       ELIDED = "(elided -- no summary held)"
+      # 48 bits keeps a session's messages distinct while each attestation sheds 59 bytes of the full digest.
+      DIGEST_CHARS = 12
 
       # `Compact` calls its summarizer even when `protected_patterns` exempted
       # every dropped message, and an empty String here becomes a `text` block
@@ -146,6 +148,16 @@ module Lain
       # Read the Eager once, over the messages this turn might drop, and keep
       # only the answers -- never the Eager itself.
       #
+      # The role is ours -- every writer in `lib/` commits one -- so a missing
+      # one is a caller bug, not a blank to render past.
+      #
+      # @param message [Hash] a rendered message
+      # @return [String] role, short digest and byte count
+      def self.attest(message)
+        digest = Canonical.digest(message).split(":").last[0, DIGEST_CHARS]
+        "#{message.fetch("role")} #{digest} #{Canonical.dump(message).bytesize} bytes"
+      end
+
       # @param messages [Array<Hash>] rendered messages, `{"role" =>, "content" =>}`
       # @param eager [#held] the live summary store, read here and released
       # @return [SummarySnapshot]
@@ -238,11 +250,7 @@ module Lain
 
       def pluralize(count, noun) = "#{count} #{noun}#{"s" unless count == 1}"
 
-      # The role is ours -- every writer in `lib/` commits one -- so a missing
-      # one is a caller bug, not a blank to render past.
-      def attest(message)
-        "#{message.fetch("role")} #{Canonical.digest(message)} #{Canonical.dump(message).bytesize} bytes"
-      end
+      def attest(message) = self.class.attest(message)
 
       # `compact` drops the two facts a part may not have: a lookup key (only
       # a String-content tool_result has one) and, unlike the role above, a

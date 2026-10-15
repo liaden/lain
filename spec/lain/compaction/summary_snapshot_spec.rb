@@ -34,6 +34,14 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
   let(:source) { "the bytes a tool returned. " * 400 }
   let(:source_digest) { Lain::Canonical.digest(source) }
 
+  def expect_attested(text, message)
+    digests = text.scan(/^\[\w+ (\S+) \d+ bytes/).flatten
+    full = Lain::Canonical.digest(message).split(":").last
+
+    expect(digests).to all(match(/\A\h{12}\z/))
+    expect(digests.any? { |digest| full.start_with?(digest) }).to be(true)
+  end
+
   def heuristic_oracle(summary:)
     Lain::Oracle::Heuristic.new(definition:, predicate: ->(_inputs) { { "summary" => summary } })
   end
@@ -96,6 +104,13 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
   # ---- Scenario: a miss degrades to an attested elision --------------------
 
   describe "a miss degrades to an attested elision" do
+    it "attests a message exactly as Elide does" do
+      message = tool_result_message(source)
+
+      expect(described_class.attest(message)).to eq(Lain::Compaction::Strategy::Elide.new.collapse([message])
+        .content.first.fetch("text")[/\A\[(.*?)\]/, 1])
+    end
+
     it "names the message's role, digest, and byte count" do
       eager = Lain::Oracle::Eager.new(oracle: heuristic_oracle(summary: "unused"))
       message = tool_result_message(source)
@@ -103,8 +118,18 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
       rendered = described_class.take(messages: [message], eager:).call([message])
 
       expect(rendered).to include("user")
-      expect(rendered).to include(Lain::Canonical.digest(message))
+      expect_attested(rendered, message)
       expect(rendered).to include(Lain::Canonical.dump(message).bytesize.to_s)
+    end
+
+    it "writes the attestation as role, 12 hex and byte count" do
+      eager = Lain::Oracle::Eager.new(oracle: heuristic_oracle(summary: "unused"))
+      message = tool_result_message(source)
+
+      rendered = described_class.take(messages: [message], eager:).call([message])
+
+      expect_attested(rendered, message)
+      expect(rendered).to match(/\A\[user \h{12} #{Lain::Canonical.dump(message).bytesize} bytes/)
     end
 
     it "attests an elision for a message the snapshot was never taken over" do
@@ -112,7 +137,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
                                       eager: Lain::Oracle::Eager.new(oracle: heuristic_oracle(summary: "x")))
       message = tool_result_message(source)
 
-      expect(snapshot.call([message])).to include(Lain::Canonical.digest(message))
+      expect_attested(snapshot.call([message]), message)
     end
   end
 
@@ -187,7 +212,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
 
       expect(rendered).to be_a(String)
       expect(rendered).to include("middle summary")
-      messages.each { |message| expect(rendered).to include(Lain::Canonical.digest(message)) }
+      messages.each { |message| expect_attested(rendered, message) }
     end
 
     it "is the duck Context::Compact invokes, whole dropped array in, one String out" do
@@ -200,7 +225,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
 
       expect(compacted.size).to eq(2)
       text = compacted.first.fetch("content").first.fetch("text")
-      messages.first(3).each { |message| expect(text).to include(Lain::Canonical.digest(message)) }
+      messages.first(3).each { |message| expect_attested(text, message) }
     end
   end
 
@@ -212,7 +237,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
       snapshot = described_class.new
 
       expect(snapshot).to be_deeply_frozen
-      expect(snapshot.call([message])).to include(Lain::Canonical.digest(message))
+      expect_attested(snapshot.call([message]), message)
     end
   end
 
@@ -276,7 +301,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
       rendered = described_class.take(messages: [message], eager:).call([message])
 
       expect(rendered).to include("user")
-      expect(rendered).to include(Lain::Canonical.digest(message))
+      expect_attested(rendered, message)
       expect(rendered).to include(Lain::Canonical.dump(message).bytesize.to_s)
     end
   end

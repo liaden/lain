@@ -39,6 +39,14 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
 
   def bytes(replacement) = Lain::Canonical.dump(replacement.content)
 
+  def expect_attested(text, message)
+    digests = text.scan(/^\[\w+ (\S+) \d+ bytes/).flatten
+    full = Lain::Canonical.digest(message).split(":").last
+
+    expect(digests).to all(match(/\A\h{12}\z/))
+    expect(digests.any? { |digest| full.start_with?(digest) }).to be(true)
+  end
+
   describe "what a collapsed span leaves behind" do
     # The invariant summary_snapshot.rb:33-41 states: nothing disappears
     # unattested. A reader can always tell what was there and fetch the original
@@ -48,9 +56,28 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
 
       expect(lines.size).to eq(span.size)
       span.zip(lines) do |message, line|
-        expect(line).to include(message["role"], Lain::Canonical.digest(message),
-                                "#{Lain::Canonical.dump(message).bytesize} bytes")
+        expect(line).to include(message["role"], "#{Lain::Canonical.dump(message).bytesize} bytes")
+        expect_attested(line, message)
       end
+    end
+
+    it "writes the attestation as role, 12 hex and byte count" do
+      message = ElideFixtures.message("one")
+
+      line = texts(elide.collapse([message])).first
+
+      expect_attested(line, message)
+      expect(line).to match(/\A\[user \h{12} #{Lain::Canonical.dump(message).bytesize} bytes\]/)
+    end
+
+    it "costs at most 40% of the full-digest attestation over 176 messages" do
+      messages = ElideFixtures.span(176)
+      before = messages.sum do |m|
+        "[#{m["role"]} #{Lain::Canonical.digest(m)} #{Lain::Canonical.dump(m).bytesize} bytes]".bytesize
+      end
+      after = texts(elide.collapse(messages)).sum { |line| line[/\A\[[^\]]*\]/].bytesize }
+
+      expect(after).to be <= before * 0.4
     end
 
     describe "a tool round" do
@@ -86,7 +113,7 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
     it "attests a message carrying no content blocks rather than omitting it" do
       blockless = { "role" => "user", "content" => [] }
 
-      expect(texts(elide.collapse([blockless]))).to contain_exactly(include(Lain::Canonical.digest(blockless)))
+      expect_attested(texts(elide.collapse([blockless])).first, blockless)
     end
 
     # The role is ours -- every writer in `lib/` commits one -- so a missing one

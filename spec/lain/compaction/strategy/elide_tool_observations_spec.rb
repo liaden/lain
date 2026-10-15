@@ -168,8 +168,9 @@ RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do
       lines = strategy.collapse(claimed).content.map { |block| block["text"] }
 
       claimed.zip(lines) do |message, line|
-        expect(line).to include(message["role"], Lain::Canonical.digest(message),
-                                "#{Lain::Canonical.dump(message).bytesize} bytes")
+        expect(line).to include(message["role"], "#{Lain::Canonical.dump(message).bytesize} bytes")
+        expect(line[/\[\w+ (\S+) \d+ bytes/, 1]).to match(/\A\h{12}\z/)
+        expect(Lain::Canonical.digest(message)).to include(line[/\[\w+ (\S+) \d+ bytes/, 1])
       end
     end
 

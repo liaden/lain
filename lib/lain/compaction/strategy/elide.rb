@@ -11,10 +11,10 @@ module Lain
       #
       # THE INVARIANT IS {SummarySnapshot}'s: nothing disappears unattested. The
       # bytes are gone, but the line names what stood there. The rendering is
-      # copied from {SummarySnapshot#attest} rather than delegated to it,
-      # because that object is keyed on TOOL-RESULT source digests and built by
+      # {SummarySnapshot.attest}, the one place a message is attested; the
+      # snapshot object itself is keyed on TOOL-RESULT source digests and built by
       # `.take` over an {Oracle::Eager} -- a different question from attesting a
-      # span. What is shared is the discipline, not the object.
+      # span.
       #
       # THE DIGEST IS A FINGERPRINT, NOT A STORE KEY. It hashes the RENDERED
       # message ({Derivation.projected}'s shape) while the Store is keyed by
@@ -72,7 +72,7 @@ module Lain
           [{ "type" => "text", "text" => [attestation(message), *gists(message), ELIDED].join(" ") }]
         end
 
-        def attestation(message) = "[#{attest(message)}]"
+        def attestation(message) = "[#{SummarySnapshot.attest(message)}]"
 
         # A tool round's bytes are gone, so the line is the only place that
         # still says which tool ran against which path.
@@ -83,13 +83,6 @@ module Lain
           content.grep(Hash).filter_map do |block|
             Oracle::Handoff.gist(block) if TOOL_BLOCKS.include?(block["type"])
           end
-        end
-
-        # Byte-for-byte {SummarySnapshot#attest}, including its `fetch`: the
-        # role is ours, so a missing one is a caller bug and not a blank to
-        # render past.
-        def attest(message)
-          "#{message.fetch("role")} #{Canonical.digest(message)} #{Canonical.dump(message).bytesize} bytes"
         end
       end
     end
