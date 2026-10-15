@@ -434,6 +434,16 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   lain's own git admin dir, so the number of worktrees registered in this repo is NOT the cause:
   that hypothesis was tested and rejected 2026-08-23.
 
+  Added 2026-10-15, from a pre-commit run and a reviewer's run beside about 10 agents running specs (load
+  13). Each passed alone; the first 2 also passed 3 of 3 runs with their worker seed on the base commit.
+  All 3 read terminal bytes before a write that is still in flight lands, so a red under load is timing:
+  `Lain::Frontend::LineEditor#read, and the submit predicate asking the terminal for Shift+Enter writes the
+  request before the read and the reset after it, on a terminal`;
+  `a plain chat's inline prompts over a real terminal a prompt the approval window decides ends its line
+  with who decided it and how, and a y typed afterwards decides nothing`;
+  `Lain::Frontend::InputPane when the chat says nothing is published rewrites in place again once a whole
+  redraw followed the resize`.
+
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
   - 2026-10-08: `typing in a real cockpit while the model is busy consumes the question when an ask
