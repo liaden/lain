@@ -2,17 +2,17 @@
 
 RSpec.describe Lain::Mode::Approval do
   describe "the declared roster" do
-    it "names exactly two levels, ask and then auto" do
-      expect(described_class::NAMES).to eq(%i[ask auto])
+    it "names exactly two levels, ask and then bypass" do
+      expect(described_class::NAMES).to eq(%i[ask bypass])
     end
 
     it "answers a declared name with that level, however it is spelled" do
-      expect(described_class.for("auto")).to have_attributes(name: :auto)
-      expect(described_class.for(:auto)).to be(described_class.for("auto"))
+      expect(described_class.for("bypass")).to have_attributes(name: :bypass)
+      expect(described_class.for(:bypass)).to be(described_class.for("bypass"))
     end
 
     it "refuses an undeclared name, naming every alternative" do
-      expect { described_class.for(:manual) }.to raise_error(ArgumentError, /manual.*ask.*auto/)
+      expect { described_class.for(:manual) }.to raise_error(ArgumentError, /manual.*ask.*bypass/)
     end
   end
 
@@ -23,8 +23,8 @@ RSpec.describe Lain::Mode::Approval do
 
     # Automatic approval decides calls a human would otherwise have been asked
     # about, so the prompt has to say so.
-    it "lights auto" do
-      expect(described_class.for(:auto).lighter).to eq("AUTO")
+    it "lights bypass" do
+      expect(described_class.for(:bypass).lighter).to eq("BYPASS")
     end
   end
 

@@ -189,7 +189,7 @@ module Lain
     # word classifying ordinary, the directory included -- the denied rule names
     # `id_*` INSIDE `.ssh` and the directory itself is not a match. It prints a
     # private key, which {Escalation::Triage} records nothing lifts: not a
-    # policy, not `/mode auto`, not `ApproveAll`, not `sensitivity exempt:`.
+    # policy, not `/mode bypass`, not `ApproveAll`, not `sensitivity exempt:`.
     # Predicate 4 cannot save it. So each entry carries the flags that
     # disqualify it, and a stage naming one is refused. (The `~/.ssh` spelling of
     # the same command abstains earlier, at the parser, because a leading `~`

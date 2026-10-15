@@ -153,9 +153,9 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
       expect(File.exist?(File.join(@repo, "lib", "b.rb"))).to be(false)
     end
 
-    # Scenario: an unconfinable command asks a human even under auto
-    it "parks a command it cannot confine for a human under auto, with the plan-scope wording" do
-      mode("plan auto")
+    # Scenario: an unconfinable command asks a human even under bypass
+    it "parks a command it cannot confine for a human under bypass, with the plan-scope wording" do
+      mode("plan bypass")
 
       pending, refused = answered("bash", { "command" => "cd #{@repo} && touch y" }, :deny)
 
@@ -168,8 +168,8 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
 
     # A human's `@dev/<skill>` spawns through the role spawn, not through a
     # tool call, and its child must be confined like any other.
-    it "confines a child a role skill spawns under plan auto, however it names the checkout" do
-      mode("plan auto")
+    it "confines a child a role skill spawns under plan bypass, however it names the checkout" do
+      mode("plan bypass")
       relative = { "path" => "child.md", "content" => "c" }
       into_checkout = { "path" => File.join(@repo, "lib", "child.rb"), "content" => "c" }
       writes = tool_response(["c1", "write_file", relative], ["c2", "write_file", into_checkout])
@@ -184,7 +184,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
     # The shape any child spawned around the scope would have: a session
     # still standing in the checkout, judged through the board's stack.
     it "refuses a checkout write from a session the flip never moved" do
-      mode("plan auto")
+      mode("plan bypass")
       stranded = Lain::Session.new(worker_env: Lain::WorkerEnv.default.with(cwd: @repo))
 
       refused = dispatch_call("write_file", { "path" => File.join(@repo, "lib", "stranded.rb"), "content" => "s" },
@@ -198,7 +198,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
       command = "touch #{@repo}/remembered"
       remembered = Lain::Approval::Remembered.new(allow: [{ "tool" => "bash", "input" => { "command" => command } }])
       allow(Lain::Approval::Remembered).to receive(:from).and_return(remembered)
-      mode("plan auto")
+      mode("plan bypass")
 
       pending, = answered("bash", { "command" => command }, :deny)
 
@@ -239,8 +239,8 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
       expect(File.read(File.join(left, "notes.md"))).to eq("plan work\n")
     end
 
-    it "drops auto and its layers on a reset mid-turn, leaving the scope move for later" do
-      mode("auto +auto_approve")
+    it "drops bypass and its layers on a reset mid-turn, leaving the scope move for later" do
+      mode("bypass +auto_approve")
 
       told = mode("!", dispatching: true)
 
@@ -266,7 +266,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
       File.write(File.join(@repo, "only-in-the-checkout.txt"), "untracked\n")
       mode("plan")
       left = spike
-      mode("checkout auto")
+      mode("checkout bypass")
       ran = dispatch("bash", { "command" => "ls" })
 
       expect(session.worker_env.cwd).to eq(@repo)
@@ -300,7 +300,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
     before { git("init", "-q") }
 
     it "lowers approval to ask and drops the layers, staying in the checkout, and says why" do
-      mode("auto +auto_approve")
+      mode("bypass +auto_approve")
 
       told = mode("!")
 

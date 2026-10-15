@@ -22,7 +22,7 @@ RSpec.describe Lain::Compare::Mode do
   end
 
   it "reads the mode a run switched into off its mode_switch records" do
-    expect(journaled(%w[ask auto]).to_s).to eq("checkout/ask → checkout/auto")
+    expect(journaled(%w[ask bypass]).to_s).to eq("checkout/ask → checkout/bypass")
   end
 
   it "is unrecorded when the journal holds no mode record" do
@@ -39,18 +39,18 @@ RSpec.describe Lain::Compare::Mode do
   end
 
   it "refuses a run that switched against one that stayed put" do
-    switched = journaled(%w[ask auto])
-    expect { described_class.guard!(switched, described_class.for("checkout/auto")) }
-      .to raise_error(Lain::Error, %r{checkout/ask → checkout/auto})
+    switched = journaled(%w[ask bypass])
+    expect { described_class.guard!(switched, described_class.for("checkout/bypass")) }
+      .to raise_error(Lain::Error, %r{checkout/ask → checkout/bypass})
   end
 
   it "compares two runs that took the same trajectory" do
-    expect(journaled(%w[ask auto])).to eq(journaled(%w[ask auto]))
+    expect(journaled(%w[ask bypass])).to eq(journaled(%w[ask bypass]))
   end
 
   it "reads a Mode as its point, so a caller may hold the value it switched" do
-    expect(described_class.for(Lain::Mode.new(approval: :auto, layers: %i[vi])))
-      .to eq(described_class.for("checkout/auto"))
+    expect(described_class.for(Lain::Mode.new(approval: :bypass, layers: %i[vi])))
+      .to eq(described_class.for("checkout/bypass"))
   end
 
   # Reading only the `to`s after the first record would answer a plausible
@@ -58,26 +58,26 @@ RSpec.describe Lain::Compare::Mode do
   # records are ordinary the moment fan-out has more than one worker writing.
   it "refuses records that do not chain, rather than inventing a trajectory" do
     damaged = [{ "type" => "mode_switch", "from_scope" => "checkout", "from_approval" => "ask",
-                 "to_scope" => "checkout", "to_approval" => "auto" },
+                 "to_scope" => "checkout", "to_approval" => "bypass" },
                { "type" => "mode_switch", "from_scope" => "checkout", "from_approval" => "ask",
-                 "to_scope" => "checkout", "to_approval" => "auto" }]
+                 "to_scope" => "checkout", "to_approval" => "bypass" }]
     expect { described_class.from_journal(damaged) }
-      .to raise_error(Lain::Error, %r{in checkout/auto cannot switch from checkout/ask})
+      .to raise_error(Lain::Error, %r{in checkout/bypass cannot switch from checkout/ask})
   end
 
   # The loader reads the new shape only: a record naming a side by the words a
   # retired vocabulary used is refused, never read as a blank point.
   it "refuses a record that carries no scope and approval on a side" do
-    expect { described_class.from_journal([{ "type" => "mode_switch", "from" => "manual", "to" => "auto" }]) }
+    expect { described_class.from_journal([{ "type" => "mode_switch", "from" => "manual", "to" => "bypass" }]) }
       .to raise_error(Lain::Error, /from_scope and from_approval/)
   end
 
   it "refuses a point naming a level that is not declared" do
-    expect { described_class.for("checkout/manual") }.to raise_error(ArgumentError, /manual.*ask.*auto/m)
+    expect { described_class.for("checkout/manual") }.to raise_error(ArgumentError, /manual.*ask.*bypass/m)
   end
 
   it "refuses a name that is not written as a point at all" do
-    expect { described_class.for(:auto) }.to raise_error(ArgumentError, %r{scope/approval})
+    expect { described_class.for(:bypass) }.to raise_error(ArgumentError, %r{scope/approval})
   end
 
   # An empty list of points IS absence, and a Recorded holding none would be
@@ -94,7 +94,7 @@ RSpec.describe Lain::Compare::Mode do
   end
 
   it "is Ractor-shareable, recorded or not" do
-    expect(described_class.for("checkout/auto")).to be_deeply_frozen
+    expect(described_class.for("checkout/bypass")).to be_deeply_frozen
     expect(described_class::UNRECORDED).to be_deeply_frozen
   end
 end

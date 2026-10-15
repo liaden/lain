@@ -44,53 +44,53 @@ RSpec.describe Lain::CLI::Command::Mode do
   describe "/mode <approval> and /mode <scope>" do
     it "switches the approval level the session runs under" do
       switch = switch_for(:ask)
-      command.call("auto", env_for(switch))
+      command.call("bypass", env_for(switch))
 
-      expect(switch.approval.name).to eq(:auto)
+      expect(switch.approval.name).to eq(:bypass)
     end
 
     it "journals the change attributed to the tty" do
-      switch = switch_for(:auto)
+      switch = switch_for(:bypass)
       command.call("ask", env_for(switch))
 
       expect(flips).to contain_exactly(
-        a_hash_including("from_approval" => "auto", "to_approval" => "ask", "surface" => "tty")
+        a_hash_including("from_approval" => "bypass", "to_approval" => "ask", "surface" => "tty")
       )
     end
 
     it "keeps the layers already enabled -- an axis is one slot, not the whole mode" do
       switch = switch_for(:ask, :goal)
-      command.call("auto", env_for(switch))
+      command.call("bypass", env_for(switch))
 
       expect(switch.layers.names).to eq([:goal])
     end
 
     it "takes a token for each axis in one invocation" do
       switch = switch_for(:ask)
-      command.call("checkout auto", env_for(switch))
+      command.call("checkout bypass", env_for(switch))
 
-      expect(switch.current).to eq(Lain::Mode.new(scope: :checkout, approval: :auto))
+      expect(switch.current).to eq(Lain::Mode.new(scope: :checkout, approval: :bypass))
     end
 
     it "returns rendered text naming both the old and the new mode, never printing" do
       switch = switch_for(:ask)
       text = nil
 
-      expect { text = command.call("auto", env_for(switch)) }.not_to output.to_stdout
-      expect(text).to be_a(String).and include("ask").and include("auto")
+      expect { text = command.call("bypass", env_for(switch)) }.not_to output.to_stdout
+      expect(text).to be_a(String).and include("ask").and include("bypass")
     end
 
     # Mode#describe carries its own colon, so a "mode: " prefix stutters.
     it "renders the transition without restating the subject" do
       switch = switch_for(:ask, :goal)
 
-      expect(command.call("auto", env_for(switch)))
-        .to eq("checkout ask: goal (GOAL) -> checkout auto (AUTO): goal (GOAL)")
+      expect(command.call("bypass", env_for(switch)))
+        .to eq("checkout ask: goal (GOAL) -> checkout bypass (BYPASS): goal (GOAL)")
     end
 
     it "writes nothing for a token naming the value already in force" do
-      switch = switch_for(:auto)
-      command.call("auto", env_for(switch))
+      switch = switch_for(:bypass)
+      command.call("bypass", env_for(switch))
 
       expect(flips).to be_empty
     end
@@ -106,10 +106,10 @@ RSpec.describe Lain::CLI::Command::Mode do
     end
 
     it "disables one layer without touching either axis -- the other half of the toggle" do
-      switch = switch_for(:auto, :auto_approve, :goal)
+      switch = switch_for(:bypass, :auto_approve, :goal)
       command.call("-auto_approve", env_for(switch))
 
-      expect(switch.approval.name).to eq(:auto)
+      expect(switch.approval.name).to eq(:bypass)
       expect(switch.layers.names).to eq([:goal])
     end
 
@@ -122,9 +122,9 @@ RSpec.describe Lain::CLI::Command::Mode do
 
     it "applies an axis and a layer in one invocation, journaling one flip" do
       switch = switch_for(:ask, :goal)
-      command.call("auto +notify -goal", env_for(switch))
+      command.call("bypass +notify -goal", env_for(switch))
 
-      expect(switch.current).to eq(Lain::Mode.new(approval: :auto, layers: [:notify]))
+      expect(switch.current).to eq(Lain::Mode.new(approval: :bypass, layers: [:notify]))
       expect(flips.size).to eq(1)
     end
   end
@@ -134,8 +134,8 @@ RSpec.describe Lain::CLI::Command::Mode do
     it "refuses two approval tokens, naming both, and leaves the mode unchanged" do
       switch = switch_for(:ask)
 
-      expect { command.call("ask auto", env_for(switch)) }
-        .to raise_error(Lain::Error, /\bask\b.*\bauto\b/)
+      expect { command.call("ask bypass", env_for(switch)) }
+        .to raise_error(Lain::Error, /\bask\b.*\bbypass\b/)
       expect(switch.current).to eq(Lain::Mode.new(approval: :ask))
       expect(flips).to be_empty
     end
@@ -143,30 +143,29 @@ RSpec.describe Lain::CLI::Command::Mode do
     it "refuses even when the second token repeats the first" do
       switch = switch_for(:ask)
 
-      expect { command.call("auto auto", env_for(switch)) }.to raise_error(Lain::Error, /approval twice/)
+      expect { command.call("bypass bypass", env_for(switch)) }.to raise_error(Lain::Error, /approval twice/)
     end
   end
 
-  describe "a retired name" do
-    # Scenario: retired names refuse
-    it "refuses manual by name, listing the tokens /mode takes" do
+  describe "a name from the old vocabulary" do
+    it "refuses manual as an unknown token, listing the tokens /mode takes" do
       switch = switch_for(:ask)
 
       expect { command.call("manual", env_for(switch)) }
-        .to raise_error(Lain::Error) { |error| expect(error.message).to include("manual", "ask", "auto", "checkout") }
+        .to raise_error(Lain::Error) { |error| expect(error.message).to include("manual", "ask", "bypass", "checkout") }
       expect(flips).to be_empty
     end
 
-    it "refuses accept_edits by name, saying what it became" do
-      expect { command.call("accept_edits", env_for(switch_for(:auto))) }
-        .to raise_error(Lain::Error, /accept_edits is retired: it is ask now/)
+    it "refuses accept_edits as an unknown token too" do
+      expect { command.call("accept_edits", env_for(switch_for(:bypass))) }
+        .to raise_error(Lain::Error, %r{unknown /mode token "accept_edits"})
     end
 
     it "moves the scope to plan, keeping the approval level" do
-      switch = switch_for(:auto)
+      switch = switch_for(:bypass)
       command.call("plan", env_for(switch))
 
-      expect([switch.scope.name, switch.approval.name]).to eq(%i[plan auto])
+      expect([switch.scope.name, switch.approval.name]).to eq(%i[plan bypass])
       expect(flips).to contain_exactly(a_hash_including("from_scope" => "checkout", "to_scope" => "plan"))
     end
 
@@ -177,10 +176,10 @@ RSpec.describe Lain::CLI::Command::Mode do
       expect(flips).to be_empty
     end
 
-    it "refuses a retired name among other tokens, applying none of them" do
+    it "refuses an unknown name among other tokens, applying none of them" do
       switch = switch_for(:ask)
 
-      expect { command.call("auto +vi manual", env_for(switch)) }.to raise_error(Lain::Error, /manual/)
+      expect { command.call("bypass +vi manual", env_for(switch)) }.to raise_error(Lain::Error, /manual/)
       expect(switch.current).to eq(Lain::Mode.new)
     end
   end
@@ -189,14 +188,14 @@ RSpec.describe Lain::CLI::Command::Mode do
     # The most confined mode there is: nothing written reaches the checkout,
     # and nothing is decided without asking.
     it "lands in plan scope and ask approval from any mode" do
-      switch = switch_for(:auto, :auto_approve, :goal, :notify)
+      switch = switch_for(:bypass, :auto_approve, :goal, :notify)
       command.call("!", env_for(switch))
 
       expect([switch.scope.name, switch.approval.name]).to eq(%i[plan ask])
     end
 
     it "clears every layer too -- a reset that leaves auto_approve on has not reset anything" do
-      switch = switch_for(:auto, :auto_approve, :goal, :notify)
+      switch = switch_for(:bypass, :auto_approve, :goal, :notify)
       command.call("!", env_for(switch))
 
       expect(switch.layers).to be_empty
@@ -215,14 +214,14 @@ RSpec.describe Lain::CLI::Command::Mode do
     describe "when plan scope cannot be entered" do
       let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
       let(:board) do
-        Lain::CLI::Switchboard.for(chronicle:, options: { auto_approve: true }, model: "m",
+        Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m",
                                    toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
                                    test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
                               .bind_session(Lain::Session.new)
       end
 
       it "still lowers approval to ask and drops every layer, staying in the checkout" do
-        command.call("auto", env_for(board.mode_switch))
+        command.call("bypass", env_for(board.mode_switch))
         command.call("!", env_for(board.mode_switch))
 
         expect(board.mode_switch.current).to eq(Lain::Mode.new)
@@ -267,14 +266,14 @@ RSpec.describe Lain::CLI::Command::Mode do
     describe "the reset" do
       let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
       let(:board) do
-        Lain::CLI::Switchboard.for(chronicle:, options: { auto_approve: true }, model: "m",
+        Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m",
                                    toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
                                    test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
                               .bind_session(Lain::Session.new)
       end
 
       it "lowers approval to ask and drops every layer in the scope it is in" do
-        command.call("auto", env_for(board.mode_switch))
+        command.call("bypass", env_for(board.mode_switch))
         command.call("!", env_for(board.mode_switch, dispatching: true))
 
         expect(board.mode_switch.current).to eq(Lain::Mode.new)
@@ -290,9 +289,9 @@ RSpec.describe Lain::CLI::Command::Mode do
 
     it "lets a flip that keeps the scope through" do
       switch = switch_for(:ask)
-      command.call("auto +vi", env_for(switch, dispatching: true))
+      command.call("bypass +vi", env_for(switch, dispatching: true))
 
-      expect(switch.approval.name).to eq(:auto)
+      expect(switch.approval.name).to eq(:bypass)
     end
   end
 
@@ -305,10 +304,10 @@ RSpec.describe Lain::CLI::Command::Mode do
     end
 
     it "leaves the mode in force and journals nothing, so the repl loops on the same mode" do
-      switch = switch_for(:auto)
-      suppress(Lain::Error) { command.call("auto turbo", env_for(switch)) }
+      switch = switch_for(:bypass)
+      suppress(Lain::Error) { command.call("bypass turbo", env_for(switch)) }
 
-      expect(switch.approval.name).to eq(:auto)
+      expect(switch.approval.name).to eq(:bypass)
       expect(flips).to be_empty
     end
 
@@ -346,9 +345,9 @@ RSpec.describe Lain::CLI::Command::Mode do
   describe "case" do
     it "accepts the upper-case approval the prompt's own lighter teaches" do
       switch = switch_for(:ask)
-      command.call("AUTO", env_for(switch))
+      command.call("BYPASS", env_for(switch))
 
-      expect(switch.approval.name).to eq(:auto)
+      expect(switch.approval.name).to eq(:bypass)
     end
 
     it "accepts an upper-case layer token too, sigil and all" do
@@ -395,21 +394,15 @@ RSpec.describe Lain::CLI::Command::Mode do
       expect(readings << engaged?(board)).to eq([false, true, false])
     end
 
-    it "withdraws a layer the launch flag turned on, and the reset withdraws it too" do
+    it "withdraws a layer a human turned on, and the reset withdraws it too" do
       %w[-auto_approve !].each do |args|
-        board = board_for(auto_approve: true)
+        board = board_for
+        command.call("+auto_approve", env_for(board.mode_switch))
         launched = engaged?(board)
         command.call(args, env_for(board.mode_switch))
 
-        expect([launched, engaged?(board)]).to eq([true, false]), "#{args} did not withdraw the launch flag's layer"
+        expect([launched, engaged?(board)]).to eq([true, false]), "#{args} did not withdraw the layer"
       end
-    end
-
-    it "lists the layer the launch flag turned on, before any /mode has run" do
-      board = board_for(auto_approve: true)
-
-      expect(command.call("", env_for(board.mode_switch))).to eq("checkout ask: auto_approve (AA)")
-      expect(flips.map { |flip| flip["surface"] }).to eq([Lain::CLI::Switchboard::LAUNCH_SURFACE])
     end
   end
 
@@ -439,7 +432,7 @@ RSpec.describe Lain::CLI::Command::Mode do
     end
 
     it "refuses +goal with no standing goal, naming /goal <objective>, and switches nothing" do
-      expect { command.call("auto +goal", env) }.to raise_error(Lain::Error, %r{/goal <objective>})
+      expect { command.call("bypass +goal", env) }.to raise_error(Lain::Error, %r{/goal <objective>})
       expect(board.mode_switch.current).to eq(Lain::Mode.new)
       expect(flips).to be_empty
     end
@@ -475,7 +468,7 @@ RSpec.describe Lain::CLI::Command::Mode do
 
     it "leaves a standing goal alone when a flip keeps its layer" do
       driver.start("ship the parser")
-      command.call("auto +notify", env)
+      command.call("bypass +notify", env)
 
       expect(driver).to be_active
       expect(board.mode_switch.layers.names).to eq(%i[goal notify])

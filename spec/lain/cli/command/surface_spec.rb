@@ -96,7 +96,8 @@ RSpec.describe Lain::CLI::Command::Surface do
   # raise, so reads and writes are asserted to land on the one slot.
   context "with the board's mode switch" do
     let(:mode_switch) do
-      instance_double(Lain::CLI::Switchboard::BoundSwitch, current: Lain::Mode.new(approval: :auto), switch: :switched)
+      instance_double(Lain::CLI::Switchboard::BoundSwitch, current: Lain::Mode.new(approval: :bypass),
+                                                           switch: :switched)
     end
 
     it "hands the run's one mode switch through, so /mode writes the slot the gate reads" do
@@ -104,14 +105,14 @@ RSpec.describe Lain::CLI::Command::Surface do
         env_switch = build_surface(root).env.mode_switch
 
         expect([env_switch.current, env_switch.switch(Lain::Mode.new, surface: "tty")])
-          .to eq([Lain::Mode.new(approval: :auto), :switched])
+          .to eq([Lain::Mode.new(approval: :bypass), :switched])
         expect(mode_switch).to have_received(:switch).with(Lain::Mode.new, surface: "tty")
       end
     end
 
     it "guards the goal layer: /mode +goal with no standing goal reaches no slot" do
       with_project do |root|
-        raising = Lain::Mode.new(approval: :auto, layers: [:goal])
+        raising = Lain::Mode.new(approval: :bypass, layers: [:goal])
 
         expect { build_surface(root).env.mode_switch.switch(raising, surface: "tty") }
           .to raise_error(Lain::Error, %r{/goal <objective>})
@@ -277,7 +278,7 @@ RSpec.describe Lain::CLI::Command::Surface do
   end
 
   # `/yolo` is gone (round 10): the identical PolicySwitch flip it wrapped is
-  # already reachable through `/mode auto` and `/mode accept_edits`, so the
+  # already reachable through `/mode bypass` and `/mode accept_edits`, so the
   # command was a redundant alias rather than a capability of its own. A typed
   # `/yolo on` must not be silently swallowed -- with no command claiming the
   # name, dispatch falls through to the skill middleware, which reports it the

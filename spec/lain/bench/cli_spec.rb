@@ -218,7 +218,7 @@ RSpec.describe Lain::Bench::CLI do
 
     # Compare's two comparability guards speak in the RECORDINGS' vocabulary and
     # name no file, so an experimenter who pointed this at a directory of twelve
-    # sessions reads "checkout/ask vs checkout/auto" with no way back to the
+    # sessions reads "checkout/ask vs checkout/bypass" with no way back to the
     # two at fault. Only this layer still holds the paths -- the same sentence
     # the orphan-baseline refusal above is built on.
     describe "refusing recordings that are not comparable" do
@@ -228,13 +228,13 @@ RSpec.describe Lain::Bench::CLI do
 
       it "refuses recordings under different modes as a Refusal naming the sources" do
         Dir.mktmpdir do |tmp|
-          { "one.ndjson" => %w[ask auto], "two.ndjson" => %w[auto ask] }.each do |name, (from, to)|
+          { "one.ndjson" => %w[ask bypass], "two.ndjson" => %w[bypass ask] }.each do |name, (from, to)|
             line = JSON.generate(flip.merge("from_approval" => from, "to_approval" => to))
             File.write(File.join(tmp, name), File.read(File.join(fixture_dir, name)) + "#{line}\n")
           end
           expect { cli.variance_report([tmp]) }
             .to raise_error(described_class::Refusal,
-                            %r{one\.ndjson.*two\.ndjson.*checkout/ask → checkout/auto.*checkout/auto → checkout/ask}m)
+                            %r{one\.ndjson.*two\.ndjson.*ask → checkout/bypass.*checkout/bypass → checkout/ask}m)
         end
       end
 

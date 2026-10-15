@@ -5,8 +5,8 @@ require "stringio"
 RSpec.describe Lain::Mode::Resolution do
   let(:journal) { Lain::Journal.new(io: StringIO.new) }
   let(:asking) { Lain::Approval::Escalation.new([], journal:, label: "ask") }
-  let(:automatic) { Lain::Approval::Escalation.new([], journal:, label: "auto") }
-  let(:ladders) { { ask: asking, auto: automatic } }
+  let(:bypassing) { Lain::Approval::Escalation.new([], journal:, label: "bypass") }
+  let(:ladders) { { ask: asking, bypass: bypassing } }
 
   def resolve(**mode) = described_class.for(mode: Lain::Mode.new(**mode), ladders:)
 
@@ -15,14 +15,14 @@ RSpec.describe Lain::Mode::Resolution do
       expect(resolve(approval: :ask).gate_policy).to be(asking)
     end
 
-    it "selects the auto ladder under auto approval" do
-      expect(resolve(approval: :auto).gate_policy).to be(automatic)
+    it "selects the bypass ladder under bypass approval" do
+      expect(resolve(approval: :bypass).gate_policy).to be(bypassing)
     end
 
     # The same object on every resolution is what lets the policy switch see
     # that a flip moved nothing.
     it "hands back the identical policy each time a level resolves" do
-      expect(resolve(approval: :auto).gate_policy).to be(resolve(approval: :auto).gate_policy)
+      expect(resolve(approval: :bypass).gate_policy).to be(resolve(approval: :bypass).gate_policy)
     end
 
     it "is not moved by a layer" do
@@ -34,12 +34,12 @@ RSpec.describe Lain::Mode::Resolution do
   # for it would stop guarding in silence.
   describe "a level the session wired no policy for" do
     it "refuses by name, listing the levels it does hold" do
-      expect { described_class.for(mode: Lain::Mode.new(approval: :auto), ladders: { ask: asking }) }
-        .to raise_error(described_class::Unknown, /auto.*\[:ask\]/m)
+      expect { described_class.for(mode: Lain::Mode.new(approval: :bypass), ladders: { ask: asking }) }
+        .to raise_error(described_class::Unknown, /bypass.*\[:ask\]/m)
     end
 
     it "refuses a policy that was named but is nil" do
-      expect { described_class.for(mode: Lain::Mode.new, ladders: { ask: nil, auto: automatic }) }
+      expect { described_class.for(mode: Lain::Mode.new, ladders: { ask: nil, bypass: bypassing }) }
         .to raise_error(described_class::Unknown, /ask/)
     end
   end

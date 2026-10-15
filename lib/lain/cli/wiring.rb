@@ -121,7 +121,7 @@ module Lain
         #   for the one program the project named. Attended sessions never see
         #   it, because the ladder's triage rung denies before the tool is
         #   reached. The two postures that DO reach the tool are exactly the
-        #   two that skip the ladder: `/mode auto`, whose gate policy is
+        #   two that skip the ladder: `/mode bypass`, whose gate policy is
         #   {Middleware::Gate::ApproveAll}, and a child of a run with no chat,
         #   whose gate {CLI::ToolGuard.detached} builds over the same class.
         #

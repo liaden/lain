@@ -130,7 +130,7 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # There is no longer a flag that skips either half: a chat gets the parked
-    # list and ask approval, and `/mode auto` is the only way out of them.
+    # list and ask approval, and `/mode bypass` is the only way out of them.
     it "wires the approval queue and starts in checkout ask, with no flag to skip either" do
       board = board_for
 
@@ -139,7 +139,7 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # `--non-interactive` answers "who decides a gated call" with "nobody can".
-    # It and `--auto-approve`, which only seeds a mode layer, are the two flags
+    # It and `--approval`, which seeds the starting approval, are the two flags
     # this entry reads.
     it "wires no queue for an unattended session, and a gate that denies" do
       board = board_for(non_interactive: true)
@@ -333,11 +333,11 @@ RSpec.describe Lain::CLI::Switchboard do
 
     it "follows the session's approval level as a flip moves it" do
       policy = policy_for(leased)
-      board.mode_switch.switch(mode(:auto), surface: "tty")
+      board.mode_switch.switch(mode(:bypass), surface: "tty")
       moved = policy.current.label
       board.mode_switch.switch(mode(:ask), surface: "tty")
 
-      expect([moved, policy.current.label]).to eq(%w[auto ask])
+      expect([moved, policy.current.label]).to eq(%w[bypass ask])
     end
 
     it "journals a leased worker's rulings where the parent's land" do
@@ -523,7 +523,7 @@ RSpec.describe Lain::CLI::Switchboard do
           task.with_timeout(1) { board.approvals.dequeue }
           expect(board.approvals.each.count).to eq(1)
 
-          board.mode_switch.switch(mode(:auto), surface: "tty")
+          board.mode_switch.switch(mode(:bypass), surface: "tty")
 
           # Bounded, and not as belt-and-braces: a break that leaves the policy
           # switch untouched parks this call on the queue FOREVER, and an
@@ -539,7 +539,7 @@ RSpec.describe Lain::CLI::Switchboard do
       it "restores the queue when approval switches back to ask" do
         board = switchboard
 
-        board.mode_switch.switch(mode(:auto), surface: "tty")
+        board.mode_switch.switch(mode(:bypass), surface: "tty")
         # The board STARTS on the ladder, so asserting only the destination is
         # vacuous -- "never moved" and "moved back" are the same reading. This
         # is the leg that tells them apart.
@@ -556,19 +556,19 @@ RSpec.describe Lain::CLI::Switchboard do
       it "journals the gate flip through the one policy switch, attributed to the surface" do
         board = switchboard
 
-        board.mode_switch.switch(mode(:auto), surface: "editor")
+        board.mode_switch.switch(mode(:bypass), surface: "editor")
 
-        expect(policy_records.last).to include("from" => "ask", "to" => "auto", "surface" => "editor")
+        expect(policy_records.last).to include("from" => "ask", "to" => "bypass", "surface" => "editor")
       end
 
       # One approval level, one name in the record, whoever is attached.
       it "names the unattended ask ladder ask too, so its gate flips read ask and auto" do
         board = switchboard(attended: false)
 
-        board.mode_switch.switch(mode(:auto), surface: "tty")
+        board.mode_switch.switch(mode(:bypass), surface: "tty")
         board.mode_switch.switch(mode(:ask), surface: "tty")
 
-        expect(policy_records.map { |record| record.values_at("from", "to") }).to eq([%w[ask auto], %w[auto ask]])
+        expect(policy_records.map { |record| record.values_at("from", "to") }).to eq([%w[ask bypass], %w[bypass ask]])
       end
 
       # A flip back to the level in force selects the very ladder already
@@ -609,7 +609,7 @@ RSpec.describe Lain::CLI::Switchboard do
     it "hands an effect its policy allows to the interpreter, whose result comes back" do
       ran = []
       board = switchboard
-      board.mode_switch.switch(mode(:auto), surface: "tty")
+      board.mode_switch.switch(mode(:bypass), surface: "tty")
 
       result = dispatch_call("bash", { "command" => "ls" }, toolset: board.toolset, layers: tool_stack(board),
                                                             handler: recording(ran))
@@ -638,7 +638,7 @@ RSpec.describe Lain::CLI::Switchboard do
       end
 
       it "runs the approved call, the tool still in place after a flip to auto" do
-        result, ran = parked_then(switchboard, :auto)
+        result, ran = parked_then(switchboard, :bypass)
 
         expect(result).to eq(Lain::Tool::Result.ok("the interpreter ran"))
         expect(ran).to eq(%w[bash])
@@ -764,14 +764,14 @@ RSpec.describe Lain::CLI::Switchboard do
       board = switchboard
       board.bind_snapshots(slot)
 
-      board.mode_switch.switch(mode(:auto), surface: "tty")
+      board.mode_switch.switch(mode(:bypass), surface: "tty")
 
       expect(slot).not_to have_received(:rebind)
       expect(board.snapshot_scope).to eq(:shadow_git)
     end
 
     it "flips harmlessly before any slot is bound" do
-      expect { switchboard.mode_switch.switch(mode(:auto), surface: "tty") }.not_to raise_error
+      expect { switchboard.mode_switch.switch(mode(:bypass), surface: "tty") }.not_to raise_error
     end
 
     it "hands the bound slot to the command surface" do
@@ -912,8 +912,8 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # Scenario: the launch flag shows its lighter
-    it "seeds the layer from --auto-approve, so the first prompt carries AA and /mode lists it" do
-      board, = chat(auto_approve: true)
+    it "seeds the approval from --approval, so the first prompt carries BYPASS" do
+      board, = chat(approval: "bypass")
       run_state = Lain::Frontend::PromptComposer::RunState.new(
         agent: instance_double(Lain::Agent, occupancy: 0.0, dispatching?: false,
                                             context: instance_double(Lain::Context, model: "opus")),
@@ -921,32 +921,34 @@ RSpec.describe Lain::CLI::Switchboard do
         mode: board.mode_switch
       )
 
-      expect(run_state.to_h["mode"]).to eq("AA")
-      expect(typed(board, "")).to include("auto_approve")
+      expect(run_state.to_h["mode"]).to eq("BYPASS")
+      expect(board.mode_switch.current).to eq(Lain::Mode.new(approval: :bypass))
+      expect(board.policy_switch.current.label).to eq("bypass")
     end
 
     # The status line and a bench reader fold the mode off the journal, never
     # off the live board, so a layer the flag turned on has to be written down
     # before the first prompt or they show nothing until the first /mode.
-    it "journals the launch flag's layer once, as the record /mode writes, before any prompt" do
-      chat(auto_approve: true)
+    it "journals the launch flag's approval once, as the record /mode writes, before any prompt" do
+      chat(approval: "bypass")
 
       expect(mode_records).to contain_exactly(
-        a_hash_including("from_approval" => "ask", "to_approval" => "ask", "from_layers" => [],
-                         "to_layers" => %w[auto_approve], "surface" => described_class::LAUNCH_SURFACE)
+        a_hash_including("from_approval" => "ask", "to_approval" => "bypass", "from_layers" => [],
+                         "to_layers" => [], "surface" => described_class::LAUNCH_SURFACE)
       )
       expect(policy_records).to be_empty
     end
 
-    it "starts with no layer when the flag is absent, and journals no mode at all" do
+    it "starts in ask with no layer when no flag is given, and journals no mode at all" do
       board, = chat
 
-      expect([board.mode_switch.layers.to_a, mode_records]).to eq([[], []])
+      expect([board.mode_switch.current, mode_records]).to eq([Lain::Mode.new, []])
     end
 
     # Scenario: a denied path stays unliftable under the layer
     it "refuses a protected private key at the path boundary before any surface is asked" do
-      board, build = chat(auto_approve: true)
+      board, build = chat
+      typed(board, "+auto_approve")
 
       result = Sync do |task|
         watchers = watching(board, build, task)
@@ -981,10 +983,10 @@ RSpec.describe Lain::CLI::Switchboard do
     #
     # The interpreter is a recording Mock, so a regression that approves the
     # call is an observation and never a real write under a home directory.
-    it "denies a command writing under a protected path under /mode auto, rather than approving it" do
+    it "denies a command writing under a protected path under /mode bypass, rather than approving it" do
       ran = []
       board = board_for
-      typed(board, "auto")
+      typed(board, "bypass")
 
       result = dispatch_call("bash", { "command" => "cp spare.key #{home}/.ssh/id_ed25519" },
                              toolset: board.toolset, layers: tool_stack(board), context: Lain::Session.new,
@@ -992,12 +994,12 @@ RSpec.describe Lain::CLI::Switchboard do
 
       expect(result).to have_attributes(is_error: true, content: /refused tool "bash".*protects/)
       expect(ran).to be_empty
-      expect(board.policy_switch.current.map(&:name)).to eq(%w[triage rules auto])
+      expect(board.policy_switch.current.map(&:name)).to eq(%w[triage rules bypass])
     end
 
-    it "approves the remainder under /mode auto, where nothing above refused, without parking it" do
+    it "approves the remainder under /mode bypass, where nothing above refused, without parking it" do
       board = board_for
-      typed(board, "auto")
+      typed(board, "bypass")
 
       expect(board.policy_switch.call(gated_call, nil)).to be(true)
       expect(board.approvals).to be_none
@@ -1015,11 +1017,11 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # Scenario: the toolset does not change with the mode
-    it "renders the same tool block before and after /mode auto" do
+    it "renders the same tool block before and after /mode bypass" do
       board = board_for
       before = board.toolset.digest
 
-      typed(board, "auto")
+      typed(board, "bypass")
 
       expect(board.toolset.digest).to eq(before)
       expect(board.toolset).to be(base)
@@ -1101,7 +1103,7 @@ RSpec.describe Lain::CLI::Switchboard do
 
       it "leases once however many times the approval moves inside plan" do
         plan!
-        plan!(:auto)
+        plan!(:bypass)
         plan!(:ask)
 
         expect(spike.leases.size).to eq(1)
@@ -1157,7 +1159,7 @@ RSpec.describe Lain::CLI::Switchboard do
       end
 
       it "says nothing for a flip that moved no scope" do
-        board.mode_switch.switch(mode(:auto), surface: "tty")
+        board.mode_switch.switch(mode(:bypass), surface: "tty")
 
         expect(board.mode_switch.said).to eq("")
       end
@@ -1190,15 +1192,15 @@ RSpec.describe Lain::CLI::Switchboard do
       end
 
       it "is judged by the plan ladder for the approval level in force" do
-        plan!(:auto)
+        plan!(:bypass)
 
-        expect(board.policy_switch.current.label).to eq("plan auto")
+        expect(board.policy_switch.current.label).to eq("plan bypass")
       end
 
       # Nothing proved `ls`'s words confined, so under auto it still waits,
       # and for a person: the automatic approver is not offered it.
       it "parks for a human even under auto, where nothing automatic may take it" do
-        plan!(:auto)
+        plan!(:bypass)
 
         pending_call = parked(board.policy_switch)
 
@@ -1206,7 +1208,7 @@ RSpec.describe Lain::CLI::Switchboard do
       end
 
       it "records why a command under auto waited, once a human decides it" do
-        plan!(:auto)
+        plan!(:bypass)
         Sync do |task|
           call = task.async { board.policy_switch.call(gated_call, session) }
           task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty")
@@ -1219,7 +1221,7 @@ RSpec.describe Lain::CLI::Switchboard do
       end
 
       it "approves a call that is no command under auto, as the checkout does" do
-        plan!(:auto)
+        plan!(:bypass)
         read = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => "a.rb" }, "tu_2")
 
         expect(board.policy_switch.call(read, session)).to be(true)
@@ -1227,7 +1229,7 @@ RSpec.describe Lain::CLI::Switchboard do
 
       it "refuses an unconfined command outright when nobody attends" do
         unattended = switchboard(spike:, attended: false).bind_session(session)
-        unattended.mode_switch.switch(Lain::Mode.new(scope: :plan, approval: :auto), surface: "tty")
+        unattended.mode_switch.switch(Lain::Mode.new(scope: :plan, approval: :bypass), surface: "tty")
 
         expect(unattended.policy_switch.call(gated_call, session)).to be(false)
       end
@@ -1238,7 +1240,7 @@ RSpec.describe Lain::CLI::Switchboard do
       it "never approves a command on a remembered allow, and parks it for a human instead" do
         remembered = Lain::Approval::Remembered.new(allow: [{ "tool" => "bash", "input" => { "command" => "ls" } }])
         board(rules: [remembered], approving: Lain::CLI::Wiring::BoardBuild.method(:approving))
-        plan!(:auto)
+        plan!(:bypass)
 
         expect(parked(board.policy_switch)).to be_humans_only
       end
@@ -1246,7 +1248,7 @@ RSpec.describe Lain::CLI::Switchboard do
       it "still refuses a command on a remembered deny" do
         remembered = Lain::Approval::Remembered.new(deny: [{ "tool" => "bash", "input" => { "command" => "ls" } }])
         board(rules: [remembered], approving: Lain::CLI::Wiring::BoardBuild.method(:approving))
-        plan!(:auto)
+        plan!(:bypass)
 
         expect(board.policy_switch.call(gated_call, session)).to be(false)
       end
@@ -1259,11 +1261,11 @@ RSpec.describe Lain::CLI::Switchboard do
 
       it "judges a child lent the spike by the plan ladder for the level in force" do
         board(classifiers: Lain::CLI::Wiring::BoardBuild::Classifiers.new(home: "/home/tester", cwd: @home))
-        plan!(:auto)
+        plan!(:bypass)
         policy = board.guard_inputs.policy_for.call(session.worker_env)
 
         expect(policy).to be_a(Lain::CLI::Switchboard::Leased)
-        expect(policy.current.label).to eq("plan auto")
+        expect(policy.current.label).to eq("plan bypass")
       end
     end
   end
@@ -1278,16 +1280,16 @@ RSpec.describe Lain::CLI::Switchboard do
         env = instance_double(Lain::CLI::Command::Env, mode_switch: board.mode_switch)
 
         raised = Array.new(2) do
-          Lain::CLI::Command::Mode.new.call("auto", env)
+          Lain::CLI::Command::Mode.new.call("bypass", env)
           nil
         rescue Lain::StatusFeed::Publication::Unpublishable => e
           e
         end
 
         expect(raised.first).to be_a(Lain::StatusFeed::Publication::Unpublishable)
-        expect(mode_records.map { |record| record["to_approval"] }).to eq(["auto"])
-        expect(board.mode_switch.approval.name).to eq(:auto)
-        expect(board.policy_switch.current).to have_attributes(label: "auto")
+        expect(mode_records.map { |record| record["to_approval"] }).to eq(["bypass"])
+        expect(board.mode_switch.approval.name).to eq(:bypass)
+        expect(board.policy_switch.current).to have_attributes(label: "bypass")
         expect { Lain::Compare::Mode.from_journal(journal_io.string.lines) }.not_to raise_error
       end
     end
@@ -1306,7 +1308,7 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     it "moves the scope, resolves, switches, commits the move, then applies" do
-      mode = Lain::Mode.new(approval: :auto)
+      mode = Lain::Mode.new(approval: :bypass)
       resolution = Lain::Mode::Resolution.new(gate_policy: ->(*) { false })
       seen = []
       inner_switch = Object.new

@@ -19,9 +19,9 @@ RSpec.describe Lain::Mode::Switch do
     end
 
     it "answers the scope, the approval, the layers and the description through that mode" do
-      switch.switch(Lain::Mode.new(approval: :auto, layers: %i[goal]), surface: "tty")
+      switch.switch(Lain::Mode.new(approval: :bypass, layers: %i[goal]), surface: "tty")
 
-      expect([switch.scope, switch.approval]).to eq([Lain::Mode::Scope.for(:checkout), Lain::Mode::Approval.for(:auto)])
+      expect([switch.scope, switch.approval]).to eq([Lain::Mode::Scope.for(:checkout), Lain::Mode::Approval.for(:bypass)])
       expect(switch.layers).to eq(Lain::Mode::LayerSet.new(%i[goal]))
       expect(switch.describe).to eq(switch.current.describe)
     end
@@ -29,7 +29,7 @@ RSpec.describe Lain::Mode::Switch do
     # Answering the slot rather than the argument: a dropped assignment must
     # not still confirm the new mode to its caller.
     it "answers the mode now in force, so a confirmation can name what it got" do
-      auto = Lain::Mode.new(approval: :auto)
+      auto = Lain::Mode.new(approval: :bypass)
 
       expect(switch.switch(auto, surface: "tty")).to be(auto).and be(switch.current)
     end
@@ -37,7 +37,7 @@ RSpec.describe Lain::Mode::Switch do
 
   describe "delegation, not mutation" do
     it "leaves the mode it held untouched -- the value is frozen and a switch replaces it" do
-      switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+      switch.switch(Lain::Mode.new(approval: :bypass), surface: "tty")
 
       expect(asking).to eq(Lain::Mode.new)
       expect(asking).to be_frozen
@@ -49,7 +49,7 @@ RSpec.describe Lain::Mode::Switch do
   # harness in a mode the experiment record never mentions.
   describe "a flip the journal refuses" do
     it "leaves the mode it held in force, and writes nothing" do
-      expect { switch.switch(Lain::Mode.new(approval: :auto), surface: nil) }
+      expect { switch.switch(Lain::Mode.new(approval: :bypass), surface: nil) }
         .to raise_error(ArgumentError, /surface/)
 
       expect(switch.current).to be(asking)
@@ -83,7 +83,7 @@ RSpec.describe Lain::Mode::Switch do
       refusing = Class.new { def record(_entry) = raise(IOError, "closed") }.new
       held = described_class.new(Lain::Mode.new, journal: refusing)
 
-      expect { held.switch(Lain::Mode.new(approval: :auto), surface: "tty") }.to raise_error(IOError)
+      expect { held.switch(Lain::Mode.new(approval: :bypass), surface: "tty") }.to raise_error(IOError)
       expect(held.current).to eq(Lain::Mode.new)
     end
   end
@@ -104,10 +104,10 @@ RSpec.describe Lain::Mode::Switch do
     it "moves the mode when a live sink raises after the durable record, then re-raises" do
       held = described_class.new(Lain::Mode.new, journal: Lain::CLI::JournalTee.new(journal, failing_sink))
 
-      expect { held.switch(Lain::Mode.new(approval: :auto), surface: "tty") }.to raise_error(IOError)
+      expect { held.switch(Lain::Mode.new(approval: :bypass), surface: "tty") }.to raise_error(IOError)
 
       expect(flips.size).to eq(1)
-      expect(held.current).to eq(Lain::Mode.new(approval: :auto))
+      expect(held.current).to eq(Lain::Mode.new(approval: :bypass))
     end
 
     it "moves the mode when the live sink's error is frozen, and surfaces the sink's own error" do
@@ -116,38 +116,38 @@ RSpec.describe Lain::Mode::Switch do
       sink.define_singleton_method(:<<) { |_event| raise frozen }
       held = described_class.new(Lain::Mode.new, journal: Lain::CLI::JournalTee.new(journal, sink))
 
-      expect { held.switch(Lain::Mode.new(approval: :auto), surface: "tty") }.to raise_error(IOError, /state feed/)
-      expect([flips.size, held.current]).to eq([1, Lain::Mode.new(approval: :auto)])
+      expect { held.switch(Lain::Mode.new(approval: :bypass), surface: "tty") }.to raise_error(IOError, /state feed/)
+      expect([flips.size, held.current]).to eq([1, Lain::Mode.new(approval: :bypass)])
     end
 
     it "leaves the mode unchanged when the durable write itself fails" do
       journal.close
       held = described_class.new(Lain::Mode.new, journal: Lain::CLI::JournalTee.new(journal, failing_sink))
 
-      expect { held.switch(Lain::Mode.new(approval: :auto), surface: "tty") }.to raise_error(Lain::Journal::Closed)
+      expect { held.switch(Lain::Mode.new(approval: :bypass), surface: "tty") }.to raise_error(Lain::Journal::Closed)
       expect(held.current).to eq(Lain::Mode.new)
     end
 
     it "writes no second record on a retry after a live-sink failure, so the records still chain" do
       held = described_class.new(Lain::Mode.new, journal: Lain::CLI::JournalTee.new(journal, failing_sink(times: 1)))
-      auto = Lain::Mode.new(approval: :auto)
+      auto = Lain::Mode.new(approval: :bypass)
 
       expect { held.switch(auto, surface: "tty") }.to raise_error(IOError)
       held.switch(auto, surface: "tty")
       held.switch(Lain::Mode.new, surface: "tty")
 
       expect(flips.map { |record| record.values_at("from_approval", "to_approval") })
-        .to eq([%w[ask auto], %w[auto ask]])
+        .to eq([%w[ask bypass], %w[bypass ask]])
       expect { Lain::Compare::Mode.from_journal(journal_io.string.lines) }.not_to raise_error
     end
   end
 
   describe "the journaled flip (attributed evidence, not incident detail)" do
     it "journals both axes on each side, with the deciding surface" do
-      switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+      switch.switch(Lain::Mode.new(approval: :bypass), surface: "tty")
 
       sides = %w[from_scope from_approval to_scope to_approval surface]
-      expect(flips.map { |record| record.values_at(*sides) }).to eq([%w[checkout ask checkout auto tty]])
+      expect(flips.map { |record| record.values_at(*sides) }).to eq([%w[checkout ask checkout bypass tty]])
     end
 
     it "journals nothing at construction -- the initial mode is the wiring's choice, not a flip" do
@@ -177,7 +177,7 @@ RSpec.describe Lain::Mode::Switch do
     # A mode never changes what the model is shown, so the record has nothing
     # to say about a toolset.
     it "names no toolset" do
-      switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+      switch.switch(Lain::Mode.new(approval: :bypass), surface: "tty")
 
       expect(flips.first.keys).not_to include("toolset_digest", "tool_names")
     end
@@ -189,7 +189,7 @@ RSpec.describe Lain::Mode::Switch do
     # line that PARSES while carrying garbage. Every field of this record must
     # therefore already be a String or an Array of Strings.
     it "writes names and lists, never a rendered Ruby object" do
-      switch.switch(Lain::Mode.new(approval: :auto, layers: %i[goal]), surface: "tty")
+      switch.switch(Lain::Mode.new(approval: :bypass, layers: %i[goal]), surface: "tty")
       line = JSON.parse(journal_io.string.lines.last)
 
       expect(journal_io.string).not_to include("#<")
@@ -200,7 +200,7 @@ RSpec.describe Lain::Mode::Switch do
 
   describe Lain::Telemetry::ModeSwitch do
     def record(**over)
-      described_class.new(from_scope: :checkout, to_scope: :checkout, from_approval: :ask, to_approval: :auto,
+      described_class.new(from_scope: :checkout, to_scope: :checkout, from_approval: :ask, to_approval: :bypass,
                           from_layers: %i[goal], to_layers: [], surface: :tty, **over)
     end
 
@@ -214,7 +214,7 @@ RSpec.describe Lain::Mode::Switch do
 
     it "coerces names to Strings, whatever the caller held them as" do
       expect(record.to_journal)
-        .to include("from_scope" => "checkout", "to_approval" => "auto", "surface" => "tty",
+        .to include("from_scope" => "checkout", "to_approval" => "bypass", "surface" => "tty",
                     "from_layers" => %w[goal])
     end
 
@@ -263,7 +263,7 @@ RSpec.describe Lain::Mode::Switch do
   # command that flipped it.
   it "says nothing beyond the mode it moved to" do
     switch = described_class.new(Lain::Mode.new, journal: Lain::Journal.new(io: StringIO.new))
-    switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+    switch.switch(Lain::Mode.new(approval: :bypass), surface: "tty")
 
     expect(switch.said).to eq("")
   end

@@ -498,7 +498,7 @@ RSpec.describe LainCLI do
     end
   end
 
-  # `--yolo` is gone: every posture it bought is reachable through `/mode auto`,
+  # `--yolo` is gone: every posture it bought is reachable through `/mode bypass`,
   # and the branches only it could reach went with it. What matters at this seam
   # is that the removal is LOUD -- a flag silently ignored would start a session
   # the operator believes is approving everything.
@@ -534,6 +534,26 @@ RSpec.describe LainCLI do
       expect { described_class.start(%w[chat --yolo]) }.to raise_error(SystemExit)
 
       expect(Lain::CLI::ChatLaunch).not_to have_received(:new)
+    end
+  end
+
+  describe "the removed --auto-approve flag" do
+    it "refuses it by name, and opens no session" do
+      launch = instance_double(Lain::CLI::ChatLaunch, call: nil, exit_status: 0)
+      allow(Lain::CLI::ChatLaunch).to receive(:new).and_return(launch)
+
+      expect { described_class.start(%w[chat --auto-approve]) }
+        .to output(/--auto-approve/).to_stderr
+        .and raise_error(SystemExit) { |error| expect(error.status).not_to eq(0) }
+      expect(Lain::CLI::ChatLaunch).not_to have_received(:new)
+    end
+  end
+
+  describe "chat --approval" do
+    it "declares ask and bypass as the values, with ask the default" do
+      option = described_class.commands.fetch("chat").options.fetch(:approval)
+
+      expect([option.enum, option.default]).to eq([%w[ask bypass], "ask"])
     end
   end
 

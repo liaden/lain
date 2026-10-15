@@ -208,23 +208,24 @@ RSpec.describe Lain::Bench::Variance do
         .to raise_error(Lain::Capability::Guard::Mismatch)
     end
 
-    # The mode is the same kind of fact the degraded set is: an `auto` run
+    # The mode is the same kind of fact the degraded set is: a `bypass` run
     # never stopped for a human, so a distribution drawn across it and an `ask`
     # run measures the approval level rather than the variable. Until the
     # Recording carried a mode this guard was unreachable from every caller in
     # the tree.
     it "raises when the recordings' journals record different modes" do
-      automatic = record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[ask auto]])
-      returned = record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[ask auto], %w[auto ask]])
+      automatic = record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[ask bypass]])
+      returned = record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[ask bypass], %w[bypass ask]])
       expect { described_class.new(recordings: [automatic, returned]) }
-        .to raise_error(Lain::Error, %r{checkout/ask → checkout/auto vs checkout/ask → checkout/auto → checkout/ask})
+        .to raise_error(Lain::Error,
+                        %r{checkout/ask → checkout/bypass vs checkout/ask → checkout/bypass → checkout/ask})
     end
 
     it "compares recordings that walked the same mode trajectory, and names it" do
       pair = Array.new(2) do
-        record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[ask auto]])
+        record([tool_response("tu_1", "hi"), text_response("done")], flips: [%w[ask bypass]])
       end
-      expect(described_class.new(recordings: pair).report).to include("mode: checkout/ask → checkout/auto")
+      expect(described_class.new(recordings: pair).report).to include("mode: checkout/ask → checkout/bypass")
     end
 
     # A pipeline decides the bytes each model call sends, so a pruned run held

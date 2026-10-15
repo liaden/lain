@@ -3,7 +3,7 @@
 module Lain
   class Compare
     # The mode a run was in, as a comparison AXIS -- the same kind of fact
-    # {Capability::Guard} already refuses to cross. An `auto` run never stopped
+    # {Capability::Guard} already refuses to cross. An `bypass` run never stopped
     # for a human, so a distribution drawn across it and an `ask` run measures
     # the approval level, not the variable under study. So this refuses, exactly
     # as that guard does. A point on the axis is a scope and an approval level,
@@ -12,8 +12,8 @@ module Lain
     # A mode is a TRAJECTORY, not a value: `/mode` can be switched mid-run, and
     # a scalar has no honest answer for a run that switched. Last-wins credits
     # the whole run to the point it ended in, first-wins to the point it left,
-    # and either DESTROYS the path -- while "every run that ever touched `auto`"
-    # is an ordinary query OVER trajectories. So `checkout/ask → checkout/auto`
+    # and either DESTROYS the path -- while "every run that ever touched `bypass`"
+    # is an ordinary query OVER trajectories. So `checkout/ask → checkout/bypass`
     # is its own axis point, comparable only with a run that walked the same
     # path. A designed sweep FIXES its arm's mode and so records one-element
     # trajectories that compare exactly like scalars.

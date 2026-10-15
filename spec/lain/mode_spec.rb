@@ -13,15 +13,15 @@ RSpec.describe Lain::Mode do
 
   describe "construction" do
     it "is a scope, an approval level and a set of layers" do
-      mode = described_class.new(scope: :checkout, approval: :auto, layers: %i[notify goal])
+      mode = described_class.new(scope: :checkout, approval: :bypass, layers: %i[notify goal])
 
       expect(mode.scope).to be(Lain::Mode::Scope.for(:checkout))
-      expect(mode.approval).to be(Lain::Mode::Approval.for(:auto))
+      expect(mode.approval).to be(Lain::Mode::Approval.for(:bypass))
       expect(mode.layers).to eq(Lain::Mode::LayerSet.new(%i[goal notify]))
     end
 
     it "accepts already-built axis values and a LayerSet, not only raw names" do
-      approval = Lain::Mode::Approval.for(:auto)
+      approval = Lain::Mode::Approval.for(:bypass)
       layers = Lain::Mode::LayerSet.new(%i[vi])
 
       mode = described_class.new(approval:, layers:)
@@ -40,7 +40,7 @@ RSpec.describe Lain::Mode do
     end
 
     it "fails loudly on an unknown approval level, naming every alternative" do
-      expect { described_class.new(approval: :manual) }.to raise_error(ArgumentError, /manual.*ask.*auto/m)
+      expect { described_class.new(approval: :manual) }.to raise_error(ArgumentError, /manual.*ask.*bypass/m)
     end
 
     it "fails loudly on an unknown scope, naming every alternative" do
@@ -98,20 +98,20 @@ RSpec.describe Lain::Mode do
     end
 
     it "renders an axis value's own lighter too, when it has one" do
-      expect(described_class.new(approval: :auto).describe).to eq("checkout auto (AUTO): no layers active")
+      expect(described_class.new(approval: :bypass).describe).to eq("checkout bypass (BYPASS): no layers active")
     end
   end
 
   describe "the value it is" do
     it "is a frozen value, safe to share across a Ractor" do
-      mode = described_class.new(approval: :auto, layers: %i[goal])
+      mode = described_class.new(approval: :bypass, layers: %i[goal])
 
       expect(mode).to be_deeply_frozen
     end
 
     it "compares equal to a mode built from the same names, so a flip can tell nothing moved" do
-      expect(described_class.new(approval: "auto", layers: %i[vi]))
-        .to eq(described_class.new(approval: :auto, layers: %w[vi]))
+      expect(described_class.new(approval: "bypass", layers: %i[vi]))
+        .to eq(described_class.new(approval: :bypass, layers: %w[vi]))
     end
   end
 

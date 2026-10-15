@@ -8,14 +8,14 @@ module Lain
       # Bare `/mode` is Emacs' `C-h m`: it reports and changes nothing.
       #
       #   /mode                 report the scope, the approval level and the layers
-      #   /mode auto            move one exclusive axis, keeping everything else
+      #   /mode bypass          move one exclusive axis, keeping everything else
       #   /mode plan ask        move both axes at once
       #   /mode +auto_approve   enable one layer
       #   /mode -auto_approve   disable one layer
       #   /mode !               reset: plan scope, ask approval, no layers
       #
       # Tokens FOLD over one Mode and the result is switched ONCE, so
-      # `/mode auto +notify -goal` journals a single flip naming where the
+      # `/mode bypass +notify -goal` journals a single flip naming where the
       # session started and where it ended. Applying each token as its own
       # switch would write intermediate modes the session was never really in.
       #
@@ -26,7 +26,7 @@ module Lain
       # The reset is a safety step first: it always lands on ask approval with
       # no layers, because Vim's promise for `<Esc><Esc>` is that afterwards you
       # know exactly where you are and that nothing is being decided behind
-      # you, which `auto` or a surviving `+auto_approve` would each break. It
+      # you, which `bypass` or a surviving `+auto_approve` would each break. It
       # then enters plan scope, the most confined one there is. When no spike
       # can be cut it stays in the checkout and says why, rather than leaving
       # the mode it was reached for in force.
@@ -67,14 +67,6 @@ module Lain
         AXES = { scope: Lain::Mode::Scope, approval: Lain::Mode::Approval }.freeze
         private_constant :AXES
 
-        # Names a human may still type from an older mode vocabulary, each
-        # refused with where it went rather than as a typo.
-        RETIRED = {
-          "manual" => "manual is retired: approval is ask or auto, and ask gates everything manual gated",
-          "accept_edits" => "accept_edits is retired: it is ask now"
-        }.freeze
-        private_constant :RETIRED
-
         def initialize = freeze
 
         def name = "mode"
@@ -85,8 +77,8 @@ module Lain
         end
 
         # Downcased, because the lighters a human reads off chrome they cannot
-        # turn off are upper-case (`AUTO`, `AA`), so a HUD showing `AUTO` beside
-        # a command that refuses `/mode AUTO` is a trap of our own making. Every
+        # turn off are upper-case (`BYPASS`, `AA`), so a HUD showing `BYPASS` beside
+        # a command that refuses `/mode BYPASS` is a trap of our own making. Every
         # declared name is lower-case.
         def call(args, env)
           tokens = args.split.map(&:downcase)
@@ -103,7 +95,7 @@ module Lain
         private
 
         # Mid-turn, a scope move is refused. A reset still lands everything but
-        # the scope, since dropping `auto` is the part that cannot wait.
+        # the scope, since dropping `bypass` is the part that cannot wait.
         def held_in_flight(env, before, after, reset:)
           return [after, nil] if before.scope == after.scope || !InFlight.dispatching?(env)
           raise Error, IN_FLIGHT unless reset
@@ -133,16 +125,10 @@ module Lain
         # {Lain::Error} because a typo is something the repl renders and loops
         # past, not a bug.
         def fold(tokens, mode)
-          refuse_retired(tokens)
           refuse_contradictions(tokens)
           tokens.inject(mode) { |current, token| apply(current, token) }
         rescue ArgumentError => e
           raise Error, e.message
-        end
-
-        def refuse_retired(tokens)
-          retired = tokens.find { |token| RETIRED.key?(token) }
-          raise Error, "#{RETIRED.fetch(retired)} -- #{takes}" if retired
         end
 
         def refuse_contradictions(tokens)

@@ -604,9 +604,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
         # A mode never changes what a child may hold: the gate a child is built
         # behind is what a flip moves.
-        it "renders the same tools to a dev child spawned after /mode auto" do
+        it "renders the same tools to a dev child spawned after /mode bypass" do
           before = spawn_dev
-          switchboard.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
+          switchboard.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
 
           expect(spawn_dev).to eq(before)
         end

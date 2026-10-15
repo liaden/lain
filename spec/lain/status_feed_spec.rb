@@ -1505,9 +1505,9 @@ RSpec.describe Lain::StatusFeed do
     it "publishes the approval the record switched TO, not the one it left" do
       feed = described_class.new(path:)
 
-      feed << mode_switch(from_approval: :ask, to_approval: :auto)
+      feed << mode_switch(from_approval: :ask, to_approval: :bypass)
 
-      expect(published.values_at("scope", "approval")).to eq(%w[checkout auto])
+      expect(published.values_at("scope", "approval")).to eq(%w[checkout bypass])
     end
 
     # The layer list is built through a real LayerSet, exactly as Mode::Switch
@@ -1516,11 +1516,11 @@ RSpec.describe Lain::StatusFeed do
     # second copy of a rule LayerSet already owns.
     it "composes the lighter from the axes and every active layer, in the record's precedence order" do
       feed = described_class.new(path:)
-      mode = Lain::Mode.new(approval: :auto, layers: %i[goal auto_approve])
+      mode = Lain::Mode.new(approval: :bypass, layers: %i[goal auto_approve])
 
       feed << mode_switch(to_approval: mode.approval.name, to_layers: mode.layers.names)
 
-      expect(published["mode_lighter"]).to eq("AUTO AA GOAL")
+      expect(published["mode_lighter"]).to eq("BYPASS AA GOAL")
     end
 
     # checkout and ask declare EMPTY lighters -- the starting mode is silent,
@@ -1528,7 +1528,7 @@ RSpec.describe Lain::StatusFeed do
     it "composes an empty lighter for the starting mode, which declares itself silent" do
       feed = described_class.new(path:)
 
-      feed << mode_switch(from_approval: :auto)
+      feed << mode_switch(from_approval: :bypass)
 
       expect(published.values_at("approval", "mode_lighter")).to eq(["ask", ""])
     end
@@ -1538,7 +1538,7 @@ RSpec.describe Lain::StatusFeed do
       feed << mode_switch(to_layers: %i[vi])
       allow(File).to receive(:write).and_call_original
 
-      feed << mode_switch(to_approval: :auto, to_layers: %i[vi])
+      feed << mode_switch(to_approval: :bypass, to_layers: %i[vi])
 
       expect(File).to have_received(:write).once
     end
@@ -1560,7 +1560,7 @@ RSpec.describe Lain::StatusFeed do
 
     it "skips the write when an unrelated record arrives and the mode did not move" do
       feed = described_class.new(path:)
-      feed << mode_switch(to_approval: :auto)
+      feed << mode_switch(to_approval: :bypass)
       feed << spawn_event("a")
       allow(File).to receive(:write).and_call_original
 
@@ -1571,10 +1571,10 @@ RSpec.describe Lain::StatusFeed do
 
     it "skips the write on a redelivered mode_switch, which moves no derived field" do
       feed = described_class.new(path:)
-      feed << mode_switch(to_approval: :auto)
+      feed << mode_switch(to_approval: :bypass)
       allow(File).to receive(:write).and_call_original
 
-      feed << mode_switch(to_approval: :auto)
+      feed << mode_switch(to_approval: :bypass)
 
       expect(File).not_to have_received(:write)
     end
@@ -1594,8 +1594,8 @@ RSpec.describe Lain::StatusFeed do
     it "never raises on a layer name this build does not declare, and still names it" do
       feed = described_class.new(path:)
 
-      expect { feed << mode_switch(to_approval: :auto, to_layers: %i[telepathy]) }.not_to raise_error
-      expect(published["mode_lighter"]).to eq("AUTO telepathy")
+      expect { feed << mode_switch(to_approval: :bypass, to_layers: %i[telepathy]) }.not_to raise_error
+      expect(published["mode_lighter"]).to eq("BYPASS telepathy")
     end
   end
 
@@ -1667,10 +1667,10 @@ RSpec.describe Lain::StatusFeed do
       feed = described_class.new(path:)
       switch = Lain::Mode::Switch.new(Lain::Mode.new, journal: chronicle_teed_to(feed).record_journal)
 
-      switch.switch(Lain::Mode.new(approval: :auto, layers: %i[auto_approve]), surface: "tty")
+      switch.switch(Lain::Mode.new(approval: :bypass, layers: %i[auto_approve]), surface: "tty")
 
       expect(published.values_at("approval", "layers", "mode_lighter"))
-        .to eq(["auto", %w[auto_approve], "AUTO AA"])
+        .to eq(["bypass", %w[auto_approve], "BYPASS AA"])
     end
 
     # Exactly ChatLaunch#open_chronicle's order: the chronicle opens, the feed

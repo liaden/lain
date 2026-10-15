@@ -74,10 +74,10 @@ RSpec.describe Lain::Bench::Session::Loader do
     # for the same reason: it is what makes two recordings comparable at all, so
     # a Recording that could not answer it left Compare's guard unable to fire.
     it "folds mode_switch records into the recorded mode trajectory" do
-      flips = [flip("ask", "auto"), flip("auto", "ask")]
+      flips = [flip("ask", "bypass"), flip("bypass", "ask")]
       lines = entries.to_a + flips.map { |record| "#{JSON.generate(record)}\n" }
       expect(described_class.new(lines).recording.mode.to_s)
-        .to eq("checkout/ask → checkout/auto → checkout/ask")
+        .to eq("checkout/ask → checkout/bypass → checkout/ask")
     end
 
     it "answers an unrecorded mode for a journal holding no mode_switch record" do
@@ -114,7 +114,7 @@ RSpec.describe Lain::Bench::Session::Loader do
       end
 
       it "refuses an unchainable pair as Corrupt, not as a bare Lain::Error" do
-        expect { loaded_with(flip("ask", "auto"), flip("ask", "auto")) }
+        expect { loaded_with(flip("ask", "bypass"), flip("ask", "bypass")) }
           .to raise_error(Lain::Bench::Session::Corrupt, /mode_switch/)
       end
 
@@ -123,14 +123,14 @@ RSpec.describe Lain::Bench::Session::Loader do
       end
 
       it "refuses a flip missing a side as Corrupt, not as a bare ArgumentError" do
-        expect { loaded_with(flip("ask", "auto").except("from_approval")) }
+        expect { loaded_with(flip("ask", "bypass").except("from_approval")) }
           .to raise_error(Lain::Bench::Session::Corrupt)
       end
 
       # The loader reads the record shape a mode is journaled in now, and no
       # other: a line carrying only `from`/`to` names no scope and no approval.
       it "refuses a record in the retired from/to shape as Corrupt" do
-        expect { loaded_with({ "type" => "mode_switch", "from" => "manual", "to" => "auto" }) }
+        expect { loaded_with({ "type" => "mode_switch", "from" => "manual", "to" => "bypass" }) }
           .to raise_error(Lain::Bench::Session::Corrupt, /from_scope and from_approval/)
       end
     end

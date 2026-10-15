@@ -763,9 +763,9 @@ RSpec.describe Lain::Frontend::PromptComposer do
       end
 
       it "reports an axis's own lighter when it has one" do
-        mode = Lain::Mode.new(approval: :auto, layers: [])
+        mode = Lain::Mode.new(approval: :bypass, layers: [])
 
-        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("AUTO")
+        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("BYPASS")
       end
 
       it "reports nothing for the starting mode with no layers active" do
@@ -775,9 +775,9 @@ RSpec.describe Lain::Frontend::PromptComposer do
       end
 
       it "reports the axes' lighters alongside every active layer's, in precedence order" do
-        mode = Lain::Mode.new(approval: :auto, layers: %i[auto_approve])
+        mode = Lain::Mode.new(approval: :bypass, layers: %i[auto_approve])
 
-        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("AUTO AA")
+        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("BYPASS AA")
       end
 
       it "reports only the active layers' lighters when both axes are silent" do
@@ -1023,15 +1023,15 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
 
     it "carries a lit approval's lighter into the rendered line" do
-      rendered = shipped.render(state.merge("mode" => "AUTO"), color: false)
+      rendered = shipped.render(state.merge("mode" => "BYPASS"), color: false)
 
-      expect(rendered).to include("AUTO")
+      expect(rendered).to include("BYPASS")
     end
 
     it "carries the approval's lighter and every active layer's lighter" do
-      rendered = shipped.render(state.merge("mode" => "AUTO AA"), color: false)
+      rendered = shipped.render(state.merge("mode" => "BYPASS AA"), color: false)
 
-      expect(rendered).to include("AUTO", "AA")
+      expect(rendered).to include("BYPASS", "AA")
     end
   end
 

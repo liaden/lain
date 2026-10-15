@@ -120,7 +120,7 @@ module Lain
       # The mode switch as the human writes it, over the one the driver moves.
       # The `goal` layer says a goal is standing, so raising it with none would
       # be a lighter that lies, and lowering it is the human saying stop. It
-      # decides on the whole folded mode, so `/mode auto +goal` is refused whole
+      # decides on the whole folded mode, so `/mode bypass +goal` is refused whole
       # and `/mode !` stops the goal as `-goal` does.
       class Guard
         REFUSAL = "the goal layer shows a standing goal, and none is set -- /goal <objective> sets one and raises it"

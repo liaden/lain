@@ -227,7 +227,9 @@ RSpec.describe "A spawned child's read outside its scope", :seam do
   # may any parked call that carries no region.
   it "releases a child's outside list_files on the automatic approver's approve" do
     child_calls("list_files", { "path" => File.join(@home, ".local", "share") }, judged: [text_response("APPROVE")])
-    wiring, agent = wired(auto_approve: true)
+    wiring, agent = wired
+    wiring.instance_variable_get(:@switchboard).mode_switch
+          .switch(Lain::Mode.new(layers: %i[auto_approve]), surface: "spec")
 
     seen = researching(wiring, agent, answer: nil) do |task|
       [task.async { wiring.auto_surface.watch(wiring.approvals) }]

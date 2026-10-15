@@ -339,7 +339,7 @@ RSpec.describe Lain::Approval::Escalation do
     let(:classifiers) { EscalationSpecSupport::Classifiers.new(home: "/home/tester", base: "/srv/project") }
 
     def automatic(rules: [], triage: described_class::Triage.new)
-      described_class.automatic(tools:, journal:, rules:, triage:)
+      described_class.bypass(tools:, journal:, rules:, triage:)
     end
 
     it "labels the asking ladder ask, over the queue" do
@@ -348,16 +348,16 @@ RSpec.describe Lain::Approval::Escalation do
       expect([built.label, built.map(&:name)]).to eq(["ask", %w[triage rules surfaces]])
     end
 
-    it "labels the automatic ladder auto, with the remainder where the queue would be" do
-      expect([automatic.label, automatic.map(&:name)]).to eq(["auto", %w[triage rules auto]])
+    it "labels the automatic ladder bypass, with the remainder where the queue would be" do
+      expect([automatic.label, automatic.map(&:name)]).to eq(["bypass", %w[triage rules bypass]])
     end
 
     it "approves a call no rung above decided, attributed to the remainder" do
       expect(automatic.call(effect, nil)).to be(true)
-      expect(rulings.last).to include("rung" => "auto", "verdict" => "allow", "authority" => "automatic")
+      expect(rulings.last).to include("rung" => "bypass", "verdict" => "allow", "authority" => "automatic")
     end
 
-    it "lets a triage deny decide under auto" do
+    it "lets a triage deny decide under bypass" do
       read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash",
                                         input: { "command" => "cat /home/tester/.ssh/id_ed25519" })
 
@@ -366,7 +366,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     # Scenario: A shell read of the shadow file is refused under bypass
-    it "denies a shell read of the shadow file as final under auto, where nothing else refuses" do
+    it "denies a shell read of the shadow file as final under bypass, where nothing else refuses" do
       read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "cat /etc/shadow" })
 
       expect(automatic(triage: described_class::Triage.new(sensitivity: classifiers)).call(read, nil)).to be(false)
@@ -374,7 +374,7 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.last["reason"]).to include('"/etc/shadow" is a system account or privilege file')
     end
 
-    it "lets a rule deny decide under auto" do
+    it "lets a rule deny decide under bypass" do
       expect(automatic(rules: [EscalationSpecSupport::Denier.new]).call(effect, nil)).to be(false)
       expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
     end
@@ -1057,7 +1057,7 @@ RSpec.describe Lain::Approval::Escalation do
     # Attributed to the rules rung, but no rule refused: an automatic allow was
     # suppressed over a fault, and a human's allow would have stood.
     it "does not mark a suppressed allow final, though it names the rung that faulted" do
-      ruling = ladder(rules_rung(EscalationSpecSupport::Raiser.new), EscalationSpecSupport::Fixed.new("auto", :allow))
+      ruling = ladder(rules_rung(EscalationSpecSupport::Raiser.new), EscalationSpecSupport::Fixed.new("bypass", :allow))
                .rule(effect, nil)
 
       expect(ruling).to have_attributes(verdict: :deny, rung: "rules")
@@ -1108,11 +1108,11 @@ RSpec.describe Lain::Approval::Escalation do
       expect(built.rule(effect, carried(barred: false))).to be_allow
     end
 
-    it "refuses a barred command under auto approval, where no human is asked" do
-      ruling = described_class.automatic(tools:, journal:).rule(effect, carried(barred: true))
+    it "refuses a barred command under bypass approval, where no human is asked" do
+      ruling = described_class.bypass(tools:, journal:).rule(effect, carried(barred: true))
 
-      expect(ruling).to have_attributes(verdict: :deny, rung: described_class::Remainder::NAME)
-      expect(rulings.last).to include("rung" => described_class::Remainder::NAME, "verdict" => "deny")
+      expect(ruling).to have_attributes(verdict: :deny, rung: described_class::Bypass::NAME)
+      expect(rulings.last).to include("rung" => described_class::Bypass::NAME, "verdict" => "deny")
     end
 
     # A refusal nobody can lift at this approval level says so, and names the
@@ -1120,12 +1120,12 @@ RSpec.describe Lain::Approval::Escalation do
     # The model cannot switch modes, so it is told who can, and that no
     # approval is possible at this level -- which is what the gate's final
     # sentence then says too.
-    it "tells the model only a human switching to /mode ask can approve a barred command under auto approval" do
-      ruling = described_class.automatic(tools:, journal:).rule(effect, carried(barred: true))
+    it "tells the model only a human switching to /mode ask can approve a barred command under bypass approval" do
+      ruling = described_class.bypass(tools:, journal:).rule(effect, carried(barred: true))
 
       expect(ruling).to be_final
       expect(ruling.told).to include("a human must switch to /mode ask to approve it",
-                                     "no approval is possible while approval is auto")
+                                     "no approval is possible while approval is bypass")
     end
 
     it "leaves a deny for a barred command a deny" do

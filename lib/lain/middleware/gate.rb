@@ -38,7 +38,7 @@ module Lain
     # opposite and the default -- safer to refuse an unattended gate than to
     # silently run it. Neither is what a mode resolves to: both approval levels
     # are an {Approval::Escalation} ladder, so a session's own triage and rule
-    # denies decide under `/mode auto` too.
+    # denies decide under `/mode bypass` too.
     class Gate < Base
       # Approves every gated call without consulting a rung: for a gate built
       # where no session rules exist to consult, never for a chat's mode.

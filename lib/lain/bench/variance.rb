@@ -28,7 +28,7 @@ module Lain
     # degraded sets and a recording that cannot replay both refuse at
     # construction, before any report text exists. Each recording's MODE
     # trajectory rides into Compare beside its degraded set, which is what lets
-    # that guard refuse an `ask` run held against an `auto` one: absent it,
+    # that guard refuse an `ask` run held against a `bypass` one: absent it,
     # every run reads as "not recorded" and the guard agrees with everything.
     class Variance
       # @param recordings [Array<Session::Recording>] n >= 2 recordings of one task

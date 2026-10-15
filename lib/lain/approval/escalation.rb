@@ -181,10 +181,10 @@ module Lain
         over(Surfaces.new(queue), label: "ask", tools:, journal:, rules:, triage:)
       end
 
-      # `auto` approval's ladder: the same deterministic rungs, so a triage deny
-      # or a rule deny still decides, and {Remainder} where the queue would be.
-      def self.automatic(tools:, journal:, rules: [], triage: Triage.new)
-        over(Remainder.new, label: "auto", tools:, journal:, rules:, triage:)
+      # `bypass` approval's ladder: the same deterministic rungs, so a triage deny
+      # or a rule deny still decides, and {Bypass} where the queue would be.
+      def self.bypass(tools:, journal:, rules: [], triage: Triage.new)
+        over(Bypass.new, label: "bypass", tools:, journal:, rules:, triage:)
       end
 
       # Whether the context a call is judged in bars it from automatic approval.
@@ -497,7 +497,7 @@ module Lain
         # (`Cookies`, `key4.db`) anywhere under `$HOME`, which is where
         # checkouts live. Denying on a bare word therefore stops
         # `grep -n Cookies lib/lain/sensitivity.rb` in this very repository, and
-        # NOTHING lifts it -- not a policy, not `/mode auto`, not `ApproveAll`,
+        # NOTHING lifts it -- not a policy, not `/mode bypass`, not `ApproveAll`,
         # and not `sensitivity exempt:`, which subtracts from the gated half
         # only.
         #
@@ -629,20 +629,20 @@ module Lain
         end
       end
 
-      # `auto` approval's bottom rung, standing where {Surfaces} stands under
+      # `bypass` approval's bottom rung, standing where {Surfaces} stands under
       # `ask`: a call no rung above decided is approved. AUTOMATIC authority,
       # so an allow reached over a faulted rung is suppressed like any other
       # machine's -- a broken rule never becomes a free pass.
       #
-      # A barred command is refused, and FINAL: there is no queue under `auto`
+      # A barred command is refused, and FINAL: there is no queue under `bypass`
       # to park it on, so no approval at this level lifts it. The model cannot
       # switch modes, so it is told who can and that retrying will not help.
-      class Remainder
-        NAME = "auto"
-        BECAUSE = "approval is auto, and no rung above refused this call"
-        REFUSED = "approval is auto, and this command is barred from automatic approval"
+      class Bypass
+        NAME = "bypass"
+        BECAUSE = "approval is bypass, and no rung above refused this call"
+        REFUSED = "approval is bypass, and this command is barred from automatic approval"
         TOLD = "this command's automatically approved output held a credential, so only a human may approve " \
-               "it, and no approval is possible while approval is auto -- a human must switch to /mode ask " \
+               "it, and no approval is possible while approval is bypass -- a human must switch to /mode ask " \
                "to approve it"
 
         # Frozen on {Triage}'s terms: a rung holds no state.

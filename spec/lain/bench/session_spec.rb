@@ -357,8 +357,8 @@ RSpec.describe Lain::Bench::Session do
     it "folds mode_switch records into the Recording's mode trajectory" do
       write_session
       journal << Lain::Telemetry::ModeSwitch.new(from_scope: :checkout, to_scope: :checkout, from_approval: :ask,
-                                                 to_approval: :auto, from_layers: [], to_layers: [], surface: "tty")
-      expect(load_session.mode.to_s).to eq("checkout/ask → checkout/auto")
+                                                 to_approval: :bypass, from_layers: [], to_layers: [], surface: "tty")
+      expect(load_session.mode.to_s).to eq("checkout/ask → checkout/bypass")
     end
 
     it "answers unrecorded for a session that journaled no mode switch" do

@@ -909,14 +909,14 @@ RSpec.describe Lain::Tools::Bash do
       expect(arms.map { |arm| [arm.verdict, arm.arm] }).to eq([%i[allow string]])
     end
 
-    # `/mode auto` resolves the gate to the automatic ladder, whose remainder
+    # `/mode bypass` resolves the gate to the bypass ladder, whose remainder
     # approves what triage and the rules left open. The tool still writes its
-    # own record of the arm, so an `auto` session's account of it does not rest
+    # own record of the arm, so a `bypass` session's account of it does not rest
     # on which rungs happened to journal.
-    it "still records under /mode auto, where the remainder approves the call" do
+    it "still records under /mode bypass, where the remainder approves the call" do
       tool = described_class.new(journal:)
       toolset = Lain::Toolset.new([tool])
-      ladder = Lain::Approval::Escalation.automatic(tools: toolset, journal: Lain::Journal.new(io: StringIO.new))
+      ladder = Lain::Approval::Escalation.bypass(tools: toolset, journal: Lain::Journal.new(io: StringIO.new))
       gate = Lain::Middleware::Gate.new(policy: ladder)
 
       result = dispatch_call("bash", { "command" => "ls -la" }, id: "tu_auto", toolset:, layers: [gate],

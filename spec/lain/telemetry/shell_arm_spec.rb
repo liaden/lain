@@ -4,7 +4,7 @@ require "json"
 require "tmpdir"
 
 # What arm a gated shell call ran on, as the Journal will hold it. The gate's own
-# `shell verdict` line only exists when the ladder runs, and `/mode auto` replaces
+# `shell verdict` line only exists when the ladder runs, and `/mode bypass` replaces
 # the ladder wholesale -- so this record is the only account of arm selection an
 # unattended run leaves behind, and every example below is written from a reader
 # of that run's point of view.

@@ -1074,7 +1074,7 @@ RSpec.describe Lain::CLI::Resume do
       def sink.<<(_event) = raise(IOError, "state file write failed")
       switch = Lain::Mode::Switch.new(Lain::Mode.new, journal: Lain::CLI::JournalTee.new(Lain::Journal.new(io:), sink))
       2.times do
-        switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+        switch.switch(Lain::Mode.new(approval: :bypass), surface: "tty")
       rescue IOError
         nil
       end
@@ -1097,7 +1097,7 @@ RSpec.describe Lain::CLI::Resume do
       end
 
       it "refuses an unchainable pair namedly, never a raw Lain::Error" do
-        expect { resume_over(flip("ask", "auto"), flip("ask", "auto")) }
+        expect { resume_over(flip("ask", "bypass"), flip("ask", "bypass")) }
           .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson.*mode_switch/m)
       end
 
@@ -1107,7 +1107,7 @@ RSpec.describe Lain::CLI::Resume do
       end
 
       it "refuses a flip missing a side namedly, never a raw ArgumentError" do
-        expect { resume_over(flip("ask", "auto").except("from_approval")) }
+        expect { resume_over(flip("ask", "bypass").except("from_approval")) }
           .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
       end
     end

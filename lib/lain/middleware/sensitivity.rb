@@ -4,7 +4,7 @@ module Lain
   module Middleware
     # Refuses a call naming a DENIED path outright, one layer ahead of {Gate}.
     #
-    # A denied path is not approvable -- no policy, no `/mode auto`, no
+    # A denied path is not approvable -- no policy, no `/mode bypass`, no
     # {Gate::ApproveAll} lifts it -- which is exactly why it cannot be a gate
     # policy answer: that answer is a Boolean, and every Boolean is approvable
     # by construction. So the two axes sit in two layers, in this order: what

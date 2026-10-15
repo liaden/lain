@@ -202,8 +202,8 @@ RSpec.describe Lain::Compare do
     it "carries the mode the caller recorded for the run" do
       timeline, ledger = recorded("yo", input: 10, output: 1)
       run = described_class::Run.from_timeline(name: "recorded", timeline:, ledger:,
-                                               mode: Lain::Mode.new(approval: :auto))
-      expect(run.mode.to_s).to eq("checkout/auto")
+                                               mode: Lain::Mode.new(approval: :bypass))
+      expect(run.mode.to_s).to eq("checkout/bypass")
     end
   end
 
@@ -323,7 +323,7 @@ RSpec.describe Lain::Compare do
   # at all, and absent has to mean absent rather than another point on the axis.
   describe "the mode axis" do
     let(:ask) { "checkout/ask" }
-    let(:auto) { "checkout/auto" }
+    let(:bypass) { "checkout/bypass" }
 
     def mode_run(name, mode)
       run(name, usage: usage(input: 10, output: 1), cost: "0.001", mode:)
@@ -338,7 +338,7 @@ RSpec.describe Lain::Compare do
     end
 
     it "refuses runs under different modes, naming both" do
-      expect { compare(ask, auto) }.to raise_error(Lain::Error, %r{checkout/ask.*checkout/auto}m)
+      expect { compare(ask, bypass) }.to raise_error(Lain::Error, %r{checkout/ask.*checkout/bypass}m)
     end
 
     it "compares runs whose journals hold no mode record" do
@@ -352,7 +352,7 @@ RSpec.describe Lain::Compare do
     # them -- and reverting the guard to `each_cons` fails nothing else in this
     # file.
     it "refuses modes that differ across an unrecorded run standing between them" do
-      expect { compare(ask, nil, auto) }.to raise_error(Lain::Error, %r{checkout/ask.*checkout/auto}m)
+      expect { compare(ask, nil, bypass) }.to raise_error(Lain::Error, %r{checkout/ask.*checkout/bypass}m)
     end
 
     # Absence is not a claim, so it cannot contradict one. A guard that refused
@@ -363,7 +363,7 @@ RSpec.describe Lain::Compare do
     end
 
     it "refuses a mode that is not a declared point, naming the roster" do
-      expect { mode_run("typo", "checkout/atuo") }.to raise_error(ArgumentError, /atuo.*ask.*auto/m)
+      expect { mode_run("typo", "checkout/atuo") }.to raise_error(ArgumentError, /atuo.*ask.*bypass/m)
     end
 
     it "keeps a Run with a mode Ractor-shareable" do

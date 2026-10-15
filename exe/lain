@@ -1079,6 +1079,9 @@ class LainCLI < Thor
                                   desc: "Seed the first question (the /btw child's side-question); the chat " \
                                         "then reads the terminal as usual"
       thor.method_option :non_interactive, type: :boolean, default: false, desc: HEADLESS
+      thor.method_option :approval, type: :string, default: "ask", enum: %w[ask bypass],
+                                    desc: "Who decides a gated call the rules left open: ask parks it for " \
+                                          "a human, bypass approves it"
     end
   end
 
@@ -1097,10 +1100,6 @@ class LainCLI < Thor
     # @param thor [Class] the Thor class to declare on
     # @return [void]
     def self.declare(thor)
-      thor.method_option :auto_approve, type: :boolean, default: false,
-                                        desc: "Wire an extra approval surface: an auto_approver role judges " \
-                                              "pendings the human hasn't yet -- opt-in, races the human's own " \
-                                              "surfaces, and abstains on anything holding sensitive regions"
       thor.method_option :secret_oracle, type: :boolean, default: false,
                                          desc: "Wire an extra approval surface: a LOCAL model (ollama, never a " \
                                                "remote provider whatever --provider says) triages parked reads " \

@@ -586,12 +586,12 @@ RSpec.describe Lain::CLI::Wiring do
     # `approve_everything` below does, and for the same reason: the board is
     # Wiring's private collaborator, and the flip has to happen after
     # #wire_agent built and memoized it.
-    it "renders the same tool block before and after /mode auto" do
+    it "renders the same tool block before and after /mode bypass" do
       agent = wire_agent
       board = wiring.instance_variable_get(:@switchboard)
       before = [agent.toolset, agent.toolset.digest]
 
-      board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
+      board.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
 
       expect([agent.toolset, agent.toolset.digest]).to eq(before)
       expect(agent.toolset.names).to include("session_usage", "bash", "edit_file")
@@ -729,18 +729,19 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     # The surface is wired for every chat and answers to the board's
-    # auto_approve layer, which --auto-approve starts on. Read through the
+    # auto_approve layer, which `/mode +auto_approve` turns on. Read through the
     # surface's own predicate, so a wiring that built the surface over some
     # other board would read the wrong layer here.
-    it "wires an AutoSurface for every chat, engaged only when --auto-approve seeds the layer" do
-      readings = [{ grace: 5 }, { grace: 5, auto_approve: true }].map do |options|
-        wiring = described_class.new(options:, chronicle:, status_feed:)
-        recorder, session = wiring.run_state(nil)
-        wiring.wire_agent(channel:, recorder:, session:, backend:)
-        wiring.auto_surface.instance_variable_get(:@enabled).call
-      end
+    it "wires an AutoSurface for every chat, engaged only while the layer is on" do
+      wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel:, recorder:, session:, backend:)
+      engaged = wiring.auto_surface.instance_variable_get(:@enabled)
+      before = engaged.call
+      wiring.instance_variable_get(:@switchboard).mode_switch.switch(Lain::Mode.new(layers: %i[auto_approve]),
+                                                                     surface: "spec")
 
-      expect(readings).to eq([false, true])
+      expect([before, engaged.call]).to eq([false, true])
     end
 
     # No --secret-oracle, no surface. Asserted at the CONSTRUCTION
@@ -832,12 +833,12 @@ RSpec.describe Lain::CLI::Wiring do
       wire_agent
       board = wiring.instance_variable_get(:@switchboard)
 
-      board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
+      board.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
 
       flip = mode_switches.last
       expect(flip.to_h.slice(:from_scope, :from_approval, :to_scope, :to_approval))
-        .to eq(from_scope: "checkout", from_approval: "ask", to_scope: "checkout", to_approval: "auto")
-      expect(journal.events.grep(Lain::Telemetry::PolicySwitch).map(&:to)).to eq(["auto"])
+        .to eq(from_scope: "checkout", from_approval: "ask", to_scope: "checkout", to_approval: "bypass")
+      expect(journal.events.grep(Lain::Telemetry::PolicySwitch).map(&:to)).to eq(["bypass"])
     end
   end
 
@@ -1086,7 +1087,7 @@ RSpec.describe Lain::CLI::Wiring do
     # collaborator rather than part of its surface.
     def approve_everything
       wiring.instance_variable_get(:@switchboard)
-            .mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
+            .mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
     end
 
     def dispatch(attached)
@@ -1173,7 +1174,7 @@ RSpec.describe Lain::CLI::Wiring do
       recorder, session = wiring.run_state(nil)
       agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
       wiring.instance_variable_get(:@switchboard)
-            .mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
+            .mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
       agent.ask(prompt)
     end
 
@@ -2344,20 +2345,20 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       # Scenario: a switch applies wholly under --no-journal --nvim
-      it "applies /mode auto to the gate and drives /goal, with no NoMethodError" do
+      it "applies /mode bypass to the gate and drives /goal, with no NoMethodError" do
         Dir.mktmpdir do |dir|
           wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
                                        tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
           wiring.run(backend:, resumed: nil, nvim: nil)
           commands = wiring.command_surface.commands
 
-          commands.dispatch("/mode auto") { raise "unmatched" }
+          commands.dispatch("/mode bypass") { raise "unmatched" }
           commands.dispatch("/goal ship it") { raise "unmatched" }
           prompt = wiring.command_surface.goal_driver.poll(settled_with("working on it"))
           wiring.conductor.close(reason: :exit)
 
           expect(wiring.instance_variable_get(:@switchboard).policy_switch.current.map(&:name))
-            .to eq(%w[triage rules auto])
+            .to eq(%w[triage rules bypass])
           expect(prompt).to include("ship it")
         end
 
@@ -2557,12 +2558,12 @@ RSpec.describe Lain::CLI::Wiring do
         renderer = wiring.send(:prompt_renderer, agent, nil)
 
         before_flip = renderer.call(text: "> ", theme: plain_theme)
-        expect(before_flip).not_to include("AUTO")
+        expect(before_flip).not_to include("BYPASS")
 
-        board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
+        board.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
         after_flip = renderer.call(text: "> ", theme: plain_theme)
 
-        expect(after_flip).to include("AUTO")
+        expect(after_flip).to include("BYPASS")
       end
 
       # The object identity behind the render above: the state the renderer was
@@ -4216,7 +4217,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     it "records a file no lain tool wrote in the next snapshot, rooted at the project root" do
       wiring, agent = wired_chat
       board = wiring.role_spawn.seam.tool_middleware.board.call
-      board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
+      board.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
 
       agent.ask("make it")
 

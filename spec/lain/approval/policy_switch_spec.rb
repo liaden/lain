@@ -152,10 +152,10 @@ RSpec.describe Lain::Approval::PolicySwitch do
     # Both approval levels are a ladder of one class, so a flip between them
     # would journal `escalation -> escalation` if the class named it.
     it "names a policy that labels itself by its label" do
-      automatic = Lain::Approval::Escalation.new([], journal:, label: "auto")
+      automatic = Lain::Approval::Escalation.new([], journal:, label: "bypass")
       switch.switch(automatic, surface: "tty")
 
-      expect(flips.map { |record| record.values_at("from", "to") }).to eq([%w[recording_policy auto]])
+      expect(flips.map { |record| record.values_at("from", "to") }).to eq([%w[recording_policy bypass]])
     end
   end
 

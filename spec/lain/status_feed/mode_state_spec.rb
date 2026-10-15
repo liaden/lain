@@ -12,10 +12,10 @@ RSpec.describe Lain::StatusFeed::ModeState do
 
   describe ".of" do
     it "reads the `to` side, since a HUD publishes what is in force now" do
-      state = described_class.of(record(to_approval: :auto))
+      state = described_class.of(record(to_approval: :bypass))
 
       expect(state.published)
-        .to eq({ "scope" => "checkout", "approval" => "auto", "layers" => [], "mode_lighter" => "AUTO" })
+        .to eq({ "scope" => "checkout", "approval" => "bypass", "layers" => [], "mode_lighter" => "BYPASS" })
     end
 
     # The exclusive axes already ship as data; publishing the composable half
@@ -34,9 +34,9 @@ RSpec.describe Lain::StatusFeed::ModeState do
     end
 
     it "appends every active layer's lighter after the axes'" do
-      state = described_class.of(record(to_approval: :auto, to_layers: %i[auto_approve goal]))
+      state = described_class.of(record(to_approval: :bypass, to_layers: %i[auto_approve goal]))
 
-      expect(state.published["mode_lighter"]).to eq("AUTO AA GOAL")
+      expect(state.published["mode_lighter"]).to eq("BYPASS AA GOAL")
     end
 
     # The record's own doc promises precedence order, so this reads that order
@@ -44,8 +44,8 @@ RSpec.describe Lain::StatusFeed::ModeState do
     it "keeps the record's layer order, which LayerSet already canonicalized" do
       layers = Lain::Mode.new(layers: %i[goal auto_approve]).layers.names
 
-      expect(described_class.of(record(to_approval: :auto, to_layers: layers)).published["mode_lighter"])
-        .to eq("AUTO AA GOAL")
+      expect(described_class.of(record(to_approval: :bypass, to_layers: layers)).published["mode_lighter"])
+        .to eq("BYPASS AA GOAL")
     end
 
     # checkout and ask declare EMPTY lighters: the starting mode is silent, and
@@ -75,9 +75,9 @@ RSpec.describe Lain::StatusFeed::ModeState do
     end
 
     it "renders a layer this build does not declare as itself, rather than raising" do
-      state = described_class.of(record(to_approval: :auto, to_layers: %i[telepathy]))
+      state = described_class.of(record(to_approval: :bypass, to_layers: %i[telepathy]))
 
-      expect(state.published["mode_lighter"]).to eq("AUTO telepathy")
+      expect(state.published["mode_lighter"]).to eq("BYPASS telepathy")
     end
 
     # Falling back to "" would be the worse half of the same rescue: a name
@@ -104,9 +104,9 @@ RSpec.describe Lain::StatusFeed::ModeState do
     end
 
     it "leaves every declared combination untouched -- the cap only trims degradation" do
-      state = described_class.of(record(to_approval: :auto, to_layers: Lain::Mode::Layer::NAMES))
+      state = described_class.of(record(to_approval: :bypass, to_layers: Lain::Mode::Layer::NAMES))
 
-      expect(state.published["mode_lighter"]).to eq("AUTO AA GOAL BELL VI")
+      expect(state.published["mode_lighter"]).to eq("BYPASS AA GOAL BELL VI")
     end
   end
 
@@ -119,8 +119,8 @@ RSpec.describe Lain::StatusFeed::ModeState do
     end
 
     it "is a value, so an unchanged mode compares equal and earns no republish" do
-      expect(described_class.of(record(to_approval: :auto))).to eq(described_class.of(record(to_approval: :auto)))
-      expect(described_class.of(record(to_approval: :auto))).not_to eq(described_class::NONE)
+      expect(described_class.of(record(to_approval: :bypass))).to eq(described_class.of(record(to_approval: :bypass)))
+      expect(described_class.of(record(to_approval: :bypass))).not_to eq(described_class::NONE)
     end
   end
 end

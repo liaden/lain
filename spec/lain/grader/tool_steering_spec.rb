@@ -123,7 +123,7 @@ RSpec.describe Lain::Grader::ToolSteering do
 
     def mode_switch
       { "type" => "mode_switch", "from_scope" => "checkout", "to_scope" => "checkout", "from_approval" => "ask",
-        "to_approval" => "auto", "from_layers" => [], "to_layers" => [], "surface" => "spec" }
+        "to_approval" => "bypass", "from_layers" => [], "to_layers" => [], "surface" => "spec" }
     end
 
     def calls_turn(digest, names)

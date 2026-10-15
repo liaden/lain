@@ -154,7 +154,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     expect(auto_surface.queues).to contain_exactly(be(queue))
   end
 
-  it "spawns one fiber per live surface: two, under --auto-approve" do
+  it "spawns one fiber per live surface: two, with the auto_approve layer on" do
     expect(fan_out(auto: auto_surface)[:watched].size).to eq(2)
   end
 
@@ -339,7 +339,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(displayed).to be_empty
     end
 
-    it "makes three with --auto-approve, and still reads nothing at the terminal" do
+    it "makes three with the auto_approve layer on, and still reads nothing at the terminal" do
       result = fan_out(auto: auto_surface, attached: editor)
 
       expect(result[:watched].size).to eq(3)

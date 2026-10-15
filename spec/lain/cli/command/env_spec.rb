@@ -54,7 +54,7 @@ RSpec.describe Lain::CLI::Command::Env do
 
   # The mode switch is a REQUIRED live collaborator, not a nilable one and not a
   # Null: `/mode` writes the slot the Gate and the toolset read, so a Null here
-  # would fail OPEN in the way surface.rb:29-37 names -- `/mode auto` would
+  # would fail OPEN in the way surface.rb:29-37 names -- `/mode bypass` would
   # report success while the live mode never moved. Nil must be as loud as
   # any other missing reader, and it must say WHICH one.
   it "refuses a nil mode_switch by name, so a half-wired mode cannot start a run" do

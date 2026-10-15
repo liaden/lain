@@ -134,10 +134,10 @@ RSpec.describe "A symlink is judged where it lands", :seam do
     expect(records("approval_pending")).to contain_exactly(include("tool" => "read_file", "tool_use_id" => "tu_1"))
   end
 
-  # Under /mode auto a gated call is approved with nobody asked, so a dangling
+  # Under /mode bypass a gated call is approved with nobody asked, so a dangling
   # link onto a denied file must be refused outright rather than gated.
-  it "refuses a write through a dangling link onto a denied file under /mode auto" do
-    board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
+  it "refuses a write through a dangling link onto a denied file under /mode bypass" do
+    board.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
     link("ak", File.join(@home, ".ssh", "id_new"))
 
     result = unparked("write_file", { "path" => "ak", "content" => "ATTACKER\n" })
@@ -146,8 +146,8 @@ RSpec.describe "A symlink is judged where it lands", :seam do
     expect(File.exist?(File.join(@home, ".ssh", "id_new"))).to be(false)
   end
 
-  it "refuses a write through a dangling link whose .. climbs out of a linked directory under /mode auto" do
-    board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "spec")
+  it "refuses a write through a dangling link whose .. climbs out of a linked directory under /mode bypass" do
+    board.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
     FileUtils.mkdir_p(File.join(@home, ".ssh", "config.d"))
     link("sd", File.join(@home, ".ssh", "config.d"))
     link("dk", "sd/../id_kern")

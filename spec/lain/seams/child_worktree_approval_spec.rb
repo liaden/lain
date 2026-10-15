@@ -78,7 +78,7 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
   def parent = Lain::CLI::ToolGuard.stack(chronicle, board)
   def parent_env = Lain::WorkerEnv.new(cwd: @repo, env: {})
 
-  def auto! = board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+  def auto! = board.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "tty")
   def ask! = board.mode_switch.switch(Lain::Mode.new(approval: :ask), surface: "tty")
 
   def input(command, cwd) = cwd ? { "command" => command, "cwd" => cwd } : { "command" => command }

@@ -1080,7 +1080,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     # the refusal names the way to a human rather than promising one.
     it "refuses the same command under auto approval, naming /mode ask as the way to a human" do
       board = board_approving("cat notes.txt")
-      board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+      board.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "tty")
       Sync { run_bash(board, "cat notes.txt") }
 
       told = Sync { run_bash(board, "cat notes.txt", id: "tu_2") }
@@ -1120,7 +1120,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     ["fold -w 16 notes.txt", "sed 's/./& /g' notes.txt", "xxd notes.txt"].each do |reshaping|
       it "does not see a key reshaped past the detector by `#{reshaping}`" do
         board = board_approving
-        board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+        board.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "tty")
 
         told = Sync { run_bash(board, reshaping) }
 

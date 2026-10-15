@@ -647,10 +647,12 @@ RSpec.describe Lain::Approval::AutoSurface do
 
     def wired
       project = Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag)
-      wiring = Lain::CLI::Wiring.new(options: { grace: 5, auto_approve: true }, chronicle: Lain::CLI::Chronicle::Null.new,
+      wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
                                      status_feed:, project:)
       recorder, session = wiring.run_state(nil)
       wiring.wire_agent(channel: RecordingChannel.new, recorder:, session:, backend:, notice: ->(_line) {})
+      wiring.instance_variable_get(:@switchboard).mode_switch
+            .switch(Lain::Mode.new(layers: %i[auto_approve]), surface: "spec")
       wiring
     end
 

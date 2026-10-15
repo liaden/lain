@@ -61,11 +61,7 @@ module Lain
       LAUNCH_SURFACE = "launch"
 
       # The wiring entry: resolves the journal the chronicle carries, then
-      # builds the switches over it. `--auto-approve` is read here and only
-      # here, as the starting mode's `auto_approve` layer: the surface that
-      # decides is {CLI::Wiring::ToolsetBuild}'s, built for every run and
-      # answering to that layer, so the flag and `/mode +auto_approve` are one
-      # switch and the prompt's lighter shows whichever of them turned it on.
+      # builds the switches over it.
       #
       # `toolset:` is the run's capability set, held for the whole session.
       #
@@ -99,8 +95,8 @@ module Lain
       # @param approval_timeout [Numeric] seconds an unanswered call waits before the queue denies it
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
-      # @option options [Boolean] :auto_approve the session starts with the
-      #   `auto_approve` layer on. These two are the only flags this entry
+      # @option options [String] :approval the session starts at this approval
+      #   level. This and `non_interactive` are the only flags this entry
       #   reads off `options`
       # @return [Switchboard]
       def self.for(chronicle:, options:, model:, toolset:, test_layout:, rules: [], approving: REMEMBERED,
@@ -110,7 +106,7 @@ module Lain
                    approval_timeout: Approval::Queue::DEFAULT_TIMEOUT)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, attended: !options[:non_interactive],
-            layers: options[:auto_approve] ? [:auto_approve] : [])
+            approval: options.fetch(:approval, :ask))
       end
 
       # The rules rung's chain when nothing composes one: the remembered
@@ -170,9 +166,9 @@ module Lain
       #   parses. Its exclusion table is also the only thing on this ladder
       #   that can DENY on the model's own words.
       #
-      #   Both approval levels consult it: `ask` and `auto` share the
+      #   Both approval levels consult it: `ask` and `bypass` share the
       #   deterministic rungs and differ only below them, so the exclusion
-      #   table denies under `/mode auto` exactly as it does under `ask`. An
+      #   table denies under `/mode bypass` exactly as it does under `ask`. An
       #   unattended session's `ask` is the one-rung {Unattended} ladder below,
       #   which refuses without asking this rung anything.
       #
@@ -187,6 +183,7 @@ module Lain
       # @param test_layout [Middleware::GuardTestLayout::Run] as on {.for};
       #   a board of its own that declares no layout by default, so the
       #   direct-construction seams a spec drives enforce nothing
+      # @param approval [Symbol, String] the approval level the session starts at
       # @param layers [Array<Symbol>] the mode layers the session starts with,
       #   in the starting scope and approval
       # @param spike [#acquire, #reminder, #release] where `/mode plan` leases
@@ -200,7 +197,7 @@ module Lain
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
                      verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
-                     attended: true, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
+                     attended: true, approval: :ask, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                      approval_timeout: Approval::Queue::DEFAULT_TIMEOUT)
         @attended = attended
         @journal = journal
@@ -214,7 +211,7 @@ module Lain
         @approvals = Approval::Queue.new(journal:, timeout: approval_timeout) if @attended
         @toolset = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
-        seed(Mode.new(layers:))
+        seed(Mode.new(approval:, layers:))
         # After the seed, which is what makes the policy switch it carries.
         @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
                                               test_layout:, policy: @policy_switch, policy_for: method(:policy_for),
@@ -375,7 +372,7 @@ module Lain
       def ladders(classifiers)
         triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict)
         rules = @approving.call(@rules, classifiers)
-        { ask: build_ladder(triage:, rules:), auto: automatic_ladder(triage:, rules:) }.freeze
+        { ask: build_ladder(triage:, rules:), bypass: bypass_ladder(triage:, rules:) }.freeze
       end
 
       # Both approval levels' ladders under plan scope, over the factory of the
@@ -391,8 +388,8 @@ module Lain
         rules = @approving.call(@rules.map { |rule| DeniesOnly.new(rule) }, classifiers)
         asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Unattended.new
         { ask: confined_ladder("plan ask", triage:, rules:, asking:, otherwise: asking, root:),
-          auto: confined_ladder("plan auto", triage:, rules:, asking:, root:,
-                                             otherwise: Approval::Escalation::Remainder.new) }.freeze
+          bypass: confined_ladder("plan bypass", triage:, rules:, asking:, root:,
+                                                 otherwise: Approval::Escalation::Bypass.new) }.freeze
       end
 
       def confined_ladder(label, triage:, rules:, asking:, otherwise:, root:)
@@ -403,14 +400,15 @@ module Lain
 
       def faults = Approval::Escalation::Faults.new(@journal)
 
-      # A layer the launch flags turned on IS journaled, as the flip `/mode`
-      # would have written to reach it: the session header carries no flags,
-      # and the status line and a bench reader fold the mode off the journal
-      # alone, so an unrecorded layer would show nowhere but the live prompt
-      # until the first `/mode`. A launch with no layer writes nothing, so a
-      # plain chat's record is unchanged.
+      # A mode the launch flags moved IS journaled, as the flip `/mode` would
+      # have written to reach it: the session header carries no flags, and the
+      # status line and a bench reader fold the mode off the journal alone, so
+      # an unrecorded approval would show nowhere but the live prompt until the
+      # first `/mode`. A launch that moves nothing writes nothing, so a plain
+      # chat's record is unchanged.
       def launched(initial)
-        Mode::Switch.new(initial.with(layers: Mode::LayerSet.empty), journal: @journal).tap do |switch|
+        floor = initial.with(approval: :ask, layers: Mode::LayerSet.empty)
+        Mode::Switch.new(floor, journal: @journal).tap do |switch|
           switch.switch(initial, surface: LAUNCH_SURFACE)
         end
       end
@@ -422,7 +420,7 @@ module Lain
       #
       # It is TOTAL -- both arms answer an {Approval::Escalation}, never nil. A
       # session with nobody to ask gets a ladder of ONE {Unattended} rung, and the two
-      # rejected alternatives are why it refuses. Approving would be `auto`
+      # rejected alternatives are why it refuses. Approving would be `bypass`
       # approval under another name, granted to a run the operator never said
       # that about. Parking is worse than it looks -- the call waits on a queue
       # no surface drains until the fail-closed timeout denies it anyway, so
@@ -449,11 +447,11 @@ module Lain
         Approval::Escalation.for(queue: @approvals, tools: @toolset, journal: @journal, rules:, triage:)
       end
 
-      # `auto` approval's ladder, built for attended and unattended sessions
+      # `bypass` approval's ladder, built for attended and unattended sessions
       # alike: nobody is asked under it, so whether anybody could be changes
       # nothing, and the triage and rules rungs still decide first.
-      def automatic_ladder(triage:, rules:)
-        Approval::Escalation.automatic(tools: @toolset, journal: @journal, rules:, triage:)
+      def bypass_ladder(triage:, rules:)
+        Approval::Escalation.bypass(tools: @toolset, journal: @journal, rules:, triage:)
       end
 
       # A mode as this session's live collaborators, out of the ladders the
@@ -689,7 +687,7 @@ module Lain
       # own bottom.
       #
       # The wording rides the ruling, so the record says why a command under
-      # `auto` waited for a person.
+      # `bypass` waited for a person.
       class Unconfinable
         NAME = "plan_scope"
 

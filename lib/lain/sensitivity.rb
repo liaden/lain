@@ -37,7 +37,7 @@ module Lain
   # unsupervised read of a credential rather than a prompt. So "one prompt" is
   # what a spurious match costs HERE, never what a miss costs everywhere.
   #
-  # No policy, no `/mode auto` and no `ApproveAll` lifts a DENIAL, so a false
+  # No policy, no `/mode bypass` and no `ApproveAll` lifts a DENIAL, so a false
   # positive there makes a file permanently unreadable with no move available
   # to anyone -- which is why
   # `id_*` carries a `*.pub` exception, and why {DENIED} is split by how
