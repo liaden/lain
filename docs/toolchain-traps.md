@@ -383,6 +383,11 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   how, and a y typed afterwards decides nothing`. The stray bytes are the same Shift+Enter reset
   as the two entries above, so that card covers this one too.
 
+  Seen again 2026-10-15, red once in a pre-commit suite (seed 9063, load about 3 with 2 agents
+  idle) and green alone and 3 of 3 runs of the Shift+Enter spec files with that seed, on the base
+  commit and with the change: `Lain::Frontend::LineEditor#read, and the submit predicate asking
+  the terminal for Shift+Enter resets at EOF`. Its second sighting, so the reset card is now owed.
+
   Added 2026-09-29, red once in a whole-suite run (seed 59509) and green 3 of 3 alone. It counts
   every descriptor in `/proc/self/fd`, so anything else live in the same worker process moves the
   count: `Lain::Agent the graph CoreGraph hands out by default runs to completion holding no file
