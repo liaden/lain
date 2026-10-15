@@ -70,7 +70,9 @@ module Lain
         configured: "named by this project's sensitivity config",
         exempt: "exempted by this project's sensitivity config",
         malformed: "a path that cannot be read lexically",
-        system: "a system account or privilege file"
+        system: "a system account or privilege file",
+        account_database: "the system account database, which a confined agent may not read; " \
+                          "the agent's home directory is $HOME"
       }.freeze
       REASONS = EXPLANATIONS.keys.freeze
       # Ordinary, or gated only by where a path is, never by what it is. A name, a shape or

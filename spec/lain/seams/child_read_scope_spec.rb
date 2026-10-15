@@ -117,6 +117,38 @@ RSpec.describe "A spawned child's read outside its scope", :seam do
     expect(researching(wiring, agent) { [] }.map { |pending, _| pending.tool }).to eq(["glob"])
   end
 
+  it "refuses a researcher's read of /etc/passwd without parking it, pointing at $HOME" do
+    child_calls("read_file", { "path" => "/etc/passwd" })
+    wiring, agent = wired
+
+    expect(researching(wiring, agent) { [] }).to be_empty
+    expect(result_of("tu_child")).to include("refused: /etc/passwd", "home directory is $HOME")
+    expect(result_of("tu_child")).not_to include("root:")
+  end
+
+  it "refuses a researcher's glob rooted at /etc/group without parking it" do
+    child_calls("glob", { "path" => "/etc/group", "pattern" => "*" })
+    wiring, agent = wired
+
+    expect(researching(wiring, agent) { [] }).to be_empty
+    expect(result_of("tu_child")).to include("refused: /etc/group")
+  end
+
+  it "parks the main agent's read of /etc/passwd under ask, as before" do
+    script.push(calls("tu_parent", "read_file", { "path" => "/etc/passwd" }), text_response("parent done"))
+    wiring, agent = wired
+    seen = []
+
+    Sync do |task|
+      surface = answering(task, wiring, seen)
+      task.with_timeout(30) { agent.ask("go") }
+    ensure
+      surface&.stop
+    end
+
+    expect(seen.map { |pending, _| [pending.tool, pending.requester] }).to eq([%w[read_file agent]])
+  end
+
   it "runs a child's grep inside the project with no park" do
     child_calls("grep", { "pattern" => "zq_project_mark", "path" => File.join(@root, "lib") })
     wiring, agent = wired

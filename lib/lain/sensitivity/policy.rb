@@ -101,6 +101,7 @@ module Lain
       READ_TOOLS = %w[read_file glob grep list_files ast_search file_symbols].freeze
 
       OUTSIDE_PROJECT = Verdict.new(level: :gated, reason: :outside_project)
+      ACCOUNT_DATABASE = Verdict.new(level: :denied, reason: :account_database)
 
       # Gates nothing, so a chat that wired no classifier behaves byte-for-byte
       # as it did before this boundary existed and no gate writes `if
@@ -151,7 +152,14 @@ module Lain
       # says it lands. What a walk meets below that is not: `grep` follows a
       # file link it walks into, so a link in the project pointing out is read
       # through unasked.
+      #
+      # A child's read of the account database is refused rather than gated:
+      # a researcher looking for its own home there is told to read `$HOME`
+      # instead, rather than parking a human on a question it can answer
+      # itself. The main agent's read of the same files still asks.
       class Confined
+        ACCOUNT_FILES = %w[/etc/passwd /etc/group /etc/passwd- /etc/group-].freeze
+
         attr_reader :policy
 
         # @param policy [Policy] what every other answer is
@@ -169,7 +177,11 @@ module Lain
         # @return [Confined]
         def confined(roots:) = Confined.new(policy: @policy, roots: [*@roots, *roots], anchors: @anchors)
 
-        def denial(effect, cwd:) = @policy.denial(effect, cwd:)
+        # @param effect [Lain::Effect]
+        # @param cwd [String] absolute
+        # @return [Denial, nil] the policy's own, else one for a read that
+        #   names or walks from the account database
+        def denial(effect, cwd:) = @policy.denial(effect, cwd:) || account_denial(Policy.unwrapped(effect), cwd)
         def classify(path, within: nil) = @policy.classify(path, within:)
         def related?(path) = @policy.related?(path)
         def filter = @policy.filter
@@ -201,6 +213,22 @@ module Lain
           effect.name == "glob" ? [base, glob_root(effect.input, base)].compact : [base]
         end
 
+        def account_denial(call, cwd)
+          hit = walked(call, cwd).find { account_file?(_1) }
+          hit && Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path: Policy.path_in(call) || hit,
+                            verdict: ACCOUNT_DATABASE)
+        end
+
+        def account_file?(named)
+          ACCOUNT_FILES.include?(named) || landings(named).intersect?(ACCOUNT_FILES)
+        end
+
+        def landings(named)
+          Landing.of(named, cwd: File::SEPARATOR, **@anchors)
+        rescue Landing::Dangling, SystemCallError, ArgumentError, EncodingError
+          []
+        end
+
         def glob_root(input, base)
           pattern = input.is_a?(Hash) && (input["pattern"] || input[:pattern])
           pattern.is_a?(String) ? ::Lain::Tools::Glob.walk_root(pattern, base) : nil
@@ -209,9 +237,7 @@ module Lain
         # Every spelling is of where the path lands, so a link that leaves is
         # judged at its target; a related directory is matched as configured.
         def held?(named)
-          Landing.of(named, cwd: File::SEPARATOR, **@anchors).any? { under_root?(_1) || @policy.in_related_tree?(_1) }
-        rescue Landing::Dangling, SystemCallError, ArgumentError, EncodingError
-          false
+          landings(named).any? { under_root?(_1) || @policy.in_related_tree?(_1) }
         end
 
         def under_root?(path) = @roots.any? { |root| path == root || path.start_with?(File.join(root, "")) }
@@ -328,6 +354,14 @@ module Lain
         field && path(at(effect.input, field))
       end
 
+      # Recursive rather than a single unwrap: {Effect::Approval} takes any
+      # effect, including another Approval, and one level of unwrapping would
+      # make a double wrap the bypass a single wrap no longer is.
+      #
+      # @param effect [Lain::Effect]
+      # @return [Lain::Effect] the innermost effect under every Approval
+      def self.unwrapped(effect) = effect.approval? ? unwrapped(effect.effect) : effect
+
       # @param effect [Lain::Effect] any effect at all; the question is total
       #   over the vocabulary, so no caller guards on kind first
       # @param cwd [String] absolute; the call's own base, see {Session.cwd_of}
@@ -365,7 +399,7 @@ module Lain
       # @param cwd [String] absolute; the call's own base, see {Session.cwd_of}
       # @return [Denial, nil] nil when nothing here refuses
       def denial(effect, cwd:)
-        call = unwrapped(effect)
+        call = self.class.unwrapped(effect)
         # {.path_in} reads `effect.name`, which a {Effect::ModelCall} has not
         # got. Without this guard the boundary raises NoMethodError on the
         # synchronous dispatch path, and the repair a crash there invites is a
@@ -413,11 +447,6 @@ module Lain
       end
 
       def strictest(verdicts) = verdicts.find(&:denied?) || verdicts.find { !_1.ordinary? } || verdicts.first
-
-      # Recursive rather than a single unwrap: {Effect::Approval} takes any
-      # effect, including another Approval, and one level of unwrapping would
-      # make a double wrap the bypass a single wrap no longer is.
-      def unwrapped(effect) = effect.approval? ? unwrapped(effect.effect) : effect
 
       # Mirrors {Sensitivity#text}, and for a reason narrower than symmetry:
       # {Tool::Input} COERCES rather than refuses, so the value this class

@@ -845,5 +845,53 @@ RSpec.describe Lain::Sensitivity::Policy do
       expect(rootless.confined(roots: [worker]).gates?(read(File.join(root, "lib")), cwd: worker)).to be(true)
       expect(rootless.confined(roots: [worker]).gates?(read("x.rb"), cwd: worker)).to be(false)
     end
+
+    describe "the account database" do
+      it "refuses a read of /etc/passwd, saying the home directory is $HOME" do
+        denial = confined.denial(read("/etc/passwd"), cwd: root)
+
+        expect(denial).to have_attributes(tool: "read_file", path: "/etc/passwd", reason: :account_database)
+        expect(denial.verdict).to have_attributes(denied?: true)
+        expect(denial.verdict.explanation).to include("home directory is $HOME")
+      end
+
+      it "refuses the backup copies the system keeps of both files" do
+        expect(%w[/etc/passwd- /etc/group-].map { confined.denial(read(_1), cwd: root)&.reason })
+          .to all(eq(:account_database))
+      end
+
+      it "refuses a walk rooted at /etc/group" do
+        expect(confined.denial(glob("/etc/group", "*"), cwd: root)).to have_attributes(reason: :account_database)
+      end
+
+      it "refuses every read tool, a spelling that climbs back into /etc, and an Approval wrapper" do
+        reads = described_class::READ_TOOLS.map { call(_1, { "path" => "/etc/passwd" }) }
+        wrapped = Lain::Effect::Approval.new(effect: read("/etc/../etc/passwd"))
+
+        expect([*reads, wrapped].map { confined.denial(_1, cwd: root)&.reason }).to all(eq(:account_database))
+      end
+
+      it "refuses a link in the project that lands on /etc/passwd" do
+        File.symlink("/etc/passwd", File.join(root, "accounts"))
+
+        expect(confined.denial(read("accounts"), cwd: root)).to have_attributes(reason: :account_database)
+      end
+
+      it "refuses it over the Null policy too" do
+        null = described_class::Null.instance.confined(roots: [worker])
+
+        expect(null.denial(read("/etc/passwd"), cwd: worker)).to have_attributes(reason: :account_database)
+      end
+
+      it "leaves other reads of /etc to the gate, and a write to the policy" do
+        expect(confined.denial(read("/etc/hosts"), cwd: root)).to be_nil
+        expect(confined.denial(call("write_file", { "path" => "/etc/passwd", "content" => "" }), cwd: root)).to be_nil
+      end
+
+      it "leaves the main agent's read of /etc/passwd gated rather than refused" do
+        expect(policy.denial(read("/etc/passwd"), cwd: root)).to be_nil
+        expect(policy.gates?(read("/etc/passwd"), cwd: root)).to be(true)
+      end
+    end
   end
 end
