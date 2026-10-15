@@ -9,12 +9,21 @@ cockpit misreported context, hid approvals that then auto-denied, and swallowed 
 Every one of those lived in a seam with specs on both sides. This scenario is the journey in
 order, with each trial failure written down as what wrong looks like.
 
+On 2026-10-09 the user reran it. The interview, the researchers and the related-directory config
+worked, but `research.md` was never written: 3 runs ended `stalled_stream`, 2 of them exactly where
+the model began the `epic_write` call that carries the whole document, because ollama sends a tool
+call's arguments whole after a silence that grows with their size. The user also could not tell the
+agent anything mid-run, could not see their own prompts or answers in the transcript or what was
+written, and was left looking at an answered question buffer. The checks for those fixes are marked
+*2026-10-09 trial fixes* below.
+
 **What it exercises:** `lain up <dir> --create`, the cloud arm's window and width, the epic skills
 and the `epic_write`, `epic_submit` and `epic_graph` tools, the walk behind `grep`, `glob`,
 `list_files` and `ast_search` (ignore files, the entry limit, running off the reactor), the
 researcher role and its ceiling, the approval surfaces (deadline, deny reason, held notice), the
-HUD's in-flight segment, and the cockpit's nvim, tmux and transcript behavior under a real user
-config.
+HUD's in-flight segment, the stall limit on a long tool call, the transcript's echoes and its
+files-written line, notes typed mid-run, `lain://epic` and `lain epic show`, and the cockpit's nvim,
+tmux and transcript behavior under a real user config.
 
 **Cost:** spends real cloud quota. Budget about 150 completions for the whole journey (round 23 counted about 147: §6.3 alone is about 60 researcher completions), most of them
 the `/research-epic` interview and its two researchers. Sections 1, 2 and 7 cost nothing or one
@@ -155,6 +164,33 @@ Checks, in the cockpit from §1:
    cannot be reasoned about.
 5. **`/help` is columns.** Names in one aligned column, bold headings, descriptions wrapped under
    their own column. At 60 columns a long name pushes its description to the next row.
+6. **The transcript echoes your side (2026-10-09 trial fixes).** Type `say hi` in the input pane. The chat pane shows
+   `HH:MM:SS you> say hi` before the reply. A slash command (`/status`) echoes too. A pasted prompt of 3 lines
+   shows its first row after `you> ` and the other 2 indented under it, aligned to the text. A prompt a skill
+   or `/goal` made, and a line that was held and then dispatched, are not echoed (nobody typed them at `you>`).
+   Repeat on a `--no-nvim` plain chat with no input pane: **no** `you>` line is echoed, since the terminal shows it.
+   *Wrong looks like:* a transcript of replies with no sign of what asked for them, or each prompt echoed twice.
+7. **A mid-run note reaches the agent (2026-10-09 trial fixes).** Send a prompt that makes the model run at least 3 tool
+   rounds (`read 6 files one at a time and summarize`). While a tool round runs, type `also ignore the tests
+   directory` in the input pane. The chat pane shows `HH:MM:SS note for the agent: also ignore the tests
+   directory` and the run is not stopped. Then read the journal: the next request's last message carries a
+   `<mailbox>` text block reading `human | also ignore the tests directory`, beside the tool results, and a
+   `message` record from `human` with that `text` is journaled. **The note is in exactly 1 request**: the
+   request after it carries the model's reply to the note and no `<mailbox>` block. Rules to try, each
+   with what it must do:
+   - a `/status` typed mid-run is not a note: it waits and runs as the next prompt;
+   - an empty line is not a note;
+   - at a parked `[y/N]` or `human>` a typed line is that prompt's, never a note;
+   - type a note during the **last** model call of a run (a prompt with no tool use, over quickly: type the line
+     right after Enter). It is not in that run. When the run ends the transcript says
+     `HH:MM:SS your note joins your next prompt`, and the first request of your **next** prompt carries it.
+   - type your next prompt the moment the final reply finishes, before `you>` is back: it is held as your next
+     prompt and runs as one, never a note;
+   *Wrong looks like:* a note held as `held as your next prompt` and run as its own turn, a note that arrives in
+   2 consecutive requests, a note typed in the last call that vanishes, or a prompt typed after the final
+   reply echoed as `note for the agent`.
+   Known quirk: `/resend` of a `lain://request` buffer that already holds a pending note claims nothing, so the
+   model sees that note twice.
 
 ## 4. Approvals: seen, answered, and explained
 
@@ -307,6 +343,24 @@ Checks:
    (`from_width`, `to_width`, `max_concurrent`), requests after it run at the narrowed width, and
    the chat did not fail. Some of the requests already in flight past the limit can fail after
    their retries; record how many. On a plan that allows 3, record that no narrowing happened.
+7. **A researcher is warned before its ceiling (2026-10-09 trial fixes).** Both trial researchers spent 60 of 60 iterations
+   reading and wrote no findings. Repeat the 40-file ask. When the child has 5 iterations left, its next request
+   carries one `<mailbox>` block reading `lain | 5 of 60 iterations remain. A child stopped at its ceiling hands back only
+   the files it read and its last text block, so write your findings as text now.` (the child's 56th request). No other
+   request of that child carries it, and the warning is journaled as a `message` to the child's spawn. The child's
+   role prompt also says it works to an iteration budget. If it then writes a text block and keeps reading, the
+   ceiling stop's report (check 3) quotes that text under `Its last text block:`. No extra model request is sent
+   after the ceiling. A child whose ceiling is 5 or less gets the warning on its first request.
+   *Wrong looks like:* the trial's empty handback, a warning in every request, or one after the ceiling.
+8. **A child's writes are reported under its role (2026-10-09 trial fixes).** Ask for a `dev` child to write one file (`write 1
+   line to notes.txt in the project`). When its round settles the chat pane shows one stamped line, `HH:MM:SS dev wrote
+   notes.txt`; several files in one round are 1 line, `dev wrote 4 files: a, b, c (+1 more)`. A researcher that only reads
+   prints nothing. Known gap: a child in its own worktree reports a path relative to that worktree without naming
+   it, so the line reads as if it were your checkout; record it rather than failing.
+9. **A related directory is in a child's scope as a tree (2026-10-09 trial fixes).** With `sensitivity related: %w[<$QA>/parent/sibling]` set (§4.8),
+   ask a researcher to `list_files` and then `glob` `**/*.rs` on `<$QA>/parent/sibling` itself. Neither parks as
+   `outside_project`; the trial's researchers were parked on the related root and could read only single files.
+   A path beside it, `<$QA>/parent/slow`, still parks.
 
 ## 7. `/research-epic` to an approved research gate
 
@@ -382,6 +436,36 @@ Checks:
     max_tokens before finishing` followed by `raise --max-tokens (now 256); a thinking model's reasoning counts against it`.
     The flag changes nothing for a reply under the cap.
 
+11. **A long `epic_write` is not a stall (2026-10-09 trial fixes).** Ollama sends a tool call's arguments whole, after a silence
+    that grows with their size (about 20s for 13 KB in a measurement). Ask the model to `epic_write` a `research` of about 300
+    lines (30 KB or more). The run finishes: no `stalled stream` error, `research.md` exists under the epic home, and
+    the turn that carried the call is in the journal. A cloud deployment's stall limit is 115s and a local
+    ollama's 295s, 5 under each request timeout. **Force a stall to read the message:** launch with
+    `LAIN_STREAM_STALL_TIMEOUT=3` and repeat. The ask ends with `stalled stream: no bytes for N.Ns, past the 3s
+    stream_stall_timeout, with the connection still open` and a second line `set LAIN_STREAM_STALL_TIMEOUT to wait longer
+    (in seconds; 0 turns the stall check off)`. Unset it again.
+    *Wrong looks like:* the trial, 3 of 3 runs ending `stalled_stream` at the document write with nothing on disk, or a
+    stall that does not say how to change the limit.
+12. **A write is in the transcript (2026-10-09 trial fixes).** After check 11 the chat pane shows 1 stamped line for the round,
+    `HH:MM:SS wrote <slug>/research.md` (an epic document is named `<slug>/<path>`). A round that writes several files is
+    still 1 line. Reads (`read_file`, `grep`) print no such line.
+13. **The document opens itself (2026-10-09 trial fixes).** With the nvim pane, `lain://epic/<slug>/research.md` opens in a split
+    below your window when check 11's write lands, holding the file read-only (`:set ma?` is `nomodifiable`, filetype
+    `markdown`), and **your cursor stays in the window you were in**. It is not in the 8 primed buffers of
+    `cockpit-surfaces.md` §1. Have the model write it again: the buffer refreshes in place. Close its window
+    (`:close` in it) and write again: the buffer refreshes **and no window reopens**; `:buffer lain://epic/<slug>/research.md`
+    brings it back. From a shell, `lain epic show` prints the same bytes, `lain epic show epic` names the missing
+    `epic.md` and the home, and `lain epic show notes` lists `research`, `epic`, `issues/ID` and `plans/ID`.
+    *Wrong looks like:* a document nobody can read without knowing the XDG path, a window that grabs focus mid-typing, or one
+    that reopens at every rewrite.
+14. **The answered question buffer is closed, not left open (2026-10-09 trial fixes).** After you answer the interview's last set
+    with `:w`, the `lain://question` window closes (unless it was the tabpage's only window), and `:buffer lain://question` shows the document under a first line `answered at HH:MM; your
+    answers went to the agent`, read-only. The chat pane shows `HH:MM:SS answered lain's questions` and one indented line per
+    answer, each cut at 120 columns. With 2 sets pending, answering the first opens the second instead and
+    the answered banner appears only after the last. An answer given with `/inbox` at the terminal echoes the same
+    way.
+    *Wrong looks like:* the trial's answered buffer left on screen and still writable, with a second `:w` refused, or an answer the transcript never shows.
+
 ## 8. Close-out
 
 Run the sandbox's negative check (`method.md`): nothing outside `$QA` changed, the lain checkout's
@@ -410,3 +494,10 @@ left. Record per section: checks run, checks not reached and why, and every obse
 | `/research-epic` on glm-5.3 spent a 4096-token cap thinking and said only `model hit max_tokens` | 7 (default now 16384; a cut turn names the flag) |
 | `lain` not on PATH; stale tmux env; missing directory refused | Needs, 1.1, 1.4 |
 | question buffer and `/help` gave no guidance | 7.2, 3.5 |
+| `epic_write` of the whole document ended `stalled_stream` 3 of 3 runs | 7.11 |
+| prompts and answers never in the transcript; no sign of a write | 3.6, 7.12, 7.14 |
+| typed text waited until the run ended | 3.7 |
+| `research.md` under XDG state with no viewer | 7.13 |
+| answered question buffer left open | 7.14 |
+| both researchers spent 60 of 60 iterations and wrote nothing | 6.7 |
+| a child's write invisible; the related root itself parked | 6.8, 6.9 |

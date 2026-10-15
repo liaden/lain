@@ -245,6 +245,37 @@ While an ask runs, the input pane's header rows update in place; redraws stop on
 sent, until the next prompt draws the header, and a header that gains or loses rows waits for the
 next prompt too. A typed line that wraps past the pane width can misplace an in-place redraw.
 
+**The transcript reads as a conversation.** Because you type in a different pane from the one that
+scrolls, a chat started with an input socket (the `lain up` cockpit) says your side back, stamped
+`HH:MM:SS`. A prompt read at `you>` appears as `you> <text>`, a slash command included, with the
+rows of a multi-line prompt indented under the first. An answered question set appears as
+`answered lain's questions` followed by one indented line per answer, each cut at 120 columns
+(`TTY::ECHO_WIDTH`), because a reply can run to tens of kilobytes. A plain chat echoes nothing, since
+the terminal already shows what you typed. A tool round that wrote files adds 1 stamped line, however
+many tools ran in it: `wrote src/main.rs` for one file, or `wrote 5 files: a, b, c (+2 more)` with the
+first 3 named. Only `write_file`, `edit_file` and `epic_write` count, and reads are not reported
+(`lain://timeline` lists them). A path under the project root is shown relative to it, any other path
+absolute with your home directory as `~`, and an epic document as `<slug>/<path>`. A subagent's write
+is reported too, with its role first (`dev wrote src/main.rs`).
+
+Known gaps: a chat resumed from a session file shows write paths relative to the process's working
+directory rather than the project root, and a subagent working in its own worktree reports paths
+relative to that worktree without naming it, so `dev wrote src/main.rs` reads as if it were your checkout.
+
+**A line typed while the agent is working is a note to it.** Type at the input pane (or the plain
+prompt) while a model call or a tool is running and nothing is asking you a question: the line is
+recorded as a message to the agent, and the transcript echoes it as `note for the agent: <text>`. The run is not
+stopped. The agent reads the note in its next model request, which is the first one after the tool
+round that was running, as a `<mailbox>` block reading `human | <text>`, beside the tool results. A note
+joins exactly 1 request: the requests after it carry only the model's reply to it, not the note again.
+
+Four lines are not notes. A slash command keeps its place as your next prompt, since it is addressed
+to lain. A blank line is not a note. A line typed at a parked `human>` or `[y/N]` is that prompt's to
+answer, or is held as before. And a note typed during the last model call of a run has no later request
+to join, so it stays pending: when the run ends the transcript says `your note joins your next prompt`,
+and it rides the first request of the next prompt you send. Once the run's final reply has arrived
+the agent is no longer working, so a line typed then is your next prompt, even before `you>` is back.
+
 ### lain sessions
 
 List this project's recorded sessions, newest first. Offline.
@@ -323,6 +354,8 @@ refuses and names them rather than guessing.
 ```bash
 lain epic status                                   # where one epic stands
 lain epic status --mermaid                         # the issue graph as mermaid source
+lain epic show                                     # the research document, printed as written
+lain epic show issues/export-stream                # ...or any other document of the epic
 lain epic submit issue_plan --issue export-stream
 lain epic queue                                    # what is parked for sign-off
 lain epic approve DIGEST --reason 'read it'
@@ -334,6 +367,7 @@ lain epic finish --local                           # ...or one merge commit in m
 | Command | What it does |
 |---|---|
 | `lain epic status [SLUG]` | Ready issues and remaining waves, folded from the Journal. `--mermaid` renders the graph as mermaid flowchart source instead of the text report. Read-only and deterministic. |
+| `lain epic show [DOC] [SLUG]` | Print one document of the epic, verbatim: `research` (the default), `epic`, `issues/ID` or `plans/ID`. The epic home sits under `$XDG_STATE_HOME`, so this is how you read `research.md` outside a chat. A missing file names itself and the epic home; any other `DOC` is refused with the four names. Read-only. |
 | `lain epic submit STAGE [SLUG]` | Submit an artifact to a stage's gate. `--issue` names the issue for the per-issue stages, `--digest` the changeset for `implementation`; `--provider`/`--model` wire the adjudicating spike. |
 | `lain epic queue [SLUG]` | The parked sign-offs, folded from the journals rather than read from a file. |
 | `lain epic approve DIGEST` / `lain epic deny DIGEST` | Append a terminal decision, draining the partition. Both take `--reason`. |
@@ -345,6 +379,14 @@ lain epic finish --local                           # ...or one merge commit in m
 
 The three graph verbs are journaled as a `graph_revision`, so a restructuring is part of the record
 rather than an unexplained change to a file.
+
+**In the editor, a written document opens itself.** With `--nvim`, each time one of the chat's epic tools writes a
+document (`epic_write` is the usual one) the cockpit draws it as a read-only `lain://epic/<slug>/<path>` buffer (for example
+`lain://epic/frugirl/research.md`), mounted epic or not, with the markdown filetype. The first write
+opens it in a split below your window and never takes focus. A later write to the same document
+refreshes the buffer in place. If you close its window, a later write refreshes the hidden buffer
+and does **not** open the window again; `:buffer lain://epic/<slug>/<path>` brings it back. It is
+not one of the buffers primed at attach: it does not exist until the first write. See `:help lain-buffers`.
 
 **`lain epic finish --local`** is for a repository with no remote. The base branch is always `main`.
 It must be the branch checked out in the project root, with no uncommitted changes to tracked
@@ -923,7 +965,7 @@ tests preset: :rspec
   directory masks its flagged regions without asking and never releases them ; a file the path
   rules gate or deny is still gated or denied. The verb refuses `/`, your home directory and any
   ancestor of it, an entry that is not a directory, and a path that is not clean.
-  Round 23: a spawned child's read of a path outside the project root, outside every `related` directory and outside its own working root is gated as `outside_project` (the tools: `read_file`, `list_files`, `glob` (its walk root too), `grep`, `ast_search`, `file_symbols`). Under `ask` it parks for the human. With the `auto_approve` layer the model judge or the human answers, whichever comes first. Under `/mode auto` it is approved like any gated call. A child that can never park (an approval judge, the epic adjudicator) is refused. The main agent's reads are unchanged. Known gaps, by ruling: a `grep` over the project follows a file link that points outside without parking, and in a chat with no project marker the root is the cwd, so a chat started in $HOME confines its children to all of $HOME.
+  Round 23: a spawned child's read of a path outside the project root, outside every `related` directory and outside its own working root is gated as `outside_project` (the tools: `read_file`, `list_files`, `glob` (its walk root too), `grep`, `ast_search`, `file_symbols`). Under `ask` it parks for the human. With the `auto_approve` layer the model judge or the human answers, whichever comes first. Under `/mode auto` it is approved like any gated call. A child that can never park (an approval judge, the epic adjudicator) is refused. The main agent's reads are unchanged. A `related` directory is in a child's scope as a tree: the directory itself, which a `list_files`, `glob` or `grep` walk names as its root, is in scope as well as every file under it (masking still treats the directory itself as no file). Known gaps, by ruling: a `grep` over the project follows a file link that points outside without parking, and in a chat with no project marker the root is the cwd, so a chat started in $HOME confines its children to all of $HOME.
   Detected secret regions are masked in what `read_file`, `grep` and `ast_search` return: a `grep` or `ast_search` row
   reads `<redacted:N>` in place with nothing parked, and a trailer says `read_file` on the file asks for their release.
   A secret path is withheld from those rows, not masked.

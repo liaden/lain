@@ -259,7 +259,7 @@ LainRender              Fires after every landed render; `ev.data` carries
 
                         Note: attach PRIMES every view, so expect a burst of
                         LainRender events at attach time -- one per primed
-                        view (seven today) -- before the agent has done
+                        view (eight today) -- before the agent has done
                         anything. Do not treat that burst as agent activity.
 
 ------------------------------------------------------------------------------
@@ -269,7 +269,8 @@ LainRender              Fires after every landed render; `ev.data` carries
 The runtime owns seven buffers: `lain://journal` (append-only tool journal),
 `lain://timeline`, `lain://workspace`, `lain://diff`, `lain://inbox`,
 `lain://status` (all read-only projections), and `lain://request`, the one
-editable buffer (edit it, then `:LainResend`). An eighth, `lain://compose`,
+editable buffer (edit it, then `:LainResend`). lain primes an eighth beside
+them at attach, `lain://approval`, which is not in the runtime's buffer set. A ninth, `lain://compose`,
 appears only while you are composing -- see |lain-compose|.
 
 `lain://status` is where the chat's epic stands: its progress, its issue graph
@@ -282,6 +283,19 @@ Without `--epic` it says no epic is mounted.
 A `lain://question` buffer appears the same way while you are answering a
 question set -- see |lain-question| -- and a `lain://approval` buffer while a
 gated tool call is waiting on you, see |lain-approval|.
+
+                                                                 *lain://epic*
+An epic document the chat writes appears as `lain://epic/{slug}/{path}`, for
+example `lain://epic/frugirl/research.md`. Like `lain://review/OLD/{path}`
+the name varies, so it is created on the first write rather than primed at
+attach, and it is not in the `LainAttach` buffers payload. It is read-only,
+with the `markdown` filetype (not `lain`) and `b:lain_view` holding its full
+name. It fires LainRender like the others. The first write opens it in a split below your window and does not
+take focus. A later write to the same document refreshes the buffer in place.
+If you close its window, a later write refreshes the hidden buffer and does NOT
+reopen the window; `:buffer lain://epic/{slug}/{path}` brings it back. It works
+with or without a mounted epic (|lain-buffers|). The terminal reads the same
+documents with `lain epic show`.
 
 The read-only record views share the single `lain` filetype; `b:lain_view`
 names the specific view on EVERY lain:// buffer, and is set before the
@@ -645,7 +659,12 @@ register a. Both halves repeat with `.`.
 
 Nothing leaves the editor until you write. `:w` submits the document as it
 stands; the answer goes to the agent that asked, and lain opens the next set
-you have not answered -- or leaves you at the inbox when that was the last one.
+you have not answered. When that was the last one, the buffer is marked
+answered instead: its first line reads `answered at HH:MM; your answers went to
+the agent`, it becomes read-only, and the window lain opened for it is closed
+(a window that is the last in its tabpage stays). Nothing else is opened; the
+buffer stays hidden with your answers in it, and `:buffer lain://question`
+shows them. The next set the agent asks replaces it as usual.
 
 A `:w` is REFUSED in two cases, and nothing is submitted in either:
 

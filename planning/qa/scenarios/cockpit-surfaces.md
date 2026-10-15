@@ -137,6 +137,11 @@ Checks:
    words.
 8. **Every prompt is answered in the input pane** — `you>`, `[y/N]`, `human>`, the countdown.
    Nothing is typed into the chat pane.
+   **The chat pane says your side back (2026-10-09 trial fixes).** A line read at `you>` is echoed there as
+   `HH:MM:SS you> <text>`, and an answered question set as `HH:MM:SS answered lain's questions` with one indented line per answer
+   (cut at 120 columns). A line typed while a model call or tool runs, with nothing asking, is echoed as `HH:MM:SS note for the agent: <text>` and
+   is a note, not a held prompt. A line typed at a parked `[y/N]`, `human>` or `command>` is never a note. `greenfield-epic.md` §3.6 and
+   §3.7 drive these.
 9. **The pane is an ordinary command.** Kill it (`tmux -L "$QA_SOCK" kill-pane -t <input>`) and the chat stays
    alive; `lain input --name lain` in a new pane reconnects to the same socket and is redrawn
    with the current prompt and HUD, not left blank until something changes. The socket is
@@ -341,6 +346,12 @@ rest is the over-correction to watch for.
 It is also deliberately *not* in the runtime's `LainAttach` buffers payload — the runtime creates it
 itself — so a config iterating that payload sees seven names (`00_constants.lua`'s `BUFFERS`, which
 `lain://status` **is** in). Seven there and eight here is correct, not a discrepancy.
+
+**Dynamic buffers are not in the eight, and a count taken later reads higher.** `lain://epic/<slug>/<doc>` is created when
+the chat first writes an epic document (2026-10-09 trial fixes), like `lain://review/OLD/<path>`, so it is absent from this
+loop at attach and `getbufinfo` lists one more per document written afterwards. That is an addition, not a stray buffer. It
+is read-only, markdown, opens in a split below without taking focus, and a closed window stays closed on a later write
+(`greenfield-epic.md` §7.13 drives it).
 
 ### `lain://status`'s fleet half is a tree, and it is the only surface that renders the whole one
 
@@ -966,6 +977,11 @@ the displayed figure is `5:00`.) Park `ls -la` and read each surface:
    stays modified, and no hit-enter prompt appears. Check by running `nvim --server "$S" --remote-expr 1` right after
    the refused `:w`: it answers at once. **Wrong looks like:** a Lua traceback in the message, or that command hanging
    until a key reaches the nvim pane.
+   **After the last set (2026-10-09 trial fixes).** Answer the only pending set with `:w`. The buffer's first line becomes
+   `answered at HH:MM; your answers went to the agent`, it is read-only, its window closes (a window that is its tabpage's
+   last stays), nothing else opens, and `:buffer lain://question` shows the answers. With 2 sets pending, answering the
+   first opens the second and the banner waits for the last. **Wrong looks like:** the answered document left on screen and
+   writable, so a second `:w` is refused. The chat pane shows the stamped `answered lain's questions` echo.
 7. **`/help` is columns.** Names in one aligned column, headings styled, descriptions wrapped under their
    own column; at 60 columns a long name pushes its description to the next row.
 

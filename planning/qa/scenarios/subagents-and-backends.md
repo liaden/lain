@@ -161,6 +161,9 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
    above the project, outside every `related` directory and outside its own working root parks for a human as
    `outside_project` (`secret-boundary.md` section 3b); the same call from the chat itself does not. Reads inside the
    project are unaffected.
+   **2026-10-09 trial fixes: a `related` directory is a tree.** The walk root itself counts: `list_files`, `glob` or `grep` aimed at
+   a configured related directory (not only at a file under it) does not park, since the trial's researchers were parked on
+   the related root and so could read only single files. A sibling of it still parks.
 2. **The ceiling stop is a failure with a report.** Point a researcher at a tree it cannot finish: a sibling
    repository with 100 or more directories and the prompt "list every directory one at a time with
    `list_files`, never `glob` or `grep`, and report each name". A local model may finish or give up before 60;
@@ -174,6 +177,16 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
    - stays under 16 KiB in all, with a `- and N more` line where a list was cut.
    The report is built from the child's own timeline: **no further model request is sent for it**, so count
    the requests after the ceiling and expect 0 for that child.
+   **2026-10-09 trial fixes: the researcher is warned first.** The trial's researchers spent all 60 iterations reading and
+   wrote no text, so the report had no last text block. Every one-shot child now gets a note when 5 iterations remain
+   (its 56th request at a ceiling of 60; its first request when the ceiling is 5 or less): a `<mailbox>` block reading
+   `lain | 5 of 60 iterations remain. A child stopped at its ceiling hands back only the files it read and its last text block,
+   so write your findings as text now.`, posted once and journaled as a `message` to the child's spawn with `text` and no `result` or
+   `lifecycle`, so `lain watch` shows it for that child and the completion fold ignores it. Count the child's requests carrying the block: 1.
+   The researcher's role prompt also says it works to an iteration budget and writes findings as text as it goes. A child that
+   answers the warning with a text block and keeps reading is stopped at the ceiling with that block quoted under
+   `Its last text block:`. Still no model request after the ceiling. Actor children are not warned (the note's recipient exists only
+   after launch); record that rather than failing it.
 3. **The lifecycle still records the failure.** The completion `message` carries `lifecycle: failed` and
    `error: Lain::Agent::Budget::Exceeded`, and no `result` key (§2's reduction). The fleet count comes back
    down. *Wrong looks like:* the bare ceiling sentence with nothing after it, `settled`, or a second model
@@ -189,6 +202,13 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
    the HUD's `fleet:` reads and the time. The trial read `fleet:0` after 2 had run; the fix investigation
    found counting correct end to end and could not reproduce it. A 0 while a child runs is a finding with a
    timestamp. A reading that matches is recorded and closes nothing.
+7. **A child's writes reach the transcript under its role (2026-10-09 trial fixes).** Spawn a `dev` child (or any role with
+   `write_file`) and have it write 2 files in 1 round and 1 file in a later round. The chat pane gets 1 stamped line per writing
+   round, `HH:MM:SS dev wrote 2 files: a.txt, b.txt` and then `HH:MM:SS dev wrote c.txt`; with more
+   than 3 files the line names the first 3 and ends `(+N more)`. The session file holds a `files_written` record for each,
+   with the child's role. A researcher that only reads prints nothing and journals nothing. Known gap: a child leased its own
+   worktree (`--isolation worktree`) reports paths relative to that worktree without naming it, so the line reads as the
+   parent's checkout; record what you see rather than failing it.
 
 A write that cannot land is itself journaled, as `ending_not_recorded` naming the spawn and which
 record was lost, rather than dropped silently.

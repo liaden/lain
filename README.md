@@ -115,7 +115,7 @@ Offline and deterministic unless noted.
 * [lain consolidate](docs/commands.md#lain-consolidate): distill completed subagent lineages into memory.
 * [lain improve](docs/commands.md#lain-improve): record what would make lain itself better.
 * [lain improvements](docs/commands.md#lain-improvements): the accumulated cross-project dogfood queue.
-* [lain epic](docs/commands.md#lain-epic): the epic tier — artifact home, issue graph, sign-off queue, and landing.
+* [lain epic](docs/commands.md#lain-epic): the epic tier: artifact home, issue graph, sign-off queue, landing and `show` to read a document.
 * [lain land](docs/commands.md#lain-land): queue a commit for the merge coordinator, wait on it, see who is draining.
 * [lain worktrees gc](docs/commands.md#lain-worktrees-gc): reap worker checkouts and anchors whose work is safe elsewhere.
 * [lain bench variance](docs/commands.md#lain-bench-variance): determinism and divergence across recorded runs.
@@ -430,7 +430,7 @@ marker as "how the cache stood when lain last did something", not as a live read
 
 **The editor pane** needs nothing installed. `lain chat --nvim` injects its whole runtime into a
 bare `nvim --listen` at attach time, so the gem and the editor cannot drift out of sync. Seven
-buffers exist:
+runtime buffers exist from attach, `lain://approval` is primed beside them (8 in all), and an epic document gets one more of its own when it is written:
 
 | Buffer | What it shows | Editable |
 |---|---|---|
@@ -441,6 +441,7 @@ buffers exist:
 | `lain://workspace` | the workspace projection, on demand | no |
 | `lain://diff` | pending edits, in nvim's own diff filetype | no |
 | `lain://status` | the mounted epic's issue graph, as a list and as mermaid, over the live fleet — drawn as a **tree**, one row per child, nested under the parent it was spawned from | no |
+| `lain://epic/<slug>/<doc>` | an epic document the chat just wrote (`research.md`, `epic.md`, an issue or a plan), opened in a split below your window without taking focus. Created on the first write, so it is not among the buffers primed at attach; closing its window is respected on later writes | no |
 
 **The fleet is a tree in both places.** One row per child — its role, whether it is running,
 how many turns it has committed, and the first line of the task it was given — indented under the
@@ -506,7 +507,7 @@ a note may be left:
 | any record view (`journal`, `timeline`, `inbox`, `question`, `approval`, a review thread) | `]]` / `[[` | next / previous record. `lain://diff` and `lain://workspace` have neither: they are projections of live state, not logs of records |
 | `lain://inbox` | `r`, `<CR>` | `:LainOpen` — open the question set under the cursor in `lain://question` |
 | `lain://question` | `x` | tick the option under the cursor; on any other line it is still vim's `x` |
-| `lain://question` | `:w` | submit the set. `:w!` declines the whole set |
+| `lain://question` | `:w` | submit the set. `:w!` declines the whole set. After the last set the buffer is marked `answered at HH:MM`, made read-only and its window closed, with your answers still readable under `:buffer lain://question` |
 | `lain://compose` | `:w` | send the draft back to the prompt |
 | `lain://timeline` | `p` | `:LainPin` — pin the turn under the cursor so compaction may not elide it |
 | `lain://approval` | `y` / `n` | `:LainApprove` / `:LainDeny [reason]` for the call under the cursor. The `n` key denies without a reason; `:LainDeny` takes the words after it as the reason, and the model reads them in the tool result. At the `[y/N]` prompt in a plain chat, `n <why>` does the same |
@@ -638,6 +639,7 @@ There is nothing to fall back to, so lain says so and stops rather than guessing
 | `ANTHROPIC_API_KEY` | `Provider::AnthropicRaw`, `Provider::Anthropic` | Required for the Claude path. Refused before construction if unset. |
 | `OLLAMA_API_KEY` | `Provider::Ollama` on its cloud deployment | Required for `--provider ollama-cloud`. Create one at [ollama.com/settings/keys](https://ollama.com/settings/keys). Refused before construction if unset, and the refusal names the variable without quoting its value. Four guards (`#inspect`, `#pretty_print`, and both `#instance_variables`) keep the key out of a rendered deployment or configuration; they do **not** cover a header Hash once it has left the object, which is documented where that Hash is built. |
 | `LAIN_OLLAMA_CLOUD_CONCURRENCY` | the cloud deployment's admission gate | How many cloud requests may be in flight. Defaults to **3**; a typo raises rather than degrading. A concurrency 429 from the server narrows the width to the plan's limit for the rest of the process (see [Providers](#providers)), and a cloud launch prints the width at startup. |
+| `LAIN_STREAM_STALL_TIMEOUT` | the provider's stall watch | Seconds of silence on an open stream before lain reports `stalled_stream` and stops. Defaults to **30**, except on `--provider ollama` and `ollama-cloud`, which default to 5 seconds under their request timeout: **295** for a local ollama (request timeout 300) and **115** for ollama cloud (120). Ollama sends a tool call's arguments whole, after a silence that grows with their size, so a long `epic_write` needs the room. A set variable wins on every provider, and `0` turns the check off. A stalled ask names this variable in the message that ends it. |
 | `LAIN_STREAM_DEBUG` | the SSE accumulator | Dumps raw stream frames while debugging a provider. |
 | `LAIN_INTEGRATION`, `LAIN_OLLAMA`, `LAIN_OLLAMA_CLOUD`, `LAIN_SPIKE` | the test suite | Opt in to the specs that cost money, need a local Ollama, spend Ollama Cloud quota, or run a spike. |
 

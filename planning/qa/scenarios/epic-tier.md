@@ -1,6 +1,6 @@
 # Scenario: the epic tier, end to end
 
-**What it exercises:** `lain epic status / queue / approve / deny / submit / add / split / merge /
+**What it exercises:** `lain epic status / show / queue / approve / deny / submit / add / split / merge /
 land / finish`, `/implement-epic` and the `lain://status` buffer, `lain worktrees gc`, `Epic::Home`
 (both `epics home:` values), `Epic::Stage`'s boundary rule, `Epic::Scribe` as the one write path,
 `Approval::Gate::Policies` and all four policies, `Approval::SignoffQueue` as a **fold** rather than
@@ -184,6 +184,25 @@ abandoned one:
 Run `lain epic status` twice and `diff` the two outputs. **It is documented read-only and
 deterministic** — same home, same session files, same bytes. A diff is a finding.
 
+### 2a: `show`, which prints a document as written *(2026-10-09 trial fixes)*
+
+The epic home sits under `$XDG_STATE_HOME`, so `research.md` had no reader outside the chat. With the §0 epic in the home:
+
+```bash
+lain epic show                      # research.md of the sole epic, byte for byte
+lain epic show epic                 # epic.md
+lain epic show issues/greet         # one issue file
+lain epic show plans/greet          # one issue plan
+lain epic show research demo        # a named epic, when the home holds several
+lain epic show notes                # UnknownDocument
+```
+
+Diff each output against the file under the home: they must be identical, and the command writes nothing. `notes` is refused with the
+four names `research, epic, issues/ID, plans/ID`. A document that has not been written (`plans/greet` before the plan stage) fails naming the file and the
+epic home, not an empty print. With two epics in the home and no slug it is `Ambiguous`, as `status` is (§2), and with an empty home it
+refuses `no epics yet in <home> -- there is nothing to name` (unlike `status`, which answers with guidance and exits 0).
+*Wrong looks like:* an empty print for a missing document.
+
 ### 2b — the mermaid rendering
 
 ```bash
@@ -302,6 +321,10 @@ itself, and with none the tools still exist). Ask for each in turn, and read the
    A symlinked segment in the home path is refused. **While `request_review` holds the file** (a review
    of `epic.md` open and unread), `epic_write` of `epic` refuses rather than regenerating a human's unread
    edits.
+   **The document opens in nvim (2026-10-09 trial fixes).** With the cockpit's nvim pane, the `epic_write` above also opens
+   `lain://epic/demo/research.md` read-only in a split below, without taking focus, whether or not an epic is mounted. A second write
+   refreshes it in place; with its window closed, a second write refreshes the hidden buffer and opens no window.
+   `greenfield-epic.md` §7.13 is the full journey. The transcript also gets 1 stamped line for the round, `wrote demo/research.md`.
 2. **`epic_submit` puts a stage in front of its gate, in-process.** Input: `stage` (`research`, `epic_plan` or
    `issue_plan`; `implementation` is not offered, since only the driver holds a changeset address), `slug` and
    `issue` (required for `issue_plan`). With the default `interactive` policy the question arrives at
