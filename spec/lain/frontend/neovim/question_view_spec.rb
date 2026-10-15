@@ -339,11 +339,16 @@ RSpec.describe Lain::Frontend::Neovim::QuestionView do
       expect(attached.settled).to eq([["digest-a", "09:05"]])
     end
 
-    it "is safe to call from inside another view's write, because it takes no lock" do
-      subject = view
+    it "is safe to call from inside the view's own write, because it takes no lock" do
+      settling = nil
+      subject = described_class.new(rpc: attached, notify:, submit: lambda { |digest, _answers|
+        settling.settled(digest, at: Time.new(2026, 10, 14, 9, 5, 0))
+      })
+      settling = subject
       subject.open(asked, "digest-a")
+      subject.wrote(tick(buffer, "sqlite"), "digest-a")
 
-      expect { subject.settled("digest-a", at: Time.now) }.not_to raise_error
+      expect(attached.settled).to eq([["digest-a", "09:05"]])
     end
 
     it "does nothing against the editor that is not there" do
