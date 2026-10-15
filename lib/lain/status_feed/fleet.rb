@@ -119,6 +119,7 @@ module Lain
         return unless lifecycle.terminal?
 
         Array(record.causal_parents).each { |cited| @members[cited]&.ended(state_of(lifecycle)) }
+        forget_finished_judges
         prune
         @tree = nil
       end
@@ -187,6 +188,16 @@ module Lain
         lifecycle.finished? ? DONE : STOPPED
       end
 
+      # A judge runs once per gated call, so its ended rows would evict the
+      # researcher a human is waiting on; a running one is still shown.
+      def forget_finished_judges
+        finished = @members.each_value.reject(&:running?).select(&:judge?)
+        finished.each do |member|
+          @members.delete(member.spawn)
+          @heads.delete(member.head)
+        end
+      end
+
       # The ended rows beyond the budget, oldest first. Insertion order is
       # arrival order, so the Hash itself says which those are.
       def prune
@@ -233,6 +244,8 @@ module Lain
         end
 
         def running? = @state == RUNNING
+
+        def judge? = @role == Approval::Judge::ROLE.to_s
 
         def ended(state)
           @state = state

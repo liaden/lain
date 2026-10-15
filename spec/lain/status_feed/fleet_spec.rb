@@ -438,6 +438,34 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(fleet.tree.size).to eq(described_class::ENDED_SHOWN)
     end
 
+    describe "a judge child" do
+      def launch_with_role(fleet, id, role)
+        spawn_event(id).tap do |launch|
+          fleet.launched(launch)
+          fleet.progressed(progress(launch, role:, task_line: "work", turns: 1))
+        end
+      end
+
+      it "does not push a finished researcher out of the ended rows" do
+        fleet = described_class.new(clock: -> { now })
+        researcher = launch_with_role(fleet, "r", "researcher")
+        fleet.completed(completion(researcher, id: "r"))
+        described_class::ENDED_SHOWN.succ.times do |index|
+          judge = launch_with_role(fleet, "j#{index}", "auto_approver")
+          fleet.completed(completion(judge, id: "j#{index}"))
+        end
+
+        expect(fleet.tree.map { |row| row["role"] }).to eq(%w[researcher])
+      end
+
+      it "shows a judge that is running" do
+        fleet = described_class.new(clock: -> { now })
+        launch_with_role(fleet, "j", "auto_approver")
+
+        expect(fleet.tree.map { |row| row.values_at("role", "state") }).to eq([%w[auto_approver running]])
+      end
+    end
+
     it "ignores a progress record for a spawn it never carried" do
       fleet = described_class.new(clock: -> { now })
 
