@@ -365,6 +365,15 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.last).to include("rung" => "triage", "verdict" => "deny", "final" => true)
     end
 
+    # Scenario: A shell read of the shadow file is refused under bypass
+    it "denies a shell read of the shadow file as final under auto, where nothing else refuses" do
+      read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "cat /etc/shadow" })
+
+      expect(automatic(triage: described_class::Triage.new(sensitivity: classifiers)).call(read, nil)).to be(false)
+      expect(rulings.last).to include("rung" => "triage", "verdict" => "deny", "final" => true)
+      expect(rulings.last["reason"]).to include('"/etc/shadow" is a system account or privilege file')
+    end
+
     it "lets a rule deny decide under auto" do
       expect(automatic(rules: [EscalationSpecSupport::Denier.new]).call(effect, nil)).to be(false)
       expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")

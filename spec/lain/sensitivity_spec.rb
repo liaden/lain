@@ -255,6 +255,65 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  # Scenario: A system secret is refused for every agent and every mode
+  describe "the account and sudo files, anchored at the filesystem root" do
+    %w[/etc/shadow /etc/gshadow /etc/shadow- /etc/gshadow- /etc/sudoers /etc/sudoers.d/90-x
+       /etc/../etc/shadow].each do |path|
+      it "denies #{path} as a system file" do
+        expect(classify(path)).to have_attributes(level: :denied, reason: :system)
+      end
+    end
+
+    it "explains the refusal as a system account or privilege file" do
+      expect(classify("/etc/shadow").explanation).to eq("a system account or privilege file")
+    end
+
+    # Scenario: A project file with the same tail is not refused
+    it "leaves a project file with the same tail alone" do
+      expect(classify("etc/shadow")).not_to be_denied
+      expect(classify("#{cwd}/etc/sudoers.d/90-x")).not_to be_denied
+    end
+
+    it "requires a whole segment, so a neighbouring name is not the file" do
+      expect(classify("/etc/shadowsocks/config.json")).to be_ordinary
+    end
+
+    it "is never a verdict the secret oracle may approve" do
+      expect(classify("/etc/sudoers")).not_to be_oracle_approvable
+    end
+
+    it "names a rule by its absolute path" do
+      rule = Lain::Sensitivity::Rule.absolute("/etc/shadow", level: :denied, reason: :system)
+
+      expect(rule.label).to eq("/etc/shadow")
+    end
+  end
+
+  describe "a rule's anchor" do
+    let(:stray) do
+      Lain::Sensitivity::Rule.new(level: :denied, reason: :system, under: "etc", inside: nil, name: nil, except: nil,
+                                  anchor: :elsewhere)
+    end
+
+    it "refuses to match on an anchor it does not know, rather than guessing one" do
+      anchors = Lain::Sensitivity::Anchors.new(home:, root: cwd)
+
+      expect { stray.matches?("/etc/x", anchors) }.to raise_error(ArgumentError, /elsewhere/)
+    end
+
+    it "refuses to label an anchor it does not know" do
+      expect { stray.label }.to raise_error(ArgumentError, /elsewhere/)
+    end
+
+    # A root of `/` is the one anchor that already ends in the separator.
+    it "reads a project root of / as holding every absolute path" do
+      rules = Lain::Sensitivity::Rules.from({ "denied" => ["/"] })
+      everything = described_class.new(home:, cwd: "/", root: "/", rules:)
+
+      expect(everything.classify("/srv/notes.md")).to have_attributes(level: :denied, reason: :configured)
+    end
+  end
+
   describe "gated, credential-shaped" do
     %w[
       .env .env.local .env.production .envrc server.pem bundle.p12 .npmrc .pypirc .gitconfig
@@ -1205,6 +1264,10 @@ RSpec.describe Lain::Sensitivity do
       expect(absent.classify("/nonexistent/home/tester/.ssh/id_ed25519")).to be_denied
     end
 
+    it "still denies a system file by its absolute path" do
+      expect(classify("/etc/shadow")).to be_denied
+    end
+
     it "still gates and still passes ordinary paths" do
       expect(classify(".env")).to be_gated
       expect(classify("lib/lain/session.rb")).to be_ordinary
@@ -1666,7 +1729,7 @@ RSpec.describe Lain::Sensitivity do
     end
 
     it "is never a path gated by name, by shape, by config, by protection, or as unreadable" do
-      reasons = %i[named credential configured protected malformed]
+      reasons = %i[named credential configured protected malformed system]
 
       expect(reasons.map { approvable?(:gated, _1) }).to all(be(false))
     end

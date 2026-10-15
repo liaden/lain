@@ -69,7 +69,8 @@ module Lain
         protected: "a protected path",
         configured: "named by this project's sensitivity config",
         exempt: "exempted by this project's sensitivity config",
-        malformed: "a path that cannot be read lexically"
+        malformed: "a path that cannot be read lexically",
+        system: "a system account or privilege file"
       }.freeze
       REASONS = EXPLANATIONS.keys.freeze
       # Ordinary, or gated only by where a path is, never by what it is. A name, a shape or
@@ -165,12 +166,13 @@ module Lain
     # `under` and `inside` are the two halves of the ruling on anchoring:
     # `inside` matches wherever it sits, which is right for `.ssh/id_*`, and
     # `under` is pinned to an anchor, which is right for `Cookies`. `anchor`
-    # says which one: the home for the built-in tables, the project root for a
-    # config pattern written with a leading `/`. `exact` narrows `under` from a
-    # subtree to its one path, which is how a home-anchored exemption is split
-    # in two (see {Sensitivity#initialize}). `specimens` are the basenames a
-    # built-in entry is probed with when its own locators would name no file
-    # anybody writes (see {#samples}).
+    # says which one: the home for the built-in tables, the filesystem root for
+    # a system file, the project root for a config pattern written with a
+    # leading `/`. `exact` narrows `under` from a subtree to its one path,
+    # which is how a home-anchored exemption is split in two (see
+    # {Sensitivity#initialize}). `specimens` are the basenames a built-in
+    # entry is probed with when its own locators would name no file anybody
+    # writes (see {#samples}).
     class Rule
       # Every rule here is about dotfiles, so a glob that could not match one
       # would be an elaborate way of matching nothing.
@@ -181,6 +183,8 @@ module Lain
       EXCEPT_GLOB = GLOB | File::FNM_EXTGLOB
       HOME = :home
       ROOT = :root
+      FILESYSTEM = :filesystem
+      SEPARATOR_BYTE = File::SEPARATOR.ord
       NO_SPECIMENS = [].freeze
 
       # `under: ""` anchors at the home directory itself, which is how the
@@ -193,6 +197,11 @@ module Lain
       # otherwise the directory and everything beneath it.
       def self.rooted(under, level:, reason:, exact:, name: nil, specimens: NO_SPECIMENS)
         new(level:, reason:, under:, inside: nil, name:, except: nil, exact:, anchor: ROOT, specimens: specimens.freeze)
+      end
+
+      # Held as written: an absolute path has nothing to anchor it on.
+      def self.absolute(path, level:, reason:)
+        new(level:, reason:, under: path.dup.freeze, inside: nil, name: nil, except: nil, anchor: FILESYSTEM)
       end
 
       def self.within(inside, level:, reason:, name: nil, except: nil)
@@ -272,7 +281,14 @@ module Lain
 
       private
 
-      def prefix = rooted? ? File::SEPARATOR : "~/"
+      def prefix
+        case anchor
+        when FILESYSTEM then ""
+        when HOME then "~/"
+        when ROOT then File::SEPARATOR
+        else raise ArgumentError, "no anchor named #{anchor.inspect}"
+        end
+      end
 
       def basename_sample = name.nil? ? SAMPLE : name.delete(STAR)
 
@@ -283,14 +299,26 @@ module Lain
       end
 
       def anchored(anchors)
-        base = rooted? ? anchors.root : anchors.home
+        case anchor
+        when FILESYSTEM then under
+        when HOME then joined(anchors.home)
+        when ROOT then joined(anchors.root)
+        else raise ArgumentError, "no anchor named #{anchor.inspect}"
+        end
+      end
+
+      def joined(base)
         under.empty? ? base : "#{base.chomp(File::SEPARATOR)}/#{under}"
       end
 
-      # The trailing separator is the whole guard: a bare `start_with?` would let
-      # `/home/tester` swallow `/home/tester2`. Chomped first, because a project
-      # root may be `/` itself where a home may not.
-      def descends?(path, prefix) = path == prefix || path.start_with?("#{prefix.chomp(File::SEPARATOR)}/")
+      # The separator after the prefix is the whole guard: a bare `start_with?`
+      # would let `/home/tester` swallow `/home/tester2`. A prefix already ending
+      # in one is a project root of `/`, where a home may not be. Read by byte so
+      # the check allocates nothing, since every classify runs it per rule.
+      def descends?(path, prefix)
+        path.start_with?(prefix) && (path.bytesize == prefix.bytesize || prefix.end_with?(File::SEPARATOR) ||
+                                     path.getbyte(prefix.bytesize) == SEPARATOR_BYTE)
+      end
 
       # A whole SEGMENT of the path, so `.gnupg-backup` is not `.gnupg`, and any
       # segment rather than the immediate parent, so `~/.ssh/keys/id_rsa` is as
@@ -706,6 +734,11 @@ module Lain
       Rule.within(".password-store", level: :denied, reason: :protected),
       Rule.named(".netrc", level: :denied, reason: :protected, variants: true),
       Rule.named("*.kdbx", level: :denied, reason: :protected),
+      # The password hashes, the copies the system keeps of them, and the sudo
+      # policy. Anchored at `/` rather than matched by name, so a checkout's own
+      # `etc/shadow` stays readable.
+      *%w[/etc/shadow /etc/gshadow /etc/shadow- /etc/gshadow- /etc/sudoers /etc/sudoers.d]
+        .map { |path| Rule.absolute(path, level: :denied, reason: :system) },
       # Ambiguous, so anchored under home: `config`, `config.json`, `Cookies`
       # and `key4.db` are all plausible names in a checkout, and every profile
       # layout holding these puts them under `$HOME`.

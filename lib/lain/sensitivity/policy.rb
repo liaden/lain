@@ -293,10 +293,11 @@ module Lain
       #   outside the root, see {.base_of}
       # @return [Sensitivity::Verdict]
       def judge(path, cwd:, within: cwd)
-        literal = @sensitivity.classify(path, within:)
-        return literal if literal.denied?
+        written = [@sensitivity.classify(path, within:), *from_cwd(path, cwd, within)]
+        denied = written.find(&:denied?)
+        return denied if denied
 
-        strictest([literal, *landed(path, cwd, within)])
+        strictest([*written, *landed(path, cwd, within)])
       end
 
       # A leased worker or a `/mode plan` spike runs in a checkout that may
@@ -380,6 +381,17 @@ module Lain
       end
 
       private
+
+      # The classifier resolves a relative path against its own cwd, not the
+      # call's, and a landing under a directory nobody may enter cannot be
+      # resolved at all. So the call's spelling is also judged lexically.
+      def from_cwd(path, cwd, within)
+        return [] if path.start_with?(File::SEPARATOR, TILDE)
+
+        [@sensitivity.classify(File.expand_path(path, cwd), within:)]
+      rescue ArgumentError, EncodingError
+        []
+      end
 
       # Resolved as {WorkerEnv#resolve} resolves it, so the landing judged is the
       # file the tool then opens. A spelling equal to the name already judged is

@@ -287,6 +287,30 @@ RSpec.describe Lain::Middleware::Sensitivity do
     it "leaves the same name alone where the worker's cwd holds no such link" do
       expect(refused(in_session(project)).content).to eq("downstream ran")
     end
+
+    # Scenario: A link to the shadow file is refused
+    it "refuses a project link to the shadow file" do
+      File.symlink("/etc/shadow", File.join(project, "notes.txt"))
+
+      expect(refused(in_session(project)).content).to include("refused", "notes.txt", "no approval can lift this")
+      expect(journal.map(&:reason)).to eq(["system"])
+    end
+  end
+
+  # The classifier resolves a relative path against the project, so a worker
+  # standing in `/etc` names a system file the literal spelling never reaches.
+  describe "a relative path from a worker standing in /etc" do
+    def from_etc(path)
+      context = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/etc", env: {}))
+      layer.call({ effect: reads(path), tool: Lain::Toolset::Unheld.new("unused"), context: }) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok("downstream ran"))
+      end.fetch(:result)
+    end
+
+    it "refuses a file under the sudo policy directory, which no landing can resolve" do
+      expect(from_etc("sudoers.d/90-x").content).to include("refused", "no approval can lift this")
+      expect(journal.map(&:reason)).to eq(["system"])
+    end
   end
 
   # The whole reason this is a layer AHEAD of the gate rather than a gate
@@ -306,6 +330,31 @@ RSpec.describe Lain::Middleware::Sensitivity do
 
       expect(result).to have_attributes(is_error: true)
       expect(result.content).to include("protected path")
+    end
+
+    # Scenario: A system secret is refused for every agent and every mode
+    it "refuses each account and sudo file under ApproveAll, before the gate is asked" do
+      paths = %w[/etc/shadow /etc/gshadow /etc/sudoers /etc/sudoers.d/90-x /etc/../etc/shadow]
+      layers = [layer, gate(Lain::Middleware::Gate::ApproveAll.new, sensitivity: policy)]
+
+      results = paths.map do |path|
+        dispatch_call("read_file", { "path" => path }, toolset: readers, layers:, context: Lain::Session.new)
+      end
+
+      expect(results.map(&:content)).to all(include("refused", "no approval can lift this"))
+      expect(journal.map(&:reason)).to eq(Array.new(paths.size, "system"))
+    end
+
+    it "parks nothing for a human under the asking ladder, since no answer could lift it" do
+      parked = StringIO.new
+      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: parked), timeout: 0.05)
+      layers = [layer, gate(Lain::Approval::Escalation.for(queue:, tools: readers, journal: []), sensitivity: policy)]
+
+      result = dispatch_call("read_file", { "path" => "/etc/shadow" }, toolset: readers, layers:,
+                                                                       context: Lain::Session.new)
+
+      expect(result.content).to include("no approval can lift this")
+      expect(parked.string).to be_empty
     end
 
     # The complement, and the one that proves the stack is really composed:
