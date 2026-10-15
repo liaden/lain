@@ -1375,6 +1375,27 @@ RSpec.describe Lain::CLI::Repl do
       expect(Lain::Frontend::Neovim).to have_received(:new).with(hash_including(epic_docs: docs))
     end
 
+    it "binds the session's mode switch to the editor's approval view it attaches" do
+      view = Lain::Frontend::Neovim::ApprovalView.new
+      mode_switch = FlipOnlyModeSwitch.new(Lain::Mode::Switch.new(Lain::Mode.new,
+                                                                  journal: Lain::Journal.new(io: StringIO.new)))
+      allow(Lain::Frontend::Neovim).to receive(:new).and_return(instance_double(Lain::Frontend::Neovim,
+                                                                                approval_view: view).as_null_object)
+      allow(conductor).to receive(:read_prompt).and_return(nil)
+      Dir.mktmpdir do |dir|
+        tty = tty_for(dir)
+        replies = Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
+                                              ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+        repl = described_class.new(agent:, tty:, replies: AttachedReplies.new(replies), commands:, supervisor:,
+                                   chronicle: Lain::CLI::Chronicle::Null.new, conductor:, mode_switch:)
+        nvim = { channel: Lain::Channel.new, socket_path: "unused" }
+        Timeout.timeout(10) { repl.run(nvim:, store: nil, session: nil) }
+      end
+
+      expect(view.decide(0, "mode auto", generation: 0)).to be_decided
+      expect(mode_switch.current.approval.name).to eq(:auto)
+    end
+
     # THE REGRESSION. Nothing but the prompt read is running: no ask, no
     # #respond, no surface #respond starts. The gesture must still be answered.
     it "answers a gesture that arrives while the human sits idle at you>, with no ask in flight" do

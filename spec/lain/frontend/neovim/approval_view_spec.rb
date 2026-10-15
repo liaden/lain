@@ -1372,4 +1372,55 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       end
     end
   end
+
+  describe "setting the approval mode from the editor" do
+    let(:mode_switch) do
+      FlipOnlyModeSwitch.new(Lain::Mode::Switch.new(Lain::Mode.new(approval: :ask), journal:))
+    end
+    let(:moded) { described_class.new(rpc:).tap { |bound| bound.bind_mode_switch(mode_switch) } }
+
+    def flips = Lain::Journal.records(journal_io.string.lines, type: "mode_switch").to_a
+
+    it "sets auto and journals the flip with the nvim surface" do
+      outcome = moded.decide(0, "mode auto", generation: 0)
+
+      expect(outcome).to be_decided
+      expect(mode_switch.current.approval.name).to eq(:auto)
+      expect(flips.last).to include("from_approval" => "ask", "to_approval" => "auto", "surface" => "nvim")
+    end
+
+    it "accepts bypass by name" do
+      moded.decide(0, "mode bypass", generation: 0)
+
+      expect(mode_switch.current.approval.name).to eq(:bypass)
+    end
+
+    it "keeps the scope and layers where they were" do
+      before = mode_switch.current
+
+      moded.decide(0, "mode auto", generation: 0)
+
+      expect(mode_switch.current).to eq(before.with(approval: :auto))
+    end
+
+    it "refuses a wrong value in words naming every level, and changes nothing" do
+      outcome = moded.decide(0, "mode yes", generation: 0)
+
+      expect(outcome).not_to be_decided
+      expect(outcome.report).to include("ask", "auto", "bypass")
+      expect(mode_switch.current.approval.name).to eq(:ask)
+      expect(flips).to be_empty
+    end
+
+    it "refuses a mode with no value" do
+      expect(moded.decide(0, "mode", generation: 0)).not_to be_decided
+    end
+
+    it "refuses when no mode switch was wired" do
+      outcome = described_class.new(rpc:).decide(0, "mode auto", generation: 0)
+
+      expect(outcome).not_to be_decided
+      expect(outcome.report).to eq(described_class::NO_MODE_SWITCH)
+    end
+  end
 end

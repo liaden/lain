@@ -1021,7 +1021,7 @@ module Lain
                  supervisor:, middleware: @command_surface.middleware, attended: attended?,
                  commands: @command_surface.commands,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
-                 echo_input: attended? && !input_socket_name.nil?, notes:)
+                 echo_input: attended? && !input_socket_name.nil?, notes:, mode_switch: @switchboard.mode_switch)
       end
 
       # Its own method because it is a DIFFERENT unnamed object, which the

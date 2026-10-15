@@ -204,6 +204,30 @@ module Lain
           def rows = owners.size
         end
 
+        MODE_VERB = "mode"
+
+        NO_MODE_SWITCH = "no session is attached to set an approval mode on"
+
+        # One line for the same reason the sentences below are.
+        UNKNOWN_MODE = "approval takes %<levels>s; nothing changed"
+
+        class Unwired < StandardError
+        end
+
+        # The default mode switch: an editor with no session behind it refuses
+        # rather than pretending a mode was set.
+        module NoModeSwitch
+          module_function
+
+          def flip(**) = raise(Unwired, NO_MODE_SWITCH)
+        end
+
+        # A mode set from the editor, shaped as {Decided} is for the one caller
+        # that asks `decided?` of either.
+        ModeSet = Data.define(:report) do
+          def decided? = true
+        end
+
         # The four ways a keypress decides nothing, four sentences because four
         # different things happened.
         #
@@ -242,6 +266,18 @@ module Lain
           # look from the moment a session can be gated at all.
           @shown = nil
           @drawing = Mutex.new
+          @mode_switch = NoModeSwitch
+        end
+
+        # Where `:LainMode` lands. Bound after construction, as the approval
+        # list itself is, because the session is built after the editor.
+        #
+        # @param mode_switch [#flip] the session's {CLI::Switchboard::BoundSwitch}, whose flip
+        #   is serialized against the approval key's
+        # @return [self]
+        def bind_mode_switch(mode_switch)
+          @mode_switch = mode_switch
+          self
         end
 
         # One fiber beside the TTY prompt, spawned per ask and stopped with it.
@@ -326,6 +362,16 @@ module Lain
         #   at (b:lain_view_generation)
         # @return [Decided]
         def decide(line, verdict, generation:)
+          return adopt_mode(verdict) if mode?(verdict)
+
+          answer_row(line, verdict, generation:)
+        end
+
+        private
+
+        def mode?(verdict) = verdict.to_s.split(/\s+/, 2).first == MODE_VERB
+
+        def answer_row(line, verdict, generation:)
           resolved = @renderings.at(line, generation:)
           # It does not guess: the list has moved since that rendering was
           # drawn, so this line could name two different calls and both values
@@ -342,7 +388,25 @@ module Lain
           settled(resolved.owner, answer, line, said)
         end
 
-        private
+        # Rides the verdict wire as "mode <level>" because that is the one
+        # acked route to the reactor the editor has; a mode needs no row, so the
+        # line and stamp it arrives with are not consulted.
+        def adopt_mode(verdict)
+          level = verdict.to_s.split(/\s+/, 2)[1].to_s.strip.downcase
+          unless Mode::Approval::NAMES.map(&:to_s).include?(level)
+            return undecided(format(UNKNOWN_MODE, levels: level_names))
+          end
+
+          @mode_switch.flip(surface: SURFACE) { |current| current.with(approval: level.to_sym) }
+          ModeSet.new(report: "approval #{level}")
+        rescue Unwired => e
+          undecided(e.message)
+        end
+
+        def level_names
+          *init, last = Mode::Approval::NAMES
+          "#{init.join(", ")} or #{last}"
+        end
 
         # The verdict word, then whatever the human typed after it, which only
         # a deny may carry. It rides in the verdict's own string so the reason

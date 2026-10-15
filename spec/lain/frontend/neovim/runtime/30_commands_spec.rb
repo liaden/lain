@@ -58,6 +58,47 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
+    it "refuses :LainMode with a wrong value on the rail, naming ask, auto and bypass, and sends nothing" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        attach_ui
+        typed(":LainMode yes\r")
+        mode = settled_mode
+
+        expect(mode).to include("blocking" => false)
+        expect(message_history).to include("lain: :LainMode takes ask, auto or bypass")
+        expect { frontend.command_inbox.pop(true) }.to raise_error(ThreadError)
+      ensure
+        typed("\r")
+      end
+    end
+
+    it "sets the approval through the production consumer when :LainMode names a level" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+      journal_io = StringIO.new
+      mode_switch = FlipOnlyModeSwitch.new(Lain::Mode::Switch.new(Lain::Mode.new(approval: :ask),
+                                                                  journal: Lain::Journal.new(io: journal_io)))
+
+      frontend.run do
+        frontend.approval_view.bind_mode_switch(mode_switch)
+        replies = Lain::CLI::HumanReplies.new(tty: instance_double(Lain::Frontend::TTY).as_null_object,
+                                              conductor: instance_double(Lain::CLI::Conductor),
+                                              ask_human: Lain::Tools::AskHuman::Directory.new,
+                                              questions: Async::Queue.new)
+        replies.bind_editor(frontend.command_inbox, views: frontend.buffers, approvals: frontend.approval_view)
+        Sync do |task|
+          surfaces = replies.session_surfaces(task)
+          inspector.command("LainMode auto")
+          task.with_timeout(10) { task.sleep(0.02) until mode_switch.current.approval.name == :auto }
+          surfaces.each(&:stop)
+        end
+
+        flip = Lain::Journal.records(journal_io.string.lines, type: "mode_switch").first
+        expect(flip).to include("to_approval" => "auto", "surface" => "nvim")
+      end
+    end
+
     # The prefix lives in ONE place -- `review_refused` prepends it
     # (`runtime/65_review.lua`) -- so a converted sentence that still spells its
     # own reached a human as `lain: lain: ...` for a whole card before it was

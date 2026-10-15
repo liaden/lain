@@ -347,7 +347,7 @@ Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
 `:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
 `:LainReviewVerdict {verdict}`, `:LainReviewClose`, `:LainApprove`,
-`:LainDeny [{reason}]`, `:LainSurveyAdd`
+`:LainDeny [{reason}]`, `:LainMode {level}`, `:LainSurveyAdd`
 (defined, but refuses every time -- NOT YET AVAILABLE, see |:LainSurveyAdd|
 below), and -- only meaningful inside a review
 buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
@@ -699,6 +699,7 @@ than by selection. Ticking is the editor's gesture, and the only one.
                                                              *lain://approval*
                                                                *:LainApprove*
                                                                   *:LainDeny*
+                                                                  *:LainMode*
 
 When lain gates a tool call, the agent PARKS on your answer and a fail-closed
 clock starts: an approval nobody answers is DENIED when its window closes.
@@ -739,6 +740,11 @@ One row per parked call, leading with who is asking:
                             the command reach the model as the end of the
                             refusal it reads, and the decision record keeps
                             them. `:LainApprove` takes no words.
+
+    :LainMode {level}       Set who answers a gated call: `ask`, `auto` or
+                            `bypass`, by name. It works from any buffer, and
+                            the flip is journaled with surface nvim. Any other
+                            word is refused in the editor.
 
 Both are buffer-local to `lain://approval`, so vim's own `y` and `n` are
 untouched everywhere else, and both are ordinary global commands reading the

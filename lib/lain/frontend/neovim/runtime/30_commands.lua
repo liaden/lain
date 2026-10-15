@@ -64,3 +64,16 @@ end
 local function lain_buf_key(buf, suffix, rhs, desc)
   vim.keymap.set("n", lain_prefix() .. suffix, rhs, { buffer = buf, desc = "lain: " .. desc })
 end
+
+-- A closed set, checked HERE as well as in Ruby so a typo is refused in the
+-- editor without a round trip; the rail, not `error`, because a raised refusal
+-- raises the hit-enter prompt (see `spec/refusal_delivery_discipline_spec.rb`).
+local APPROVAL_LEVELS = { ask = true, auto = true, bypass = true }
+define("LainMode", function(opts)
+  local level = vim.trim(opts.args):lower()
+  if not APPROVAL_LEVELS[level] then
+    _G.__lain.review_refused(":LainMode takes ask, auto or bypass")
+    return
+  end
+  vim.rpcrequest(chan, "lain_command", "approval", { 0, "mode " .. level, 0 })
+end, { nargs = 1 })

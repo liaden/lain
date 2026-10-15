@@ -31,7 +31,8 @@ module Lain
                      supervisor: Lain::Supervisor::Null,
                      middleware: Lain::Middleware::Stack.new, secret_surface: nil,
                      goal_driver: Lain::CLI::GoalDriver::Null, attended: true, input: Lain::Frontend::StdinPump::Idle,
-                     echo_input: false, notes: HumanNotes::Null)
+                     echo_input: false, notes: HumanNotes::Null,
+                     mode_switch: Lain::Frontend::Neovim::ApprovalView::NoModeSwitch)
         @agent = agent
         @notes = notes
         @tty = tty
@@ -44,6 +45,7 @@ module Lain
         @goal_driver = goal_driver
         @attended = attended
         @echo_input = echo_input
+        @mode_switch = mode_switch
         name_lifetimes(replies:, supervisor:, approvals:, secret_surface:, tty:, conductor:)
       end
 
@@ -135,6 +137,7 @@ module Lain
         frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, epic:, epic_docs:, resend_bridge: bridge,
                                                       compose_notify: @tty.method(:render_warning), **nvim)
         @surfaces.bind_editor(frontend&.approval_view)
+        frontend&.approval_view&.bind_mode_switch(@mode_switch)
         frontend
       end
 
