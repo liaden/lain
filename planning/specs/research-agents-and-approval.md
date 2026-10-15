@@ -1,6 +1,6 @@
 # Research agents, judge-first approval and environment facts
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -307,7 +307,7 @@ Spec files: `spec/lain/tools/subagent_spec.rb`, `spec/lain/cli/wiring/toolset_bu
 **Shared-file wiring:** none
 **Reachable from:** `Sensitivity.new` (`sensitivity.rb:883`) puts `DENIED` first; `Sensitivity::Policy` is built in `Switchboard`, and `Middleware::Sensitivity` is in every stack (`tool_guard.rb:262-275`)
 
-The refusal covers the path tools in `Policy::PATH_FIELDS`, and a `bash` command that names one of these files as an argv word through Triage. Shell content that is not a parsed word (`sh -c`, a script) is the known gap that `sensitivity.rb:807-809` already accepts.
+The refusal covers the path tools in `Policy::PATH_FIELDS`, and a `bash` command that names one of these files as an argv word through Triage. Shell content that is not a parsed word (`sh -c`, a script) is the known gap that `sensitivity.rb:807-809` already accepts. T4's review found the gap is wider: when `Shell::Verdict` abstains (no term), Triage has no argv words to check, so under today's approve-all ladder `cat '/etc/shadow'`, `cat < /etc/shadow`, `sudo cat /etc/shadow`, a glob or brace, `cd /etc && cat shadow`, `cat shadow` with cwd `/etc`, `$HOME/..` spellings and `head --file=/etc/shadow` were all approved (the same holds for `~/.ssh/id_rsa`). This predates the plan. Triage is not the shell boundary under `bypass`; only file modes stop these reads today.
 
 **Acceptance criteria**
 
@@ -852,16 +852,16 @@ Spec files: `spec/lain/frontend/line_editor_spec.rb`, `spec/lain/frontend/intake
 
 ```gherkin
 Scenario: A user binds the cycle to another key
-  Given the user's config says keys approval_cycle: "C-t"
+  Given the user's config says keys approval_cycle: "C-x"
   When a chat starts
-  Then C-t cycles approval and Shift+Tab does nothing
+  Then C-x cycles approval and Shift+Tab does nothing
 
 Scenario: An unknown key name is refused at launch
   Given keys approval_cycle: "Hyper-Q"
   Then launch refuses, naming the config line and the accepted forms
 
 Scenario: A project config cannot rebind keys
-  Given .lain/config.rb says keys approval_cycle: "C-t"
+  Given .lain/config.rb says keys approval_cycle: "C-x"
   Then it is refused as a verb only the user's config may use
 ```
 
@@ -1089,7 +1089,7 @@ After the last card lands:
 1. `pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` and `pgrep -cf '[p]re-commit (hook-impl|run)'` both read 0. Then run `bundle exec rake pspec` and compare the example count against the base run plus the examples the cards added, net of deleted specs (`risk_spec.rb`, `auto_surface_spec.rb`).
 2. `bundle exec rubocop`, `bin/comment-census --check-tickets`, `bin/zeitwerk-census --check`, `bin/spec-census --check`.
 3. `pre-commit run --all-files`.
-4. `grep -rn 'auto_approve\|AutoSurface\|auto_surface\|Risk::' lib exe` returns nothing, comments included.
+4. `grep -rnw 'auto_approve\|AutoSurface\|auto_surface\|Risk' lib exe` returns nothing, comments included (`-w`, because the kept role `auto_approver` would otherwise match).
 5. **Manual, owed by the user:** frugirl round 4 per `frugirl-trial.md`, in the default `auto`. Record:
    - the judge's latency per call and its wrong approves;
    - the count of human prompts against round 3's 37;
@@ -1106,4 +1106,80 @@ After the last card lands:
 - T1 handed back; in review. T4 and T6 started, stacked on T1 (stack commits `e0742b2a`, `6844717a` over `96ac5277`; a stacked card lands as `git diff <stack commit> card/<id>` applied on main).
 - T3 handed back; in review.
 - T6 scope widened: `lib/lain/approval/escalation.rb` (Triage reads `term.flatten`), `spec/lain/approval/{rule,escalation}_spec.rb`, comments in `lib/lain/exec{,/core}.rb`. Shares `escalation_spec.rb` with T4; merged by patch at landing.
-- T3 landed `a54d3a0c`, but its hook skipped every file check (see next entry).
+- T3 landed `a54d3a0c`. (The hook runs twice, pre-commit then commit-msg; the second run skips every file check, which is not a skipped suite.)
+- T1 landed `46582847` (also reworded `ARCHITECTURE.md:1007`, which cited the deleted `Risk::Classification`; `ROADMAP.md` mentions are history and stay). T10, T2 in review; T2 back to its implementer for 1 substantive and 3 mechanical fixes. T4 handed back; adding `/etc/shadow-` and `/etc/gshadow-` before review.
+- T4 in review. T5 started, stacked on T4 (stack commit `7873c14a` over `46582847`).
+- T2 landed `ec015422` after 1 fix round (os-release parse crash on a comment line, researcher specs moved onto the production path, a clock pinned to today, bare `~`).
+- T10 back to its implementer: 3 substantive fixes (an automatic allow after a judge fault, a fault cause not journaled, unattended refusals of barred calls not final) and 3 mechanical.
+- T5 handed back; in review.
+- T4 back to its implementer: cwd-relative and `/proc/<pid>/root` spellings judged malformed rather than denied (substantive), 4 mechanical. The Triage abstain gap it found is recorded in T4's card text; owed to the user at close-out as a candidate card.
+- T6 handed back (main session fixed 1 out-of-list line in `spec/lain/cli/wiring_spec.rb`); in review. T10 fix round done; second review. T7 and T9 started, stacked on T6 (`945bbcd7` over `ec015422`).
+- T10 landed `c06a180c` after 1 fix round. Open NIT for T21: after a judge fault, a suppressed automatic allow is journaled against rung `surfaces`, not the judge; and each handed-down call writes 2 `escalation` records per `tool_use_id`. Hand-back kept at `~/tmp/lain/handback-T10.md`.
+- T5 review: APPROVE-WITH-FIXES, all mechanical plus the 2 backup files; back to its implementer, no second review. Not taken: unifying `Middleware::Gate#unwrapped` with `Policy.unwrapped` (outside the card). Owed after landing: check a real researcher system text holds the home directory.
+- T9 handed back. `node`, `npm`, `python3`, `ruby` dropped from `VERSION_PROBES`: `Shell::Verdict` refuses interpreters by name, so they could never approve. Owed to the user: whether an exact `[interpreter, "--version"]` should pass the verdict.
+- T4 fix round done; second review.
+- T7 handed back with a regression (`cd /tmp && pwd` ran `cd` as a binary, exit 127); returned: a sequence holding any stage that abstains alone must abstain whole. Scope widened: `spec/lain/approval/auto_surface_spec.rb` (1 example), `lib/lain/shell/term.rb` comment.
+- T6 review: APPROVE-WITH-FIXES, all mechanical (a sequence-shaped Term ran as 1 pipe; left to T7, docstring corrected here). No second review.
+- T4 approved on second review. Also left gated (reach a human, not refused): `/proc/1/root/etc/shadow` and a project link into `/etc/sudoers.d`; file modes stop both for a non-root lain. Recorded beside the shell gap for T11.
+- T7 fix done (builtins abstain whole; `cd /tmp && pwd` exits 0 again); in review.
+- T4 landed `2f8f5e4d` (scope also took `policy.rb` for the cwd-relative fix). T5 landed `a279a866` (first commit attempt failed the 72-char subject lint after a green suite). T6 landed `53159bb6`. T7 in review; T9 in a REQUEST-CHANGES round (blocker: a project `rust-toolchain.toml` can make `rustc --version` run a planted binary; also `ls` printing names that `list_files` withholds).
+- T8 started, stacked on T7 over `53159bb6` (stack commit `7f5e16e3`; the `term.rb` docstring conflict resolved to T7's wording).
+- T8 stack re-recorded as `581a84b5`: the first snapshot caught the T7 reviewer's live mutant (`verdict.rb:242`) and its `.t7probe-orig` file. T8 restarted on the clean base.
+- T7 review: APPROVE-WITH-FIXES (5 more builtins ran as binaries and exited 127; an untested deadline check between pipelines). Back to its implementer; second review follows.
+- T9 second review: REQUEST-CHANGES (an `ls` option value read as a directory hides the cwd check; `ls -w 80` in `.ssh` approved). Asked the user: fix, then a third review.
+- T8 handed back; scope widened to `lib/lain/exec/docker.rb` and its spec (Docker ignored discards; a term with discards now takes the string arm).
+- T7 landed `159a5ea0`. First hook run red on the known Shift+Enter reset at EOF flake (seed 9063); green alone and 3 of 3 on base and card; sighting recorded in `docs/toolchain-traps.md` (`9a5f65fe`). A repeat, so a reset card is owed to the user. T9 approved on the third review with 1 mechanical fix.
+- T8 and T9 rebased onto main by patch (T8: `docker.rb` message conflict resolved). T8 in review. T11 started from main `9a5f65fe` without waiting on T8: the graph edge shares no code or file.
+- T9 landed `2a915da4` after 3 reviews (user ruled the third). It carried a stray `handback-T9.md` from my rebase copy (dropped the leading dot); removed in `70499e83`.
+- T8 review: REQUEST-CHANGES (`ls 0>/dev/null` allowed as argv `ls 0`; tree-sitter reads a glued digit as a word). Back to its implementer; second review follows.
+- T11 handed back; in review. T21 started, stacked on T11 (`925a14d6` over `70499e83`), snapshot taken before the reviewer began. T11's CLAUDE.md bullet diff held for T21.
+- T11 review: APPROVE-WITH-FIXES, mechanical (stale approve-all comments, a WHAT comment, `/mode manual` still had a retired message). No second review.
+- T11 landed `52ac9e76`. T8 fix round done; second review.
+- T8 landed `81f50ff1` after 2 reviews. T21 handed back, rebased onto main by patch; scope widened to `spec/lain/mode/approval_spec.rb`, `exe/lain` (the `--approval` enum) and `spec/lain/cli_spec.rb`.
+- T21 in review, with the CLAUDE.md mode bullet applied in its worktree. T12 started, stacked on T21 (`7b5b3ece` over `81f50ff1`).
+- T12 handed back; in review. T13 and T17 started, stacked on T12 over T21 (`890d8a10`, `7b41b18e`). Integration check 4 now uses `grep -w`.
+- T21 review: APPROVE-WITH-FIXES (a Judge build raise skipped the human; untested memo and lighter; structure-reading specs). Back to its implementer; second review follows. `repl-commands.md`'s `/mode auto` scenario goes to T20.
+- T13 scope widened to the specs that pin the old lighter (`mode/approval_spec`, `mode_spec`, `status_feed_spec`, and any a run shows).
+- T12 review: APPROVE-WITH-FIXES, mechanical (dead `Queue#automatic`, 2-surface comments). Not taken: folding `QueueSurface` into `SecretSurface`.
+- T13 handed back with `spec/e2e/session_passes_spec.rb` red: the launch `mode_switch` now lands before the session header. Returned: fix the ordering in production, keep the spec as the guard.
+- T21 landed `686cb1de` after 2 reviews (with the CLAUDE.md mode bullet). T12 landed `b24b2e62` (its deletion of `auto_surface_spec.rb` was redone by hand: T21's fix round had changed that file). T17 handed back with 8 pinned middleware lists outside its list; approved.
+- T13 and T17 rebased onto main by patch; both in review. T14 started stacked on T13 (`2fd6c03f`), T18 stacked on T17 (`05f38b7b`), snapshots taken before the reviewers began. T17 found no production path handing `Escalation::Surfaces` straight to a Gate.
+- T17 review: REQUEST-CHANGES (a declined secret release was remembered as a path deny; a remembered deny masked a final refusal; no journal record; an encoding raise could leave a pending parked). Back to its implementer; second review follows.
+- T18 handed back. Rulings: the chat researcher leases its own scratch or spike regardless of `--isolation` (2 pinning specs updated); plan scope keeps lending the board's spike (the card's stop shape); kept leases accumulate by design (docs to say how to clean); scope widened to `confine_to_scope.rb` for a lease-specific refusal.
+- T18 rulings applied; its review waits for T17 to land so it reviews on the real base. T19 started, stacked on T18 (`90d3ba29`).
+- T13 review: REQUEST-CHANGES (a rebase leftover example; an `--approval ask` launch shows no ASK on the HUD until the first /mode). Back to its implementer; second review follows.
+- T17 landed `92699773` after 2 reviews. First hook run red on the Shift+Enter reset-after-exception flake (seed 61060); green alone and 3 of 3 on base and card; recorded in `docs/toolchain-traps.md`.
+- T18 rebased onto main; in review. T19 stopped on its stop condition (researcher askable turns true): ruled intended, since the card's curl-asks criterion needs it; its 2 other failures (`rustc --version` parks under ask, a spike write misses the lease) under diagnosis.
+- T13 fix round: every launch now journals its starting mode (from == to). `Wiring` went 1 line over `Metrics/ClassLength`; ruled: extract the lazy judge build into its own collaborator rather than raise the limit.
+- T14 handed back; waits for T13 to land (its `Wiring` ClassLength overage goes with T13's extraction), then a rebase and review. Wiring: `spec/support/slow_files.rb` gains `approval_cycle_key_spec.rb`. Open for review: the pane ignores the key during a run with no prompt open.
+- T15 and T16 started, stacked on T14 (`e955b21c`).
+- T19: `rustc --version` parked because ComposedTerm's root predicate confines nothing when the cwd (a T18 lease) is outside the project root. Ruled: the predicate admits the call's own confined checkout as its root, reusing the leased-worker path; scope widened to `composed_term.rb` and friends.
+- Correction: T19 needed no `composed_term.rb` change. The parked probe was its own harness (HOME under the root); `Switchboard#policy_for` already roots a lease at its checkout. T19 handed back; its review waits for T18 to land.
+- T13 fix round done (`Wiring::JudgeSource` extracted); CLAUDE.md launch-default wiring applied in its worktree; second review.
+- T16 handed back (scope widened to `repl.rb`, `wiring.rb`, `plugin/nvim/doc/lain.txt`); its review waits for T14 to land.
+- T18 review: APPROVE-WITH-FIXES. Substantive: "kept" was not (the spike worktree was detached; Gc reaped a clean research spike at exit; scratch under tmpdir). Ruled: commits land on the branch, Gc exempts research leases, scratch moves under the per-user state dir. Second review follows.
+- T13 landed `4f3701e0` after 2 reviews (with `Wiring::JudgeSource` and the CLAUDE.md launch-default line). T14 rebased (switchboard comment conflict resolved; slow_files wiring applied); in review. T15 and T16 rebased onto T14 (`ae6f2805`); `wiring.rb` passes ClassLength in each. T15 found `C-t` is Reline's transpose and cannot bind; its specs use `C-x`.
+- T18 approved on second review, but its landing suite went red (journal routing discipline and hang-up seam: research leases journal no lease record). Main restored; back to its implementer.
+- T18 landed `02f8ca21` (a research lease journals IsolationLease `acquired` then `kept`; new `telemetry/isolation_lease.rb`). T19 rebased; 1 example red on the final T18 base, back to its implementer.
+- T14 review: REQUEST-CHANGES (the key during a run with no prompt open replays late in the chat and is dropped in the pane; a wiped KeyTaken warning; no PTY test of the real path; an unlocked cross-thread flip). Second review follows.
+- T19 fixed its spec for the final T18 base; in review. T20 started early from main `02f8ca21`, reading the in-flight hand-backs; it gets a re-check after T14, T15, T16 and T19 land.
+- T19 approved, but its landing suite went red (the unattended-role invariant: no role the harness spawns unattended holds a gated tool; and a persona fixture). Main restored; implementer investigating before a ruling.
+- T19 ruling: the adjudicator's unattended evidence spike gets its own read-only role instead of the researcher, keeping the unattended-role invariant unchanged.
+- T20 draft handed back; review after T14, T15, T16, T19 land. For T15's review: its error text offers `C-t`, which Reline owns.
+- T19 second landing red: `skill_dispatch_spec` fixture lacked the researcher's new tools. Main restored; implementer sweeping every such fixture.
+- T19 landed `9d08f633` (4th hook run: the 3rd was green at 23,559 examples but rubocop caught a long line in `role_spec.rb`, fixed by the main session). Adds the read-only `evidence_researcher` role for the adjudicator.
+- T14 asked the user (cooked mode cannot see the key with no prompt open). Ruled: the pane cycles at once even with no prompt open; the in-process chat is prompts-only and drops a typeahead key instead of replaying it late; scope widened to the TTY prompt composer so the open prompt's lighter redraws on every flip.
+- T14 second review: REQUEST-CHANGES (a stale termios write-back made `input_pane_spec` fail about 30% alone). Asked the user: fix, then a third review.
+- 2026-10-15T13:02 T14 third review: APPROVE-WITH-FIXES. Resize example flakes 5/16 with the T14 seam vs 0/10 on main, so T14 caused it; fix round 4 sent to the implementer with the lain_repaint rescue narrowing and a 2-line repaint spec.
+- 2026-10-15T13:02 T15 and T16 drafts done; reviews held until T14 lands so their test load does not confound the T14 flake runs. At rebase, check wiring.rb Metrics/ClassLength (both implementers saw it trip over 300 on the stacked tree; main and T14 are clean).
+- 2026-10-15T14:38 T14 landed 4e1f686f (fix round 4: sweep after marking the read open; rescue narrowed; paste ^[[Z nit left).
+- 2026-10-15T14:39 T15 and T16 rebased onto 4e1f686f; T15 had 2 conflicts (wiring cycle_key, stdin_pump bind_cycle), resolved by hand; T15 sent to wire the configured key into T14 sweep and pane byte match, fix C-t text. T16 verifying.
+- 2026-10-15T14:42 T15 finished on rebased tree (configured key drives sweep and pane; C-x text); plan Gherkin C-t changed to C-x; medium review started.
+- 2026-10-15T14:43 T16 verified on rebase; :LainMode now flips atomically via mode_switch.flip; known gap: nvim flip does not repaint an open TTY prompt header (needs a LineEditor hook; owed to the user). Medium review started.
+- 2026-10-15T14:44 T16 review APPROVE-WITH-FIXES (comment placement x2, extract stand-in switch helper); fixes sent. Reviewer accepts the repaint gap and the approval-verb reuse; both owed to the user as follow-ups.
+- 2026-10-15T14:48 T16 landed 33fa8341.
+- 2026-10-15T14:56 T15 review APPROVE-WITH-FIXES: 3 key lines untested (wiring cycle_key, bind_cycle key, echo width); fixes sent after rebase onto 33fa8341.
+- 2026-10-15T15:02 T15 landed 05ba07ae.
+- 2026-10-15T15:03 T20 rebased onto 05ba07ae (docs/commands.md keys conflict resolved by the implementer); shared-file patch at ~/tmp/lain/T20-shared.patch checks clean against both index and working tree; low review started.
+- 2026-10-15T15:05 T20 landed 0d7f5b36 (shared-file lines staged alone; user edits in planning/qa left unstaged). All 21 cards landed.
+- 2026-10-15T15:11 Close-out: rake pspec 23,630 examples, 0 failures; rubocop clean; comment-census --check-tickets ok; zeitwerk-census --check failed once (output lost) then 15 clean runs; spec-census --check assertions 185 > 184, which predates the run (186 at plan start, this run removed 1); pre-commit --all-files green; retired-name grep empty. Leftover T7 worktree removed (main already holds a superset); reviewer ollama stopped. Status done.
