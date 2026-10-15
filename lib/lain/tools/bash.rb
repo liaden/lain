@@ -124,8 +124,10 @@ module Lain
                                               "program with literal words, optionally joined by pipes or `&&` -- " \
                                               "`cat README.md | head -20` -- can run as argv with no shell " \
                                               "process anywhere, and does wherever the backend running it takes " \
-                                              "argv. Everything else goes through `sh -c`: more than one line, " \
-                                              "quoting or escaping of any kind, `;`, `||`, `&`, " \
+                                              "argv. So can a stage followed by `2>/dev/null`, by " \
+                                              "`&>/dev/null`, or by `>/dev/null` when no pipe follows it. " \
+                                              "Everything else goes through `sh -c`: more than one line, " \
+                                              "quoting or escaping of any kind, `;`, `||`, `&`, any other " \
                                               "redirection, `$` expansion, globs or `~`, and any program that " \
                                               "can run a program named in its own arguments or that can drop " \
                                               "the user into a shell -- git, tar, rsync, sudo, less, vim, man, " \

@@ -64,6 +64,22 @@ module Lain
       # its own tier and its own message.
       LITERAL_KINDS = %w[program list pipeline command command_name word number concatenation].freeze
 
+      # Literal only when every redirect in the command is a {DISCARDS} entry
+      # sent to /dev/null after its stage; otherwise they abstain as kinds.
+      REDIRECT_KINDS = %w[file_redirect redirected_statement].freeze
+
+      SPACING = /\A[ \t]+\z/
+
+      # The redirects a term carries, by descriptor and operator, and the
+      # streams each one sends to /dev/null. `2>&1`, `>>` and `1>` stay out:
+      # a duplication is not a discard, and the rest are spellings nobody asked
+      # for yet.
+      DISCARDS = {
+        ["2", ">"] => %i[stderr],
+        ["", ">"] => %i[stdout],
+        ["", "&>"] => %i[stdout stderr]
+      }.freeze
+
       # THE GENERATING RULE for the six families below: a name belongs here when
       # something the MODEL writes -- an argument, a flag, or the stdin it pipes
       # in -- can name the program that ends up executing. The Design's first
@@ -204,6 +220,11 @@ module Lain
       # @return [Decision]
       def call(command) = judge(@parse.call(command))
 
+      # @param redirect [Parse::Redirect]
+      # @return [Array<Symbol>] the streams its descriptor and operator would
+      #   send to its target, empty for anything {DISCARDS} does not name
+      def self.discarded(redirect) = DISCARDS.fetch([redirect.descriptor, redirect.operator], [])
+
       private
 
       # Exclusion is consulted before the abstention ladder because it can only
@@ -246,7 +267,9 @@ module Lain
 
       def joins?(range, left, right) = range.begin.between?(left.byte_range.end, right.byte_range.begin)
 
-      def term_stage(stage) = Term::Stage.new(argv: stage.argv, discards: [])
+      def term_stage(stage)
+        Term::Stage.new(argv: stage.argv, discards: stage.redirects.flat_map { |redirect| Verdict.discarded(redirect) })
+      end
 
       def deny(excluded)
         Decision.new(name: :deny, reason: Doubts.sentence(EXCLUDED, excluded), term: NO_TERM)
@@ -334,7 +357,43 @@ module Lain
         end
 
         def unknown_kinds
-          sentences("node kinds this layer cannot read literally", @result.kinds - LITERAL_KINDS)
+          literal = discards_only? ? LITERAL_KINDS + REDIRECT_KINDS : LITERAL_KINDS
+          sentences("node kinds this layer cannot read literally", @result.kinds - literal)
+        end
+
+        def discards_only?
+          owned = @result.stages.sum { |stage| stage.redirects.size }
+          owned == @result.redirects.size &&
+            @result.stages.each_with_index.all? { |stage, index| stage_discards_only?(stage, index) }
+        end
+
+        # Each redirect must sit after what precedes it with only spaces or tabs
+        # between. Touching, `0>` is a descriptor to bash and the word `0` to
+        # the grammar; across a newline, bash runs it as a command of its own;
+        # and a leading redirect has no gap after its stage at all.
+        def stage_discards_only?(stage, index)
+          afters = [stage.byte_range.end, *stage.redirects.map { |redirect| redirect.byte_range.end }]
+          piped = piped?(stage, @result.stages[index + 1])
+          stage.redirects.zip(afters).all? do |redirect, after|
+            discard?(redirect) && spaced?(after, redirect) && !(piped && Verdict.discarded(redirect).include?(:stdout))
+          end
+        end
+
+        def discard?(redirect)
+          !Verdict.discarded(redirect).empty? && redirect.target == File::NULL && redirect.extra_words.empty?
+        end
+
+        def spaced?(after, redirect) = SPACING.match?(@result.source.byteslice(after...redirect.byte_range.begin))
+
+        # Open3 owns the descriptor between two stages, so a stdout discard
+        # there is a term no runner here can express.
+        def piped?(stage, following)
+          return false if following.nil?
+
+          @result.separators.any? do |separator|
+            separator.text == PIPE &&
+              separator.byte_range.begin.between?(stage.byte_range.end, following.byte_range.begin)
+          end
         end
 
         def program_runners

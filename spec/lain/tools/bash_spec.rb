@@ -284,6 +284,18 @@ RSpec.describe Lain::Tools::Bash do
       expect(result.content).to include("exit status: 0", "hi")
     end
 
+    # bash reads the `0` of `0>` as a descriptor where the grammar reads a word,
+    # so the shell has to be the one that runs it.
+    it "sends a redirect touching a digit to the shell arm" do
+      backend, seen = recording_local
+
+      tool = described_class.new(exec: backend)
+      tool.call({ command: "ls 0>/dev/null" }, invocation)
+      tool.call({ command: "echo 0>/dev/null" }, invocation)
+
+      expect(seen).to eq([sh("ls 0>/dev/null"), sh("echo 0>/dev/null")])
+    end
+
     # The dispatch half of the card's misparse scenario. `time { echo PWNED; }`
     # is broken=false and fully covered -- neither the node-kind tier nor the
     # byte-coverage backstop sees anything -- so it abstains via the program-

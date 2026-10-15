@@ -466,6 +466,58 @@ RSpec.describe Lain::Shell::Pipeline do
     end
   end
 
+  describe "a stage that discards a stream" do
+    def run_stages(*stages)
+      term = Lain::Shell::Term.new(pipelines: [Lain::Shell::Term::Pipeline.new(stages:)])
+      pipeline.call(term, cwd: Dir.pwd, env: {}, timeout: 10,
+                          capture: Lain::Exec::Capture::Bounded.new(ceiling: 1_048_576))
+    end
+
+    def stage(argv, *discards) = Lain::Shell::Term::Stage.new(argv:, discards:)
+
+    it "sends a discarded stderr nowhere" do
+      result = run_stages(stage(%w[ls /nonexistent/lain/probe], :stderr))
+      expect(result).to have_attributes(stdout: "", stderr: "")
+      expect(result.exit_status).not_to eq(0)
+    end
+
+    it "sends a discarded stdout nowhere" do
+      expect(run_stages(stage(%w[echo hi], :stdout))).to have_attributes(stdout: "", stderr: "", exit_status: 0)
+    end
+
+    it "discards only on the stage that asks" do
+      result = run_stages(stage(%w[ls /nonexistent/lain/probe], :stderr), stage(%w[wc -c]))
+      expect(result).to have_attributes(stdout: "0\n", stderr: "")
+    end
+
+    it "refuses a stdout discarded before a pipe, running nothing" do
+      Dir.mktmpdir do |dir|
+        marker = File.join(dir, "ran")
+        result = run_stages(stage(["touch", marker], :stdout), stage(%w[wc -c]))
+
+        expect(result).to have_attributes(exit_status: described_class::NOT_PERMITTED,
+                                          stderr: "lain: touch: its stdout is discarded before a pipe\n")
+        expect(File.exist?(marker)).to be(false)
+      end
+    end
+
+    it "keeps stderr out of the bash tool's result when the command sends it to /dev/null" do
+      seen = []
+      real = described_class.new
+      recorder = lambda do |term, **options|
+        seen << term
+        real.call(term, **options)
+      end
+      tool = Lain::Tools::Bash.new(exec: Lain::Exec::Local.new(pipeline: recorder))
+
+      result = tool.call({ command: "ls /nonexistent 2>/dev/null" },
+                         Lain::Tool::Invocation.new(tool_use_id: "tu_1", channel: RecordingChannel.new))
+
+      expect(seen.sole.stages.sole).to have_attributes(argv: %w[ls /nonexistent], discards: %i[stderr])
+      expect(result.content).to end_with("--- stderr ---\n")
+    end
+  end
+
   describe "timeout" do
     it "raises Timeout when the term outlives its deadline" do
       expect { run([%w[sleep 5]], timeout: 0.3) }.to raise_error(described_class::Timeout)

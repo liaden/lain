@@ -642,6 +642,16 @@ RSpec.describe Lain::Exec::Docker do
       expect { run(command: decision.term) }.to raise_error(Lain::Exec::Unsupported, /&&/)
     end
 
+    # The container's argv has no place for a stage's own descriptors, so a
+    # discard goes to the string arm, where the shell honours it as written.
+    it "does not take a term with a stage that discards a stream, and refuses it by name" do
+      decision = Lain::Shell::Verdict.new.call("ls missing 2>/dev/null")
+
+      expect(decision.term.stages.sole.discards).to eq(%i[stderr])
+      expect(backend.takes_term?(decision.term)).to be(false)
+      expect { run(command: decision.term) }.to raise_error(Lain::Exec::Unsupported, /discard/)
+    end
+
     # The only row of the seam's truth table with two different answers in it,
     # which is why the predicate is asked WITH a term: one stage runs, a pipe
     # cannot, and no argument-less question could say so.

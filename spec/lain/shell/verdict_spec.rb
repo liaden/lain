@@ -506,8 +506,9 @@ RSpec.describe Lain::Shell::Verdict do
     # caller is promised it can never be handed one.
     it "abstains on an empty term even from a parse that reported nothing wrong" do
       empty_term = Lain::Shell::Parse::Result.new(
-        source: "echo", stages: [Lain::Shell::Parse::Stage.new(argv: ["echo", ""].freeze, byte_range: 0...4)].freeze,
-        kinds: %w[command command_name program word].freeze, separators: [].freeze,
+        source: "echo",
+        stages: [Lain::Shell::Parse::Stage.new(argv: ["echo", ""].freeze, byte_range: 0...4, redirects: [])].freeze,
+        kinds: %w[command command_name program word].freeze, separators: [].freeze, redirects: [].freeze,
         uncovered: [].freeze, breakages: [].freeze
       )
       expect(empty_term).to be_covered
@@ -529,10 +530,10 @@ RSpec.describe Lain::Shell::Verdict do
     let(:refusal) do
       Lain::Shell::Parse::Result.new(
         source: "", stages: [stage].freeze, kinds: %w[command command_name word].freeze,
-        separators: [].freeze, uncovered: [].freeze, breakages: [breakage].freeze
+        separators: [].freeze, redirects: [].freeze, uncovered: [].freeze, breakages: [breakage].freeze
       )
     end
-    let(:stage) { Lain::Shell::Parse::Stage.new(argv: %w[ls].freeze, byte_range: 0...2) }
+    let(:stage) { Lain::Shell::Parse::Stage.new(argv: %w[ls].freeze, byte_range: 0...2, redirects: []) }
     let(:breakage) { Lain::Shell::Parse::Breakage.new(kind: :unparseable, detail: "RuntimeError: abi drift") }
     let(:verdict) { described_class.new(parse: instance_double(Lain::Shell::Parse, call: refusal)) }
 
@@ -568,7 +569,7 @@ RSpec.describe Lain::Shell::Verdict do
 
     def judging(**overrides)
       shape = { broken?: false, covered?: true, stages: [stage].freeze, kinds: %w[command command_name word].freeze,
-                separators: [].freeze, uncovered: [].freeze, breakages: [].freeze }
+                separators: [].freeze, redirects: [].freeze, uncovered: [].freeze, breakages: [].freeze }
       result = instance_double(Lain::Shell::Parse::Result, **shape, **overrides)
       described_class.new(parse: instance_double(Lain::Shell::Parse, call: result))
     end
@@ -754,6 +755,66 @@ RSpec.describe Lain::Shell::Verdict do
     it "abstains on every sequencing form in the corpus but &&" do
       ["echo hi\nrm -rf /tmp/x", "ls | wc\nrm -rf /tmp/x", "echo hi; ls", "ls &"]
         .each { |command| expect(verdict.call(command)).to be_abstain, command.inspect }
+    end
+  end
+
+  describe "a redirect to /dev/null" do
+    def stage_of(command) = decide(command).term.stages.sole
+
+    it "allows stderr to /dev/null, as a stage that discards stderr" do
+      expect(decide("ls missing 2>/dev/null")).to be_allow
+      expect(stage_of("ls missing 2>/dev/null")).to have_attributes(argv: %w[ls missing], discards: %i[stderr])
+    end
+
+    it "allows stdout to /dev/null, as a stage that discards stdout" do
+      expect(decide("cat a >/dev/null")).to be_allow
+      expect(stage_of("cat a >/dev/null")).to have_attributes(argv: %w[cat a], discards: %i[stdout])
+    end
+
+    it "allows both streams to /dev/null, as a stage that discards both" do
+      expect(decide("ls missing &>/dev/null")).to be_allow
+      expect(stage_of("ls missing &>/dev/null").discards).to contain_exactly(:stdout, :stderr)
+    end
+
+    it "discards on the stage the redirect follows, and on no other" do
+      term = decide("ls missing 2>/dev/null | wc -l && pwd").term
+      expect(term.pipelines.map { |pipeline| pipeline.stages.map(&:discards) }).to eq([[%i[stderr], []], [[]]])
+    end
+
+    it "abstains on any other redirect" do
+      ["echo a >out.txt", "cat <in.txt", "ls 2>&1", ">/dev/null ls", "ls 1>/dev/null", "ls >>/dev/null",
+       "ls 3>/dev/null", "cat </dev/null"].each do |command|
+        expect(decide(command)).to be_abstain, command.inspect
+      end
+    end
+
+    # tree-sitter reads `0>` as the word `0` then `>`, where bash reads fd 0:
+    # allowing it would run `rm -rf 0` for `rm -rf 0>/dev/null`.
+    it "abstains on a redirect touching the word before it, which bash may read as its descriptor" do
+      commands = [0, 1, *3..9].map { |digit| "ls #{digit}>/dev/null" } +
+                 (0..9).map { |digit| "ls #{digit}&>/dev/null" } + ["echo 0>/dev/null", "ls a 0>/dev/null"]
+      commands.each { |command| expect(decide(command)).to be_abstain, command.inspect }
+    end
+
+    # The grammar folds a redirect on the next line into the command before
+    # it, where bash runs it as a command of its own.
+    it "abstains on a redirect a newline separates from its stage" do
+      expect(decide("ls\n2>/dev/null")).to be_abstain
+      expect(decide("ls\n 2>/dev/null")).to be_abstain
+    end
+
+    it "abstains on a redirect that belongs to no stage" do
+      expect(decide("2>/dev/null\nls")).to be_abstain
+    end
+
+    it "abstains on a word after the redirect, so the argv that runs is the one written" do
+      expect(decide("echo a >/dev/null b")).to be_abstain
+    end
+
+    # A stage's stdout feeds the next one, so discarding it there is a shape
+    # the runner cannot hand Open3, which owns that descriptor.
+    it "abstains on stdout discarded before a pipe" do
+      expect(decide("cat a >/dev/null | wc -l")).to be_abstain
     end
   end
 end

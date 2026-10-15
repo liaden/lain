@@ -101,11 +101,13 @@ module Lain
       # not about this backend -- which is why the seam's predicate is asked
       # with one. It is the CALLER's term that is answered for, never the
       # single docker argv every command is wrapped into below; that wrapper is
-      # one stage for a pipe as much as for anything else.
+      # one stage for a pipe as much as for anything else. A stage that
+      # discards a stream is refused too: the argv has no place for its
+      # descriptors, and the string arm's shell honours the redirect as written.
       #
       # @param term [Shell::Term] the term a caller is about to offer
-      # @return [Boolean] true for a one-stage term
-      def takes_term?(term) = term.stages.size == 1
+      # @return [Boolean] true for a one-stage term that discards nothing
+      def takes_term?(term) = term.stages.size == 1 && term.stages.first.discards.empty?
 
       # ⚠️ NO VALUE GOES ON THE COMMAND LINE. `/proc/<pid>/cmdline` is
       # WORLD-READABLE while `/proc/<pid>/environ` is owner-only, so a
@@ -209,8 +211,8 @@ module Lain
       def one_stage(term)
         return term.stages.first.argv if takes_term?(term)
 
-        raise Unsupported, "docker run takes one argv and a pipe or a && sequence needs a shell, so this " \
-                           "backend has no shape for this term: #{term.to_journal.inspect}"
+        raise Unsupported, "docker run takes one argv, and a pipe, a && sequence or a discarded stream needs " \
+                           "a shell, so this backend has no shape for this term: #{term.to_journal.inspect}"
       end
 
       # HOW THE CALLING USER APPEARS INSIDE THE CONTAINER, which is not one

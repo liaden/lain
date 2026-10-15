@@ -74,6 +74,9 @@ module Lain
 
       COMMAND = "command"
       SEPARATOR = "separator"
+      REDIRECT = "file_redirect"
+      DESCRIPTOR = "redirect_descriptor"
+      TARGET = "redirect_target"
 
       # One query, compiled once per thread by the extension, one FFI crossing. The
       # ERROR/MISSING alternation is first and carries two capture names, so a
@@ -81,10 +84,12 @@ module Lain
       QUERY = [
         "[(ERROR) @error (MISSING) @missing]",
         *KINDS.map { |kind| "(#{kind}) @#{kind}" },
-        "[#{OPERATORS.map(&:inspect).join(" ")}] @#{SEPARATOR}"
+        "[#{OPERATORS.map(&:inspect).join(" ")}] @#{SEPARATOR}",
+        "(#{REDIRECT} descriptor: (file_descriptor) @#{DESCRIPTOR})",
+        "(#{REDIRECT} destination: (_) @#{TARGET})"
       ].join("\n").freeze
 
-      private_constant :COMMAND, :SEPARATOR
+      private_constant :COMMAND, :SEPARATOR, :REDIRECT, :DESCRIPTOR, :TARGET
 
       # Why a parse cannot be trusted. `:error_node` and `:missing_node` name
       # which of the two tree-sitter signals fired; `:too_long` and
@@ -95,7 +100,13 @@ module Lain
       # outermost terminal spans lying inside it. A caller runs THIS, never the
       # original string -- re-running an accepted string through `sh -c` turns
       # every parser/shell disagreement into a live bypass.
-      Stage = Data.define(:argv, :byte_range)
+      Stage = Data.define(:argv, :byte_range, :redirects)
+
+      # A `file_redirect`, in parts. `descriptor` is empty when none was
+      # written, and `extra_words` are what the grammar folds into the redirect
+      # after its target: `b` in `echo a >/dev/null b`, which bash passes to
+      # `echo` and {Stage#argv} does not.
+      Redirect = Data.define(:text, :descriptor, :operator, :target, :extra_words, :byte_range)
 
       # An operator, and WHERE it sits. Counting cannot tell a caller which stage
       # is downstream of a pipe -- `ls &` is one stage and one separator, and
@@ -103,7 +114,9 @@ module Lain
       # range is the only thing that orders the two lists against each other.
       Separator = Data.define(:text, :byte_range)
 
-      Result = Data.define(:source, :stages, :kinds, :separators, :uncovered, :breakages) do
+      # `redirects` is every redirect, including one no stage owns, such as a
+      # redirect after a dangling `&&`.
+      Result = Data.define(:source, :stages, :kinds, :separators, :redirects, :uncovered, :breakages) do
         # The grammar reported a defect, or nothing could be parsed at all.
         def broken? = !breakages.empty?
 
@@ -162,7 +175,7 @@ module Lain
       # here would read as "every byte accounted for", which is the vacuous
       # success a refusal must never look like.
       def refused(source, breakage)
-        Result.new(source:, stages: [].freeze, kinds: [].freeze, separators: [].freeze,
+        Result.new(source:, stages: [].freeze, kinds: [].freeze, separators: [].freeze, redirects: [].freeze,
                    uncovered: Reading.runs((0...source.bytesize).to_a), breakages: [breakage].freeze)
       end
 
@@ -189,11 +202,13 @@ module Lain
         # uncovered run, which is the signal a verdict already refuses on.
         BLANK_BYTES = " \t\n".bytes.freeze
 
+        NOT_WRITTEN = ""
+
         Span = Data.define(:range, :text) do
           def contains?(other) = range.begin <= other.range.begin && other.range.end <= range.end
         end
 
-        private_constant :BLANK_BYTES, :Span
+        private_constant :BLANK_BYTES, :NOT_WRITTEN, :Span
 
         # Consecutive byte indexes, merged into the spans a human reads.
         def self.runs(indexes)
@@ -211,7 +226,9 @@ module Lain
         end
 
         def result
-          Result.new(source: @source, stages:, kinds:, separators:, uncovered:, breakages:)
+          redirects = self.redirects
+          Result.new(source: @source, stages: stages(redirects), kinds:, separators:,
+                     redirects: redirects.values.freeze, uncovered:, breakages:)
         end
 
         private
@@ -254,12 +271,59 @@ module Lain
           end
         end
 
-        def stages
+        def stages(redirects)
           words = terms
-          ordered(top_level_commands).map do |command|
+          commands = ordered(top_level_commands)
+          owned = redirects.group_by { |span, _redirect| owner(commands, span) }
+          commands.map do |command|
             argv = ordered(words.select { |word| command.contains?(word) })
-            Stage.new(argv: argv.map(&:text).freeze, byte_range: command.range)
+            Stage.new(argv: argv.map(&:text).freeze, byte_range: command.range,
+                      redirects: owned.fetch(command, []).map(&:last).freeze)
           end.freeze
+        end
+
+        # Keyed by span, in source order, so a stage can claim its own.
+        def redirects
+          ordered(@spans.fetch(REDIRECT, [])).to_h { |span| [span, redirect(span)] }
+        end
+
+        def redirect(span)
+          descriptor = inside(span, DESCRIPTOR).first
+          target = inside(span, TARGET).first
+          Redirect.new(text: span.text, descriptor: descriptor&.text || NOT_WRITTEN,
+                       operator: operator(span, descriptor, target), target: target&.text || NOT_WRITTEN,
+                       extra_words: extra_words(span, target), byte_range: span.range)
+        end
+
+        # The operator is an anonymous token, so it is read off the source
+        # between the descriptor and the target rather than queried: a token
+        # list in the query raises on any name the grammar does not define.
+        def operator(span, descriptor, target)
+          from = descriptor ? descriptor.range.end : span.range.begin
+          to = target ? target.range.begin : span.range.end
+          @source.byteslice(from...to).strip.freeze
+        end
+
+        def extra_words(span, target)
+          words = outermost(spans_for(TERMINAL_KINDS + GROUP_KINDS).select do |word|
+            word.range != span.range && span.contains?(word)
+          end)
+          ordered(words.reject { |word| target&.contains?(word) }).map(&:text).freeze
+        end
+
+        def inside(span, name) = @spans.fetch(name, []).select { |part| span.contains?(part) }
+
+        # The command enclosing a redirect, or else the nearest one before it
+        # with no operator between them: `2>/dev/null` in `a 2>/dev/null | b`
+        # is `a`'s, and the grammar's own nesting of a pipeline's trailing
+        # redirect around the whole pipeline is not what bash applies it to.
+        def owner(commands, span)
+          commands.find { |command| command.contains?(span) } ||
+            commands.reverse.find { |command| command.range.end <= span.range.begin && !split?(command, span) }
+        end
+
+        def split?(command, span)
+          separator_spans.any? { |separator| separator.range.begin.between?(command.range.end, span.range.begin) }
         end
 
         def uncovered = self.class.runs(gaps(covered_bytes))

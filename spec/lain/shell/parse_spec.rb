@@ -507,6 +507,61 @@ RSpec.describe Lain::Shell::Parse do
     end
   end
 
+  # A redirect is reported with its parts apart, and on the stage it belongs to,
+  # so a verdict can tell a discard from a write without re-reading the source.
+  describe "redirects" do
+    def redirect_of(command) = result_for(command).redirects.sole
+
+    it "reports a descriptor, an operator and a target as separate parts" do
+      expect(redirect_of("ls missing 2>/dev/null"))
+        .to have_attributes(descriptor: "2", operator: ">", target: "/dev/null", extra_words: [])
+    end
+
+    it "reports an unwritten descriptor as empty" do
+      expect(redirect_of("cat a >/dev/null")).to have_attributes(descriptor: "", operator: ">", target: "/dev/null")
+    end
+
+    it "reads &> as one operator, not as a separator" do
+      result = result_for("ls missing &>/dev/null")
+      expect(result.redirects.sole).to have_attributes(descriptor: "", operator: "&>", target: "/dev/null")
+      expect(result.separators).to be_empty
+    end
+
+    it "reports a word after the target, which the argv drops" do
+      result = result_for("echo a >/dev/null b")
+      expect(result.redirects.sole).to have_attributes(target: "/dev/null", extra_words: ["b"])
+      expect(result.stages.sole.argv).to eq(%w[echo a])
+    end
+
+    it "keeps a trailing redirect off the argv and on the stage it follows" do
+      stage = result_for("ls missing 2>/dev/null").stages.sole
+      expect(stage.argv).to eq(%w[ls missing])
+      expect(stage.redirects.map(&:target)).to eq(["/dev/null"])
+    end
+
+    it "puts each redirect on its own stage of a pipeline" do
+      stages = result_for("ls missing 2>/dev/null | wc -l").stages
+      expect(stages.map { |stage| stage.redirects.map(&:descriptor) }).to eq([["2"], []])
+    end
+
+    it "gives no stage a redirect that follows an operator" do
+      result = result_for("ls && 2>/dev/null\npwd")
+      expect(result.stages.map(&:redirects)).to eq([[], []])
+      expect(result.redirects.map(&:text)).to eq(["2>/dev/null"])
+    end
+
+    it "puts a leading redirect on the stage that encloses it" do
+      stage = result_for(">/dev/null ls").stages.sole
+      expect(stage.redirects.sole.byte_range.end).to be <= stage.byte_range.end
+    end
+
+    it "reports no redirects for a command without one" do
+      result = result_for("ls -la")
+      expect(result.redirects).to be_empty
+      expect(result.stages.sole.redirects).to be_empty
+    end
+  end
+
   describe "an empty command" do
     it "is not broken and has no stages" do
       result = result_for("")

@@ -175,6 +175,8 @@ module Lain
       # so the line reads as coming from lain rather than from the program.
       PREFIX = "lain: "
 
+      STREAM_OPTIONS = { stdout: :out, stderr: :err }.freeze
+
       # What the backstop below says, and it says it because the alternative is
       # a lie. `spawn` raises in the PARENT, per stage, in order -- so by the
       # time it raises, every earlier stage is already running and detached, and
@@ -251,7 +253,7 @@ module Lain
       class Refusals
         NUL = "\0"
 
-        TIERS = %i[nothing_to_run nul_arguments missing_cwd refused_downstream unresolvable].freeze
+        TIERS = %i[nothing_to_run nul_arguments missing_cwd refused_downstream discarded_into_pipe unresolvable].freeze
 
         def initialize(term:, cwd:, env:)
           @term = term
@@ -303,6 +305,18 @@ module Lain
 
           [Refusal.new(status: NOT_PERMITTED,
                        message: "#{offenders.first}: not permitted downstream of a pipe")]
+        end
+
+        # Open3 sets every stage's stdout but the last to the next pipe, and
+        # `spawn` raises on a descriptor given twice -- after the earlier
+        # stages are already running.
+        def discarded_into_pipe
+          offenders = @term.pipelines.flat_map { |pipeline| pipeline.stages[0...-1] }
+                           .select { |stage| stage.discards.include?(:stdout) }
+          return [] if offenders.empty?
+
+          [Refusal.new(status: NOT_PERMITTED,
+                       message: "#{offenders.first.program}: its stdout is discarded before a pipe")]
         end
 
         # Advisory, not a security check -- `exec` remains the authority and the
@@ -390,8 +404,12 @@ module Lain
         # re-split, and `--` keeps a program named like an option from being read
         # as one.
         def commands(pipeline)
-          pipeline.stages.map { |stage| [@env, [@setsid, "setsid"], "--", *stage.argv] }
+          pipeline.stages.map { |stage| [@env, [@setsid, "setsid"], "--", *stage.argv, discarded(stage)] }
         end
+
+        # A stage's own options win over the pipeline's in Open3, which is how
+        # one stage's stderr leaves the shared pipe.
+        def discarded(stage) = stage.discards.to_h { |stream| [STREAM_OPTIONS.fetch(stream), File::NULL] }
 
         # Each stage leads its own session, and so its own group ({SETSID}),
         # which is what lets a timeout kill the command's own descendants rather
