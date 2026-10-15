@@ -1875,6 +1875,7 @@ RSpec.describe Lain::Tools::Subagent do
         toolset = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::WriteFile.new])
         tool = build_subagent(provider:, toolset:, policy: spawn_policy(only:), announces_as: "dev",
                               display_channel: display, telemetry:)
+        FileUtils.mkdir_p(File.join(tmpdir, "src"))
         Dir.chdir(tmpdir) { tool.call({ "prompt" => "write it" }, invocation) }
         [display.drain, telemetry.drain].map { |records| records.grep(Lain::Telemetry::FilesWritten) }
       end

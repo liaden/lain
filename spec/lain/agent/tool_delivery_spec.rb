@@ -171,6 +171,28 @@ RSpec.describe Lain::Agent::ToolDelivery do
       expect(display.first.paths).to include("frugirl/research.md")
     end
 
+    it "sends nothing for a write that failed after its pre-image was taken" do
+      handler = Lain::Effect::Handler::Mock.new do |_effect, _|
+        session.record_pre_image("newdir/x.txt") { nil }
+        Lain::Tool::Result.error("write failed")
+      end
+      perform(handler)
+
+      expect(display).to be_empty
+    end
+
+    it "sends nothing when the real write_file cannot create the file's directory" do
+      tool = Lain::Tools::WriteFile.new
+      handler = Lain::Effect::Handler::Mock.new do |_effect, _|
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
+        tool.call({ path: File.join(dir, "newdir", "x.txt"), content: "x" }, invocation)
+      end
+      committed = perform(handler)
+
+      expect(committed.head.content.first["is_error"]).to be(true)
+      expect(display).to be_empty
+    end
+
     it "sends nothing for a round that only read" do
       perform(echoing)
 

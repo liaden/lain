@@ -368,7 +368,7 @@ module Lain
     #
     # @return [Array<String>]
     def round_writes
-      [*@pre_images.to_h.keys.map { |path| display_path(path) }, *@documents]
+      [*@pre_images.to_h.keys.select { |path| @writes.include?(path) }.map { |path| display_path(path) }, *@documents]
     end
 
     # What `path` held before the open turn first wrote it. The block reads it

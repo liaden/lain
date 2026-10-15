@@ -797,6 +797,14 @@ RSpec.describe Lain::Session do
     it "is empty for a round that wrote nothing" do
       expect(session.open_pre_images.round_writes).to eq([])
     end
+
+    it "leaves out a path whose pre-image was taken but whose write never landed" do
+      session.open_pre_images
+      session.record_pre_image("newdir/x.txt") { nil }
+      write("lib/a.rb")
+
+      expect(session.round_writes).to eq(["lib/a.rb"])
+    end
   end
 
   describe "#reminders" do
