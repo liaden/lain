@@ -232,7 +232,7 @@ RSpec.describe Lain::CredentialPatterns do
       expect { names_matching(:content, invalid) }.to raise_error(ArgumentError, /invalid byte sequence/)
     end
 
-    # The documented Approval::Risk trap (risk.rb:322): UTF-16 is not
+    # The documented encoding trap: UTF-16 is not
     # ASCII-compatible, and `valid_encoding?` is TRUE, so a caller cannot use
     # that predicate to decide whether a scan is safe.
     it "raises on UTF-16 even though its valid_encoding? is true" do

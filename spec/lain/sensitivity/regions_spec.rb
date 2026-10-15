@@ -611,7 +611,7 @@ RSpec.describe Lain::Sensitivity::Regions do
     context "when the bytes are not decodable" do
       # `valid_encoding?` answers TRUE for every UTF-16 String, which then raises
       # Encoding::CompatibilityError -- NOT an ArgumentError -- out of the first
-      # Regexp. `risk.rb:322` and the `for(:content)` encoding contract both
+      # Regexp. The `Sensitivity.readable?` guard and the `for(:content)` encoding contract both
       # record it; this is the consumer that has to survive it.
       let(:utf16) { "API_KEY=#{secret}\n".encode(Encoding::UTF_16LE) }
       let(:binary) { Random.new(20_260_807).bytes(4096) }

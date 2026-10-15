@@ -227,18 +227,18 @@ module Lain
         #
         # @param project [Lain::Project]
         # @param paths [Paths]
-        # @return [Lain::Approval::Risk::Root, Lain::Approval::Risk::Root::Nowhere]
+        # @return [Lain::Approval::Root, Lain::Approval::Root::Nowhere]
         def confinement(project:, paths:)
-          return Lain::Approval::Risk::Root::NOWHERE if unconfined?(project, paths)
+          return Lain::Approval::Root::NOWHERE if unconfined?(project, paths)
 
-          Lain::Approval::Risk::Root.new(project.root)
+          Lain::Approval::Root.new(project.root)
         end
 
         # `kind` is the resolver's answer over home's real spellings; containment
         # covers a root above home and a HOME written with a trailing slash.
         def unconfined?(project, paths)
           project.detected_by == :none || project.kind == :home ||
-            Lain::Approval::Risk::Root.new(project.root).contains?(paths.home)
+            Lain::Approval::Root.new(project.root).contains?(paths.home)
         end
 
         # A config that will not load refuses the launch, and so does a
@@ -470,14 +470,14 @@ module Lain
           # @raise [ArgumentError] from {Lain::Sensitivity}, when `home`, `cwd`
           #   or a root is not something a classifier can be anchored on
           def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty, root: nil, also_rooted: [],
-                         confinement: Lain::Approval::Risk::Root::NOWHERE)
+                         confinement: Lain::Approval::Root::NOWHERE)
             @home = home
             @rules = rules
             @roots = [root, *also_rooted].uniq.freeze
             @confinement = confinement
             @worker_env = Lain::WorkerEnv.new(cwd:, env: {})
             @session = classifier(cwd)
-            @nowhere = Confinement.new(Lain::Approval::Risk::Root::NOWHERE, @worker_env.cwd)
+            @nowhere = Confinement.new(Lain::Approval::Root::NOWHERE, @worker_env.cwd)
             freeze
           end
 
@@ -505,7 +505,7 @@ module Lain
             # exactly this string, so `inner/../h` runs in `h` whatever `inner`
             # links to, while a word's `..` is resolved by the kernel from there.
             landing = @worker_env.resolve(cwd)
-            real_root = Lain::Approval::Risk::Root.new(File.realpath(@confinement))
+            real_root = Lain::Approval::Root.new(File.realpath(@confinement))
             # The one resolution of the cwd, asked here and CARRIED: the root
             # question needs it, and so does every word a rule classifies
             # afterwards.
@@ -560,10 +560,10 @@ module Lain
           # the home directory is no boundary, for {BoardBuild.confinement}'s
           # reason.
           def leased_confinement(checkout)
-            root = Lain::Approval::Risk::Root.new(checkout)
-            return Lain::Approval::Risk::Root::NOWHERE if @confinement.equal?(Lain::Approval::Risk::Root::NOWHERE)
+            root = Lain::Approval::Root.new(checkout)
+            return Lain::Approval::Root::NOWHERE if @confinement.equal?(Lain::Approval::Root::NOWHERE)
 
-            root.contains?(@home) ? Lain::Approval::Risk::Root::NOWHERE : root
+            root.contains?(@home) ? Lain::Approval::Root::NOWHERE : root
           end
         end
       end

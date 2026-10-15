@@ -2,21 +2,22 @@
 
 module Lain
   module Approval
-    # The answers a human already gave, applied so the same question is never
-    # put to them twice.
+    # The answers a human wrote into the config, applied so the same question
+    # is never put to them twice.
     #
-    # Almost every tool-approval UI offers permanent-YES and nothing else, so a
-    # user repeatedly asked about something they will never want answers `n`
-    # forever or eventually answers `y` out of fatigue. BOTH directions are
-    # rememberable here, at Emacs' three strengths.
+    # Nothing writes an answer from the prompt: the human edits the config by
+    # hand, and this rule only reads what they left. Almost every tool-approval
+    # UI offers permanent-YES and nothing else, so a user repeatedly asked about
+    # something they will never want answers `n` forever or eventually answers
+    # `y` out of fatigue. BOTH directions are rememberable here, at Emacs' three
+    # strengths.
     #
     # == What each strength actually covers
     #
     # `allow` and `deny` match an EXACT call shape -- the tool plus every set
     # field -- so a remembered `deny` on `bash(command: "rm -rf /tmp/x")` does
-    # NOT cover the same command with `timeout: 120` beside it. That is what
-    # makes them safe to write from the prompt, and it is also their limit. The
-    # durable refusal is `deny_tool`, which names the tool and nothing else.
+    # NOT cover the same command with `timeout: 120` beside it. The durable
+    # refusal is `deny_tool`, which names the tool and nothing else.
     #
     # == Precedence: the strictest remembered answer wins
     #

@@ -911,7 +911,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # an unresolvable call inside the project. The root answer fails CLOSED.
     it "confines nothing for a cwd nothing could resolve, where the classifier falls back" do
       in_tree do |root, home|
-        factory = described_class.new(home:, cwd: root, confinement: Lain::Approval::Risk::Root.new(root))
+        factory = described_class.new(home:, cwd: root, confinement: Lain::Approval::Root.new(root))
 
         expect(factory.confinement(nil).contains?("README.md")).to be(true)
         expect(factory.confinement("lib").contains?("../README.md")).to be(true)
@@ -925,7 +925,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # the real half of the question fails closed on it.
     it "confines nothing under a root that does not exist" do
       factory = described_class.new(home: "/home/u", cwd: "/home/u/work",
-                                    confinement: Lain::Approval::Risk::Root.new("/home/u/work"))
+                                    confinement: Lain::Approval::Root.new("/home/u/work"))
 
       expect(factory.confinement(nil).contains?("README.md")).to be(false)
     end
@@ -945,7 +945,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       in_tree do |root, home|
         FileUtils.mkdir_p(File.join(root, "docs"))
         File.symlink(File.join(root, "docs"), File.join(root, "manual"))
-        factory = described_class.new(home:, cwd: root, confinement: Lain::Approval::Risk::Root.new(root))
+        factory = described_class.new(home:, cwd: root, confinement: Lain::Approval::Root.new(root))
 
         expect(factory.confinement(nil).real_landing).to eq(root)
         expect(factory.confinement("manual").real_landing).to eq(File.join(root, "docs"))
@@ -966,7 +966,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
     describe "#content" do
       def confined_factory(home, root)
-        described_class.new(home:, cwd: root, confinement: Lain::Approval::Risk::Root.new(root))
+        described_class.new(home:, cwd: root, confinement: Lain::Approval::Root.new(root))
       end
 
       def put(root, name, body, mode: 0o644)
@@ -1129,7 +1129,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       def leased_at(checkout) = Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:)
 
       def project_factory(root, home, table: Lain::Sensitivity::Rules.empty)
-        described_class.new(home:, cwd: root, rules: table, root:, confinement: Lain::Approval::Risk::Root.new(root))
+        described_class.new(home:, cwd: root, rules: table, root:, confinement: Lain::Approval::Root.new(root))
       end
 
       def in_checkout(config: nil)

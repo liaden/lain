@@ -32,7 +32,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
   # drift, and these examples would then exercise the copy while a live session
   # ran on the other. The session cwd doubles as the project root unless an
   # example says otherwise.
-  def factory_for(home, session_cwd, confinement: Lain::Approval::Risk::Root.new(session_cwd),
+  def factory_for(home, session_cwd, confinement: Lain::Approval::Root.new(session_cwd),
                   rules: Lain::Sensitivity::Rules.empty)
     Lain::CLI::Wiring::BoardBuild::Classifiers.new(home:, cwd: session_cwd, rules:, root: session_cwd, confinement:)
   end
@@ -396,7 +396,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
   # Automatic approval is sized for a reader nobody watches, so what it may
   # read stops at the project. Every word and the call's own cwd resolve
-  # LEXICALLY under the root, on {Approval::Risk::OutsideRoot}'s terms -- no
+  # LEXICALLY under the root, on {Approval::Root}'s terms -- no
   # stat, no realpath, and a leading `~` refused rather than expanded.
   describe "the project root" do
     it "refuses a reader of a path under home but outside the root" do
@@ -517,7 +517,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
     it "approves nothing when the session confines nothing" do
       in_tree do |root, home|
-        rule = rule_for(home, root, confinement: Lain::Approval::Risk::Root::NOWHERE)
+        rule = rule_for(home, root, confinement: Lain::Approval::Root::NOWHERE)
 
         expect(rule.decide(call_of("cat README.md | head -20", cwd: root))).to be_nil
       end
@@ -802,7 +802,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
         linked = File.join(File.dirname(root), "repo-link")
         File.symlink(root, linked)
         rule = rule_for(home, linked, rules: Lain::Sensitivity::Rules.from({ "gated" => ["/vault/"] }),
-                                      confinement: Lain::Approval::Risk::Root.new(linked))
+                                      confinement: Lain::Approval::Root.new(linked))
 
         expect(rule.decide(call_of("cat vault/secret.txt", cwd: linked))).to be_nil
         expect(rule.decide(call_of("cat notes.txt", cwd: linked))).to be_nil

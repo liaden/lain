@@ -202,8 +202,7 @@ module Lain
       end
 
       # Interning is deliberate for the field NAMES (a bounded set) and
-      # deliberately absent for the values ({Risk::Keepsake.scalar}'s reason:
-      # an unbounded tool argument in the fstring table leaks for the life of
+      # deliberately absent for the values (an unbounded tool argument in the fstring table leaks for the life of
       # the process).
       def scalars(input)
         input.to_h { |field, value| [-field.to_s, value.is_a?(String) ? value.dup.freeze : value] }.freeze

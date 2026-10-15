@@ -20,7 +20,7 @@ module Lain
   #
   # Lexical matching is a decision, not an omission: a symlink named `notes.md`
   # pointing at `~/.ssh/id_ed25519` classifies ordinary. It is what
-  # {Approval::Risk::Root} already chose so that it agrees with
+  # {Approval::Root} already chose so that it agrees with
   # {Workspace::Restore} about what "outside the root" means, and
   # resolving links here would both disagree with that and put a syscall in a
   # classifier whose whole contract is that it makes none. The hole has a name
@@ -29,8 +29,8 @@ module Lain
   # classifies where it LANDS as well as what it says, because nobody is asked
   # about what that rule approves.
   #
-  # The two halves err in OPPOSITE directions. {Approval::Risk}'s widen-never-
-  # sharpen rule (`risk.rb:66-72`) applies to the GATED half only, where a
+  # The two halves err in OPPOSITE directions. The widen-never-
+  # sharpen rule applies to the GATED half only, where a
   # spurious match costs one prompt. That price is the READ path's, which was
   # the only path when it was written: a caller that APPROVES pays the other
   # error instead, and a gated name this table does not match costs it an
@@ -78,8 +78,8 @@ module Lain
       # file is ordinary: the operator lifted its name gate on purpose.
       ORACLE_APPROVABLE = %i[none exempt out_of_scope outside_project].freeze
 
-      # Checked, not coerced, for the reason {Approval::Risk::Classification}
-      # states: a wrong value answering the permissive question in silence is
+      # Checked, not coerced, for the same reason a boundary check never
+      # coerces: a wrong value answering the permissive question in silence is
       # exactly what this boundary must not do.
       #
       # Declared HERE, below {LEVELS}/{REASONS}, so both resolve by ordinary
@@ -506,8 +506,8 @@ module Lain
 
       # The patterns are frozen COPIES: they arrive from a TOML parse, so they
       # are mutable and the caller keeps them, and this value rides inside a
-      # `Ractor.shareable?` {Sensitivity}. `dup.freeze` rather than `-@` for
-      # {Risk::Keepsake.scalar}'s reason -- interning an unbounded config string
+      # `Ractor.shareable?` {Sensitivity}. `dup.freeze` rather than `-@`:
+      # interning an unbounded config string
       # leaks it into the fstring table for the life of the process.
       def self.rule(key, pattern, path: nil)
         return relation(pattern, path:) if key == RELATED
@@ -822,8 +822,7 @@ module Lain
 
     # A path this classifier cannot read. GATED and not ordinary: gated reaches
     # a human and is liftable, which is the right posture for input nobody can
-    # parse, and {Approval::Risk#reasons_for} calls the same input class risky
-    # for the same reason.
+    # parse.
     MALFORMED = Verdict.new(level: :gated, reason: :malformed)
 
     ROOT = "/"
@@ -832,15 +831,15 @@ module Lain
     # A leading `~`, `~/` or `~someone/`. Rewritten to the INJECTED home by pure
     # string substitution -- never `File.expand_path`, which resolves a named
     # tilde through getpwnam and is a socket to nscd on an SSSD or LDAP-backed
-    # host (`risk.rb:212-220`). Another user's `~/.ssh/id_rsa` is unambiguously
+    # host (`Approval::Root`). Another user's `~/.ssh/id_rsa` is unambiguously
     # a secret, so treating every tilde as home widens in the safe direction.
     TILDE_SEGMENT = %r{\A~[^/]*(?=/|\z)}
 
     # The two inputs that get past a String check and then raise: a NUL byte
     # (`ArgumentError` out of `Pathname#cleanpath` and `File.fnmatch?`) and a
     # non-ASCII-compatible encoding (`Encoding::CompatibilityError`, which is NOT
-    # an ArgumentError, so no rescue would catch it). {Approval::Risk#readable?}
-    # tests the same pair, and the `&&` order matters: `include?` on a UTF-16
+    # an ArgumentError, so no rescue would catch it). {Approval::Root#contains?}
+    # rescues the same pair, and the `&&` order matters: `include?` on a UTF-16
     # String raises the very error being tested for.
     def self.readable?(text)
       text.encoding.ascii_compatible? && text.valid_encoding? && !text.include?(NUL)
@@ -936,7 +935,7 @@ module Lain
       verdict = @rules.find { |rule| rule.matches?(clean, @anchors) }.verdict
       verdict.reason == ORDINARY.reason && named_within?(clean, within) ? NAME.verdict : verdict
     rescue ArgumentError, EncodingError
-      # Defence in depth, {Approval::Risk::OutsideRoot}'s posture: `readable?`
+      # Defence in depth, {Approval::Root#contains?}'s posture: `readable?`
       # takes the two inputs we know of, and unresolvable is exactly the case
       # that must not be waved through.
       MALFORMED

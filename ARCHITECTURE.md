@@ -1004,8 +1004,8 @@ a size cap never reconciles at all.
 
 The ledger is run-scoped, mutable, and owned beside the run's one `Approval::Queue` and one
 `Sensitivity::Policy`. There is deliberately no persistence path and no Null: remembering "yes,
-send `.env.local`" across runs is exactly what `Approval::Risk::Classification#rememberable?`
-declines to keep, and a Null would answer "nothing outstanding" forever — a release control that
+send `.env.local`" across runs would turn one approval into a standing one,
+and a Null would answer "nothing outstanding" forever — a release control that
 releases everything, wearing the Null Object idiom as camouflage.
 
 

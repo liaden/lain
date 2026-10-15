@@ -37,8 +37,7 @@ module Lain
     # cost one `&&` and one method here -- two for 9, which needs a rescue of
     # its own -- and no existing predicate's logic changed.
     # Predicates 7 and 8 also each cost a message on the injected factory
-    # (`#confinement`, `#content`), and 7 the lexical test it shares with
-    # {Risk::OutsideRoot}, extracted as {Risk::Root}. The `PATH`-trust rung
+    # (`#confinement`, `#content`), and 7 the lexical test {Root} answers. The `PATH`-trust rung
     # ("the program `execvp` finds is under a trusted prefix") is still above
     # this one, and bolts on the same way.
     #

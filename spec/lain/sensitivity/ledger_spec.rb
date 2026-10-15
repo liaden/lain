@@ -496,7 +496,7 @@ RSpec.describe Lain::Sensitivity::Ledger do
 
     # Session-scoped is the security property, not an unfinished feature:
     # persisting "yes, send .env.local" across runs is exactly the answer
-    # {Approval::Risk::Classification#rememberable?} refuses to keep. A
+    # a remembered-answer store refuses to keep. A
     # persistence path is what its absence has to be spec'd as.
     it "offers no way to persist or reload itself" do
       expect(described_class.public_instance_methods(false).sort)

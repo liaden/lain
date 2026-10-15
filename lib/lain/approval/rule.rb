@@ -42,7 +42,7 @@ module Lain
     # closing the `term:` keyword would have closed nothing: `#with(tool:)`
     # keeps a valid input and swaps the verdict under it, which reaches a rule
     # with a term its own input never produced. {Call} therefore follows
-    # {Risk::Keepsake} -- `new` and `Data::[]` private, `#with` refusing
+    # a token no caller can forge -- `new` and `Data::[]` private, `#with` refusing
     # WHATEVER it is handed. A blanket refusal is the point: it enumerates no
     # keywords, so it cannot be outflanked by the member nobody thought of, and
     # the one that broke an earlier draft of this file was `tool`.

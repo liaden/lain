@@ -35,7 +35,7 @@ module Lain
     #
     # There is no persistence path and no Null. Remembering "yes, send
     # `.env.local`" across runs is precisely the answer
-    # {Approval::Risk::Classification#rememberable?} declines to keep, and a Null
+    # a remembered-answer store declines to keep, and a Null
     # would answer "nothing outstanding" forever -- a release control that
     # silently releases everything, wearing this codebase's own Null Object idiom
     # as camouflage.
