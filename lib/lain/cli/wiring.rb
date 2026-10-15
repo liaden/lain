@@ -841,6 +841,7 @@ module Lain
                                           verdict:, isolation: fleet_isolation,
                                           handback:, epic: epic_mount(notice),
                                           attachments:, middleware: backend.middleware, paths: @paths,
+                                          display: @channel,
                                           config:)
         @toolset_build.build(recorder, ask_human:)
       end

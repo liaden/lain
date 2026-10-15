@@ -1847,6 +1847,38 @@ RSpec.describe Lain::Tools::Subagent do
       expect(second_results.first["is_error"]).to be(true)
       expect(File.read(path)).to eq("goodbye world")
     end
+
+    describe "reporting a child's writes" do
+      let(:display) { Lain::Channel.new }
+      let(:telemetry) { Lain::Channel.new }
+
+      def written_by(provider, only:)
+        toolset = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::WriteFile.new])
+        tool = build_subagent(provider:, toolset:, policy: spawn_policy(only:), announces_as: "dev",
+                              display_channel: display, telemetry:)
+        Dir.chdir(tmpdir) { tool.call({ "prompt" => "write it" }, invocation) }
+        [display.drain, telemetry.drain].map { |records| records.grep(Lain::Telemetry::FilesWritten) }
+      end
+
+      it "tells the display and the telemetry which files a child wrote, under its role" do
+        provider = mock(
+          tool_response(["w1", "write_file", { "path" => "src/main.rs", "content" => "fn main() {}\n" }]),
+          text_response("written")
+        )
+
+        shown, recorded = written_by(provider, only: %i[read_file write_file])
+
+        expect(shown.map { |r| [r.role, r.paths] }).to eq([["dev", ["src/main.rs"]]])
+        expect(recorded).to eq(shown)
+      end
+
+      it "sends nothing for a child that only reads" do
+        path = write("notes.txt", "hello")
+        provider = mock(tool_response(["r1", "read_file", { "path" => path }]), text_response("read"))
+
+        expect(written_by(provider, only: %i[read_file])).to eq([[], []])
+      end
+    end
   end
 
   # ---- A child runs in a LEASED environment ---------------------------------

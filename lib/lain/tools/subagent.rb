@@ -1009,8 +1009,8 @@ module Lain
       # should say which direction it moves that claim; the current ones move it
       # nowhere new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
-      Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :supervisor,
-                         :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware) do
+      Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :display_channel,
+                         :supervisor, :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -1041,6 +1041,10 @@ module Lain
         # file alone. A child that did not answer names the question it left
         # parked consumed there, or the inbox lists it for the rest of the run.
         #
+        # `display_channel` is the run's own display channel, which a child's writes
+        # are reported to; never `journal`, which is the session file. Not
+        # `display`, which would shadow Kernel#display.
+        #
         # `escalation` defaults to `[AskHuman::HUMAN]`: absent a spawn, `parent`
         # IS the run's own chat, so a question asked FROM it need go no further
         # once it is addressed there. A seam a spawn built over
@@ -1068,7 +1072,8 @@ module Lain
         # so the whole subtree is configured alike. It holds recipes, not
         # instances: each child builds its own members from it.
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
-                       telemetry: Channel::Null.instance, supervisor: Supervisor::Null, observer: NO_OBSERVER,
+                       telemetry: Channel::Null.instance, display_channel: Channel::Null.instance,
+                       supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        askers: NoAskers, isolation: NO_ISOLATION,
                        escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED,
                        attachments: Middleware::ResolveAttachments::Unwired,
@@ -1389,7 +1394,8 @@ module Lain
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain, mailbox),
             model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed),
-            session:, budget: @budget, journal: Channel::Null.instance, pipeline_source:, mailbox:
+            session:, budget: @budget, journal: Channel::Null.instance, pipeline_source:, mailbox:,
+            display: CLI::JournalTee.new(@seam.telemetry, @seam.display_channel), display_as: @name
           )
         end
 

@@ -412,6 +412,20 @@ RSpec.describe Lain::CLI::Wiring do
     expect(shown).to eq(["lib/other.rb"])
   end
 
+  # A child's own journal is the record, never the transcript, so its writes
+  # reach the human only through the channel the Seam carries for them.
+  it "hands every child the transcript's channel as where its written files are told" do
+    displays = []
+    allow(Lain::Tools::Subagent::Seam).to receive(:new).and_wrap_original do |original, **kwargs|
+      displays << kwargs[:display_channel]
+      original.call(**kwargs)
+    end
+
+    wire_agent
+
+    expect(displays).to all(equal(channel)).and(be_any)
+  end
+
   # The epic mount, the toolset's gate submitter, the board and the isolation
   # settings all read `.lain/config.rb` through one reader, so they cannot
   # read two different files.
