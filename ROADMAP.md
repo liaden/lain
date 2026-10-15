@@ -2012,6 +2012,8 @@ XDG path relative, which put machine state back inside the user's repository)
    Shift+Tab to cycle `ask` and `auto` (rebindable), a per-requester memory of human denies, `&&`
    sequences and `/dev/null` redirects understood without a shell, read-only probes approved, and
    researchers with gated `bash` and writes in a kept scratch directory or spike worktree. 21 cards.
+   **Done (2026-10-15)**: all 21 cards landed; frugirl round 4 in the default `auto` is the user's
+   manual check (`planning/specs/research-agents-and-approval.md`, Integration checks).
 
 ## Map of the documents
 

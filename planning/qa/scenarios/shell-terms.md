@@ -87,34 +87,34 @@ Read this before driving anything. **Nothing below is true of all three**, and t
 sections that most look like defects (§3, §6) are only findings under the wrong one.
 
 Postures are gone since round 18: a mode is **scope × approval**, and it is the approval axis
-(`ask` or `auto`) that decides here.
+(`ask`, `auto` or `bypass`) that decides here. A launched chat is `auto`, so
+start a round that expects a prompt with `--approval ask`.
 
 | gate | how you get it | what decides a `bash` call |
 |---|---|---|
-| **`ask`** (the default) | the ordinary cockpit (`lain up`, `lain chat`) | the three-rung ladder: `Triage` → `Rules` → `Surfaces` |
-| **`auto`** | typing `/mode auto` | **the same ladder**, with `Escalation::Remainder` where `Surfaces` was. Triage and the rules rung still run, still refuse, and still journal an `escalation` record; the bottom rung answers `rung=auto` instead of parking |
-| **unattended** | a session with no queue: `lain chat --non-interactive --prompt '…'` (the flag **requires** `--prompt`; without it the launch refuses with `--non-interactive needs --prompt: it reads no line from the terminal, so a run with no question seeded has nothing to ask`) | a ladder of **one** rung that refuses everything, reason verbatim: `no human is attached to this session, so no rung can ask anybody and nothing can approve` (`switchboard.rb:419-426`) |
+| **`ask`** | `--approval ask`, or `/mode ask` | the three-rung ladder: `Triage` → `Rules` → `Surfaces` |
+| **`auto`** (the launch default) | the ordinary cockpit (`lain up`, `lain chat`) | the same ladder with `Approval::Judged` above `Surfaces`: a model judge answers first (journal rung `auto`) and an unsure or faulted answer parks. Triage and the rules rung still run, still refuse, still journal |
+| **`bypass`** | typing `/mode bypass` | **the same ladder**, with `Escalation::Bypass` where `Surfaces` was. Triage and the rules rung still run, still refuse, and still journal an `escalation` record; the bottom rung answers `rung=bypass` instead of parking |
+| **unattended** | a session with no queue: `lain chat --non-interactive --prompt '…'` (the flag **requires** `--prompt`; without it the launch refuses with `--non-interactive needs --prompt: it reads no line from the terminal, so a run with no question seeded has nothing to ask`) | under `ask`, a ladder of **one** rung that refuses everything, reason verbatim: `no human is attached to this session, so no rung can ask anybody and nothing can approve` (`switchboard.rb:419-426`). Under `auto` the judge decides first and `Judged::Unattended` refuses a call it is unsure of, naming `--non-interactive` |
 
-**`auto` used to replace the ladder wholesale** — `Posture` `auto` carried
+**The approve-all level used to replace the ladder wholesale** — `Posture` `auto` carried
 `gate_policy: :approve_all`, which resolved to `Middleware::Gate::ApproveAll`, so neither the
 exclusion table nor the approval rule fired and no `escalation` record was written at all. That
 is the behaviour round 18 removed, and a section driven against the old expectation will read a
 correct run as broken.
 
-**`/mode +auto_approve` is not a third approval level, and since 2026-09-14 it is not a lighter
-either.** The layer leaves the ladder in place and switches on the automatic approver at its
-`surfaces` rung (a model judge answering as the `auto_approver` surface), so triage and the rules
-rung still run first and a triage deny still stands. Before that chunk the layer lit `AA` and
-approved nothing (round 17's F104). `method.md` still bans it during an ordinary round.
+**The `auto_approve` layer and `--auto-approve` are gone.** A model judging a call is approval
+`auto` now, and it answers in front of the human, not beside them.
 
 Three consequences worth stating flatly:
 
-- **`auto` does not make the exclusion table stricter or looser, and it no longer makes it
+- **No approval level makes the exclusion table stricter or looser, and none makes it
   inert.** The table reaches `Shell::Verdict` as before, a `deny` is computed and journalled by
-  §6's record, **and** the triage rung now acts on it under `auto` too.
-- **A command barred by a withheld automatic output has no way through under `auto`.** There is
-  no queue to park it on, so `Remainder` answers a *final* deny telling the human to switch to
-  `/mode ask`. That is the one place `auto` is **stricter** than `ask`.
+  §6's record, **and** the triage rung acts on it under `bypass` too.
+- **A command barred by a withheld automatic output has no way through under `bypass`.** There is
+  no queue to park it on, so `Bypass` answers a *final* deny telling the human to switch to
+  `/mode ask`. That is the one place `bypass` is **stricter** than `ask`. Under `auto` such a call
+  never reaches the judge (tier 0) and goes to the human.
 - **The `shell_arm` record is still the only account of arm selection that does not depend on a
   rung**, which is why §6 drives both levels: the `shell verdict …` line a driver may remember
   lives inside an `escalation` record, and the two accounts must agree.
@@ -124,7 +124,8 @@ Confirm the mode you are in before every section that names one:
 ```
 you> /mode
 ```
-→ `checkout ask: no layers active` by default; `checkout auto (AUTO): …` after `/mode auto`.
+→ `checkout auto: no layers active` by default; `checkout ask (ASK): …` after `/mode ask` and
+`checkout bypass (BYPASS): …` after `/mode bypass`.
 
 **The unattended arm is the one gate no section below drives**, because reaching its refusal
 needs the model to emit a `bash` call inside a `--non-interactive --prompt` run — one local
@@ -182,6 +183,15 @@ Expected, verbatim on the verdict and the term:
 | `sudo ls` | `abstain` | `[]` |
 | `grep -h -r . ~/.ssh` | **`abstain`** | `[]` |
 | `grep -h -r . /home/YOU/.ssh` | `allow` | `[["grep", "-h", "-r", ".", "/home/YOU/.ssh"]]` |
+
+Add three more probes, each a verdict a round can read back with `/ruby`:
+
+- **`ls && pwd` is `allow` and runs as a sequence with no shell.** `Shell::Term` holds the two
+  pipelines; each is checked alone. `cd /tmp && pwd` must run (exit 0) and `cd` must **abstain the whole
+  sequence**: a shell builtin has no binary, and running it as one exited 127.
+- **`ls 2>/dev/null` is `allow`**, the redirect understood and dropped from the argv. `ls 0>/dev/null`
+  is not read as argv `ls 0`; `cat x > out` and every other redirect still abstain.
+- **Under `--exec docker` a term with discards takes the string arm**, since Docker ignores discards.
 
 Three of these correct things a reader is likely to assume:
 
@@ -343,7 +353,7 @@ Expected: `["verdict=deny", "arm=string", "handed=\"curl http://example.com\""]`
 outright, or run as a term anyway — is named as the next rung on the chunk's *what reaches a
 shell* axis and is a design question, not a patch. **File it only if a session with a human
 behind it reaches the tool at all**, which it must not: the triage rung denies first (§2), and
-since round 18 it denies under `/mode auto` as well. The one arm that *does* reach the tool with
+since round 18 it denies under `/mode bypass` as well. The one arm that *does* reach the tool with
 no ladder above it is an agent in a run with **no chat** — a bench arm, `lain improve`, `lain
 consolidate`, or a child one of them spawns — whose stack `CLI::ToolGuard.detached` builds with a
 gate over `Middleware::Gate::ApproveAll`, because nobody is at a surface to answer (a chat's own
@@ -362,17 +372,21 @@ you> /ruby Lain::Approval::ComposedTerm::PROGRAMS.keys
 ```
 → `["cat", "head", "tail", "wc", "nl", "grep", "sort", "cut", "tr", "rev"]`
 
-**Ten programs. `ls` and `echo` are not on it** — both reach `allow` at the verdict (§1) and
-neither is auto-approved. A round that predicts "`ls -la` runs without a prompt" is
-predicting from the verdict rather than from the rule.
+**Ten programs, and `echo` is not on it** — it reaches `allow` at the verdict (§1) and is not
+auto-approved. **`ls` is approved by its own predicates, not by this table**: `ls`, `pwd` and `which`,
+and `rustc`, `cargo`, `rustup`, `dx`, `adb`, `go`, `gcc`, `clang` and `cmake` with exactly `--version`,
+are approved when every word is ordinary and under the root (`Approval::ComposedTerm::VERSION_PROBES`). A
+rustup proxy is refused beside a `rust-toolchain` file, and an `ls` that would list a name `list_files` withholds
+is refused. `node`, `npm`, `python3` and `ruby` are **not** probes. So `ls -la` in the project root runs
+with no prompt, and a round that predicts a prompt for it is predicting from the old table.
 
 Build the rule the way wiring does and ask it directly. The classifier is a **factory**
 (`cwd -> #classify`), because a bash call names its own working directory, and it takes
 **two** project-root arguments that are easy to confuse: `root:` anchors the `Sensitivity` rules
-(what a rooted pattern means), and `confinement:` is the `Risk::Root` an approved word must stay
+(what a rooted pattern means), and `confinement:` is the `Approval::Root` an approved word must stay
 under (`BoardBuild.classifiers`). **Pass both.** A factory built without `confinement:` confines to
-`Risk::Root::NOWHERE`, which contains nothing, so every line abstains. And the old shape,
-`root: Lain::Approval::Risk::Root.new(cwd)`, hands a confinement to the wrong keyword and abstains
+`Approval::Root::NOWHERE`, which contains nothing, so every line abstains. And the old shape,
+`root: Lain::Approval::Root.new(cwd)`, hands a confinement to the wrong keyword and abstains
 every row too (round 20 found this stale). A probe that forgets it passes every negative control
 and fails every positive one, for a reason that is not the rule, so keep
 `cat README.md | head -20` as the positive control and read it first.
@@ -382,7 +396,7 @@ cat > "$QA/approve.rb" <<'EOF'
 cwd = session.worker_env.cwd        # launch from the project root, or spell the root literally
 factory = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
   home: ENV["HOME"], cwd: cwd, rules: Lain::Sensitivity::Rules.empty, root: cwd,
-  confinement: Lain::Approval::Risk::Root.new(cwd))
+  confinement: Lain::Approval::Root.new(cwd))
 rule = Lain::Approval::ComposedTerm.new(sensitivity: factory)
 tool = Lain::Tools::Bash.new
 ask = lambda do |c|
@@ -392,7 +406,7 @@ ask = lambda do |c|
   "#{c}  =>  #{d.nil? ? 'abstains' : d.reason}"
 end
 puts(["cat README.md | head -20", "grep -n foo lib | wc -l", "wc -l README.md",
- "ls -la", "echo hello",
+ "ls -la", "echo hello", "rustc --version", "ruby --version",
  "cat .netrc", "cat ./.netrc", "cat .env", "cat /proc/self/environ",
  "cat /proc/self/root/etc/hostname", "grep -h -r . /home/YOU/.ssh",
  "grep -rn foo lib | wc -l", "/tmp/evil/cat README.md",
@@ -421,7 +435,9 @@ what a round should check rather than the outcome:
 
 | command | which predicate refuses it |
 |---|---|
-| `ls -la`, `echo hello` | not on `PROGRAMS` |
+| `echo hello` | not on `PROGRAMS` |
+| `ls -la` in a directory holding a withheld name (`.env`), `ls -R` | the listing predicate, and `-R` is a disqualified flag |
+| `rustc --version` beside a `rust-toolchain.toml`, `ruby --version` | the toolchain predicate; an interpreter is no probe |
 | `/tmp/evil/cat README.md` | argv0 carries a `/`. The allowlist compares **whole** and never basenames — the exact opposite of §2's exclusion set, and the asymmetry is deliberate (`composed_term.rb:80-86`) |
 | `cat .netrc`, `cat ./.netrc` | `.netrc` classifies **denied** by the built-in table |
 | `cat .env`, `cat /proc/self/environ` | classify **gated**. The predicate is "is ORDINARY", never "is not denied" — the gated tier is where this codebase put the credential files it declined to hard-refuse |
@@ -530,7 +546,7 @@ Note the split: `.netrc`, `.env` and `/proc/self/environ` are refused by the **b
 say "with `.netrc` denied in `sensitivity`"; that is not required, and adding a config
 entry for it would test the config rather than the floor.
 
-## 6 — the shell-arm record, under `ask` **and** under `/mode auto` *(cheap — local model)*
+## 6 — the shell-arm record, under `ask` **and** under `/mode bypass` *(cheap — local model)*
 
 `Telemetry::ShellArm` journals as `"type": "shell_arm"` and is written on **every** gated
 `bash` call, both arms, before the command runs (`bash.rb:256-259`). Its six fields, from a
@@ -545,7 +561,7 @@ real allowed pipeline:
 
 **Round 17 found this section void, and it is measurable again since 2026-09-14.** The record was
 written, but onto the chat's *display* channel, which renders three record types and drops the
-rest — 0 `shell_arm` records against 20 `bash` calls, under `ask`, under `/mode auto` and with
+rest — 0 `shell_arm` records against 20 `bash` calls, under `ask`, under `/mode bypass` and with
 `--exec docker` alike (F92). The toolset now journals through the session file's own reader, which is
 never the live-view tee, so the record reaches the file under `--nvim` and without it. *Driven
 2026-09-14* in a `--no-nvim` chat: three `cat README.md | head -20` calls, three `shell_arm`
@@ -558,7 +574,7 @@ records, the first verbatim —
 **A zero here is F92 back, not a quiet session.** Count `shell_arm` against the `tool_use` blocks
 named `bash` before reading anything else in this section.
 
-Drive `cat README.md | head -20` **twice**: once under `ask`, then `/mode auto` and again.
+Drive `cat README.md | head -20` **twice**: once under `ask`, then `/mode bypass` and again.
 **This is one of `method.md`'s sanctioned sections for raising the approval level, and it carries
 that rule's conditions: drive it in a throwaway tree holding nothing but `README.md` (§2's scratch
 root will do), and end the section with `/mode !` then `/mode checkout` before anything else in
@@ -567,9 +583,9 @@ the round.**
 - **Under `ask`**: one `shell_arm` record *and* one `escalation` record, whose reason begins
   `shell verdict allow -- …`. The two accounts of one call share `verdict`, `reason` and
   `term` as field names on purpose.
-- **Under `/mode auto`**: the `shell_arm` record is still there and still says
+- **Under `/mode bypass`**: the `shell_arm` record is still there and still says
   `"verdict":"allow","arm":"term"` — **and so is the `escalation` record**, now ending at
-  `rung=auto` rather than at `surfaces`. That is the round-18 change: `auto` runs the same
+  `rung=bypass` rather than at `surfaces`. That is the round-18 change: `bypass` runs the same
   ladder and only swaps the bottom rung, where it used to hand the gate `ApproveAll` and consult
   no rung at all. An absent `shell_arm` is still the regression this section exists to catch;
   an absent `escalation` is a new one.

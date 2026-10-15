@@ -36,12 +36,13 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--secret-oracle` | off | A local model answers a parked read of a gated path, shown the path and region count, never the contents. The local qwen3:4b oracle was measured approving `.env` at 0.8 to 1.0 confidence (`planning/approval-layering-research-2026-10.md`), so an oracle approve is applied only when the path is gated for where it is (ordinary, exempt, `out_of_scope`, `outside_project`), checked when the surface claims the pending and again when it settles. A deny is always applied. `.env`, keys, named, configured, protected and malformed paths always wait for a human. Known gaps: a link repointed before the surface first claims the pending, and the oracle is never offered an `outside_project` park. |
 | `--context-pipeline` | unset | `default`, `reminder`, `cache-breakpoints`, `prune`, `dedupe-tool-calls`, `purge-failed-inputs`, or several joined by `+` and applied left to right. Which combinators render every request. A word **replaces** the default: `prune` alone sends no reminders and no cache breakpoints; `prune+default` keeps both. Unset renders the default and writes no `context_pipeline` key into the session header; a named pipeline, `default` included, is recorded. An unknown, empty or repeated part is refused at launch. |
 | `--temperature`, `--seed` | unset | Ride `Request#extra`. Ollama honors both; `--temperature 0` is the determinism recipe. |
-| `--auto-approve` | off | Wire an `auto_approver` role that judges pendings the human has not. Races the human's surfaces. |
+| `--approval` | `auto` | `ask`, `auto` or `bypass`: who decides a gated call the rules left open. `ask` parks it for you, `auto` asks a model judge first and parks only what it is unsure of, `bypass` approves it. See [/mode](#mode) for what each does and what none of them guarantee. |
 | `--journal` / `--no-journal` | on | The durable, fsync'd, replayable session record. `--no-journal` also disables `--windows`. |
 | `--resume [SESSION]` | off | Bare picks the newest; or give a filename or prefix under this project's session dir. |
 | `--fork SESSION@DIGEST` | off | Fork a recorded session at a digest prefix. The parent opens read-only. |
 | `--btw` | off | Ephemeral session (`<ts>-<pid>.btw.ndjson`), reaped on clean exit unless promoted with [`/keep`](#keep). |
 | `--prompt` | unset | Seed the first question, then read the terminal as usual. |
+| `--non-interactive` | off | Run `--prompt`'s question and stop, reading nothing from the terminal. A gated call has no human to park for: under the default `auto` the judge decides it and a call the judge is unsure of is **refused**; under `ask` every gated call is refused; under `bypass` it is approved. A run that named no approval used to get `ask`'s refusal and now gets `auto`, so a bench or compare arm that needs the old behaviour passes `--approval ask`. Needs `--prompt`. |
 | `--nvim SOCKET` | off | Attach a Neovim frontend to an `nvim --listen` socket. |
 | `--input socket:NAME` | off | Read the human from a [`lain input`](#lain-input) pane instead of from this terminal. `NAME` is a name, not a path — the socket is derived from it under this project. Bare `socket:` means `chat`; `lain up` passes the tmux session's name, so two cockpits on one project do not collide. |
 | `--windows` | off | Open a tmux window running [`lain watch`](#lain-watch) per subagent spawn. Needs `$TMUX` and a journal. |
@@ -630,33 +631,136 @@ Bare `/mode` reports and changes nothing.
 | Token | Axis | What it means |
 |---|---|---|
 | `checkout` | scope | Writes and commands land in the project's own checkout. |
-| `plan` | scope | Writes and commands are confined to a **spike** — a worktree cut on `lain/plan/<key>` from the checkout's tracked state, or a scratch directory outside a git repository. |
-| `ask` | approval | A gated call parks for a surface to answer. |
-| `auto` | approval | A gated call is approved at the ladder's last rung. |
-| `+layer` / `-layer` | layers | Enable or disable one of `auto_approve`, `goal`, `notify`, `vi`. |
-| `!` | — | Reset: `ask` approval, no layers, and then `plan` scope. |
+| `plan` | scope | Writes and commands are confined to a **spike**: a worktree cut on `lain/plan/<key>` from the checkout's tracked state, or a scratch directory outside a git repository. |
+| `ask` | approval | A gated call parks for you (or the secret oracle) to answer. |
+| `auto` | approval | A model judge decides first; only a call it is unsure of parks. **The default at launch.** |
+| `bypass` | approval | A gated call the rules left open is approved, with no judge and no prompt. |
+| `+layer` / `-layer` | layers | Enable or disable one of `goal`, `notify`, `vi`. |
+| `!` | none | Reset: `ask` approval, no layers, and then `plan` scope. |
 
-Tokens **fold over one mode and switch once**, so `/mode auto +notify -goal` journals a single
+Tokens **fold over one mode and switch once**, so `/mode bypass +notify -goal` journals a single
 flip naming where the session started and where it ended. An axis holds one value, so two tokens
-naming the same axis refuse whole and name both — taking the last would hand a typo the gate.
+naming the same axis refuse whole and name both: taking the last would hand a typo the gate.
 
-`auto` is not a different gate, only a different last rung: the triage and the rule denies run
-first either way, so a protected path still refuses under `auto`. The `auto_approve` **layer** is
-a separate thing entirely — it leaves the ladder in place and adds a model judge at its end.
+`--approval ask|auto|bypass` picks the level a chat starts in. A launched chat starts in `auto`,
+and the HUD shows no approval lighter for it; `ask` shows `ASK` and `bypass` shows `BYPASS`.
+`/mode !` lands on `ask`, not on the default, because a reset is the move you make to get a human
+back in the loop.
 
-`plan` scope is confinement, not a sandbox. It checks the location a tool **names** —
-`write_file`/`edit_file`'s path, `bash`'s `cwd` — and refuses anything outside the spike by name,
+#### What each approval level does
+
+All three run the same deterministic rungs first. A path the sensitivity rules deny, a call the
+`approval` rules deny and a command the shell rule bars are refused under every level, and a
+protected or credential path never goes to a model. The levels differ only in what stands below
+those rungs.
+
+* **`ask`** parks the call. You answer it, or the [secret oracle](#lain-chat) does for a read
+  it may.
+* **`auto`** asks a judge first: a fresh, tool-limited `auto_approver` child shown the one call,
+  bounded at 30 seconds. It answers approve, deny or unsure. Approve and deny settle the call.
+  **Unsure parks it for you**, and so does a judge that errors or runs out of time (a fault never
+  turns into an approve). Calls that touch a credential, a protected path, a named or configured
+  path, or a path the classifier could not read are never shown to the judge at all: they go
+  straight to you. A headless run (`--non-interactive`) has no one to park for, so there an unsure
+  call is **refused**, and so is a call that would have gone to a human.
+* **`bypass`** approves what the rules allow. It is the old approve-all, renamed. Nothing else
+  stands between the model and the command.
+
+**`bypass` is not a shell boundary.** Triage reads the words of a command it could parse. When the
+shell verdict cannot parse one, there are no words to check, so each of these was approved
+under approve-all and is approved under `bypass`: a quoted path (`cat '/etc/shadow'`), a
+redirect (`cat < /etc/shadow`), `sudo cat /etc/shadow`, a glob or brace, `cd /etc && cat shadow`,
+a relative name with the cwd set to `/etc`, a `$HOME/..` spelling and `head --file=/etc/shadow`.
+The same holds for `~/.ssh/id_rsa`. Only file modes stop them. The judge under `auto` does see
+these, but it is a model and can be wrong. If a session must not read a file, make its mode
+`ask` or take the file out of reach.
+
+**Account and sudo files are always refused**, under every level and for every agent:
+`/etc/shadow`, `/etc/gshadow`, `/etc/sudoers`, `/etc/sudoers.d/*` and their `-` backups, by absolute
+path, with `..` and links resolved. The refusal says no approval can lift it. A project's own
+`etc/shadow` is not that file. A chat's **child** (a researcher, say) also has its reads of
+`/etc/passwd` and `/etc/group` refused, not parked, and told its home directory is in its
+environment block; your own agent's read of those still asks.
+
+**A deny you give is remembered.** When you deny a call on a path, that requester (the main agent,
+or all researchers together) is refused the same path, and anything under it, for the rest of the
+session, with your reason, whatever the tool. A timeout or an automatic deny is not remembered,
+and another requester still asks.
+
+**What runs without anyone asking.** The shell rule approves a command with no human and no model
+only when every word of it is ordinary and under the project root. That now includes:
+
+* `ls`, `pwd` and `which`, and `NAME --version` for `rustc`, `cargo`, `rustup`, `dx`, `adb`, `go`,
+  `gcc`, `clang` and `cmake`. A rustup proxy (`rustc`, `cargo`) is refused beside a `rust-toolchain`
+  file, because that file can name a binary to run. `ls` is refused when it would list a name
+  `list_files` withholds.
+* `node`, `npm`, `python3` and `ruby` are **not** probes. An interpreter runs what its arguments
+  name, so `ruby --version` waits for a decision like any other command.
+* `a && b` runs as a sequence **without a shell**, each side checked on its own. A shell builtin
+  such as `cd` abstains, so a sequence holding one is left to the ladder whole.
+* A redirect to `/dev/null` (`2>/dev/null`, `>/dev/null`) is understood and does not make a
+  command unparseable. Any other redirect still does.
+
+#### Cycling approval from the keyboard
+
+**Shift+Tab** flips approval between `ask` and `auto`, and the flip is journaled as a `mode_switch`
+from surface `key`. From `bypass` it goes to `ask`. Scope and layers are kept.
+
+* In the `lain input` pane it flips at once, even with no prompt open.
+* In a chat running in your own terminal it flips only at its prompts. A Shift+Tab typed ahead
+  while a run is in flight is dropped, not replayed later. A flip redraws the open prompt's header.
+* Known gap: after a paste that contains Shift+Tab, the pane row shows `^[[Z`.
+
+In the editor, `:LainMode ask|auto|bypass` sets the level from any buffer and journals a
+`mode_switch` from surface `nvim`; any other word is refused in the editor. Known gap: it does not
+redraw an open terminal prompt's header, so the next prompt shows the new level.
+
+The key is a property of your terminal, so it is set only in the **user-level** config
+(`$XDG_CONFIG_HOME/lain/config.rb`, after `lain trust --user`), with a `keys` verb that takes
+`approval_cycle:`, as in `keys approval_cycle: "C-x"`. Its value is `"S-Tab"` (the default) or
+`"C-<letter>"`, and the configured key drives the prompt, the typeahead sweep and the pane. A project's
+`.lain/config.rb` that says `keys` is refused as a verb only the user's file may use, and an unknown name is
+refused at launch with the file and line. **Most control keys are not free.** The line editor
+(Reline) owns most of them already, so `C-t` is its transpose, `C-g` is the compose key, and
+neither can be bound. `C-x` is free. A key that is taken is not silently shared: the cycle is
+left off and the chat says so.
+
+#### `plan` scope
+
+`plan` scope is confinement, not a sandbox. It checks the location a tool **names**:
+`write_file`/`edit_file`'s path, `bash`'s `cwd`. It refuses anything outside the spike by name,
 pointing at `/mode checkout`. A human-approved shell command's own words can still write
 elsewhere. Leaving `plan` keeps the spike's branch if it carries commits and deletes it if it
 does not, saying which.
 
 A **scope** move is refused while a turn is in flight, since a running tool call may be writing
-where the session's writes would stop landing: wait, or `/stop`. `/mode !` is the exception — it
-lands everything but the scope immediately, because dropping `auto` is the part that cannot
+where the session's writes would stop landing: wait, or `/stop`. `/mode !` is the exception: it
+lands everything but the scope immediately, because dropping `bypass` is the part that cannot
 wait, and says the scope move waits for the turn to end.
 
-`manual` and `accept_edits` are retired, and are refused by name rather than as typos: approval
-is `ask` or `auto`, and `ask` gates everything `manual` gated.
+`manual` and `accept_edits` are retired and are refused as unknown tokens. The `auto_approve` layer is
+gone too, and `+auto_approve` is an unknown layer: asking a model first is what `auto` does, in
+front of you instead of beside you.
+
+#### Where a researcher works, and how to clean up
+
+A chat's researcher subagent gets its own directory, whatever `--isolation` says, and **keeps
+it**. It can run commands (`bash`, with its working directory in the lease) and write files there,
+and it cannot write outside it: a write aimed at the project is refused naming the lease.
+
+| What | Where |
+|---|---|
+| Scratch, the default | `$XDG_STATE_HOME/lain/research/<project_hash>/scratch/research-*` |
+| A spike, when the spawn names `extends` | `$XDG_STATE_HOME/lain/research/<project_hash>/worktrees/<hash>`, on branch `lain/plan/<key>` |
+
+`$XDG_STATE_HOME` is `~/.local/state` when unset. A spike is cut from the project or one of its
+related directories, and commits there land on its branch. Under `plan` scope the researcher is
+lent the session's own spike instead, and nothing new is cut.
+
+**Nothing removes these.** `lain worktrees gc` leaves them alone on purpose. To clean up, delete
+the scratch directories, and for a spike run `git worktree remove <path>` from the project, then
+`git branch -D lain/plan/<key>` and `git update-ref -d refs/lain/owned/heads/lain/plan/<key>`.
+The branch pass of `gc` may delete a merged branch that no worktree has checked out.
 
 ### /stop
 
@@ -965,7 +1069,7 @@ tests preset: :rspec
   directory masks its flagged regions without asking and never releases them ; a file the path
   rules gate or deny is still gated or denied. The verb refuses `/`, your home directory and any
   ancestor of it, an entry that is not a directory, and a path that is not clean.
-  Round 23: a spawned child's read of a path outside the project root, outside every `related` directory and outside its own working root is gated as `outside_project` (the tools: `read_file`, `list_files`, `glob` (its walk root too), `grep`, `ast_search`, `file_symbols`). Under `ask` it parks for the human. With the `auto_approve` layer the model judge or the human answers, whichever comes first. Under `/mode auto` it is approved like any gated call. A child that can never park (an approval judge, the epic adjudicator) is refused. The main agent's reads are unchanged. A `related` directory is in a child's scope as a tree: the directory itself, which a `list_files`, `glob` or `grep` walk names as its root, is in scope as well as every file under it (masking still treats the directory itself as no file). Known gaps, by ruling: a `grep` over the project follows a file link that points outside without parking, and in a chat with no project marker the root is the cwd, so a chat started in $HOME confines its children to all of $HOME.
+  Round 23: a spawned child's read of a path outside the project root, outside every `related` directory and outside its own working root is gated as `outside_project` (the tools: `read_file`, `list_files`, `glob` (its walk root too), `grep`, `ast_search`, `file_symbols`). Under `ask` it parks for the human. Under `auto` the judge decides it first and a call it is unsure of parks. Under `bypass` it is approved like any gated call. A child that can never park (an approval judge, the epic adjudicator) is refused. The main agent's reads are unchanged. A `related` directory is in a child's scope as a tree: the directory itself, which a `list_files`, `glob` or `grep` walk names as its root, is in scope as well as every file under it (masking still treats the directory itself as no file). Known gaps, by ruling: a `grep` over the project follows a file link that points outside without parking, and in a chat with no project marker the root is the cwd, so a chat started in $HOME confines its children to all of $HOME.
   Detected secret regions are masked in what `read_file`, `grep` and `ast_search` return: a `grep` or `ast_search` row
   reads `<redacted:N>` in place with nothing parked, and a trailer says `read_file` on the file asks for their release.
   A secret path is withheld from those rows, not masked.
@@ -1064,14 +1168,11 @@ it to the chat and to every subagent it spawns. `lain bench`, `lain consolidate`
 and `lain epic submit` read none, so a bench arm does not change with the home directory.
 
 **The user-level file.** `$XDG_CONFIG_HOME/lain/config.rb` (by default `~/.config/lain/config.rb`)
-accepts only the `middleware` and `keys` verbs and applies to every project. It runs only after
+accepts only the `middleware` and `keys` verbs and applies to every project. `keys approval_cycle:` rebinds the
+[approval cycle key](#cycling-approval-from-the-keyboard) and is refused in a project's file. It runs only after
 `lain trust --user`, which shows the file and records its exact bytes. Trust is consent to bytes
 someone reviewed: it is not containment, and an agent that can write the file can also write the
 mark, as it can for a project today. Any changed byte asks again.
-
-`keys approval_cycle: "C-x"` rebinds the key that cycles approval (default `"S-Tab"`; `"C-<letter>"` or
-`"S-Tab"` are the accepted forms). A key Reline or lain already uses, such as `C-t` or `C-g`, cannot be
-bound: the key is left off and a warning says so.
 
 ### isolation
 

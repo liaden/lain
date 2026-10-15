@@ -41,7 +41,7 @@ provider or a forge:
 |---|---|---|
 | [`repl-commands.md`](scenarios/repl-commands.md) | Does the **command surface** do what `/help` says — `/help`, `/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/fork`, `/goal`, `/meta`, `/review-submit`, `/introspect` and the eleven others? Twelve of the twenty-three are driven by nothing else. Every refusal path is a **zero-model-turn** path. **RE-DERIVE the count from the registry** — the literal roster at `spec/lain/cli/command/surface_spec.rb` — never from this row: it read "twenty" from the day `/introspect` shipped (2026-08-26) until 2026-08-28, and "twenty-one" until round 17 counted 23 in `/help`. | cheap |
 | [`epic-tier.md`](scenarios/epic-tier.md) | Does a four-stage pipeline stay honest when only a journal remembers where it is — the stage-boundary ruling, all four gate policies, the drain-is-journaling fold, and the fail-**closed** abort on a damaged record? ~4,100 lines with no prior coverage at all. | cheap |
-| [`secret-boundary.md`](scenarios/secret-boundary.md) | Does the **three-place split** hold — gate on the effect, filter on the result, mask on the content — with a real model pulling on it, and is a denial actually unliftable (including under `/mode auto`, the approve-all posture)? `--secret-oracle` is a local model by construction. | cheap |
+| [`secret-boundary.md`](scenarios/secret-boundary.md) | Does the **three-place split** hold — gate on the effect, filter on the result, mask on the content — with a real model pulling on it, and is a denial actually unliftable (including under `/mode bypass`, the approve-all level)? `--secret-oracle` is a local model by construction. | cheap |
 | [`changeset-review.md`](scenarios/changeset-review.md) | Does a review of a **real diff** tell the truth? `cockpit-surfaces` drives the review rails over `/survey`, which has no old side, no base ref and no commits — everything that makes a changeset a changeset is untouched by it. Local branches only; no forge. | cheap |
 | [`subagents-and-backends.md`](scenarios/subagents-and-backends.md) | When the loop stops being one process, does anything still tell the truth — a one-shot's lease under `--isolation worktree`'s real-`git` seams, `--exec docker`, `lain watch`, `--windows`? `actor` mode has no chat path (round 17), so its checks are recorded as unreachable from chat rather than driven. | minutes |
 | [`memory-and-dogfood.md`](scenarios/memory-and-dogfood.md) | Does what a session learned **come back**? The memory ceiling and its chain, the `memory_root` pairing, `lain consolidate` / `improve` / `improvements`, and `bench sweep`'s offline five-arm recall@k. | cheap–minutes |
@@ -117,7 +117,7 @@ once, here, rather than twice in adjacent sections as it did until 2026-08-28.
 
 | Scenario | The question it answers | Cost |
 |---|---|---|
-| [`shell-terms.md`](scenarios/shell-terms.md) | Does the **deterministic half of the shell subsystem** decide the way it says it does — which commands earn the no-shell **term arm**, which a project's `[shell] exclude` table refuses **by name** (a deny path that had never been driven), which are approved by `Approval::ComposedTerm` with **nobody asked**, and — the half that matters more — which still reach a human? Plus the `web_fetch` egress floor, the `shell_arm` record in **both** attended and `/mode auto`, and the one instrument nothing else here has: a paid measurement of the arm *distribution* over a real session. | cheap (one step paid) |
+| [`shell-terms.md`](scenarios/shell-terms.md) | Does the **deterministic half of the shell subsystem** decide the way it says it does — which commands earn the no-shell **term arm**, which a project's `[shell] exclude` table refuses **by name** (a deny path that had never been driven), which are approved by `Approval::ComposedTerm` with **nobody asked**, and — the half that matters more — which still reach a human? Plus the `web_fetch` egress floor, the `shell_arm` record in **both** attended and `/mode bypass`, and the one instrument nothing else here has: a paid measurement of the arm *distribution* over a real session. | cheap (one step paid) |
 | [`shell-term-approval.md`](scenarios/shell-term-approval.md) | Does the **parse boundary** refuse what it claims to (the 4096-byte cap reporting *both* broken and not-covered, the newline that has no separator node and is caught by arithmetic instead), do the **verdict arms** land where they say — `git` abstaining deliberately, `deny` existing and being **unreachable in production** — and **can a driver tell from the outside which arm ran**? Plus the `Triage` rung's own reasoning over a resolved term, `STDIN_SAFE`, and the recursive-read hazard a term-shaped rule cannot see. Runs entirely on the **local** arm. | cheap |
 
 **They DIVIDE the subsystem; neither is retired.** Ruled 2026-08-28 under the standing rule that one
@@ -139,8 +139,8 @@ the cheap set even when the feature it guards is not. `shell-terms` §0–§4 an
 `/ruby` reads, §5–§7 spend local completions, and **§9 alone is metered** — cut §9 first, §7 second
 (it needs a docker daemon), and **do not cut §5**, which holds every negative control. In
 `shell-term-approval`, §1, §2, §4a, §6 and §10 are zero-model; the rest is under fifteen local
-completions. `shell-terms` §0 names the **three postures** (attended ladder, `/mode auto`'s
-`ApproveAll`, the one-rung unattended deny-all) because they decide differently and a driver who
+completions. `shell-terms` §0 names the **three gates** (`ask`, the judge-first `auto`, and
+`bypass`'s approve-all bottom rung, plus the unattended refusal) because they decide differently and a driver who
 conflates them files a false finding.
 
 **`shell-term-approval`'s `blocked on` markers are spent.**

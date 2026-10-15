@@ -200,7 +200,9 @@ Write `$QA/parent/frugirl/.lain/config.rb`, run `lain trust` from `frugirl`, res
 approval timeout: 25
 ```
 
-Ask the model to run `ls` with the `bash` tool. At `checkout ask` the call parks.
+Launch with `--approval ask`: a launched chat is `auto`, where the judge may answer the call before any
+surface sees it. Ask the model to run `echo hello` with the `bash` tool. At `checkout ask` the call parks.
+(`ls` no longer parks: it is on the shell rule's allowlist and runs in the project with no human.)
 
 Checks:
 
@@ -361,6 +363,15 @@ Checks:
    ask a researcher to `list_files` and then `glob` `**/*.rs` on `<$QA>/parent/sibling` itself. Neither parks as
    `outside_project`; the trial's researchers were parked on the related root and could read only single files.
    A path beside it, `<$QA>/parent/slow`, still parks.
+
+10. **Frugirl round 4 checks (default `auto`, relaunched without `--approval`).** Record the judge's latency
+    per call and any approve that was wrong, and count the human prompts for the whole journey against
+    round 3's 37. No researcher reads `/etc/passwd` or lists `/home`: each such call is refused or
+    parks once and is then refused for that requester for the session with your reason. Press Shift+Tab
+    in the `lain input` pane while a run is in flight: approval flips and the HUD shows it at once
+    (a plain chat flips only at its prompts). A researcher's `rustc
+    --version` runs with no prompt. Every researcher's first request carries the environment block
+    (`prompt-slots-and-roles.md` §5b), and its lease is under the state directory (`subagents-and-backends.md` §2c).
 
 ## 7. `/research-epic` to an approved research gate
 

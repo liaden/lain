@@ -22,12 +22,11 @@ all. That makes this the cheapest scenario in the set and the one with the highe
 **Needs:** `bench.md` up for §7–§8. tmux for `/btw` and `/fork` (both open panes). nvim not
 required.
 
-**Read `method.md`'s standing rule about `/mode auto` first.** It says never to raise the approval
-level to `auto` during a round — correctly, because a gate that asks nobody answers every question
-the rest of the method exists to ask. §6 is one of its sanctioned exceptions (derive the current
-list with the grep `method.md` gives), it is scoped to a throwaway tree, and it exists to check
-that `auto` does what it claims **and no more**. Do not carry the approval level into another
-section: §6 ends with `/mode !`.
+**Read `method.md`'s standing rule about the approval level first.** A launched chat starts in `auto`:
+a judge answers the gated calls it is sure of, and only an unsure one parks. State the level you run
+under at the top of the round. Never raise it to `bypass`, because that answers every question the
+method exists to ask. §6 is the one place that drives `bypass`, on a throwaway tree, and it ends with
+`/mode !`, which lands on `ask`. Do not carry a raised level into another section.
 
 ---
 
@@ -105,37 +104,22 @@ the failure this command exists to catch — read `cli/command/introspect.rb`'s 
 fabrication this was written against. The `scope` row is the same discipline applied to the token
 totals: this run only, every model it called.
 
-**A mode is scope × approval, since round 18.** `/mode` reports the scope, the approval level and
-the active layers. Scope is `checkout` or `plan`; approval is `ask` or `auto`; the layers are
-`auto_approve`, `goal`, `notify`, `vi`. The old posture ladder is gone, and `manual` and
-`accept_edits` are refused **by name** rather than as typos:
+**A mode is scope × approval.** `/mode` reports the scope, the approval level and the active layers.
+Scope is `checkout` or `plan`; approval is `ask`, `auto` or `bypass`; the layers are `goal`, `notify`
+and `vi`. A launched chat is `checkout auto`, and `--approval ask|auto|bypass` seeds another. The old
+posture ladder is gone, and `manual` and `accept_edits` are no longer words at all, so each is refused
+as an unknown token and the answer names the whole grammar:
 
 | typed | answered |
 |---|---|
-| `/mode manual` | `error: manual is retired: approval is ask or auto, and ask gates everything manual gated` |
-| `/mode accept_edits` | `error: accept_edits is retired: it is ask now` |
+| `/mode manual` | `error: unknown /mode token "manual" -- /mode takes ask, auto, bypass, checkout, plan, !, +layer and -layer (layers: goal, notify, vi)` |
+| `/mode accept_edits` | the same, naming `"accept_edits"` |
+| `/mode +auto_approve` | `error: unknown mode layer "auto_approve", expected one of [:goal, :notify, :vi]` |
 
-Anything below that quotes an `accept_edits: …` answer is a **record of a 2026-09-14 drive**, kept
-because the finding it discharges is worth reading; the same drive today answers
-`checkout ask: …`.
-
-**Round 17 found the layers were lighters and nothing else** (F104): `+auto_approve` lit `AA` and
-approved nothing, `/goal` never raised `goal`, `notify` named a deleted notifier, `vi` never reached
-the line editor. The discharging chunk wires all four. **`auto_approve` is wired as of 2026-09-14**:
-the layer switches the automatic approver (the `auto_approver` role at the ladder's surfaces rung)
-on and off, and `--auto-approve` seeds the layer so its lighter shows. Recorded from one drive on
-2026-09-14 in a `--no-nvim` chat with nothing parked — a record of what the grammar answers, **not an
-instruction to raise the layer in a round**:
-
-| typed | answered |
-|---|---|
-| `/mode` | `accept_edits: no layers active` |
-| the layer raised | `accept_edits: no layers active -> accept_edits: auto_approve (AA)` |
-| the layer lowered | `accept_edits: auto_approve (AA) -> accept_edits: no layers active` |
-| `lain chat --auto-approve --prompt /mode` | `accept_edits: auto_approve (AA)` |
-
-`method.md` bans raising the layer during a round; `/mode +notify` below exercises the same grammar
-with no approver behind it.
+The `auto_approve` layer and the `--auto-approve` flag are **gone**: asking a model first is approval
+`auto` now, in front of the human rather than racing them. `lain chat --auto-approve` must be refused
+by Thor as an unknown switch. Any older drive that quotes an `accept_edits: ...` answer or an `AA`
+lighter is history; the same drive today answers `checkout auto: ...` or `checkout ask: ...`.
 
 **`goal`, `vi` and `notify` are wired too, since the same chunk's last two cards (`4c8089ab`).**
 
@@ -167,25 +151,28 @@ Drive the full grammar:
 ```
 you> /mode +notify         enable one layer, both axes unchanged
 you> /mode -notify         disable it
-you> /mode +nosuchlayer    must name the four valid layers
+you> /mode +nosuchlayer    must name the three valid layers
 you> /mode plan            move the scope
 you> /mode checkout        move it back
 you> /mode plan ask        both axes in one command, one record
+you> /mode ask auto        refuses whole, naming the approval axis twice
 you> /mode plan checkout   refuses whole, naming the scope axis twice
 you> /mode nosuchmode      must name the values of one axis
-you> /mode manual          refuses by name, saying where manual went
+you> /mode manual          refuses as an unknown token, naming the grammar
 you> /mode !               reset -- ask approval, NO layers, then plan scope
 ```
 
 **Two tokens naming the same axis refuse whole and name both.** This is the fix for round 18's
 P46, where `/mode` took the last of contradictory tokens and `/mode accept_edits auto` landed
-silently on the approve-all rung. `method.md` still bans `auto` in a grammar probe; drive the
-contradiction with `/mode plan checkout` instead, which is safe in every direction.
+silently on the approve-all rung. `/mode plan checkout` is the contradiction to drive, safe in every
+direction. `/mode ask auto` is safe too, since it refuses before anything lands, but never type
+`bypass` in a grammar probe.
 
 **`/mode !` is a reset, not a step**, and the design note says why it leads: like `<Esc><Esc>` in
 vim, its promise is that afterwards you know where you are and that nothing is being decided
-behind you. It lands **`ask` approval and no layers first**, because dropping `auto` or a
-surviving `+auto_approve` is the part that cannot wait, and then enters `plan`, the most confined
+behind you. It lands **`ask` approval and no layers first**, because dropping `bypass` or a
+surviving layer is the part that cannot wait, and a reset is the move that puts a human back in the
+loop, so it lands on `ask` and not on the launch default `auto`, and then enters `plan`, the most confined
 scope there is. Raise two layers, then `!`, then `/mode`: the report must show `plan` scope, `ask`
 approval and **no** layers. A reset that keeps a layer is the finding.
 
@@ -208,9 +195,10 @@ for. Drive `/mode plan`, then look at the prompt *before* typing anything else, 
 look again. In a cockpit that prompt is in the **input pane**. The wiring hands the prompt composer
 the **live** mode switch rather than a snapshot precisely so this works.
 
-**`checkout` and `ask` both carry an empty lighter**, so the default mode's prompt is
-byte-identical to one with no mode support at all. Only `plan` (`PLAN`), `auto` (`AUTO`) and the
-layers show. That is deliberate, not a missing segment.
+**`checkout` and `auto` both carry an empty lighter**, so the launch default's prompt is
+byte-identical to one with no mode support at all. `plan` (`PLAN`), `ask` (`ASK`), `bypass`
+(`BYPASS`) and the layers show. That is deliberate, not a missing segment, and a chat that shows
+`ASK` with no one having asked for it is the finding.
 
 **The record's shape.** A `mode_switch` names both axes on both sides plus both layer sets:
 
@@ -246,11 +234,10 @@ you> /unpin <never pinned> should refuse, not silently succeed
 ```
 
 *Driven 2026-09-14:* `/mode +nosuchlayer` → `error: unknown mode layer "nosuchlayer", expected one
-of [:auto_approve, :goal, :notify, :vi]`. The bare-token refusal was rewritten in round 18 and now
-names the whole grammar rather than one roster: `/mode nosuchmode` → `error: unknown /mode token
-"nosuchmode" -- /mode takes ask, auto, checkout, plan, !, +layer and -layer (layers: auto_approve,
-goal, notify, vi)`. The two retired words get their own sentence and that same grammar line after
-it. **A typo in the third token abandons the first two**: the fold is guarded whole, nothing is
+of [:goal, :notify, :vi]`. The bare-token refusal names the whole grammar rather than one roster:
+`/mode nosuchmode` → `error: unknown /mode token "nosuchmode" -- /mode takes ask, auto, bypass,
+checkout, plan, !, +layer and -layer (layers: goal, notify, vi)`. The two retired words get that same
+answer. **A typo in the third token abandons the first two**: the fold is guarded whole, nothing is
 written, and the mode in force is still the one on the prompt — check that after
 `/mode plan +notify nosuchmode`.
 
@@ -502,56 +489,100 @@ Two distinct refusals; "nothing is open" and "there is nowhere to post" have not
 remedies and must not share a sentence. `changeset-review.md` §7 drives the third case (a local
 branch review) and the no-network check; do not repeat it here.
 
-## 6 — `/mode auto`: a gate that asks nobody, once, deliberately
+## 6 — `/mode bypass` and the `auto` judge: what each level does to the gate
 
-One of the sanctioned exceptions to `method.md`'s standing prohibition, in a throwaway tree with nothing
-sensitive in it beyond the fixture `secret-boundary.md` §0 builds. §1 drove the `/mode` *grammar*;
-this section drives what the bottom rung actually does to the gate, which nothing else here reaches.
+`bypass` is the sanctioned exception to `method.md`'s rule against raising the approval level: it
+names an approve-all gate in its heading, runs in a throwaway tree with nothing sensitive in it
+beyond the fixture `secret-boundary.md` §0 builds, and ends with `/mode !`. §1 drove the `/mode`
+*grammar*; this section drives what the bottom rung does to the gate, which nothing else here
+reaches. A launched chat is already in `auto`, so drive that part first and raise nothing.
+
+### 6a — `auto`, the launch default
 
 ```
-you> /mode auto
 you> /mode
 ```
 
-**`auto` is no longer approve-all, and that is the change this section now measures.** Since
-round 18 it is the **same ladder** `ask` runs — the triage rung, then the rule chain — with
-`Escalation::Remainder` where `ask` has `Surfaces`. `Mode::Resolution` *selects* a pre-built
-policy per approval level rather than building one, and it hands the gate no `ApproveAll`.
+Must read `checkout auto`, and the HUD must show no approval lighter. Then ask the model for one
+gated `bash` that no rung refuses (`wc -l README.md`, say), and check:
+
+1. **The judge answered, not a human.** Nothing parks (`/approve` answers `no pending approvals`) when
+   the judge approves. The journal carries an `escalation` record at rung `auto` whose reason is
+   *"the judge approved this call"*. A call with **no** escalation records at all means the ladder was
+   replaced rather than bottomed out, which is the finding.
+2. **An unsure judge parks.** Ask for a call the judge would defer on (an unusual `bash` with
+   several effects). It must park for you: the journal carries a rung `auto` record whose reason
+   is `deferred`, then the queue's own decision. A call that ran with no `deferred` or approve record
+   is the finding. The judge is bounded at 30 seconds, and a judge that errors or runs out of time
+   parks too, journaled `fault`: never read a fault as an approve.
+3. **Tier 0 never reaches the judge.** Read a credential path (the fixture key's absolute path) and
+   the journal's rung `auto` reason is `unjudgeable`, with the call parked or refused as `ask`
+   would, and no judge child in the journal for that `tool_use_id`.
+4. **Headless.** `lain chat --non-interactive --prompt '<a gated call>'` with no `--approval` decides
+   through the judge, and a call it is unsure of is refused, with the reason naming
+   `--non-interactive`. The same run with `--approval ask` refuses every gated call.
+
+### 6b — `bypass`
+
+```
+you> /mode bypass
+you> /mode
+```
+
+`bypass` is the **same ladder** `ask` runs, the triage rung, then the rule chain, with
+`Escalation::Bypass` at the bottom. `Mode::Resolution` selects a pre-built policy per approval
+level rather than building one, and it hands the gate no `ApproveAll`.
 
 Check five things and then stop:
 
-1. `/mode` reflects it — an `auto` that does not show up in the mode report is a hidden state
-   change, and the HUD lighter must read `AUTO` too (`cockpit-surfaces.md` §7). `checkout` and
-   `ask` both carry an empty lighter, so `AUTO` appearing is the only visible difference and its
-   absence is the finding.
-2. A gated `bash` that no rung refuses now runs without a prompt. That is the claim.
+1. `/mode` reflects it, and the HUD lighter must read `BYPASS`. A `bypass` that does not show up in
+   the mode report is a hidden state change, and its absence is the finding.
+2. A gated `bash` that no rung refuses runs without a prompt and without the judge. That is the claim.
 3. **Nothing parks**, but the ladder still ran. Type `/approve` after the unprompted call: it must
-   answer `no pending approvals`. The journal, though, must carry the rungs — ending in
-   `rung=auto` with *"approval is auto, and no rung above refused this call"*. A call with **no**
-   escalation records at all means the ladder was replaced rather than bottomed out, which is the
-   old behaviour and now the finding.
-4. **A triage deny and a rule deny still refuse under `auto`.** This is the whole point of the
-   change: `cat` the fixture key's absolute path and watch it refuse at the triage rung, under
-   `auto`, with no human asked and no approval possible. Compare the same command under `ask`
-   (§5's tree): the rung and the reason must be identical, and only the bottom of the ladder
-   differs.
-5. **A `denied` path is still refused.** `read_file` on the fixture key must fail under `auto`
+   answer `no pending approvals`. The journal, though, must carry the rungs, ending in
+   `rung=bypass` with *"approval is bypass, and no rung above refused this call"*. A call with **no**
+   escalation records at all means the ladder was replaced rather than bottomed out.
+4. **A triage deny and a rule deny still refuse under `bypass`.** `cat` the fixture key's absolute
+   path and watch it refuse at the triage rung, with no human asked and no approval possible.
+   Compare the same command under `ask` (§5's tree): the rung and the reason must be identical, and
+   only the bottom of the ladder differs.
+5. **A `denied` path is still refused.** `read_file` on the fixture key must fail under `bypass`
    exactly as it does under `ask`: `Middleware::Sensitivity` runs *ahead of* the gate, so no
    policy can lift it. Type the path **resolved and absolute**, for the reason `secret-boundary.md`
-   §5 gives — a `~` or a `$HOME` is not expanded on the `read_file` arm. The `bash` spelling of the
-   same probe (`cat` on that path) is §5's and goes through a different rung; drive it there, and
-   read §5 before assuming the two answer alike. Running the `read_file` half in both places is
-   deliberate, because a regression could land in the command surface rather than in the boundary.
+   §5 gives. The `bash` spelling of the same probe goes through a different rung; drive it there,
+   and read §5 before assuming the two answer alike.
+
+**Do not read item 4 as a shell boundary.** Under `bypass` Triage checks only the words of a command
+the shell verdict parsed, so `cat '/etc/shadow'`, `sudo cat /etc/shadow` and `cd /etc && cat shadow`
+are approved when they are not parsed, and only file modes stop them. `shell-term-approval.md`
+records the list. `/etc/shadow` as a `read_file` path or a plain `cat /etc/shadow` is refused as an
+account file under every level.
 
 One more, if `shell-term-approval.md` has already run in this tree: a command **barred** from
-automatic approval by a withheld output gets a *final* deny under `auto`, telling the human to
+automatic approval by a withheld output gets a *final* deny under `bypass`, telling the human to
 switch to `/mode ask` to approve it. There is no queue to park it on, so the refusal has to carry
 the way out in words.
 
-Then `/mode !` and confirm the floor is back — `plan` scope, `ask` approval, no layers — before
+Then `/mode !` and confirm the floor is back: `plan` scope, `ask` approval, no layers, before
 anything else in the round. **`!` lands in `plan` scope, which confines writes to a spike**, so
 type `/mode checkout` to get the round's default back before §7, whose `/goal` drives edits into
 the real tree and would otherwise land in the spike rather than where the section is looking.
+Type `/mode auto` as well if the rest of the round should run under the launch default.
+
+### 6c — the cycle key
+
+In a cockpit, press **Shift+Tab** in the `lain input` pane. The approval flips `ask` and `auto` (from
+`bypass` it goes to `ask`), the HUD shows the change, and the journal carries one `mode_switch`
+with surface `key`. **In the pane it flips at once, even mid-run with no prompt open.** In a plain
+chat (own terminal) it flips only at a prompt: a Shift+Tab typed mid-run is dropped, not replayed at
+the next prompt (a replay is the finding), and a flip redraws the open prompt's header. Known gap, record
+it and do not fail it: after a paste containing Shift+Tab the pane row shows `^[[Z`.
+A user config `keys approval_cycle: "C-x"` moves the cycle to C-x (prompt, typeahead sweep and pane)
+and Shift+Tab then does nothing. `C-t` and `C-g` cannot be bound (Reline's transpose, and compose); a
+project `.lain/config.rb` naming `keys` is refused.
+In nvim, `:LainMode bypass` from any buffer journals a `mode_switch` from surface `nvim`, and
+`:LainMode nosuch` refuses in the editor. Known gap: it does not redraw an open terminal prompt
+header; the next prompt shows the new level.
 
 ## 7 — `/goal`: the only loop a command starts
 
@@ -593,7 +624,7 @@ finished`): `/mode` and `/goal off` typed during iteration 2 rendered
 
     held as your next prompt: /mode
     held as your next prompt: /goal off
-    accept_edits: goal (GOAL)
+    checkout auto: goal (GOAL)
     goal off -- the driver stopped before its next iteration; type your next line at you>
 
 when iteration 2 ended. **Count the iterations as `goal_iteration` records MINUS
@@ -641,7 +672,7 @@ expensive.
 
 Also confirm the `goal` **layer** appears in `/mode` while a goal is standing, and clears when it
 ends — the layer and the driver are two objects and this is the only place they are checked against
-each other. Round 17 read `/mode` as `accept_edits: no layers active` while a goal stood.
+each other. Round 17 read `/mode` as `accept_edits: no layers active` (the pre-round-18 form; today it reads `checkout auto: no layers active`) while a goal stood.
 Since the discharging chunk's last cards the driver owns the layer: *driven 2026-09-14*, the goal
 above journaled `mode_switch` raising `goal` (`to_layers: ["goal"]`, `surface: goal`) as it started,
 `/mode` mid-drive answered `accept_edits: goal (GOAL)`, and `/goal off` journaled the lowering

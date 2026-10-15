@@ -175,6 +175,28 @@ template) is **unreachable for a built-in** through this project-config surface 
 ships a default, so hitting it would mean the packaging itself is broken, not a project's `.lain/`
 tree. Spec-covered, not driven here.
 
+## 5b — every agent's system prompt carries a fixed environment block *(cheap, no completion)*
+
+The shipped `system` slot renders `Prompt::Environment`: the home directory, the user name, the OS name
+and version, the shell, the project root, the cwd, each `related` directory, whether the root is a git
+repository, and today's date. Launch a chat in a project with one `related` directory (`sensitivity
+related:` in `.lain/config.rb`) and read the first request's system text in the journal:
+
+1. **Every field is there and true.** Compare each against the shell (`echo $HOME $USER $SHELL`,
+   `pwd`, `git rev-parse --is-inside-work-tree`, `date +%F`). A field that is absent, or a home
+   directory that is not yours, is the finding.
+2. **A researcher child sees the same block.** Spawn one and read its first request: its system text
+   holds the same environment block after its role persona, and that persona is the `researcher` role
+   prompt (a researcher that opens with the generic prompt is the finding).
+3. **Byte-stable within a session.** Two requests in one session carry byte-identical system text, or
+   the prompt cache breaks. The date is read once at launch, so a session that crosses midnight keeps
+   its launch date.
+4. **A project override still lands.** A `.lain/slots/system.md` replaces the shipped slot whole,
+   environment block included, and is journaled once (§1).
+
+`auto_approver` is the role the approval judge runs as, and it has a slot file like any other
+built-in; §3 and §4 drive an override of it like any role.
+
 ## 6 — the 4096-token cache floor *(the one paid step — 2 completions, real Anthropic quota)*
 
 The free two-thirds of this section first:

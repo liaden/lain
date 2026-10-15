@@ -87,7 +87,7 @@ Typed at `you>`. Each dispatches lib-side, ahead of the skill middleware, with z
 * [/status](docs/commands.md#status): cache warmth, fleet size, inbox count.
 * [/sessions](docs/commands.md#sessions): recorded sessions, newest first.
 * [/model](docs/commands.md#model): show the model in force, or switch the next turn's model.
-* [/mode](docs/commands.md#mode): show or move the mode — scope (`checkout`/`plan`) × approval (`ask`/`auto`), plus layers.
+* [/mode](docs/commands.md#mode): show or move the mode — scope (`checkout`/`plan`) × approval (`ask`/`auto`/`bypass`; `auto`, the default, has a model judge the call first), plus layers.
 * [/stop](docs/commands.md#stop): stop the ask in flight and keep the session.
 * [/rewind](docs/commands.md#rewind): move back N turns, or to a recorded digest.
 * [/undo](docs/commands.md#undo): put back the files the last file-changing turn wrote; `/undo skip` drops that turn instead.
@@ -145,7 +145,7 @@ flowchart TB
   SR -->|"end_turn · stop_sequence"| DONE([done])
   SR -->|"max_tokens · refusal · unknown · malformed"| FAIL([failed])
   SR -->|tool_use| GATE{"tier-3?"}
-  GATE -->|yes| APR["Approval::Queue<br/>you&gt; · nvim · auto_approver"] --> EXEC
+  GATE -->|yes| APR["Approval::Queue<br/>you&gt; · nvim"] --> EXEC
   GATE -->|no| EXEC["ToolRunner → tool middleware → Effect::Handler<br/>parallel_safe? tools gather, everything else is a barrier"]
   EXEC -->|"ONE user turn, all tool_results"| TL
   EXEC --> SUM["Oracle::Eager<br/>local summary on its own fiber, off the critical path"]

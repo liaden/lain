@@ -645,7 +645,7 @@ are the axes:
 | axis | values | what it decides |
 |---|---|---|
 | scope (`mode/scope.rb`) | `checkout`, `plan` | *where* a write or a command may land |
-| approval (`mode/approval.rb`) | `ask`, `auto` | *who* answers for a gated call |
+| approval (`mode/approval.rb`) | `ask`, `auto`, `bypass` | *who* answers for a gated call |
 
 `checkout` is the project's own working tree, unconfined. `plan` confines the paths a tool
 **names** — `write_file`/`edit_file`'s `path`, `bash`'s `cwd` — to a leased spike, refusing
@@ -656,21 +656,43 @@ reflog are untouched; outside a git repository `Isolation::Scratch` hands out an
 instead. **It is confinement, not a sandbox**: a human-approved shell command's own words can
 still write anywhere, because only the named location is checked.
 
-`ask` and `auto` are the same ladder — `Escalation::Triage`, then the rule chain — and differ
-only at the bottom rung: `ask` parks on `Approval::Surfaces`, `auto` takes `Remainder`. So a
-triage deny or a rule deny still refuses under `auto`. A scope never changes the toolset, so a
-flip cannot move the tool block a prompt cache keys on.
+All three approval levels run one ladder, and a rung above the bottom refuses under every one:
+`Escalation::Triage` (argv words that name a denied path), then the rule chain. They differ at the
+bottom. `ask` parks on `Approval::Surfaces`. `auto` puts `Approval::Judged` there: tier 0 first,
+which sends a call barred from automatic approval, or one whose path is a credential, named,
+configured, protected or malformed, to the asking rung without a model; then `Approval::Judge`,
+a fresh-root `auto_approver` child bounded at 30 seconds that answers approve, deny or defer. Defer,
+and a fault (an error or the bound running out), hand the call to the asking rung, which is
+`Surfaces` in a chat and `Judged::Unattended`, a refusal, under `--non-interactive`. A fault also
+suppresses an automatic allow below it. `bypass` takes `Escalation::Bypass` and approves what the
+rules left open. A launched chat starts in `auto`; `Mode.new` itself still defaults to `ask`, and
+`/mode !` resets to `ask`. A scope never changes the toolset, so a flip cannot move the tool block
+a prompt cache keys on.
 
-Layers (`mode/layer.rb`) are the orthogonal, non-exclusive third member: `auto_approve`, `goal`,
-`notify`, `vi`. Only `auto_approve` answers `alters_outcome?`, and it is the one that adds the
-`auto_approver` model judge at the ladder's last rung — a different thing from approval `auto`,
-which removes the rung instead.
+**Triage is not a shell boundary.** It reads the words of a term `Shell::Verdict` parsed, and a
+verdict that abstains leaves it nothing to read, so quoted paths, redirects, globs, `sudo`, `cd /etc
+&& cat shadow` and the like reach `bypass` unchecked. The parts of that gap the plan closed:
+`Shell::Term` is a value object, `a && b` runs as a sequence without a shell (a builtin
+abstains the whole sequence), and a redirect to `/dev/null` is understood. Account and sudo files
+are a `Sensitivity` rule anchored at the filesystem root (`Rule.absolute`), denied for every agent
+and level, and a child's reads of `/etc/passwd` and `/etc/group` are refused in
+`Sensitivity::Policy::Confined`. `Middleware::RememberedDenials` refuses a requester the paths a
+human denied it, for the session. `Approval::ComposedTerm` approves `ls`, `pwd`, `which` and a
+named program's `--version` with no human or model, and an interpreter is never one of those.
+
+Shift+Tab (`Switchboard#cycle_approval`) flips `ask` and `auto` through `mode_switch`, from the
+chat's own prompt (only at its prompts; a key typed ahead mid-run is dropped) or the `lain input`
+pane's socket (at once, with or without a prompt open), and `:LainMode` does the same from nvim. The key is
+set by the user-level config's `keys` verb (`Config::Keys`).
+
+Layers (`mode/layer.rb`) are the orthogonal, non-exclusive third member: `goal`, `notify` and `vi`.
+The `auto_approve` layer and the racing `AutoSurface` it added are gone; asking a model first is
+approval `auto`.
 
 `Mode::Switch` (`mode/switch.rb`) is the live slot, and it journals **only a move**: switching to
 the mode already in force writes nothing. The posture table, `Permits::All`/`Only`, `READ_ONLY`,
 `ToolsetBuild::PosturePermits`, `Subagent::Seam#permits`, the `deny_all` gate-policy entry and
-the `manual` and `accept_edits` tokens are all gone; `/mode` refuses the two retired words by
-name rather than as typos.
+the `manual` and `accept_edits` tokens are all gone; `/mode` refuses them, and `auto_approve`, as unknown.
 
 ## Tools, tiers, and the toolset
 
@@ -1319,6 +1341,17 @@ overrides because each owns a `release` that must compose with the inner backend
 - `Isolation::Compose` brings up a per-worker `docker compose` stack.
 - `Isolation::Journal` records lease acquisition and release as telemetry.
 
+A chat's research subagent leases outside this table. `Tools::Subagent::Kept` hands it a scratch
+directory (`Isolation::Scratch`, prefix `research-`), or with `extends` a spike on
+`lain/plan/<key>` (`Isolation::Spike#attached`), whatever `--isolation` says, and never releases
+either: `Isolation::Gc` exempts them and nothing else reclaims them. Both live under
+`$XDG_STATE_HOME/lain/research/<project_hash>/{scratch,worktrees}`, outside every fleet root, and an
+`IsolationLease` record (`acquired`, then `kept`) journals each. The child's stack carries a second
+`ConfineToScope` over its own checkout with the `LEASE` wording, and its toolset adds `bash` and
+`write_file` (`Role::Catalog`), so it runs commands and writes where it may and nowhere else. Under
+plan scope it is lent the board's spike instead. Cleanup is by hand and is in
+[`docs/commands.md`](docs/commands.md#where-a-researcher-works-and-how-to-clean-up).
+
 `Isolation::Services` (`lib/lain/isolation/services.rb`) is what they read: a `.lain/services.rb`
 Ruby DSL on the same `.lain/` convention as `Prompt::Slots` and `Skill::Catalog`, `instance_eval`'d
 with no sandbox once its bytes are trusted (below), whose surface is `postgres` and
@@ -1822,7 +1855,7 @@ Subsystems without a section above, each self-documented in its own index file:
 | Skills and roles | `lib/lain/skill/`, `lib/lain/role/` | config values, not behavior. A role is an attenuation plus a prompt slot; `Role::Catalog` is the one place its tool set can change |
 | Prompt slots | `lib/lain/prompt/` | the `.lain/slots/` fills and the shipped ERB templates `Slots.load` renders the system prompt from |
 | Plans and Gherkin | `lib/lain/plan/`, `lib/lain/gherkin/` | a content-addressed IR for acceptance criteria a grader can attest against |
-| Approval | `lib/lain/approval/` | the queue tier-3 calls park in, with racing surfaces (TTY, the editor's list, `auto_approver`) |
+| Approval | `lib/lain/approval/` | the queue tier-3 calls park in, with racing surfaces (TTY, the editor's list), and the judge-first rung `auto` approval uses |
 | Structural search | `lib/lain/structural/` | the Ruby side of `ext/lain`'s AST/tree-sitter search |
 | Friction and dogfood | `lib/lain/friction/`, `lib/lain/improvement.rb`, `lib/lain/consolidation.rb` | offline passes that read a finished journal back into knob guidance, harness-improvement notes, and memory |
 | Session and worker env | `lib/lain/session.rb`, `lib/lain/worker_env.rb` | the read-set/write-set a tool resolves against, and the per-tool cwd that is never `Dir.chdir`'d |

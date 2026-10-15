@@ -155,7 +155,9 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
 `web_fetch` and `web_search`, and a child stopped by its ceiling hands the parent a partial report.
 
 1. **The researcher's tools and ceiling.** Spawn a researcher (the `subagent` tool, announced as the researcher, from a chat) and read its
-   first request in the journal: the tool list holds `grep` and `glob`, and no write or shell tool. A role
+   first request in the journal: the tool list holds `grep` and `glob`, and, since the lease change below, `bash` and `write_file`. The
+   `subagent` tool's own description names each of the child's tools, and says a role with no `bash` cannot run commands, so
+   the parent should run them and pass the output in. A role
    with no `max_iterations` (any other built-in) stops at 25. The researcher stops at 60.
    **Round 23 j-10, fixed: the researcher's reads are confined.** A `glob`, `list_files`, `grep` or `ast_search` it aims
    above the project, outside every `related` directory and outside its own working root parks for a human as
@@ -209,6 +211,31 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
    with the child's role. A researcher that only reads prints nothing and journals nothing. Known gap: a child leased its own
    worktree (`--isolation worktree`) reports paths relative to that worktree without naming it, so the line reads as the
    parent's checkout; record what you see rather than failing it.
+
+### 2c: A researcher's kept lease, and what it may run
+
+A chat's researcher gets its own directory, whatever `--isolation` says, and keeps it. Drive it in a
+project that is a git repository, under `--approval ask`, with `$XDG_STATE_HOME` pointed at a scratch
+directory so the check is a `find`.
+
+1. **A scratch lease, by default.** Spawn a researcher and have it write `notes.txt`. The file lands in
+   `$XDG_STATE_HOME/lain/research/<project_hash>/scratch/research-*/`, not in the project. The journal
+   holds an `IsolationLease` record `acquired`, then `kept`, for the spawn.
+2. **A spike with `extends`.** Spawn one with `extends` naming the project (or a `related` directory),
+   have it write `spike/main.rs` after a `mkdir` (`write_file` does not create parent directories), and
+   commit. The worktree is under `.../research/<project_hash>/worktrees/<hash>` on branch
+   `lain/plan/<key>`, and the commit moves that branch. An `extends` outside the project and the related
+   directories is refused before any record is written.
+3. **It can run a version probe and nothing riskier without asking.** `rustc --version` in the lease
+   runs with no prompt. `curl -s http://127.0.0.1:11434/api/tags` parks with `researcher` as the
+   requester. `cat ../outside` parks or refuses. `ruby --version` is not a probe and does not run unasked.
+4. **A write aimed at the project is refused** with a message naming the lease, and not mentioning plan
+   scope or `/mode`. Its read of `/etc/passwd` is refused (not parked), saying the home directory is in its environment block.
+5. **Under `plan` scope the researcher is lent the session's spike** and nothing new is cut.
+6. **Nothing removes the lease.** After the chat exits, and after `lain worktrees gc`, the scratch
+   directory, the worktree and its branch are still there. Cleanup is by hand (`docs/commands.md`, "Where
+   a researcher works, and how to clean up"): `git worktree remove <path>`, then delete the branch and
+   `refs/lain/owned/heads/lain/plan/<key>`. A lease that `gc` reaped is the finding.
 
 A write that cannot land is itself journaled, as `ending_not_recorded` naming the spawn and which
 record was lost, rather than dropped silently.

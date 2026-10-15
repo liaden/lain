@@ -69,27 +69,38 @@ file a false finding, and the shapes are close enough that it is easy.
 
 | gate | what adjudicates | what this scenario's subject does there |
 |---|---|---|
-| **`ask`** (the default) | the `[Triage, Rules, Surfaces]` ladder | everything here is live |
-| **`auto`** | the **same** `[Triage, Rules, …]` ladder with `Escalation::Remainder` at the bottom | every rung above still runs and is journalled; only the parking is gone — see §11 |
-| **unattended** (no queue) | a one-rung `Unattended` deny-all ladder (`switchboard.rb:387,419-426`) | every gated call is denied before any of this is consulted |
+| **`ask`** | the `[Triage, Rules, Surfaces]` ladder | everything here is live |
+| **`auto`** (the launch default) | the same ladder with `Approval::Judged` above `Surfaces`: a model judge answers first, and an unsure or faulted answer parks for the human | every rung above still runs and is journalled; the judge's own record is `rung=auto` — see §11 |
+| **`bypass`** | the **same** `[Triage, Rules, …]` ladder with `Escalation::Bypass` at the bottom | every rung above still runs and is journalled; only the asking is gone — see §11 |
+| **unattended** (`--non-interactive`, no queue) | the level's own ladder with a refusing bottom rung: `Unattended` under `ask`, the judge then `Judged::Unattended` under `auto` | under `ask` every gated call is denied before any of this is consulted; under `auto` the judge decides and an unsure call is refused |
 
-**Approval is exactly `ask` or `auto`**, and `manual` and `accept_edits` are refused by name.
-Round 17's correction to this table ("there is no `accept_all` posture") is superseded rather than
-wrong: there is no posture at all. The `auto_approve` **layer** is still a third thing: it leaves
-the ladder in place and adds the `auto_approver` surface beside the human at the `Surfaces` rung,
-so it applies under `ask` and has nothing to add under `auto`.
+**Approval is exactly `ask`, `auto` or `bypass`**, and `manual` and `accept_edits` are refused as unknown
+tokens. The `auto_approve` layer is gone: a model judging beside the human is now approval `auto`,
+in front of the human.
 
-**`auto` no longer replaces the ladder**, and a round carrying the old expectation will read a
-correct run as broken. It used to hand the gate `Middleware::Gate::ApproveAll`, so nothing was
-journalled; now a triage deny or a rule deny refuses under `auto` exactly as under `ask`, and the
-bottom rung journals `rung=auto`. See §11.
+**State the level you run under, and know which rung answers.** A launched chat is `auto`, so a
+gated call here may be approved by the **judge** (journal rung `auto`, *"the judge approved this call"*)
+and not parked. A section that checks the arm, the `shell_arm` record or a refusal is unaffected, but one
+that expects a prompt (§7's parked retry, any `[y/N]`) must run under `/mode ask` or `--approval ask`,
+or the judge may answer it first. **`bypass` replaced what `auto` used to mean**: a round carrying the
+old words reads the old `rung=auto` / `Remainder` expectation as `rung=bypass`. See §11.
+
+**The shell gap, which `bypass` does not close.** Triage reads only the words of a command the shell
+verdict parsed. When the verdict abstains there are no words to check, so under `bypass` these were
+approved: `cat '/etc/shadow'`, `cat < /etc/shadow`, `sudo cat /etc/shadow`, a glob or brace, `cd /etc &&
+cat shadow`, `cat shadow` with cwd `/etc`, a `$HOME/..` spelling and `head --file=/etc/shadow`, and the
+same for `~/.ssh/id_rsa`. Only file modes stopped them. `/etc/shadow`, `/etc/gshadow`, `/etc/sudoers` and
+`/etc/sudoers.d/*` are now refused for every agent and level when named as a `read_file` path or a
+parsed argv word, and `cat /etc/shadow` must refuse as final under `bypass`. **A round that finds
+one of the spellings above approved under `bypass` has found the known gap, not a new defect**:
+record it against that note. Under `auto` the same spelling reaches the judge, which can be wrong.
 
 **Scope is the other axis, and `plan` is where it bites.** It does not remove `bash` from the
 toolset — no scope ever changes the toolset — it **confines** the `cwd` a call names to the
 leased spike, refusing anything outside it by name and pointing at `/mode checkout`. Recording
 that as "the rung refused" voids the section: it is refused before the ladder, by
 `Middleware::ConfineToScope`. **The round's default for everything below is `checkout ask`**,
-which is also the session's default, so nothing has to be typed to reach it.
+which is no longer the session's default: start the chat with `--approval ask`, or type `/mode ask`.
 
 ---
 
@@ -143,8 +154,8 @@ from the outside which arm ran?" — with YES, for an attended session, from the
 — this escalation-based method is inferable wherever a ladder runs — and §11 is where the
 approval level's effect on it actually gets driven. **The hole that used to be here is closed
 twice over.** `auto` once handed the gate `ApproveAll` and consulted no rung, so no `escalation`
-record was written at all and this oracle went dark; since round 18 `auto` runs the same ladder
-with a different bottom rung, so the record is there under both levels. And separately, T5 and
+record was written at all and this oracle went dark; since round 18 that level (now `bypass`) runs the same
+ladder with a different bottom rung, so the record is there under every level. And separately, T5 and
 T7's dedicated `Telemetry::ShellArm` record (§8, driven in full at `shell-terms.md` §6) names the
 arm *directly* on every gated call, at every approval level. Two independent accounts of one
 call, which is what makes §11's cross-check worth doing.
@@ -416,7 +427,7 @@ tr.call(Lain::Effect::ToolCall.new(name: "bash", input: { "command" => C, "cwd" 
 (The triage rung needs no `confinement:`; that keyword confines `ComposedTerm` at the rules rung, and
 `shell-terms.md` §4 is where omitting it silently abstains everything. Round 20 found that `root:` is not
 the confinement's keyword either: it anchors the `Sensitivity` rules, and `confinement:` takes the
-`Risk::Root`.) Measured 2026-08-27 with a
+`Approval::Root`.) Measured 2026-08-27 with a
 real `Sensitivity` anchored on a scratch `HOME` holding `.ssh/id_qa` and `.netrc`:
 
 | command | rung verdict | the note in the reason |
@@ -667,9 +678,9 @@ refusal and not the bytes. The **retry** must reach a human: the same command ty
 abstains at the rules rung and parks, where before it would have been
 auto-approved a second time. **Which reason the rules rung gives depends on the level** (round 22): under
 `ask`, when the content predicate already refuses the file (an `API_KEY=` line it can read), the retry's rules
-reason is `no rule had an opinion`, because nothing needed to bar it; `barred` appears under `auto`, where the
+reason is `no rule had an opinion`, because nothing needed to bar it; `barred` appears under `bypass`, where the
 bar is what keeps the command off the queue. Do not file `no rule had an opinion` under `ask` as a missing bar. And the pending it parks on carries `"humans_only": true`, under
-`/mode auto` there is no queue, so the same command gets a *final* deny naming `/mode ask` as the
+`/mode bypass` there is no queue, so the same command gets a *final* deny naming `/mode ask` as the
 way out (§11).
 
 **What wrong looks like:** the bytes reaching the model; a masked result instead of a withheld one
@@ -690,16 +701,16 @@ command grep -n 'journal' lib/lain/tools/bash.rb                  # journal_arm 
 ```
 
 **This is `shell-terms.md` §6's ground in full** — the record's six fields, driving it twice
-(once under `ask`, once under `/mode auto`) and confirming it is present in **both**, is driven
+(once under `ask`, once under `/mode bypass`) and confirming it is present in **both**, is driven
 there; do not redrive it here. What is worth keeping in this section is the boundary between the
 dedicated record and the older, indirect method the rest of this document (§0) still leans on:
 `Escalation` separately writes one record per rung consulted, `"type" => "escalation"`, and the
 Triage rung's reason begins `shell verdict allow` / `shell verdict abstain`
 (`escalation.rb:540`) — so **the arm is *also* inferable from the gate's record**, which is what
-§0 uses as its corroborating oracle. That method used to have a hole: `auto` replaced the ladder,
+§0 uses as its corroborating oracle. That method used to have a hole: the approve-all level replaced the ladder,
 so no `escalation` record was written and only the `shell_arm` record remained. Round 18 closed
-it — `auto` is the same ladder with `Escalation::Remainder` at the bottom — so both records are
-present at both approval levels, and §11 checks that they agree.
+it — `bypass` is the same ladder with `Escalation::Bypass` at the bottom — so both records are
+present at every approval level, and §11 checks that they agree.
 
 ## 9 — A pipeline under `--exec docker`
 
@@ -778,34 +789,41 @@ the half that is easy to ship broken: stand up a local responder returning a `30
 names the *hop's* host. **The check is lexical on the host**, so a public name resolving into a
 blocked range is still reachable — record that as a stated limit of the rung, not as a defect.
 
-## 11 — `/mode auto`: the ladder still runs, and only the parking is gone
+## 11 — `/mode bypass` and `auto`: the ladder still runs, and only the asking differs
 
-**DRIVABLE NOW.** One of the named exceptions to `method.md`'s standing prohibition on raising the
-approval level, on the precedent of `repl-commands.md` §6 and `secret-boundary.md` §5. **Scope it
-to `$T`, the throwaway tree from §0, and end the section with `/mode !`.**
+**DRIVABLE NOW.** `bypass` is one of the named exceptions to `method.md`'s standing prohibition on
+raising the approval level, on the precedent of `repl-commands.md` §6 and `secret-boundary.md` §5.
+**Scope it to `$T`, the throwaway tree from §0, and end the section with `/mode !`.** The `auto`
+half below raises nothing: it is the launch default.
 
-**This section inverted in round 18.** It used to check that *nothing* was journalled, because
-`auto` replaced the ladder with `Middleware::Gate::ApproveAll`. Now `Mode::Resolution` selects a
-pre-built ladder per approval level, `auto`'s is the same one `ask` runs with
-`Escalation::Remainder` at the bottom, and the old expectation is the finding.
+**This section inverted in round 18.** It used to check that *nothing* was journalled, because the
+approve-all level replaced the ladder with `Middleware::Gate::ApproveAll`. Now `Mode::Resolution`
+selects a pre-built ladder per approval level, `bypass`'s is the same one `ask` runs with
+`Escalation::Bypass` at the bottom, and the old expectation is the finding.
+
+**First, `auto`, with nothing raised.** In a fresh chat, run `exit 3` as below. The judge answers,
+so the journal ends in a rung `auto` record, *"the judge approved this call"*, and then the same
+arm check in item 5 holds. A `deferred` or `fault` record at rung `auto` followed by a parked
+prompt is also correct: that is the judge being unsure, and it is the one case where a human is
+asked under `auto`.
 
 ```
-you> /mode auto
+you> /mode bypass
 you> run: exit 3
 you> /approve
 ```
 
 Five things, then stop:
 
-1. **No prompt.** That is `auto`'s claim and it is not what this section is about.
+1. **No prompt.** That is `bypass`'s claim and it is not what this section is about.
 2. **Nothing parked.** The queue is still built and `/approve` still drains it; it simply never
    receives anything, because the bottom rung answers instead of asking. `/approve` must answer
    `no pending approvals`.
-3. **The `escalation` records for that `tool_use_id` are there**, ending in `rung=auto` with
-   *"approval is auto, and no rung above refused this call"*. Grep the journal by the id. **No
+3. **The `escalation` records for that `tool_use_id` are there**, ending in `rung=bypass` with
+   *"approval is bypass, and no rung above refused this call"*. Grep the journal by the id. **No
    records at all is the regression** — it means the ladder was replaced rather than bottomed out.
-4. **A rung above still refuses.** Drive the triage rung under `auto`: `cat` an absolute path
-   inside the fixture's protected set (§4's probe) and read the deny. Under `auto` there is no
+4. **A rung above still refuses.** Drive the triage rung under `bypass`: `cat` an absolute path
+   inside the fixture's protected set (§4's probe) and read the deny. Under `bypass` there is no
    queue to fall back to, so this is a refusal with no way to approve it, and the message says so.
    A call that runs here is the serious finding in this section.
 5. **The arm was still chosen.** `Tools::Bash` picks its arm from the verdict regardless of the
@@ -817,7 +835,7 @@ Five things, then stop:
 *arm* executes, which nothing is supposed to do — the ladder decides whether a human is asked, and
 the verdict decides which arm runs, and they are meant to be independent axes.
 
-**What genuinely stays out of reach under `auto`** is narrower than it was: the `Surfaces` rung and
+**What genuinely stays out of reach under `bypass`** is narrower than it was: the `Surfaces` rung and
 everything that depends on a human answering — §7's "approved by a human once, remembered" path,
 and any check whose evidence is a prompt. §6's exclusion table and §4's triage are **live** here
 and should be driven rather than skipped.
@@ -832,7 +850,8 @@ you> /mode checkout
 `!` lands in `plan` scope, which confines a `bash` call's `cwd` to the spike — so a command typed
 there against `$T` is refused *before* the ladder, by `Middleware::ConfineToScope`, and a driver
 who leaves the session there will read the next section's confinement refusal as a rung refusal.
-Confirm the mode report reads `checkout ask` before continuing.
+Confirm the mode report reads `checkout ask` before continuing, and type `/mode auto` if the rest of
+the round should run under the launch default.
 
 ---
 

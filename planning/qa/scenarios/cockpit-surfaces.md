@@ -791,8 +791,12 @@ the live-looking stale `[y/N]` (F106) — are gone **in the cockpit** by constru
 reader they raced no longer exists there. The plain `--no-nvim` chat keeps its inline prompt, with
 guards; the last part of this section drives it.
 
-Force a gated call the approval rule does not approve — `ls -la` is enough, since `ls` is not on
-`ComposedTerm`'s allowlist (`shell-terms.md` §4) — and compare the surfaces:
+**Run this section under `--approval ask`.** A launched chat is `auto`, where the judge may answer
+the call before any surface sees it. Force a gated call that no rule approves — `echo hello` is
+enough, since `echo` is not on `ComposedTerm`'s allowlist (`shell-terms.md` §4). **`ls -la` no
+longer parks:** `ls` joined the shell rule's allowlist, so in the project root it runs with no
+surface asked, and every transcript below that parks `ls -la` is a record from before that change.
+Compare the surfaces:
 
 | surface | check |
 |---|---|
@@ -867,7 +871,7 @@ pass. With the layer down, an arrival must write no BEL and run no `tmux` comman
 `subagent` calls in one message, but **`bash` is an unsafe tool, and the runner treats each
 unsafe call as a barrier that runs alone** (`agent/tool_runner.rb`, `ToolRunner#run`). So three
 parallel `bash` calls park ONE AT A TIME, and three rows at once is unreachable with `bash`
-(round 22). Ask for `ls -la`, `ls -l` and `ls` as three calls in one message and check what is
+(round 22). Ask for `echo one`, `echo two` and `echo three` as three calls in one message and check what is
 reachable: one arrival line and one row in `lain://approval`, and answering it releases the next,
 in wire order. Three rows at once needs gated calls that are all parallel-safe, so name that
 vehicle before claiming the shape. **Queued approvals are announced**: each call parked behind
@@ -925,7 +929,7 @@ The trial's first `bash` call auto-denied after 300 seconds with no surface havi
 gave the model nothing to read. Make the wait short so each check is quick: write `approval timeout: 30` in
 `.lain/config.rb`, run `lain trust --yes`, relaunch. (`approval timeout:` takes a number of seconds above 0;
 `0`, a negative number and a non-number refuse at load. Without the line the window is 300 seconds, and
-the displayed figure is `5:00`.) Park `ls -la` and read each surface:
+the displayed figure is `5:00`.) Park `echo hello` and read each surface:
 
 | surface | what it says |
 |---|---|
@@ -1322,16 +1326,14 @@ What is worth checking:
   could not reproduce it. While a one-shot child runs, record what `fleet:` reads and the clock time, and
   again after it completes. A reading of 0 while a child is running is a new finding with a timestamp;
   a matching reading is recorded and closes nothing.
-- **The layer lighters, all four of which now mean something** (round 17's F104 found them lighters
+- **The layer lighters, all three of which now mean something** (round 17's F104 found them lighters
   and nothing else). Each is checked against the behaviour it names, not just its letters:
-  - `AA` means the automatic approver is really on. `method.md` bans raising that layer during a
-    round, so check it off a launch: `lain chat --auto-approve --prompt /mode` answered
-    `accept_edits: auto_approve (AA)` (driven 2026-09-14). **Since round 18 a mode reads as
-    scope then approval then layers**, so the same launch now answers `checkout ask:
-    auto_approve (AA)` — an answer still naming `accept_edits` is a stale binary, not a pass.
+  - `AA` is **gone** with the `auto_approve` layer. `lain chat --auto-approve` must be refused by Thor
+    as an unknown switch, and `+auto_approve` as an unknown layer. Approval has lighters of its own
+    (below).
   - `GOAL` stands exactly while a goal drives. *Driven 2026-09-14*: `/goal <objective>` journaled
     `mode_switch … to_layers: ["goal"] surface: goal`, `/mode` typed mid-drive answered
-    `accept_edits: goal (GOAL)` (now `checkout ask: goal (GOAL)`), and `/goal off` journaled the
+    `accept_edits: goal (GOAL)` (now `checkout auto: goal (GOAL)` in a launched chat), and `/goal off` journaled the
     matching `from_layers: ["goal"], to_layers: []`. `/mode +goal` with no goal refuses
     (`repl-commands.md` §1).
   - `VI` switches the line editor at the next read. *Driven 2026-09-14* in a tmux pane: the prompt
@@ -1339,9 +1341,15 @@ What is worth checking:
     `[cmd]you>`, and `/mode -vi` gave back a plain `you>`. In a cockpit this is the **input
     pane's** prompt, not the chat pane's (§0).
   - `BELL` rings on arrivals (§5).
-  - `PLAN` and `AUTO` are the two **axis** lighters, not layers, and they sit before the colon:
-    `plan (PLAN) ask: no layers active`. `checkout` and `ask` carry an empty lighter on purpose,
-    so the default mode's prompt shows neither — do not read their absence as missing support.
+  - `PLAN`, `ASK` and `BYPASS` are the **axis** lighters, not layers, and they sit before the colon:
+    `plan (PLAN) ask (ASK): no layers active`. `checkout` and `auto` carry an empty lighter on
+    purpose, so a launched chat's prompt shows neither: do not read their absence as missing support.
+    `--approval ask` must show `ASK` from the first prompt, and `--approval bypass` `BYPASS`.
+  - **The approval key and `:LainMode` move the lighter at once.** Press Shift+Tab: `ASK` appears (or
+    disappears) in the HUD within one refresh, in the input pane (even mid-run, with no prompt open) and, at a plain
+    chat's prompt, in its redrawn header, and the status feed's mode agrees. `:LainMode` does not
+    redraw an open terminal prompt header (known gap); the next prompt shows it. `:LainMode bypass` in nvim shows `BYPASS`; `:LainMode nosuch` refuses
+    in the editor and changes nothing.
 
 ## 8 — Fold state on the approval and inbox rows
 
