@@ -2005,7 +2005,7 @@ XDG path relative, which put machine state back inside the user's repository)
    folds into exactly 1 request. Follow-ups: a resumed chat's files-written paths (Replay builds its
    Session with no root), a leased child's paths named without its worktree, the Shift+Enter reset
    flake family (3 recorded), 2 sources for "an ask is running" in the note path, and the frugirl rerun.
-57. **Planned (2026-10-15)**: `planning/specs/research-agents-and-approval.md`, the third frugirl
+57. **Done (2026-10-15)**: `planning/specs/research-agents-and-approval.md`, the third frugirl
    trial's findings: an environment block in every system prompt, child role tools named to the
    parent, the account and sudo files always refused, approval values `ask`/`auto`/`bypass` with a
    judge-first `auto` on by default (tier 0 class check, 30s bound, unsure parks or refuses headless),
@@ -2014,6 +2014,14 @@ XDG path relative, which put machine state back inside the user's repository)
    researchers with gated `bash` and writes in a kept scratch directory or spike worktree. 21 cards.
    **Done (2026-10-15)**: all 21 cards landed; frugirl round 4 in the default `auto` is the user's
    manual check (`planning/specs/research-agents-and-approval.md`, Integration checks).
+58. **Planned (2026-10-15)**: `planning/specs/qa-round-24-fixes.md`, the QA round-24 discharge
+   (`planning/qa-findings-round24-2026-10-15.md`) over every finding rated MEDIUM or higher: a walk of `/`
+   that ends, one reader for the paths a `bash` command names (used by the judge, the deny memory, Triage and
+   lease confinement), each child told its own working directory and kept there on every route, approval roles
+   that a project cannot rewrite, an oracle that cannot release a named shape, password shapes, a pinned
+   exchange kept whole, short attestations, `shift: false` on ollama, the HUD's row-count redraw, a rebound
+   approval key, `lain land wait` that knows a drainer, and the judge's decisions shown. 24 cards,
+   panel-reviewed. The round's "not reached" sections stay round 25's coverage debts, by ruling.
 
 ## Map of the documents
 
