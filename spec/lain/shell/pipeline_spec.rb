@@ -406,6 +406,66 @@ RSpec.describe Lain::Shell::Pipeline do
     end
   end
 
+  describe "a sequence of pipelines, as && joins them" do
+    def run_sequence(*pipelines, timeout: 10)
+      term = Lain::Shell::Term.new(pipelines: pipelines.map do |argvs|
+        Lain::Shell::Term::Pipeline.new(stages: argvs.map { |argv| Lain::Shell::Term::Stage.new(argv:, discards: []) })
+      end)
+      pipeline.call(term, cwd: Dir.pwd, env: {}, timeout:,
+                          capture: Lain::Exec::Capture::Bounded.new(ceiling: 1_048_576))
+    end
+
+    it "runs each pipeline in order, reporting the last one's status" do
+      result = run_sequence([%w[echo one]], [%w[printf two], %w[wc -c]], [%w[false]])
+
+      expect(result).to have_attributes(stdout: "one\n3\n", exit_status: 1)
+    end
+
+    it "stops at the first pipeline that fails, so nothing after it starts" do
+      Dir.mktmpdir do |dir|
+        marker = File.join(dir, "ran")
+        result = run_sequence([%w[false]], [["touch", marker]])
+
+        expect(result).to have_attributes(stdout: "", exit_status: 1)
+        expect(File.exist?(marker)).to be(false)
+      end
+    end
+
+    it "judges only the stages after a pipe as downstream, so a pipeline's first stage may be any program" do
+      expect(run_sequence([%w[echo hi]], [%w[ls -d /]])).to have_attributes(stdout: "hi\n/\n", exit_status: 0)
+    end
+
+    it "still refuses a stage downstream of a pipe in a later pipeline" do
+      result = run_sequence([%w[true]], [%w[echo hi], ["sh"]])
+
+      expect(result.stderr).to eq("lain: sh: not permitted downstream of a pipe\n")
+    end
+
+    it "does not start a later pipeline once the deadline has passed" do
+      Dir.mktmpdir do |dir|
+        first = File.join(dir, "first")
+        second = File.join(dir, "second")
+        jumped = false
+        allow(Open3).to receive(:pipeline_r).and_wrap_original do |original, *args, &block|
+          original.call(*args, &block).tap { jumped = true }
+        end
+        late = described_class.new(grace: 0.2, clock: -> { monotonic + (jumped ? 100 : 0) })
+        term = Lain::Shell::Term.new(pipelines: [Lain::Shell::Term.of(["touch", first]),
+                                                 Lain::Shell::Term.of(["touch", second])].flat_map(&:pipelines))
+
+        expect { late.call(term, cwd: dir, env: {}, timeout: 10, capture: Lain::Exec::Capture::Bounded.new(ceiling: 64)) }
+          .to raise_error(described_class::Timeout)
+        expect([File.exist?(first), File.exist?(second)]).to eq([true, false])
+        expect(Open3).to have_received(:pipeline_r).once
+      end
+    end
+
+    it "spends 1 deadline across the whole sequence" do
+      expect { run_sequence([%w[sleep 0.4]], [%w[sleep 0.4]], timeout: 0.6) }
+        .to raise_error(described_class::Timeout)
+    end
+  end
+
   describe "timeout" do
     it "raises Timeout when the term outlives its deadline" do
       expect { run([%w[sleep 5]], timeout: 0.3) }.to raise_error(described_class::Timeout)

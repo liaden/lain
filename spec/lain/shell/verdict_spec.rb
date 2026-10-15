@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "open3"
 require "shellwords"
 
 RSpec.describe Lain::Shell::Verdict do
@@ -280,8 +281,8 @@ RSpec.describe Lain::Shell::Verdict do
     end
   end
 
-  describe "a combinator other than the pipe" do
-    ["a && b", "a || b", "echo hi; ls", "ls &", "ls;"].each do |command|
+  describe "a combinator other than the pipe and &&" do
+    ["a || b", "echo hi; ls", "ls &", "ls;"].each do |command|
       it "abstains on #{command.inspect}, because running it means interpreting control flow" do
         expect(decide(command)).to be_abstain
       end
@@ -295,9 +296,78 @@ RSpec.describe Lain::Shell::Verdict do
     # contributes is the REASON a human reads off the queue: which combinator,
     # not merely that the counts did not balance.
     it "names the combinator it found, rather than only the arithmetic" do
-      expect(reason_for("a && b")).to include("&&")
-      expect(reason_for("echo hi; ls")).to include(";")
-      expect(reason_for("ls &")).to include("&")
+      expect(reason_for("ls || pwd")).to include('"||"')
+      expect(reason_for("ls; pwd")).to include('";"')
+      expect(reason_for("ls & pwd")).to include('"&"')
+    end
+  end
+
+  describe "a sequence joined by &&" do
+    def term_of(*pipelines)
+      Lain::Shell::Term.new(pipelines: pipelines.map do |argvs|
+        Lain::Shell::Term::Pipeline.new(stages: argvs.map { |argv| Lain::Shell::Term::Stage.new(argv:, discards: []) })
+      end)
+    end
+
+    it "allows with one pipeline per side, each stage judged on its own" do
+      decision = decide("pwd && ls -la | wc -l")
+
+      expect(decision).to be_allow
+      expect(decision.term).to eq(term_of([%w[pwd]], [%w[ls -la], %w[wc -l]]))
+    end
+
+    it "binds looser than the pipe, so `a | b && c | d` is 2 pipelines of 2" do
+      expect(decide("cat a | wc -l && cat b | wc -c").term)
+        .to eq(term_of([%w[cat a], %w[wc -l]], [%w[cat b], %w[wc -c]]))
+    end
+
+    # A builtin has no program on disk, so the term arm could only fail it;
+    # abstaining keeps `cd dir && make` on the string arm, where it works.
+    ["cd /tmp && pwd", "pwd && cd /tmp", "umask 077 && ls", "ls | wc -l && exit"].each do |command|
+      it "abstains on #{command.inspect}, naming the builtin" do
+        expect(decide(command)).to be_abstain
+        expect(reason_for(command)).to include(command[/cd|umask|exit/].inspect)
+      end
+    end
+
+    [": && echo ok", "ls -d / && bind x", "ls && break", "ls && continue", "help && ls"].each do |command|
+      it "abstains on #{command.inspect}, a builtin with no program behind it" do
+        expect(decide(command)).to be_abstain
+      end
+    end
+
+    it "covers every bash builtin with no program on PATH, so none reaches the term arm" do
+      builtins, status = Open3.capture2("bash", "-c", "compgen -b")
+      skip("bash is not installed") unless status&.success?
+
+      on_path = ->(name) { ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, name)) } }
+      known = described_class::SHELL_BUILTINS + described_class::PROGRAM_RUNNERS + described_class::RESERVED_WORDS
+
+      expect(builtins.split.reject(&on_path) - known).to eq([])
+    rescue Errno::ENOENT
+      skip("bash is not installed")
+    end
+
+    it "abstains when any stage of any pipeline would on its own" do
+      expect(reason_for("ls && bash x")).to include('"bash"')
+      expect(reason_for("ls | wc -l && echo $HOME")).to include("simple_expansion")
+    end
+
+    ["echo hi &&", "&& echo hi"].each do |command|
+      it "abstains on the dangling or leading #{command.inspect}" do
+        expect(decide(command)).to be_abstain
+        expect(decide(command).term).to be_empty
+      end
+    end
+
+    it "abstains on 2 lines with no operator between them" do
+      expect(decide("ls\npwd")).to be_abstain
+    end
+
+    it "abstains when && sits beside another separator" do
+      ["ls && pwd; id", "ls && pwd || id", "ls && pwd &"].each do |command|
+        expect(decide(command)).to be_abstain, command
+      end
     end
   end
 
@@ -603,7 +673,7 @@ RSpec.describe Lain::Shell::Verdict do
         "printf hi" => :allow, "sort -u" => :allow, "find . -name '*.rb'" => :abstain,
         "ls *.rb" => :abstain, "cat ~/.gitconfig" => :abstain, "echo $(id)" => :abstain,
         "echo $HOME" => :abstain, "FOO=1 ls" => :abstain, "ls > out" => :abstain,
-        "make && make install" => :abstain, "cd /tmp; ls" => :abstain, "sleep 1 &" => :abstain,
+        "make && make install" => :allow, "cd /tmp; ls" => :abstain, "sleep 1 &" => :abstain,
         "time rm -rf /tmp/x" => :abstain, "time { echo PWNED; }" => :abstain
       }
     end
@@ -613,8 +683,8 @@ RSpec.describe Lain::Shell::Verdict do
       expect(corpus.keys.to_h { |command| [command, decide(command).name] }).to eq(corpus)
     end
 
-    it "splits 14 allow to 18 abstain" do
-      expect(corpus.values.tally).to eq({ allow: 14, abstain: 18 })
+    it "splits 15 allow to 17 abstain" do
+      expect(corpus.values.tally).to eq({ allow: 15, abstain: 17 })
     end
 
     it "denies nothing, because the default capability set excludes nothing" do
@@ -670,17 +740,19 @@ RSpec.describe Lain::Shell::Verdict do
     # Asked as arithmetic, not as separator text. A guard that reads the
     # separators passes the newline case, because there the separator list is
     # empty -- which is the whole reason the newline case existed.
-    it "never allows a term whose stages are joined by anything but N-1 pipes" do
+    it "never allows a term whose stages are joined by anything but N-1 pipes and &&" do
       corpus.select { |command| verdict.call(command).allow? }.each do |command|
         result = parse.call(command)
-        pipes = result.separators.count { |separator| separator.text == "|" }
-        expect(result.stages.size).to eq(pipes + 1), command.inspect
-        expect(result.separators.size).to eq(pipes), command.inspect
+        ands = result.separators.count { |separator| separator.text == "&&" }
+        joins = ands + result.separators.count { |separator| separator.text == "|" }
+        expect(result.stages.size).to eq(joins + 1), command.inspect
+        expect(result.separators.size).to eq(joins), command.inspect
+        expect(verdict.call(command).term.pipelines.size).to eq(ands + 1), command.inspect
       end
     end
 
-    it "abstains on every one of the sequencing forms in the corpus" do
-      ["echo hi\nrm -rf /tmp/x", "ls | wc\nrm -rf /tmp/x", "echo hi; ls", "a && b", "ls &"]
+    it "abstains on every sequencing form in the corpus but &&" do
+      ["echo hi\nrm -rf /tmp/x", "ls | wc\nrm -rf /tmp/x", "echo hi; ls", "ls &"]
         .each { |command| expect(verdict.call(command)).to be_abstain, command.inspect }
     end
   end

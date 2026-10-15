@@ -20,6 +20,12 @@ module Lain
     # rather than left to `docker run`'s habit of creating an absent `--workdir`
     # as an empty directory.
     #
+    # A term of more than one stage -- a pipe, or pipelines joined by `&&` --
+    # is not taken: {Tools::Bash} hands this backend the model's own string,
+    # which runs as `sh -c` inside the container. A shell reads the model's
+    # bytes there, the same exposure for a sequence as for a pipe, and what
+    # stands in for the term arm is the container plus the same gate.
+    #
     # ⚠️ Shares {Core}'s namespace hazard in reverse: a bare `Core` here is
     # {Exec::Core}, never {Lain::Core}.
     class Docker
@@ -203,8 +209,8 @@ module Lain
       def one_stage(term)
         return term.stages.first.argv if takes_term?(term)
 
-        raise Unsupported, "docker run takes one argv and a pipe needs a shell, so this backend has no " \
-                           "shape for a #{term.stages.size}-stage term: #{term.stages.map(&:argv).inspect}"
+        raise Unsupported, "docker run takes one argv and a pipe or a && sequence needs a shell, so this " \
+                           "backend has no shape for this term: #{term.to_journal.inspect}"
       end
 
       # HOW THE CALLING USER APPEARS INSIDE THE CONTAINER, which is not one

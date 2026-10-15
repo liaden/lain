@@ -634,6 +634,14 @@ RSpec.describe Lain::Exec::Docker do
       expect { run(command: decision.term) }.to raise_error(Lain::Exec::Unsupported)
     end
 
+    it "does not take a term the verdict allows for a && sequence, and refuses it by name" do
+      decision = Lain::Shell::Verdict.new.call("pwd && ls")
+
+      expect(decision.term.pipelines.size).to eq(2)
+      expect(backend.takes_term?(decision.term)).to be(false)
+      expect { run(command: decision.term) }.to raise_error(Lain::Exec::Unsupported, /&&/)
+    end
+
     # The only row of the seam's truth table with two different answers in it,
     # which is why the predicate is asked WITH a term: one stage runs, a pipe
     # cannot, and no argument-less question could say so.

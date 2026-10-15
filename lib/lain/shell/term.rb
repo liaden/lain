@@ -5,8 +5,8 @@ module Lain
     Term = Data.define(:pipelines)
 
     # What {Verdict} authorises and {Pipeline} runs: argv stages, never a
-    # string. {Verdict} builds one pipeline, and {Pipeline} joins every stage of
-    # a term into one pipe.
+    # string. Pipelines run in order, each only if the one before it succeeded,
+    # which is how {Verdict} hands over a sequence joined by `&&`.
     #
     # One shape every consumer reads, so the approval rules, the exec backends
     # and the Journal cannot each grow their own idea of what a nested Array

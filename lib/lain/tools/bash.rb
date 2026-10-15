@@ -33,10 +33,9 @@ module Lain
     # * *anything else* -- the string runs through `sh -c`, under the same gate.
     #
     # Both arms render through {.render_output}, so which one ran is not
-    # observable in the tool result. The one measured exception is a shell
-    # BUILTIN with no binary -- `exit 3` is `command not found` on the term arm
-    # -- and {Shell::Pipeline} documents why closing that gap honestly is not
-    # possible.
+    # observable in the tool result. A shell BUILTIN with no binary would be
+    # `command not found` on the term arm, which is why {Shell::Verdict}
+    # abstains on one and the string arm runs it.
     #
     # Neither arm is run here: both go to an injected {Lain::Exec} backend,
     # which decides the child's environment. This tool owns the CHOICE of arm
@@ -122,11 +121,11 @@ module Lain
       class Input < Tool::Input
         field :command, :string, required: true,
                                  description: "Shell command to run. A command whose every stage is a literal " \
-                                              "program with literal words, optionally joined by pipes -- " \
+                                              "program with literal words, optionally joined by pipes or `&&` -- " \
                                               "`cat README.md | head -20` -- can run as argv with no shell " \
                                               "process anywhere, and does wherever the backend running it takes " \
                                               "argv. Everything else goes through `sh -c`: more than one line, " \
-                                              "quoting or escaping of any kind, `;`, `&&`, `||`, `&`, " \
+                                              "quoting or escaping of any kind, `;`, `||`, `&`, " \
                                               "redirection, `$` expansion, globs or `~`, and any program that " \
                                               "can run a program named in its own arguments or that can drop " \
                                               "the user into a shell -- git, tar, rsync, sudo, less, vim, man, " \

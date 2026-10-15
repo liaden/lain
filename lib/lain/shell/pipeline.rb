@@ -71,7 +71,8 @@ module Lain
     # is `command not found` here, where `sh -c "exit 3"` exits 3. There is no
     # honest way to close that gap: implementing builtins would make this a shell,
     # and re-running the string would surrender the property the term path exists
-    # for. Everything else in the accepted subset renders byte-identically
+    # for. {Verdict} abstains on them instead, so a term an allow hands over
+    # never names one. Everything else in the accepted subset renders byte-identically
     # through {Tools::Bash.render_output}, and there is a spec.
     class Pipeline
       # The command outlived its deadline and its process groups were killed.
@@ -203,13 +204,15 @@ module Lain
         freeze
       end
 
-      # @param term [Term] what {Verdict::Decision#term} hands over, run as
-      #   one pipeline of its stages
+      # @param term [Term] what {Verdict::Decision#term} hands over: its
+      #   pipelines run in order, each only once the one before it exited 0,
+      #   and the status is the last one run's
       # @param cwd [String] already resolved by the caller ({WorkerEnv#resolve})
       # @param env [Hash] overrides applied ONTO the inherited environment, with
       #   a nil value scrubbing a key -- the {WorkerEnv} contract, which `spawn`
       #   implements natively.
-      # @param timeout [Numeric] seconds before the process groups are killed
+      # @param timeout [Numeric] seconds before the process groups are killed,
+      #   one deadline for the whole sequence
       # @param capture [Exec::Capture::Bounded] what each stage's bytes are
       #   taken into as they arrive, and where a refusal's own line is written
       #   when the term never runs at all. The caller's, so what a run holds is
@@ -333,9 +336,9 @@ module Lain
           raw.to_s.split(File::PATH_SEPARATOR).reject(&:empty?)
         end
 
-        # Every stage but the first, because {Run} joins every stage of the term
-        # into one pipe.
-        def downstream = @term.stages.drop(1)
+        # Every stage but the first of each pipeline: a pipeline after an `&&`
+        # starts on `/dev/null` like the first one does.
+        def downstream = @term.pipelines.flat_map { |pipeline| pipeline.stages.drop(1) }
 
         def not_found(message) = Refusal.new(status: NOT_FOUND, message:)
       end
@@ -355,30 +358,39 @@ module Lain
           @capture = capture
         end
 
+        def call
+          deadline = clock + @timeout
+          status = @term.pipelines.lazy.map { |pipeline| run(pipeline, deadline) }.find { |code| !code.zero? }
+          @capture.finish(status || 0)
+        end
+
+        private
+
         # Every stage's stderr shares ONE pipe, as `sh -c "a | b"` gives them one
         # terminal. Open3 applies a pipeline-level `:in` to the first command
         # only and everything else to all of them, which is exactly the split
-        # this needs.
-        def call
+        # this needs. A later pipeline is not started once the deadline has
+        # passed, because what it would do before the kill is a side effect.
+        def run(pipeline, deadline)
+          raise Timeout, @capture.report unless (deadline - clock).positive?
+
           err_read, err_write = IO.pipe
-          Open3.pipeline_r(*commands, options(err_write)) do |out, threads|
+          Open3.pipeline_r(*commands(pipeline), options(err_write)) do |out, threads|
             err_write.close
-            collect({ out => :stdout, err_read => :stderr }, threads)
-            @capture.finish(exit_status(threads))
+            collect({ out => :stdout, err_read => :stderr }, threads, deadline)
+            exit_status(threads)
           end
         ensure
           [err_read, err_write].each { |io| io.close unless io.nil? || io.closed? }
         end
-
-        private
 
         # `[program, argv0]` rather than a bare String: see the class comment on
         # why a one-word stage would otherwise be re-split. `setsid` hands the
         # program to `execvp` as its own argv, so the stage is still never
         # re-split, and `--` keeps a program named like an option from being read
         # as one.
-        def commands
-          @term.stages.map { |stage| [@env, [@setsid, "setsid"], "--", *stage.argv] }
+        def commands(pipeline)
+          pipeline.stages.map { |stage| [@env, [@setsid, "setsid"], "--", *stage.argv] }
         end
 
         # Each stage leads its own session, and so its own group ({SETSID}),
@@ -404,8 +416,8 @@ module Lain
         # The kill has to happen INSIDE the block for the same reason. Exception,
         # not StandardError, because a stop is `Async::Stop`: a command stopped
         # at the countdown otherwise ran on and had its side effects anyway.
-        def collect(streams, threads)
-          pump(streams, threads)
+        def collect(streams, threads, deadline)
+          pump(streams, threads, deadline)
         rescue Timeout
           terminate(threads)
           raise Timeout, @capture.report
@@ -418,8 +430,7 @@ module Lain
         # has closed: a child a stage put in the background can hold a pipe open
         # for as long as it likes. Pipes that closed first leave only the exits
         # to wait for, under the same deadline.
-        def pump(streams, threads)
-          deadline = clock + @timeout
+        def pump(streams, threads, deadline)
           open = streams.keys
           open = read_ready(open, streams, ready(open, deadline)) until open.empty? || threads.none?(&:alive?)
           open.empty? ? reap(threads, deadline) : drain(open, streams)

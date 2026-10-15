@@ -35,18 +35,20 @@ module Lain
     #   has no source, so its `uncovered` is `[]` while `covered?` is correctly
     #   false.
     # * An allow hands over a {Term} -- `grep -r foo .` piped to `wc -l` as two
-    #   argv stages -- and deliberately NOT the original string, because
+    #   argv stages, and `pwd && ls` as two pipelines run in order -- and
+    #   deliberately NOT the original string, because
     #   re-running an accepted string through `sh -c` turns every parser/shell
     #   disagreement into a live bypass, and the cheapest way to make that
     #   impossible is to not hand the string over.
-    # * A quoted or escaped argument ABSTAINS, and so do `;`, `&&`, `||` and `&`.
+    # * A quoted or escaped argument ABSTAINS, and so do `;`, `||` and `&`.
     #   {Parse} does not strip quotes -- `echo 'a b'` reconstructs as
     #   `["echo", "'a b'"]`, and `echo foo\ bar` as `["echo", "foo\\ bar"]`
     #   where bash gives `["echo", "foo bar"]` -- so allowing either would exec a
     #   term carrying literal quoting characters. Widening it needs dequoting
-    #   first, and dequoting is interpretation; running the combinators means
-    #   interpreting control flow, and this layer hands over a pipeline, not a
-    #   shell.
+    #   first, and dequoting is interpretation. `&&` is the one control flow a
+    #   term carries, because "run the next pipeline only if this one
+    #   succeeded" needs no shell to decide; the other three would make this
+    #   layer hand over a shell.
     class Verdict
       # What every record says this object was asked, so a reader of the Journal
       # cannot mistake an allow for a safety judgement.
@@ -141,6 +143,18 @@ module Lain
       # them.
       RESERVED_WORDS = %w[! [[ ]] { } case do done elif else esac fi for function if in select then until while].freeze
 
+      # Bash builtins that act on the shell itself, so no program on disk can
+      # stand in for them: `cd /tmp && pwd` as a term would fail, or change
+      # nothing, where the string arm runs it. Abstaining keeps them there. The
+      # ones that run a command are in {TAKES_A_COMMAND}; `echo`, `test`, `pwd`
+      # and `kill` have real binaries and are not here.
+      SHELL_BUILTINS = %w[
+        : cd pushd popd dirs export unset set shopt declare typeset local readonly let
+        exit logout return break continue shift trap umask ulimit read readarray mapfile getopts
+        wait jobs fg bg disown suspend hash type unalias history fc enable bind help
+        compgen complete compopt caller times
+      ].freeze
+
       # Glob, tilde and brace. No node kind exists for any of them, so the term's
       # text is the entire signal.
       EXPANDING = /[*?\[\]{}~]/
@@ -151,9 +165,11 @@ module Lain
       # interpretation, so the answer is to abstain rather than to guess.
       ESCAPING = /\\/
 
-      # The one combinator a term carries, because `Open3.pipeline` is a pipeline
-      # and nothing else.
+      # The combinators a term carries: a pipe joins stages, and `&&` binds
+      # looser, so it splits the stages into the pipelines a term runs in order.
       PIPE = "|"
+      AND = "&&"
+      JOINS = [PIPE, AND].freeze
 
       NO_TERM = Term::NONE
 
@@ -217,8 +233,20 @@ module Lain
       end
 
       def allow(result)
-        Decision.new(name: :allow, reason: ALLOWED, term: Term.of(*result.stages.map(&:argv)))
+        Decision.new(name: :allow, reason: ALLOWED, term: Term.new(pipelines: pipelines(result)))
       end
+
+      # By byte position, because the stage and separator lists are ordered
+      # only against the source.
+      def pipelines(result)
+        ands = result.separators.select { |separator| separator.text == AND }.map(&:byte_range)
+        result.stages.slice_when { |left, right| ands.any? { |range| joins?(range, left, right) } }
+              .map { |stages| Term::Pipeline.new(stages: stages.map { |stage| term_stage(stage) }) }
+      end
+
+      def joins?(range, left, right) = range.begin.between?(left.byte_range.end, right.byte_range.begin)
+
+      def term_stage(stage) = Term::Stage.new(argv: stage.argv, discards: [])
 
       def deny(excluded)
         Decision.new(name: :deny, reason: Doubts.sentence(EXCLUDED, excluded), term: NO_TERM)
@@ -312,7 +340,8 @@ module Lain
         def program_runners
           names = programs
           sentences("programs that run what their arguments name", names & PROGRAM_RUNNERS) +
-            sentences("bash reserved words, which are not programs at all", names & RESERVED_WORDS)
+            sentences("bash reserved words, which are not programs at all", names & RESERVED_WORDS) +
+            sentences("shell builtins, which only a shell can run", names & SHELL_BUILTINS)
         end
 
         def expanding_words
@@ -322,7 +351,7 @@ module Lain
 
         def control_flow
           sentences("combinators no argv can express",
-                    @result.separators.map(&:text).reject { |text| text == PIPE }) + malformed_pipeline
+                    @result.separators.map(&:text).reject { |text| JOINS.include?(text) }) + malformed_pipeline
         end
 
         # Counting, because the one separator {Parse} CANNOT report is a newline
@@ -330,15 +359,15 @@ module Lain
         # node to query (`parse.rb:248`). `echo hi\nrm -rf /tmp/x` therefore
         # arrives as TWO stages with an EMPTY separator list, and reading the
         # separator texts is blind to exactly the separator that is invisible.
-        # N stages are a pipeline only if N-1 pipes join them and nothing else
-        # does; the newline case fails that arithmetic, and without it
-        # `Open3.pipeline` would be handed a term that lies about its own
-        # structure and would run `echo hi | rm -rf /tmp/x`.
+        # N stages are a term only if N-1 pipes and `&&`s join them and
+        # nothing else does; the newline case fails that arithmetic, and
+        # without it `Open3.pipeline` would be handed a term that lies about its
+        # own structure and would run `echo hi | rm -rf /tmp/x`.
         def malformed_pipeline
-          pipes = @result.separators.count { |separator| separator.text == PIPE }
-          return [] if @result.stages.size == pipes + 1 && @result.separators.size == pipes
+          joins = @result.separators.count { |separator| JOINS.include?(separator.text) }
+          return [] if @result.stages.size == joins + 1 && @result.separators.size == joins
 
-          ["#{NOT_A_PIPELINE}: stages=#{@result.stages.size} pipes=#{pipes} " \
+          ["#{NOT_A_PIPELINE}: stages=#{@result.stages.size} joins=#{joins} " \
            "separators=#{@result.separators.size}".freeze]
         end
 
@@ -351,7 +380,7 @@ module Lain
 
       NOTHING_TO_RUN = "there is no command to run"
       NOT_UNDERSTOOD = "not fully understood -- "
-      NOT_A_PIPELINE = "the stages are joined by something other than pipes"
+      NOT_A_PIPELINE = "the stages are joined by something other than pipes and &&"
       EXCLUDED = "the session's capability set excludes"
       private_constant :NOTHING_TO_RUN, :NOT_UNDERSTOOD, :NOT_A_PIPELINE, :EXCLUDED, :Doubts
       private_constant :TAKES_A_COMMAND, :INTERPRETERS, :WRAPPERS, :PRIVILEGE, :SHELL_ESCAPES, :OPTION_DIRECTED

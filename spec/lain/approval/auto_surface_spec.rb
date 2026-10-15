@@ -354,7 +354,7 @@ RSpec.describe Lain::Approval::AutoSurface do
   # on {Shell::Verdict}'s ALLOW, because `term` is `NO_TERM` on a deny and on
   # every abstention. {Shell::Verdict} abstains on quotes and escapes
   # ({Verdict::ESCAPING}), on a tilde or a glob ({Verdict::EXPANDING}), on `$`
-  # expansion, and on `;`/`&&`/`||`/`&`. So the deny needs the WHOLE command to
+  # expansion, and on `;`/`||`/`&`. So the deny needs the WHOLE command to
   # be literal AND the path written with a separator, and everything else
   # abstains without ever looking at the path.
   #
@@ -367,11 +367,6 @@ RSpec.describe Lain::Approval::AutoSurface do
   # aspirational on this card's own rule -- record what the code does, do not
   # assert a hypothesis it refutes. Closing it belongs to a later card, beside
   # the `/mode auto` hole in the plan doc's Open decisions.
-  #
-  # The `&&` example is the sharpest of them: the path there is bare, unquoted
-  # and absolute -- the exact spelling the first example denies -- and it is
-  # approved anyway, because a SECOND command elsewhere in the string cost the
-  # rung its allow. The hole is not about how the path is spelled.
   describe "a bash argv naming a path no approval may lift" do
     let(:spawn) { AutoSurfaceSpecSupport::ScriptedRoleSpawn.new { Lain::Tool::Result.ok("APPROVE") } }
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
@@ -494,8 +489,7 @@ RSpec.describe Lain::Approval::AutoSurface do
       "a double-quoted path" => ->(key) { %(cat "#{key}") },
       "a single-quoted path" => ->(key) { "cat '#{key}'" },
       "a tilde" => ->(_key) { "cat ~/.ssh/id_rsa" },
-      "a $HOME expansion" => ->(_key) { "cat $HOME/.ssh/id_rsa" },
-      "a bare path beside a second command" => ->(key) { "cat #{key} && echo hi" }
+      "a $HOME expansion" => ->(_key) { "cat $HOME/.ssh/id_rsa" }
     }.each do |spelling, command|
       it "OPEN: #{spelling} abstains at triage, reaches this surface, and is approved with no human" do
         in_tree do |root, home|
@@ -507,6 +501,18 @@ RSpec.describe Lain::Approval::AutoSurface do
           expect(rungs).to eq([%w[triage abstain], %w[rules abstain], %w[surfaces allow]])
           expect(signatures).to eq([%w[auto_approver approve]])
         end
+      end
+    end
+
+    # Closed: a && sequence hands triage a term, so the path is read there.
+    it "denies a bare path beside a second command at triage, before this surface" do
+      in_tree do |root, home|
+        board = armed_board(root, home)
+        allowed = answered_for(board, "cat #{key_under(home)} && echo hi")
+
+        expect(allowed).to be(false)
+        expect(spawn.calls.size).to eq(0)
+        expect(rungs).to eq([%w[triage deny]])
       end
     end
   end

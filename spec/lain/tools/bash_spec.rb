@@ -329,15 +329,12 @@ RSpec.describe Lain::Tools::Bash do
       end
     end
 
-    # The one measured divergence, pinned rather than hidden: a shell BUILTIN
-    # has no binary to exec, so the term arm reports 127 where `sh -c` exits 3.
-    # Implementing builtins would make Shell::Pipeline a shell, and re-running
-    # the string after an allow would surrender the property the term arm exists
-    # for -- so this is the honest outcome, and a reader meets it here.
-    it "answers a shell builtin with command-not-found on the term arm" do
-      expect(tool.call({ command: "exit 3" }, invocation).content).to include("exit status: 127", "exit")
-      expect(described_class.new(verdict: abstaining).call({ command: "exit 3" }, invocation).content)
-        .to include("exit status: 3")
+    # A shell BUILTIN has no binary to exec, so the term arm could only answer
+    # 127. The verdict abstains on one instead, in any pipeline of a sequence,
+    # and the string arm runs it as a shell would.
+    it "runs a shell builtin on the string arm, alone or in a && sequence" do
+      expect(tool.call({ command: "exit 3" }, invocation).content).to include("exit status: 3")
+      expect(tool.call({ command: "cd /tmp && pwd" }, invocation).content).to include("exit status: 0", "/tmp")
     end
   end
 
@@ -402,11 +399,19 @@ RSpec.describe Lain::Tools::Bash do
       backend, seen = recording_local
       docker, inner = recording_docker
 
-      described_class.new(exec: backend).call({ command: "echo a && echo b" }, invocation)
-      described_class.new(exec: docker).call({ command: "echo a && echo b" }, invocation)
+      described_class.new(exec: backend).call({ command: "echo a || echo b" }, invocation)
+      described_class.new(exec: docker).call({ command: "echo a || echo b" }, invocation)
 
-      expect(seen).to eq([sh("echo a && echo b")])
-      expect(entrypoint(inner)).to eq(["sh", "-c", "echo a && echo b"])
+      expect(seen).to eq([sh("echo a || echo b")])
+      expect(entrypoint(inner)).to eq(["sh", "-c", "echo a || echo b"])
+    end
+
+    it "hands a && sequence to that backend as the model's own string" do
+      backend, inner = recording_docker
+
+      described_class.new(exec: backend).call({ command: "pwd && ls" }, invocation)
+
+      expect(entrypoint(inner)).to eq(["sh", "-c", "pwd && ls"])
     end
 
     # Through the floor `--exec docker` really builds, because the seam that
@@ -457,7 +462,12 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     it "names the constructs that lose it" do
-      expect(command_field).to include("more than one line", "&&", "||", "redirection", "globs", "git", "sudo")
+      expect(command_field).to include("more than one line", "`||`", "redirection", "globs", "git", "sudo")
+    end
+
+    it "names && among the joins that keep the shell-free arm, not among the constructs that lose it" do
+      expect(command_field).to include("joined by pipes or `&&`")
+      expect(command_field[/Everything else.*/m]).not_to include("&&")
     end
 
     # The rule the list generalises over is itself a claim the model reasons
@@ -471,7 +481,7 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     it "advertises only shapes the verdict really allows" do
-      decisions = ["ls -la", "cat README.md | head -20", "grep -rn foo lib | wc -l"]
+      decisions = ["ls -la", "cat README.md | head -20", "grep -rn foo lib | wc -l", "pwd && ls -la"]
                   .map { |command| Lain::Shell::Verdict.new.call(command) }
 
       expect(decisions).to all(be_allow)
@@ -479,7 +489,7 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     it "warns off constructs the verdict really abstains on" do
-      warned = ["echo a && echo b", "echo a || echo b", "echo a ; echo b", "sleep 1 &",
+      warned = ["echo a || echo b", "echo a ; echo b", "sleep 1 &",
                 %(echo "hello world"), "echo foo\\ bar", "echo hi > out.txt", "echo $HOME",
                 "ls *.rb", "echo ~/x", "echo a\necho b",
                 "git log --oneline -5", "tar -cf x.tar dir", "rsync -a a b",
@@ -750,7 +760,7 @@ RSpec.describe Lain::Tools::Bash do
     it "is the same verdict #perform picks its arm from, so the two cannot disagree" do
       recorder = RecordingChannel.new
       tool = described_class.new(journal: recorder)
-      input = described_class::Input.build({ "command" => "echo a && echo b" })
+      input = described_class::Input.build({ "command" => "echo a || echo b" })
       tool.call({ command: input.command }, invocation)
 
       expect(tool.decision_for(input).name)
@@ -769,6 +779,14 @@ RSpec.describe Lain::Tools::Bash do
 
       expect(arms.map { |arm| [arm.tool_use_id, arm.verdict, arm.arm, arm.term] })
         .to eq([["tu_term", :allow, :term, term_of(%w[cat README.md], %w[head -20])]])
+    end
+
+    it "runs a && sequence as a term on the production backend, stopping at the first failure" do
+      result = described_class.new(journal:).call({ command: "false && echo no" }, invocation)
+
+      expect(result.content).to eq("exit status: 1\n--- stdout ---\n--- stderr ---\n")
+      expect(arms.map(&:arm)).to eq([:term])
+      expect(arms.last.term.pipelines.size).to eq(2)
     end
 
     it "runs a pipeline as a term on the production backend, journalling 1 pipeline of 2 stages" do
@@ -791,7 +809,7 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     it "records an abstention, which carries no term because no arm chose one" do
-      described_class.new(journal:).call({ command: "echo a && echo b" }, invocation)
+      described_class.new(journal:).call({ command: "echo a || echo b" }, invocation)
 
       expect(arms.map { |arm| [arm.verdict, arm.arm, arm.term] }).to eq([[:abstain, :string, Lain::Shell::Term::NONE]])
     end
@@ -801,7 +819,7 @@ RSpec.describe Lain::Tools::Bash do
     # cannot answer it.
     it "writes exactly one record per call, on both arms" do
       tool = described_class.new(journal:)
-      ["ls -la", "echo a && echo b", "printf hi"].each { |command| tool.call({ command: }, invocation) }
+      ["ls -la", "echo a || echo b", "printf hi"].each { |command| tool.call({ command: }, invocation) }
 
       expect(arms.map(&:verdict)).to eq(%i[allow abstain allow])
     end
