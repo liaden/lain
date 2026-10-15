@@ -408,7 +408,7 @@ module Lain
         def research_subagent(base)
           Lain::Tools::Subagent.new(seam: announcing(RESEARCHER.to_s), toolset: base,
                                     policy: backend.spawn_policy(RESEARCHER),
-                                    max_depth: 1, announces_as: RESEARCHER.to_s,
+                                    persona: persona(RESEARCHER), max_depth: 1, announces_as: RESEARCHER.to_s,
                                     budget: Lain::Role::Catalog.fetch(RESEARCHER).budget)
         end
 

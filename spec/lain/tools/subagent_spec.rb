@@ -311,6 +311,24 @@ RSpec.describe Lain::Tools::Subagent do
     expect(tool.description).not_to be_empty
   end
 
+  it "lists the tools its child holds" do
+    tool = build_subagent(provider: mock(text_response), policy: Lain::Tool::SpawnPolicy.new(only: %w[read_file]))
+
+    expect(tool.description).to include("read_file")
+  end
+
+  it "says a child without a shell cannot run commands and the parent should pass output in" do
+    tool = build_subagent(provider: mock(text_response), policy: Lain::Tool::SpawnPolicy.new(only: %w[read_file]))
+
+    expect(tool.description).to include("cannot run commands").and include("pass the output")
+  end
+
+  it "does not say so for a child that holds bash" do
+    tool = build_subagent(provider: mock(text_response), policy: Lain::Tool::SpawnPolicy.new(only: %w[read_file bash]))
+
+    expect(tool.description).not_to include("cannot run commands")
+  end
+
   # Retiring an actor rebases its work first, and a conflict is put to the
   # actor itself -- which only an actor holding a shell could act on.
   describe "the worker a launched actor offers its self-sync" do

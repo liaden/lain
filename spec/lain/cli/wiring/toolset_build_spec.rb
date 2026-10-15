@@ -780,6 +780,29 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           expect(arrivals.map { |item| [item.from, item.question.to_s] }).to eq([["researcher", "which db?"]])
         end
       end
+
+      describe "the chat's research subagent" do
+        let(:store) { Lain::Store.new }
+        let(:parent) { -> { Lain::Timeline.empty(store:) } }
+        let(:provider) { Lain::Provider::Mock.new(responses: [text_response("found it")]) }
+        let(:subagent) { toolset_build.build(recorder, ask_human:).fetch("subagent") }
+
+        it "lists every tool its role may use in its description" do
+          tools = Lain::Role::Catalog.fetch(:researcher).spawn_policy.only
+
+          expect(tools.reject { |name| subagent.description.include?(name) }).to be_empty
+        end
+
+        it "renders the same description twice" do
+          expect(subagent.description).to eq(subagent.description)
+        end
+
+        it "frames its child with the researcher persona" do
+          subagent.call({ "prompt" => "go" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+
+          expect(provider.requests.first.system.last["text"]).to eq(library.slots.render_role(:researcher))
+        end
+      end
     end
 
     # A build handed no board at all -- the direct-construction seam the rest

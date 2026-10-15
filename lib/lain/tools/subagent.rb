@@ -106,7 +106,20 @@ module Lain
         "Spawns a subagent to carry out `prompt` on its own, with its own tools " \
           "and its own conversation, and returns only its final answer. Use it to " \
           "fan out a self-contained subtask without spending your context on the " \
-          "steps it takes to get there."
+          "steps it takes to get there.#{child_tools_note}"
+      end
+
+      # Empty for an unattenuated child, whose tools are the whole union and so
+      # not worth listing. Derived from the policy alone, so the description's
+      # bytes (a cache key) cannot vary between renders.
+      def child_tools_note
+        only = policy.only
+        return "" if only.empty?
+
+        note = " The subagent can use only these tools: #{only.join(", ")}."
+        return note if only.include?("bash")
+
+        "#{note} It cannot run commands: run any command yourself and pass the output in `prompt`."
       end
 
       # Each child runs a SEPARATE Timeline over the SHARED, Monitor-guarded,
