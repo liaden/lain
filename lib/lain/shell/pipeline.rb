@@ -4,11 +4,11 @@ require "open3"
 
 module Lain
   module Shell
-    # Runs a TERM -- `[["grep", "-r", "foo", "."], ["wc", "-l"]]` -- and never a
-    # string. This is the half of the triage layer that makes {Shell::Verdict}'s
-    # allow sound: no shell is asked to interpret the model's bytes, so a
-    # parser/shell disagreement degrades to a broken command instead of an
-    # attacker-chosen one. `time { echo PWNED; }` is the measured case -- under
+    # Runs a {Term} -- argv stages such as `grep -r foo .` then `wc -l` -- and
+    # never a string. This is the half of the triage layer that makes
+    # {Shell::Verdict}'s allow sound: no shell is asked to interpret the model's
+    # bytes, so a parser/shell disagreement degrades to a broken command instead
+    # of an attacker-chosen one. `time { echo PWNED; }` is the measured case -- under
     # `sh -c` it prints PWNED, and as the argv the parser reconstructs it cannot.
     #
     # "No shell" is a claim about the COMMAND STRING, and it is worth stating
@@ -38,8 +38,9 @@ module Lain
     # re-split on whitespace, and one holding a metacharacter goes through
     # `/bin/sh` outright. Every stage is therefore spawned in the
     # `[program, argv0]` form, which cannot do either, and reaches its own
-    # program as argv through {SETSID}. `[["echo hi"]]` looks for a program
-    # literally named `echo hi` and fails, which is the correct answer.
+    # program as argv through {SETSID}. A stage whose one word is `echo hi`
+    # looks for a program literally named `echo hi` and fails, which is the
+    # correct answer.
     #
     # == The predicate downstream of a pipe, and why it defaults to refusing
     #
@@ -202,8 +203,8 @@ module Lain
         freeze
       end
 
-      # @param term [Array<Array<String>>] argv arrays, joined by pipes and by
-      #   nothing else -- the shape {Verdict::Decision#term} hands over.
+      # @param term [Term] what {Verdict::Decision#term} hands over, run as
+      #   one pipeline of its stages
       # @param cwd [String] already resolved by the caller ({WorkerEnv#resolve})
       # @param env [Hash] overrides applied ONTO the inherited environment, with
       #   a nil value scrubbing a key -- the {WorkerEnv} contract, which `spawn`
@@ -215,8 +216,8 @@ module Lain
       #   bounded by what the caller chose to retain.
       # @return [Exec::Capture] for every TERM, including every one that cannot run --
       #   which is the totality that matters, because a term is built from a
-      #   {Tool::Input} the model wrote. NOT for every OBJECT: a term that is not
-      #   an Array of Arrays (a bare String, nil) raises `NoMethodError`, loudly,
+      #   {Tool::Input} the model wrote. NOT for every OBJECT: anything that is
+      #   not a {Term} (a bare String, nil) raises `NoMethodError`, loudly,
       #   because that is a caller's bug rather than a model's input.
       # @raise [Timeout] when the deadline passes, after the groups are killed
       # @raise [Exception] whatever a caller's sink raises mid-pump, or a stop,
@@ -247,7 +248,7 @@ module Lain
       class Refusals
         NUL = "\0"
 
-        TIERS = %i[foreign_words nothing_to_run nul_arguments missing_cwd refused_downstream unresolvable].freeze
+        TIERS = %i[nothing_to_run nul_arguments missing_cwd refused_downstream unresolvable].freeze
 
         def initialize(term:, cwd:, env:)
           @term = term
@@ -269,22 +270,9 @@ module Lain
 
         private
 
-        # A term's words are Strings, and refusing anything else is DELIBERATE
-        # rather than incidental. An Integer or a Symbol would merely crash, but
-        # a Hash as a stage's last element is worse: Open3 does
-        # `cmd_opts.update cmd.pop if Hash === cmd.last`, so it would become
-        # arbitrary SPAWN OPTIONS -- another `chdir`, another `in`, an fd
-        # redirection. Nothing but `nul_arguments` reaching for `#b` and getting
-        # a NoMethodError stood between that and `spawn`, which is defence by
-        # accident. This is the same defence on purpose, which is why it runs
-        # first.
-        def foreign_words
-          offenders = words.grep_v(String)
-          offenders.empty? ? [] : [not_found("#{offenders.first.inspect}: argument is not a String")]
-        end
-
         def nothing_to_run
-          return [] unless @term.empty? || @term.any? { |argv| argv.empty? || argv.any?(&:empty?) }
+          stages = @term.stages
+          return [] unless stages.empty? || stages.any? { |stage| stage.argv.empty? || stage.argv.any?(&:empty?) }
 
           [not_found("there is no command to run")]
         end
@@ -293,7 +281,7 @@ module Lain
         # answers it with an ArgumentError, so it reaches this object from any
         # tool call and must not raise out of one.
         def nul_arguments
-          offenders = words.select { |word| word.b.include?(NUL) }
+          offenders = @term.words.select { |word| word.b.include?(NUL) }
           offenders.empty? ? [] : [not_found("#{offenders.first.b.delete(NUL).inspect}: argument contains a NUL byte")]
         end
 
@@ -307,7 +295,7 @@ module Lain
         # the attacker's spelling of a name on the list; requiring the bare word
         # costs a legitimate caller an absolute path and buys the whole check.
         def refused_downstream
-          offenders = @term.drop(1).map(&:first).reject { |program| STDIN_SAFE.include?(program) }
+          offenders = downstream.map(&:program).reject { |program| STDIN_SAFE.include?(program) }
           return [] if offenders.empty?
 
           [Refusal.new(status: NOT_PERMITTED,
@@ -318,7 +306,7 @@ module Lain
         # window between the two is real. Its job is to keep a doomed stage from
         # being discovered halfway through spawning a pipeline.
         def unresolvable
-          offenders = @term.map(&:first).reject { |program| resolvable?(program) }
+          offenders = @term.programs.reject { |program| resolvable?(program) }
           offenders.empty? ? [] : [not_found("#{offenders.first}: command not found")]
         end
 
@@ -345,9 +333,9 @@ module Lain
           raw.to_s.split(File::PATH_SEPARATOR).reject(&:empty?)
         end
 
-        # One level only: a nested Array must stay VISIBLE to {#foreign_words}
-        # rather than be flattened into the words it holds.
-        def words = @term.flatten(1)
+        # Every stage but the first, because {Run} joins every stage of the term
+        # into one pipe.
+        def downstream = @term.stages.drop(1)
 
         def not_found(message) = Refusal.new(status: NOT_FOUND, message:)
       end
@@ -390,7 +378,7 @@ module Lain
         # re-split, and `--` keeps a program named like an option from being read
         # as one.
         def commands
-          @term.map { |argv| [@env, [@setsid, "setsid"], "--", *argv] }
+          @term.stages.map { |stage| [@env, [@setsid, "setsid"], "--", *stage.argv] }
         end
 
         # Each stage leads its own session, and so its own group ({SETSID}),

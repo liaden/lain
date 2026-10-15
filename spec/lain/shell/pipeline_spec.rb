@@ -28,8 +28,9 @@ end
 RSpec.describe Lain::Shell::Pipeline do
   subject(:pipeline) { described_class.new(grace: 0.2) }
 
-  def run(term, cwd: Dir.pwd, env: {}, timeout: 10, ceiling: 1_048_576, **sinks)
-    pipeline.call(term, cwd:, env:, timeout:, capture: Lain::Exec::Capture::Bounded.new(ceiling:, **sinks))
+  def run(argvs, cwd: Dir.pwd, env: {}, timeout: 10, ceiling: 1_048_576, **sinks)
+    pipeline.call(Lain::Shell::Term.of(*argvs), cwd:, env:, timeout:,
+                                                capture: Lain::Exec::Capture::Bounded.new(ceiling:, **sinks))
   end
 
   def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -234,15 +235,6 @@ RSpec.describe Lain::Shell::Pipeline do
       result = run([["echo", "a\0b"]])
       expect(result.exit_status).to eq(127)
       expect(result.stderr).to include("NUL")
-    end
-
-    # Not a crash guard: Open3 pops a Hash off a stage and merges it into the
-    # SPAWN OPTIONS (`cmd_opts.update cmd.pop if Hash === cmd.last`), so a Hash
-    # here would be another chdir, another stdin, an fd redirection.
-    it "refuses a stage carrying anything that is not a String" do
-      expect(run([["echo", { chdir: "/" }]]).exit_status).to eq(127)
-      expect(run([["echo", 3]]).stderr).to include("not a String")
-      expect(run([["echo", ["nested"]]]).stderr).to include("not a String")
     end
 
     # The one window the pre-flight cannot close, forced deterministically: an
@@ -496,7 +488,8 @@ RSpec.describe Lain::Shell::Pipeline do
         capture = Lain::Exec::Capture::Bounded.new(ceiling: 63)
 
         expect do
-          patient.call([%w[sleep 30], %w[cat], %w[tr a b]], cwd: dir, env: shimmed, timeout: 0.5, capture:)
+          patient.call(Lain::Shell::Term.of(%w[sleep 30], %w[cat], %w[tr a b]),
+                       cwd: dir, env: shimmed, timeout: 0.5, capture:)
         end.to raise_error(described_class::Timeout)
 
         expect(monotonic - started).to be < 0.5 + 1.0 + 0.5
@@ -535,7 +528,8 @@ RSpec.describe Lain::Shell::Pipeline do
       true
     end
 
-    def groups_of_stopped(term, runner:, after:, again: nil)
+    def groups_of_stopped(argvs, runner:, after:, again: nil)
+      term = Lain::Shell::Term.of(*argvs)
       capture = Lain::Exec::Capture::Bounded.new(ceiling: 63)
       before = children
       Sync do |parent|

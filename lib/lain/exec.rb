@@ -15,7 +15,7 @@ module Lain
   # {Timeout} for one that outlived its deadline -- {Tools::Bash}'s distinction
   # between "the tool could not produce a result" and "the command exited
   # non-zero". `command` is a String (the shell's problem: `sh -c`, tier 3) or a
-  # TERM, an Array of argv Arrays ({Shell::Pipeline}, no shell at all). One entry
+  # {Shell::Term} of argv stages ({Shell::Pipeline}, no shell at all). One entry
   # point, so the arm a command took cannot change the environment it runs under.
   # It answers one more message -- `#takes_term?(term)` -- and the first
   # carve-out below is what that is for.

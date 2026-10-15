@@ -38,17 +38,17 @@ module Lain
       # ⚠️ THIS LINE HOLDS UP THE TWO-ARM BYTE-IDENTITY INVARIANT. Because it
       # is true for EVERY term, no command that reaches the term arm here can
       # fall back to the string arm, so the two arms never run the same command
-      # differently. Narrow it -- a subclass answering `term.size == 1` is
+      # differently. Narrow it -- a subclass taking only a one-stage term is
       # enough -- and `cat README.md | head -20` silently takes the string arm
       # on a term-capable backend, which is the divergence
       # `spec/lain/tools/bash_spec.rb` pins.
       #
-      # @param _term [Array<Array<String>>] the term a caller is about to offer
+      # @param _term [Shell::Term] the term a caller is about to offer
       # @return [true]
       def takes_term?(_term) = true
 
-      # @param command [String, Array<Array<String>>] a shell command string, or
-      #   a TERM -- an Array of argv Arrays, which never reaches a shell
+      # @param command [String, Shell::Term] a shell command string, or a
+      #   term, which never reaches a shell
       # @param cwd [String] already resolved by the caller ({WorkerEnv#resolve})
       # @param env [Hash] the caller's overrides, before the framework scrub
       # @param timeout [Numeric] seconds before the process group is killed
@@ -66,7 +66,7 @@ module Lain
 
       private
 
-      def term(command) = command.is_a?(String) ? [[SHELL, "-c", command]] : command
+      def term(command) = command.is_a?(String) ? Shell::Term.of([SHELL, "-c", command]) : command
     end
   end
 end

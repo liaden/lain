@@ -457,24 +457,27 @@ module Lain
 
       def ordinary_words?(term, cwd)
         classifier = @sensitivity.call(cwd)
-        term.flatten.all? { |word| unexempted?(classifier.classify(word)) }
+        term.words.all? { |word| unexempted?(classifier.classify(word)) }
       end
 
       def unexempted?(verdict) = verdict.ordinary? && !verdict.exempt?
 
       def unflagged?(term)
-        term.all? { |program, *arguments| PROGRAMS.fetch(program, UNLISTED).admits?(arguments) }
+        term.stages.all? do |stage|
+          program, *arguments = stage.argv
+          PROGRAMS.fetch(program, UNLISTED).admits?(arguments)
+        end
       end
 
       # Predicate 6, and the shape every later rung copies: one method over the
       # term alone, total by itself, reached by one more `&&` above.
-      def unaliased?(term) = term.flatten.none? { |word| word.match?(ALIASING) }
+      def unaliased?(term) = term.words.none? { |word| word.match?(ALIASING) }
 
       # The root predicate. The factory folds the call's own cwd into the
       # answer: a cwd outside the root confines nothing, so no word passes.
       def confined?(term, cwd)
         confinement = @sensitivity.confinement(cwd)
-        term.flatten.all? { |word| confinement.contains?(word) }
+        term.words.all? { |word| confinement.contains?(word) }
       end
 
       # The content predicate. The only one that opens a file, and that is the
@@ -482,7 +485,7 @@ module Lain
       # answer.
       def plain_content?(term, cwd)
         content = @sensitivity.content(cwd)
-        term.flatten.all? { |word| content.admits?(word) }
+        term.words.all? { |word| content.admits?(word) }
       end
 
       # The landing predicate. Predicate 4 classified the word as written; this
@@ -491,7 +494,7 @@ module Lain
       def resolved_words?(term, cwd)
         classifier = @sensitivity.call(cwd)
         confinement = @sensitivity.confinement(cwd)
-        term.flatten.all? { |word| ordinary_landing?(classifier, confinement, word) }
+        term.words.all? { |word| ordinary_landing?(classifier, confinement, word) }
       end
 
       # Both spellings of the landing, for the reason the header gives, and
@@ -510,7 +513,7 @@ module Lain
         false
       end
 
-      def programs(term) = term.map(&:first)
+      def programs(term) = term.programs
     end
   end
 end

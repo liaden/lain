@@ -34,11 +34,11 @@ module Lain
     #   asked as `covered?` and never as `uncovered.empty?` -- the refusal path
     #   has no source, so its `uncovered` is `[]` while `covered?` is correctly
     #   false.
-    # * An allow hands over `[["grep", "-r", "foo", "."], ["wc", "-l"]]` and
-    #   deliberately NOT the original string, because re-running an accepted
-    #   string through `sh -c` turns every parser/shell disagreement into a live
-    #   bypass, and the cheapest way to make that impossible is to not hand the
-    #   string over.
+    # * An allow hands over a {Term} -- `grep -r foo .` piped to `wc -l` as two
+    #   argv stages -- and deliberately NOT the original string, because
+    #   re-running an accepted string through `sh -c` turns every parser/shell
+    #   disagreement into a live bypass, and the cheapest way to make that
+    #   impossible is to not hand the string over.
     # * A quoted or escaped argument ABSTAINS, and so do `;`, `&&`, `||` and `&`.
     #   {Parse} does not strip quotes -- `echo 'a b'` reconstructs as
     #   `["echo", "'a b'"]`, and `echo foo\ bar` as `["echo", "foo\\ bar"]`
@@ -155,7 +155,7 @@ module Lain
       # and nothing else.
       PIPE = "|"
 
-      NO_TERM = [].freeze
+      NO_TERM = Term::NONE
 
       # A verdict, and the term it authorises. `term` is empty on anything but an
       # allow -- a Null Object, so no caller writes `if decision.term`.
@@ -166,7 +166,7 @@ module Lain
 
         # What goes in the Journal. {CLAIM} rides along on every one of them, so
         # no record can be read as a claim about safety.
-        def record = { verdict: name, reason:, term:, claim: CLAIM }.freeze
+        def record = { verdict: name, reason:, term: term.to_journal, claim: CLAIM }.freeze
       end
 
       # The capability set of a session that restricts no program name. Answers
@@ -217,7 +217,7 @@ module Lain
       end
 
       def allow(result)
-        Decision.new(name: :allow, reason: ALLOWED, term: result.stages.map(&:argv).freeze)
+        Decision.new(name: :allow, reason: ALLOWED, term: Term.of(*result.stages.map(&:argv)))
       end
 
       def deny(excluded)
@@ -298,7 +298,8 @@ module Lain
 
         # An empty argv is an ArgumentError out of `Open3`, and an empty STRING
         # as a term execs nothing -- `echo hi &&` really does reconstruct
-        # `[["echo", "hi"], [""]]`. Neither may be reachable through an allow.
+        # a second stage whose only word is empty. Neither may be reachable
+        # through an allow.
         def nothing_to_run?
           @result.stages.empty? ||
             @result.stages.any? { |stage| stage.argv.empty? || stage.argv.any?(&:empty?) }

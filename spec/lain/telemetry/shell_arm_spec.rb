@@ -14,10 +14,12 @@ require "tmpdir"
 # `GenericBuild`, which passes one dummy value for every member, and `claim` is a
 # forced member no generic builder can supply. The last example here pins that.
 RSpec.describe Lain::Telemetry::ShellArm do
+  def term_of(*argvs) = Lain::Shell::Term.of(*argvs)
+
   subject(:event) do
     described_class.new(tool_use_id: "tu_1", verdict: :allow, arm: :term,
                         reason: "every stage is literal and fully understood",
-                        term: [%w[cat README.md], %w[head -20]])
+                        term: term_of(%w[cat README.md], %w[head -20]))
   end
 
   describe "an allowed term" do
@@ -26,7 +28,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
       expect(event.verdict).to eq(:allow)
       expect(event.arm).to eq(:term)
       expect(event.reason).to eq("every stage is literal and fully understood")
-      expect(event.term).to eq([%w[cat README.md], %w[head -20]])
+      expect(event.term).to eq(term_of(%w[cat README.md], %w[head -20]))
       expect(event).to be_allow
     end
 
@@ -39,7 +41,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
     it "is a frozen value object with structural equality" do
       twin = described_class.new(tool_use_id: "tu_1", verdict: :allow, arm: :term,
                                  reason: "every stage is literal and fully understood",
-                                 term: [%w[cat README.md], %w[head -20]])
+                                 term: term_of(%w[cat README.md], %w[head -20]))
 
       expect(event).to eq(twin)
       expect(event.hash).to eq(twin.hash)
@@ -51,7 +53,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
     it "takes the verdict and arm names as Strings, so a record rebuilt from a journal line is the same record" do
       from_wire = described_class.new(tool_use_id: +"tu_1", verdict: +"allow", arm: +"term",
                                       reason: +"every stage is literal and fully understood",
-                                      term: [[+"cat", +"README.md"], [+"head", +"-20"]])
+                                      term: term_of([+"cat", +"README.md"], [+"head", +"-20"]))
 
       expect(from_wire).to eq(event)
     end
@@ -83,10 +85,12 @@ RSpec.describe Lain::Telemetry::ShellArm do
       expect(allowed).to include(
         "type" => "shell_arm", "tool_use_id" => "tu_1", "verdict" => "allow", "arm" => "term",
         "reason" => "every stage is literal and fully understood",
-        "term" => [%w[cat README.md], %w[head -20]], "claim" => Lain::Shell::Verdict::CLAIM
+        "term" => { "pipelines" => [[{ "argv" => %w[cat README.md], "discards" => [] },
+                                     { "argv" => %w[head -20], "discards" => [] }]] },
+        "claim" => Lain::Shell::Verdict::CLAIM
       )
       expect(allowed).to have_key("ts")
-      expect(abstained).to include("verdict" => "abstain", "arm" => "string", "term" => [],
+      expect(abstained).to include("verdict" => "abstain", "arm" => "string", "term" => { "pipelines" => [] },
                                    "claim" => Lain::Shell::Verdict::CLAIM)
     end
 
@@ -100,7 +104,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
       end
 
       fields = JSON.parse(line).slice("tool_use_id", "verdict", "arm", "reason", "term").transform_keys(&:to_sym)
-      rebuilt = described_class.new(**fields)
+      rebuilt = described_class.new(**fields, term: Lain::Shell::Term.from_journal(fields.fetch(:term)))
 
       expect(rebuilt).to eq(event)
       expect(Ractor.shareable?(rebuilt)).to be(true)
@@ -114,16 +118,16 @@ RSpec.describe Lain::Telemetry::ShellArm do
     end
 
     it "carries the Null Object itself as its term, so reading it needs no nil guard" do
-      expect(event.term).to eq([])
+      expect(event.term).to be_empty
       expect(event.term).to equal(Lain::Shell::Verdict::NO_TERM)
-      expect(event.to_journal.fetch("term")).to eq([])
+      expect(event.to_journal.fetch("term")).to eq("pipelines" => [])
     end
 
     it "refuses a nil term rather than storing one" do
       expect do
         described_class.new(tool_use_id: "tu_2", verdict: :abstain, arm: :string, reason: "not understood",
                             term: nil)
-      end.to raise_error(ArgumentError, /term must be an Array of argv Arrays/)
+      end.to raise_error(ArgumentError, /term must be a Shell::Term/)
     end
 
     # A record saying "no arm was chosen" while carrying the argv of a chosen one
@@ -132,7 +136,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
     it "refuses a term on anything but an allow" do
       expect do
         described_class.new(tool_use_id: "tu_2", verdict: :abstain, arm: :string, reason: "not understood",
-                            term: [%w[cat README.md]])
+                            term: term_of(%w[cat README.md]))
       end.to raise_error(ArgumentError, /term must be empty unless the verdict allows/)
     end
   end
@@ -161,11 +165,11 @@ RSpec.describe Lain::Telemetry::ShellArm do
     it "records an allow that ran on the string arm, keeping the term it authorised but did not run" do
       diverged = described_class.new(tool_use_id: "tu_9", verdict: :allow, arm: :string,
                                      reason: "every stage is literal and fully understood",
-                                     term: [%w[cat README.md], %w[head -20]])
+                                     term: term_of(%w[cat README.md], %w[head -20]))
 
       expect(diverged.verdict).to eq(:allow)
       expect(diverged.arm).to eq(:string)
-      expect(diverged.term).to eq([%w[cat README.md], %w[head -20]])
+      expect(diverged.term).to eq(term_of(%w[cat README.md], %w[head -20]))
       expect(diverged).to be_deeply_frozen
     end
 
@@ -174,7 +178,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
     # as "ran as a term".
     it "still answers allow? on that record, because allow? is about the verdict" do
       diverged = described_class.new(tool_use_id: "tu_9", verdict: :allow, arm: :string,
-                                     reason: "understood", term: [%w[cat README.md], %w[head -20]])
+                                     reason: "understood", term: term_of(%w[cat README.md], %w[head -20]))
 
       expect(diverged).to be_allow
       expect(diverged.arm).not_to eq(:term)
@@ -186,7 +190,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
     # pipe the two predicates give different answers. Only one of them is the
     # question that was asked.
     it "counts what ran, where allow? counts what was decided" do
-      understood = { verdict: :allow, reason: "understood", term: [%w[cat a], %w[head -1]] }
+      understood = { verdict: :allow, reason: "understood", term: term_of(%w[cat a], %w[head -1]) }
       run = [described_class.new(tool_use_id: "tu_a", arm: :term, **understood),
              described_class.new(tool_use_id: "tu_b", arm: :string, **understood),
              described_class.new(tool_use_id: "tu_c", verdict: :abstain, arm: :string, reason: "quoted")]
@@ -196,26 +200,30 @@ RSpec.describe Lain::Telemetry::ShellArm do
     end
 
     it "distinguishes the two arms of one identical decision" do
-      fields = { tool_use_id: "tu_9", verdict: :allow, reason: "understood", term: [%w[ls -la]] }
+      fields = { tool_use_id: "tu_9", verdict: :allow, reason: "understood", term: term_of(%w[ls -la]) }
 
       expect(described_class.new(**fields, arm: :term)).not_to eq(described_class.new(**fields, arm: :string))
     end
 
     it "is shareable on the string arm too, whose term is a real one" do
       diverged = described_class.new(tool_use_id: +"tu_9", verdict: +"allow", arm: +"string",
-                                     reason: +"understood", term: [[+"cat", +"a"], [+"head", +"-1"]])
+                                     reason: +"understood", term: term_of([+"cat", +"a"], [+"head", +"-1"]))
 
       expect(Ractor.shareable?(diverged)).to be(true)
-      expect(diverged.term.first.first).to equal(-"cat")
+      expect(diverged.term.programs.first).to equal(-"cat")
     end
 
     it "rejects an arm name nothing runs" do
-      expect { described_class.new(tool_use_id: "tu_9", verdict: :allow, arm: :argv, reason: "ok", term: [%w[ls]]) }
+      expect do
+        described_class.new(tool_use_id: "tu_9", verdict: :allow, arm: :argv, reason: "ok", term: term_of(%w[ls]))
+      end
         .to raise_error(ArgumentError, /arm must be term or string, got argv/)
     end
 
     it "rejects a nil arm, which is the one question this record exists to answer" do
-      expect { described_class.new(tool_use_id: "tu_9", verdict: :allow, arm: nil, reason: "ok", term: [%w[ls]]) }
+      expect do
+        described_class.new(tool_use_id: "tu_9", verdict: :allow, arm: nil, reason: "ok", term: term_of(%w[ls]))
+      end
         .to raise_error(ArgumentError, /arm must name the arm the command ran on/)
     end
 
@@ -230,7 +238,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
     end
 
     it "refuses the term arm on an allow carrying no term to have run" do
-      expect { described_class.new(tool_use_id: "tu_9", verdict: :allow, arm: :term, reason: "ok", term: []) }
+      expect { described_class.new(tool_use_id: "tu_9", verdict: :allow, arm: :term, reason: "ok", term: Lain::Shell::Term::NONE) }
         .to raise_error(ArgumentError, /arm must be string unless the verdict allows/)
     end
   end
@@ -255,7 +263,8 @@ RSpec.describe Lain::Telemetry::ShellArm do
     # exactly as `with(claim:)` does. Nothing needs to copy a journal record.
     it "cannot be handed in, and no copy can rewrite it" do
       expect do
-        described_class.new(tool_use_id: "tu_5", verdict: :allow, arm: :string, reason: "ok", term: [], claim: "safe")
+        described_class.new(tool_use_id: "tu_5", verdict: :allow, arm: :string, reason: "ok",
+                            term: Lain::Shell::Term::NONE, claim: "safe")
       end
         .to raise_error(ArgumentError, /claim/)
       expect { event.with(claim: "this command is safe") }.to raise_error(ArgumentError, /claim/)
@@ -266,13 +275,20 @@ RSpec.describe Lain::Telemetry::ShellArm do
   describe "shareability" do
     it "holds no reachable mutable state, even built entirely from mutable Strings" do
       mutable = described_class.new(tool_use_id: +"tu_6", verdict: :allow, arm: +"term", reason: +"understood",
-                                    term: [[+"grep", +"-n", +"foo", +"lib"], [+"wc", +"-l"]])
+                                    term: term_of([+"grep", +"-n", +"foo", +"lib"], [+"wc", +"-l"]))
 
       expect(Ractor.shareable?(mutable)).to be(true)
       expect(mutable).to be_deeply_frozen
-      expect(mutable.term.first).to be_frozen
-      expect(mutable.term.first.first).to be_frozen
-      expect(mutable.term.first.first).to equal(-"grep")
+      expect(mutable.term.stages.first.argv).to be_frozen
+      expect(mutable.term.programs.first).to be_frozen
+      expect(mutable.term.programs.first).to equal(-"grep")
+    end
+
+    it "swaps an empty term built elsewhere for the shared Null Object" do
+      rebuilt = described_class.new(tool_use_id: "tu_7", verdict: :abstain, arm: :string, reason: "x",
+                                    term: Lain::Shell::Term.new(pipelines: []))
+
+      expect(rebuilt.term).to equal(Lain::Shell::Verdict::NO_TERM)
     end
 
     it "holds no reachable mutable state on an abstention, whose term is the shared Null Object" do
@@ -297,20 +313,22 @@ RSpec.describe Lain::Telemetry::ShellArm do
     end
 
     it "rejects a nil reason -- an arm with no reason is a record a reader cannot act on" do
-      expect { described_class.new(tool_use_id: "tu_8", verdict: :allow, arm: :term, reason: nil, term: [%w[ls]]) }
+      expect do
+        described_class.new(tool_use_id: "tu_8", verdict: :allow, arm: :term, reason: nil, term: term_of(%w[ls]))
+      end
         .to raise_error(ArgumentError, /reason must carry the verdict's reason/)
     end
 
     it "rejects a record that names no call, which nothing could join back to a tool_use block" do
-      expect { described_class.new(tool_use_id: nil, verdict: :allow, arm: :term, reason: "ok", term: [%w[ls]]) }
+      expect { described_class.new(tool_use_id: nil, verdict: :allow, arm: :term, reason: "ok", term: term_of(%w[ls])) }
         .to raise_error(ArgumentError, /tool_use_id must name the call this record is about/)
     end
 
-    it "rejects a term that is not argv, so no reader has to guess at a stage's shape" do
+    it "rejects a term that is not a Shell::Term, so no reader has to guess at a stage's shape" do
       expect do
-        described_class.new(tool_use_id: "tu_8", verdict: :allow, arm: :term, reason: "ok", term: ["cat README.md"])
+        described_class.new(tool_use_id: "tu_8", verdict: :allow, arm: :term, reason: "ok", term: [%w[cat README.md]])
       end
-        .to raise_error(ArgumentError, /term must be an Array of argv Arrays/)
+        .to raise_error(ArgumentError, /term must be a Shell::Term/)
     end
   end
 

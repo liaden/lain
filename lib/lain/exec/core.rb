@@ -36,7 +36,7 @@ module Lain
         freeze
       end
 
-      # @param _term [Array<Array<String>>] the term a caller is about to offer
+      # @param _term [Shell::Term] the term a caller is about to offer
       # @return [false] for every term -- the wire has one command shape, and
       #   {#accepts!} refuses by reading this answer rather than restating it
       def takes_term?(_term) = false
@@ -80,7 +80,7 @@ module Lain
       private
 
       # The wire has ONE command shape. A term packed here would go out as
-      # `["sh", "-c", [["printf", "hi"]]]`, which the daemon rejects at decode --
+      # `["sh", "-c", <a term>]`, which the daemon rejects at decode --
       # arriving back as a spawn-shaped Refused a caller then misreports as a
       # bad cwd. Refusing it at the door says what actually went
       # wrong; there is deliberately no join back to a string, for the reason

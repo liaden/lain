@@ -665,7 +665,7 @@ RSpec.describe Lain::Approval::Escalation do
 
     it "carries the command's parsed term, stage by stage" do
       expect(captured("bash", { "command" => "cat README.md | head -20" }).term)
-        .to eq([%w[cat README.md], %w[head -20]])
+        .to eq(Lain::Shell::Term.of(%w[cat README.md], %w[head -20]))
     end
 
     it "carries an empty term when the verdict abstained" do
@@ -678,7 +678,7 @@ RSpec.describe Lain::Approval::Escalation do
 
     it "hands a tool whose input is no command the Call it always had" do
       expect(captured("read_file", { "path" => "README.md" }))
-        .to have_attributes(tool_name: "read_file", term: [], term?: false)
+        .to have_attributes(tool_name: "read_file", term: Lain::Shell::Term::NONE, term?: false)
     end
   end
 
@@ -911,7 +911,8 @@ RSpec.describe Lain::Approval::Escalation do
     it "treats a tilde word as written-as-a-path even with no separator in it" do
       denied = Lain::Sensitivity::Rules.from({ "denied" => [File.basename(home)] })
       allowing = lambda do |_command|
-        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec allows", term: [%w[cat ~somebody]])
+        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec allows",
+                                           term: Lain::Shell::Term.of(%w[cat ~somebody]))
       end
 
       answer = triaged("irrelevant", verdict: allowing,

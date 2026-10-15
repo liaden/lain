@@ -4452,7 +4452,7 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
 
       result = bash_in(floor).call({ command: "ls -la" }, Lain::Tool::Invocation.new(tool_use_id: "tu_1", channel:))
 
-      expect(seen).to eq([[%w[ls -la]]])
+      expect(seen).to eq([Lain::Shell::Term.of(%w[ls -la])])
       expect(result).to be_ok
       expect(result.content).to include("exit status: 0")
     end

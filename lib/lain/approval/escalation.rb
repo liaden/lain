@@ -612,7 +612,7 @@ module Lain
         # named in the record.
         def refused(term, cwd)
           classifier = @sensitivity.call(cwd)
-          term.flatten.uniq.filter_map do |word|
+          term.words.uniq.filter_map do |word|
             verdict = classifier.classify(word)
             [word, verdict.explanation] if verdict.denied?
           end

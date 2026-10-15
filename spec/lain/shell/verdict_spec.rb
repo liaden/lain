@@ -21,7 +21,7 @@ RSpec.describe Lain::Shell::Verdict do
     end
 
     it "carries the reconstructed term" do
-      expect(decision.term).to eq([%w[ls -la]])
+      expect(decision.term).to eq(Lain::Shell::Term.of(%w[ls -la]))
     end
 
     it "allows the plain literal commands a session really runs" do
@@ -31,7 +31,7 @@ RSpec.describe Lain::Shell::Verdict do
     end
 
     it "allows a pipeline, whose term is the stages in order" do
-      expect(decide("grep -r foo . | wc -l").term).to eq([%w[grep -r foo .], %w[wc -l]])
+      expect(decide("grep -r foo . | wc -l").term).to eq(Lain::Shell::Term.of(%w[grep -r foo .], %w[wc -l]))
     end
   end
 
@@ -386,7 +386,7 @@ RSpec.describe Lain::Shell::Verdict do
       it "still allows #{command.inspect}, where the byte stays inside one word" do
         decision = decide(command)
         expect(decision).to be_allow
-        expect(decision.term.first.first).to include(command[2])
+        expect(decision.term.programs.first).to include(command[2])
       end
     end
 
@@ -576,7 +576,7 @@ RSpec.describe Lain::Shell::Verdict do
 
     it "carries the term and the reason in the record" do
       record = decide("ls -la").record
-      expect(record.fetch(:term)).to eq([%w[ls -la]])
+      expect(record.fetch(:term)).to eq(Lain::Shell::Term.of(%w[ls -la]).to_journal)
       expect(record.fetch(:reason)).to eq(described_class::ALLOWED)
     end
   end
@@ -663,7 +663,7 @@ RSpec.describe Lain::Shell::Verdict do
     it "is a non-empty list of non-empty argvs, none of them an empty term, on every allow" do
       corpus.map { |command| verdict.call(command) }.select(&:allow?).each do |decision|
         expect(decision.term).not_to be_empty
-        expect(decision.term).to all(satisfy { |argv| !argv.empty? && argv.none?(&:empty?) })
+        expect(decision.term.stages.map(&:argv)).to all(satisfy { |argv| !argv.empty? && argv.none?(&:empty?) })
       end
     end
 

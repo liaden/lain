@@ -41,9 +41,10 @@ RSpec.describe Lain::Exec::Local do
     it "runs a TERM as argv, with no shell process at all" do
       pipeline, seen = recording_pipeline
 
-      described_class.new(pipeline:).call(command: [%w[printf hi]], cwd: Dir.pwd, env: ENV.to_h, timeout: 10)
+      term = Lain::Shell::Term.of(%w[printf hi])
+      described_class.new(pipeline:).call(command: term, cwd: Dir.pwd, env: ENV.to_h, timeout: 10)
 
-      expect(seen).to eq([[%w[printf hi]]])
+      expect(seen).to eq([term])
     end
 
     # One runner, so the process group, the kill, the live sinks, the bound and
@@ -54,7 +55,7 @@ RSpec.describe Lain::Exec::Local do
 
       described_class.new(pipeline:).call(command: "echo a && echo b", cwd: Dir.pwd, env: ENV.to_h, timeout: 10)
 
-      expect(seen).to eq([[["/bin/sh", "-c", "echo a && echo b"]]])
+      expect(seen).to eq([Lain::Shell::Term.of(["/bin/sh", "-c", "echo a && echo b"])])
     end
   end
 
@@ -99,7 +100,7 @@ RSpec.describe Lain::Exec::Local do
     end
 
     it "holds at most the ceiling plus one byte on the term arm, while counting every byte" do
-      capture = run([["head", "-c", "1048576", "/dev/zero"], ["tr", "\\0", "a"]])
+      capture = run(Lain::Shell::Term.of(["head", "-c", "1048576", "/dev/zero"], ["tr", "\\0", "a"]))
 
       expect(capture.size).to eq(1_048_576)
       expect(held(capture)).to eq(1025)
@@ -164,7 +165,7 @@ RSpec.describe Lain::Exec::Local do
 
     it "scrubs on the TERM arm too, so the arm a command took cannot change its environment" do
       with_env("BUNDLE_GEMFILE" => "/lain/Gemfile") do
-        capture = backend.call(command: [%w[printenv BUNDLE_GEMFILE]],
+        capture = backend.call(command: Lain::Shell::Term.of(%w[printenv BUNDLE_GEMFILE]),
                                cwd: Dir.pwd, env: ENV.to_h, timeout: 10)
 
         expect(capture.stdout).to eq("")
@@ -205,7 +206,7 @@ RSpec.describe Lain::Exec::Local do
   # required message cannot stay a promise only a comment makes.
   describe "the terms it says it can take" do
     def run_term(term) = run(term)
-    def terms_taken = [[%w[printf hi]], [%w[printf hi], %w[cat]]]
+    def terms_taken = [Lain::Shell::Term.of(%w[printf hi]), Lain::Shell::Term.of(%w[printf hi], %w[cat])]
     def terms_refused = []
 
     it_behaves_like "an exec backend answering for a term"
@@ -224,7 +225,8 @@ RSpec.describe Lain::Exec::Local do
 
         local = Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.2))
         prompt = "printf LAIN-TTY-SCRIBBLE > /dev/tty; read answer < /dev/tty"
-        arms = { "string" => prompt, "term" => [["sh", "-c", prompt]], "shell-free term" => [["cat", "/dev/tty"]] }
+        arms = { "string" => prompt, "term" => Lain::Shell::Term.of(["sh", "-c", prompt]),
+                 "shell-free term" => Lain::Shell::Term.of(["cat", "/dev/tty"]) }
         seen = arms.to_h do |arm, command|
           started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
           outcome = begin
@@ -298,7 +300,7 @@ RSpec.describe Lain::Exec::Local do
     it "raises the SAME Exec::Timeout when a term outlives its timeout" do
       expect do
         described_class.new(pipeline: short_grace)
-                       .call(command: [%w[sleep 5]], cwd: Dir.pwd, env: ENV.to_h, timeout: deadline)
+                       .call(command: Lain::Shell::Term.of(%w[sleep 5]), cwd: Dir.pwd, env: ENV.to_h, timeout: deadline)
       end.to raise_error(Lain::Exec::Timeout)
     end
   end

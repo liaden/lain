@@ -34,7 +34,9 @@ RSpec.describe Lain::Tools::Bash do
     [Lain::Exec::Local.new(pipeline:), seen]
   end
 
-  def sh(command) = [["/bin/sh", "-c", command]]
+  def sh(command) = Lain::Shell::Term.of(["/bin/sh", "-c", command])
+
+  def term_of(*argvs) = Lain::Shell::Term.of(*argvs)
 
   it "runs a command and captures its stdout" do
     result = tool.call({ command: "echo hello" }, invocation)
@@ -269,7 +271,7 @@ RSpec.describe Lain::Tools::Bash do
     # A verdict stand-in that abstains on everything, which is how a command the
     # real verdict would ALLOW can be run through the string arm for comparison.
     let(:abstaining) do
-      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: []) }
+      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: Lain::Shell::Term::NONE) }
     end
 
     it "runs an allowed command as a term, with no shell process at all" do
@@ -277,7 +279,7 @@ RSpec.describe Lain::Tools::Bash do
 
       result = described_class.new(exec: backend).call({ command: "printf hi" }, invocation)
 
-      expect(seen).to eq([[%w[printf hi]]])
+      expect(seen).to eq([term_of(%w[printf hi])])
       expect(result).to be_ok
       expect(result.content).to include("exit status: 0", "hi")
     end
@@ -362,14 +364,14 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     # What the container is asked to run, at the tail of the client's argv.
-    def entrypoint(inner) = inner.command.first.last(3)
+    def entrypoint(inner) = inner.command.stages.first.argv.last(3)
 
     it "hands the term to a backend that takes any term" do
       backend, seen = recording_local
 
       described_class.new(exec: backend).call({ command: "cat README.md | head -20" }, invocation)
 
-      expect(seen).to eq([[%w[cat README.md], %w[head -20]]])
+      expect(seen).to eq([term_of(%w[cat README.md], %w[head -20])])
     end
 
     # The user-visible win: `--exec docker` stops erroring on an ordinary
@@ -391,7 +393,7 @@ RSpec.describe Lain::Tools::Bash do
 
       described_class.new(exec: backend).call({ command: "ls -la" }, invocation)
 
-      expect(inner.command.first.last(3)).to eq(["img:1", "ls", "-la"])
+      expect(inner.command.stages.first.argv.last(3)).to eq(["img:1", "ls", "-la"])
     end
 
     # An abstention produces no term to offer, so the predicate is never
@@ -473,7 +475,7 @@ RSpec.describe Lain::Tools::Bash do
                   .map { |command| Lain::Shell::Verdict.new.call(command) }
 
       expect(decisions).to all(be_allow)
-      expect(decisions[1].term).to eq([%w[cat README.md], %w[head -20]])
+      expect(decisions[1].term).to eq(term_of(%w[cat README.md], %w[head -20]))
     end
 
     it "warns off constructs the verdict really abstains on" do
@@ -538,7 +540,7 @@ RSpec.describe Lain::Tools::Bash do
       File.join(@tmpdir, "big.txt").tap { |path| File.write(path, "x" * (ceiling + 1024)) }
     end
     let(:abstaining) do
-      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: []) }
+      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: Lain::Shell::Term::NONE) }
     end
 
     around do |example|
@@ -677,7 +679,7 @@ RSpec.describe Lain::Tools::Bash do
       let(:quiet) { Lain::Tool::Invocation.new(tool_use_id: "tu_1") }
       let(:flood) { "head -c 200000000 /dev/zero | tr '\\0' a" }
       let(:as_term) do
-        term = [["head", "-c", "200000000", "/dev/zero"], ["tr", "\\0", "a"]].freeze
+        term = Lain::Shell::Term.of(["head", "-c", "200000000", "/dev/zero"], ["tr", "\\0", "a"])
         ->(_command) { Lain::Shell::Verdict::Decision.new(name: :allow, reason: "approved", term:) }
       end
 
@@ -695,7 +697,7 @@ RSpec.describe Lain::Tools::Bash do
         term_exec = keeping(Lain::Exec::Local.new)
         string_exec = keeping(Lain::Exec::Local.new)
         command = flooding(ceiling * 64)
-        term = [["head", "-c", (ceiling * 64).to_s, "/dev/zero"], ["tr", "\\0", "x"]].freeze
+        term = term_of(["head", "-c", (ceiling * 64).to_s, "/dev/zero"], ["tr", "\\0", "x"])
 
         by_term = described_class.new(exec: term_exec, verdict: lambda { |_command|
           Lain::Shell::Verdict::Decision.new(name: :allow, reason: "approved", term:)
@@ -735,11 +737,11 @@ RSpec.describe Lain::Tools::Bash do
       input = described_class::Input.build({ "command" => "cat README.md | head -20" })
 
       expect(described_class.new.decision_for(input))
-        .to have_attributes(name: :allow, term: [%w[cat README.md], %w[head -20]])
+        .to have_attributes(name: :allow, term: term_of(%w[cat README.md], %w[head -20]))
     end
 
     it "answers from the INJECTED verdict, never one of its own" do
-      pinned = Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec pins", term: [%w[true]].freeze)
+      pinned = Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec pins", term: term_of(%w[true]))
       tool = described_class.new(verdict: ->(_command) { pinned })
 
       expect(tool.decision_for(described_class::Input.build({ "command" => "ls -la" }))).to be(pinned)
@@ -766,7 +768,16 @@ RSpec.describe Lain::Tools::Bash do
                                          invocation(tool_use_id: "tu_term"))
 
       expect(arms.map { |arm| [arm.tool_use_id, arm.verdict, arm.arm, arm.term] })
-        .to eq([["tu_term", :allow, :term, [%w[cat README.md], %w[head -20]]]])
+        .to eq([["tu_term", :allow, :term, term_of(%w[cat README.md], %w[head -20])]])
+    end
+
+    it "runs a pipeline as a term on the production backend, journalling 1 pipeline of 2 stages" do
+      result = described_class.new(journal:).call({ command: "ls -la | wc -l" }, invocation)
+
+      expect(result).to be_ok
+      expect(arms.map(&:arm)).to eq([:term])
+      expect(arms.last.to_journal.dig("term", "pipelines").map { |stages| stages.map { |stage| stage["argv"] } })
+        .to eq([[%w[ls -la], %w[wc -l]]])
     end
 
     # The decision's own sentence, verbatim, rather than one composed here: a
@@ -782,7 +793,7 @@ RSpec.describe Lain::Tools::Bash do
     it "records an abstention, which carries no term because no arm chose one" do
       described_class.new(journal:).call({ command: "echo a && echo b" }, invocation)
 
-      expect(arms.map { |arm| [arm.verdict, arm.arm, arm.term] }).to eq([[:abstain, :string, []]])
+      expect(arms.map { |arm| [arm.verdict, arm.arm, arm.term] }).to eq([[:abstain, :string, Lain::Shell::Term::NONE]])
     end
 
     # What a bench asks of these records is what FRACTION of commands earn the
@@ -832,7 +843,7 @@ RSpec.describe Lain::Tools::Bash do
 
       described_class.new(exec: backend, journal:).call({ command: "cat README.md | head -20" }, invocation)
 
-      expect(inner.command.first.last(3)).to eq(["sh", "-c", "cat README.md | head -20"])
+      expect(inner.command.stages.first.argv.last(3)).to eq(["sh", "-c", "cat README.md | head -20"])
       expect(arms.map { |arm| [arm.verdict, arm.arm] }).to eq([%i[allow string]])
     end
 
@@ -845,7 +856,7 @@ RSpec.describe Lain::Tools::Bash do
 
       described_class.new(exec: backend, journal:).call({ command: "ls -la" }, invocation)
 
-      expect(inner.command.first.last(3)).to eq(["img:1", "ls", "-la"])
+      expect(inner.command.stages.first.argv.last(3)).to eq(["img:1", "ls", "-la"])
       expect(arms.map { |arm| [arm.verdict, arm.arm] }).to eq([%i[allow term]])
     end
 
@@ -861,7 +872,7 @@ RSpec.describe Lain::Tools::Bash do
                      .call({ command: "curl http://example.com" }, invocation)
 
       expect(seen).to eq([sh("curl http://example.com")])
-      expect(arms.map { |arm| [arm.verdict, arm.arm, arm.term] }).to eq([[:deny, :string, []]])
+      expect(arms.map { |arm| [arm.verdict, arm.arm, arm.term] }).to eq([[:deny, :string, Lain::Shell::Term::NONE]])
     end
 
     # The record names the verdict, which is the decision the gate and the tool
@@ -938,7 +949,7 @@ RSpec.describe Lain::Tools::Bash do
   # become text the commit can take, or a refusal that names this tool.
   describe "output bytes and the text boundary" do
     let(:abstaining) do
-      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: []) }
+      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: Lain::Shell::Term::NONE) }
     end
 
     def committed(result) = Lain::Canonical.normalize(Lain::Tool::ResultBlock.of(result, tool_use_id: "tu_1").to_h)

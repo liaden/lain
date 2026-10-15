@@ -97,9 +97,9 @@ module Lain
       # single docker argv every command is wrapped into below; that wrapper is
       # one stage for a pipe as much as for anything else.
       #
-      # @param term [Array<Array<String>>] the term a caller is about to offer
+      # @param term [Shell::Term] the term a caller is about to offer
       # @return [Boolean] true for a one-stage term
-      def takes_term?(term) = term.size == 1
+      def takes_term?(term) = term.stages.size == 1
 
       # ⚠️ NO VALUE GOES ON THE COMMAND LINE. `/proc/<pid>/cmdline` is
       # WORLD-READABLE while `/proc/<pid>/environ` is owner-only, so a
@@ -113,8 +113,8 @@ module Lain
       # no business owning. The override is ADDITIVE, so the operator's
       # `DOCKER_HOST` and `DOCKER_CONTEXT` survive untouched.
       #
-      # @param command [String, Array<Array<String>>] a shell command string,
-      #   or a single-stage TERM
+      # @param command [String, Shell::Term] a shell command string, or a
+      #   single-stage term
       # @param cwd [String] already resolved by the caller ({WorkerEnv#resolve})
       # @param env [Hash] the caller's overrides, before the framework scrub
       # @param timeout [Numeric] seconds before the client's process group is
@@ -134,8 +134,8 @@ module Lain
       def call(command:, cwd:, env:, timeout:, stdout_sink: Sink::Null.new, stderr_sink: Sink::Null.new)
         crossing = crossing(env)
         name = @names.next
-        @exec.call(command: [argv(command, cwd, crossing.keys, timeout, name)], cwd: @project, env: crossing,
-                   timeout:, stdout_sink:, stderr_sink:)
+        @exec.call(command: Shell::Term.of(argv(command, cwd, crossing.keys, timeout, name)), cwd: @project,
+                   env: crossing, timeout:, stdout_sink:, stderr_sink:)
       rescue Timeout => e
         raise Timeout, with_cleanup_note(name, e.message)
       rescue Async::Stop
@@ -201,10 +201,10 @@ module Lain
       # ({Shell::Verdict}'s rule). The rule itself is {#takes_term?}, read here
       # rather than restated, so the answer and the refusal cannot disagree.
       def one_stage(term)
-        return term.first if takes_term?(term)
+        return term.stages.first.argv if takes_term?(term)
 
         raise Unsupported, "docker run takes one argv and a pipe needs a shell, so this backend has no " \
-                           "shape for a #{term.size}-stage term: #{term.inspect}"
+                           "shape for a #{term.stages.size}-stage term: #{term.stages.map(&:argv).inspect}"
       end
 
       # HOW THE CALLING USER APPEARS INSIDE THE CONTAINER, which is not one
@@ -279,7 +279,7 @@ module Lain
       # place the answer is -- `docker version --format '{{.Client.Version}}'`
       # returns a bare `6.1.0` under the podman shim, no vendor word in it.
       class Prober
-        QUESTION = [CLI, "--version"].freeze
+        QUESTION = Shell::Term.of([CLI, "--version"])
 
         # A CEILING, not the deadline: the probe gets the SMALLER of this and
         # the deadline of the command it is asked for, so a generous caller does
@@ -301,7 +301,7 @@ module Lain
         #   {Sink::Null} and the version line cannot land in a tool result or in
         #   the Journal, a stray line in somebody else's record.
         def call(timeout)
-          @exec.call(command: [QUESTION], cwd: @cwd, env: {}, timeout: [TIMEOUT, timeout].min).stdout
+          @exec.call(command: QUESTION, cwd: @cwd, env: {}, timeout: [TIMEOUT, timeout].min).stdout
         rescue StandardError
           nil
         end
@@ -396,7 +396,7 @@ module Lain
           remaining = ends_by - @clock.call
           return false unless remaining.positive?
 
-          @exec.call(command: [argv], cwd: @cwd, env: {}, timeout: remaining)
+          @exec.call(command: Shell::Term.of(argv), cwd: @cwd, env: {}, timeout: remaining)
           true
         rescue Timeout
           false

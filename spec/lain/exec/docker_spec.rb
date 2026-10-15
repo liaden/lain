@@ -164,8 +164,8 @@ RSpec.describe Lain::Exec::Docker do
   # One argv Array inside a one-stage TERM: the docker client is exec'd
   # directly, never through a shell of ours.
   def argv
-    expect(inner.command.size).to eq(1)
-    inner.command.first
+    expect(inner.command.stages.size).to eq(1)
+    inner.command.stages.first.argv
   end
 
   def flag_values(name) = argv.each_cons(2).select { |flag, _| flag == name }.map(&:last)
@@ -244,8 +244,8 @@ RSpec.describe Lain::Exec::Docker do
       one.call(command: "echo hi", cwd: project, env: {}, timeout: 5)
       two.call(command: "echo hi", cwd: project, env: {}, timeout: 5)
 
-      name_one = name_flag(one_inner.command.first)
-      name_two = name_flag(two_inner.command.first)
+      name_one = name_flag(one_inner.command.stages.first.argv)
+      name_two = name_flag(two_inner.command.stages.first.argv)
 
       expect([name_one, name_two]).to all(be_a(String))
       expect(name_one).not_to eq(name_two)
@@ -408,7 +408,7 @@ RSpec.describe Lain::Exec::Docker do
     it "asks the client through the same backend it runs the client through" do
       run
 
-      expect(inner.calls.first[:command]).to eq([%w[docker --version]])
+      expect(inner.calls.first[:command]).to eq(Lain::Shell::Term.of(%w[docker --version]))
     end
 
     # THE QUESTION IS SPENT FROM THE CALLER'S BUDGET. A command asking for one
@@ -472,7 +472,7 @@ RSpec.describe Lain::Exec::Docker do
         attr_reader :command
 
         def call(command:, **)
-          raise Lain::Exec::Timeout, "the client never answered" if command.flatten.include?("--version")
+          raise Lain::Exec::Timeout, "the client never answered" if command.words.include?("--version")
 
           @command = command
           Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
@@ -482,7 +482,7 @@ RSpec.describe Lain::Exec::Docker do
 
       expect { run_through(backend) }.not_to raise_error
 
-      expect(refusing.command.first).to include("--user")
+      expect(refusing.command.words).to include("--user")
     end
   end
 
@@ -601,7 +601,7 @@ RSpec.describe Lain::Exec::Docker do
 
   describe "a shape it cannot run" do
     it "runs a single-stage term as argv, with no shell inside the container either" do
-      run(command: [%w[grep -r foo .]])
+      run(command: Lain::Shell::Term.of(%w[grep -r foo .]))
 
       expect(argv.last(5)).to eq(["img:1", "grep", "-r", "foo", "."])
     end
@@ -611,12 +611,12 @@ RSpec.describe Lain::Exec::Docker do
     # `sh -c` the very command the term path exists to keep away from it
     # (Shell::Verdict's own rule, and {Exec::Core} refuses for it too).
     it "refuses a piped term loudly rather than joining it back into a shell string" do
-      expect { run(command: [%w[grep -r foo .], %w[wc -l]]) }
+      expect { run(command: Lain::Shell::Term.of(%w[grep -r foo .], %w[wc -l])) }
         .to raise_error(Lain::Exec::Unsupported, /one argv|pipe/i)
     end
 
     it "says the stages out loud in the refusal, so the caller can see what it handed over" do
-      expect { run(command: [%w[grep foo], %w[wc -l]]) }
+      expect { run(command: Lain::Shell::Term.of(%w[grep foo], %w[wc -l])) }
         .to raise_error(Lain::Exec::Unsupported, /grep/)
     end
 
@@ -630,7 +630,7 @@ RSpec.describe Lain::Exec::Docker do
       decision = Lain::Shell::Verdict.new.call("grep -r foo . | wc -l")
 
       expect(decision).to be_allow
-      expect(decision.term.size).to be > 1
+      expect(decision.term.stages.size).to be > 1
       expect { run(command: decision.term) }.to raise_error(Lain::Exec::Unsupported)
     end
 
@@ -638,8 +638,8 @@ RSpec.describe Lain::Exec::Docker do
     # which is why the predicate is asked WITH a term: one stage runs, a pipe
     # cannot, and no argument-less question could say so.
     def run_term(term) = run(command: term)
-    def terms_taken = [[%w[grep -r foo .]]]
-    def terms_refused = [[%w[grep -r foo .], %w[wc -l]]]
+    def terms_taken = [Lain::Shell::Term.of(%w[grep -r foo .])]
+    def terms_refused = [Lain::Shell::Term.of(%w[grep -r foo .], %w[wc -l])]
 
     it_behaves_like "an exec backend answering for a term"
 
@@ -649,8 +649,8 @@ RSpec.describe Lain::Exec::Docker do
     it "answers about the caller's term, never about the docker argv it wraps" do
       run(command: "echo hi")
 
-      expect(inner.command.size).to eq(1)
-      expect(backend.takes_term?([%w[echo hi], %w[cat]])).to be(false)
+      expect(inner.command.stages.size).to eq(1)
+      expect(backend.takes_term?(Lain::Shell::Term.of(%w[echo hi], %w[cat]))).to be(false)
     end
   end
 
@@ -688,7 +688,7 @@ RSpec.describe Lain::Exec::Docker do
         define_method(:initialize) { @commands = [] }
 
         define_method(:call) do |command:, timeout:, **|
-          argv = command.first
+          argv = command.stages.first.argv
           @commands << { argv:, timeout: }
           outer.cleanup_answer(argv, kill:, remove:)
         end
@@ -759,8 +759,8 @@ RSpec.describe Lain::Exec::Docker do
       inner = timing_out_inner
       stop = Async::Stop.new
       inner.define_singleton_method(:call) do |command:, **|
-        @commands << { argv: command.first }
-        raise stop if command.first[1] == "run"
+        @commands << { argv: command.stages.first.argv }
+        raise stop if command.words[1] == "run"
 
         Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
       end
@@ -901,7 +901,7 @@ RSpec.describe Lain::Exec::Docker do
     # client, and the scenario below cannot be reached honestly.
     def container_host_reaches_a_black_hole?
       ENV["CONTAINER_HOST"] = black_hole
-      Lain::Exec::Local.new.call(command: [%w[docker kill lain-t44-container-host-probe]],
+      Lain::Exec::Local.new.call(command: Lain::Shell::Term.of(%w[docker kill lain-t44-container-host-probe]),
                                  cwd: Dir.pwd, env: {}, timeout: 1)
       false
     rescue Lain::Exec::Timeout

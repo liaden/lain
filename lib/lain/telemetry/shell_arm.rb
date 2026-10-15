@@ -3,14 +3,15 @@
 module Lain
   module Telemetry
     module Carriers
-      # The three names held VERBATIM rather than referenced, so telemetry
-      # depends on the shell tier for nothing. {Shell::Verdict::Decision} is the
-      # authority; a fourth name added there and not here refuses the record
-      # loudly rather than journalling a name no decision answers to.
+      # The three names held VERBATIM rather than referenced, so the verdict
+      # names do not tie telemetry to the shell tier; the term does, as a
+      # {Shell::Term}. {Shell::Verdict::Decision} is the authority for the
+      # names; a fourth added there and not here refuses the record loudly
+      # rather than journalling a name no decision answers to.
       #
-      # `term` is checked for SHAPE and for agreement with the verdict, which is
-      # the record's whole content: a stage list is an argv list, and only an
-      # allow ever authorised one.
+      # `term` is checked for TYPE and for agreement with the verdict, which is
+      # the record's whole content: it is a {Shell::Term}, and only an allow
+      # ever authorised a non-empty one.
       #
       # `arm` is enumerated the same way and for the same reason, over the two
       # shapes {Tools::Bash} can hand a backend. It is held VERBATIM here too:
@@ -31,7 +32,7 @@ module Lain
                         inclusion: { in: %i[term string],
                                      message: "must be term or string, got %<value>s" }
         validates :reason, presence: { message: "must carry the verdict's reason, got nil" }
-        validate :term_is_argv_stages
+        validate :term_is_a_term
         validate :term_absent_unless_allowed
         validate :term_arm_needs_an_authorised_term
 
@@ -41,10 +42,10 @@ module Lain
         # already a Null Object ({Shell::Verdict::NO_TERM}) and a record that
         # accepted nil would hand every reader back the guard that object exists
         # to remove.
-        def term_is_argv_stages
-          return if term.is_a?(Array) && term.all? { |stage| stage.is_a?(Array) && stage.all?(String) }
+        def term_is_a_term
+          return if term.is_a?(Shell::Term)
 
-          errors.add(:term, "must be an Array of argv Arrays, empty when there is none, got #{term.inspect}")
+          errors.add(:term, "must be a Shell::Term, Shell::Term::NONE when there is none, got #{term.inspect}")
         end
 
         # A record naming an abstention while carrying the argv of a chosen arm
@@ -80,7 +81,7 @@ module Lain
     # `verdict` is what {Shell::Verdict} DECIDED about the command; `arm` is what
     # actually ran. Only an allow ever authorises a term, but an allow does not
     # mean one was taken: {Tools::Bash} offers the term only where the backend
-    # has a shape for it, and {Exec::Docker#takes_term?} is `term.size == 1` --
+    # has a shape for it, and {Exec::Docker#takes_term?} takes one stage only --
     # so under `--exec docker` every allowed PIPE, `cat README.md | head -20`
     # included, falls back to the model's own string and runs as
     # `["sh", "-c", command]` inside the container. A record carrying the verdict
@@ -108,9 +109,11 @@ module Lain
     # to copy a journal record.
     #
     # Every String is interned on the way in, which is both what keeps the record
-    # `Ractor.shareable?` and what makes the repetition free: a term read back off
-    # the Journal arrives as fresh mutable Strings, and a bench run's terms are
-    # the same few program names many thousands of times over.
+    # `Ractor.shareable?` and what makes the repetition free: a bench run's terms
+    # are the same few program names many thousands of times over. The term
+    # interns its own words when it is built, {Shell::Term.from_journal}
+    # included, and journals through {Shell::Term#to_journal} because a `Data`
+    # has no JSON form of its own.
     ShellArm = Data.define(:tool_use_id, :verdict, :arm, :reason, :term, :claim) do
       include Journalable
 
@@ -122,7 +125,7 @@ module Lain
       #   one question this record exists to answer, and a guess at it would be
       #   wrong for every allowed pipe under `--exec docker`.
       # @param reason [String] the decision's own reason, verbatim
-      # @param term [Array<Array<String>>] the argv stages an allow authorised
+      # @param term [Shell::Term] the argv stages an allow authorised
       def initialize(tool_use_id:, verdict:, arm:, reason:, term: Shell::Verdict::NO_TERM)
         verdict = verdict.to_s.to_sym
         arm = arm.to_s.to_sym
@@ -151,17 +154,17 @@ module Lain
       #   which is the question "did this command avoid a shell" asks.
       def term_arm? = arm == :term
 
+      # @return [Hash{String=>Object}] the attributes, string-keyed, tagged,
+      #   with the term in its JSON-safe shape
+      def to_journal = super.merge("term" => term.to_journal)
+
       private
 
       # An empty term is handed back as {Shell::Verdict::NO_TERM} ITSELF rather
-      # than as a fresh frozen Array, so every abstention and denial in a run
+      # than as another empty term, so every abstention and denial in a run
       # shares the one object a Null Object is meant to be. A rebuilt one would
-      # still read `== []`, which is why the identity is asserted in the spec.
-      def interned_term(term)
-        return Shell::Verdict::NO_TERM if term.empty?
-
-        term.map { |stage| stage.map { |word| -word.to_s }.freeze }.freeze
-      end
+      # still compare equal, which is why the identity is asserted in the spec.
+      def interned_term(term) = term.empty? ? Shell::Verdict::NO_TERM : term
     end
   end
 end

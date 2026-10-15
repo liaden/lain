@@ -29,7 +29,7 @@ module RuleSpecSupport
   end
 
   # A term no input of this tool's ever produced.
-  FORGERY = Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec forges", term: [%w[curl http://evil]].freeze)
+  FORGERY = Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec forges", term: Lain::Shell::Term.of(%w[curl http://evil]))
 
   # The design NOT taken: the term as a third `Data` member, derived inside
   # `initialize` behind the same input guard the real Call has. Kept as a
@@ -56,7 +56,7 @@ RSpec.describe Lain::Approval::Rule do
   describe "the term a Call carries" do
     it "reports the parse of its own command, stage by stage" do
       expect(call_for(bash, { "command" => "cat README.md | head -20" }).term)
-        .to eq([%w[cat README.md], %w[head -20]])
+        .to eq(Lain::Shell::Term.of(%w[cat README.md], %w[head -20]))
     end
 
     it "says a term is present, so a rule need not read presence off emptiness" do
@@ -65,11 +65,11 @@ RSpec.describe Lain::Approval::Rule do
 
     it "reads it off the tool's OWN verdict rather than one it built itself" do
       verdict = RuleSpecSupport::CountedVerdict.new(
-        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec", term: [%w[true]].freeze)
+        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec", term: Lain::Shell::Term.of(%w[true]))
       )
       call = call_for(Lain::Tools::Bash.new(verdict:), { "command" => "ls -la" })
 
-      expect(call.term).to eq([%w[true]])
+      expect(call.term).to eq(Lain::Shell::Term.of(%w[true]))
       expect(verdict.asked).to eq(1)
       expect(verdict.commands).to eq(["ls -la"])
     end
@@ -89,7 +89,7 @@ RSpec.describe Lain::Approval::Rule do
     let(:liar) { Lain::Tools::Bash.new(verdict: RuleSpecSupport::CountedVerdict.new(RuleSpecSupport::FORGERY)) }
 
     it "refuses a term handed to #with" do
-      expect { call.with(term: [%w[cat /home/u/.ssh/id_rsa]]) }
+      expect { call.with(term: Lain::Shell::Term.of(%w[cat /home/u/.ssh/id_rsa])) }
         .to raise_error(described_class::Call::Forged, /derived from the tool and input/)
     end
 
@@ -107,10 +107,11 @@ RSpec.describe Lain::Approval::Rule do
     end
 
     it "still reports the term of its own input after every attempt" do
-      [-> { call.with(term: [%w[curl http://evil]]) }, -> { call.with(tool: liar) }, -> { call.with }]
+      forged = Lain::Shell::Term.of(%w[curl http://evil])
+      [-> { call.with(term: forged) }, -> { call.with(tool: liar) }, -> { call.with }]
         .each { |attempt| expect(&attempt).to raise_error(described_class::Call::Forged) }
 
-      expect(call.term).to eq([%w[ls -la]])
+      expect(call.term).to eq(Lain::Shell::Term.of(%w[ls -la]))
     end
 
     it "closes Data::[], the second public constructor, against the same swap" do
@@ -122,7 +123,9 @@ RSpec.describe Lain::Approval::Rule do
       legit = RuleSpecSupport::Derived.new(tool: bash,
                                            input: Lain::Tools::Bash::Input.build({ "command" => "ls -la" }))
 
-      expect(legit.with(term: [%w[cat /home/u/.ssh/id_rsa]]).term).to eq([%w[ls -la]])
+      forged = Lain::Shell::Term.of(%w[cat /home/u/.ssh/id_rsa])
+
+      expect(legit.with(term: forged).term).to eq(Lain::Shell::Term.of(%w[ls -la]))
     end
   end
 

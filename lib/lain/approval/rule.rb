@@ -137,7 +137,7 @@ module Lain
         # differ only in its name.
         #
         # `NO_TERM` is named inside the method rather than copied into a second
-        # empty Array: naming the shipped one keeps absence a single object --
+        # empty term: naming the shipped one keeps absence a single object --
         # which {#term?} then has something to test against.
         class Termless
           def term = Shell::Verdict::NO_TERM
@@ -226,8 +226,7 @@ module Lain
         # `Call.members` is unchanged, which is what leaves
         # {Remembered::Entry.for_call}'s key byte-identical.
         #
-        # @return [Array<Array<String>>] one argv per stage, or
-        #   {Shell::Verdict::NO_TERM}
+        # @return [Shell::Term] the argv stages, or {Shell::Verdict::NO_TERM}
         def term = parsed.term
 
         # Absence, asked rather than inferred -- and derived from the TERM, not
@@ -238,7 +237,7 @@ module Lain
         # Identity against the Null rather than `#empty?`. MEASURED: every
         # absence -- an abstention, a denial, and a tool with no parse to offer
         # -- answers the one shipped {Shell::Verdict::NO_TERM} object, while an
-        # allow answers a fresh Array. `#empty?` would agree today, and not by
+        # allow answers a fresh term. `#empty?` would agree today, and not by
         # luck: `Doubts#nothing_to_run?` puts a cause on empty stages, on an
         # empty argv and on an empty word, and an allow is exactly the result
         # whose causes are empty -- so a zero-stage allow is unreachable by

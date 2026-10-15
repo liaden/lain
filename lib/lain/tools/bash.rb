@@ -3,8 +3,8 @@
 module Lain
   module Tools
     # Tier 3 (free-form): runs a shell command via `sh -c`. Handing the backend
-    # a STRING command rather than an argv Array is exactly what makes this tier
-    # 3 rather than tier 2 -- an Array `exec`s with no shell at all, while a
+    # a STRING command rather than a {Shell::Term} is exactly what makes this tier
+    # 3 rather than tier 2 -- a term `exec`s with no shell at all, while a
     # String goes through the shell and the model fully controls that string.
     #
     # == Two arms, chosen by {Shell::Verdict}, and one rendering
@@ -118,7 +118,7 @@ module Lain
       # mentions against the real verdict rather than restating the rule.
       #
       # "More than one line" rather than "no newlines", because a TRAILING one
-      # still allows: `"ls -la\n"` reaches allow with the term `[["ls","-la"]]`.
+      # still allows: `"ls -la\n"` reaches allow with the one-stage term `ls -la`.
       class Input < Tool::Input
         field :command, :string, required: true,
                                  description: "Shell command to run. A command whose every stage is a literal " \

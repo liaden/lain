@@ -188,19 +188,19 @@ RSpec.describe Lain::Exec::Core do
 
     def run_term(term) = run(command: term)
     def terms_taken = []
-    def terms_refused = [[%w[printf hi]], [%w[grep foo], %w[wc -l]]]
+    def terms_refused = [Lain::Shell::Term.of(%w[printf hi]), Lain::Shell::Term.of(%w[grep foo], %w[wc -l])]
 
     it_behaves_like "an exec backend answering for a term"
 
     it "refuses a term by name, rather than packing one the daemon cannot decode" do
-      expect { run(command: [%w[printf hi]]) }
+      expect { run(command: Lain::Shell::Term.of(%w[printf hi])) }
         .to raise_error(Lain::Exec::Unsupported, /no wire shape for a term/)
     end
 
     # Nothing reaches the wire, and nothing falls back to the string arm: a join
     # back would hand `sh -c` the very command the term path keeps away from it.
     it "refuses at the door, so neither a packed term nor a rejoined string is sent" do
-      expect { run(command: [%w[printf hi]]) }.to raise_error(Lain::Exec::Unsupported)
+      expect { run(command: Lain::Shell::Term.of(%w[printf hi])) }.to raise_error(Lain::Exec::Unsupported)
 
       expect(client.params).to be_nil
     end
