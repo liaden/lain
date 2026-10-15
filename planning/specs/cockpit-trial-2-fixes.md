@@ -1,6 +1,6 @@
 # Cockpit trial 2 fixes: the cloud arm finishes a long write, notes reach a running agent, and the transcript shows both sides
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -930,3 +930,31 @@ After the last card lands:
 - `git worktree list` at start: `/home/tara/dev/lain c7f0846f [main]`, `/home/tara/tmp/lain-qa-2026-10-08-tree b6a3efb2 (detached HEAD)`. Branches: `flake/review`, `main`, `spike/combined`, `spike/combined2`.
 - Commit checks (`.pre-commit-config.yaml`): whitespace, EOF, yaml, merge-conflict and shebang hooks; `bundle exec rake compile check` (rubocop over the repo plus `rake pspec`, about 60s); `bundle exec yard-lint --staged`; `bin/lint-gherkin-docs` on staged plan docs; `bin/lint-commit-msg` (subject 72 chars max, no period, no dashes, no trailers); `bin/lint-price-freshness`. Rust hooks only on Rust files. Agent-runnable: `bundle exec rubocop <paths>`, `bundle exec yard-lint <paths>`, `bundle exec rspec <spec paths>`.
 - The suite shares `TMPDIR` and is not safe beside other tests: landings run on a quiet box. No paths need user approval.
+- T1, T2, T3, T5, T6, T11, T17 started from `a5454c29` (T17 on opus, the rest on sonnet).
+- T17 review note for T12: on ollama, several text blocks beside tool results are joined with no separator (text_of), so a note and a reminder go out glued; the tags delimit them today. A newline join changes every multi-block message's bytes and would need its own card.
+- T1 landed `320745d0`. T3 landed `f49d41d8`. T17 landed `0baee5a2`. T2 landed `f9122216` (2 extra fix rounds: the cut is judged per raw canonical line with markers counted; `input_pane.rb:309` joined its Files). T6 landed `4a2bc794` (the first hook run failed on 2 rubocop offenses in the main session's wiring; `build_repl` now hands the Repl's construction to `repl_over`). T11 landed `d1928688`.
+- T5 scope gained `lib/lain/frontend/neovim/inbox_view.rb` and its spec, for `settled` on `InboxView::Unwired`.
+- T4 and T12 started from `d1928688` (T12 on opus).
+- T5 landed `60a5dd0c`. T4 landed `e76a37c8`. Landed beside a running agent, per the user's standing preference for a noisier box during landings. T7 and T10 started from `e76a37c8`.
+- T12 stopped on its third stop condition: a first prompt's stranded-prompt fold (`Agent#prompted`) and a `/rewind` past the root give the chain a new root, stranding a captured note addressed to the old one. Compaction handoff does not. Ruling: `Live` folds by its own Log, and a note is pending while no turn on the current chain names it, whatever its `to`; a note whose folding turn is rewound away refolds. The test-only `A1MailboxSeam` examples in `agent_spec.rb` convert to a plain `Mailbox::Source`.
+- T10 scope gained `lib/lain/cli/repl.rb`, `lib/lain/frontend/neovim.rb` and their specs: `epic_docs:` travels beside `epic:` through `Repl#run`, `attach_editor` and `Neovim.new` to `Surfaces`.
+- T10 behaviour for T15 to document: once the human closes a `lain://epic` window, a later write refreshes the hidden buffer and does not reopen the window.
+- T10 landed `60d2e035`.
+- T7 scope gained `spec/lain/seams/human_reply_handback_spec.rb`: its scrollback exclusion now pins the echo's bound (`TTY::ECHO_WIDTH`, 120) instead of banning any part of the reply.
+- T12 review (REQUEST-CHANGES): a fresh `Live` on a resumed chat could rebuild an earlier note's exact bytes and treat it as consumed. Ruling: a per-`Live` random nonce rides each note body. Accepted quirk: a plain `/resend` of a buffer that already holds a pending note claims nothing, so the model sees the note twice.
+- User ruling: a mid-run note folds into exactly 1 model request, as the card says; later requests carry only the model's reply to it.
+- T12 landed `fe10e023` (the journal write happens outside `Live`'s lock, so a post never waits on disk). For T13: a sink raising after the journal leg re-journals the same message record on the next capture; readers dedupe by digest. T7 landed `45c6b490` (adds `TTY::ECHO_WIDTH`, 120, beyond the card).
+- T8 and T14 started from `45c6b490`.
+- T14 scope gained `spec/lain/prompt/slots_spec.rb`: the researcher role prompt's new sentence moves its pinned digest.
+- Known gap from T8, not fixed here: a resumed chat's Session comes from `SessionRecord::Replay#session` with neither `worker_env` nor `root`, so its files-written line shows paths relative to the process cwd. A follow-up should pass both through Replay.
+- T8 landed `1264dd4c` (Session gained `root:`; wiring passes the project root, with a wiring spec). T9 started from `1264dd4c`. T14 scope gained `lib/lain/context/mailbox.rb` and its spec, for `post` and `pending?` on `Mailbox::Null`.
+- T14 landed `a0e29ed2` (first hook run red on a flake, recorded in `docs/toolchain-traps.md` at `5280689b`; a second example of the Shift+Enter reset group, so that group wants a card). T16 started from `a0e29ed2`.
+- T9 landed `5efb2d48` (every decorator answers `stamped?`; the other decorator files joined its scope). T16 landed `ff03fb7e` (the Seam member is `display_channel`, because `display` shadows `Kernel#display`).
+- Known gap from T16, not fixed here: a leased child's write paths are relative to its own worktree, so "dev wrote src/main.rs" reads as the parent's checkout. The lease name belongs on the line for a leased child; a follow-up card, with a spec.
+- T13 started from `ff03fb7e` (opus).
+- T15 started from `ff03fb7e` beside T13's review; it reads T13's strings from the T13 worktree and lists them for a recheck.
+- T13 review (REQUEST-CHANGES): `spec/e2e/stop_while_busy_spec.rb` pinned the held-line behaviour the card changes and joined T13's scope; the "joins your next prompt" line now sits in an `ensure` guarded against a closing session. Follow-ups, not fixed here: HumanNotes reads "an ask is running" from `Conductor#ask_in_flight?` while Intake asks its sink, 2 sources for 1 decision; in a goal-driven chat the "joins your next prompt" line means the next driven iteration; `Live#pending?` walks the chain once per settled line after the first note.
+- T13 second review (REQUEST-CHANGES): the run's teardown counted as in flight, so a next prompt typed right after the final reply became a note, and `fork_resume` and `wire_contract` e2e journeys went flaky. User ruling 2026-10-15: a line is a note only while a model call or a tool is running; once the final reply has streamed, prose is the next prompt again. A third round (fix round 2) with a review, approved by the user. Both journeys joined T13's scope.
+- T13 landed `7927f31f` after a third round the user approved (new `Agent#working?`; the first hook run was red on a third Shift+Enter reset flake, recorded at `5141aaa1`). T15 landed `c832ad94`, with its note wording updated to the narrowed rule.
+- Close-out 2026-10-15: `rake pspec` on a quiet box 23,420 examples, 0 failures; `rubocop` clean; `bin/comment-census --check-tickets` and `bin/zeitwerk-census --check` clean; `pre-commit run --all-files` green in a clean worktree at `5a266f34`. `bin/spec-census --check` reads assertions 186 > 184, the same count as the plan's base `a5454c29`; this plan's one new unfailable example was rewritten at `5a266f34`. The ollama server a reviewer started was stopped. `git worktree list` and `git branch --list` match the start of the run.
+- Owed by the user: `/manual-qa greenfield-epic`, then `/manual-qa cockpit-surfaces epic-tier subagents-and-backends`, then the frugirl rerun (Integration check 5).

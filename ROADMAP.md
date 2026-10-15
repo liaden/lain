@@ -1994,13 +1994,17 @@ XDG path relative, which put machine state back inside the user's repository)
    All 26 landed, `7b528bfa..90e6d2ed`. Follow-ups: approval layering (`/mode auto` escalating an unsure
    call, the secret oracle as first triage; `planning/approval-layering-research-2026-10.md`), a child's
    grep through a link out of the project, and a link repointed before the oracle claims a pending.
-56. **Planned (2026-10-09)**: `planning/specs/cockpit-trial-2-fixes.md`, the second frugirl trial on
+56. **Done (2026-10-15)**: `planning/specs/cockpit-trial-2-fixes.md`, the second frugirl trial on
    ollama-cloud, which never wrote `research.md`: an ollama stall limit that waits out a whole tool
    call, notes typed mid-run that join the agent's next request through a live Mailbox, a near-ceiling
    wrap-up note for children, prompts, answers and written files echoed in the transcript, an
    answered question buffer that closes, `lain://epic/<slug>/<doc>` and `lain epic show`, a pasted
    paragraph with no paste markers, a child's walk of a related directory itself, and text beside
    tool results that the ollama encoder no longer drops. 17 cards.
+   All 17 landed, `320745d0..5a266f34`. A note is taken only while a model call or a tool runs, and
+   folds into exactly 1 request. Follow-ups: a resumed chat's files-written paths (Replay builds its
+   Session with no root), a leased child's paths named without its worktree, the Shift+Enter reset
+   flake family (3 recorded), 2 sources for "an ask is running" in the note path, and the frugirl rerun.
 
 ## Map of the documents
 
