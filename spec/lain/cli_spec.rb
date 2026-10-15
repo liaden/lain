@@ -551,10 +551,12 @@ RSpec.describe LainCLI do
   end
 
   describe "chat --approval" do
-    it "declares ask, auto and bypass as the values, with ask the default" do
+    # The default lives on the launch option, not in Mode.new, so a chat starts
+    # in auto while every Mode built directly keeps ask.
+    it "declares ask, auto and bypass as the values, with auto the default" do
       option = described_class.commands.fetch("chat").options.fetch(:approval)
 
-      expect([option.enum, option.default]).to eq([%w[ask auto bypass], "ask"])
+      expect([option.enum, option.default]).to eq([%w[ask auto bypass], "auto"])
     end
   end
 

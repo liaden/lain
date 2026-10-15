@@ -29,7 +29,7 @@ RSpec.describe Lain::CLI::Command::Mode do
     it "reports the scope, the approval and every active layer" do
       switch = switch_for(:ask, :goal)
 
-      expect(command.call("", env_for(switch))).to eq("checkout ask: goal (GOAL)")
+      expect(command.call("", env_for(switch))).to eq("checkout ask (ASK): goal (GOAL)")
     end
 
     it "reports without switching or journaling" do
@@ -85,7 +85,7 @@ RSpec.describe Lain::CLI::Command::Mode do
       switch = switch_for(:ask, :goal)
 
       expect(command.call("bypass", env_for(switch)))
-        .to eq("checkout ask: goal (GOAL) -> checkout bypass (BYPASS): goal (GOAL)")
+        .to eq("checkout ask (ASK): goal (GOAL) -> checkout bypass (BYPASS): goal (GOAL)")
     end
 
     it "writes nothing for a token naming the value already in force" do
@@ -199,6 +199,13 @@ RSpec.describe Lain::CLI::Command::Mode do
       expect([switch.scope.name, switch.approval.name]).to eq(%i[plan ask])
     end
 
+    it "lowers auto to ask with no layers, since auto still decides calls without asking" do
+      switch = switch_for(:auto, :goal)
+      command.call("!", env_for(switch))
+
+      expect([switch.approval.name, switch.layers.names]).to eq([:ask, []])
+    end
+
     it "clears every layer too -- a reset that leaves a layer on has not reset anything" do
       switch = switch_for(:bypass, :vi, :goal, :notify)
       command.call("!", env_for(switch))
@@ -237,7 +244,7 @@ RSpec.describe Lain::CLI::Command::Mode do
       it "says in words that plan scope could not be entered, and why" do
         told = command.call("!", env_for(board.mode_switch))
 
-        expect(told).to include("checkout ask: no layers active", "plan scope could not be entered",
+        expect(told).to include("checkout ask (ASK): no layers active", "plan scope could not be entered",
                                 "needs a project")
       end
     end
@@ -290,7 +297,8 @@ RSpec.describe Lain::CLI::Command::Mode do
       it "says the move to plan scope waits until the turn ends" do
         told = command.call("!", env_for(board.mode_switch, dispatching: true))
 
-        expect(told).to include("checkout ask: no layers active", "plan scope waits until the turn in flight ends")
+        expect(told).to include("checkout ask (ASK): no layers active",
+                                "plan scope waits until the turn in flight ends")
       end
     end
 

@@ -85,7 +85,7 @@ RSpec.describe Lain::Mode do
 
       description = mode.describe
 
-      expect(description).to start_with("checkout ask:")
+      expect(description).to start_with("checkout ask (ASK):")
       expect(precedence_order.map { |name| Lain::Mode::Layer.for(name).to_s })
         .to all(satisfy { |rendered| description.include?(rendered) })
 
@@ -94,7 +94,7 @@ RSpec.describe Lain::Mode do
     end
 
     it "still names the axes when no layers are active, and says so" do
-      expect(described_class.new.describe).to eq("checkout ask: no layers active")
+      expect(described_class.new.describe).to eq("checkout ask (ASK): no layers active")
     end
 
     it "renders an axis value's own lighter too, when it has one" do

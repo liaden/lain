@@ -6,7 +6,8 @@
 RSpec.describe "approving and denying a parked call in a real cockpit", :e2e do
   def prompt = "Use the bash tool to run exactly: touch made-by-agent.txt. If it is refused, do not try again."
 
-  def flags = %w[--provider ollama --model qwen3:4b --seed 1 --temperature 0]
+  # A launched chat defaults to auto, whose judge would answer the gated call before it parks.
+  def flags = %w[--provider ollama --model qwen3:4b --seed 1 --temperature 0 --approval ask]
 
   def patience = E2E::Cassette.recording? ? 300 : 20
 

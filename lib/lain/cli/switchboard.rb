@@ -109,6 +109,7 @@ module Lain
                    approval_timeout: Approval::Queue::DEFAULT_TIMEOUT)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:,
+            # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
 
@@ -325,6 +326,16 @@ module Lain
         end
       end
 
+      # Writes the mode the session launched in, once the session header is
+      # down. A second call writes nothing.
+      #
+      # @return [self]
+      def journal_launch
+        @launch.call
+        @launch = -> {}
+        self
+      end
+
       private
 
       # What a refused call is REPORTED as, which is a different question from
@@ -423,16 +434,15 @@ module Lain
 
       def faults = Approval::Escalation::Faults.new(@journal)
 
-      # A mode the launch flags moved IS journaled, as the flip `/mode` would
-      # have written to reach it: the session header carries no flags, and the
-      # status line and a bench reader fold the mode off the journal alone, so
-      # an unrecorded approval would show nowhere but the live prompt until the
-      # first `/mode`. A launch that moves nothing writes nothing, so a plain
-      # chat's record is unchanged.
+      # Every launch journals the mode it started in: the session header
+      # carries no flags, and the status line and a bench reader fold the mode
+      # off the journal alone, so an unrecorded start would read as silence on
+      # the HUD (auto's lighter, not ask's) and as UNRECORDED to a comparison.
+      # Deferred to {#journal_launch}, because the board is built before the
+      # session header and the header must stay a session file's first record.
       def launched(initial)
-        floor = initial.with(approval: :ask, layers: Mode::LayerSet.empty)
-        Mode::Switch.new(floor, journal: @journal).tap do |switch|
-          switch.switch(initial, surface: LAUNCH_SURFACE)
+        Mode::Switch.new(initial, journal: @journal).tap do |switch|
+          @launch = -> { switch.journal_start(surface: LAUNCH_SURFACE) }
         end
       end
 

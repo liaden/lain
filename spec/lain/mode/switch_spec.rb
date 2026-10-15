@@ -13,6 +13,18 @@ RSpec.describe Lain::Mode::Switch do
     Lain::Journal.records(journal_io.string.lines, type: "mode_switch").to_a
   end
 
+  describe "#journal_start" do
+    it "journals the mode in force as a flip from itself, under the given surface, and answers it" do
+      started = described_class.new(Lain::Mode.new(approval: :auto), journal:)
+
+      expect(started.journal_start(surface: "launch")).to eq(Lain::Mode.new(approval: :auto))
+      expect(flips).to contain_exactly(
+        a_hash_including("from_scope" => "checkout", "to_scope" => "checkout", "from_approval" => "auto",
+                         "to_approval" => "auto", "from_layers" => [], "to_layers" => [], "surface" => "launch")
+      )
+    end
+  end
+
   describe "the delegating slot (a stand-in for the Mode its holder was built with)" do
     it "answers the mode it currently holds" do
       expect(switch.current).to be(asking)

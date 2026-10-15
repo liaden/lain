@@ -4,7 +4,8 @@
 # what typing in the input pane does while an ask is running, parked on an approval or parked on a
 # question. A held request cannot be recorded, so nothing here replays a cassette.
 RSpec.describe "typing in a real cockpit while the model is busy", :e2e do
-  def flags = %w[--provider ollama --model qwen3:4b --seed 1 --temperature 0]
+  # A launched chat defaults to auto, whose judge would answer the gated call before it parks.
+  def flags = %w[--provider ollama --model qwen3:4b --seed 1 --temperature 0 --approval ask]
 
   def line(message, done: false)
     body = { "model" => "qwen3:4b", "message" => { "role" => "assistant", "content" => "" }.merge(message),

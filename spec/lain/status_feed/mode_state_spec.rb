@@ -5,8 +5,8 @@
 # composition itself -- which is where the "one rule, one home" argument for
 # publishing a composed lighter instead of the raw names actually has to hold.
 RSpec.describe Lain::StatusFeed::ModeState do
-  def record(to_approval: :ask, to_scope: :checkout, to_layers: [], surface: "tty")
-    Lain::Telemetry::ModeSwitch.new(from_scope: :checkout, to_scope:, from_approval: :ask, to_approval:,
+  def record(to_approval: :auto, to_scope: :checkout, to_layers: [], surface: "tty")
+    Lain::Telemetry::ModeSwitch.new(from_scope: :checkout, to_scope:, from_approval: :auto, to_approval:,
                                     from_layers: [], to_layers:, surface:)
   end
 
@@ -30,7 +30,7 @@ RSpec.describe Lain::StatusFeed::ModeState do
     it "publishes a name the lighter dropped, so an empty lighter still names what is on" do
       state = described_class.of(record(to_layers: %i[notify]))
 
-      expect(state.published.values_at("scope", "approval", "layers")).to eq(["checkout", "ask", %w[notify]])
+      expect(state.published.values_at("scope", "approval", "layers")).to eq(["checkout", "auto", %w[notify]])
     end
 
     it "appends every active layer's lighter after the axes'" do
@@ -48,10 +48,14 @@ RSpec.describe Lain::StatusFeed::ModeState do
         .to eq("BYPASS GOAL BELL")
     end
 
-    # checkout and ask declare EMPTY lighters: the starting mode is silent, and
+    # checkout and auto declare EMPTY lighters: the launch mode is silent, and
     # that rule lives in the axes' tables rather than in three renderers.
     it "composes an empty lighter for the silent starting mode" do
       expect(described_class.of(record).published["mode_lighter"]).to eq("")
+    end
+
+    it "lights ask, so the HUD says the session will wait on a human" do
+      expect(described_class.of(record(to_approval: :ask)).published["mode_lighter"]).to eq("ASK")
     end
 
     it "still names the layers under axes whose own lighters are empty" do

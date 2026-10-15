@@ -321,9 +321,9 @@ one round trip, never a loop — Lain owns the loop, because the loop is the obj
   entry is the compose marker.
 - **A mode is scope × approval**: scope (`checkout`/`plan`) decides *where* a named write or
   command may land, approval (`ask`/`auto`/`bypass`) decides *who* answers a gated call. `auto`
-  asks a judge first and parks only what it cannot settle; `bypass` approves what the rules
-  allow. Every level but an unattended `ask` keeps the triage and rule denies rather than
-  replacing the ladder.
+  (the default at launch) asks a judge first and parks only what it cannot settle; `bypass`
+  approves what the rules allow. Every level but an unattended `ask` keeps the triage and rule
+  denies rather than replacing the ladder.
 - **All durable memory lives in one `Memory::ProjectStore` per project**, so a fresh chat sees
   what earlier chats and `lain consolidate` wrote; compaction is a different subsystem with its
   own records, and neither reads the other.

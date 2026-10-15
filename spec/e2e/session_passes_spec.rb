@@ -19,7 +19,7 @@ RSpec.describe "the journal passes over a recorded session", :e2e do
       sandbox = E2E::Sandbox.create(files: { ".lain/skills/ask-lfm/skill.md" => skill })
       session = record_session(sandbox, upstream, flags)
       runs = %w[consolidate improve].to_h { |pass| [pass, run_pass(sandbox, upstream, pass, session)] }
-      { header: header_of(session), runs: }
+      { header: header_of(session), launch: launch_of(session), runs: }
     end
   end
 
@@ -35,6 +35,8 @@ RSpec.describe "the journal passes over a recorded session", :e2e do
   end
 
   def header_of(session) = JSON.parse(File.foreach(session).first)
+
+  def launch_of(session) = Lain::Journal.records(File.foreach(session).to_a, type: "mode_switch").first
 
   def run_pass(sandbox, upstream, pass, session)
     before = chat_bodies(upstream).size
@@ -55,6 +57,10 @@ RSpec.describe "the journal passes over a recorded session", :e2e do
   it "records the session on a model that is not the default" do
     expect(journey.fetch(:header)).to include("model" => "lfm2.5:latest", "num_batch" => 1024)
     expect(journey.fetch(:header).fetch("model")).not_to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
+  end
+
+  it "launches with no --approval into auto, and records that as where it started" do
+    expect(journey.fetch(:launch)).to include("to_approval" => "auto", "surface" => Lain::CLI::Switchboard::LAUNCH_SURFACE)
   end
 
   %w[consolidate improve].each do |pass|

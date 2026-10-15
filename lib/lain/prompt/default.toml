@@ -47,9 +47,9 @@
 #               it does not say one was attempted this turn, and it clears only
 #               when one succeeds. See RunState#compaction for why it latches.
 #   $mode       the scope's and the approval's lighters, then every active
-#               layer's, space separated -- e.g. "AUTO" or "AUTO AA". Absent
+#               layer's, space separated -- e.g. "ASK" or "BYPASS BELL". Absent
 #               whenever there is nothing to say: no mode is wired yet, or the
-#               session is in checkout ask, where it starts, with no layers
+#               session is in checkout auto, where it starts, with no layers
 #               active. This is chrome the human cannot accidentally scroll
 #               away or turn off, which is why it rides the composed line
 #               above the editor rather than living only in the transcript.

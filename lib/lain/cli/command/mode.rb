@@ -26,10 +26,10 @@ module Lain
       # The reset is a safety step first: it always lands on ask approval with
       # no layers, because Vim's promise for `<Esc><Esc>` is that afterwards you
       # know exactly where you are and that nothing is being decided behind
-      # you, which `bypass` would break. It
-      # then enters plan scope, the most confined one there is. When no spike
-      # can be cut it stays in the checkout and says why, rather than leaving
-      # the mode it was reached for in force.
+      # you, which `auto` (where a launched chat starts) and `bypass` would
+      # both break. It then enters plan scope, the most confined one there is.
+      # When no spike can be cut it stays in the checkout and says why, rather
+      # than leaving the mode it was reached for in force.
       #
       # A flip that moves the scope moves where every tool resolves and runs,
       # and leaving plan gives back a spike a running call may be writing in,
@@ -77,7 +77,7 @@ module Lain
         end
 
         # Downcased, because the lighters a human reads off chrome they cannot
-        # turn off are upper-case (`BYPASS`, `AA`), so a HUD showing `BYPASS` beside
+        # turn off are upper-case (`ASK`, `BYPASS`), so a HUD showing `BYPASS` beside
         # a command that refuses `/mode BYPASS` is a trap of our own making. Every
         # declared name is lower-case.
         def call(args, env)
@@ -95,7 +95,7 @@ module Lain
         private
 
         # Mid-turn, a scope move is refused. A reset still lands everything but
-        # the scope, since dropping `bypass` is the part that cannot wait.
+        # the scope, since dropping `auto` or `bypass` is the part that cannot wait.
         def held_in_flight(env, before, after, reset:)
           return [after, nil] if before.scope == after.scope || !InFlight.dispatching?(env)
           raise Error, IN_FLIGHT unless reset

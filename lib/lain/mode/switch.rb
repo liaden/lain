@@ -19,8 +19,10 @@ module Lain
     # Every flip that MOVES something lands in the Journal attributed to the
     # surface that made it. A flip to the mode already in force writes nothing:
     # the session did not change, and a record of it would read as a change to
-    # every reader that folds these. The INITIAL mode is the wiring's choice and
-    # already visible in the session's flags -- construction journals nothing.
+    # every reader that folds these. Construction journals nothing. The one
+    # deliberate exception is {#journal_start}: a launch records its starting
+    # mode as a flip from itself, once its session file has a header to
+    # follow, and readers take that record as a single point, not a move.
     #
     # Like {Approval::PolicySwitch}, there is deliberately no lock: a flip is
     # straight-line Ruby with no yield point, and a fiber only interleaves at an
@@ -56,6 +58,17 @@ module Lain
         @current = mode
         raise failure if failure
 
+        @current
+      end
+
+      # Journals the mode in force as a flip from itself: the one record that
+      # moves nothing, because a reader folding the journal must learn where a
+      # session STARTED even when it never moves.
+      #
+      # @param surface [String] who chose the starting mode
+      # @return [Mode] the mode in force
+      def journal_start(surface:)
+        @journal.record(flip(@current, @current, surface))
         @current
       end
 

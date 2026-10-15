@@ -17,18 +17,18 @@ RSpec.describe Lain::Mode::Approval do
   end
 
   describe "the lighters" do
-    it "leaves ask silent, since it is where every session starts" do
-      expect(described_class.for(:ask).lighter).to eq("")
+    it "leaves auto silent, since it is where a launched chat starts" do
+      expect(described_class.for(:auto).lighter).to eq("")
     end
 
-    # Automatic approval decides calls a human would otherwise have been asked
-    # about, so the prompt has to say so.
+    it "lights ask, so a human can see the session will wait on them" do
+      expect(described_class.for(:ask).lighter).to eq("ASK")
+    end
+
+    # Bypass decides calls a human would otherwise have been asked about, so
+    # the prompt has to say so.
     it "lights bypass" do
       expect(described_class.for(:bypass).lighter).to eq("BYPASS")
-    end
-
-    it "lights auto, where a model judge decides calls before any human" do
-      expect(described_class.for(:auto).lighter).to eq("AUTO")
     end
   end
 

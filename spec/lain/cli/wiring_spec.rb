@@ -2298,6 +2298,23 @@ RSpec.describe Lain::CLI::Wiring do
         expect(records.select { |record| record["type"] == "goal_iteration" }.map { |record| record["goal"] })
           .to eq(["ship it"])
       end
+
+      # Readers of a session file take its first record as the header, and a
+      # launch under the default auto approval journals a flip from ask.
+      it "writes the session header before the launch's mode switch" do
+        Dir.mktmpdir do |dir|
+          wiring = described_class.new(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:,
+                                       tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+        end
+
+        records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+        expect(records.first["type"]).to eq(Lain::SessionRecord::HEADER_TYPE)
+        expect(records.select { |record| record["type"] == "mode_switch" })
+          .to contain_exactly(a_hash_including("from_approval" => "auto", "to_approval" => "auto",
+                                               "surface" => Lain::CLI::Switchboard::LAUNCH_SURFACE))
+      end
     end
 
     # `--no-journal --nvim`: no session record, and every journal-role
@@ -4029,10 +4046,11 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
         .to eq([%w[prompt_caching Lain::Context Lain::Provider::Mock]])
     end
 
-    it "writes nothing when the provider supports everything the context requires" do
+    it "writes no degradation when the provider supports everything the context requires" do
       wire_over(context.requires)
 
-      expect(io.string).to be_empty
+      expect(io.string).not_to be_empty
+      expect(degraded_lines).to be_empty
     end
 
     # The wired policy is `:degrade` and may never be `:strict`:

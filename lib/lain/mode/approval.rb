@@ -22,11 +22,12 @@ module Lain
     # constant declared there scopes to the enclosing module, not to the Data
     # class (the trap {Request::SYSTEM_PREFIX} documents).
     class Approval
-      # `ask` is silent because every session starts in it. `auto` and `bypass`
-      # are lit: each decides calls a human would otherwise have been asked about.
+      # `auto` is silent because a launched chat starts in it. `ask` is lit
+      # because the session will wait on a human, and `bypass` because it
+      # approves what a human or a judge would otherwise have decided.
       DECLARED = {
-        ask: new(name: :ask, lighter: ""),
-        auto: new(name: :auto, lighter: "AUTO"),
+        ask: new(name: :ask, lighter: "ASK"),
+        auto: new(name: :auto, lighter: ""),
         bypass: new(name: :bypass, lighter: "BYPASS")
       }.freeze
       private_constant :DECLARED

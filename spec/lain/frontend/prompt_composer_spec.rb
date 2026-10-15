@@ -769,7 +769,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       end
 
       it "reports nothing for the starting mode with no layers active" do
-        mode = Lain::Mode.new(layers: [])
+        mode = Lain::Mode.new(approval: :auto, layers: [])
 
         expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to be_nil
       end
@@ -781,7 +781,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       end
 
       it "reports only the active layers' lighters when both axes are silent" do
-        mode = Lain::Mode.new(layers: %i[goal])
+        mode = Lain::Mode.new(approval: :auto, layers: %i[goal])
 
         expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("GOAL")
       end

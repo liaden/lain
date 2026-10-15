@@ -1523,14 +1523,14 @@ RSpec.describe Lain::StatusFeed do
       expect(published["mode_lighter"]).to eq("BYPASS GOAL BELL")
     end
 
-    # checkout and ask declare EMPTY lighters -- the starting mode is silent,
+    # checkout and auto declare EMPTY lighters -- the launch mode is silent,
     # and that rule lives in the axes' tables, not in three renderers' filters.
     it "composes an empty lighter for the starting mode, which declares itself silent" do
       feed = described_class.new(path:)
 
-      feed << mode_switch(from_approval: :bypass)
+      feed << mode_switch(to_approval: :auto, from_approval: :bypass)
 
-      expect(published.values_at("approval", "mode_lighter")).to eq(["ask", ""])
+      expect(published.values_at("approval", "mode_lighter")).to eq(["auto", ""])
     end
 
     it "republishes when the approval moves" do
@@ -1554,7 +1554,7 @@ RSpec.describe Lain::StatusFeed do
       feed << mode_switch(to_layers: %i[notify vi])
 
       expect(File).to have_received(:write).once
-      expect(published["mode_lighter"]).to eq("BELL VI")
+      expect(published["mode_lighter"]).to eq("ASK BELL VI")
     end
 
     it "skips the write when an unrelated record arrives and the mode did not move" do
@@ -1670,6 +1670,18 @@ RSpec.describe Lain::StatusFeed do
 
       expect(published.values_at("approval", "layers", "mode_lighter"))
         .to eq(["bypass", %w[notify], "BYPASS BELL"])
+    end
+
+    # Ask is lit and its launch moves nothing, so a launch that journaled only
+    # a move would leave the HUD silent, as if the session were in auto.
+    it "publishes ASK for a board launched under --approval ask" do
+      feed = described_class.new(path:)
+      Lain::CLI::Switchboard.for(chronicle: chronicle_teed_to(feed), options: { approval: "ask" },
+                                 judge: Lain::CLI::Switchboard::DEFERRING,
+                                 model: "claude-opus-4-8", toolset: Lain::Toolset.new,
+                                 test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared).journal_launch
+
+      expect(published.values_at("approval", "mode_lighter")).to eq(%w[ask ASK])
     end
 
     # Exactly ChatLaunch#open_chronicle's order: the chronicle opens, the feed

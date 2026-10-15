@@ -1008,19 +1008,41 @@ RSpec.describe Lain::CLI::Switchboard do
     # off the live board, so a layer the flag turned on has to be written down
     # before the first prompt or they show nothing until the first /mode.
     it "journals the launch flag's approval once, as the record /mode writes, before any prompt" do
-      chat(approval: "bypass")
+      board, = chat(approval: "bypass")
+      board.journal_launch.journal_launch
 
       expect(mode_records).to contain_exactly(
-        a_hash_including("from_approval" => "ask", "to_approval" => "bypass", "from_layers" => [],
+        a_hash_including("from_approval" => "bypass", "to_approval" => "bypass", "from_layers" => [],
                          "to_layers" => [], "surface" => described_class::LAUNCH_SURFACE)
       )
       expect(policy_records).to be_empty
     end
 
-    it "starts in ask with no layer when no flag is given, and journals no mode at all" do
-      board, = chat
+    # The board is built before the session header, which must stay the
+    # session file's first record.
+    it "holds the launch flag's approval until told the header is down" do
+      chat(approval: "auto")
 
-      expect([board.mode_switch.current, mode_records]).to eq([Lain::Mode.new, []])
+      expect(mode_records).to be_empty
+    end
+
+    # A launch records where it started even when it moved nothing, so a
+    # reader folding the journal never mistakes an ask session for an unknown one.
+    it "starts in ask with no layer when no flag is given, and journals ask as where it started" do
+      board, = chat
+      board.journal_launch
+
+      expect(board.mode_switch.current).to eq(Lain::Mode.new)
+      expect(mode_records).to contain_exactly(
+        a_hash_including("from_approval" => "ask", "to_approval" => "ask", "surface" => described_class::LAUNCH_SURFACE)
+      )
+    end
+
+    it "folds a launch into the one point it started at, for a comparison" do
+      board, = chat(approval: "auto")
+      board.journal_launch
+
+      expect(Lain::Compare::Mode.from_journal(journal_io.string.lines).to_s).to eq("checkout/auto")
     end
 
     # Scenario: a denied path stays unliftable
