@@ -2005,6 +2005,13 @@ XDG path relative, which put machine state back inside the user's repository)
    folds into exactly 1 request. Follow-ups: a resumed chat's files-written paths (Replay builds its
    Session with no root), a leased child's paths named without its worktree, the Shift+Enter reset
    flake family (3 recorded), 2 sources for "an ask is running" in the note path, and the frugirl rerun.
+57. **Planned (2026-10-15)**: `planning/specs/research-agents-and-approval.md`, the third frugirl
+   trial's findings: an environment block in every system prompt, child role tools named to the
+   parent, the account and sudo files always refused, approval values `ask`/`auto`/`bypass` with a
+   judge-first `auto` on by default (tier 0 class check, 30s bound, unsure parks or refuses headless),
+   Shift+Tab to cycle `ask` and `auto` (rebindable), a per-requester memory of human denies, `&&`
+   sequences and `/dev/null` redirects understood without a shell, read-only probes approved, and
+   researchers with gated `bash` and writes in a kept scratch directory or spike worktree. 21 cards.
 
 ## Map of the documents
 
