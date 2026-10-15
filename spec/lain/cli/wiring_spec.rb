@@ -1640,14 +1640,10 @@ RSpec.describe Lain::CLI::Wiring do
         expect(leases.map(&:backend).uniq).to eq(["Lain::Isolation::Worktree"])
       end
 
-      # THROUGH THE TOOL, and that is the whole of why this example exists. The
-      # defect it pins survived because every spec that proved a lease injected
-      # its own backend, while production threaded {Lain::WorkerEnv.default}
-      # down #run_child -- so a proof over an injected backend would have
-      # shipped the same gap a second time, green. Nothing here is doubled: the
-      # backend is the one `--isolation worktree` really resolves, the tool is
-      # the one this run's own ToolsetBuild built, and the spawn is a tool_use
-      # the model dispatched through the parent's loop.
+      # THROUGH THE TOOL: nothing here is doubled. The backend is the one
+      # `--isolation worktree` really resolves, the tool is the one this run's
+      # own ToolsetBuild built, and the spawn is a tool_use the model
+      # dispatched through the parent's loop.
       #
       # A child's cwd is unobservable from outside a spawn that hands back a
       # Timeline and never an Agent, so the child asks for a RELATIVE path that
@@ -1678,21 +1674,22 @@ RSpec.describe Lain::CLI::Wiring do
           refusal.fetch("content").to_s.delete_prefix("no such directory: ")
         end
 
-        it "leases the resolved worktree for the child, which resolves its relative paths there" do
+        # The isolation flag places epic workers' checkouts; the chat's
+        # researcher always works in a kept scratch directory of its own.
+        it "leases the researcher its own scratch directory rather than the resolved worktree" do
           chat_cwd = nil
-          runtime_dir = nil
-          in_throwaway_repo do |repo, runtime|
+          state_dir = nil
+          in_throwaway_repo do |repo, state|
             chat_cwd = repo
-            runtime_dir = runtime
+            state_dir = state
             spawn_through_the_tool(wiring_with("worktree"))
           end
 
           expect(leases.map { |lease| [lease.kind, lease.backend] })
-            .to eq([[:acquired, "Lain::Isolation::Worktree"], [:released, "Lain::Isolation::Worktree"]])
-          # Under the throwaway XDG_STATE_HOME -- its own dir, apart from the
-          # runtime dir -- and NOT under the chat's own tree.
-          expect(child_resolved_path).to start_with(runtime_dir)
-          expect(child_resolved_path).to include("/worktrees/")
+            .to eq([[:acquired, "Lain::Isolation::Scratch"], [:kept, "Lain::Isolation::Scratch"]])
+          expect(child_resolved_path).to start_with(File.join(state_dir, "lain", "research", ""))
+          expect(File.basename(File.dirname(child_resolved_path))).to start_with("research-")
+          expect(child_resolved_path).not_to include("/worktrees/")
           expect(child_resolved_path).not_to start_with(chat_cwd)
         end
       end

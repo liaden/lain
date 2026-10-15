@@ -77,6 +77,21 @@ module Lain
         Lease.new(worker_env: cut.worker_env.with(cwd:), on_release:, origin: cut.origin)
       end
 
+      # Puts the lease's checkout on its branch, for a spike that is never
+      # released: {#release} is what carries a detached spike's commits onto the
+      # branch, so one nothing releases must commit there directly.
+      #
+      # @param lease [Lease] one {#acquire} answered
+      # @return [Lease] the same lease
+      # @raise [Refused] when git will not check the branch out there
+      def attached(lease)
+        origin = lease.origin
+        shell = run("git", "-C", origin.path, "switch", "--quiet", origin.branch)
+        return lease if shell.exitstatus.zero?
+
+        raise Refused, "the spike at #{origin.path} could not be put on #{origin.branch}: #{said(shell)}"
+      end
+
       # What the model is told about where it is.
       #
       # @param lease [Lease] one {#acquire} answered

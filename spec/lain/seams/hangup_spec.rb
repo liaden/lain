@@ -7,7 +7,7 @@ require "tmpdir"
 
 # A closed terminal sends SIGHUP, and a chat that dies of it while a subagent is
 # mid-spawn must leave the record a terminate leaves: the spawn's ending, the
-# session's close, and the child's checkout returned. Driven in a CHILD process
+# session's close, and the child's lease ended on the record. Driven in a CHILD process
 # because the signal's default action ends the process, which no in-process
 # example can survive to observe.
 #
@@ -102,7 +102,9 @@ RSpec.describe "a chat hung up on mid-spawn", :seam do
     end
   end
 
-  it "ends the spawn, closes the record and returns the lease, as a terminate does" do
+  # The chat's researcher works in a lease of its own that outlives it, so
+  # its lease ends kept rather than given back.
+  it "ends the spawn, closes the record and ends the lease, as a terminate does" do
     hung_up
     written = records
     ended = written.select { |record| record["type"] == "message" && record["payload"]&.key?("final") }
@@ -110,6 +112,6 @@ RSpec.describe "a chat hung up on mid-spawn", :seam do
 
     expect(ended).not_to be_empty
     expect(written.map { |record| record["type"] }).to include("session_closed")
-    expect(leases).to eq(%w[acquired released])
+    expect(leases).to eq(%w[acquired kept])
   end
 end

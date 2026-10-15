@@ -17,8 +17,11 @@ module Lain
       ROOT = File.join(Dir.tmpdir, "lain", "scratch")
 
       # @param root [String] the directory each lease is made under
-      def initialize(root: ROOT)
+      # @param prefix [String] what each directory's name starts with, so a
+      #   human listing the root can tell whose work each one holds
+      def initialize(root: ROOT, prefix: "plan-")
         @root = root
+        @prefix = prefix
       end
 
       # Named by its real path, because a worker's paths are compared by where
@@ -27,7 +30,7 @@ module Lain
       # @return [Lease] over a new, empty directory
       def acquire(_worker_id = nil)
         FileUtils.mkdir_p(@root)
-        dir = File.realpath(Dir.mktmpdir("plan-", @root))
+        dir = File.realpath(Dir.mktmpdir(@prefix, @root))
         Lease.new(worker_env: WorkerEnv.new(cwd: dir, env: ENV.to_h), origin: Lease::Origin.new(path: dir))
       end
 

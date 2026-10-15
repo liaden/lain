@@ -89,18 +89,27 @@ module Lain
       # `compaction` is the {ParentView} a child reads its parent's held cuts
       # through. It is not copied by {#descend}: a grandchild's parent is the
       # child, whose session this view does not read.
+      #
+      # `kept` gives each child a directory of its own, kept after it ends
+      # ({Kept}), and adds `extends` to the input; not copied by {#descend}
+      # either, since a grandchild works where its parent was put.
       def initialize(toolset:, policy:, seam: nil, budget: Agent::Budget.new,
                      max_depth: 1, name: NAME, announces_as: name, mode: :one_shot,
                      log: Log::Null, persona: Role::Persona::Null, model: ModelChoice::Null,
-                     answer: ANSWER, compaction: ParentView::None, **spawn_over)
+                     answer: ANSWER, compaction: ParentView::None, kept: Unkept, **spawn_over)
         super()
         @seam = Seam.resolve(seam, **spawn_over)
         @announces_as = announces_as
         @answer = answer
+        @kept = kept
         @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, model:, name: announces_as,
                                     compaction:)
         seed_config(max_depth, name, mode, log)
       end
+
+      # Per instance, since only a spawner that gives its child a place of its
+      # own takes `extends`.
+      def input_model = @kept.input_model
 
       def description
         "Spawns a subagent to carry out `prompt` on its own, with its own tools " \
@@ -224,7 +233,7 @@ module Lain
         return depth_exceeded if @max_depth <= 0
         return adopt_actor(input.prompt) if @mode == :actor
 
-        spawn_one_shot(input.prompt)
+        spawn_one_shot(input.prompt, lease: kept_lease(input))
       end
 
       private
@@ -266,26 +275,43 @@ module Lain
       # same scope: under plan, a child's writes land in the spike. Read here,
       # where every one-shot spawn passes -- a tool call, a role skill, a
       # fan-out -- and once, so the lease and the session agree.
-      def spawn_one_shot(prompt, on_stream_started: nil)
+      def spawn_one_shot(prompt, on_stream_started: nil, lease: @kept.lease_for(nil))
         # Per spawn, not per tool, so a fan-out's record shows WHICH spawns
         # ran un-cacheable.
         policy.prefix.journal_floor(journal)
         scope = @seam.scope.current
         Lineage::OneShot.new(lineage, parent_timeline, consumed: telemetry, journal:).recording do |record|
-          Tool::Result.ok(finished(record, leased(record, prompt, scope:, on_stream_started:)).text)
+          Tool::Result.ok(finished(record, leased(record, prompt, scope:, lease:, on_stream_started:)).text)
         end
+      end
+
+      # The input is checked before any record is written, so a refused
+      # `extends` reads as an invalid call and no child ever existed.
+      def kept_lease(input)
+        @kept.lease_for(input.attributes["extends"])
+      rescue Kept::Refused => e
+        invalid!(e.message)
       end
 
       # A child the scope did not lend to -- one its caller lent a checkout of
       # its own -- keeps that checkout, so its session is not the scope's.
-      def leased(record, prompt, scope:, on_stream_started:)
-        lent = scope.lend(isolation)
-        scope = Session::Unconfined if lent.equal?(isolation)
+      def leased(record, prompt, scope:, lease:, on_stream_started:)
+        scope, lent = lending(scope, lease)
         lent.hold(@name, journal:) do |worker_env, sync, worker|
           progress = reporting(record.spawned(prompt), prompt, worker)
           child = build_child(record.parent, worker_env, scope, progress:)
           run_child(record.built(child), prompt, sync, on_stream_started:)
         end
+      end
+
+      # Under plan the board lends its spike instead, since it refuses a write in any lease outside it.
+      def lending(scope, lease)
+        lent = scope.lend(isolation)
+        return [scope, lent] unless lent.equal?(isolation)
+
+        own = lease.call
+        lent = own.lend(isolation)
+        [lent.equal?(isolation) ? Session::Unconfined : own, lent]
       end
 
       # The live views' half of the same dispatch. It goes out under the lease
@@ -859,6 +885,171 @@ module Lain
       # The scope of a seam no board confines.
       module UNSCOPED
         def self.current = Session::Unconfined
+      end
+
+      # What a spawner with no place of its own to give a child offers: just
+      # the task, and a child that leases as the run's isolation says.
+      module Unkept
+        UNLEASED = -> { Session::Unconfined }
+
+        def self.input_model = Input
+
+        def self.lease_for(_extends) = UNLEASED
+      end
+
+      # Where a researcher works: a directory of its own, KEPT after it ends,
+      # since what it wrote there is the only copy of its findings. A scratch
+      # directory by default; with `extends`, a spike of a git repository inside
+      # the project or a related directory, checked out on a `lain/plan/<key>`
+      # branch of its own, so whatever it commits lands on that branch. The key
+      # is a fresh random one per spawn and never a worker id, because an owned
+      # branch that already exists is reused, and 2 researchers must never
+      # share one.
+      #
+      # Both live under lain's state home, per project, rather than the
+      # temporary root a reboot clears, and outside the fleet's worktree root,
+      # so {Isolation::Gc} never reaps a clean spike once its chat has exited.
+      # Nothing here releases a lease either: a release removes a clean
+      # worktree and deletes a branch nothing committed on, which is exactly
+      # what kept means not to do.
+      class Kept
+        EXTENDS = "A git repository inside the project or one of its related directories. The subagent works " \
+                  "in a new worktree of it on a branch of its own; without it, in an empty scratch directory. " \
+                  "Under plan scope it is still checked, but the subagent works in the plan's spike instead."
+
+        SCRATCH = "Your working directory is %<dir>s, an empty scratch directory of your own that is kept after " \
+                  "you finish, and a write outside it is refused."
+
+        SPIKE = "Your working directory is %<dir>s, in a new worktree of %<repo>s checked out on the branch " \
+                "%<branch>s, which keeps what you commit after you finish, and a write outside it is refused."
+
+        # An `extends` naming no repository the researcher may work in.
+        class Refused < Error; end
+
+        # One lease's records, keyed by its directory, since no worker id
+        # names a researcher's lease.
+        Recorded = Data.define(:journal, :origin, :backend) do
+          def call(kind)
+            journal << Telemetry::IsolationLease.new(kind:, worker_key: "research.#{File.basename(origin.path)}",
+                                                     backend:, **origin.to_h)
+          end
+        end
+
+        # The child's scope, whose lend records the lease kept when the child
+        # ends however it ends, since nothing releases a kept lease.
+        class Confined < Session::Confined
+          # @param worker_env [WorkerEnv] the lease's environment, naming its
+          #   directory as the checkout
+          # @param reminder [String] what the model is told about where it is
+          # @param kept [#call] records the lease kept
+          def initialize(worker_env:, reminder:, kept:)
+            @kept = kept
+            super(worker_env:, reminder:)
+          end
+
+          def lend(leases) = Lent.new(lent: super, kept: @kept)
+        end
+
+        # A lent checkout whose every hold ends by recording the lease kept.
+        Lent = Data.define(:lent, :kept) do
+          def lane = lent.lane
+
+          def hold(role, **, &)
+            lent.hold(role, **, &)
+          ensure
+            kept.call
+          end
+        end
+
+        # A subclass rather than a field on the shared one: the schema is a cache
+        # key, and only a spawner that leases its child a place takes `extends`.
+        class Input < Subagent::Input
+          field :extends, :string, description: EXTENDS
+        end
+
+        # @param paths [Paths]
+        # @param root [String] the project root
+        # @return [String] where the project's researchers' leases are kept
+        def self.home(paths, root) = paths.container("research", key: paths.project_hash(root))
+
+        # @param root [String] the project root, where an `extends` may lie
+        # @param paths [Paths] the state home leases are kept under, and what
+        #   bounds the search for a spike's repository
+        # @param related [#call] `path -> Boolean`, whether the path is a
+        #   related directory or lies under one
+        # @param scratch [Isolation::Scratch] where a researcher with no
+        #   `extends` works
+        # @param journal [#<<] where each lease's {Telemetry::IsolationLease}
+        #   records land, as a fleet lease's do
+        def initialize(root:, paths:, related:, journal: Channel::Null.instance,
+                       scratch: Isolation::Scratch.new(root: File.join(Kept.home(paths, root), "scratch"),
+                                                       prefix: "research-"))
+          @root = File.expand_path(root)
+          @paths = paths
+          @related = related
+          @journal = journal
+          @scratch = scratch
+        end
+
+        def input_model = Input
+
+        # Checked now, so a refused `extends` starts no child; leased only when
+        # called, so a spawn that is lent a checkout cuts nothing.
+        #
+        # @param extends [String, nil] as the model wrote it
+        # @return [#call] answering the child's {Session::Confined} scope
+        # @raise [Refused]
+        def lease_for(extends)
+          return method(:scratched) if extends.to_s.empty?
+
+          dir = admitted(extends)
+          repo = repository(dir)
+          spike = Isolation::Spike.new(repo_root: repo, cwd: dir,
+                                       root: File.join(Kept.home(@paths, @root), "worktrees"))
+          -> { spiked(spike, repo) }
+        end
+
+        private
+
+        def confined(lease, from)
+          record = Recorded.new(journal: @journal, origin: lease.origin, backend: from.class.name)
+          record.call(:acquired)
+          Confined.new(worker_env: lease.worker_env, reminder: yield(lease.worker_env), kept: -> { record.call(:kept) })
+        end
+
+        def scratched = confined(@scratch.acquire, @scratch) { |env| format(SCRATCH, dir: env.cwd) }
+
+        def spiked(spike, repo)
+          lease = spike.attached(spike.acquire)
+          confined(lease, spike) { |env| format(SPIKE, dir: env.cwd, repo:, branch: lease.origin.branch) }
+        end
+
+        # Both sides by real path, so a link cannot carry a researcher out.
+        def admitted(extends)
+          dir = File.realpath(File.expand_path(extends, @root))
+          return dir if inside?(dir, File.realpath(@root)) || @related.call(dir)
+
+          raise Refused, "extends #{extends.inspect} is neither inside the project #{@root} nor a related directory"
+        rescue SystemCallError, ArgumentError
+          raise Refused, "extends #{extends.inspect} names no directory"
+        end
+
+        def inside?(dir, root) = dir == root || dir.start_with?(File.join(root, ""))
+
+        def repository(dir)
+          nearest = Project::Repository.nearest(dir, paths: @paths, home: @paths.home_or_nil)
+          raise Refused, "extends #{dir} is not in a git repository" unless nearest.found?
+          raise Refused, "extends #{dir} is in #{nearest.path}, which has no commit to cut a worktree from" unless
+            committed?(nearest.path)
+
+          nearest.path
+        end
+
+        def committed?(repo)
+          shell = Shell::Out.new("git", "-C", repo, "rev-parse", "--verify", "--quiet", "HEAD^{commit}",
+                                 environment: Isolation::Worktree::GIT_CONTEXT_SCRUB)
+          shell.run_command.exitstatus.zero?
+        end
       end
 
       # What a child renders through, read off its parent at the instant of the

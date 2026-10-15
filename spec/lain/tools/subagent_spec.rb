@@ -2051,6 +2051,127 @@ RSpec.describe Lain::Tools::Subagent do
       end
     end
 
+    # A researcher is handed a place of its own to work, kept after it ends,
+    # rather than a lease of the run's that its handback would give back.
+    describe "with a kept lease source" do
+      let(:project) { File.join(File.realpath(leases_root), "project").tap { FileUtils.mkdir_p(_1) } }
+      let(:scratch_root) { File.join(File.realpath(leases_root), "scratch") }
+      let(:paths) { Lain::Paths.new(env: { "HOME" => File.realpath(leases_root) }) }
+      let(:kept) do
+        described_class::Kept.new(root: project, paths:, related: ->(_path) { false },
+                                  scratch: Lain::Isolation::Scratch.new(root: scratch_root, prefix: "research-"))
+      end
+
+      let(:scopes) { [] }
+      let(:scope_tool) do
+        held = scopes
+        Class.new(Lain::Tool) do
+          define_method(:name) { "scope" }
+          define_method(:description) { "Reports the scope this session is confined to." }
+          define_method(:input_schema) { { type: :object, properties: {} } }
+          define_method(:perform) do |_input, invocation|
+            held << session_of(invocation).scope
+            Lain::Tool::Result.ok("reported")
+          end
+        end.new
+      end
+
+      def reports_both = mock(tool_response(["c1", "cwd", {}], ["c2", "scope", {}]), text_response("done"))
+
+      def kept_tool(provider = reports_both, kept: self.kept, **rest)
+        build_subagent(provider:, toolset: cwd_only(scope_tool), policy: spawn_policy(only: %i[cwd scope]),
+                       isolation: leases, kept:, **rest)
+      end
+
+      it "offers extends in its schema, where a spawner with none does not" do
+        expect(kept_tool.input_schema["properties"].keys).to eq(%w[prompt extends])
+        expect(build_subagent(provider: mock).input_schema["properties"].keys).to eq(%w[prompt])
+      end
+
+      it "runs the child in a fresh scratch directory it confines it to, leasing nothing of the run's" do
+        expect(kept_tool.call({ "prompt" => "go" }, invocation)).to be_ok
+
+        expect(seen).to contain_exactly(start_with("#{scratch_root}/research-"))
+        expect(scopes.first).to be_a(Lain::Session::Confined)
+        expect(scopes.first.root).to eq(seen.first)
+        expect(scopes.first.reminders.first).to include(seen.first)
+        expect(backend.leased).to be_empty
+      end
+
+      it "keeps the directory after the child ends" do
+        kept_tool.call({ "prompt" => "go" }, invocation)
+
+        expect(File.directory?(seen.first)).to be(true)
+      end
+
+      it "refuses an extends outside the project and its related directories, starting no child" do
+        provider = mock(text_response("never"))
+
+        expect { kept_tool(provider).call({ "prompt" => "go", "extends" => "/etc" }, invocation) }
+          .to raise_error(Lain::Tool::InvalidInput, %r{extends.*/etc})
+        expect(provider.requests).to be_empty
+      end
+
+      it "refuses an extends inside the project that no git repository holds" do
+        expect { kept_tool.call({ "prompt" => "go", "extends" => project }, invocation) }
+          .to raise_error(Lain::Tool::InvalidInput, /not in a git repository/)
+        expect(seen).to be_empty
+      end
+
+      def refused(extends)
+        kept_tool.call({ "prompt" => "go", "extends" => extends }, invocation)
+      rescue Lain::Tool::InvalidInput => e
+        e.message
+      end
+
+      it "refuses an extends that cannot name a path at all, as an extends refusal" do
+        expect([refused("~nosuchuserzz/x"), refused("a\0b")]).to all(include("invalid input for subagent: extends"))
+        expect(seen).to be_empty
+      end
+
+      it "refuses an extends whose repository has no commit to cut from" do
+        SeedRepo.git(project, "init", "-q")
+
+        expect(refused(project)).to match(/extends #{Regexp.escape(project)} .*no commit/)
+      end
+
+      it "refuses a link inside the project that lands outside it" do
+        outside = File.join(File.realpath(leases_root), "outside").tap { FileUtils.mkdir_p(_1) }
+        File.symlink(outside, File.join(project, "link"))
+
+        expect(refused(File.join(project, "link"))).to include("neither inside the project")
+      end
+
+      it "refuses a sibling whose name merely starts with the project's" do
+        sibling = "#{project}-foo".tap { FileUtils.mkdir_p(_1) }
+
+        expect(refused(sibling)).to include("neither inside the project")
+      end
+
+      # Scratch under the temporary root is cleared on reboot, and kept means
+      # kept, so a researcher's scratch lives under lain's state home.
+      it "makes its scratch directories under lain's state home by default" do
+        default = described_class::Kept.new(root: project, paths:, related: ->(_path) { false })
+
+        kept_tool(kept: default).call({ "prompt" => "go" }, invocation)
+
+        expect(seen).to contain_exactly(start_with(File.join(paths.state_home, "research", "")))
+      end
+
+      # A board already confining the chat lends its child the spike, and a
+      # lease of the researcher's own would sit outside what the board allows.
+      it "keeps a confining scope's directory rather than leasing its own" do
+        spike = File.join(File.realpath(leases_root), "spike").tap { FileUtils.mkdir_p(_1) }
+        confined = Lain::Session::Confined.new(worker_env: Lain::WorkerEnv.new(cwd: spike, env: {}, checkout: spike),
+                                               reminder: "in a spike")
+
+        kept_tool(scope: Struct.new(:current).new(confined)).call({ "prompt" => "go" }, invocation)
+
+        expect([seen, scopes]).to eq([[spike], [confined]])
+        expect(Dir.exist?(scratch_root)).to be(false)
+      end
+    end
+
     # The other exit. A context that will not render is {ChildBuilder#spawned}'s
     # own named example of a spawn raising past the acquire, and a lease held by
     # a raise is a leaked checkout that defeats the NEXT acquire at that path.

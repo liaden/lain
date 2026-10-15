@@ -547,6 +547,54 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
   end
 
+  # A child leased a directory of its own is held inside it, whatever the
+  # board's scope says: the board confines nothing outside plan.
+  describe "a child held to the checkout its environment names", :seam do
+    around do |example|
+      Dir.mktmpdir("lain-tool-guard-held") do |dir|
+        @lease = File.realpath(dir)
+        example.run
+      end
+    end
+
+    def env = Lain::WorkerEnv.new(cwd: @lease, env: {}, checkout: @lease)
+
+    def written(builder, path)
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "write_file",
+                                          input: { "path" => path, "content" => "x" })
+      context = Lain::Session.new(worker_env: env)
+      builder.call(env).call({ effect:, tool: Lain::Tools::WriteFile.new, context: }) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok("written"))
+      end.fetch(:result)
+    end
+
+    def held(board)
+      described_class::Spawned.new(chronicle:, board: -> { board }, requester: "researcher", confined: true)
+    end
+
+    it "refuses a write outside it by name, before any approval is asked" do
+      refused = written(held(ToolGuardSpecBoard.new(approvals: queue, policy: queue)), "/home/tester/project/a.rb")
+
+      expect(refused).to have_attributes(is_error: true, content: start_with("write_file refused"))
+      expect(refused.content).to include(@lease)
+      expect(refused.content).not_to include("plan scope", "/mode")
+      expect(Lain::Journal.records(journal_io.string.lines, type: "approval_pending").to_a).to be_empty
+    end
+
+    it "lets a write inside it through to the gate" do
+      board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true))
+
+      expect(written(held(board), File.join(@lease, "notes.md"))).to have_attributes(is_error: false)
+    end
+
+    it "holds no child there unless its builder says so" do
+      board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true))
+      loose = described_class::Spawned.new(chronicle:, board: -> { board }, requester: "researcher")
+
+      expect(written(loose, "/home/tester/project/a.rb")).to have_attributes(is_error: false)
+    end
+  end
+
   # What a chat's spawn seam carries: the builder over a board that does not
   # exist yet when the seam does, and the name its children are asked for.
   describe Lain::CLI::ToolGuard::Spawned do

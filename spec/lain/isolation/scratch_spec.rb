@@ -38,6 +38,13 @@ RSpec.describe Lain::Isolation::Scratch do
       expect(scratch.acquire.worker_env.cwd).to start_with("#{target}/")
     end
 
+    it "names each directory with the prefix it was given" do
+      named = described_class.new(root: @root, prefix: "research-").acquire
+
+      expect(File.basename(named.worker_env.cwd)).to start_with("research-")
+      expect(File.basename(scratch.acquire.worker_env.cwd)).to start_with("plan-")
+    end
+
     it "runs its commands under the process environment" do
       expect(scratch.acquire.worker_env.env).to eq(ENV.to_h)
     end

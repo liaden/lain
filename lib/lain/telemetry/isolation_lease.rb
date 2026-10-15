@@ -8,8 +8,8 @@ module Lain
       class IsolationLease < Declarative::Carrier
         attribute :kind
         attribute :worker_key
-        validates :kind, inclusion: { in: %i[acquired released service_provisioned service_torn_down],
-                                      message: "must be one of acquired/released/service_provisioned/" \
+        validates :kind, inclusion: { in: %i[acquired released kept service_provisioned service_torn_down],
+                                      message: "must be one of acquired/released/kept/service_provisioned/" \
                                                "service_torn_down, got %<value>s" }
         validates :worker_key, presence: { message: "must name the worker the lease belongs to, got nil" }
       end
@@ -19,7 +19,8 @@ module Lain
     # complete the vocabulary for a richer backend -- a per-worker Postgres
     # database, a compose stack -- to emit alongside acquire/release: a closed enum whose
     # every value is not yet reached, the idiom {Compaction#cache_state} keeps
-    # for its own `:warm`.
+    # for its own `:warm`. `:kept` ends a lease that outlives its worker on
+    # purpose -- a researcher's directory -- so it is not read as given back.
     #
     # `worker_key` is the STRING form of whatever `worker_id` the caller passed
     # to `acquire`, so the record stays self-describing whatever a caller's
@@ -39,7 +40,7 @@ module Lain
     # {Handback}'s ref, because it names lain's own state dir, never the repo.
     #
     # Emitted by {Isolation::Journal}, never by a backend itself, which stays
-    # journal-ignorant.
+    # journal-ignorant, and by {Tools::Subagent::Kept} for a researcher's lease.
     IsolationLease = Data.define(:kind, :worker_key, :backend, :service, :path, :base, :branch) do
       include Journalable
 

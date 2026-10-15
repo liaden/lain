@@ -123,10 +123,20 @@ RSpec.describe Lain::CLI::Wiring, "the journal routing discipline" do
   end
 
   # The fleet leasing real checkouts off a named branch is what makes the
-  # handback run: the spawned child's lease ends in the run's one handoff, which
-  # records how the child's work came home.
+  # handback run: a role spawn's lease ends in the run's one handoff, which
+  # records how the child's work came home. The chat's researcher keeps a lease
+  # of its own instead, which ends kept and hands nothing back.
   context "when the fleet leases worktrees", :seam do
     let(:options) { { grace: 5, isolation: "worktree" } }
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 tool_response(["tu_bash", "bash", { "command" => "printf hello" }]),
+                                 tool_response(["tu_spawn", "subagent", { "prompt" => "look around" }]),
+                                 text_response("child done"),
+                                 text_response("parent done"),
+                                 text_response("dev done")
+                               ])
+    end
 
     around do |example|
       Dir.mktmpdir("lain-routing-repo") do |repo|
@@ -139,10 +149,12 @@ RSpec.describe Lain::CLI::Wiring, "the journal routing discipline" do
 
     it "loses no handback or lease record to the display channel" do
       converse
+      wiring.role_spawn.call(:dev, :fresh, "tidy up")
       drain_a_parked_fleet
 
       expect(lost.map(&:journal_type).uniq).to eq([])
       expect(record.events.map(&:class)).to include(Lain::Telemetry::Handback, Lain::Telemetry::IsolationLease)
+      expect(record.events.grep(Lain::Telemetry::IsolationLease).map(&:kind)).to include(:released, :kept)
     end
   end
 end

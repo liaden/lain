@@ -956,16 +956,22 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(chat.reclaimed).to be_empty
     end
 
-    it "leaves the chat's own research Subagent leasing from the chat's lane" do
+    # The researcher works in a kept directory of its own, so neither lane
+    # leases it a checkout or hands anything back.
+    it "leaves the chat's own research Subagent leasing its own scratch directory, through neither lane" do
       chat = ToolsetBuildHandoff.new
       build = build_with(options, handback: Lain::CLI::Wiring::Handback.new(handoff: chat))
       full = build.build(recorder, ask_human:)
       issued(build)
+      kept = File.join(Lain::Paths.new.state_home, "research", "*", "scratch", "research-*")
+      before = Dir.glob(kept)
 
       full.fetch("subagent").call({ "prompt" => "look" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+      made = Dir.glob(kept) - before
+      FileUtils.rm_rf(made)
 
-      expect(chat.reclaimed).to eq([spawned(1)])
-      expect(issue_handoff.reclaimed).to be_empty
+      expect(made.size).to eq(1)
+      expect([chat.reclaimed, issue_handoff.reclaimed]).to eq([[], []])
     end
 
     it "grants issue_orchestrator at depth 2, over the floor plus a spawner and the skill renderer" do

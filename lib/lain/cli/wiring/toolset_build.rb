@@ -393,11 +393,21 @@ module Lain
         # into the session record. `announces_as:` is the human-facing half of
         # the same name -- the tool stays "subagent" because that is what the
         # model calls, so an arrival note says "researcher" instead.
+        #
+        # Each child works in a directory of its own that outlives it, and its
+        # stack holds it there: outside plan the board confines nothing.
         def research_subagent(base)
-          Lain::Tools::Subagent.new(seam: announcing(RESEARCHER.to_s), toolset: base,
-                                    policy: backend.spawn_policy(RESEARCHER),
+          held = announcing(RESEARCHER.to_s).then { _1.with(tool_middleware: _1.tool_middleware.with(confined: true)) }
+          Lain::Tools::Subagent.new(seam: held, toolset: base, policy: backend.spawn_policy(RESEARCHER),
                                     persona: persona(RESEARCHER), max_depth: 1, announces_as: RESEARCHER.to_s,
-                                    budget: Lain::Role::Catalog.fetch(RESEARCHER).budget)
+                                    budget: Lain::Role::Catalog.fetch(RESEARCHER).budget, kept: research_leases)
+        end
+
+        # Related directories are read off the board when a child is spawned,
+        # since the board is built after this toolset.
+        def research_leases
+          related = ->(dir) { @switchboard.call.guard_inputs.sensitivity.in_related_tree?(dir) }
+          Lain::Tools::Subagent::Kept.new(root: @root, paths: @in_chat.fetch(:paths), related:, journal: seam.journal)
         end
 
         # The floor plus the two names only the orchestrator holds: one spawner

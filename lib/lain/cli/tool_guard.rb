@@ -73,6 +73,8 @@ module Lain
         def self.current = Session::Unconfined
       end
 
+      Held = Data.define(:current)
+
       # The board's scope, read through the thunk a spawn seam holds, so a
       # child built before the board existed still reads the scope in force.
       BoardScope = Data.define(:board) do
@@ -115,10 +117,16 @@ module Lain
       # A value rather than a lambda so the name can be rebound: a spawn that
       # announces a role copies the run's one seam with a different
       # `requester` and every other member shared.
-      Spawned = Data.define(:chronicle, :board, :requester) do
+      #
+      # `confined` holds every child inside the checkout its environment
+      # names, for a spawner that leases each child a directory of its own:
+      # outside plan the board's scope confines nothing.
+      Spawned = Data.define(:chronicle, :board, :requester, :confined) do
+        def initialize(confined: false, **) = super
+
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @return [Middleware::Stack] a fresh one per child
-        def call(worker_env) = ToolGuard.child_stack(chronicle, board.call, worker_env, requester:)
+        def call(worker_env) = ToolGuard.child_stack(chronicle, board.call, worker_env, requester:, confined:)
 
         # Read off the board as a child is built, never before.
         def guard_inputs = board.call.guard_inputs
@@ -236,11 +244,21 @@ module Lain
       # @param board [CLI::Switchboard] as on {.stack}
       # @param worker_env [WorkerEnv] the environment the child runs in
       # @param requester [String] who a human is told is asking
+      # @param confined [Boolean] whether a write or a command aimed outside
+      #   the checkout `worker_env` names is refused, as plan scope refuses one
+      #   outside the spike
       # @return [Middleware::Stack]
-      def child_stack(chronicle, board, worker_env, requester:)
+      def child_stack(chronicle, board, worker_env, requester:, confined: false)
         inputs = board.guard_inputs
         working(chronicle, inputs, worker_env, Asking.new(policy: inputs.policy_for.call(worker_env), requester:),
-                requester:)
+                requester:, held: confined ? [held_in(worker_env)] : [])
+      end
+
+      # Read once, as the child is built: the checkout is the lease's, and a
+      # lease never moves.
+      def held_in(worker_env)
+        scope = Session::Confined.new(worker_env:, reminder: "")
+        Middleware::ConfineToScope.new(scope: Held.new(current: scope), wording: Middleware::ConfineToScope::LEASE)
       end
 
       # A worker's stack, over the inputs it is guarded by, the checkout its
@@ -250,8 +268,9 @@ module Lain
       # Its path policy is confined to the project, its related directories
       # and the worker's own tree, so a read anywhere else asks first. The main
       # agent's stack is built by {.stack} and reads where it likes.
-      def working(chronicle, inputs, worker_env, policy = inputs.policy, requester: nil)
-        layered(chronicle, confined(inputs, worker_env), inputs.test_layout.roots_for(worker_env), policy, requester:)
+      def working(chronicle, inputs, worker_env, policy = inputs.policy, requester: nil, held: [])
+        layered(chronicle, confined(inputs, worker_env), inputs.test_layout.roots_for(worker_env), policy,
+                requester:, held:)
       end
 
       def confined(inputs, worker_env)
@@ -262,10 +281,10 @@ module Lain
       # the layout held at `roots`, and the gate's two layers asking `policy`
       # -- checked closed as it is built, the one check a child's stack from
       # any builder is also held to.
-      def layered(chronicle, inputs, roots, policy, requester: nil)
+      def layered(chronicle, inputs, roots, policy, requester: nil, held: [])
         journal = chronicle.instrumentation.journal
         Middleware::Gate.closes!(
-          Middleware::Stack.new([*configured(inputs), Middleware::ConfineToScope.new(scope: inputs.scope),
+          Middleware::Stack.new([*configured(inputs), Middleware::ConfineToScope.new(scope: inputs.scope), *held,
                                  Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
                                  Middleware::RedactSecretReads.new(**read_kwargs(chronicle, inputs), requester:),
                                  Middleware::WithholdSecretPaths.new(filter: path_filter(inputs)),

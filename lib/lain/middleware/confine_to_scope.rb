@@ -29,9 +29,23 @@ module Lain
       CONFINED = { "write_file" => %w[path written], "edit_file" => %w[path written],
                    "bash" => %w[cwd run] }.freeze
 
-      # @param scope [#current] the board's scope, read per call
-      def initialize(scope:)
+      # What a session held in plan scope is told. Each wording names the
+      # tool, the root, the location as written and what did not happen.
+      PLAN = "%<tool>s refused: plan scope confines this session's writes and commands to %<root>s, and " \
+             "%<named>s lies outside it. Nothing was %<undone>s. Work inside %<root>s, or ask the human to leave " \
+             "plan scope with /mode checkout."
+
+      # What a child held to the directory it was leased is told: no mode
+      # lifts that, so pointing it at one would be advice it cannot take.
+      LEASE = "%<tool>s refused: this session's writes and commands are confined to %<root>s, the directory it " \
+              "was leased, and %<named>s lies outside it. Nothing was %<undone>s. Work inside %<root>s, and put " \
+              "anything meant for elsewhere in your answer instead."
+
+      # @param scope [#current] the scope judged against, read per call
+      # @param wording [String] the refusal, {PLAN} or {LEASE}
+      def initialize(scope:, wording: PLAN)
         @scope = scope
+        @wording = wording
         super()
         freeze
       end
@@ -61,9 +75,7 @@ module Lain
 
       # The location is the model's own words, so it is quoted.
       def refusal(effect, scope, named, undone)
-        Tool::Result.error("#{effect.name} refused: plan scope confines this session's writes and commands to " \
-                           "#{scope.root}, and #{named.inspect} lies outside it. Nothing was #{undone}. Work " \
-                           "inside #{scope.root}, or ask the human to leave plan scope with /mode checkout.")
+        Tool::Result.error(format(@wording, tool: effect.name, root: scope.root, named: named.inspect, undone:))
       end
     end
   end

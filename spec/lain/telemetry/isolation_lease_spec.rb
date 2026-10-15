@@ -26,6 +26,14 @@ RSpec.describe Lain::Telemetry::IsolationLease do
     expect(record).to be_deeply_frozen
   end
 
+  # A researcher's lease outlives its child on purpose, so its end is told
+  # apart from a release that gave the checkout back.
+  it "records a lease kept rather than released" do
+    record = described_class.new(kind: :kept, worker_key: "research.x", backend: "Lain::Isolation::Scratch")
+
+    expect(record.kind).to eq(:kept)
+  end
+
   it "still refuses a kind outside the lease lifecycle" do
     expect { described_class.new(kind: :borrowed, worker_key: "w-1", backend: "B") }
       .to raise_error(ArgumentError, /kind/)

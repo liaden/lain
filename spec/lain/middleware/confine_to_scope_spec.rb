@@ -161,6 +161,21 @@ RSpec.describe Lain::Middleware::ConfineToScope do
     expect(through(effect).content).to eq("ran")
   end
 
+  # A child leased a directory of its own is held there by the same guard,
+  # and plan scope is not why, so the refusal must not send it to /mode.
+  describe "holding a child to its own lease" do
+    subject(:guard) { described_class.new(scope: board_scope, wording: described_class::LEASE) }
+
+    it "names the lease's directory, and neither plan scope nor /mode checkout" do
+      result = through(call("write_file", { "path" => File.join(@checkout, "y.rb"), "content" => "y" }))
+
+      expect(result.is_error).to be(true)
+      expect(result.content).to include("write_file refused", @spike, File.join(@checkout, "y.rb"),
+                                        "Nothing was written")
+      expect(result.content).not_to include("plan scope", "/mode")
+    end
+  end
+
   it "passes a tool it does not confine, whatever it names" do
     expect(through(call("read_file", { "path" => File.join(@checkout, "a.rb") })).content).to eq("ran")
   end
