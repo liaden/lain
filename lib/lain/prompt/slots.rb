@@ -48,13 +48,14 @@ module Lain
         # snapshot. The shipped skill dir is injectable so a spec can point the
         # hole defaults at a fixture tree, exactly as {Skill::Catalog.load}
         # injects its shipped scaffolds.
-        def load(root: Dir.pwd, skill_shipped_dir: SKILL_TEMPLATE_DIR)
+        def load(root: Dir.pwd, skill_shipped_dir: SKILL_TEMPLATE_DIR, environment: Environment.none)
           dir = ProjectDir.new(root:).slots
           new(
             fills: read_fills(dir),
             role_fills: read_role_fills(File.join(dir, "role")),
             skill_slots: SkillSlots.new(fills: SkillSlots.read(File.join(dir, "skill")),
-                                        templates: SkillSlots.read(skill_shipped_dir))
+                                        templates: SkillSlots.read(skill_shipped_dir)),
+            environment:
           )
         end
 
@@ -147,7 +148,7 @@ module Lain
 
       def initialize(fills:, role_fills: {}, templates: self.class.shipped_templates,
                      role_templates: self.class.shipped_role_templates,
-                     skill_slots: self.class.shipped_skill_slots)
+                     skill_slots: self.class.shipped_skill_slots, environment: Environment.none)
         @fills = fills.transform_keys(&:to_s).freeze
         @role_fills = role_fills.transform_keys(&:to_s).freeze
         # The trailing #freeze is SHALLOW -- it stops `@templates = ...`, not
@@ -163,13 +164,14 @@ module Lain
         @templates = templates.dup.freeze
         @role_templates = role_templates.dup.freeze
         @skill_slots = skill_slots
+        @environment = environment.to_s.freeze
         freeze
       end
 
       # The rendered prompt for +slot+, base template plus filled holes. Pure: a
       # function of the frozen fills and templates, byte-identical across calls.
       def render(slot = "system")
-        engine = LockedBinding.new(resolve: method(:resolve))
+        engine = LockedBinding.new(resolve: method(:resolve), locals: { environment: @environment })
         engine.render_template(@templates.fetch(slot.to_s), slot.to_s)
       end
 

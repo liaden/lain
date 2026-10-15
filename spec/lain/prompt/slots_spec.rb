@@ -209,11 +209,35 @@ RSpec.describe Lain::Prompt::Slots do
     end
   end
 
-  describe "legitimate fills still render, digests unchanged from HEAD" do
+  describe "the environment block" do
+    it "renders the given environment into the system prompt" do
+      with_project do |root|
+        slots = described_class.load(root:, environment: Lain::Prompt::Environment.fixed)
+
+        expect(slots.render).to include(Lain::Prompt::Environment.fixed.to_s)
+      end
+    end
+
+    it "adds nothing for Environment.none" do
+      with_project do |root|
+        expect(described_class.load(root:).render).not_to include("/home/")
+      end
+    end
+
+    it "lets a project fill read the environment bare" do
+      with_project("system" => "Env: <%= environment %>") do |root|
+        slots = described_class.load(root:, environment: Lain::Prompt::Environment.fixed)
+
+        expect(slots.render).to include("Env: ", "/work/project")
+      end
+    end
+  end
+
+  describe "legitimate fills still render, digests pinned" do
     # Recorded from `Slots.load(root: <empty dir>).digests` / `#render_role`
     # against shipped templates only (no project overrides), before the fix.
     # The escalation bar: if fixing the binding moves any of these, stop.
-    let(:shipped_system_digest) { "blake3:b8f7c81556a743daf8049a1a5290bc50c485f2f04edac5a8e810a3b0b5c9d41f" }
+    let(:shipped_system_digest) { "blake3:a9f5c5c182e0e32d720f3e2545821a7584bab90573fa5bc8d2273acdf62df533" }
     let(:shipped_role_digests) do
       {
         "court_clerk" => "blake3:4879b45773658d7cac5285a0bffc53ee79e7249d461df494fb8a579d3e00ed50",
@@ -228,7 +252,7 @@ RSpec.describe Lain::Prompt::Slots do
 
     it "renders the shipped system template twice, byte-identically, at the HEAD digest" do
       with_project do |root|
-        slots = described_class.load(root:)
+        slots = described_class.load(root:, environment: Lain::Prompt::Environment.fixed)
 
         expect(slots.render).to eq(slots.render)
         expect(slots.digests.fetch("system")).to eq(shipped_system_digest)

@@ -36,8 +36,9 @@ module Lain
       #
       # `locals` are the names every skill template and hole may read bare, such
       # as the epic home; a callable value is resolved only when read.
-      def self.load(root: Dir.pwd, locals: {})
-        new(catalog: Catalog.load(root:), slots: Prompt::Slots.load(root:), locals: locals.transform_values do |v|
+      def self.load(root: Dir.pwd, locals: {}, environment: Prompt::Environment.none)
+        slots = Prompt::Slots.load(root:, environment:)
+        new(catalog: Catalog.load(root:), slots:, locals: locals.transform_values do |v|
           v.respond_to?(:call) ? v : v.dup.freeze
         end.freeze)
       end

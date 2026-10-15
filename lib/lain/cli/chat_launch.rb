@@ -222,7 +222,8 @@ module Lain
       # into the system prompt: the skills and slots the Backend loads are the
       # named project's, not the ones in whatever directory the shell was in.
       def backend
-        @backend ||= Backend.new(@options, profile:, compaction:, root: project.root, middleware: configured_middleware)
+        @backend ||= Backend.new(@options, profile:, compaction:, root: project.root, middleware: configured_middleware,
+                                           environment:)
       end
 
       # The ONE {RunProfile} the run's backend is built from: what was typed,
@@ -235,6 +236,11 @@ module Lain
       # what the resumed or forked header recorded, so a resume renders under
       # the arm its recording ran with unless a flag says otherwise.
       def compaction = @compaction ||= @typed_compaction.over(CompactionProfile.from_header(recorded_header))
+
+      def environment
+        related = Config.sensitivity(root: project.root).related
+        Prompt::Environment.current(project:, related:)
+      end
 
       # The ONE RunClock for the run. Written by the Conductor and by the tee's
       # Telemetry::Compaction, read by the StatusFeed; two instances would

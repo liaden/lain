@@ -190,10 +190,12 @@ module Lain
       # @option options [String] :summarizer_provider provider for the summarizer tier
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
+      # @param environment [Prompt::Environment] rendered into the system prompt; none renders nothing
       def initialize(options, root:, profile: RunProfile.from_options(options),
                      compaction: CompactionProfile.typed(options), middleware: Config::Middleware.empty,
-                     paths: Paths.new)
+                     paths: Paths.new, environment: Prompt::Environment.none)
         @options = options
+        @environment = environment
         @paths = paths
         @root = root
         @middleware = middleware
@@ -611,7 +613,10 @@ module Lain
       # working directory: that is the whole of what `--root` buys, and the
       # layering is unchanged -- Wiring still receives a loaded library, and the
       # root arrives from above rather than being resolved here.
-      def library = @library ||= Skill::Library.load(root: @root, locals: { epic_home: method(:epic_home) })
+      def library
+        @library ||= Skill::Library.load(root: @root, locals: { epic_home: method(:epic_home) },
+                                         environment: @environment)
+      end
 
       # The loaded prompt slots -- exposed (not just the rendered String
       # {#context} produces) so a caller can emit ONE Telemetry::SlotFills built

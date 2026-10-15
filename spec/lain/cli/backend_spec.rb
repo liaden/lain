@@ -929,6 +929,26 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  # The chat's researcher exactly as the wiring builds it: the subagent tool's
+  # seam hands its child the backend's own context.
+  def researcher_system(backend)
+    tools = toolset_build_for(backend).build(Lain::Memory::Recorder.new,
+                                             ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+    tools.fetch("subagent").seam.context_factory.call.system
+  end
+
+  def toolset_build_for(backend)
+    chronicle = Lain::CLI::Chronicle::Null.new
+    journal = RecordingChannel.new
+    Lain::CLI::Wiring::ToolsetBuild.new(
+      backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
+      supervisor: Lain::Supervisor.new(journal:), parent: -> { Lain::Timeline.new }, journal:,
+      library: backend.library, epic: SpecNulls.unmounted_epic, root: Dir.pwd,
+      switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
+      **SpecNulls.unloaded_project
+    )
+  end
+
   describe "#context" do
     it "defaults the model to the selected provider's own default" do
       expect(backend_for(provider: "ollama", model: nil, max_tokens: 1024).context.model)
@@ -947,6 +967,24 @@ RSpec.describe Lain::CLI::Backend do
     it "renders the prompt slots into the system prompt by default" do
       expect(backend_for(provider: "ollama", max_tokens: 1024).context.system)
         .to eq(Lain::Prompt::Slots.load.render)
+    end
+
+    it "renders the given environment into the system prompt" do
+      environment = Lain::Prompt::Environment.fixed
+      backend = described_class.new({ provider: "ollama", max_tokens: 1024 }, root: Dir.pwd, environment:)
+
+      expect(backend.context.system).to include(environment.to_s)
+    end
+
+    it "renders no environment block by default" do
+      expect(backend_for(provider: "ollama", max_tokens: 1024).context.system).not_to include("/work/project")
+    end
+
+    it "hands the chat's researcher child the same environment block" do
+      environment = Lain::Prompt::Environment.fixed
+      backend = described_class.new({ provider: "ollama", max_tokens: 1024 }, root: Dir.pwd, environment:)
+
+      expect(researcher_system(backend)).to include(environment.to_s)
     end
 
     it "honors an explicit system override without touching the slots" do

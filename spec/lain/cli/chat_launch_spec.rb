@@ -508,6 +508,49 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
+  # The chat's researcher exactly as the wiring builds it: the subagent tool's
+  # seam hands its child the backend's own context.
+  def researcher_system(backend)
+    tools = toolset_build_for(backend).build(Lain::Memory::Recorder.new,
+                                             ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+    tools.fetch("subagent").seam.context_factory.call.system
+  end
+
+  def toolset_build_for(backend)
+    chronicle = Lain::CLI::Chronicle::Null.new
+    journal = RecordingChannel.new
+    Lain::CLI::Wiring::ToolsetBuild.new(
+      backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
+      supervisor: Lain::Supervisor.new(journal:), parent: -> { Lain::Timeline.new }, journal:,
+      library: backend.library, epic: SpecNulls.unmounted_epic, root: Dir.pwd,
+      switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
+      **SpecNulls.unloaded_project
+    )
+  end
+
+  describe "the environment block in the system prompt" do
+    it "names the project root, cwd, related directory and git state, stably across renders" do
+      Dir.mktmpdir("lain-launch-env") do |dir|
+        root = File.realpath(dir)
+        cwd = File.join(root, "services")
+        FileUtils.mkdir_p([cwd, File.join(root, ".git")])
+        project = Lain::Project.new(root:, cwd:, kind: :project, detected_by: :flag)
+        rules = Lain::Sensitivity::Rules.new(denied: [], gated: [], exempt: [], related: ["/srv/related-app"])
+        allow(Lain::Config).to receive(:sensitivity).with(root:).and_return(rules)
+
+        backend = launch({ journal: false, provider: "ollama", model: nil, max_tokens: 16 },
+                         project_factory: -> { project }).backend
+        system = backend.context.system
+
+        expect(system).to include(root, cwd, "/srv/related-app", Dir.home, Time.now.strftime("%F"),
+                                  ENV.fetch("USER"), ENV.fetch("SHELL"), "(a git repository)",
+                                  Lain::Prompt::Environment.os_name("/etc/os-release"))
+        expect(backend.context.system).to eq(system)
+        expect(researcher_system(backend)).to include(system)
+      end
+    end
+  end
+
   # The run's ONE {Lain::Project}, resolved here -- the point above both
   # the chronicle and the wiring -- and threaded down, exactly as the RunClock
   # and the StatusFeed above are. Five collaborators read a root off it, and
