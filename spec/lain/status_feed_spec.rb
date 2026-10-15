@@ -271,6 +271,18 @@ RSpec.describe Lain::StatusFeed do
       expect(published["inbox_count"]).to eq(1)
     end
 
+    it "leaves a note the human typed to the running agent out of the count" do
+      feed = described_class.new(path:)
+      notes = Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
+                                               observer: feed.method(:<<))
+      timeline = Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      notes.post(from: Lain::Tools::AskHuman::HUMAN, text: "prefer Syncthing")
+
+      written = notes.capture(timeline).folded
+
+      expect([written.size, published["inbox_count"]]).to eq([1, 0])
+    end
+
     it "ignores messages addressed elsewhere" do
       feed = described_class.new(path:)
 

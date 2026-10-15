@@ -809,6 +809,72 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
   end
 
+  describe "prose typed mid-run while an ask is in flight, with notes to the agent" do
+    let(:pipe) { IO.pipe }
+    let(:console) do
+      Class.new do
+        def initialize(io) = @io = io
+        def tty? = true
+        def echo? = true
+        def read_nonblock(*args, **opts) = @io.read_nonblock(*args, **opts)
+        def wait_readable = @io.wait_readable
+      end.new(pipe.first)
+    end
+    let(:store) { Lain::Store.new }
+    let(:mailbox) do
+      Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of), observer: ->(_) {})
+    end
+    let(:notes) { Lain::CLI::HumanNotes.new(mailbox:, in_flight: -> { true }) }
+    let(:timeline) do
+      Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+    end
+
+    after { pipe.each(&:close) }
+
+    def typed_mid_run(text, settled: -> { output.string.include?("note for the agent") })
+      pump = described_class.new(rail:, screen:, input: console, notes:)
+      Sync do |task|
+        pumping = pump.start(task)
+        pipe.last.write(text)
+        pumped_until(task, reason: "the line taken off the terminal", &settled)
+        pump.sweep
+      ensure
+        pumping&.stop
+      end
+    end
+
+    def noted = mailbox.capture(timeline).pending.map { |note| note.body.fetch("text") }
+
+    it "posts the line as a note, says so, and does not put it back as typeahead" do
+      typed_mid_run("prefer Syncthing\r")
+
+      expect([rail.take_held, noted]).to eq([nil, ["prefer Syncthing"]])
+      expect(output.string).to include("note for the agent: prefer Syncthing")
+    end
+
+    # The reader also runs between a prompt's read ending and its withdrawal, and
+    # a line it finishes then is the published prompt's, never a note.
+    it "keeps a line as typeahead, posting no note, while a human> prompt is published" do
+      allow(rail).to receive(:published)
+        .and_return(Lain::Frontend::Intake::Prompt.new(kind: :human, text: "human> ", generation: 0))
+      typed = [false]
+      allow(rail).to receive(:lifts?).and_wrap_original do |original, value|
+        original.call(value).tap { typed[0] = true }
+      end
+
+      typed_mid_run("prefer Syncthing\r", settled: -> { typed.first })
+
+      expect([rail.take_held, noted]).to eq(["prefer Syncthing", []])
+      expect(output.string).not_to include("note for the agent")
+    end
+
+    it "still keeps a slash command as typeahead for the next prompt" do
+      typed_mid_run("prefer Syncthing\r/model\r")
+
+      expect([rail.take_held, rail.take_held, noted]).to eq(["/model", nil, ["prefer Syncthing"]])
+    end
+  end
+
   describe "#keep" do
     it "hands a partial line to the next sweep, which joins it to the rest" do
       allow(Lain::Frontend::LineEditor).to receive(:typed_ahead).and_return("ial\r")

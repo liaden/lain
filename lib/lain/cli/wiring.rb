@@ -285,7 +285,7 @@ module Lain
         startup = [*resumed&.notices, *memory_notices(recorder, resumed), *backend.startup_notices]
         startup.each(&notice)
         tty = open_terminal(agent, notice, startup)
-        rail = Lain::Frontend::Intake.new(screen: tty, history: history_for(tty))
+        rail = Lain::Frontend::Intake.new(screen: tty, history: history_for(tty), notes:)
         @conductor = open_conductor(tty, rail)
         @conductor.guard do
           build_repl(tty:, agent:, backend:, input: input_for(rail, tty))
@@ -447,7 +447,7 @@ module Lain
       # all and every line arrives over the socket.
       def input_for(rail, tty)
         return Lain::Frontend::StdinPump::Idle unless attended?
-        return Lain::Frontend::StdinPump.new(rail:, screen: tty, input: @stdin) unless input_socket_name
+        return Lain::Frontend::StdinPump.new(rail:, screen: tty, input: @stdin, notes:) unless input_socket_name
 
         input_socket(rail, tty)
       end
@@ -659,9 +659,18 @@ module Lain
         agent = nil
         Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: live, session:,
                         timeline:, request_override: Lain::Agent::RequestOverride.new, # ResendBridge's slot
-                        display: channel,
+                        display: channel, mailbox: notes.mailbox,
                         snapshot_slot: snapshot_slot(board, session:, journal: chronicle.record_journal, channel:),
                         **backing(backend, channel, -> { agent.timeline }, board:)).tap { |built| agent = built }
+      end
+
+      # Built while the agent is, so the agent is read at each line.
+      def notes
+        @notes ||= Lain::CLI::HumanNotes.new(
+          mailbox: Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
+                                                    observer: chronicle.observer),
+          in_flight: -> { @agent&.working? }
+        )
       end
 
       # Born here and handed to the board, because the board is the one object
@@ -1002,7 +1011,7 @@ module Lain
                  supervisor:, middleware: @command_surface.middleware, attended: attended?,
                  commands: @command_surface.commands, auto_surface:,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
-                 echo_input: attended? && !input_socket_name.nil?)
+                 echo_input: attended? && !input_socket_name.nil?, notes:)
       end
 
       # Its own method because it is a DIFFERENT unnamed object, which the

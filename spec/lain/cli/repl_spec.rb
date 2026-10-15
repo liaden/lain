@@ -2081,4 +2081,130 @@ RSpec.describe Lain::CLI::Repl do
       expect(chronicle.events).to be_empty
     end
   end
+
+  # A line the human types while an ask is running, with nothing asking them for
+  # one, reaches the agent as a note. Driven through the real Repl, Conductor,
+  # Intake and Agent with a real Mailbox::Live; the line is typed onto the rail
+  # from inside the run, as the input pane's socket would deliver it.
+  describe "a line typed while the run is in flight" do
+    let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
+    let(:mailbox) do
+      Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of), observer: ->(_) {})
+    end
+    let(:out) { StringIO.new }
+    let(:tty) do
+      Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: out, input: StringIO.new,
+                              pastel: Pastel.new(enabled: false),
+                              history_path: File.join(Dir.tmpdir, "lain-repl-notes-history-#{Process.pid}"))
+    end
+    let(:notes) { Lain::CLI::HumanNotes.new(mailbox:, in_flight: -> { @agent&.working? }) }
+    let(:rail) { Lain::Frontend::Intake.new(screen: tty, notes:) }
+    let(:conductor) do
+      Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new, signals: Lain::CLI::Signals.new,
+                               rail:, grace: 5)
+    end
+
+    def typed(text) = rail << Lain::Frontend::Intake::Line.new(text:, generation: 0)
+
+    # A provider that has the human type a line while its `at`th call is in flight.
+    def typing_provider(responses, at:, text:)
+      typist = method(:typed)
+      Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |request, **opts|
+          super(request, **opts).tap { typist.call(text) if requests.size == at }
+        end
+      end.new(responses:)
+    end
+
+    def converse(provider, asks:, tools: [], middleware: Lain::Middleware::Stack.new)
+      queued = asks.dup
+      conductor.define_singleton_method(:read_prompt) { |*| queued.shift }
+      agent = @agent = Lain::Agent.new(provider:, toolset: Lain::Toolset.new(tools), context:, mailbox:)
+      described_class.new(agent:, tty:, replies:, commands: passing_through, conductor:, notes:, middleware:,
+                          chronicle: Lain::CLI::Chronicle::Null.new)
+                     .run(nvim: nil, store: nil, session: nil)
+    end
+
+    # Refuses the line once its turn has run, as a middleware's own Lain::Error.
+    def refusing_after_the_turn
+      Lain::Middleware::Stack.new([Class.new(Lain::Middleware::Base) do
+        def call(env)
+          yield(env)
+          raise Lain::Error, "refused after the turn"
+        end
+      end.new])
+    end
+
+    def replies
+      Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
+                                  ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+    end
+
+    def passing_through
+      Struct.new(:nothing) do
+        def dispatch(_text) = yield
+        def serves_replies?(_text) = false
+      end.new(nil)
+    end
+
+    def carries?(request, text) = JSON.generate(request.messages).include?("<mailbox>\\nhuman | #{text}\\n</mailbox>")
+
+    it "says the note, folds it into the next request, and holds nothing as the next prompt" do
+      typing = EchoTool.new
+      notes_at = method(:typed)
+      typing.define_singleton_method(:perform) do |input, ctx|
+        notes_at.call("prefer Syncthing")
+        super(input, ctx)
+      end
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
+                                                      text_response("done")])
+
+      converse(provider, asks: ["tell me"], tools: [typing])
+
+      expect(out.string).to include("note for the agent: prefer Syncthing")
+      expect(provider.requests.map { |request| carries?(request, "prefer Syncthing") }).to eq([false, true])
+      expect(conductor.take_held).to be_nil
+      expect(out.string).not_to include("joins your next prompt")
+    end
+
+    it "keeps a note typed during the last call for the next prompt's first request, and says so" do
+      provider = typing_provider([text_response("first"), text_response("second")], at: 1, text: "also check Aldi")
+
+      converse(provider, asks: ["tell me", "and now?"])
+
+      expect(out.string).to include("your note joins your next prompt")
+      expect(provider.requests.map { |request| carries?(request, "also check Aldi") }).to eq([false, true])
+    end
+
+    it "says the note waits even when a middleware refuses the line after its turn" do
+      provider = typing_provider([text_response("first")], at: 1, text: "also check Aldi")
+
+      converse(provider, asks: ["tell me"], middleware: refusing_after_the_turn)
+
+      expect(out.string).to include("refused after the turn").and include("your note joins your next prompt")
+    end
+
+    it "says nothing of a pending note when the session closes during the run" do
+      closing = conductor
+      provider = typing_provider([text_response("first")], at: 1, text: "also check Aldi")
+      provider.define_singleton_method(:complete) do |request, **opts|
+        super(request, **opts).tap { closing.close(reason: :sigterm) }
+      end
+
+      converse(provider, asks: ["tell me", "and now?"])
+
+      expect(out.string).to include("note for the agent: also check Aldi")
+      expect(out.string).not_to include("your note joins your next prompt")
+    end
+
+    it "still holds a slash command typed mid-run, and runs it as the next prompt" do
+      provider = typing_provider([text_response("first"), text_response("second")], at: 1, text: "/model")
+
+      converse(provider, asks: ["tell me"])
+
+      expect(JSON.generate(provider.requests.last.messages.last)).to include("/model")
+      expect(out.string).to include("held as your next prompt: /model")
+      expect(out.string).not_to include("note for the agent")
+    end
+  end
 end

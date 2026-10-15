@@ -2080,6 +2080,106 @@ RSpec.describe Lain::CLI::Wiring do
       expect(transcripts).to eq([true, false])
     end
 
+    # A line typed mid-run is one note however it arrives, so the Agent that
+    # folds it and every reader that can take it must hold the same queue.
+    it "hands a built chat's Agent, Intake, StdinPump and Repl one HumanNotes" do
+      seen = Hash.new { |hash, key| hash[key] = [] }
+      { Lain::Agent => :mailbox, Lain::Frontend::Intake => :notes, Lain::Frontend::StdinPump => :notes,
+        Lain::CLI::Repl => :notes }.each do |klass, key|
+        allow(klass).to receive(:new).and_wrap_original do |original, *args, **kwargs, &block|
+          seen[klass] << kwargs[key]
+          original.call(*args, **kwargs, &block)
+        end
+      end
+
+      Dir.mktmpdir do |dir|
+        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                                     tty_factory: tty_factory(dir), conductor_opener:)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+      end
+
+      notes = seen[Lain::CLI::Repl].sole
+      expect(notes).to be_a(Lain::CLI::HumanNotes)
+      expect([seen[Lain::Frontend::Intake].sole, seen[Lain::Frontend::StdinPump].sole, seen[Lain::Agent].first])
+        .to eq([notes, notes, notes.mailbox])
+    end
+
+    # A registered command runs outside every ask, so prose typed meanwhile
+    # waits as the next prompt rather than going to an agent that is not running.
+    it "holds prose typed while a registered command runs, rather than noting it" do
+      rails = []
+      allow(Lain::Frontend::Intake).to receive(:new).and_wrap_original do |original, **kwargs|
+        original.call(**kwargs).tap { |rail| rails << rail }
+      end
+      allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
+        registry = kwargs.fetch(:commands)
+        typing = Object.new
+        typing.define_singleton_method(:dispatch) do |text, &turn|
+          rails.last << Lain::Frontend::Intake::Line.new(text: "prefer Syncthing", generation: 0) if text == "/help"
+          registry.dispatch(text, &turn)
+        end
+        typing.define_singleton_method(:serves_replies?) { |text| registry.serves_replies?(text) }
+        original.call(**kwargs, commands: typing)
+      end
+      output = StringIO.new
+
+      Dir.mktmpdir do |dir|
+        factory = lambda do |channel:, **|
+          Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
+        end
+        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("/help\n"),
+                                     tty_factory: factory, conductor_opener:)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+      end
+
+      expect(output.string).to include("held as your next prompt: prefer Syncthing")
+      expect(output.string).not_to include("note for the agent")
+    end
+
+    # The run is not working once its final reply commits, so a prompt typed
+    # while it tears down is the next prompt, not a note for no request.
+    context "with a model that answers twice" do
+      let(:mock_provider) { Lain::Provider::Mock.new(responses: [text_response("first"), text_response("second")]) }
+
+      it "holds prose typed after the final reply commits as the next prompt, rather than noting it" do
+        rails = []
+        allow(Lain::Frontend::Intake).to receive(:new).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs).tap { |rail| rails << rail }
+        end
+        typed = [false]
+        typing = Class.new(Lain::Middleware::Base) do
+          define_method(:call) do |env, &downstream|
+            downstream.call(env).tap do |settled|
+              if settled.fetch(:settled) && !typed.first
+                typed[0] = true
+                rails.last << Lain::Frontend::Intake::Line.new(text: "Second prompt please.", generation: 0)
+              end
+            end
+          end
+        end.new
+        typing_chronicle = Class.new(Lain::CLI::Chronicle::Null) do
+          define_method(:turn_middleware) { |_timeline| Lain::Middleware::Stack.new([typing]) }
+        end.new
+        output = StringIO.new
+
+        Dir.mktmpdir do |dir|
+          factory = lambda do |channel:, **|
+            Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
+          end
+          wiring = described_class.new(options: { grace: 5 }, chronicle: typing_chronicle, status_feed:,
+                                       stdin: StringIO.new("tell me\n"), tty_factory: factory, conductor_opener:)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+        end
+
+        expect(output.string).to include("held as your next prompt: Second prompt please.")
+        expect(output.string).not_to include("note for the agent")
+        expect(mock_provider.requests.size).to eq(2)
+      end
+    end
+
     # Answers the first `you>` a pane is shown with `text`, as a human typing
     # there would, then goes away.
     def type_at_you_from_a_pane(path, text)

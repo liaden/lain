@@ -61,6 +61,8 @@ RSpec.describe "typing in a real cockpit while the model is busy", :e2e do
 
   def held_notes(cockpit) = cockpit.capture(:chat).scan(format(Lain::Frontend::TTY::HELD, "")).size
 
+  def agent_notes(cockpit) = cockpit.capture(:chat).scan(Lain::Frontend::TTY::NOTED).size
+
   def inbox_lines(cockpit) = cockpit.editor.evaluate("getbufline(bufnr('lain://inbox'), 1, '$')").join("\n")
 
   def parked?(cockpit) = cockpit.state.fetch("approvals_pending", 0).positive?
@@ -116,23 +118,33 @@ RSpec.describe "typing in a real cockpit while the model is busy", :e2e do
     end
   end
 
-  it "holds lines typed mid-ask and sends them once each, in order, as the next prompts" do
-    replies = [holding, saying("first"), saying("second"), saying("third")]
-    journey(replies) do |cockpit, _sandbox, upstream|
+  it "holds a slash command typed mid-ask, and sends the prose as notes in one block with the next prompt" do
+    journey([holding, saying("first")]) do |cockpit, _sandbox, upstream|
       cockpit.type("Start")
       await_chats(upstream, 1)
-      ["/goal off", "hello", "one", "two"].each { |held| cockpit.type(held) }
+      ["/goal off", "hello", "one", "two"].each { |typed| cockpit.type(typed) }
 
-      wait_until(timeout: 20, reason: "4 held notes in the chat pane") { held_notes(cockpit) >= 4 }
-      expect(chats(upstream).size).to eq(1)
-
+      wait_until(timeout: 20, reason: "1 held line and 3 notes in the chat pane") do
+        held_notes(cockpit) >= 1 && agent_notes(cockpit) >= 3
+      end
       upstream.release
-      wait_until(timeout: 20, reason: "the third held prompt answered") { cockpit.capture(:chat).include?("third") }
-      sleep(1)
+      wait_until(timeout: 20, reason: "the pending note said as the run ends") do
+        cockpit.capture(:chat).include?(Lain::Frontend::TTY::NOTE_WAITS)
+      end
+      wait_until(timeout: 20, reason: "the held /goal off run") do
+        cockpit.capture(:chat).include?("goal off -- no standing goal was driving")
+      end
 
-      expect(user_prompts(upstream)).to eq(%w[Start hello one two])
-      expect(cockpit.capture(:chat).scan("goal off -- no standing goal was driving").size).to eq(1)
-      expect(chats(upstream).size).to eq(4)
+      expect(user_prompts(upstream)).to eq(["Start"])
+      expect(held_notes(cockpit)).to eq(1)
+
+      cockpit.type("Next")
+      await_chats(upstream, 2)
+      sent = JSON.generate(chats(upstream).last[:body].fetch("messages"))
+
+      expect(sent.scan("<mailbox>").size).to eq(1)
+      expect(sent).to include("<mailbox>\\nhuman | hello\\nhuman | one\\nhuman | two\\n</mailbox>")
+      expect(chats(upstream).size).to eq(2)
     end
   end
 

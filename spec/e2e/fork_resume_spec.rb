@@ -17,8 +17,11 @@ RSpec.describe "forking and resuming a session whose subagent asked the human a 
       sandbox = E2E::Sandbox.create(files: { ".lain/skills/ask-question/skill.md" => skill })
       chat = E2E::PlainChat.start(sandbox, upstream.url, *launch_flags)
       # A role-spawn adds no parent turn, and --fork names only parent turns.
-      chat.type("Reply with the single word ready and nothing else.")
+      first = "Reply with the single word ready and nothing else."
+      chat.type(first)
       chat.session.wait_for("turn_usage", timeout: patience) { |record| record["stop_reason"] == "end_turn" }
+      # The next line is typed at you>, never while the first run is still settling.
+      chat.await_prompt(since: chat.screen.rindex(first) + first.size)
       chat.type("@dev[/ask-question] Find out which colour I like.")
       chat.answer("green")
       chat.session.wait_for("message", timeout: patience) { |record| record.dig("payload", "final") }

@@ -13,6 +13,8 @@ RSpec.describe Lain::Frontend::Intake do
 
       def render_note(text) = @said << [:note, text]
 
+      def render_human_note(text) = @said << [:human_note, text]
+
       def close_prompt(text) = text.respond_to?(:closed) && text.closed { |note| @said << [:closed, note] }
 
       def queue_prompt(text) = @said << [:queued, text.to_s]
@@ -861,6 +863,54 @@ RSpec.describe Lain::Frontend::Intake do
       rail << line("/stop", 0)
 
       expect([received, rail.take_held]).to eq([[:stop], nil])
+    end
+
+    context "with an ask in flight and notes to the agent" do
+      let(:store) { Lain::Store.new }
+      let(:mailbox) do
+        Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
+                                         observer: ->(_) {})
+      end
+      let(:received) { [] }
+      let(:noting) do
+        notes = Lain::CLI::HumanNotes.new(mailbox:, in_flight: -> { true })
+        described_class.new(screen:, notes:).route(sink_over(received, ask_in_flight: true))
+      end
+      let(:timeline) do
+        Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      end
+
+      def noted = mailbox.capture(timeline).pending.map { |note| note.body.fetch("text") }
+
+      it "posts prose as a note, says so, and holds nothing" do
+        noting << line("prefer Syncthing", 0)
+
+        expect([screen.said, noting.take_held, noted]).to eq([[[:human_note, "prefer Syncthing"]], nil,
+                                                              ["prefer Syncthing"]])
+      end
+
+      it "still holds a slash command as the next prompt" do
+        noting << line("/model", 0)
+
+        expect([screen.said, noting.take_held, noted]).to eq([[[:held, "/model"]], "/model", []])
+      end
+
+      it "still stops on /stop, and posts no note" do
+        noting << line("/stop", 0)
+
+        expect([received, noting.take_held, noted]).to eq([[:stop], nil, []])
+      end
+
+      it "leaves a line typed at a parked human> prompt to be its answer" do
+        answer = Sync do |task|
+          reading = task.async { noting.read(:human, "human> ") }
+          pumped_until(task, reason: "human> published") { noting.published.kind == :human }
+          noting << line("Syncthing", noting.published.generation)
+          reading.wait
+        end
+
+        expect([answer, noted]).to eq(["Syncthing", []])
+      end
     end
   end
 

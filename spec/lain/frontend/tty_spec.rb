@@ -651,6 +651,30 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string).not_to include("\e")
     end
 
+    it "says a line typed mid-run went to the agent as a note, after the time" do
+      stamped.render_human_note("prefer Syncthing")
+
+      expect(output.string).to eq("13:14:01 note for the agent: prefer Syncthing\n")
+    end
+
+    it "indents a pasted note's continuation lines under its first" do
+      stamped.render_human_note("one\ntwo")
+
+      expect(output.string.lines).to eq(["13:14:01 note for the agent: one\n", "#{" " * 29}two\n"])
+    end
+
+    it "shows a control character in a note rather than sending it to the screen" do
+      stamped.render_human_note("a\e[201~b")
+
+      expect(output.string).not_to include("\e")
+    end
+
+    it "says a note still pending as a run ends joins the next prompt" do
+      stamped.render_note_waiting
+
+      expect(output.string).to eq("13:14:01 your note joins your next prompt\n")
+    end
+
     it "starts a held-line notice with the time" do
       stamped.render_held("next please")
 

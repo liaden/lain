@@ -24,12 +24,16 @@ module Lain
       # `input:` is the producer that feeds the conductor's rail, started for
       # the conversation by {#run} -- {Frontend::StdinPump} for a chat at a
       # terminal, and nothing for one that reads no line.
+      #
+      # `notes:` is asked, as each line's run settles, whether a note typed
+      # during it never reached a request ({HumanNotes}).
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
                      supervisor: Lain::Supervisor::Null,
                      middleware: Lain::Middleware::Stack.new, auto_surface: nil, secret_surface: nil,
                      goal_driver: Lain::CLI::GoalDriver::Null, attended: true, input: Lain::Frontend::StdinPump::Idle,
-                     echo_input: false)
+                     echo_input: false, notes: HumanNotes::Null)
         @agent = agent
+        @notes = notes
         @tty = tty
         @input = input
         @middleware = middleware
@@ -283,12 +287,21 @@ module Lain
       # nothing. One supervision per line, so a pass-through line's turn is
       # supervised by it and {#respond} opens no second one.
       #
+      # The pending note is said in an `ensure` so a middleware's own refusal,
+      # raised past here, still says it; a closed session takes no next prompt
+      # for the note to join.
+      def middleware_turn(text)
+        settle_line(supervise_line(text))
+        nil
+      ensure
+        @tty.render_note_waiting if !@conductor.closed? && @notes.pending?(@agent.timeline)
+      end
+
       # A nil response is a STOPPED run: the block always hands back an env or
       # a refusal, and only a stop leaves the task with no value. The conductor
       # has already journaled the stop and closed the session, so what is left
       # is marking the line unfinished.
-      def middleware_turn(text)
-        supervised = supervise_line(text)
+      def settle_line(supervised)
         # The supervisor's own refusal, already said and recorded in full.
         return if supervised.nil?
 
@@ -297,7 +310,6 @@ module Lain
         return deliver(outcome.note(nil)) if env.nil? && supervised.closed?
 
         env.to_h.key?(:response) ? deliver(env.response) : render_missing_response
-        nil
       end
 
       # A {Lain::Error} raised by the SUPERVISOR itself, outside the task, is

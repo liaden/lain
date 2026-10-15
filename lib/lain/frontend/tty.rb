@@ -53,6 +53,8 @@ module Lain
       # A reply can be tens of kilobytes on one line; the echo is a reminder, not a copy.
       ECHO_WIDTH = 120
       ANSWERED = "answered lain's questions"
+      NOTED = "note for the agent: "
+      NOTE_WAITS = "your note joins your next prompt"
       DISCARDED = "discarded: %s -- finish that line and it is held as your next prompt"
 
       NO_LAYERS = -> { Mode::LayerSet.empty }
@@ -235,11 +237,11 @@ module Lain
       # What the human typed in another pane, said back so the transcript reads as
       # a conversation. One line per row: a bare newline inside a drawn prompt
       # only moves down, and {#render_line} already ends each row correctly.
-      def render_prompt_echo(text)
-        first, *rest = legible_lines(text)
-        render_line(:prompt, stamp("you> #{first}"))
-        rest.each { |row| render_line(:prompt, "#{" " * stamp("you> ").length}#{row}") }
-      end
+      def render_prompt_echo(text) = echoed("you> ", text)
+
+      def render_human_note(text) = echoed(NOTED, text)
+
+      def render_note_waiting = render_warning(stamp(NOTE_WAITS))
 
       def render_answer_echo(lines)
         render_line(:prompt, stamp(ANSWERED))
@@ -446,6 +448,12 @@ module Lain
       def legible(text) = text.gsub(/[[:cntrl:]]/) { |char| char.dump[1..-2] }
 
       def legible_lines(text) = text.split("\n", -1).map { |row| legible(row) }
+
+      def echoed(label, text)
+        first, *rest = legible_lines(text)
+        render_line(:prompt, stamp("#{label}#{first}"))
+        rest.each { |row| render_line(:prompt, "#{" " * stamp(label).length}#{row}") }
+      end
 
       # The background render loop: blocking drain of the Channel so live tool
       # output (a running bash command's stdout) renders as it arrives rather

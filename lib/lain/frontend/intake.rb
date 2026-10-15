@@ -85,6 +85,7 @@ module Lain
       module Unseen
         def self.render_held(_text) = nil
         def self.render_note(_text) = nil
+        def self.render_human_note(_text) = nil
         def self.close_prompt(_text) = nil
         def self.queue_prompt(_text) = nil
         def self.drop_prompt(_text) = nil
@@ -115,15 +116,17 @@ module Lain
       end
       private_constant :Heard, :REDRAWN, :STILL_DRAWN, :STEPPED_ASIDE, :Preempt, :Turn
 
-      # @param screen [#render_held, #render_note, #close_prompt, #queue_prompt, #drop_prompt]
-      #   where the human is told a line was held and why its prompt refused it, where a withdrawn prompt's
-      #   line is ended, and where a prompt waiting its turn is announced and,
+      # @param screen [#render_held, #render_note, #render_human_note, #close_prompt, #queue_prompt, #drop_prompt]
+      #   where the human is told a line was held and why its prompt refused it, or that it went to the agent as a
+      #   note, where a withdrawn prompt's line is ended, and where a prompt waiting its turn is announced and,
       #   leaving unpublished, said to have gone
       # @param history [#remember] takes each line that reaches `you>`, whole --
       #   {Discretion} in a chat someone types into
-      def initialize(screen: Unseen, history: Unrecorded)
+      # @param notes [#take?] offered each line that arrives with nothing published, before it is held
+      def initialize(screen: Unseen, history: Unrecorded, notes: CLI::HumanNotes::Null)
         @screen = screen
         @history = history
+        @notes = notes
         @inbound = Thread::Queue.new
         @lock = Thread::Mutex.new
         @turns = []
@@ -244,7 +247,11 @@ module Lain
 
       # With nothing published no reader is waiting, and a queued line would sit
       # unseen until some later prompt: the chat looks for held lines instead.
-      def deliver(sent) = unread?(sent) ? hold(sent.text) : @inbound.push(sent)
+      def deliver(sent)
+        return @inbound.push(sent) unless unread?(sent)
+
+        @notes.take?(sent.text) ? @screen.render_human_note(sent.text) : hold(sent.text)
+      end
 
       def unread?(value) = value.is_a?(Line) && glimpse.kind.nil?
 

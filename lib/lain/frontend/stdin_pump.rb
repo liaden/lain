@@ -94,8 +94,11 @@ module Lain
       # @param listening [Boolean] whether a line finished while nothing is
       #   published is taken at once. Off for a caller that reads the terminal
       #   itself in that state.
-      def initialize(rail:, screen:, input: $stdin, listening: true)
+      # @param notes [#take?] offered each such line before it is put back as
+      #   typeahead
+      def initialize(rail:, screen:, input: $stdin, listening: true, notes: CLI::HumanNotes::Null)
         @rail = rail
+        @notes = notes
         @listening = listening
         @screen = screen
         @input = input
@@ -242,15 +245,25 @@ module Lain
 
       def listens? = @listening && @typeahead.console?
 
-      # ONLY A STOP THE RAIL WILL LIFT IS ACTED ON. Every other line, a `/stop`
-      # with no ask behind it included, is put back as the typeahead it was, in
-      # the order typed, so the prompt that opens next reads it as it always has:
-      # a `command>` takes it for its own line, an answer holds it. Holding it
-      # here would send a `/approve` typed just ahead of a parked call to `you>`.
+      # ONLY A STOP THE RAIL WILL LIFT, AND A NOTE TO THE RUNNING AGENT, ARE
+      # ACTED ON. Every other line, a `/stop` with no ask behind it included, is
+      # put back as the typeahead it was, in the order typed, so the prompt that
+      # opens next reads it as it always has: a `command>` takes it for its own
+      # line, an answer holds it. Holding it here would send a `/approve` typed
+      # just ahead of a parked call to `you>`.
       def forwarded(typed)
         lifted, others = whole(typed).partition { |line| @rail.lifts?(Intake::Line.new(text: line, generation: 0)) }
         lifted.each { |line| @rail << Intake::Line.new(text: line, generation: Intake::Unpublished.generation) }
-        @unfinished = Typeahead.pending(others, typed.partial)
+        @unfinished = Typeahead.pending(others.reject { |line| noted?(line) }, typed.partial)
+      end
+
+      # The reader also runs between a prompt's read ending and its withdrawal,
+      # when that prompt is still the one a line answers.
+      def noted?(line)
+        return false unless @rail.published.kind.nil? && @notes.take?(line)
+
+        @screen.render_human_note(line)
+        true
       end
 
       def whole(typed) = StdinPump.uncut(typed, @screen)

@@ -1093,6 +1093,51 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  # Whether a model call or a tool is running, read by a line the human types
+  # mid-run: a note while it is, the next prompt once the run's final reply has
+  # committed, though the run still holds the dispatch lock while it tears down.
+  describe "#working?" do
+    it "is false on a fresh agent" do
+      expect(agent(text_response).working?).to be(false)
+    end
+
+    it "is true during each model call and while a tool runs, and false once the final reply commits" do
+      readings = []
+      subject = nil
+      reading = ->(label) { readings << [label, subject.working?] }
+      provider = Class.new(Lain::Provider::Mock) do
+        define_method(:complete) { |request, **opts| reading.call(:model) && super(request, **opts) }
+      end.new(responses: [tool_response(["tu_1", "echo", { "text" => "a" }]), text_response("done")])
+      tool = EchoTool.new
+      tool.define_singleton_method(:perform) { |input, ctx| reading.call(:tool) && super(input, ctx) }
+      journal = Class.new do
+        define_method(:<<) do |record|
+          reading.call(record.stop_reason) if record.is_a?(Lain::Telemetry::TurnUsage)
+        end
+      end.new
+      subject = described_class.new(provider:, toolset: CoreGraph.toolset([tool]), context:, journal:)
+
+      subject.ask("hi")
+
+      expect(readings).to eq([[:model, true], [:tool_use, true], [:tool, true], [:model, true], [:end_turn, false]])
+      expect(subject.working?).to be(false)
+    end
+
+    it "is false after a run raises out, though the state is still busy" do
+      exploding = Class.new(Lain::Provider) do
+        def capabilities = []
+        def cache_profile = Lain::CacheProfile::NO_CACHING
+        def encode(request) = request.cache_payload
+        def complete(*, **) = raise(Lain::Error, "connection reset by peer")
+      end.new
+      subject = described_class.new(provider: exploding, toolset: CoreGraph.toolset([]),
+                                    context: CoreGraph.context(model: "opus", max_tokens: 64))
+      expect { subject.ask("hi") }.to raise_error(Lain::Error)
+
+      expect(subject.working?).to be(false)
+    end
+  end
+
   # Pin the Agent's existing Timeline injection seam (agent.rb:71,84) --
   # `timeline: nil` already defaults to a fresh Timeline, so passing one in is
   # already "resume from here". Subagent#spawn_agent is the production caller

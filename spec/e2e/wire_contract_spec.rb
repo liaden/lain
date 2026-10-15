@@ -24,8 +24,11 @@ RSpec.describe "the wire contract of a recorded plain chat", :e2e do
   end
 
   def drive(chat, upstream)
-    chat.type("Use read_file to read NOTES.md, then tell me in one sentence what it says.")
+    first = "Use read_file to read NOTES.md, then tell me in one sentence what it says."
+    chat.type(first)
     chat.session.wait_for("turn_usage", timeout: patience) { |record| record["stop_reason"] == "end_turn" }
+    # The next line is typed at you>, never while the first run is still settling.
+    chat.await_prompt(since: chat.screen.rindex(first) + first.size)
     parent_count = chats(upstream.requests).size
     chat.type("@dev[/ask-lfm] What colour is a clear daytime sky?")
     chat.session.wait_for("message", timeout: patience) { |record| record["kind"] == "message" }
