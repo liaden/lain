@@ -448,6 +448,8 @@ module Lain
         def render_warning(line) = @open ? __getobj__.render_warning(line) : @lines << line
       end
 
+      def cycle_key = Lain::Config.keys(paths: @paths).approval_cycle
+
       def approval_key = -> { @switchboard.cycle_approval(surface: Switchboard::KEY_SURFACE) }
 
       # Nobody types into a chat run under --non-interactive, so nothing reads.
@@ -456,7 +458,10 @@ module Lain
       # all and every line arrives over the socket.
       def input_for(rail, tty)
         return Lain::Frontend::StdinPump::Idle unless attended?
-        return Lain::Frontend::StdinPump.new(rail:, screen: tty, input: @stdin, notes:) unless input_socket_name
+        unless input_socket_name
+          return Lain::Frontend::StdinPump.new(rail:, screen: tty, input: @stdin, notes:,
+                                               cycle_key:)
+        end
 
         input_socket(rail, tty)
       end

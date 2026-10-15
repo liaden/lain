@@ -684,6 +684,30 @@ RSpec.describe Lain::Config do
         .to raise_error(Lain::Project::Trust::Unreadable, /#{Regexp.escape(paths.user_config)}/)
     end
 
+    it "reads the approval cycle key the user declared" do
+      write_user("keys approval_cycle: \"C-x\"\n")
+
+      expect(described_class.keys(paths:).approval_cycle).to eq("C-x")
+    end
+
+    it "is Shift+Tab when the user has no config.rb" do
+      expect(described_class.keys(paths:).approval_cycle).to eq("S-Tab")
+    end
+
+    it "refuses an unknown key name at the user's file and line" do
+      write_user("\nkeys approval_cycle: \"Hyper-Q\"\n")
+
+      expect { described_class.keys(paths:) }
+        .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(paths.user_config)}:2: .*Hyper-Q/)
+    end
+
+    it "refuses keys in a project's config.rb" do
+      write_config(root, "keys approval_cycle: \"C-x\"\n", paths:)
+
+      expect { described_class.middleware(root:, paths:) }
+        .to raise_error(Lain::Config::Refusal, /keys belongs in the user's config\.rb/)
+    end
+
     it "is never read by the project's own readers" do
       with_env("XDG_CONFIG_HOME" => File.join(@tmp, "config")) do
         write_user("# #{SecureRandom.hex}\nmiddleware { }\n", trusted: false)

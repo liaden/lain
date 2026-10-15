@@ -64,7 +64,7 @@ RSpec.describe "the approval key in an input pane", :seam do
   let(:own_script) do
     <<~RUBY
       require "lain"
-      dir, shape = ARGV
+      dir, shape, cycle_key = ARGV
       approval = +"AUTO"
       tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: $stdout,
                                     input: Lain::Frontend::StdinPump.keys($stdin),
@@ -76,7 +76,7 @@ RSpec.describe "the approval key in an input pane", :seam do
       end
       rail = Lain::Frontend::Intake.new(screen: tty, on_cycle: cycle)
       Sync do |task|
-        pumping = Lain::Frontend::StdinPump.new(rail:, screen: tty, input: $stdin).start(task)
+        pumping = Lain::Frontend::StdinPump.new(rail:, screen: tty, input: $stdin, cycle_key:).start(task)
         File.write(File.join(dir, "ready"), "")
         Async::Task.current.sleep(0.05) until shape != "late" || File.exist?(File.join(dir, "go"))
         File.write(File.join(dir, "heard.ndjson"), "\#{JSON.generate({ "heard" => rail.read(:you, "you> ") })}\n")
@@ -112,23 +112,31 @@ RSpec.describe "the approval key in an input pane", :seam do
   # pane runs, so the key is bound by #start and nothing else. Its prompt
   # carries a header row naming the approval the key last flipped to. `late`
   # opens `you>` only once the spec says so, as a run in flight does.
-  def own_terminal(shape = "plain")
+  def own_terminal(shape = "plain", key: "S-Tab")
     File.write(File.join(dir, "own.rb"), own_script)
     tmux("new-session", "-d", "-x", "100", "-y", "20", "-c", repo,
-         "#{RbConfig.ruby} -I lib #{dir}/own.rb #{dir} #{shape}")
+         "#{RbConfig.ruby} -I lib #{dir}/own.rb #{dir} #{shape} #{key}")
     wait_for { File.exist?(File.join(dir, "ready")) }
   end
 
   # A pane typing into a chat with no prompt open, once the pane's terminal
   # ends a read at ESC, which is when the key can arrive as it is pressed.
-  def idle_pane
+  def idle_pane(eol: "^[")
     start_chat("unpublished", :auto)
     wait_for { File.exist?(File.join(dir, "bound")) }
     tmux("new-session", "-d", "-x", "100", "-y", "20", "-c", repo,
          "#{RbConfig.ruby} -I lib exe/lain input --socket #{path}")
     wait_for { File.exist?(File.join(dir, "welcomed")) }
     pane_tty = tmux("display-message", "-p", "\#{pane_tty}").first.strip
-    wait_for { Open3.capture2("stty", "-F", pane_tty, "-a").first.include?("eol = ^[") }
+    wait_for { Open3.capture2("stty", "-F", pane_tty, "-a").first.include?("eol = #{eol}") }
+  end
+
+  # The user's config.rb for the pane process, under the same trusted state home.
+  def user_binds(key)
+    paths = Lain::Paths.new(env: env.merge("HOME" => dir))
+    FileUtils.mkdir_p(File.dirname(paths.user_config))
+    File.write(paths.user_config, "keys approval_cycle: #{key.inspect}\n")
+    Lain::Project::Trust.for_user(paths:).grant!
   end
 
   def start_chat(shape, approval)
@@ -266,5 +274,33 @@ RSpec.describe "the approval key in an input pane", :seam do
     wait_for { heard.any? }
 
     expect(heard).to eq([{ "heard" => "ab" }])
+  end
+
+  describe "with a key the user's config rebinds" do
+    it "drops the configured key typed while no prompt was drawn" do
+      own_terminal("late", key: "C-x")
+
+      press("ab")
+      press("C-x")
+      sleep 0.2
+      FileUtils.touch(File.join(dir, "go"))
+      wait_for { screen.include?("you>") }
+      press("Enter")
+      wait_for { heard.any? }
+
+      expect([lines_of("cycled"), heard]).to eq([[], [{ "heard" => "ab" }]])
+    end
+
+    it "sends the configured key from an idle pane at once, and not Shift+Tab" do
+      user_binds("C-x")
+      idle_pane(eol: "^X")
+
+      press("BTab")
+      sleep 0.3
+      press("C-x")
+      wait_for { flips.any? }
+
+      expect(flips).to eq([%w[auto ask]])
+    end
   end
 end

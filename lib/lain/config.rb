@@ -17,7 +17,8 @@ module Lain
   # crashing three call frames deep.
   #
   # The user's `$XDG_CONFIG_HOME/lain/config.rb` is read by {.middleware}
-  # alone, under its own trust, and may declare nothing but middleware.
+  # and {.keys}, under its own trust, and may declare nothing but middleware
+  # and keys.
   class Config
     # The evaluated file, memoised on its path and trusted bytes: a `lain chat`
     # startup asks the four readers below for one file, and an edit is new
@@ -89,7 +90,15 @@ module Lain
     # @raise [Project::Trust::Untrusted] as {.load}, for either file
     # @raise [Project::Trust::Unreadable] when either file's path is not a regular file
     # @raise [Refusal] as {.load}, for either file
-    def self.middleware(root:, paths: Paths.new) = user(paths) + built(root, paths:).middleware
+    def self.middleware(root:, paths: Paths.new) = user(paths).middleware + built(root, paths:).middleware
+
+    # The keys the user's config.rb rebinds. Only that file may declare them.
+    #
+    # @param paths [Paths] where the user's config.rb lives
+    # @return [Keys] every key at its default when the file or the table is absent
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] naming the user's file and line
+    def self.keys(paths: Paths.new) = user(paths).keys
 
     # Where this project keeps its tests, which the layout guard holds a test
     # file's path to. With no table the layout falls back to the preset of a
@@ -122,9 +131,9 @@ module Lain
 
     def self.user(paths)
       path = paths.user_config
-      return Middleware.empty unless File.exist?(path)
+      return Builder.new(path).built unless File.exist?(path)
 
-      judged(path, Project::Trust.for_user(paths:), Builder::USER_VERBS, "the user's").middleware
+      judged(path, Project::Trust.for_user(paths:), Builder::USER_VERBS, "the user's")
     end
 
     def self.judged(path, trust, verbs, whose)

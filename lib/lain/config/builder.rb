@@ -9,7 +9,7 @@ module Lain
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
-                        :approval_timeout) do
+                        :approval_timeout, :keys) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -27,7 +27,7 @@ module Lain
 
       # The user's config.rb runs in every project, so the tables that rule
       # one project stay in that project's file.
-      USER_VERBS = %i[middleware].freeze
+      USER_VERBS = %i[middleware keys].freeze
 
       # Records the calls a block makes, so the verb that owns the block can
       # validate them at the line each was written on.
@@ -108,7 +108,8 @@ module Lain
                   search: @tables.fetch(:search, SearchRules.empty),
                   tests: @tables[:tests],
                   middleware: @tables.fetch(:middleware, Middleware.empty),
-                  approval_timeout: @approval_timeout)
+                  approval_timeout: @approval_timeout,
+                  keys: @tables.fetch(:keys) { Keys.empty })
       end
 
       def epics(**table, &block)
@@ -148,6 +149,8 @@ module Lain
         declare(:middleware, Middleware::TABLE) { Middleware.from(collect(block, Middleware::AREAS), path: @path) }
       end
 
+      def keys(**table) = declare(:keys, Keys::TABLE, table) { |at| Keys.from(shaped(table), path: at) }
+
       def tests(**table) = declare(:tests, TestLayout::TABLE, table) { |at| TestLayout.from(shaped(table), path: at) }
 
       # Kernel#test answers the likeliest typo of `tests` with an unrelated TypeError.
@@ -173,7 +176,8 @@ module Lain
       end
 
       def refuse_project_only(table, at)
-        raise Refusal.new("#{table} belongs in a project's #{ProjectDir.config}", path: at, key: table.to_s)
+        owner = USER_VERBS.include?(table) ? "the user's config.rb" : "a project's #{ProjectDir.config}"
+        raise Refusal.new("#{table} belongs in #{owner}", path: at, key: table.to_s)
       end
 
       def refuse_repeated_keys(keywords, at, label)

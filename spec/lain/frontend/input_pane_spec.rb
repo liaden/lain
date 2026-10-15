@@ -113,6 +113,42 @@ RSpec.describe Lain::Frontend::InputPane do
               .find { |answer| !answer.nil? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline }
   end
 
+  it "backs the cooked echo of a configured key off by that key's width" do
+    keyed = described_class.new(path:, tty:, input: reader, commands:, layers:, tick: 0.01, geometry:, cycle_key: "C-x")
+    allow(tty).to receive(:print_prompt)
+
+    keyed.send(:cycled, nil, erase: true)
+
+    expect(tty).to have_received(:print_prompt).with("\b\b\e[K")
+  end
+
+  it "hands its pump the approval key it was given" do
+    made = []
+    allow(Lain::Frontend::StdinPump).to(receive(:new).and_wrap_original { |new, **kw| (made << kw) && new.call(**kw) })
+    keyed = described_class.new(path:, tty:, input: reader, commands:, layers:, tick: 0.01, geometry:, cycle_key: "C-x")
+    @running = Thread.new { keyed.run }
+    server.timeout = 5
+    server.accept.tap { |chat| chat.timeout = 5 }
+
+    expect(settles { made.first&.fetch(:cycle_key) }).to eq("C-x")
+  end
+
+  it "reads the approval key from the user's config when opened" do
+    paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_CONFIG_HOME" => File.join(dir, "config") })
+    FileUtils.mkdir_p(File.dirname(paths.user_config))
+    File.write(paths.user_config, "keys approval_cycle: \"C-x\"\n")
+    Lain::Project::Trust.for_user(paths:).grant!
+    made = []
+    allow(Lain::Frontend::StdinPump).to(receive(:new).and_wrap_original { |new, **kw| (made << kw) && new.call(**kw) })
+    opened = described_class.open(path:, input: reader, output: screen, paths:, history_path: File.join(dir, "h"),
+                                  state_path: File.join(dir, "s.json"), pastel: Pastel.new(enabled: false))
+    @running = Thread.new { opened.run }
+    server.timeout = 5
+    server.accept.tap { |chat| chat.timeout = 5 }
+
+    expect(settles { made.first&.fetch(:cycle_key) }).to eq("C-x")
+  end
+
   it "draws the published prompt with the chat's header above it" do
     chat = open_pane
     publish(chat, { "header" => "🔥 fleet:1 inbox:0" })
@@ -1018,6 +1054,7 @@ RSpec.describe Lain::Frontend::InputPane::CycleKey do
   let(:terminal) { pty.last }
   let(:presses) { [] }
   let(:subject_key) { described_class.new(terminal, ->(ended) { presses << ended }) }
+  let(:ctrl_x) { described_class.new(terminal, ->(ended) { presses << ended }, key: "\x18") }
 
   after { pty.each { |io| io.close unless io.closed? } }
 
@@ -1033,6 +1070,16 @@ RSpec.describe Lain::Frontend::InputPane::CycleKey do
     reads = subject_key.ending_reads { [typed("\e[Z"), typed("ab\e[Zcd\e[Zef\n")] }
 
     expect([reads, presses]).to eq([["", "abcdef\n"], [true, false, false]])
+  end
+
+  it "takes the configured key out of a read, and leaves Shift+Tab as typed" do
+    reads = ctrl_x.ending_reads do
+      keyboard.write("ab\x18cd\e[Z\n")
+      sleep 0.1
+      ctrl_x.read_nonblock(65_536, exception: false)
+    end
+
+    expect([reads, presses]).to eq(["abcd\e[Z\n", [false]])
   end
 
   it "never arms a terminal already raw, and leaves it raw" do

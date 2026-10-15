@@ -69,16 +69,16 @@ class StdinPumpRaceTerminal
 end
 
 RSpec.describe Lain::Frontend::StdinPump do
-  let(:output) { StringIO.new }
-  let(:history_path) { File.join(@dir, "history") }
-  let(:layers) { [] }
+  # History is the Intake's to keep, not the pump's: the rail here keeps it
+  # through the same discretion a chat's does, into the real file.
+  let(:rail) { Lain::Frontend::Intake.new(screen:, history: Lain::Frontend::Intake::Discretion.new(writer: screen)) }
   let(:screen) do
     Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, pastel: Pastel.new(enabled: false), history_path:,
                             layers: -> { Lain::Mode::LayerSet.new(layers) })
   end
-  # History is the Intake's to keep, not the pump's: the rail here keeps it
-  # through the same discretion a chat's does, into the real file.
-  let(:rail) { Lain::Frontend::Intake.new(screen:, history: Lain::Frontend::Intake::Discretion.new(writer: screen)) }
+  let(:layers) { [] }
+  let(:history_path) { File.join(@dir, "history") }
+  let(:output) { StringIO.new }
 
   # Reline's history and config are process-global; see tty_spec for why every
   # example that reaches the line editor puts them back.
@@ -103,8 +103,8 @@ RSpec.describe Lain::Frontend::StdinPump do
   # only when its input answers `tty?`, which a StringIO never does.
   def terminal = instance_double(IO, tty?: true)
 
-  def pumped(input)
-    pump = described_class.new(rail:, screen:, input:)
+  def pumped(input, **seams)
+    pump = described_class.new(rail:, screen:, input:, **seams)
     Sync do |task|
       pumping = pump.start(task)
       yield pump
@@ -153,6 +153,20 @@ RSpec.describe Lain::Frontend::StdinPump do
   end
 
   describe "over a terminal" do
+    it "binds the approval key it was given when it starts, and not Shift+Tab" do
+      allow(Reline).to receive(:readmultiline).and_return("hi")
+      Lain::Frontend::LineEditor.unbind_all
+
+      bound = pumped(terminal, cycle_key: "C-x") do
+        rail.read(:you, "> ")
+        [Lain::Frontend::LineEditor.bound?("C-x"), Lain::Frontend::LineEditor.bound?("S-Tab")]
+      ensure
+        Lain::Frontend::LineEditor.unbind_all
+      end
+
+      expect(bound).to eq([true, false])
+    end
+
     it "hands the composed prompt to the line editor and answers with what was typed" do
       allow(Reline).to receive(:readmultiline).and_return("hi")
 
@@ -981,6 +995,39 @@ RSpec.describe Lain::Frontend::StdinPump do
       keys = described_class.keys(StringIO.new("c"))
 
       expect([keys.tty?, keys.read_nonblock(1)]).to eq([false, "c"])
+    end
+  end
+
+  describe ".bind_cycle" do
+    let(:rail) { instance_double(Lain::Frontend::Intake, cycle: nil) }
+    let(:screen) { instance_double(Lain::Frontend::TTY, render_warning: nil) }
+
+    # Reline's config is process-wide and reads the developer's inputrc, so a key an
+    # earlier example bound, or an inputrc owns, would make the bind refuse.
+    around do |example|
+      with_env("INPUTRC" => File.join(Dir.tmpdir, "lain-spec-no-such-inputrc")) do
+        Reline.core.config.reset_variables
+        Lain::Frontend::LineEditor.unbind_all
+        example.run
+      end
+    end
+
+    after do
+      Reline.core.config.reset_variables
+      Lain::Frontend::LineEditor.unbind_all
+    end
+
+    it "binds Shift+Tab by default" do
+      described_class.bind_cycle(rail, screen)
+
+      expect(Lain::Frontend::LineEditor).to be_bound("S-Tab")
+    end
+
+    it "binds the key it is given and leaves Shift+Tab unbound" do
+      described_class.bind_cycle(rail, screen, "C-x")
+
+      expect([Lain::Frontend::LineEditor.bound?("C-x"), Lain::Frontend::LineEditor.bound?("S-Tab")])
+        .to eq([true, false])
     end
   end
 end

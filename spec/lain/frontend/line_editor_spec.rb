@@ -659,6 +659,15 @@ RSpec.describe Lain::Frontend::LineEditor do
     end
   end
 
+  describe "Registry.name?" do
+    it "is true for the names bind can translate and false for the rest" do
+      names = ["C-g", "c-G", "S-Tab", "s-tab", "Hyper-Q", "C-", 7, nil]
+
+      expect(names.map { |name| described_class::Registry.name?(name) })
+        .to eq([true, true, true, true, false, false, false, false])
+    end
+  end
+
   describe "Shift+Tab, a key bound by its whole escape sequence" do
     def shift_tab = [27, 91, 90]
 

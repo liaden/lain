@@ -434,6 +434,9 @@ module Lain
         CONTROL_NAME = /\AC-([a-z])\z/i
         NAMED_SEQUENCES = { "s-tab" => "\e[Z".bytes.freeze }.freeze
 
+        # @return [Boolean] whether {#bind} can translate this key name
+        def self.name?(name) = CONTROL_NAME.match?(name.to_s) || NAMED_SEQUENCES.key?(name.to_s.downcase)
+
         def initialize
           @handlers = {}
           @notify = Reporter.new(SILENT)

@@ -2101,6 +2101,25 @@ RSpec.describe Lain::CLI::Wiring do
         .to eq([notes, notes, notes.mailbox])
     end
 
+    it "hands the chat's StdinPump the approval key the user's config names" do
+      allow(Lain::Config).to receive(:keys)
+        .and_return(Lain::Config::Keys.from({ "approval_cycle" => "C-x" }, path: nil))
+      keys = []
+      allow(Lain::Frontend::StdinPump).to receive(:new).and_wrap_original do |original, *args, **kwargs, &block|
+        keys << kwargs[:cycle_key]
+        original.call(*args, **kwargs, &block)
+      end
+
+      Dir.mktmpdir do |dir|
+        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                                     tty_factory: tty_factory(dir), conductor_opener:)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+      end
+
+      expect(keys).to eq(["C-x"])
+    end
+
     # A registered command runs outside every ask, so prose typed meanwhile
     # waits as the next prompt rather than going to an agent that is not running.
     it "holds prose typed while a registered command runs, rather than noting it" do

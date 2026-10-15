@@ -49,6 +49,7 @@ RSpec.describe Lain::Config::Builder do
 
     it "yields every default for an empty file" do
       expect(build("").to_h.except(:middleware)).to eq(epics: Lain::Config::Epics.new(home: :xdg),
+                                                       keys: Lain::Config::Keys.empty,
                                                        approval: Lain::Config::Answers.empty,
                                                        isolation: Lain::Config::Isolation.empty,
                                                        sensitivity: Lain::Sensitivity::Rules.empty,
@@ -240,9 +241,29 @@ RSpec.describe Lain::Config::Builder do
         .to raise_error(Lain::Config::Refusal, /config\.rb:1: .*approval belongs in a project's/)
     end
 
-    it "lists only middleware as a known verb" do
+    it "lists only the user's verbs as known" do
       expect { build_user("\nmiddlewear { }\n") }
-        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*:middlewear; known verbs: middleware\z/)
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*:middlewear; known verbs: middleware, keys\z/)
+    end
+
+    it "builds a keys table" do
+      expect(build_user("keys approval_cycle: \"C-x\"\n").keys.approval_cycle).to eq("C-x")
+    end
+
+    it "leaves the approval cycle at Shift+Tab when keys is not declared" do
+      expect(build_user("").keys.approval_cycle).to eq("S-Tab")
+    end
+
+    it "names the line of a key it refuses" do
+      expect { build_user("\nkeys approval_cycle: \"Hyper-Q\"\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*Hyper-Q/)
+    end
+  end
+
+  describe "a project's config.rb" do
+    it "refuses keys as a verb only the user's config may use" do
+      expect { build("keys approval_cycle: \"C-x\"\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:1: .*keys belongs in the user's config\.rb/)
     end
   end
 end

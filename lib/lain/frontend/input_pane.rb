@@ -75,8 +75,11 @@ module Lain
       #   in seconds
       # @param geometry [#moved!] the pane's own window, measured off the
       #   terminal it was handed; {Geometry::Blind} where there is none
+      # @param cycle_key [String] the key that cycles approval, from the user's config
       def initialize(path:, tty:, input: StdinPump.process_input, commands: [], layers: [], tick: TICK,
-                     geometry: Geometry.for(input))
+                     geometry: Geometry.for(input), cycle_key: StdinPump::CYCLE_KEY)
+        @cycle_bytes = CycleKey.bytes(cycle_key)
+        @cycle_key = cycle_key
         @path = path
         @tty = tty
         @input = input
@@ -85,13 +88,10 @@ module Lain
         @tick = tick
         @geometry = geometry
         @rail = Intake.new(screen: tty, on_cycle: -> { emit(@client, { "v" => "cycle" }) })
-        @drawn = NOTHING_DRAWN
-        @reported = @client = nil
-        @quit = @idle = @settled = @answered = @resized = @below_echo = false
-        @shown = @wanted = ""
         @pump = StdinPump::Idle
         @relay = Relay.new
         @rail.route(@relay)
+        start_unconnected
       end
 
       # The pane a `lain input` process is, terminal and all: the completion
@@ -99,13 +99,13 @@ module Lain
       # chat, so a `/command` learned at connect completes at the next prompt.
       #
       # @return [InputPane]
-      def self.open(path:, output: $stdout, input: StdinPump.process_input, **terminal)
+      def self.open(path:, output: $stdout, input: StdinPump.process_input, paths: Lain::Paths.new, **terminal)
         commands = []
         layers = []
         tty = TTY.new(channel: Lain::Channel.new, output:, input: StdinPump.keys(input),
                       completion_sources: Completion::Sources.new(skills: commands),
                       layers: -> { layers }, **terminal)
-        new(path:, tty:, input:, commands:, layers:)
+        new(path:, tty:, input:, commands:, layers:, cycle_key: Lain::Config.keys(paths:).approval_cycle)
       end
 
       # Draw, type, send, until the chat says goodbye.
@@ -130,6 +130,13 @@ module Lain
       end
 
       private
+
+      def start_unconnected
+        @drawn = NOTHING_DRAWN
+        @reported = @client = nil
+        @quit = @idle = @settled = @answered = @resized = @below_echo = false
+        @shown = @wanted = ""
+      end
 
       # A signal the pane's traps or its line editor recorded. With a chat to
       # carry it to, a Ctrl-C or Ctrl-\ goes there -- the run it means is the
@@ -171,7 +178,8 @@ module Lain
       end
 
       def start_pump(task)
-        @pump = StdinPump.new(rail: @rail, screen: @tty, input: @input, listening: false)
+        @pump = StdinPump.new(rail: @rail, screen: @tty, input: @input, listening: false,
+                              cycle_key: @cycle_key)
         @pump.start(task)
       end
 
@@ -292,7 +300,7 @@ module Lain
       # cooked inside the pump's terminal lock, so taking that lock first arms
       # the wait only after the mode has settled.
       def unprompted(client)
-        keyboard = CycleKey.new(@input, ->(ended) { cycled(client, erase: ended) })
+        keyboard = CycleKey.new(@input, ->(ended) { cycled(client, erase: ended) }, key: @cycle_bytes)
         typeahead = StdinPump::Typeahead.new(input: keyboard)
         return unless typeahead.console?
 
@@ -311,7 +319,7 @@ module Lain
       # only when it ended the read, the one case where it was echoed last.
       def cycled(client, erase:)
         emit(client, { "v" => "cycle" })
-        @tty.print_prompt("#{"\b" * CycleKey::ECHOED}\e[K") if erase
+        @tty.print_prompt("#{"\b" * CycleKey.echoed(@cycle_bytes)}\e[K") if erase
       end
 
       # A partial line, one ended by Ctrl-D, waits for the rest of it.
@@ -538,10 +546,12 @@ module Lain
       # key. Anything else stays in the line as typed, and a lone ESC is held
       # for the next read, since a line of nothing but ESC says nothing.
       class CycleKey < SimpleDelegator
-        KEY = LineEditor.keystroke(StdinPump::CYCLE_KEY).pack("C*").freeze
+        # @param name [String] a key as {LineEditor.bind} names it
+        # @return [String] the bytes a terminal sends for it
+        def self.bytes(name) = LineEditor.keystroke(name).pack("C*").freeze
 
         # Columns the cooked echo gives the key: `^[` for the escape, then `[Z`.
-        ECHOED = KEY.each_char.sum { |char| char.match?(/[[:cntrl:]]/) ? 2 : 1 }
+        def self.echoed(key) = key.each_char.sum { |char| char.match?(/[[:cntrl:]]/) ? 2 : 1 }
 
         # How long the rest of the key may take to follow its ESC. A terminal
         # sends the three bytes together; a human typing ESC does not.
@@ -560,8 +570,12 @@ module Lain
         VMIN_AT = 17 + 6
         VEOL_AT = 17 + 11
 
-        def initialize(input, pressed)
+        # @param input [IO] the pane's keyboard
+        # @param pressed [#call] told each press, and whether it ended the read
+        # @param key [String] the bytes of the approval key, from {.bytes}
+        def initialize(input, pressed, key: CycleKey.bytes(StdinPump::CYCLE_KEY))
           super(input)
+          @key = key
           @pressed = pressed
           @held = +""
           @armed = false
@@ -571,7 +585,7 @@ module Lain
         # another reader set meanwhile -- a countdown's raw window -- stands. A
         # terminal already raw is not cooked, so there is no line to end.
         def ending_reads
-          @armed = cooked? && changed { |set| (@eol = set.getbyte(VEOL_AT)) && set.setbyte(VEOL_AT, KEY.getbyte(0)) }
+          @armed = cooked? && changed { |set| (@eol = set.getbyte(VEOL_AT)) && set.setbyte(VEOL_AT, @key.getbyte(0)) }
           yield
         ensure
           changed { |set| set.setbyte(VEOL_AT, @eol) } if @armed
@@ -583,7 +597,7 @@ module Lain
           return read unless @armed && read.is_a?(String)
 
           typed = "#{@held}#{read.b}"
-          typed << follow(KEY.bytesize - 1) if typed.end_with?(KEY[0])
+          typed << follow(@key.bytesize - 1) if typed.end_with?(@key[0])
           pressed_out(typed)
         end
 
@@ -592,9 +606,9 @@ module Lain
         # The pressed callable is told whether the key ended the read, the one
         # case where its echo is the last thing on the row.
         def pressed_out(typed)
-          *kept, last = typed.split(KEY, -1)
+          *kept, last = typed.split(@key, -1)
           kept.each_index { |at| @pressed.call(at == kept.size - 1 && last.empty?) }
-          @held = last.end_with?(KEY[0]) ? KEY[0].dup : +""
+          @held = last.end_with?(@key[0]) ? @key[0].dup : +""
           "#{kept.join}#{@held.empty? ? last : last.chop}"
         end
 

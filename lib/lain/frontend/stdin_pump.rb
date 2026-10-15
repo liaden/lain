@@ -66,6 +66,7 @@ module Lain
       # How often the wait looks again.
       HOLD_POLL = 0.01
 
+      # The approval key when the user's config does not name another, as {LineEditor.bind} names it.
       CYCLE_KEY = "S-Tab"
 
       # A cooked terminal's 4096-byte line buffer keeps 4095 content bytes and drops the rest without a word.
@@ -93,10 +94,10 @@ module Lain
       # pump started owns the key; a chat and a pane each start one. A key that
       # cannot be had costs the human the key, never the prompt. The open
       # prompt's header is repainted at once, since it names the level.
-      def self.bind_cycle(rail, screen)
-        return if LineEditor.bound?(CYCLE_KEY)
+      def self.bind_cycle(rail, screen, key = CYCLE_KEY)
+        return if LineEditor.bound?(key)
 
-        LineEditor.bind(CYCLE_KEY) do |_draft|
+        LineEditor.bind(key) do |_draft|
           rail.cycle
           screen.restyled
         end
@@ -113,8 +114,11 @@ module Lain
       #   itself in that state.
       # @param notes [#take?] offered each such line before it is put back as
       #   typeahead
-      def initialize(rail:, screen:, input: $stdin, listening: true, notes: CLI::HumanNotes::Null)
+      # @param cycle_key [String] the key that cycles approval, as {LineEditor.bind} names it
+      def initialize(rail:, screen:, input: $stdin, listening: true, notes: CLI::HumanNotes::Null,
+                     cycle_key: CYCLE_KEY)
         @rail = rail
+        @cycle_key = cycle_key
         @notes = notes
         @listening = listening
         @screen = screen
@@ -141,7 +145,7 @@ module Lain
       # @return [Async::Task] what stops the pump
       def start(task)
         @lines = Lines.new(seated(@input))
-        StdinPump.bind_cycle(@rail, @screen) if StdinPump.terminal?(@input)
+        StdinPump.bind_cycle(@rail, @screen, @cycle_key) if StdinPump.terminal?(@input)
         @told = @rail.attach(self)
         task.async { run }
       end
@@ -395,7 +399,7 @@ module Lain
       # The approval key pressed while no prompt was drawn sat in the terminal
       # for this read; replayed now it would flip long after it was meant to.
       def drop_typed_cycles
-        cycle = LineEditor.keystroke(CYCLE_KEY).pack("C*")
+        cycle = LineEditor.keystroke(@cycle_key).pack("C*")
         @typeahead.type_back(LineEditor.typed_ahead(@input).b.gsub(cycle, ""))
       end
 

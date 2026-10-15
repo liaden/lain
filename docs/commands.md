@@ -1064,10 +1064,14 @@ it to the chat and to every subagent it spawns. `lain bench`, `lain consolidate`
 and `lain epic submit` read none, so a bench arm does not change with the home directory.
 
 **The user-level file.** `$XDG_CONFIG_HOME/lain/config.rb` (by default `~/.config/lain/config.rb`)
-accepts only the `middleware` verb and applies to every project. It runs only after
+accepts only the `middleware` and `keys` verbs and applies to every project. It runs only after
 `lain trust --user`, which shows the file and records its exact bytes. Trust is consent to bytes
 someone reviewed: it is not containment, and an agent that can write the file can also write the
 mark, as it can for a project today. Any changed byte asks again.
+
+`keys approval_cycle: "C-x"` rebinds the key that cycles approval (default `"S-Tab"`; `"C-<letter>"` or
+`"S-Tab"` are the accepted forms). A key Reline or lain already uses, such as `C-t` or `C-g`, cannot be
+bound: the key is left off and a warning says so.
 
 ### isolation
 
