@@ -18,7 +18,8 @@ module Lain
     #
     # 1. the tool is the one whose input is a shell command;
     # 2. the verdict ALLOWS, so a term exists to read at all;
-    # 3. every stage's argv0 is a BARE NAME, and every one is on {PROGRAMS};
+    # 3. every stage's argv0 is a BARE NAME, and every one is on {PROGRAMS}
+    #    or is a {VERSION_PROBES} stage;
     # 4. every word of every stage classifies ORDINARY, and not by exemption;
     # 5. no stage carries a flag that takes it outside its own arguments;
     # 6. no word traverses a path-aliasing pseudo-filesystem;
@@ -28,7 +29,13 @@ module Lain
     #    one whose first bytes carry a region a masked read would withhold.
     # 9. THE LANDING PREDICATE: every word classifies ordinary where it LANDS,
     #    and not by exemption -- predicate 4 judges the name that was written,
-    #    and a name can point at a file with a different one.
+    #    and a name can point at a file with a different one. `which` is the
+    #    one exception: a bare word it is given names a program, not a file.
+    # 10. THE TOOLCHAIN PREDICATE: no rustup proxy probes under a
+    #     `rust-toolchain` file in its cwd or any directory above it.
+    # 11. THE LISTING PREDICATE: every entry of every directory an `ls` lists
+    #     classifies ordinary, by its own name and where it lands, and not by
+    #     exemption -- `ls` prints the names `list_files` withholds.
     #
     # {#approvable?} is the whole conjunction on one line and every predicate is
     # total over a term on its own, so another is one more `&&` plus one more
@@ -390,8 +397,62 @@ module Lain
         # all; `rev` opens exactly its arguments.
         "cut" => Flags.new,
         "tr" => Flags.new,
-        "rev" => Flags.new
+        "rev" => Flags.new,
+        # Lists exactly its arguments, or the cwd -- until it recurses, or
+        # follows a link to list what lies outside the words it was given.
+        # Every option that takes a value is refused too, since a separate
+        # value would otherwise read as a directory operand; the three with an
+        # optional `=WHEN` go with them rather than be told apart.
+        "ls" => Flags.new(short: %w[R L H I T w],
+                          long: %w[--recursive --dereference --dereference-command-line
+                                   --dereference-command-line-symlink-to-dir
+                                   --block-size --format --hide --ignore --indicator-style --quoting-style
+                                   --sort --tabsize --time --time-style --width
+                                   --color --classify --hyperlink]),
+        # Reads no file; `-L` and `-P` choose a spelling of the same directory.
+        "pwd" => Flags.new,
+        # Searches PATH for program names. `-i` and the two `--read-*` flags
+        # read alias and function definitions from stdin.
+        "which" => Flags.new(short: %w[i], long: %w[--read-alias --read-functions])
       }.freeze
+
+      VERSION = "--version"
+
+      # Programs whose stage is approved only as exactly `[name, "--version"]`.
+      # Closed, because `--version` is a convention and not a contract: a tool
+      # off this list may read it as anything. `-V` is not accepted, since
+      # `sort -V` and `ls -V` sort and some tools read it as verbose.
+      #
+      # ACCEPTED RISK, at the user's request: `rustc`, `cargo` and `rustup` are
+      # usually rustup proxies, which choose a toolchain before they answer.
+      # Accepted: the user's own default or `rustup override`, and a download
+      # of one that is not installed. NOT accepted: a toolchain the checkout
+      # pins in a `rust-toolchain` file, whose `path` key runs whatever binary
+      # the checkout names -- {RUSTUP_PROXIES} refuse under one.
+      #
+      # No interpreter is here: the shell verdict refuses a program that runs
+      # what its arguments name, so no term for one ever reaches this rule.
+      VERSION_PROBES = %w[rustc cargo rustup dx adb go gcc clang cmake].freeze
+
+      # Answers {Flags#admits?}, so the flags predicate stays one lookup.
+      class VersionProbe
+        def admits?(arguments) = arguments == [VERSION]
+      end
+      private_constant :VersionProbe
+
+      VERSION_PROBE = VersionProbe.new.freeze
+      private_constant :VERSION_PROBE
+
+      PROGRAM_LOOKUP = "which"
+      LISTER = "ls"
+      DOT = "."
+      # Matched as {Flags} match, so an abbreviation or a bundle counts too.
+      SHOWS_DOT_ENTRIES = Flags.new(short: %w[a A], long: %w[--all --almost-all])
+      CURRENT = "."
+
+      RUSTUP_PROXIES = %w[rustc cargo rustup].freeze
+      # rustup looks for both, from `getcwd` upward -- the REAL cwd.
+      TOOLCHAIN_FILES = %w[rust-toolchain rust-toolchain.toml].freeze
 
       # @param sensitivity [#call, #confinement, #content] `cwd -> #classify`, a
       #   {Sensitivity} FACTORY rather than one classifier: a bash call names its
@@ -443,7 +504,8 @@ module Lain
       def approvable?(term, cwd)
         bare_names?(term) && allowlisted?(term) && ordinary_words?(term, cwd) &&
           unflagged?(term) && unaliased?(term) && confined?(term, cwd) &&
-          plain_content?(term, cwd) && resolved_words?(term, cwd)
+          plain_content?(term, cwd) && resolved_words?(term, cwd) &&
+          unpinned?(term, cwd) && unrevealing?(term, cwd)
       end
 
       def judged?(call) = call.tool_name == TOOL
@@ -453,7 +515,9 @@ module Lain
       # entry for `cat` here.
       def bare_names?(term) = programs(term).none? { |program| program.include?(SEPARATOR) }
 
-      def allowlisted?(term) = programs(term).all? { |program| PROGRAMS.key?(program) }
+      def allowlisted?(term)
+        programs(term).all? { |program| PROGRAMS.key?(program) || VERSION_PROBES.include?(program) }
+      end
 
       def ordinary_words?(term, cwd)
         classifier = @sensitivity.call(cwd)
@@ -465,8 +529,12 @@ module Lain
       def unflagged?(term)
         term.stages.all? do |stage|
           program, *arguments = stage.argv
-          PROGRAMS.fetch(program, UNLISTED).admits?(arguments)
+          flags_for(program).admits?(arguments)
         end
+      end
+
+      def flags_for(program)
+        PROGRAMS.fetch(program) { VERSION_PROBES.include?(program) ? VERSION_PROBE : UNLISTED }
       end
 
       # Predicate 6, and the shape every later rung copies: one method over the
@@ -494,8 +562,15 @@ module Lain
       def resolved_words?(term, cwd)
         classifier = @sensitivity.call(cwd)
         confinement = @sensitivity.confinement(cwd)
-        term.words.all? { |word| ordinary_landing?(classifier, confinement, word) }
+        landing_words(term).all? { |word| ordinary_landing?(classifier, confinement, word) }
       end
+
+      def landing_words(term) = term.stages.flat_map { |stage| landed(stage) }
+
+      def landed(stage) = stage.program == PROGRAM_LOOKUP ? looked_up_paths(stage) : stage.argv
+
+      # A word with a `/` given to `which` is still the path it reads as.
+      def looked_up_paths(stage) = [stage.program, *stage.argv.drop(1).select { |word| word.include?(SEPARATOR) }]
 
       # Both spellings of the landing, for the reason the header gives, and
       # false for a word that resolves nowhere: `#landing_of` raises where no
@@ -506,11 +581,74 @@ module Lain
       # `#real_landing` -- one resolution per decision, which the factory had to
       # make anyway, rather than one per word.
       def ordinary_landing?(classifier, confinement, word)
-        landing = confinement.landing_of(word)
-        relative = Pathname.new(landing).relative_path_from(confinement.real_landing).to_s
-        [landing, relative].all? { |spelling| unexempted?(classifier.classify(spelling)) }
+        ordinary_spellings?(classifier, confinement, confinement.landing_of(word))
       rescue StandardError
         false
+      end
+
+      def ordinary_spellings?(classifier, confinement, absolute)
+        relative = Pathname.new(absolute).relative_path_from(confinement.real_landing).to_s
+        [absolute, relative].all? { |spelling| unexempted?(classifier.classify(spelling)) }
+      end
+
+      # The toolchain predicate. False where the cwd resolves nowhere, which is
+      # the direction the root predicate already fails in.
+      def unpinned?(term, cwd)
+        return true unless term.programs.intersect?(RUSTUP_PROXIES)
+
+        Pathname.new(@sensitivity.confinement(cwd).landing_of(CURRENT)).ascend.none? { |directory| pins?(directory) }
+      rescue StandardError
+        false
+      end
+
+      # A dangling link counts: refusing costs a prompt, and rustup's reading
+      # of one is not this rule's to predict.
+      def pins?(directory)
+        TOOLCHAIN_FILES.any? { |name| File.exist?(directory.join(name)) || File.symlink?(directory.join(name)) }
+      end
+
+      # The listing predicate. One level deep, because the flags predicate
+      # already refuses a listing that recurses.
+      def unrevealing?(term, cwd)
+        classifier = @sensitivity.call(cwd)
+        confinement = @sensitivity.confinement(cwd)
+        term.stages.select { |stage| stage.program == LISTER }
+            .all? { |stage| ordinary_listing?(stage.argv.drop(1), classifier, confinement) }
+      rescue StandardError
+        false
+      end
+
+      # `ls` prints no dot entry unless a flag asks for them.
+      def ordinary_listing?(arguments, classifier, confinement)
+        dots = !SHOWS_DOT_ENTRIES.admits?(arguments)
+        listed_directories(arguments, confinement).all? do |directory|
+          printed_entries(directory, dots).all? { |path| ordinary_entry?(classifier, confinement, path) }
+        end
+      end
+
+      # The cwd stands in when no operand is a directory, so a word misread as
+      # an operand cannot leave the cwd unjudged.
+      def listed_directories(arguments, confinement)
+        directories = operands(arguments).map { |word| confinement.landing_of(word) }
+                                         .select { |landing| File.directory?(landing) }
+        directories.empty? ? [confinement.landing_of(CURRENT)] : directories
+      end
+
+      def printed_entries(directory, dots)
+        entries = Dir.children(directory)
+        (dots ? entries : entries.reject { |entry| entry.start_with?(DOT) }).map { |entry| File.join(directory, entry) }
+      end
+
+      # Every word after `--` is an operand, as getopt reads it.
+      def operands(arguments)
+        options = arguments.take_while { |word| word != LONG }
+        options.reject { |word| word.start_with?(DASH) } + arguments.drop(options.size + 1)
+      end
+
+      # A link's landing counts though a plain `ls` prints only its name: `-l`
+      # prints the target, and the parked prompt costs less than telling them apart.
+      def ordinary_entry?(classifier, confinement, path)
+        ordinary_spellings?(classifier, confinement, path) && ordinary_landing?(classifier, confinement, path)
       end
 
       def programs(term) = term.programs

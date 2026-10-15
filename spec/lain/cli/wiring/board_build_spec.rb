@@ -387,7 +387,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       in_tree do |root, home|
         board = board_for(root, home)
 
-        while_parked(board, bash_of("ls -la")) do
+        while_parked(board, bash_of("du -sh lib")) do
           expect(rulings.map { |ruling| ruling["rung"] }).to eq(%w[triage rules])
           expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
         end
@@ -704,6 +704,46 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
         expect(board.policy_switch.call(bash_of("cat README.md | head -20", "cwd" => root), nil)).to be(true)
         expect(rulings.last).to include("rung" => "rules", "verdict" => "allow")
+      end
+    end
+
+    it "approves a read-only probe with nobody asked, sequences included" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+
+        ["pwd", "ls -la", "pwd && ls -la", "which cargo", "rustc --version"].each do |command|
+          expect(board.policy_switch.call(bash_of(command, "cwd" => root), nil)).to be(true)
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "allow")
+        end
+        expect(board.approvals.each.count).to eq(0)
+      end
+    end
+
+    it "leaves a rustup proxy's --version and a listing of credentials parking for a human" do
+      in_tree do |root, home|
+        File.write(File.join(root, "rust-toolchain.toml"), "[toolchain]\npath = \"/proc/self/cwd/tc\"\n")
+        FileUtils.mkdir_p(File.join(root, "keys"))
+        File.write(File.join(root, "keys", "id_rsa"), "opaque\n")
+        board = board_over(root, home)
+
+        ["rustc --version", "ls -la keys"].each do |command|
+          while_parked(board, bash_of(command, "cwd" => root)) do
+            expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+          end
+        end
+      end
+    end
+
+    it "leaves each probe hazard parking for a human" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+
+        ["ls -R", "ls --recursive", "ls -L link", "rustc -V", "rustc --version extra", "./x --version",
+         "mytool --version"].each do |command|
+          while_parked(board, bash_of(command, "cwd" => root)) do
+            expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+          end
+        end
       end
     end
 

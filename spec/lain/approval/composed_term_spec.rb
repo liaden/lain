@@ -857,6 +857,260 @@ RSpec.describe Lain::Approval::ComposedTerm do
     end
   end
 
+  # The verdict here hands over one pipeline; a term of several is what `&&`
+  # will carry, so it is built directly and handed over as an allow.
+  def sequence_verdict(*pipelines)
+    term = Lain::Shell::Term.new(pipelines: pipelines.map do |stages|
+      Lain::Shell::Term::Pipeline.new(stages: stages.map { |argv| Lain::Shell::Term::Stage.new(argv:, discards: []) })
+    end)
+    ->(_command) { Lain::Shell::Verdict::Decision.new(name: :allow, reason: "sequence", term:) }
+  end
+
+  describe "a read-only probe of where the agent is and what is installed" do
+    it "approves pwd, a long listing, which and a named program's --version" do
+      in_tree do |root, home|
+        probes = ["pwd", "ls -la", "ls", "which cargo", "which -a cargo ruby", "rustc --version"]
+        expect_allowed_by_the_verdict(*probes)
+
+        rule = rule_for(home, root)
+        expect(probes.map { |command| rule.decide(call_of(command, cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    it "approves --version of every program in the probe table" do
+      in_tree do |root, home|
+        rule = rule_for(home, root)
+        commands = %w[rustc cargo rustup dx adb go gcc clang cmake].map { |name| "#{name} --version" }
+
+        expect(commands.map { |command| rule.decide(call_of(command, cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    # An interpreter runs what its arguments name, so the shell verdict refuses
+    # it by name and no term reaches this rule.
+    it "leaves an interpreter's --version asking, because the verdict refuses it" do
+      in_tree do |root, home|
+        expect(Lain::Shell::Verdict.new.call("ruby --version")).to be_abstain
+
+        expect(rule_for(home, root).decide(call_of("ruby --version", cwd: root))).to be_nil
+      end
+    end
+
+    it "judges every stage of every pipeline in a sequence" do
+      in_tree do |root, home|
+        rule = rule_for(home, root)
+        safe = sequence_verdict([%w[pwd]], [%w[ls -la]])
+        recursing = sequence_verdict([%w[pwd]], [%w[ls -R]])
+
+        expect(rule.decide(call_of("pwd && ls -la", cwd: root, verdict: safe))).to be_allow
+        expect(rule.decide(call_of("pwd && ls -R", cwd: root, verdict: recursing))).to be_nil
+      end
+    end
+
+    it "refuses a listing that recurses or follows links" do
+      in_tree do |root, home|
+        hazards = ["ls -R", "ls -laR", "ls --recursive", "ls -L link", "ls -H link", "ls --dereference link",
+                   "ls --dereference-command-line link", "ls --dereference-command-line-symlink-to-dir link"]
+        expect_allowed_by_the_verdict(*hazards)
+
+        rule = rule_for(home, root)
+        expect(hazards.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * hazards.size)
+      end
+    end
+
+    it "refuses a version probe that is not exactly a listed name and --version" do
+      in_tree do |root, home|
+        hazards = ["rustc -V", "rustc --version extra", "./x --version", "mytool --version", "rustc",
+                   "cargo build", "cmake --version build"]
+        expect_allowed_by_the_verdict(*hazards)
+
+        rule = rule_for(home, root)
+        expect(hazards.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * hazards.size)
+      end
+    end
+
+    it "refuses which reading aliases or functions from stdin" do
+      in_tree do |root, home|
+        hazards = ["which -i cargo", "which --read-alias cargo", "which --read-functions cargo"]
+        expect_allowed_by_the_verdict(*hazards)
+
+        rule = rule_for(home, root)
+        expect(hazards.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * hazards.size)
+      end
+    end
+
+    # A rustup proxy reads `rust-toolchain.toml` from the cwd upward, and a
+    # toolchain named by `path` there runs whatever binary that path holds.
+    it "refuses a rustup proxy's --version under a pinned toolchain, in the cwd or any ancestor" do
+      in_tree do |root, home|
+        sub = File.join(root, "sub")
+        FileUtils.mkdir_p(sub)
+        rule = rule_for(home, root)
+        proxies = ["rustc --version", "cargo --version", "rustup --version"]
+        expect(proxies.map { |command| rule.decide(call_of(command, cwd: sub)) }).to all(be_allow)
+
+        on_disk(root, "rust-toolchain.toml", "[toolchain]\npath = \"/proc/self/cwd/tc\"\n")
+        expect(proxies.map { |command| rule.decide(call_of(command, cwd: sub)) }).to eq([nil] * 3)
+        expect(rule.decide(call_of("gcc --version", cwd: sub))).to be_allow
+      end
+    end
+
+    it "refuses a rustup proxy's --version under a legacy rust-toolchain file above the root" do
+      in_tree do |root, home|
+        on_disk(File.dirname(root), "rust-toolchain", "nightly\n")
+
+        expect(rule_for(home, root).decide(call_of("cargo --version", cwd: root))).to be_nil
+      end
+    end
+
+    # `ls` prints the names `list_files` withholds, so a listing is judged by
+    # every entry of every directory it lists.
+    it "refuses a listing of a directory holding an entry the classifier would not call ordinary" do
+      in_tree do |root, home|
+        on_disk(root, ".ssh/id_rsa", "opaque\n")
+        on_disk(root, "plain/notes.txt", "hi\n")
+        on_disk(root, "aliased/readme.txt", "hi\n")
+        on_disk(root, ".env", "PLAIN=1\n")
+        File.symlink(File.join(root, ".ssh"), File.join(root, "keys"))
+        File.symlink(File.join(root, ".env"), File.join(root, "aliased", "settings"))
+        listings = ["ls .ssh", "ls -la keys", "ls -la", "ls aliased", "ls -- aliased", "ls plain .ssh"]
+        expect_allowed_by_the_verdict(*listings, "ls plain")
+
+        rule = rule_for(home, root)
+        expect(listings.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * listings.size)
+        expect(rule.decide(call_of("ls -la plain", cwd: root))).to be_allow
+        expect(rule.decide(call_of("ls", cwd: File.join(root, "plain")))).to be_allow
+      end
+    end
+
+    # `ls` prints no dot entry unless it is asked to.
+    it "judges a dot entry only for a listing that shows dot entries" do
+      in_tree do |root, home|
+        on_disk(root, "dotted/.env", "PLAIN=1\n")
+        on_disk(root, "dotted/notes.txt", "hi\n")
+        showing = ["ls -a dotted", "ls -lA dotted", "ls --all dotted", "ls --almost-all dotted", "ls --alm dotted"]
+        expect_allowed_by_the_verdict("ls -l dotted", *showing)
+
+        rule = rule_for(home, root)
+        expect(rule.decide(call_of("ls -l dotted", cwd: root))).to be_allow
+        expect(rule.decide(call_of("ls", cwd: File.join(root, "dotted")))).to be_allow
+        expect(showing.map { |command| rule.decide(call_of(command, cwd: root)) }).to eq([nil] * showing.size)
+      end
+    end
+
+    # An option's value is not a directory to list, so reading it as one let a
+    # listing of the cwd through unjudged.
+    it "refuses an ls option that takes a separate value, in any spelling" do
+      in_tree do |root, home|
+        on_disk(root, ".ssh/id_rsa", "opaque\n")
+        valued = ["ls -w 80", "ls --width 80", "ls --wid 80", "ls -T 4", "ls --tabsize 4", "ls -I x", "ls --ignore x",
+                  "ls --sort size", "ls --hide x", "ls --format long", "ls --time ctime", "ls --time-style iso",
+                  "ls --quoting-style c", "ls --block-size K", "ls --indicator-style slash", "ls -lw 80"]
+        expect_allowed_by_the_verdict(*valued)
+
+        rule = rule_for(home, root)
+        expect(valued.map { |command| rule.decide(call_of(command, cwd: File.join(root, ".ssh"))) })
+          .to eq([nil] * valued.size)
+      end
+    end
+
+    # The value names a real directory here, so the cwd fallback does not run
+    # and the flag table alone refuses it.
+    it "refuses an ls option whose value happens to name a directory" do
+      in_tree do |root, home|
+        on_disk(root, ".ssh/id_rsa", "opaque\n")
+        FileUtils.mkdir_p(File.join(root, ".ssh", "plain"))
+        valued = ["ls -I plain", "ls --ignore plain", "ls --hide plain", "ls --sort plain"]
+        expect_allowed_by_the_verdict(*valued)
+
+        rule = rule_for(home, root)
+        expect(valued.map { |command| rule.decide(call_of(command, cwd: File.join(root, ".ssh"))) })
+          .to eq([nil] * valued.size)
+      end
+    end
+
+    it "refuses a width or tab-size value that happens to name a directory" do
+      in_tree do |root, home|
+        on_disk(root, ".ssh/id_rsa", "opaque\n")
+        FileUtils.mkdir_p(File.join(root, ".ssh", "80"))
+        valued = ["ls -w 80", "ls --width 80", "ls -T 80", "ls --tabsize 80"]
+        expect_allowed_by_the_verdict(*valued)
+
+        rule = rule_for(home, root)
+        expect(valued.map { |command| rule.decide(call_of(command, cwd: File.join(root, ".ssh"))) })
+          .to eq([nil] * valued.size)
+      end
+    end
+
+    it "judges the cwd's entries when no operand of an ls is a directory" do
+      in_tree do |root, home|
+        on_disk(root, ".ssh/id_rsa", "opaque\n")
+        on_disk(root, ".ssh/notes.txt", "hi\n")
+        on_disk(root, "plain/notes.txt", "hi\n")
+        expect_allowed_by_the_verdict("ls notes.txt")
+
+        rule = rule_for(home, root)
+        expect(rule.decide(call_of("ls notes.txt", cwd: File.join(root, ".ssh")))).to be_nil
+        expect(rule.decide(call_of("ls notes.txt", cwd: File.join(root, "plain")))).to be_allow
+      end
+    end
+
+    it "judges a dot entry by its own name, though it links to an ordinary file" do
+      in_tree do |root, home|
+        on_disk(root, "linked/notes.txt", "hi\n")
+        File.symlink(File.join(root, "linked", "notes.txt"), File.join(root, "linked", ".env"))
+        rule = rule_for(home, root)
+
+        expect(rule.decide(call_of("ls -a linked", cwd: root))).to be_nil
+        expect(rule.decide(call_of("ls linked", cwd: root))).to be_allow
+      end
+    end
+
+    it "refuses a rustup proxy's --version under a dangling rust-toolchain.toml link" do
+      in_tree do |root, home|
+        File.symlink(File.join(root, "nowhere"), File.join(root, "rust-toolchain.toml"))
+
+        expect(rule_for(home, root).decide(call_of("cargo --version", cwd: root))).to be_nil
+      end
+    end
+
+    # The toolchain and listing predicates each resolve the cwd themselves, so
+    # each must refuse, not approve, when that resolution fails.
+    it "refuses a probe or a listing whose cwd cannot be resolved" do
+      in_tree do |root, home|
+        factory = factory_for(home, root)
+        refusing = Class.new(SimpleDelegator) do
+          def confinement(cwd)
+            Class.new(SimpleDelegator) do
+              def landing_of(word) = word == "." ? raise(Errno::ENOENT, word) : __getobj__.landing_of(word)
+            end.new(__getobj__.confinement(cwd))
+          end
+        end.new(factory)
+        commands = ["rustc --version", "ls"]
+
+        real = described_class.new(sensitivity: factory)
+        unresolved = described_class.new(sensitivity: refusing)
+        expect(commands.map { |command| real.decide(call_of(command, cwd: root)) }).to all(be_allow)
+        expect(commands.map { |command| unresolved.decide(call_of(command, cwd: root)) }).to eq([nil, nil])
+      end
+    end
+
+    # `which` reads no file its arguments name: a bare word is a program name,
+    # so a checkout entry of that name landing on a credential is not a read.
+    it "skips the landing predicate for a bare name given to which, and for nothing else" do
+      in_tree do |root, home|
+        on_disk(root, ".env", "PLAIN=1\n")
+        File.symlink(File.join(root, ".env"), File.join(root, "cargo"))
+        commands = ["which cargo", "cat cargo", "which ./cargo", "ls cargo"]
+        expect_allowed_by_the_verdict(*commands)
+
+        rule = rule_for(home, root)
+        expect(commands.map { |command| rule.decide(call_of(command, cwd: root))&.verdict })
+          .to eq([:allow, nil, nil, nil])
+      end
+    end
+  end
+
   describe "a qualified program name" do
     # The exclusion set matches by BASENAME, which is right for a denylist:
     # `/usr/bin/curl` must not evade an exclusion of `curl`. Run the same
