@@ -509,6 +509,123 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
+  # A human's no on a path holds for whoever asked it, so the queue keeps what
+  # it was told and a later call on that path can be refused without parking.
+  describe "a human's deny on a path is remembered" do
+    def lists(path) = tool_call("list_files", { "path" => path })
+
+    def in_dir(cwd, requester: nil)
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd:, env: {}))
+      requester ? Lain::Approval::PolicySwitch::Requested.new(session, requester) : session
+    end
+
+    def settled(effect, context = nil)
+      Sync do |task|
+        run = task.async { queue.adjudicate(effect, context) }
+        yield queue.dequeue
+        run.wait
+      end
+    end
+
+    def denied_by_human(effect, context = nil, reason: "not your business")
+      settled(effect, context) { |pending| pending.deny(surface: "spec", reason:) }
+    end
+
+    it "answers the human's reason for the denied path and anything under it, for the same requester" do
+      denied_by_human(lists("/home"), in_dir("/", requester: "researcher"))
+
+      expect(%w[/home /home/joel /home/joel/a.md].map { |path| queue.denied(requester: "researcher", path:) })
+        .to all(eq("not your business"))
+    end
+
+    it "does not treat a sibling name as under the denied path" do
+      denied_by_human(lists("/home/jo"), in_dir("/", requester: "researcher"))
+
+      expect(queue.denied(requester: "researcher", path: "/home/joel")).to be_nil
+    end
+
+    it "does not answer for another requester" do
+      denied_by_human(lists("/home"), in_dir("/", requester: "researcher"))
+
+      expect(queue.denied(requester: "agent", path: "/home")).to be_nil
+    end
+
+    it "keys a context that names nobody under the main agent" do
+      denied_by_human(lists("/home"))
+
+      expect(queue.denied(requester: described_class::REQUESTER, path: "/home")).to eq("not your business")
+    end
+
+    it "resolves a relative path against the call's own cwd, cleaned" do
+      denied_by_human(lists("../secret/./x"), in_dir("/srv/project"))
+
+      expect(queue.denied(requester: "agent", path: "/srv/secret/x")).to eq("not your business")
+    end
+
+    it "remembers a deny given no words as an empty reason, still a String" do
+      denied_by_human(lists("/home"), reason: nil)
+
+      expect(queue.denied(requester: "agent", path: "/home")).to eq("")
+    end
+
+    it "remembers nothing for an approval" do
+      settled(lists("/home")) { |pending| pending.approve(surface: "spec") }
+
+      expect(queue.denied(requester: "agent", path: "/home")).to be_nil
+    end
+
+    it "remembers nothing for a call that names no path" do
+      denied_by_human(tool_call)
+
+      expect(queue.denied(requester: "agent", path: Dir.pwd)).to be_nil
+    end
+
+    it "remembers nothing for a path that cannot be resolved" do
+      denied_by_human(lists("/home/\0x"))
+
+      expect(queue.denied(requester: "agent", path: "/home")).to be_nil
+    end
+
+    it "remembers nothing a machine or a fault decided" do
+      [Lain::Approval::SecretSurface::SURFACE, Lain::Frontend::ApprovalPolicy::FAULT_SURFACE].each do |surface|
+        settled(lists("/tmp/x")) { |pending| pending.deny(surface:) }
+      end
+
+      expect(queue.denied(requester: "agent", path: "/tmp/x")).to be_nil
+    end
+
+    it "remembers nothing the window decided" do
+      timed = described_class.new(journal:, timeout: 0.01)
+      Sync { timed.adjudicate(lists("/tmp/x"), nil) }
+
+      expect(timed.denied(requester: "agent", path: "/tmp/x")).to be_nil
+    end
+
+    it "remembers nothing for a declined secret release, which is a no about regions and not the path" do
+      regions = Lain::Sensitivity::Regions.detect("API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n")
+      outstanding = described_class::Outstanding.new(path: "/srv/creds.txt", regions:)
+      Sync do |task|
+        run = task.async { queue.adjudicate(tool_call("read_file", { "path" => "/srv/creds.txt" }), nil, outstanding:) }
+        queue.dequeue.deny(surface: "spec", reason: "keep the token")
+        run.wait
+      end
+
+      expect(queue.denied(requester: "agent", path: "/srv/creds.txt")).to be_nil
+    end
+
+    it "settles a binary path against a non-ASCII cwd without raising, and leaves nothing parked" do
+      denied_by_human(lists("\xFF/x".b), in_dir("/srv/proj\u00e9t"))
+
+      expect(queue.count).to eq(0)
+    end
+
+    it "remembers nothing for a pending its requester abandoned" do
+      Sync { |task| task.async { queue.adjudicate(lists("/tmp/x"), nil) }.stop }
+
+      expect(queue.denied(requester: "agent", path: "/tmp/x")).to be_nil
+    end
+  end
+
   # A command whose automatically approved output was withheld may be approved
   # by a person only, so its pending says so and an automatic surface is never
   # offered it.

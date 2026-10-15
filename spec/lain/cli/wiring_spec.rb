@@ -3293,6 +3293,7 @@ RSpec.describe Lain::CLI::Wiring do
           .to eq([WiringSpecToolStamp, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                   Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                   Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
+                  Lain::Middleware::RememberedDenials,
                   Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
       end
     end
@@ -3602,7 +3603,8 @@ RSpec.describe Lain::CLI::Wiring do
             .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                     Lain::Middleware::RedactSecretReads,
                     Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                    Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity,
+                    Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
+                    Lain::Middleware::Sensitivity,
                     Lain::Middleware::Gate])
           expect(listing_guard(board).filter).to be(board.sensitivity.filter)
           expect(listing_guard(board).filter).not_to be(Lain::Sensitivity::Filter::Null.instance)
@@ -4074,7 +4076,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
         .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
     # An unattended run leaves {Lain::CLI::Switchboard#approvals} nil, and the
@@ -4162,7 +4165,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
         .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate,
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate,
                 Lain::Effect::Handler::Live])
       expect(runner.middleware.to_a.last.instance_variable_get(:@policy)).to be(board.policy_switch)
     end

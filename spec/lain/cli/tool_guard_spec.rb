@@ -133,13 +133,14 @@ RSpec.describe Lain::CLI::ToolGuard do
   def read_call(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
 
   describe "the stack it builds" do
-    it "puts the scope, write, read, listing, test layout and automatic output guards first, then the path " \
-       "refusal and the gate" do
+    it "puts the scope, write, read, listing, test layout and automatic output guards first, then the " \
+       "remembered denials, the path refusal and the gate" do
       expect(guards(ToolGuardSpecBoard.new).map(&:class))
         .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
     describe "a grep through the main agent's stack" do
@@ -284,6 +285,36 @@ RSpec.describe Lain::CLI::ToolGuard do
   # of it: two of its three callers are outside `Agent`, and this is one. So it
   # stayed its own object when the collaborator RESOLVER folded back in, and
   # this example is where that asymmetry is pinned rather than remembered.
+  # A human's no reaches a child's next call through the board's one queue, so
+  # the call is refused where it would have parked.
+  describe "a denial the human gave a child" do
+    def lists(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "list_files", input: { "path" => path })
+
+    def listed(stack, path)
+      stack.call({ effect: lists(path), tool: Lain::Tools::ListFiles.new, context: Lain::Session.new }) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok("listed"))
+      end.fetch(:result)
+    end
+
+    it "refuses the child's later call under the denied path without parking it", :seam do
+      board = ToolGuardSpecBoard.new(approvals: queue, policy: queue)
+      child = described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher")
+
+      later = Sync do |task|
+        first = task.async { listed(child, "/home") }
+        queue.dequeue.deny(surface: "tty", reason: "not your business")
+        first.wait
+        task.with_timeout(5) { listed(child, "/home/joel") }
+      end
+
+      expect(later).to have_attributes(is_error: true, content: end_with("not your business"))
+      parked = Lain::Journal.records(journal_io.string.lines, type: "approval_pending").map { |r| r["requester"] }
+      expect(parked.to_a).to eq(["researcher"])
+      expect(Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a)
+        .to include(a_hash_including("rung" => "remembered", "requester" => "researcher", "verdict" => "deny"))
+    end
+  end
+
   # The gate is a guard like the other four, built over the same one value, so
   # a chat's stack and every child's come out of this one module. Its place is
   # the posture: the gate judges the tool the runner resolved and approves the
@@ -483,7 +514,7 @@ RSpec.describe Lain::CLI::ToolGuard do
         .to eq([ToolGuardSpecStamp, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                 Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
-                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+                Lain::Middleware::RememberedDenials, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
     it "has the guards judge the path it passes on, as if the model had named it" do

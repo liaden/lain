@@ -25,9 +25,11 @@ module Lain
     # {Middleware::GuardTestLayout} holds the writing tools against the
     # project's test layout, and is disjoint from all three.
     #
-    # {Middleware::WithholdAutomaticOutput} sits directly before the gate's two
-    # layers, because what it reads is the gate's decision: a `bash` result is
-    # scanned only when no human approved the call.
+    # {Middleware::WithholdAutomaticOutput} sits before the gate's two layers,
+    # because what it reads is the gate's decision: a `bash` result is scanned
+    # only when no human approved the call. {Middleware::RememberedDenials}
+    # sits after it, ahead of the gate's two layers, refusing a call on a path
+    # a human already denied its requester before the gate can park it again.
     #
     # Then the gate's two layers: {Middleware::Sensitivity} refuses a path no
     # approval can lift, and {Middleware::Gate} asks about what a human may
@@ -179,6 +181,9 @@ module Lain
         # `outstanding:` is a KEYWORD, so the name is the duck and cannot take
         # the unused-argument underscore.
         def self.adjudicate(_effect, _context, outstanding: nil) = Verdict # rubocop:disable Lint/UnusedMethodArgument
+
+        # Nobody was asked, so nobody denied anything.
+        def self.denied(**) = nil
       end
 
       # The whole ladder a judge's child's gate asks: one rung, refusing.
@@ -266,8 +271,16 @@ module Lain
                                  Middleware::WithholdSecretPaths.new(filter: path_filter(inputs)),
                                  Middleware::GuardTestLayout.new(run: inputs.test_layout, roots:, journal:),
                                  Middleware::WithholdAutomaticOutput.new(bar: inputs.bar, journal:),
-                                 *gating(inputs, policy, journal)])
+                                 remembered(inputs, requester, journal), *gating(inputs, policy, journal)])
         )
+      end
+
+      # Over the board's one queue, so a deny given through any stack is held
+      # by every stack asking for the same requester.
+      def remembered(inputs, requester, journal)
+        Middleware::RememberedDenials.new(queue: inputs.approvals || Middleware::RememberedDenials::Unattended,
+                                          sensitivity: inputs.sensitivity, denial: inputs.denial, journal:,
+                                          requester:)
       end
 
       def gating(inputs, policy, journal)

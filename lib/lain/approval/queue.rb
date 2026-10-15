@@ -301,6 +301,10 @@ module Lain
         # queue_concurrency_spec.rb can only pass by adding a lock here, the
         # claim has failed -- escalate, don't patch.
         @parked = []
+        @denials = {}
+        # Built here, not as a constant: {Escalation::Surfaces} names this
+        # class's surfaces in its own body, so a constant here is a load cycle.
+        @machine_surfaces = [*Escalation::Surfaces::AUTOMATIC, ::Lain::Frontend::ApprovalPolicy::FAULT_SURFACE].freeze
       end
 
       # @param seconds [Numeric]
@@ -354,6 +358,28 @@ module Lain
         context.respond_to?(:requester) ? context.requester : fallback
       end
 
+      # Where a call's path lands, spelled one way for both the recording and
+      # the lookup; nil for a path no tool could resolve either.
+      #
+      # @param path [String] as the call wrote it
+      # @param cwd [String] absolute; where the call resolves a relative path
+      # @return [String, nil]
+      def self.resolved(path, cwd)
+        File.expand_path(path, cwd)
+      rescue ArgumentError, EncodingError
+        nil
+      end
+
+      # The reason a human gave when they denied this requester a call on
+      # `path` or a directory above it, "" when they gave none.
+      #
+      # @param requester [String] as {.requester_for} names it
+      # @param path [String] absolute and resolved, see {.resolved}
+      # @return [String, nil] nil when no such denial was given
+      def denied(requester:, path:)
+        @denials.fetch(requester, {}).find { |denied, _| path == denied || path.start_with?(below(denied)) }&.last
+      end
+
       # Async::Queue is buffered, so a pending enqueued before any surface
       # watched is delivered, never missed. Already-decided arrivals -- an
       # abandoned pending cannot be removed from the arrival queue itself -- are
@@ -394,9 +420,26 @@ module Lain
       ensure
         pending.deny(surface: ABANDONED_SURFACE)
         @parked.delete(pending)
+        remember(pending)
         retire_arrivals
         record_evidence(Pending) { pending }
       end
+
+      # Straight-line with no yield, as every @parked mutation is, so it can
+      # sit in {#settle}'s `ensure` without opening a gap between fibers. A
+      # declined release is a no about a file's regions, not about its path.
+      def remember(pending)
+        path = pending.path && Queue.resolved(pending.path, pending.cwd)
+        return unless path && human_denial?(pending) && pending.outstanding.none?
+
+        (@denials[pending.requester] ||= {})[path] = pending.reason.to_s
+      end
+
+      # A machine's no, the clock's, or one a fault forced, is not a person's
+      # judgement about a path, so none of these is held against later calls.
+      def human_denial?(pending) = !pending.approved? && !@machine_surfaces.include?(pending.surface)
+
+      def below(path) = path.end_with?("/") ? path : "#{path}/"
 
       # Only undecided work stays buffered. A surface that observes the parked
       # set rather than consuming arrivals -- all a cockpit has -- would
