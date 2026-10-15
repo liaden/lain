@@ -13,6 +13,8 @@ module Lain
 
         def line_shaped? = true
 
+        def stamped? = false
+
         # @param theme [Frontend::Theme]
         # @return [String] one attributed line: what cannot be undone, and why
         def render(theme)

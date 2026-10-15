@@ -21,6 +21,8 @@ module Lain
         # rows, not as one run-together string.
         def line_shaped? = true
 
+        def stamped? = false
+
         # @param theme [Frontend::Theme]
         # @return [String] one attributed line naming this attempt, whether it
         #   is backing off or exhausted, and what triggered it

@@ -18,14 +18,15 @@ module Lain
     # {.for} is the named seam: a third event type that earns rendering gets its
     # own decorator here and one more clause below, and TTY does not change.
     module Decorators
-      # Every decorator answers two messages: `render(theme)` for the bytes, and
+      # Every decorator answers three messages: `render(theme)` for the bytes,
       # `line_shaped?` for whether those bytes are a whole line the frontend may
-      # terminate. The second is a MESSAGE rather than a type check upstream, so
+      # terminate, and `stamped?` for whether the frontend puts the time in front
+      # of them. The last two are messages rather than a type check upstream, so
       # adding a decorator never means editing a list of classes elsewhere.
       #
       # @param event [Object] a Channel event
-      # @return [#render, #line_shaped?, nil] the decorator that presents `event`
-      #   -- answering BOTH messages above, not just the first -- or nil if the
+      # @return [#render, #line_shaped?, #stamped?, nil] the decorator that presents `event`
+      #   -- answering ALL three messages above, not just the first -- or nil if the
       #   frontend does not render this event type (it is silently skipped)
       def self.for(event)
         return ToolOutput.new(event) if event.is_a?(Telemetry::ToolOutput)
@@ -33,6 +34,7 @@ module Lain
         return SnapshotDegraded.new(event) if event.is_a?(::Lain::Agent::SnapshotSlot::SnapshotDegraded)
         return SnapshotNarrowed.new(event) if event.is_a?(::Lain::Agent::SnapshotSlot::SnapshotNarrowed)
         return PromptUnclosed.new(event) if event.is_a?(TTY::PromptUnclosed)
+        return FilesWritten.new(event) if event.is_a?(Telemetry::FilesWritten)
 
         nil
       end
@@ -53,6 +55,8 @@ module Lain
         # is a FRAGMENT; a frontend that terminated it would break rows the
         # command never broke.
         def line_shaped? = false
+
+        def stamped? = false
 
         # @param theme [Frontend::Theme] resolves the tokens named below; the
         #   decorator names intent, never a colour
@@ -79,6 +83,8 @@ module Lain
         def initialize(event) = @event = event
 
         def line_shaped? = true
+
+        def stamped? = false
 
         # @param theme [Frontend::Theme]
         # @return [String] one attributed line: what went unsaid, and the error

@@ -469,6 +469,7 @@ module Lain
       def render(event)
         decorator = Decorators.for(event)
         rendered = decorator&.render(@theme)
+        rendered = stamp(rendered) if decorator&.stamped? && !rendered.nil?
         @countdown.print_above(fitted(rendered, decorator), line_shaped: decorator.line_shaped?) unless rendered.nil?
       end
 

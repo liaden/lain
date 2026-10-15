@@ -89,6 +89,19 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  describe "a files_written record" do
+    it "prints 1 stamped line when drained from a real channel" do
+      stamped = described_class.new(channel:, output:, pastel: Pastel.new(enabled: false),
+                                    wall_clock: -> { Time.new(2026, 10, 8, 13, 14, 1) })
+      channel.push(Lain::Telemetry::FilesWritten.new(role: "lain", paths: ["lib/a.rb"]))
+      channel.push(tool_output(bytes: "raw\n"))
+
+      stamped.drain_and_render
+
+      expect(output.string).to start_with("13:14:01 wrote lib/a.rb\n").and include("[tu_1 stdout] raw")
+    end
+  end
+
   describe "#run" do
     it "enters the alternate screen before yielding and restores it after" do
       tty.run { channel.close }

@@ -14,6 +14,8 @@ module Lain
 
         def line_shaped? = true
 
+        def stamped? = false
+
         # @param theme [Frontend::Theme]
         # @return [String] one attributed line: how much went unrecorded, and
         #   where the snapshot reached

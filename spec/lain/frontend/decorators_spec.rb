@@ -94,3 +94,13 @@ RSpec.describe Lain::Frontend::Decorators::PromptUnclosed do
     expect(described_class.new(unclosed)).to be_line_shaped
   end
 end
+
+RSpec.describe Lain::Frontend::Decorators do
+  [Lain::Frontend::Decorators::ToolOutput, Lain::Frontend::Decorators::PromptUnclosed,
+   Lain::Frontend::Decorators::ProviderRetry, Lain::Frontend::Decorators::SnapshotDegraded,
+   Lain::Frontend::Decorators::SnapshotNarrowed].each do |klass|
+    it "#{klass.name.demodulize} is not stamped, so its output keeps its own shape" do
+      expect(klass.instance_method(:stamped?).bind_call(klass.allocate)).to be(false)
+    end
+  end
+end
