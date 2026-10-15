@@ -123,10 +123,28 @@ module Lain
       # reach this one and it has to be frozen by hand.
       BOM = "\xEF\xBB\xBF".b.freeze
 
+      # Password shapes the content table has no name for. They stay here and
+      # not in {CredentialPatterns}: the write side refuses on that table, and
+      # these are shaped for masking a value inside a line, where a false hit
+      # costs one release decision rather than a refused write.
+      PASSWORD_SHAPES = {
+        "quoted password key" => /["'][\w-]*(?:password|passwd|pwd)["']\s*:\s*(?<q>["'])(?<value>[^"'\n]+)\k<q>/i,
+        "suffixed password key" => /^[ \t]*[\w-]*[_-](?:password|passwd)[ \t]*:[ \t]+["']?(?<value>[^\s"']+)/i,
+        "url credentials" => %r{\b[a-z][a-z0-9+.-]*://[^\s:/@]*:(?<value>[^\s@/]+)@}i,
+        "mysql password flag" => /\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n]*?[ \t]-p(?<value>[^\s-]\S*)/,
+        "github token" => /(?<![\w-])(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})(?![\w-])/,
+        "bearer header" => %r{\bAuthorization:[ \t]*Bearer[ \t]+(?<value>[A-Za-z0-9._~+/=-]{8,})}i
+      }.freeze
+
+      # A reference or template (`${X}`, `<%= %>`) is where a secret is read
+      # FROM, so masking it hides a name and protects nothing.
+      PLACEHOLDER_VALUE = /\A[$<{]/
+      REFERENCE_CHECKED = ["quoted password key", "suffixed password key", "url credentials"].freeze
+
       # Issuer-fixed shapes are whole-match secrets; the assignment shapes are
       # gated and contribute only their value. Order is the table's own, so a
       # span both shapes reach is named by the one that says more.
-      PATTERNS = CredentialPatterns.for(:content).keys.each_with_index.to_h.freeze
+      PATTERNS = (CredentialPatterns.for(:content).keys + PASSWORD_SHAPES.keys).each_with_index.to_h.freeze
 
       class << self
         # A BOM defeats every line-anchored shape on line 1 -- `^` anchors before
@@ -204,7 +222,7 @@ module Lain
         end
 
         def pattern_candidates(scanned)
-          CredentialPatterns.for(:content).flat_map do |name, shape|
+          CredentialPatterns.for(:content).merge(PASSWORD_SHAPES).flat_map do |name, shape|
             matches(scanned, shape).filter_map { |match| pattern_candidate(name, match) }
           end
         end
@@ -224,7 +242,13 @@ module Lain
           value_span(match, assignment, name)
         end
 
-        def value_group_span(match, name) = span(match.begin(:value), match[:value], name, :pattern)
+        def value_group_span(match, name)
+          return nil if REFERENCE_CHECKED.include?(name) && !real_value?(match[:value])
+
+          span(match.begin(:value), match[:value], name, :pattern)
+        end
+
+        def real_value?(value) = !value.match?(PLACEHOLDER_VALUE) && substantial?(value)
 
         # The emitted span is the UNQUOTED value. Quotes are the file's syntax,
         # not the secret: masking a span that carries its own delimiters would

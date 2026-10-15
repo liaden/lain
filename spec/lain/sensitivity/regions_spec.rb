@@ -409,6 +409,93 @@ RSpec.describe Lain::Sensitivity::Regions do
     # The gate, pinned from both sides. Without it the assignment shapes match
     # `^ident = value`, which IS Ruby assignment syntax, and every source file
     # the agent reads yields regions.
+    context "when a common password shape carries a value no name arm reaches" do
+      {
+        "a double-quoted json key" => ['{"password": "hunter2xyz"}', "hunter2xyz"],
+        "a single-quoted python key" => ["{'password': 'hunter2xyz'}", "hunter2xyz"],
+        "a suffixed yaml key" => ["db_password: hunter2xyz", "hunter2xyz"],
+        "url credentials" => ["postgres://app:hunter2xyz@db.local/app", "hunter2xyz"],
+        "a mysql password flag" => ["mysql -u root -phunter2xyz", "hunter2xyz"],
+        "a bearer header" => ["Authorization: Bearer abcdef0123456789abcd", "abcdef0123456789abcd"],
+        "a short bearer token" => ["Authorization: Bearer hunter2xyz", "hunter2xyz"]
+      }.each do |label, (line, value)|
+        it "masks only the value of #{label}" do
+          expect(detect(line).map(&:bytes)).to eq([value])
+        end
+      end
+    end
+
+    context "when a password shape holds a reference, a template or a plain word" do
+      {
+        "an env reference" => "x_password: ${DB_PASS}",
+        "an erb template" => "x_password: <%= ENV['X'] %>",
+        "a json reference" => '{"password": "${PASS}"}',
+        "a json null" => '{"password": null}',
+        "a json true" => '{"password": true}',
+        "a short json word" => '{"password": "none"}',
+        "a url reference" => 'url = "postgres://app:${PW}@db/x"',
+        "a url with an empty password" => "postgres://app:@db/x",
+        "a url with a user and no password" => "https://user@host/path",
+        "a url with a port only" => "https://example.com:8080/path",
+        "a password hint key" => '{"password_hint": "your pet"}',
+        "ssh port flag" => "ssh -p 22 host",
+        "git log patch flag" => "git log -p",
+        "mysql prompt flag" => "mysql -u root -p",
+        "mysql prompt flag then option" => "mysql -u root -p -e 'select 1'"
+      }.each do |label, line|
+        it "reports nothing for #{label}" do
+          expect(detect(line)).to be_empty
+        end
+      end
+    end
+
+    # No clean regex tells `-pager` from `-ppager`, and a false mask costs one
+    # release decision; these pin the accepted cost.
+    context "when a word merely looks like a value" do
+      {
+        "a mysql long-ish option" => ["mysql --help -pager less", "ager"],
+        "a required marker" => ["confirm_password: required", "required"]
+      }.each do |label, (line, value)|
+        it "accepts the false positive on #{label}" do
+          expect(detect(line).map(&:bytes)).to eq([value])
+        end
+      end
+    end
+
+    context "when url credentials have an empty user" do
+      it "masks the password" do
+        expect(detect("redis://:hunter2xyz@host:6379").map(&:bytes)).to eq(["hunter2xyz"])
+      end
+    end
+
+    context "when a bare github token sits in prose" do
+      %w[
+        ghp_aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5
+        github_pat_11ABCDEFG0aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5bC7dE9fG1hJ3kL5mN7pQ9rS1tU3vW5xY
+      ].each do |token|
+        it "names #{token[0, 6]} as a pattern, not entropy" do
+          regions = detect("Use #{token} to log in.")
+
+          expect(regions.map(&:bytes)).to eq([token])
+          expect(regions.map(&:detector)).to eq([:pattern])
+        end
+      end
+    end
+
+    context "when a line only resembles a password shape" do
+      {
+        "a mkdir flag" => "mkdir -p build",
+        "a compiler flag" => "gcc -pthread main.c",
+        "a plain url" => "https://example.com/path",
+        "a url with a port and no user" => "http://db.local:5432/app",
+        "a policy setting" => "password_policy: strict"
+      }.each do |label, line|
+        it "reports nothing for #{label}" do
+          expect(detect(line)).to be_empty
+        end
+      end
+    end
+
     context "when an assignment is ordinary code or prose" do
       {
         "an integer assignment" => "x = 1",
