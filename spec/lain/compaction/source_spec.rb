@@ -1132,7 +1132,9 @@ RSpec.describe Lain::Compaction::Source do
   describe "the pins it must not elide" do
     def digests_of(line) = line.to_a.map(&:digest)
 
-    def pins_for(line, *indices) = Lain::Context::PinnedMessages.new(messages_of(line).values_at(*indices))
+    def pins_for(line, *indices)
+      Lain::Context::PinnedMessages.new(messages_of(line).values_at(*indices), candidates: messages_of(line))
+    end
 
     def head_for(line, pins: Lain::Context::PinnedMessages::NONE)
       Lain::Compaction::Head.new(messages: messages_of(line), keep_last:, pins:)
@@ -1162,10 +1164,22 @@ RSpec.describe Lain::Compaction::Source do
 
       messages = render(context_for(forcing, line, session: pinning), line).messages
 
-      expect(messages.size).to eq(keep_last + 3)
+      expect(messages.size).to eq(keep_last + 4)
       expect(messages[0]["content"].first["text"]).to include("elided")
       expect(messages[1]["content"].first).to eq(block(2))
-      expect(messages[2]["content"].first["text"]).to include("elided")
+      expect(messages[2]["content"].first).to eq(block(3))
+      expect(messages[3]["content"].first["text"]).to include("elided")
+    end
+
+    it "keeps the reply that answered a pinned prompt verbatim beside it" do
+      line = timeline(8)
+      pinning = session_pinning(digests_of(line)[1])
+
+      messages = render(context_for(forcing, line, session: pinning), line).messages
+
+      expect(messages[1]["content"].first).to eq(block(2))
+      expect(messages[2]["content"].first).to eq(block(3))
+      expect(messages[2]["role"]).to eq("assistant")
     end
 
     it "leaves the unpinned head summarized, so the pin costs only its own bytes" do
@@ -1173,10 +1187,10 @@ RSpec.describe Lain::Compaction::Source do
       pinning = session_pinning(digests_of(line)[1])
 
       messages = render(context_for(forcing, line, session: pinning), line).messages
-      attested = messages.values_at(0, 2).map { |message| message["content"].first["text"] }.join("\n")
+      attested = messages.values_at(0, 3).map { |message| message["content"].first["text"] }.join("\n")
 
       expect(attested).not_to include(block(2)["text"])
-      expect(attested.lines.grep(/^\[user |^\[assistant /).size).to eq(3)
+      expect(attested.lines.grep(/^\[user |^\[assistant /).size).to eq(2)
     end
 
     # Scenario: pinning everything droppable declines the compaction rather than
@@ -1200,8 +1214,8 @@ RSpec.describe Lain::Compaction::Source do
     # on a short unpinned head -- and here the only unpinned droppable message
     # is smaller than the ~230-byte attestation that would replace it.
     it "journals a pin-shrunk head that no longer saves bytes as not shrinking" do
-      line = timeline(6) { |index| index == 3 ? small_block(index) : block(index) }
-      pinning = session_pinning(*digests_of(line).values_at(0, 1, 3), plan_step_completed: true)
+      line = timeline(6) { |index| [2, 3].include?(index) ? small_block(index) : block(index) }
+      pinning = session_pinning(*digests_of(line).values_at(0, 3), plan_step_completed: true)
       built = source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1)
 
       expect(context_for(built, line, session: pinning)).to equal(base)
@@ -2645,8 +2659,9 @@ RSpec.describe Lain::Compaction::Source do
     end
 
     def answer_pinned_leaving_a_lone_turn
-      line = answered_ask_then_running_ask
-      [line, session_pinning(line.to_a[1].digest)]
+      line = committed([["assistant", [block(0)]], ask("an older ask"), ["assistant", [block(1)]],
+                        ask("the running ask"), *round(1)])
+      [line, session_pinning(line.to_a[2].digest)]
     end
 
     it "names the pair to elide-tools when the conversation it cannot claim is a run the pair can" do

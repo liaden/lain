@@ -138,8 +138,35 @@ module Lain
       def matched(pinned, pool)
         by_use = index(pool, "tool_use", "id")
         by_result = index(pool, "tool_result", "tool_use_id")
-        pinned.flat_map { |message| paired(message, by_use:, by_result:) }.uniq
+        answered(pinned, pool).flat_map { |message| paired(message, by_use:, by_result:) }.uniq
       end
+
+      # A pinned prompt is held with the reply that answered it and a pinned
+      # reply with its prompt, read off `pool` order; otherwise a cut strands
+      # one half and the summary has to explain the other.
+      def answered(pinned, pool)
+        last_prompt = pool.rindex { |message| plain_prompt?(message) }
+        pinned.flat_map { |message| neighbours(message, pool, last_prompt) }.uniq
+      end
+
+      def neighbours(message, pool, last_prompt)
+        positions = pool.each_index.select { |at| pool[at] == message }
+        positions.flat_map { |at| [prompt_before(pool, at), message, reply_after(pool, at, last_prompt)] }.compact
+      end
+
+      # An open tool round stays compactable around the running ask's pin.
+      def reply_after(pool, at, last_prompt)
+        following = pool[at + 1]
+        answered = following && following["role"] == "assistant" && plain_prompt?(pool[at])
+        following if answered && (last_prompt > at || blocks(following, "tool_use").empty?)
+      end
+
+      def prompt_before(pool, at)
+        preceding = pool[at - 1] if at.positive?
+        preceding if pool[at]["role"] == "assistant" && preceding && plain_prompt?(preceding)
+      end
+
+      def plain_prompt?(message) = message["role"] == "user" && blocks(message, "tool_result").empty?
 
       def paired(message, by_use:, by_result:)
         used = blocks(message, "tool_use").map { |block| block["id"] }

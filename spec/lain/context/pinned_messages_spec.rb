@@ -64,6 +64,63 @@ RSpec.describe Lain::Context::PinnedMessages do
     end
   end
 
+  describe "a prompt and its answer" do
+    it "holds the answer with a pinned prompt when the chain offers it" do
+      pins = described_class.new([messages[0]], candidates: messages)
+
+      expect(pins.indices_in(messages).to_a).to eq([0, 1])
+    end
+
+    it "holds the prompt with a pinned answer" do
+      pins = described_class.new([messages[3]], candidates: messages)
+
+      expect(pins.indices_in(messages).to_a).to eq([2, 3])
+    end
+
+    it "carries a tool_use answer's result along through the pair closure" do
+      chain = [message("user", "go"), tool_use("t1"), tool_result("t1"), message("assistant", "done"),
+               message("user", "next")]
+      pins = described_class.new([chain[0]], candidates: chain)
+
+      expect(pins.indices_in(chain).to_a).to eq([0, 1, 2])
+    end
+
+    it "does not take a tool_result as the prompt of a pinned answer" do
+      chain = [message("user", "go"), tool_use("t1"), tool_result("t1"), message("assistant", "done")]
+      pins = described_class.new([chain[3]], candidates: chain)
+
+      expect(pins.indices_in(chain).to_a).to eq([3])
+    end
+
+    it "holds a finished answer that is the latest turn" do
+      chain = messages.first(2)
+      pins = described_class.new([chain[0]], candidates: chain)
+
+      expect(pins.indices_in(chain).to_a).to eq([0, 1])
+    end
+
+    it "pulls the neighbours of every position a repeated prompt text occupies" do
+      chain = [message("user", "same"), message("assistant", "a1"), message("user", "same"),
+               message("assistant", "a2"), message("user", "z")]
+      pins = described_class.new([chain[2]], candidates: chain)
+
+      expect(pins.indices_in(chain).to_a).to eq([0, 1, 2, 3])
+    end
+
+    it "leaves the open exchange alone when no later prompt has closed it" do
+      chain = [message("user", "go"), tool_use("t1"), tool_result("t1")]
+      pins = described_class.new([chain[0]], candidates: chain)
+
+      expect(pins.indices_in(chain).to_a).to eq([0])
+    end
+
+    it "holds nothing extra for a prompt with no answer yet" do
+      pins = described_class.new([messages[2]], candidates: messages.first(3))
+
+      expect(pins.indices_in(messages.first(3)).to_a).to eq([2])
+    end
+  end
+
   # Scenario: pairing is read off the TIMELINE BEING RENDERED
   #
   # A turn pinned while its `tool_use` was still PARKED records only that one
