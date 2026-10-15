@@ -442,7 +442,9 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   `a plain chat's inline prompts over a real terminal a prompt the approval window decides ends its line
   with who decided it and how, and a y typed afterwards decides nothing`;
   `Lain::Frontend::InputPane when the chat says nothing is published rewrites in place again once a whole
-  redraw followed the resize`.
+  redraw followed the resize`;
+  `Shift+Enter in a pane inserts a newline and submits the whole draft on Enter` (load 14, passed alone
+  and 3 of 3 with its seed on the base commit).
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
