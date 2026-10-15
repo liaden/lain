@@ -1,6 +1,6 @@
 # Research agents, judge-first approval and environment facts
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1099,3 +1099,7 @@ After the last card lands:
 6. **Manual:** `/manual-qa repl-commands secret-boundary shell-term-approval cockpit-surfaces`.
 
 ## Execution log
+
+- 2026-10-15 start. Base `main` at `232d5bda` (grounding was `6b43bab1`; only the plan and `ROADMAP.md` changed since, so no card drifted). `git worktree list`: `/home/tara/dev/lain 232d5bda [main]`, `/home/tara/tmp/lain-qa-2026-10-08-tree b6a3efb2 (detached HEAD)`.
+- Hook checks, runnable on a card's paths: `bundle exec rubocop <files>`; `bundle exec rspec <spec files>`; `bundle exec yard-lint <files>`; `bin/lint-gherkin-docs <planning/specs/*.md>`; `bin/lint-commit-msg <msgfile>` (subject at most 72, no em or en dashes, no trailers). The hook itself runs `rake compile check`: whole-repo rubocop plus `rake pspec`, about 1 to 2 minutes. The suite cannot run beside other tests (shared `TMPDIR`); landings need a quiet box. Paths needing user approval: none known.
+- T1, T2, T3, T10 started (worktrees under `tmp/worktrees/`, cut at `232d5bda`).
