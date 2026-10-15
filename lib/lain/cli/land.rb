@@ -14,6 +14,9 @@ module Lain
     class Land
       POLL = 0.05
 
+      # How long a queued entry may go without a live drainer before {#wait} gives up on one.
+      NO_DRAINER_AFTER = 5
+
       # EPERM means the process exists under another user.
       ALIVE = lambda do |pid|
         Process.kill(0, pid)
@@ -63,6 +66,7 @@ module Lain
         branch ||= checked_out(root)
         here = git(@cwd)
         home = home(root, branch)
+        usable!(home.drain_lock)
         spool = Isolation::MergeCoordinator::Spool.new(home)
         entry = spool.enqueue(anchored(here, ref, id || File.basename(toplevel(here))))
         position = spool.pending.take_while { |each| each.id != entry.id }.size + 1
@@ -83,17 +87,21 @@ module Lain
       # @param branch [String, nil] the branch it was queued for; the main worktree's when nil
       # @param timeout [Numeric, nil] seconds to wait; forever when nil
       # @return [Integer] 0 when the work is on the branch, 1 when it is not, 2 on
-      #   timeout, and 130 on Ctrl-C, the shell's code for a SIGINT, as every
-      #   other interrupted lain command answers
+      #   timeout, 3 when no live process has held the drain lock for 5 seconds
+      #   (a drainer still booting can be reported so), and 130 on
+      #   Ctrl-C, the shell's code for a SIGINT, as every other interrupted lain
+      #   command answers
       # @raise [Lain::Error] when the id is not one the spool mints, or the
       #   branch's spool has neither queued nor answered it
       def wait(id, branch: nil, timeout: nil)
         root = main_root
         branch ||= checked_out(root)
-        spool = spool(root, branch)
+        home = home(root, branch)
+        spool = Isolation::MergeCoordinator::Spool.new(home)
         known!(spool, id, branch)
-        result = poll(spool, id, timeout && (@clock.call + timeout))
-        return still_queued(id, timeout) if result.nil?
+        deadline = timeout && (@clock.call + timeout)
+        result = poll(spool, id, deadline, home)
+        return waited_out(id, timeout, branch, home, deadline) if result.nil?
 
         told(result.report, id, branch)
       rescue Interrupt
@@ -112,13 +120,16 @@ module Lain
 
       private
 
+      def usable!(lock)
+        lock.holder
+        lock.writable!
+      end
+
       def git(dir) = Isolation::Checkout.new(dir, shell_out_factory: @shell_out_factory)
 
       def home(root, branch)
         Isolation::MergeCoordinator::Home.for(repo_root: root, branch:, shell_out_factory: @shell_out_factory)
       end
-
-      def spool(root, branch) = Isolation::MergeCoordinator::Spool.new(home(root, branch))
 
       def main_root = Isolation::MergeCoordinator.main_root(@cwd, shell_out_factory: @shell_out_factory)
 
@@ -165,13 +176,34 @@ module Lain
         raise Error, "no landing #{id} was queued for #{branch}"
       end
 
-      def poll(spool, id, deadline)
+      def poll(spool, id, deadline, home)
+        attended = @clock.call
         result = spool.result(id)
-        until result || expired?(deadline)
+        until result || expired?(deadline) || @clock.call - attended >= NO_DRAINER_AFTER
           @sleeper.call(POLL)
           result = spool.result(id)
+          attended = @clock.call if live_holder(home)
         end
         result
+      end
+
+      def waited_out(id, timeout, branch, home, deadline)
+        return still_queued(id, timeout) if expired?(deadline)
+
+        said(3, "#{id} is queued and no drainer is landing it#{stale_note(home)}; " \
+                "#{format(Isolation::MergeCoordinator::Spawner::BY_HAND, branch:)}")
+      end
+
+      def stale_note(home)
+        holder = home.drain_lock.holder
+        holder.empty? ? "" : " (stale holder line from pid #{holder_pid(holder)})"
+      end
+
+      def holder_pid(holder) = holder[/\Apid=(\d+)/, 1].to_i
+
+      def live_holder(home)
+        holder = home.drain_lock.holder
+        holder unless holder.empty? || !@alive.call(holder_pid(holder))
       end
 
       def expired?(deadline) = !deadline.nil? && @clock.call >= deadline
@@ -207,7 +239,7 @@ module Lain
         holder = home.drain_lock.holder
         return "no drainer running" if holder.empty?
 
-        pid = holder[/\Apid=(\d+)/, 1].to_i
+        pid = holder_pid(holder)
         return "no drainer running; a stale holder line from pid #{pid} was left" unless @alive.call(pid)
 
         held = [(@wall_clock.call - File.mtime(File.join(home.dir, "drain.lock"))).to_i, 0].max

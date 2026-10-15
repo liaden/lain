@@ -262,6 +262,77 @@ RSpec.describe Lain::CLI::Land, :seam do
     end
   end
 
+  describe "#wait with no drainer" do
+    def ticking
+      now = 0.0
+      { clock: -> { now }, sleeper: ->(seconds) { now += seconds } }
+    end
+
+    def dead_pid
+      pid = Process.spawn("true")
+      Process.wait(pid)
+      pid
+    end
+
+    it "answers 3 and names the command to run once no live drainer has held the lock for 5 seconds" do
+      entry = queued
+
+      expect(land(**ticking).wait(entry.id, branch: "main")).to eq(3)
+      expect(sink.string).to include(entry.id, "lain land drain --branch main")
+    end
+
+    it "answers 3 naming the pid a killed drainer left in its holder line" do
+      entry = queued
+      pid = dead_pid
+      FileUtils.mkdir_p(home.dir)
+      File.write(File.join(home.dir, "drain.lock"), "pid=#{pid} command=lain land drain\n")
+
+      expect(land(**ticking).wait(entry.id, branch: "main")).to eq(3)
+      expect(sink.string).to include("pid #{pid}", "lain land drain --branch main")
+    end
+
+    it "keeps waiting while a live drainer holds the lock" do
+      entry = queued
+      FileUtils.mkdir_p(home.dir)
+      File.write(File.join(home.dir, "drain.lock"), "pid=#{Process.pid} command=lain land drain\n")
+
+      expect(land(**ticking).wait(entry.id, branch: "main", timeout: 20)).to eq(2)
+    end
+  end
+
+  describe "an unopenable drain lock" do
+    def lock_file = File.join(home.dir, "drain.lock")
+
+    around do |example|
+      FileUtils.mkdir_p(home.dir)
+      File.write(lock_file, "")
+      File.chmod(0o000, lock_file)
+      example.run
+    ensure
+      File.chmod(0o600, lock_file)
+    end
+
+    it "refuses enqueue over a lock that is readable but not writable, queuing and spawning nothing" do
+      File.chmod(0o400, lock_file)
+
+      expect { land.enqueue(branch: "main") }.to raise_error(Lain::Error, /#{Regexp.escape(lock_file)}/)
+      expect(spawned).to be_empty
+      expect(spool.pending).to be_empty
+    end
+
+    it "refuses enqueue by the lock's name rather than promising a drainer" do
+      expect { land.enqueue(branch: "main") }.to raise_error(Lain::Error, /#{Regexp.escape(lock_file)}/)
+      expect(spawned).to be_empty
+    end
+
+    it "makes status say one line naming the lock, as a refusal and not a backtrace" do
+      Dir.chdir(@worktree) do
+        expect { LainCLI.start(["land", "status", "--branch", "main"], debug: true) }
+          .to raise_error(Thor::Error, /\A[^\n]*#{Regexp.escape(lock_file)}[^\n]*\z/)
+      end
+    end
+  end
+
   it "must be told its directory" do
     expect { described_class.new(paths:) }.to raise_error(ArgumentError, /cwd/)
   end

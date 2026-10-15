@@ -439,10 +439,11 @@ lain land drain                         # what the detached drainer runs; useful
 | `0` | The work is on the branch (or was already). |
 | `1` | It did not land; the output names why. |
 | `2` | The timeout passed and the entry is still queued. |
+| `3` | No live process has held the drain lock for 5 seconds, or the one that held it is dead. It prints the `lain land drain --branch <b>` command to run. A drainer still booting can read this way; running the printed command then is harmless, because the lock admits one drainer. |
 | `130` | Interrupted with Ctrl-C. The entry stays queued unless it landed meanwhile. |
 | `64` | The id, repository or branch was refused: an id the queue never minted, a bare repository, a detached branch. |
 
-A malformed command line, such as a missing id, is Thor's usage error and exits `1`.
+A malformed command line, such as a missing id, is Thor's usage error and exits `1`. `lain land enqueue` and `lain land status` refuse, by name and in one line, a `drain.lock` that is unreadable (or, for `enqueue`, not writable), rather than saying a drainer is landing.
 
 **The coordinator's root is the repository's main worktree**, whichever linked worktree you run
 from: its `.lain/config.rb`, its journal and its verify worktree are the main one's. A bare

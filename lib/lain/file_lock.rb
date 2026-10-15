@@ -11,6 +11,13 @@ module Lain
   # Reentrancy is not promised: a second hold on the same path from the same
   # process waits on the first, because each opens its own file description.
   class FileLock
+    # A lock file that exists and cannot be used.
+    class Unreadable < Error
+      def initialize(path, cause)
+        super("cannot use the lock #{path}: #{cause.message}")
+      end
+    end
+
     # @param path [String] the lock file; created if absent
     # @param mode [Integer] the flock mode, without LOCK_NB
     # @param sleeper [#call] waits between tries while another process holds it
@@ -46,8 +53,21 @@ module Lain
     end
 
     # @return [String] the holder's pid and command, or "" when free
+    # @raise [Unreadable] when the file exists and this user cannot read it
     def holder
       File.exist?(@path) ? File.read(@path).strip : ""
+    rescue SystemCallError => e
+      raise Unreadable.new(@path, e)
+    end
+
+    # Looks at the file's mode and never takes the lock, so a caller that must
+    # not contend for it can still refuse a lock a drainer would die on.
+    # @return [nil]
+    # @raise [Unreadable] when the file exists and this user cannot write it
+    def writable!
+      return unless File.exist?(@path) && !File.writable?(@path)
+
+      raise Unreadable.new(@path, SystemCallError.new("not writable", Errno::EACCES::Errno))
     end
 
     private

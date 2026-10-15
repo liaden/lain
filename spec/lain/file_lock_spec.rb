@@ -137,4 +137,29 @@ RSpec.describe Lain::FileLock, :seam do
   it "reads the holder as empty when the file does not exist" do
     expect(described_class.new(@path).holder).to eq("")
   end
+
+  it "refuses to read a holder it may not read, naming the file" do
+    File.write(@path, "pid=1\n")
+    File.chmod(0o000, @path)
+
+    expect { described_class.new(@path).holder }.to raise_error(described_class::Unreadable, /#{Regexp.escape(@path)}/)
+  ensure
+    File.chmod(0o600, @path)
+  end
+
+  it "refuses a lock file it may read but not write, naming it, without taking the lock" do
+    File.write(@path, "")
+    File.chmod(0o400, @path)
+
+    expect { described_class.new(@path).writable! }
+      .to raise_error(described_class::Unreadable, /#{Regexp.escape(@path)}/)
+  ensure
+    File.chmod(0o600, @path)
+  end
+
+  it "accepts a lock file that is absent or writable" do
+    expect(described_class.new(@path).writable!).to be_nil
+    File.write(@path, "")
+    expect(described_class.new(@path).writable!).to be_nil
+  end
 end
