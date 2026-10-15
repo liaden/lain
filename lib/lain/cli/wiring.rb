@@ -967,7 +967,23 @@ module Lain
       # every path in every real chat and the whole axis was dark.
       def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
-                                        verdict:, middleware: backend.middleware, config:)
+                                        verdict:, middleware: backend.middleware, config:,
+                                        judge: approval_judge)
+      end
+
+      # What `auto` approval asks first, built at the first judged call: the
+      # spawn seam it asks through is the toolset build's discovery, and
+      # `build_agent`'s spec seam reaches the board with no build behind it.
+      def approval_judge = ->(**question, &on_fault) { judged(question, on_fault) }
+
+      # A judge that cannot be built is a fault like any other the judge has,
+      # so the call goes to a human rather than out of the rung as a raise.
+      def judged(question, on_fault)
+        @approval_judge ||= Approval::Judge.new(role_spawn:)
+        @approval_judge.call(**question, &on_fault)
+      rescue StandardError => e
+        on_fault&.call("#{e.class}: #{e.message}")
+        :fault
       end
 
       # The session's ONE {Lain::Shell::Verdict}, and the memo is the whole

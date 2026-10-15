@@ -91,8 +91,8 @@ module Lain
     # `arm` is therefore written from the tool's OWN resolved choice -- the same
     # value it hands the backend, never a second derivation of the same
     # predicate, which could disagree with what ran. Whether a non-allow ran at
-    # all is a further question this record does not answer: both approval
-    # levels' triage rung refuses a deny, while a gate over ApproveAll runs it on
+    # all is a further question this record does not answer: every approval
+    # level's triage rung refuses a deny, while a gate over ApproveAll runs it on
     # the string arm.
     #
     # `verdict`, `reason` and `term` are {Shell::Verdict::Decision#record}'s own

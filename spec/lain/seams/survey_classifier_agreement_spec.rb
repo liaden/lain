@@ -80,6 +80,7 @@ RSpec.describe "a survey and the gate beside it, after the config changes mid-se
   # returns.
   def board
     @board ||= Lain::CLI::Wiring::BoardBuild.for(chronicle: Lain::CLI::Chronicle::Null.new, options: {},
+                                                 judge: Lain::CLI::Switchboard::DEFERRING,
                                                  model: "m", toolset:, project:, paths:)
   end
 

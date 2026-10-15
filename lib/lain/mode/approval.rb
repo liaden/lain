@@ -5,12 +5,13 @@ module Lain
     Approval = Data.define(:name, :lighter)
 
     # Who decides a gated call the session's own rules left open -- the second
-    # of a mode's two exclusive axes, and exactly two levels.
+    # of a mode's two exclusive axes, and exactly three levels.
     #
-    # Both run the deterministic rungs first, so a triage deny or a rule deny
-    # decides under either. They differ only in what stands below those rungs:
+    # All run the deterministic rungs first, so a triage deny or a rule deny
+    # decides under any. They differ only in what stands below those rungs:
     # `ask` parks the call for a surface (a human, or the automatic approver
-    # the `auto_approve` layer turns on), and `bypass` approves it. There is no
+    # the `auto_approve` layer turns on), `auto` asks a model judge first and
+    # parks only what it cannot settle, and `bypass` approves it. There is no
     # "is this an edit" predicate between them: only `bash` asks to be gated,
     # so a level that gated edits and not commands would gate nothing different.
     #
@@ -21,10 +22,11 @@ module Lain
     # constant declared there scopes to the enclosing module, not to the Data
     # class (the trap {Request::SYSTEM_PREFIX} documents).
     class Approval
-      # `ask` is silent because every session starts in it. `bypass` is lit: it
-      # decides calls a human would otherwise have been asked about.
+      # `ask` is silent because every session starts in it. `auto` and `bypass`
+      # are lit: each decides calls a human would otherwise have been asked about.
       DECLARED = {
         ask: new(name: :ask, lighter: ""),
+        auto: new(name: :auto, lighter: "AUTO"),
         bypass: new(name: :bypass, lighter: "BYPASS")
       }.freeze
       private_constant :DECLARED

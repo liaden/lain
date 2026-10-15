@@ -93,25 +93,33 @@ module Lain
       # @param middleware [Config::Middleware] what the chat's config.rb files
       #   registered, whose tool members run ahead of every guard
       # @param approval_timeout [Numeric] seconds an unanswered call waits before the queue denies it
+      # @param judge [#call] what `auto` approval asks first, on `new`'s terms.
+      #   REQUIRED here, as `test_layout:` is: defaulted, a real chat's `auto`
+      #   would quietly hand every call to a human
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [String] :approval the session starts at this approval
       #   level. This and `non_interactive` are the only flags this entry
       #   reads off `options`
       # @return [Switchboard]
-      def self.for(chronicle:, options:, model:, toolset:, test_layout:, rules: [], approving: REMEMBERED,
+      def self.for(chronicle:, options:, model:, toolset:, test_layout:, judge:, rules: [], approving: REMEMBERED,
                    sensitivity: Sensitivity::Policy::Null.instance,
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                    approval_timeout: Approval::Queue::DEFAULT_TIMEOUT)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
-            verdict:, test_layout:, spike:, middleware:, approval_timeout:, attended: !options[:non_interactive],
-            approval: options.fetch(:approval, :ask))
+            verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:,
+            attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
 
       # The rules rung's chain when nothing composes one: the remembered
       # answers alone, whatever factory a worker is judged by.
       REMEMBERED = ->(rules, _classifiers) { rules }
+
+      # The judge of a board nobody handed one. It settles nothing, so `auto`
+      # hands every call down to whoever `ask` would have asked, and no model
+      # approves anything on a board that was never given a model to ask.
+      DEFERRING = ->(**) { :defer }
 
       # What the tool stack is built over, as ONE value: the ledger and the
       # path policy described above, the approval queue, the session's one
@@ -166,8 +174,8 @@ module Lain
       #   parses. Its exclusion table is also the only thing on this ladder
       #   that can DENY on the model's own words.
       #
-      #   Both approval levels consult it: `ask` and `bypass` share the
-      #   deterministic rungs and differ only below them, so the exclusion
+      #   Every approval level consults it: `ask`, `auto` and `bypass` share
+      #   the deterministic rungs and differ only below them, so the exclusion
       #   table denies under `/mode bypass` exactly as it does under `ask`. An
       #   unattended session's `ask` is the one-rung {Unattended} ladder below,
       #   which refuses without asking this rung anything.
@@ -193,19 +201,19 @@ module Lain
       #   scope
       # @param middleware [Config::Middleware] as on {.for}; none by default
       # @param approval_timeout [Numeric] as on {.for}
+      # @param judge [#call] the {Approval::Judge} `auto` approval asks before
+      #   anyone else. {DEFERRING} by default, so a board built with no model
+      #   behind it parks under `auto` exactly as under `ask`
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
                      verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
                      attended: true, approval: :ask, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
-                     approval_timeout: Approval::Queue::DEFAULT_TIMEOUT)
+                     approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, judge: DEFERRING)
         @attended = attended
         @journal = journal
-        @rules = rules.to_a.freeze
-        @approving = approving
-        @classifiers = classifiers
-        @verdict = verdict
         @spike = spike
+        hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
         @approvals = Approval::Queue.new(journal:, timeout: approval_timeout) if @attended
@@ -348,11 +356,24 @@ module Lain
           "and say what it was for."
       end
 
+      # What every ladder is built from, held before the seed builds them. The
+      # judge and the policy among them are why: every judged rung, the leased
+      # workers' included, is built over these two, so `auto` judges alike
+      # wherever a call is asked.
+      def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:)
+        @rules = rules.to_a.freeze
+        @approving = approving
+        @classifiers = classifiers
+        @verdict = verdict
+        @judge = judge
+        @sensitivity = sensitivity
+      end
+
       # The starting mode's resolution seeds the policy slot DIRECTLY rather
       # than through {#apply}, because construction journals no policy: every
       # session starts at the same approval level.
       #
-      # CONSTRUCTION ORDER: both ladders are built FIRST, ONCE, before the
+      # CONSTRUCTION ORDER: every ladder is built FIRST, ONCE, before the
       # first {#resolve} -- they are what the approval levels resolve TO, and a
       # flip that selects the ladder already in force is then the identical
       # object, which is how the policy switch sees that nothing moved.
@@ -367,27 +388,29 @@ module Lain
                                                           apply: method(:apply))
       end
 
-      # Both approval levels' ladders over one classifier factory, the triage
+      # Every approval level's ladder over one classifier factory, the triage
       # rung and the rules chain each built over it.
       def ladders(classifiers)
         triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict)
         rules = @approving.call(@rules, classifiers)
-        { ask: build_ladder(triage:, rules:), bypass: bypass_ladder(triage:, rules:) }.freeze
+        { ask: build_ladder(triage:, rules:), auto: judged_ladder(triage:, rules:),
+          bypass: bypass_ladder(triage:, rules:) }.freeze
       end
 
-      # Both approval levels' ladders under plan scope, over the factory of the
+      # Every approval level's ladder under plan scope, over the factory of the
       # directory the session is confined to. Triage is the same, and the rules
       # rung is the same but for one thing: a remembered answer is about a
       # command's shape in the checkout and knows nothing of the spike, so it
       # may still refuse a command but never approve one, and the confinement
       # rule is the only approver a command has ({DeniesOnly}). What differs
       # below them is the bottom, where a command nothing confined goes to a
-      # human at either level ({Unconfinable}).
+      # human at any level ({Unconfinable}).
       def plan_ladders(classifiers, root)
         triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict)
         rules = @approving.call(@rules.map { |rule| DeniesOnly.new(rule) }, classifiers)
         asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Unattended.new
         { ask: confined_ladder("plan ask", triage:, rules:, asking:, otherwise: asking, root:),
+          auto: confined_ladder("plan auto", triage:, rules:, asking:, otherwise: judged, root:),
           bypass: confined_ladder("plan bypass", triage:, rules:, asking:, root:,
                                                  otherwise: Approval::Escalation::Bypass.new) }.freeze
       end
@@ -445,6 +468,20 @@ module Lain
         return Approval::Escalation.new([Unattended.new], journal: @journal, label: "ask") unless @approvals
 
         Approval::Escalation.for(queue: @approvals, tools: @toolset, journal: @journal, rules:, triage:)
+      end
+
+      # `auto` approval's ladder: the deterministic rungs, then the judge. An
+      # unattended session keeps both rungs here, unlike its `ask`, because a
+      # judge can still approve what they leave open; only what the judge does
+      # not settle is refused.
+      def judged_ladder(triage:, rules:)
+        Approval::Escalation.new([triage, Approval::Escalation::Rules.new(rules:, tools: @toolset, faults:), judged],
+                                 journal: @journal, label: "auto")
+      end
+
+      def judged
+        asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Approval::Judged::Unattended.new
+        Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal)
       end
 
       # `bypass` approval's ladder, built for attended and unattended sessions

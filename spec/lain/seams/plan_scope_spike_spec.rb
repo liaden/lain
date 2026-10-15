@@ -51,7 +51,8 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
 
   def board
     @board ||= Lain::CLI::Wiring::BoardBuild.for(
-      chronicle:, options: {}, model: "m", toolset:, project:, paths:,
+      chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
+      model: "m", toolset:, project:, paths:,
       verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:)
     ).bind_session(session).tap { _1.bind_snapshots(slot) }
   end

@@ -1066,8 +1066,9 @@ class LainCLI < Thor
     # method is what keeps the paragraph an operator needs from arguing with
     # Metrics/MethodLength -- {Lain::Tools::AskHuman::DESCRIPTION}'s idiom, for
     # the same reason.
-    HEADLESS = "Run --prompt's question and stop, reading nothing from the terminal: gated tool calls " \
-               "are denied and ask_human refuses by name (no human is attached to answer either), and " \
+    HEADLESS = "Run --prompt's question and stop, reading nothing from the terminal: a gated tool call the " \
+               "rules leave open is refused under ask, decided by the judge under auto (a call it is unsure " \
+               "of is refused), and approved under bypass; ask_human refuses by name (no human is attached), and " \
                "the process exits non-zero when a turn could not finish. Needs --prompt. Run it " \
                "DIRECTLY, not through `lain up` -- that puts the chat in a tmux pane whose exit status " \
                "nothing reads, which is the whole of what this flag adds"
@@ -1079,9 +1080,9 @@ class LainCLI < Thor
                                   desc: "Seed the first question (the /btw child's side-question); the chat " \
                                         "then reads the terminal as usual"
       thor.method_option :non_interactive, type: :boolean, default: false, desc: HEADLESS
-      thor.method_option :approval, type: :string, default: "ask", enum: %w[ask bypass],
+      thor.method_option :approval, type: :string, default: "ask", enum: %w[ask auto bypass],
                                     desc: "Who decides a gated call the rules left open: ask parks it for " \
-                                          "a human, bypass approves it"
+                                          "a human, auto asks a model judge first, bypass approves it"
     end
   end
 

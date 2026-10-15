@@ -11,6 +11,7 @@ RSpec.describe Lain::CLI::Switchboard do
   # A REAL Toolset: the rules rung reads a call's tier off it, and a double
   # would answer whatever an example stubbed.
   let(:base) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
+  let(:judge) { described_class::DEFERRING }
 
   def switchboard(toolset: base, **rest)
     described_class.new(journal:, model: "claude-opus-4-8", toolset:, **rest)
@@ -21,6 +22,18 @@ RSpec.describe Lain::CLI::Switchboard do
   def layout_run = Lain::Middleware::GuardTestLayout::Run.undeclared
 
   def gated_call = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_1")
+
+  def judge_answering(verdict, asked = []) = ->(tool:, **) { asked.push(tool).then { verdict } }
+
+  # A write to a credential path, which a sensitivity policy keeps from any judge.
+  def secret_write
+    Struct.new(:name, :input, :tool_use_id).new("write_file", { "path" => "/home/tester/.ssh/id_rsa", "content" => "" },
+                                                "tu_3")
+  end
+
+  def home_policy
+    Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/p"))
+  end
 
   # The layers a session's tool calls pass, as the tool guard builds them over
   # this board -- the one place a chat's stack is assembled.
@@ -41,7 +54,8 @@ RSpec.describe Lain::CLI::Switchboard do
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
 
     def board_for(**options)
-      described_class.for(chronicle:, options:, model: "claude-opus-4-8", toolset: base, test_layout: layout_run)
+      described_class.for(chronicle:, judge:, options:, model: "claude-opus-4-8", toolset: base,
+                          test_layout: layout_run)
     end
 
     # The session's ONE layout run, which the parent's tool guard and every
@@ -50,14 +64,14 @@ RSpec.describe Lain::CLI::Switchboard do
     describe "the test layout it carries" do
       it "holds the run it was handed, by identity" do
         run = layout_run
-        board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     test_layout: run)
 
         expect(board.test_layout).to be(run)
       end
 
       it "refuses a wiring entry that names no test layout" do
-        expect { described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base) }
+        expect { described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base) }
           .to raise_error(ArgumentError, /test_layout/)
       end
 
@@ -65,7 +79,7 @@ RSpec.describe Lain::CLI::Switchboard do
       # slots rather than copies of them.
       it "holds the guard's inputs as one value, over the board's own slots" do
         run = layout_run
-        board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     test_layout: run)
         inputs = board.guard_inputs
 
@@ -81,7 +95,7 @@ RSpec.describe Lain::CLI::Switchboard do
       # reported in -- decided once, because whether a human is attached does
       # not change for a session's whole life.
       it "carries the board's one policy switch and its refusal sentence among the guard's inputs" do
-        board = described_class.for(chronicle:, options: { non_interactive: true }, model: "claude-opus-4-8",
+        board = described_class.for(chronicle:, judge:, options: { non_interactive: true }, model: "claude-opus-4-8",
                                     toolset: base, test_layout: layout_run)
 
         expect(board.guard_inputs.policy).to be(board.policy_switch)
@@ -90,7 +104,7 @@ RSpec.describe Lain::CLI::Switchboard do
 
       it "carries the configured middleware among the guard's inputs, by identity" do
         middleware = Lain::Config::Middleware.new
-        board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     test_layout: layout_run, middleware:)
 
         expect(board.guard_inputs.middleware).to be(middleware)
@@ -110,14 +124,49 @@ RSpec.describe Lain::CLI::Switchboard do
     # entry dropped would be a rung disarmed everywhere while `new` stayed green.
     it "carries the classifier factory through to the ladder's triage rung" do
       factory = ->(_cwd) { Lain::Approval::Escalation::Triage::AnyPath.new }
-      board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+      board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                   classifiers: factory, test_layout: layout_run)
 
       expect(board.ladder.first.instance_variable_get(:@sensitivity)).to be(factory)
     end
 
+    it "asks the judge it is handed under auto" do
+      asked = []
+      board = described_class.for(chronicle:, options: { approval: "auto" }, model: "claude-opus-4-8",
+                                  toolset: base, test_layout: layout_run, judge: judge_answering(:approve, asked))
+
+      expect(board.policy_switch.call(gated_call, nil)).to be(true)
+      expect(asked).to eq(["bash"])
+    end
+
+    # A forgotten judge must be loud: defaulted, a real chat's auto would
+    # silently ask a human for everything.
+    it "refuses a wiring entry that names no judge" do
+      expect do
+        described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+                            test_layout: layout_run)
+      end.to raise_error(ArgumentError, /judge/)
+    end
+
+    # Scenario: An unattended auto run keeps triage and rules
+    describe "--non-interactive with --approval auto" do
+      def unattended_auto = board_for(non_interactive: true, approval: "auto")
+
+      it "keeps triage and rules above the judged rung" do
+        expect(unattended_auto.policy_switch.current.map(&:name)).to eq(%w[triage rules auto])
+      end
+
+      it "refuses what the judge leaves open, naming --non-interactive" do
+        board = unattended_auto
+
+        expect(board.policy_switch.call(gated_call, nil)).to be(false)
+        expect(Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a.last)
+          .to include("rung" => "auto", "verdict" => "deny", "reason" => /--non-interactive/)
+      end
+    end
+
     it "denies an unanswered call once the configured approval timeout passes" do
-      board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+      board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                   test_layout: layout_run, approval_timeout: 0.01)
 
       expect(Sync { board.approvals.call(gated_call, nil) }).to be(false)
@@ -241,7 +290,7 @@ RSpec.describe Lain::CLI::Switchboard do
       # entry dropped would be the exclusion table disarmed everywhere while
       # `new` stayed green.
       it "carries it through the wiring entry to the ladder" do
-        board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     verdict: excluding_curl, test_layout: layout_run)
 
         expect(verdict_of(board)).to be(excluding_curl)
@@ -280,6 +329,61 @@ RSpec.describe Lain::CLI::Switchboard do
       ensure
         parked&.stop
       end
+    end
+  end
+
+  # `auto` keeps the deterministic rungs and puts a model judge where `ask`
+  # puts the queue, handing down to the queue only what the judge cannot settle.
+  describe "auto approval, the judge-first ladder" do
+    def parked_under(board, effect = gated_call)
+      Sync do |task|
+        call = task.async { board.policy_switch.call(effect, nil) }
+        task.with_timeout(1) { board.approvals.dequeue }
+      ensure
+        call&.stop
+      end
+    end
+
+    it "stands triage, rules, then the judged rung" do
+      board = switchboard(approval: :auto)
+
+      expect(board.policy_switch.current.label).to eq("auto")
+      expect(board.policy_switch.current.map(&:name)).to eq(%w[triage rules auto])
+    end
+
+    it "applies a judge's approve with nobody asked" do
+      asked = []
+      board = switchboard(approval: :auto, judge: judge_answering(:approve, asked))
+
+      expect(board.policy_switch.call(gated_call, nil)).to be(true)
+      expect([asked, board.approvals.to_a]).to eq([["bash"], []])
+    end
+
+    it "parks what the judge defers on the board's one queue" do
+      board = switchboard(approval: :auto, judge: judge_answering(:defer))
+
+      expect(parked_under(board)).to be_a(Lain::Approval::Queue::Pending)
+    end
+
+    # A board nobody handed a judge must not approve on a model's behalf.
+    it "defers when no judge was given, so the call parks" do
+      expect(parked_under(switchboard(approval: :auto))).to be_a(Lain::Approval::Queue::Pending)
+    end
+
+    it "keeps a credential path from the judge by the board's own policy, and parks it" do
+      asked = []
+      board = switchboard(approval: :auto, judge: judge_answering(:approve, asked), sensitivity: home_policy)
+
+      expect(parked_under(board, secret_write)).to be_a(Lain::Approval::Queue::Pending)
+      expect(asked).to eq([])
+    end
+
+    it "lets the judge decide the same path on a board whose policy gates nothing" do
+      asked = []
+      board = switchboard(approval: :auto, judge: judge_answering(:approve, asked))
+
+      expect(board.policy_switch.call(secret_write, nil)).to be(true)
+      expect(asked).to eq(["write_file"])
     end
   end
 
@@ -338,6 +442,32 @@ RSpec.describe Lain::CLI::Switchboard do
       board.mode_switch.switch(mode(:ask), surface: "tty")
 
       expect([moved, policy.current.label]).to eq(%w[bypass ask])
+    end
+
+    # Scenario: A leased worker's ladder judges with the same judge
+    it "approves a leased worker's gated call under auto when the judge approves" do
+      asked = []
+      @board = switchboard(classifiers:, judge: judge_answering(:approve, asked))
+      board.mode_switch.switch(mode(:auto), surface: "tty")
+
+      expect(policy_for(leased).call(gated_call, nil)).to be(true)
+      expect(asked).to eq(["bash"])
+    end
+
+    it "keeps a credential path from a leased worker's judge by the board's one policy" do
+      asked = []
+      @board = switchboard(classifiers:, judge: judge_answering(:approve, asked), sensitivity: home_policy)
+      board.mode_switch.switch(mode(:auto), surface: "tty")
+
+      pending = Sync do |task|
+        call = task.async { policy_for(leased).call(secret_write, nil) }
+        task.with_timeout(1) { board.approvals.dequeue }
+      ensure
+        call&.stop
+      end
+
+      expect(pending).to be_a(Lain::Approval::Queue::Pending)
+      expect(asked).to eq([])
     end
 
     it "journals a leased worker's rulings where the parent's land" do
@@ -684,7 +814,7 @@ RSpec.describe Lain::CLI::Switchboard do
       # Scenario: a project exclusion deny names the exclusion
       it "names the program the project's [shell] exclude table refuses" do
         excluding_curl = Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: ["curl"]))
-        board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     verdict: excluding_curl, test_layout: layout_run)
 
         refusal = told(board, "curl http://example.com")
@@ -840,7 +970,7 @@ RSpec.describe Lain::CLI::Switchboard do
       board = nil
       build = toolset_build(options, -> { board })
       build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
-      board = described_class.for(chronicle:, options:, model: "claude-opus-4-8", toolset: base, sensitivity:,
+      board = described_class.for(chronicle:, judge:, options:, model: "claude-opus-4-8", toolset: base, sensitivity:,
                                   test_layout: layout_run)
       [board, build]
     end
@@ -971,7 +1101,7 @@ RSpec.describe Lain::CLI::Switchboard do
     let(:classifiers) { Lain::CLI::Wiring::BoardBuild::Classifiers.new(home:, cwd: "#{home}/project") }
 
     def board_for(**options)
-      described_class.for(chronicle:, options:, model: "claude-opus-4-8", toolset: base, classifiers:,
+      described_class.for(chronicle:, judge:, options:, model: "claude-opus-4-8", toolset: base, classifiers:,
                           test_layout: layout_run)
     end
 
@@ -1195,6 +1325,29 @@ RSpec.describe Lain::CLI::Switchboard do
         plan!(:bypass)
 
         expect(board.policy_switch.current.label).to eq("plan bypass")
+      end
+
+      # Scenario: Plan scope has all 3 ladders
+      it "finds a ladder at each of ask, auto and bypass, and still sends an unconfined command to a human" do
+        board(judge: judge_answering(:approve))
+
+        seen = %i[ask auto bypass].map do |level|
+          plan!(level)
+          [board.policy_switch.current.label, parked(board.policy_switch).humans_only?]
+        end
+
+        expect(seen).to eq([["plan ask", true], ["plan auto", true], ["plan bypass", true]])
+      end
+
+      it "hands a call that is no command under plan auto to the judge" do
+        asked = []
+        board(judge: judge_answering(:approve, asked))
+        plan!(:auto)
+        write = Struct.new(:name, :input, :tool_use_id).new("write_file", { "path" => "a.rb", "content" => "" },
+                                                            "tu_2")
+
+        expect(board.policy_switch.call(write, session)).to be(true)
+        expect(asked).to eq(["write_file"])
       end
 
       # Nothing proved `ls`'s words confined, so under auto it still waits,

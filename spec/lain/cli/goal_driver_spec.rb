@@ -372,6 +372,7 @@ RSpec.describe Lain::CLI::GoalDriver do
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
     let(:board) do
       Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "claude-opus-4-8",
+                                 judge: Lain::CLI::Switchboard::DEFERRING,
                                  toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }),
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
     end

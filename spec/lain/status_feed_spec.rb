@@ -1688,6 +1688,7 @@ RSpec.describe Lain::StatusFeed do
       # An empty base set says what this example is not about: it wants the
       # board's queue, and nothing on this path reads a tool.
       Lain::CLI::Switchboard.for(chronicle: chronicle_teed_to(feed), options: {},
+                                 judge: Lain::CLI::Switchboard::DEFERRING,
                                  model: "claude-opus-4-8", toolset: Lain::Toolset.new,
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared).approvals
     end

@@ -400,6 +400,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     # object {Repl::ApprovalSurfaces#watch} spawns when the flag is set.
     def armed_board(root, home)
       Lain::CLI::Wiring::BoardBuild.for(chronicle:, options: {}, model: "m", toolset:,
+                                        judge: Lain::CLI::Switchboard::DEFERRING,
                                         project: project_at(root), paths: paths_at(home))
     end
 
@@ -416,6 +417,7 @@ RSpec.describe Lain::Approval::AutoSurface do
       table = Lain::CLI::Wiring::BoardBuild.rules(project:, paths: paths_at(home))
       remembered = Lain::Approval::Remembered.from(Lain::Config.load(root: project.root))
       Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m", toolset:,
+                                 judge: Lain::CLI::Switchboard::DEFERRING,
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
                                  rules: [remembered].reject(&:empty?),
                                  sensitivity: Lain::CLI::Wiring::BoardBuild.policy(project:, paths: paths_at(home),

@@ -550,10 +550,10 @@ RSpec.describe LainCLI do
   end
 
   describe "chat --approval" do
-    it "declares ask and bypass as the values, with ask the default" do
+    it "declares ask, auto and bypass as the values, with ask the default" do
       option = described_class.commands.fetch("chat").options.fetch(:approval)
 
-      expect([option.enum, option.default]).to eq([%w[ask bypass], "ask"])
+      expect([option.enum, option.default]).to eq([%w[ask auto bypass], "ask"])
     end
   end
 

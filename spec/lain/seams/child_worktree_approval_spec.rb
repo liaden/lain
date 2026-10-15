@@ -50,7 +50,8 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
 
   def board
     @board ||= Lain::CLI::Wiring::BoardBuild.for(
-      chronicle:, options: {}, model: "m", toolset:, project:, paths: Lain::Paths.new(env: { "HOME" => @home }),
+      chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
+      model: "m", toolset:, project:, paths: Lain::Paths.new(env: { "HOME" => @home }),
       verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:)
     )
   end

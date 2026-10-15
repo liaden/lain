@@ -3889,6 +3889,59 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
   end
+
+  # `auto` asks a judge built over the run's role-spawn seam, once, at the
+  # first judged call; a judge that cannot be built hands the call to a human.
+  describe "the judge auto approval asks" do
+    around do |example|
+      Dir.mktmpdir("lain-wiring-judge") do |state|
+        @state = File.realpath(state)
+        example.run
+      end
+    end
+
+    let(:journal_io) { StringIO.new }
+    let(:chronicle) do
+      Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io), journal_path: "judge-spec.ndjson")
+    end
+    let(:mock_provider) { Lain::Provider::Mock.new(responses: [text_response("APPROVE"), text_response("APPROVE")]) }
+    let(:backend_root) { @state }
+    let(:wiring) do
+      described_class.new(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:,
+                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                          project: throwaway_project(@state))
+    end
+
+    def board
+      wire_agent
+      wiring.instance_variable_get(:@switchboard)
+    end
+
+    def removal = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "rm -rf build" })
+
+    it "builds the judge once across two judged calls" do
+      allow(Lain::Approval::Judge).to receive(:new).and_call_original
+      gate = board.policy_switch
+
+      expect(Array.new(2) { gate.call(removal, nil) }).to eq([true, true])
+      expect(Lain::Approval::Judge).to have_received(:new).once
+    end
+
+    it "hands the call to a human when the judge cannot be built" do
+      allow(Lain::Approval::Judge).to receive(:new).and_raise(IOError, "no spawn seam")
+      live = board
+      pending = Sync do |task|
+        call = task.async { live.policy_switch.call(removal, nil) }
+        task.with_timeout(1) { live.approvals.dequeue }
+      ensure
+        call&.stop
+      end
+
+      expect(pending).to be_a(Lain::Approval::Queue::Pending)
+      expect(Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a)
+        .to include(a_hash_including("rung" => "auto", "reason" => "fault", "error" => "IOError: no spawn seam"))
+    end
+  end
 end
 
 # What the Agent is built FROM, driven at the seam that takes the board as an

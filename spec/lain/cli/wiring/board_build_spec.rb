@@ -46,8 +46,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     described_class.classifier(project:, paths:, table: described_class.rules(project:, paths:))
   end
 
-  def board_for(root, home, options: {}, **rest)
-    described_class.for(chronicle:, options:, model: "m", toolset:, project: project_at(root),
+  def board_for(root, home, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, **rest)
+    described_class.for(chronicle:, options:, judge:, model: "m", toolset:, project: project_at(root),
                         paths: paths_at(home), **rest)
   end
 
@@ -149,6 +149,25 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
         expect(board.sensitivity).not_to equal(Lain::Sensitivity::Policy::Null.instance)
         expect(board.sensitivity.gates?(read_of(File.join(root, ".env")), cwd: root)).to be(true)
+      end
+    end
+
+    it "hands the board the judge it is given, so auto approves what the judge approves" do
+      in_tree do |root, home|
+        judge = ->(**) { :approve }
+        board = board_over(root, home, options: { approval: "auto" }, judge:)
+
+        expect(board.policy_switch.call(bash_of("rm -rf build"), nil)).to be(true)
+        expect(board.approvals.to_a).to eq([])
+      end
+    end
+
+    it "refuses a build that names no judge" do
+      in_tree do |root, home|
+        expect do
+          described_class.for(chronicle:, options: {}, model: "m", toolset:, project: project_at(root),
+                              paths: paths_at(home))
+        end.to raise_error(ArgumentError, /judge/)
       end
     end
 
@@ -580,7 +599,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       in_tree do |_root, home|
         FileUtils.mkdir_p(home)
         project = Lain::Project.new(root: home, cwd: home, kind: :home, detected_by: :flag)
-        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home))
+        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
+                                    judge: Lain::CLI::Switchboard::DEFERRING)
 
         while_parked(board, bash_of("cat README.md", "cwd" => home)) do
           expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
@@ -593,7 +613,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "approves nothing automatically when no project was detected" do
       in_tree do |root, home|
         project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :none)
-        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home))
+        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
+                                    judge: Lain::CLI::Switchboard::DEFERRING)
 
         while_parked(board, bash_of("cat README.md", "cwd" => root)) do
           expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
@@ -623,7 +644,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         FileUtils.mkdir_p(home)
         base = File.dirname(root)
         project = Lain::Project.new(root: base, cwd: base, kind: :project, detected_by: :flag)
-        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home))
+        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
+                                    judge: Lain::CLI::Switchboard::DEFERRING)
 
         while_parked(board, bash_of("cat home/notes.txt", "cwd" => base)) do
           expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
@@ -906,7 +928,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "anchors on the project root even where the root confines nothing" do
       in_tree(config: %(sensitivity denied: %w[/vault/]\n)) do |root, home|
         project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :none)
-        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home))
+        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
+                                    judge: Lain::CLI::Switchboard::DEFERRING)
 
         expect(board.policy_switch.call(bash_of("cat #{root}/vault/a.txt", "cwd" => root), nil)).to be(false)
         expect(rulings.first).to include("rung" => "triage", "verdict" => "deny")

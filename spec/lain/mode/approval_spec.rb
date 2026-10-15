@@ -2,8 +2,8 @@
 
 RSpec.describe Lain::Mode::Approval do
   describe "the declared roster" do
-    it "names exactly two levels, ask and then bypass" do
-      expect(described_class::NAMES).to eq(%i[ask bypass])
+    it "names exactly three levels, ask, auto and bypass" do
+      expect(described_class::NAMES).to eq(%i[ask auto bypass])
     end
 
     it "answers a declared name with that level, however it is spelled" do
@@ -25,6 +25,10 @@ RSpec.describe Lain::Mode::Approval do
     # about, so the prompt has to say so.
     it "lights bypass" do
       expect(described_class.for(:bypass).lighter).to eq("BYPASS")
+    end
+
+    it "lights auto, where a model judge decides calls before any human" do
+      expect(described_class.for(:auto).lighter).to eq("AUTO")
     end
   end
 

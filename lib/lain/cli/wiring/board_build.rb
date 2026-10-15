@@ -47,10 +47,11 @@ module Lain
         # @param middleware [Config::Middleware] what the launch read from
         #   config.rb; its tool members run ahead of every guard
         # @param config [Config] `.lain/config.rb`, whose remembered answers the board approves
+        # @param judge [#call] what `auto` approval asks first, on {Switchboard#initialize}'s terms
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
-        def for(chronicle:, options:, model:, toolset:, project:, paths: Paths.new,
+        def for(chronicle:, options:, model:, toolset:, project:, judge:, paths: Paths.new,
                 verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty,
                 config: Config.load(root: project.root))
           # Compiled once: the exemption check stats the disk.
@@ -64,7 +65,7 @@ module Lain
                           approving: method(:approving),
                           sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, test_layout: test_layout(project:), middleware:,
-                          approval_timeout: Config.approval_timeout(root: project.root))
+                          approval_timeout: Config.approval_timeout(root: project.root), judge:)
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree

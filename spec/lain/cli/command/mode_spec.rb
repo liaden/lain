@@ -215,6 +215,7 @@ RSpec.describe Lain::CLI::Command::Mode do
       let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
       let(:board) do
         Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m",
+                                   judge: Lain::CLI::Switchboard::DEFERRING,
                                    toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
                                    test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
                               .bind_session(Lain::Session.new)
@@ -267,6 +268,7 @@ RSpec.describe Lain::CLI::Command::Mode do
       let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
       let(:board) do
         Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m",
+                                   judge: Lain::CLI::Switchboard::DEFERRING,
                                    toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
                                    test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
                               .bind_session(Lain::Session.new)
@@ -377,6 +379,7 @@ RSpec.describe Lain::CLI::Command::Mode do
 
     def board_for(**options)
       Lain::CLI::Switchboard.for(chronicle:, options:, model: "claude-opus-4-8", toolset: tools,
+                                 judge: Lain::CLI::Switchboard::DEFERRING,
                                  spike: Lain::Isolation::Scratch.new(root: @scratch),
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
                             .bind_session(Lain::Session.new)
@@ -414,6 +417,7 @@ RSpec.describe Lain::CLI::Command::Mode do
     let(:tools) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
     let(:board) do
       Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: tools,
+                                 judge: Lain::CLI::Switchboard::DEFERRING,
                                  spike: Lain::Isolation::Scratch.new(root: @scratch),
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
                             .bind_session(Lain::Session.new)
