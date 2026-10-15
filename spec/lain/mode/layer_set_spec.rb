@@ -43,13 +43,13 @@ RSpec.describe Lain::Mode::LayerSet do
   end
 
   it "leaves the other layers alone while doing it" do
-    expect(layer_set(:auto_approve, :goal, :vi).disable(:goal).to_a).to eq(%i[auto_approve vi])
+    expect(layer_set(:goal, :notify, :vi).disable(:goal).to_a).to eq(%i[notify vi])
   end
 
   # Scenario: an unknown layer name fails loudly
   it "refuses to enable an undeclared layer, naming the declared ones" do
     expect { described_class.empty.enable(:nonsense) }
-      .to raise_error(ArgumentError, /nonsense.*auto_approve.*goal.*notify.*vi/)
+      .to raise_error(ArgumentError, /nonsense.*goal.*notify.*vi/)
   end
 
   it "refuses to disable an undeclared layer too" do
@@ -74,7 +74,7 @@ RSpec.describe Lain::Mode::LayerSet do
     end
 
     # Derived from NAMES rather than written out, because a hardcoded
-    # `%i[auto_approve goal vi]` is satisfied by a `.sort` just as well as by
+    # `%i[goal notify vi]` is satisfied by a `.sort` just as well as by
     # the canonicalizing `select` -- see the canary below.
     it "canonicalizes any permutation back to declaration order" do
       expect(layer_set(*Lain::Mode::Layer::NAMES.reverse).to_a).to eq(Lain::Mode::Layer::NAMES)

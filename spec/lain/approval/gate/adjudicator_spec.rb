@@ -774,7 +774,6 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
 
     it "signs its decisions with the role's own name" do
       expect(described_class::SURFACE).to eq("gate_adjudicator")
-      expect(described_class::SURFACE).not_to eq(Lain::Approval::AutoSurface::SURFACE)
     end
   end
 end

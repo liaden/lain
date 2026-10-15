@@ -41,10 +41,8 @@ module QueueSurfaceSpecSupport
   end
 end
 
-# The template {AutoSurface} and {SecretSurface} share, and -- the reason it
-# exists -- the PARTITION between them. Two LLM surfaces over one queue is only
-# safe if their filters are disjoint AND total, and that is a property of the
-# two answers taken together, which neither surface's own spec can state.
+# The template {SecretSurface} is built on: the observing, the seen-set and the
+# guarded polling loop.
 RSpec.describe Lain::Approval::QueueSurface do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
@@ -81,75 +79,6 @@ RSpec.describe Lain::Approval::QueueSurface do
 
       expect(surface.asked.size).to eq(1)
       expect(settled.surface).to eq(QueueSurfaceSpecSupport::Everything::SURFACE)
-    end
-  end
-
-  # The property neither surface could assert about itself.
-  describe "the partition between the two shipped surfaces" do
-    let(:auto) { Lain::Approval::AutoSurface.new(role_spawn: ->(*) { Lain::Tool::Result.ok("DEFER") }, enabled: -> { true }) }
-    let(:secret) do
-      Lain::Approval::SecretSurface.new(oracle: instance_double(Lain::Oracle::Model))
-    end
-
-    it "sends every possible pending to EXACTLY ONE of them -- disjoint, and total" do
-      [carrying, none].each do |outstanding|
-        expect(auto.judges?(outstanding) ^ secret.judges?(outstanding))
-          .to be(true), "both or neither claimed #{outstanding.inspect}"
-      end
-    end
-
-    it "splits them the right way round, so the exclusive-or above is not two surfaces swapped" do
-      expect([auto.judges?(none), secret.judges?(carrying)]).to eq([true, true])
-    end
-
-    # The same property one level up, over real parked Pendings rather than the
-    # values: `mine?` also folds in decided? and the seen-set, and a partition
-    # that held for `judges?` and not for `mine?` would be no partition at all.
-    it "holds for the pendings themselves, not only for what they carry" do
-      queue = Lain::Approval::Queue.new(journal:, timeout: 0.5)
-      Sync do |task|
-        a = task.async { queue.adjudicate(effect, nil, outstanding: carrying) }
-        b = task.async { queue.adjudicate(effect, nil, outstanding: none) }
-        task.with_timeout(1) { [queue.dequeue, queue.dequeue] }
-
-        queue.each { |pending| expect(auto.mine?(pending) ^ secret.mine?(pending)).to be(true) }
-      ensure
-        [a, b].each(&:stop)
-      end
-    end
-  end
-
-  describe "a path-gate pending, once the auto surface yields to the secret surface" do
-    let(:sensitivity) do
-      Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project", rules: Lain::Sensitivity::Rules.empty)
-    end
-    let(:path_gate) { Lain::Approval::PathGate.new(Lain::Sensitivity::Policy.new(sensitivity:)) }
-    let(:auto) { Lain::Approval::AutoSurface.new(role_spawn: ->(*) { Lain::Tool::Result.ok("DEFER") }, enabled: -> { true }) }
-    let(:secret) { Lain::Approval::SecretSurface.new(oracle: instance_double(Lain::Oracle::Model), path_gate:) }
-
-    def parked_read(path)
-      read = QueueSurfaceSpecSupport::Effect.new("read_file", { "path" => path }, "tu_1")
-      Lain::Approval::Queue::Pending.new(effect: read, requester: "agent", clock: -> { 0.0 })
-    end
-
-    it "is claimed by both until the precedence is declared" do
-      pending = parked_read(".env.local")
-
-      expect([auto.mine?(pending), secret.mine?(pending)]).to eq([true, true])
-    end
-
-    it "goes to the secret surface alone once declared" do
-      auto.yield_path_gates_to(secret)
-      pending = parked_read(".env.local")
-
-      expect([auto.mine?(pending), secret.mine?(pending)]).to eq([false, true])
-    end
-
-    it "leaves an ordinary call with the auto surface" do
-      auto.yield_path_gates_to(secret)
-      pending = parked_read("lib/lain.rb")
-
-      expect([auto.mine?(pending), secret.mine?(pending)]).to eq([true, false])
     end
   end
 

@@ -127,11 +127,8 @@ module Lain
   #   is a change to {Publication}'s contract, not to this one.
   #
   #   All four are {#observed}, so a LAYER flip publishes even when neither
-  #   axis moved. `/mode +auto_approve` journals `ask -> ask`, so a guard
-  #   comparing the axes ALONE would leave a silent HUD while the automatic
-  #   approver was on -- the silently-active policy the mode design forbids.
-  #   An outcome-altering layer MUST declare a lighter
-  #   ({Mode::Layer::Declaration} enforces it), so it always moves this string.
+  #   axis moved. `/mode +notify` journals `ask -> ask`, so a guard
+  #   comparing the axes ALONE would leave a silent HUD while the layer was on.
   # * `elapsed` / `idle` / `since_compaction` -- the run's own measures, read off
   #   the injected {RunClock} as PLAIN DURATIONS in whole seconds. Deliberately
   #   NOT deadlines: `cache_deadline` is absolute precisely so a renderer can

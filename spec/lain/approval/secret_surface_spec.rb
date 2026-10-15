@@ -7,8 +7,8 @@ require "tmpdir"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module SecretSurfaceSpecSupport
-  # The minimal effect a {Approval::Queue::Pending} reads (auto_surface_spec's
-  # own fixture shape).
+  # The minimal effect a {Approval::Queue::Pending} reads (the fixture shape every
+  # surface spec shares).
   Effect = Struct.new(:name, :input, :tool_use_id)
 
   # An oracle tier stand-in answering through the REAL
@@ -425,8 +425,8 @@ RSpec.describe Lain::Approval::SecretSurface do
     end
   end
 
-  # The partition with {Approval::AutoSurface}, from this end. Two LLM surfaces
-  # over one queue is only safe because each takes what the other refuses.
+  # No region, no question: the oracle answers only what would release a
+  # sensitive region or a gated path.
   describe "a pending carrying no regions at all" do
     it "is not this surface's question, so the oracle is never asked" do
       tier = oracle(verdict: "approve", confidence: 1.0)

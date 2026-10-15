@@ -1492,14 +1492,14 @@ RSpec.describe Lain::StatusFeed do
     end
 
     # The layer half ships as DATA beside the rendered lighter, so a bench arm
-    # asking "was auto_approve on?" answers with a set membership rather than a
-    # substring match against "AA".
+    # asking "was notify on?" answers with a set membership rather than a
+    # substring match against "BELL".
     it "publishes the active layers as names, not only as a substring of the lighter" do
       feed = described_class.new(path:)
 
-      feed << mode_switch(to_layers: %i[auto_approve goal])
+      feed << mode_switch(to_layers: %i[goal notify])
 
-      expect(published["layers"]).to eq(%w[auto_approve goal])
+      expect(published["layers"]).to eq(%w[goal notify])
     end
 
     it "publishes the approval the record switched TO, not the one it left" do
@@ -1516,11 +1516,11 @@ RSpec.describe Lain::StatusFeed do
     # second copy of a rule LayerSet already owns.
     it "composes the lighter from the axes and every active layer, in the record's precedence order" do
       feed = described_class.new(path:)
-      mode = Lain::Mode.new(approval: :bypass, layers: %i[goal auto_approve])
+      mode = Lain::Mode.new(approval: :bypass, layers: %i[goal notify])
 
       feed << mode_switch(to_approval: mode.approval.name, to_layers: mode.layers.names)
 
-      expect(published["mode_lighter"]).to eq("BYPASS AA GOAL")
+      expect(published["mode_lighter"]).to eq("BYPASS GOAL BELL")
     end
 
     # checkout and ask declare EMPTY lighters -- the starting mode is silent,
@@ -1543,19 +1543,18 @@ RSpec.describe Lain::StatusFeed do
       expect(File).to have_received(:write).once
     end
 
-    # `/mode +auto_approve` moves neither axis, and auto_approve is the one
-    # layer that alters an outcome. A guard comparing the axes ALONE would
-    # suppress the publish and leave the HUD silent while the automatic
-    # approver had been turned on.
+    # `/mode +notify` moves neither axis. A guard comparing the axes ALONE
+    # would suppress the publish and leave the HUD silent while the layer
+    # had been turned on.
     it "republishes a layer flip that never moved an axis" do
       feed = described_class.new(path:)
       feed << mode_switch(to_layers: %i[vi])
       allow(File).to receive(:write).and_call_original
 
-      feed << mode_switch(to_layers: %i[auto_approve vi])
+      feed << mode_switch(to_layers: %i[notify vi])
 
       expect(File).to have_received(:write).once
-      expect(published["mode_lighter"]).to eq("AA VI")
+      expect(published["mode_lighter"]).to eq("BELL VI")
     end
 
     it "skips the write when an unrelated record arrives and the mode did not move" do
@@ -1667,10 +1666,10 @@ RSpec.describe Lain::StatusFeed do
       feed = described_class.new(path:)
       switch = Lain::Mode::Switch.new(Lain::Mode.new, journal: chronicle_teed_to(feed).record_journal)
 
-      switch.switch(Lain::Mode.new(approval: :bypass, layers: %i[auto_approve]), surface: "tty")
+      switch.switch(Lain::Mode.new(approval: :bypass, layers: %i[notify]), surface: "tty")
 
       expect(published.values_at("approval", "layers", "mode_lighter"))
-        .to eq(["bypass", %w[auto_approve], "BYPASS AA"])
+        .to eq(["bypass", %w[notify], "BYPASS BELL"])
     end
 
     # Exactly ChatLaunch#open_chronicle's order: the chronicle opens, the feed

@@ -4,8 +4,8 @@ require "async"
 
 module Lain
   module Approval
-    # The template every meta-agent surface over {Approval::Queue}'s PARKED set
-    # shares: poll the parked list, take the pendings that are this surface's
+    # The template a model-backed surface over {Approval::Queue}'s PARKED set
+    # builds on: poll the parked list, take the pendings that are this surface's
     # question, ask about each exactly once, route the answer. It OBSERVES and
     # never consumes -- draining `dequeue` here would STEAL pendings the human
     # surface then never sees. First-answer-wins is what makes the
@@ -13,17 +13,8 @@ module Lain
     #
     # == Why a template, and what the subclass owes
     #
-    # The two subclasses' filters must PARTITION the queue: DISJOINT, so no
-    # pending gets two LLM opinions, and TOTAL, so none is silently dropped. A
-    # partition maintained by two separately-authored predicates in two files
-    # survives until somebody narrows one of them, with a green suite either way.
-    #
-    # So the shared half lives here and a subclass answers exactly one question,
-    # {#judges?}, over its {Queue::Outstanding} ALONE. The two implementations
-    # are then literally `outstanding.any?` and `outstanding.none?` --
-    # complementary by inspection, over a value object owning both predicates --
-    # and the spec asserts the exclusive-or rather than each half pinning only
-    # itself.
+    # The shared half lives here and a subclass answers exactly one question,
+    # {#judges?}, over its {Queue::Outstanding} ALONE.
     #
     # A subclass supplies {#judges?}, {#settle} and a `SURFACE` name.
     class QueueSurface
@@ -87,9 +78,7 @@ module Lain
         queue.select { |pending| mine?(pending) }.each { |pending| adjudicate(pending) }
       end
 
-      # Public because the PARTITION between two surfaces is a property of
-      # these answers taken TOGETHER, and a property nothing can assert is a
-      # property nothing maintains.
+      # Public so a spec can assert what a surface would take without sweeping.
       #
       # @param pending [Approval::Queue::Pending]
       # @return [Boolean]
@@ -105,8 +94,7 @@ module Lain
       def claims?(pending) = judges?(pending.outstanding)
 
       # The one discriminator a subclass owns, deliberately a function of the
-      # {Queue::Outstanding} ALONE so two subclasses' answers can be compared
-      # directly.
+      # {Queue::Outstanding} ALONE.
       #
       # @param outstanding [Approval::Queue::Outstanding]
       # @return [Boolean]

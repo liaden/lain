@@ -22,30 +22,30 @@ RSpec.describe Lain::StatusFeed::ModeState do
     # only as a substring of a rendered string was an asymmetry with no argument
     # behind it. A bench arm asks a set, not a `String#include?`.
     it "publishes the layer names as data beside the rendered lighter" do
-      state = described_class.of(record(to_layers: %i[auto_approve goal]))
+      state = described_class.of(record(to_layers: %i[goal notify]))
 
-      expect(state.published["layers"]).to eq(%w[auto_approve goal])
+      expect(state.published["layers"]).to eq(%w[goal notify])
     end
 
     it "publishes a name the lighter dropped, so an empty lighter still names what is on" do
-      state = described_class.of(record(to_layers: %i[auto_approve]))
+      state = described_class.of(record(to_layers: %i[notify]))
 
-      expect(state.published.values_at("scope", "approval", "layers")).to eq(["checkout", "ask", %w[auto_approve]])
+      expect(state.published.values_at("scope", "approval", "layers")).to eq(["checkout", "ask", %w[notify]])
     end
 
     it "appends every active layer's lighter after the axes'" do
-      state = described_class.of(record(to_approval: :bypass, to_layers: %i[auto_approve goal]))
+      state = described_class.of(record(to_approval: :bypass, to_layers: %i[goal notify]))
 
-      expect(state.published["mode_lighter"]).to eq("BYPASS AA GOAL")
+      expect(state.published["mode_lighter"]).to eq("BYPASS GOAL BELL")
     end
 
     # The record's own doc promises precedence order, so this reads that order
     # rather than re-deriving it -- a second copy of a rule LayerSet owns.
     it "keeps the record's layer order, which LayerSet already canonicalized" do
-      layers = Lain::Mode.new(layers: %i[goal auto_approve]).layers.names
+      layers = Lain::Mode.new(layers: %i[goal notify]).layers.names
 
       expect(described_class.of(record(to_approval: :bypass, to_layers: layers)).published["mode_lighter"])
-        .to eq("BYPASS AA GOAL")
+        .to eq("BYPASS GOAL BELL")
     end
 
     # checkout and ask declare EMPTY lighters: the starting mode is silent, and
@@ -55,9 +55,9 @@ RSpec.describe Lain::StatusFeed::ModeState do
     end
 
     it "still names the layers under axes whose own lighters are empty" do
-      state = described_class.of(record(to_layers: %i[auto_approve]))
+      state = described_class.of(record(to_layers: %i[notify]))
 
-      expect(state.published["mode_lighter"]).to eq("AA")
+      expect(state.published["mode_lighter"]).to eq("BELL")
     end
 
     # Scope.for/Approval.for/Layer.for raise ArgumentError on an undeclared
@@ -106,7 +106,7 @@ RSpec.describe Lain::StatusFeed::ModeState do
     it "leaves every declared combination untouched -- the cap only trims degradation" do
       state = described_class.of(record(to_approval: :bypass, to_layers: Lain::Mode::Layer::NAMES))
 
-      expect(state.published["mode_lighter"]).to eq("BYPASS AA GOAL BELL VI")
+      expect(state.published["mode_lighter"]).to eq("BYPASS GOAL BELL VI")
     end
   end
 

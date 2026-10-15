@@ -1,12 +1,6 @@
 # frozen_string_literal: true
 
 module SpecNulls
-  # A frozen {Lain::Mode} answers `#layers` exactly as {Lain::Mode::Switch}
-  # does, which is the whole of what the auto_approve layer check asks -- so
-  # the board below stands in with a real value rather than a fake duck, in the
-  # mode every session starts in.
-  UNSWITCHED = Lain::Mode.new
-
   # The board a directly-constructed {Lain::CLI::Wiring::ToolsetBuild} runs
   # under: children ungated, byte-for-byte what every spawn
   # did before children were first gated. For the direct-construction seams
@@ -39,7 +33,6 @@ module SpecNulls
 
     def approvals = nil
     def policy_switch = guard_inputs.policy
-    def mode_switch = UNSWITCHED
     def sensitivity = guard_inputs.sensitivity
 
     def inspect = "SpecNulls::NoSwitchboard"

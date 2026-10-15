@@ -29,7 +29,7 @@ module Lain
       # during it never reached a request ({HumanNotes}).
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
                      supervisor: Lain::Supervisor::Null,
-                     middleware: Lain::Middleware::Stack.new, auto_surface: nil, secret_surface: nil,
+                     middleware: Lain::Middleware::Stack.new, secret_surface: nil,
                      goal_driver: Lain::CLI::GoalDriver::Null, attended: true, input: Lain::Frontend::StdinPump::Idle,
                      echo_input: false, notes: HumanNotes::Null)
         @agent = agent
@@ -44,7 +44,7 @@ module Lain
         @goal_driver = goal_driver
         @attended = attended
         @echo_input = echo_input
-        name_lifetimes(replies:, supervisor:, approvals:, auto_surface:, secret_surface:, tty:, conductor:)
+        name_lifetimes(replies:, supervisor:, approvals:, secret_surface:, tty:, conductor:)
       end
 
       # What this conversation was worth as a process exit status, for the one

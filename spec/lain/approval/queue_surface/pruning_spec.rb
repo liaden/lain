@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
-# Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock), the
-# same shape auto_surface_spec.rb's own support module uses.
+# Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module PruningSpecSupport
   # A minimal decided?-only double: Pending is a plain identity-keyed object
   # (compare_by_identity), so all Pruning needs from it is that one predicate.

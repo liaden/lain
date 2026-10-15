@@ -5,13 +5,12 @@ require "async"
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module ApprovalSurfacesSpecSupport
   # The minimal effect a {Approval::Queue::Pending} reads -- a name, an input,
-  # and the tool_use_id the park record correlates on (auto_surface_spec's own
-  # fixture shape).
+  # and the tool_use_id the park record correlates on.
   Effect = Struct.new(:name, :input, :tool_use_id)
 
   # A surface stand-in with the real surfaces' SHAPE: record the queue handed
   # to it, then park forever, exactly as `loop { decide(queue.dequeue) }` and
-  # AutoSurface's poll loop do. It OBSERVES without consuming (queue.rb's
+  # a surface's poll loop do. It OBSERVES without consuming (queue.rb's
   # two-surface discipline), so the sibling human surface still sees every
   # pending and this spy can never make the fan-out pass by stealing the work.
   # Parking rather than returning is deliberate: a stand-in that fell off the
@@ -22,13 +21,11 @@ module ApprovalSurfacesSpecSupport
     # stopped task unwinds promptly.
     POLL = 0.01
 
-    attr_reader :queues, :senior
+    attr_reader :queues
 
     def initialize
       @queues = []
     end
-
-    def yield_path_gates_to(surface) = @senior = surface
 
     def watch(queue)
       @queues << queue
@@ -38,8 +35,8 @@ module ApprovalSurfacesSpecSupport
 end
 
 # The fan-out a conversation opens ({Lain::CLI::Repl::ConversationScope}): `watch(task)`
-# spawns one fiber per LIVE surface over one queue, splats the opt-in auto
-# surface in without leaving a nil hole, and spawns nothing at all when no
+# spawns one fiber per LIVE surface over one queue, splats the opt-in
+# surfaces in without leaving a nil hole, and spawns nothing at all when no
 # queue was wired (an unattended run).
 #
 # Every example asserts on an effect a fiber HAD -- a pending approved by a
@@ -56,7 +53,6 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # and a SIBLING fiber wakes the parked gated call, and only the real
   # park/decide path can show that.
   let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.3) }
-  let(:auto_surface) { ApprovalSurfacesSpecSupport::SpySurface.new }
   # A REAL terminal over a StringIO, because a cockpit's chat announces a parked
   # call through the frontend's own one-line note, and what it printed is half
   # of what these examples assert.
@@ -84,8 +80,8 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
   end
 
-  def surfaces(approvals: queue, auto: nil, attached: nil, secret: nil)
-    described_class.new(approvals:, auto_surface: auto, secret_surface: secret, tty:, conductor:)
+  def surfaces(approvals: queue, attached: nil, secret: nil)
+    described_class.new(approvals:, secret_surface: secret, tty:, conductor:)
                    .tap { |built| built.bind_editor(attached) }
   end
 
@@ -98,9 +94,9 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # spies, the conductor, and the journal carry the rest of the evidence.
   # `with_timeout` bounds the whole thing so a fan-out that spawned no
   # answerer AND no clock fails in words rather than hanging the suite.
-  def fan_out(auto: nil, attached: nil, secret: nil)
+  def fan_out(attached: nil, secret: nil)
     Sync do |task|
-      watched = surfaces(auto:, attached:, secret:).watch(task)
+      watched = surfaces(attached:, secret:).watch(task)
       gated = task.async { queue.call(effect, nil) }
       { verdict: task.with_timeout(2) { gated.wait }, watched: }
     ensure
@@ -114,7 +110,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # this Sync instead of failing it.
   def watch_without_a_queue
     Sync do |task|
-      watched = surfaces(approvals: nil, auto: auto_surface, attached: editor, secret: secret_surface).watch(task)
+      watched = surfaces(approvals: nil, attached: editor, secret: secret_surface).watch(task)
       watched
     ensure
       watched&.each { |surface| surface&.stop }
@@ -148,22 +144,8 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     expect(decisions.last.fetch("surface")).to eq(Lain::Frontend::ApprovalPolicy::SURFACE)
   end
 
-  it "hands the opt-in auto surface that same queue when one is wired" do
-    fan_out(auto: auto_surface)
-
-    expect(auto_surface.queues).to contain_exactly(be(queue))
-  end
-
-  it "spawns one fiber per live surface: two, with the auto_approve layer on" do
-    expect(fan_out(auto: auto_surface)[:watched].size).to eq(2)
-  end
-
-  # The fourth peer, opt-in behind --secret-oracle: a local model triaging
-  # the parked reads that carry sensitive regions, ahead of the human. It is
-  # DISJOINT from the auto surface rather than a second opinion on the same
-  # pendings -- each takes what the other structurally refuses (auto_surface_spec
-  # and secret_surface_spec pin both halves) -- so both watching one queue is a
-  # partition, not a race.
+  # Opt-in behind --secret-oracle: a local model triaging the parked reads
+  # that carry sensitive regions, ahead of the human.
   describe "--secret-oracle: the local-model triage surface" do
     it "hands it the SAME queue the TTY surface watches when one is wired" do
       fan_out(secret: secret_surface)
@@ -178,18 +160,12 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     # The size AND the class of every member, because that is what the splat's
     # comment claims and a size alone would survive an `Async::Task` gaining
     # `to_a` -- the exact upgrade this pin exists to catch.
-    it "makes four with every opt-in surface up, one of them the chat's note rather than its read" do
-      result = fan_out(auto: auto_surface, attached: editor, secret: secret_surface)
+    it "makes three with every opt-in surface up, one of them the chat's note rather than its read" do
+      result = fan_out(attached: editor, secret: secret_surface)
 
-      expect(result[:watched].size).to eq(4)
+      expect(result[:watched].size).to eq(3)
       expect(result[:watched]).to all(be_an_instance_of(Async::Task))
       expect(conductor).not_to have_received(:read_reply)
-    end
-
-    it "declares it the senior of the auto surface for path gates, in this one place" do
-      surfaces(auto: auto_surface, secret: secret_surface)
-
-      expect(auto_surface.senior).to be(secret_surface)
     end
 
     it "spawns nothing for it by default, which is every chat launched without the flag" do
@@ -339,13 +315,6 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(displayed).to be_empty
     end
 
-    it "makes three with the auto_approve layer on, and still reads nothing at the terminal" do
-      result = fan_out(auto: auto_surface, attached: editor)
-
-      expect(result[:watched].size).to eq(3)
-      expect(conductor).not_to have_received(:read_reply)
-    end
-
     it "spawns nothing for an editor that is not attached, which is every headless chat" do
       watched = fan_out[:watched]
 
@@ -367,16 +336,12 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     expect(displayed).to be_empty
   end
 
-  it "compacts the absent auto surface away rather than leaving a nil hole in the set" do
+  it "compacts the absent opt-in surfaces away rather than leaving a nil hole in the set" do
     watched = fan_out[:watched]
 
     # Repl#respond's ensure walks this set to stop each surface, so a nil
     # member is a hole in the shutdown path, not a cosmetic detail.
     expect(watched).to contain_exactly(an_instance_of(Async::Task))
-  end
-
-  it "still lets the human surface answer with both watching -- the second is additive" do
-    expect(fan_out(auto: auto_surface)[:verdict]).to be(true)
   end
 
   describe "unattended: no queue was wired" do
@@ -387,7 +352,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     it "hands no surface the queue it does not have" do
       watch_without_a_queue
 
-      expect([auto_surface.queues, editor.queues, secret_surface.queues]).to all(be_empty)
+      expect([editor.queues, secret_surface.queues]).to all(be_empty)
     end
 
     it "builds no approval policy either: an unwatched session pays for no surface" do
@@ -397,11 +362,11 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
   end
 
-  # Both opt-in surfaces are REQUIRED keywords: a defaulted one turns "the
+  # The secret surface is a REQUIRED keyword: a defaulted one turns "the
   # caller forgot to wire it" into a surface that is silently inert, which is
   # the flag-that-wires-nothing failure read from the other end.
-  it "refuses to be built without being told about either opt-in surface" do
-    expect { described_class.new(approvals: queue, auto_surface: nil, tty:, conductor:) }
+  it "refuses to be built without being told about the secret surface" do
+    expect { described_class.new(approvals: queue, tty:, conductor:) }
       .to raise_error(ArgumentError, /secret_surface/)
   end
 

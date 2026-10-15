@@ -26,7 +26,7 @@ RSpec.describe Lain::Mode::Resolution do
     end
 
     it "is not moved by a layer" do
-      expect(resolve(layers: %i[auto_approve]).gate_policy).to be(asking)
+      expect(resolve(layers: %i[goal]).gate_policy).to be(asking)
     end
   end
 

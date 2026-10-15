@@ -5,9 +5,9 @@ require "async"
 module Lain
   module Approval
     # A local model standing beside the human at {Approval::Queue}'s parked set,
-    # for the pendings {AutoSurface} refuses -- a gated call carrying
-    # outstanding sensitive regions ({Queue::Outstanding}) -- and, given a
-    # {PathGate}, for a call parked at the path gate, ahead of {AutoSurface}. Opt-in behind
+    # for a gated call carrying outstanding sensitive regions
+    # ({Queue::Outstanding}) and, given a {PathGate}, for a call parked at the
+    # path gate. Opt-in behind
     # `--secret-oracle`, never wired by default. The observing, the seen-set and
     # the polling are {QueueSurface}'s.
     #
@@ -59,7 +59,7 @@ module Lain
       # KNOWN LIMIT: at ~30s a judgement and a sequential sweep, ten pendings
       # parked at once cannot all be asked inside a 300s window. Bounding one
       # call does not fix that; adjudicating CONCURRENTLY would, and is a change
-      # to {QueueSurface} for both surfaces rather than to this constant.
+      # to {QueueSurface} rather than to this constant.
       DEFAULT_ASK_TIMEOUT = 120
 
       # A defer at zero confidence, so {#settle}'s two questions both answer
@@ -106,9 +106,7 @@ module Lain
         super
       end
 
-      # Pendings that WOULD release sensitive regions, and only those -- the
-      # complement of {AutoSurface#judges?} over the same value object, so the
-      # two are a partition by inspection rather than by coincidence.
+      # Pendings that WOULD release sensitive regions, and only those.
       #
       # @param outstanding [Approval::Queue::Outstanding]
       # @return [Boolean]

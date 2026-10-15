@@ -3,7 +3,7 @@
 RSpec.describe Lain::Mode::Layer do
   describe "the declared family" do
     it "names its layers as a closed, public set" do
-      expect(described_class::NAMES).to eq(%i[auto_approve goal notify vi])
+      expect(described_class::NAMES).to eq(%i[goal notify vi])
     end
 
     it "answers a declared name with that layer" do
@@ -16,7 +16,7 @@ RSpec.describe Lain::Mode::Layer do
 
     it "refuses an undeclared name, naming every alternative" do
       expect { described_class.for(:nonsense) }
-        .to raise_error(ArgumentError, /nonsense.*auto_approve.*goal.*notify.*vi/)
+        .to raise_error(ArgumentError, /nonsense.*goal.*notify.*vi/)
     end
 
     it "is a deeply frozen value" do
@@ -24,33 +24,18 @@ RSpec.describe Lain::Mode::Layer do
     end
   end
 
-  # Scenario: a layer that can change an outcome renders a lighter.
-  #
-  # The roster check alone would be satisfied by four hand-written strings and
-  # would say nothing about the fifth layer somebody adds next year, so the
-  # obligation is pinned at CONSTRUCTION as well: a layer cannot be declared
-  # outcome-altering and silent.
-  describe "the lighter obligation" do
-    it "gives every outcome-altering layer a non-empty lighter" do
-      altering = described_class.all.select(&:alters_outcome?)
-
-      expect(altering).not_to be_empty
-      expect(altering.map(&:lighter)).to all(satisfy { |lighter| !lighter.empty? })
+  describe "what a layer declares" do
+    it "carries a name and a lighter and no outcome flag" do
+      expect(described_class.members).to eq(%i[name lighter])
     end
 
-    # The layer the automatic approval surface answers to, so the prompt that
-    # carries its lighter is telling the human something is deciding for them.
-    it "declares auto_approve as outcome-altering, lit as AA" do
-      expect(described_class.for(:auto_approve)).to have_attributes(alters_outcome?: true, lighter: "AA")
+    it "refuses an unknown auto_approve layer" do
+      expect { described_class.for(:auto_approve) }
+        .to raise_error(ArgumentError, /auto_approve.*goal.*notify.*vi/)
     end
 
-    it "refuses to declare an outcome-altering layer with no lighter" do
-      expect { described_class.new(name: :phantom, lighter: "", alters_outcome: true) }
-        .to raise_error(ArgumentError, /lighter/)
-    end
-
-    it "lets a layer that cannot alter an outcome stay silent" do
-      expect(described_class.new(name: :phantom, lighter: "", alters_outcome: false).lighter).to eq("")
+    it "lets a layer stay silent with an empty lighter" do
+      expect(described_class.new(name: :phantom, lighter: "").lighter).to eq("")
     end
   end
 
@@ -59,7 +44,7 @@ RSpec.describe Lain::Mode::Layer do
   # notification some desktop daemon would be expected to show.
   describe "what the notify layer's lighter promises" do
     it "lights notify as BELL" do
-      expect(described_class.for(:notify)).to have_attributes(alters_outcome?: false, lighter: "BELL")
+      expect(described_class.for(:notify)).to have_attributes(lighter: "BELL")
     end
   end
 end

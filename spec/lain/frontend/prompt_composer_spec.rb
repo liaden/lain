@@ -775,9 +775,9 @@ RSpec.describe Lain::Frontend::PromptComposer do
       end
 
       it "reports the axes' lighters alongside every active layer's, in precedence order" do
-        mode = Lain::Mode.new(approval: :bypass, layers: %i[auto_approve])
+        mode = Lain::Mode.new(approval: :bypass, layers: %i[notify])
 
-        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("BYPASS AA")
+        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("BYPASS BELL")
       end
 
       it "reports only the active layers' lighters when both axes are silent" do
@@ -1029,9 +1029,9 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
 
     it "carries the approval's lighter and every active layer's lighter" do
-      rendered = shipped.render(state.merge("mode" => "BYPASS AA"), color: false)
+      rendered = shipped.render(state.merge("mode" => "BYPASS BELL"), color: false)
 
-      expect(rendered).to include("BYPASS", "AA")
+      expect(rendered).to include("BYPASS", "BELL")
     end
   end
 

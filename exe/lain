@@ -1086,17 +1086,13 @@ class LainCLI < Thor
     end
   end
 
-  # The opt-in surfaces that answer a PARKED approval beside the human, both
-  # of them meta-agents racing the person the queue is already asking. Grouped
-  # into a declarer of their own on {ModelFlags}' rule -- the second one pushed
-  # the Thor class past Metrics/ClassLength, and two flags naming one idea are
-  # an object, not a limit to raise.
+  # The opt-in surface that answers a PARKED approval beside the human: a
+  # meta-agent racing the person the queue is already asking. Grouped into a
+  # declarer of its own on {ModelFlags}' rule, because the Thor class has no
+  # Metrics/ClassLength headroom for another `method_option`.
   #
-  # They are DISJOINT, and that is the reason it is safe to run both: the auto
-  # surface judges only pendings that release nothing sensitive, and the secret
-  # oracle only pendings that would ({Approval::AutoSurface} and
-  # {Approval::SecretSurface} each filter structurally). Neither can decide the
-  # other's.
+  # The secret oracle judges only pendings that would release something
+  # sensitive ({Approval::SecretSurface} filters structurally).
   module SurfaceFlags
     # @param thor [Class] the Thor class to declare on
     # @return [void]

@@ -10,8 +10,8 @@ module Lain
       #   /mode                 report the scope, the approval level and the layers
       #   /mode bypass          move one exclusive axis, keeping everything else
       #   /mode plan ask        move both axes at once
-      #   /mode +auto_approve   enable one layer
-      #   /mode -auto_approve   disable one layer
+      #   /mode +notify         enable one layer
+      #   /mode -notify         disable one layer
       #   /mode !               reset: plan scope, ask approval, no layers
       #
       # Tokens FOLD over one Mode and the result is switched ONCE, so
@@ -26,7 +26,7 @@ module Lain
       # The reset is a safety step first: it always lands on ask approval with
       # no layers, because Vim's promise for `<Esc><Esc>` is that afterwards you
       # know exactly where you are and that nothing is being decided behind
-      # you, which `bypass` or a surviving `+auto_approve` would each break. It
+      # you, which `bypass` would break. It
       # then enters plan scope, the most confined one there is. When no spike
       # can be cut it stays in the checkout and says why, rather than leaving
       # the mode it was reached for in force.

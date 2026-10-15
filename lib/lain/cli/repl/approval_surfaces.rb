@@ -3,32 +3,22 @@
 module Lain
   module CLI
     class Repl
-      # Up to four watch the SAME parked-approval queue, and FIRST ANSWER WINS
-      # (Pending's own doctrine): the terminal's surface, the automatic approver
-      # every attended session is built with, the editor's under --nvim, and the
-      # secret oracle under --secret-oracle. The automatic approver's fiber
-      # always runs and decides only while the `auto_approve` mode layer is on,
-      # so turning the layer on or off mid-session needs no watcher respawned.
-      #
-      # The two LLM surfaces are DISJOINT rather than a second opinion on one
-      # pending: {Approval::AutoSurface} takes only pendings carrying no
-      # sensitive regions and {Approval::SecretSurface} only pendings carrying
-      # some, each by a structural filter of its own.
+      # Up to three watch the SAME parked-approval queue, and FIRST ANSWER WINS
+      # (Pending's own doctrine): the terminal's surface, the editor's under
+      # --nvim, and the secret oracle under --secret-oracle.
       #
       # Every one of them can be absent, the queue included: under
       # --non-interactive nobody is there to drain a parked call, so `watch`
       # honestly spawns nothing at all. All of them watch for the whole
       # conversation ({ConversationScope}).
       class ApprovalSurfaces
-        # The two oracle keywords are REQUIRED though they are nil-by-default
-        # capabilities: a defaulted keyword turns "the caller forgot to wire it"
-        # into a surface that is silently inert. Forgetting one is an
+        # The oracle keyword is REQUIRED though it is a nil-by-default
+        # capability: a defaulted keyword turns "the caller forgot to wire it"
+        # into a surface that is silently inert. Forgetting it is an
         # ArgumentError.
-        def initialize(approvals:, auto_surface:, secret_surface:, tty:, conductor:)
+        def initialize(approvals:, secret_surface:, tty:, conductor:)
           @approvals = approvals
-          @auto_surface = auto_surface
           @secret_surface = secret_surface
-          @auto_surface.yield_path_gates_to(@secret_surface) if @auto_surface && @secret_surface
           @tty = tty
           @conductor = conductor
         end
@@ -82,7 +72,6 @@ module Lain
         #   reader is open while one is
         def watch(task, attention: ConversationScope::Attention.new)
           @approvals && [terminal_surface(task, attention),
-                         *(@auto_surface && task.async { @auto_surface.watch(@approvals) }),
                          *(@secret_surface && task.async { @secret_surface.watch(@approvals) }),
                          *(@editor && task.async { @editor.watch(@approvals) })]
         end

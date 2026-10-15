@@ -728,22 +728,6 @@ RSpec.describe Lain::CLI::Wiring do
       expect(io.string).not_to include("capability_degraded")
     end
 
-    # The surface is wired for every chat and answers to the board's
-    # auto_approve layer, which `/mode +auto_approve` turns on. Read through the
-    # surface's own predicate, so a wiring that built the surface over some
-    # other board would read the wrong layer here.
-    it "wires an AutoSurface for every chat, engaged only while the layer is on" do
-      wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
-      recorder, session = wiring.run_state(nil)
-      wiring.wire_agent(channel:, recorder:, session:, backend:)
-      engaged = wiring.auto_surface.instance_variable_get(:@enabled)
-      before = engaged.call
-      wiring.instance_variable_get(:@switchboard).mode_switch.switch(Lain::Mode.new(layers: %i[auto_approve]),
-                                                                     surface: "spec")
-
-      expect([before, engaged.call]).to eq([false, true])
-    end
-
     # No --secret-oracle, no surface. Asserted at the CONSTRUCTION
     # site as well as at the fan-out, because "a flag that wires nothing" and
     # "a capability with no reachable construction" are the same defect read
@@ -751,14 +735,6 @@ RSpec.describe Lain::CLI::Wiring do
     it "wires no secret surface without --secret-oracle" do
       wire_agent
       expect(wiring.secret_surface(backend)).to be_nil
-    end
-
-    it "leaves a gated path to the auto surface's own claim without --secret-oracle" do
-      wire_agent
-      effect = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => ".env.local" }, "tu_1")
-      pending = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 })
-
-      expect(wiring.auto_surface.mine?(pending)).to be(true)
     end
 
     describe "--secret-oracle" do

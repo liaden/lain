@@ -241,7 +241,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
     end
 
     it "drops bypass and its layers on a reset mid-turn, leaving the scope move for later" do
-      mode("bypass +auto_approve")
+      mode("bypass +goal")
 
       told = mode("!", dispatching: true)
 
@@ -301,7 +301,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
     before { git("init", "-q") }
 
     it "lowers approval to ask and drops the layers, staying in the checkout, and says why" do
-      mode("bypass +auto_approve")
+      mode("bypass +goal")
 
       told = mode("!")
 

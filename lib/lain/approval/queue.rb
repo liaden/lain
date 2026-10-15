@@ -138,8 +138,8 @@ module Lain
         # at once.
         #
         # `humans_only` is a call whose automatically approved output was
-        # withheld: only a person may decide it, so {Queue#automatic} leaves it
-        # out of what a machine surface is offered.
+        # withheld: only a person may decide it, so a machine surface is not
+        # offered it.
         #
         # `cwd` is where the parked call's relative path resolves, so a surface
         # judging that path lands it where the gate did; absent, it is the
@@ -324,7 +324,7 @@ module Lain
       # The same lifecycle, answering the SETTLED {Pending} instead of its
       # Boolean. A caller that has to attribute the verdict needs the SURFACE
       # that made it -- {Approval::Escalation} treats a human's approval and an
-      # {AutoSurface}'s as different kinds of authority -- and a Boolean cannot
+      # {SecretSurface}'s as different kinds of authority -- and a Boolean cannot
       # carry that. {#rule} is what a {Middleware::Gate} holding the queue
       # asks, and {#call} the Boolean for a caller that needs only the answer.
       #
@@ -366,13 +366,6 @@ module Lain
       # Oldest first -- what a second surface, or the bench, inspects without
       # draining the arrival queue.
       def each(&block) = @parked.each(&block)
-
-      # The parked calls an AUTOMATIC surface may judge: every one but a call
-      # only a human may decide. A snapshot, collected with no yield, on
-      # {QueueSurface#sweep}'s terms.
-      #
-      # @return [Array<Pending>]
-      def automatic = reject(&:humans_only?)
 
       private
 

@@ -5,7 +5,7 @@ require "async"
 module Lain
   module Approval
     # One bounded question to the `auto_approver` role: may this call run?
-    # {Judged} asks it on the live gate path, so unlike {AutoSurface} it waits
+    # {Judged} asks it on the live gate path, so it waits
     # with the call unparked and must answer within {TIMEOUT} whatever the
     # child does.
     #

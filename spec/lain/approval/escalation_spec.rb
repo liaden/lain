@@ -258,18 +258,6 @@ RSpec.describe Lain::Approval::Escalation do
       expect(decision.fetch("tool_use_id")).to eq("tu_1")
       expect(surfaced.fetch("tool_use_id")).to eq(decision.fetch("tool_use_id"))
     end
-
-    # Scenario: the auto-approve layer only sees what the deterministic rung
-    # abstained on.
-    it "creates nothing for an auto-approve surface to adjudicate when the rung allowed" do
-      spawn = ->(*) { raise "a role was spawned to adjudicate a call the rung had already settled" }
-      surface = Lain::Approval::AutoSurface.new(role_spawn: spawn, enabled: -> { true })
-
-      over(EscalationSpecSupport::Fixed.new("rules", :allow)).call(effect, nil)
-
-      expect { surface.sweep(queue) }.not_to raise_error
-      expect(queue.each.count).to eq(0)
-    end
   end
 
   # Scenario: the ladder remains fail-closed
@@ -552,11 +540,6 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.last["reason"]).to include("rules")
     end
 
-    it "keeps suppressing an auto-approver's allow, which IS a later automatic rung" do
-      expect(settled_by(faulting, surface: Lain::Approval::AutoSurface::SURFACE)).to be(false)
-      expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
-    end
-
     # `AUTOMATIC`'s own comment predicted this exactly -- "an unlisted
     # automatic surface's allow survives a fault, and that one fails visibly in
     # a review of a file whose whole subject is adjudication" -- and one card
@@ -631,7 +614,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     it "does not mistake a spec's own fixture for a surface this harness ships" do
-      expect(machine_surfaces).to include("auto_approver", "secret_oracle")
+      expect(machine_surfaces).to include("secret_oracle")
       expect(machine_surfaces).not_to include(EscalationSpecSupport::UnclassifiedSurface::SURFACE)
     end
 

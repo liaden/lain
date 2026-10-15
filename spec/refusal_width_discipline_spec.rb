@@ -707,7 +707,7 @@ module RefusalWidthDiscipline
     "total" => "99",
     "given" => "unreviewed",      # a mistyped verdict, at this vocabulary's longest word
     "decision" => "approved",
-    "surface" => "auto_approver"  # the longest surface name that decides an approval
+    "surface" => "secret_oracle"  # the longest surface name that decides an approval
   }.freeze
 
   # Values read off the code's OWN vocabulary, so widening a vocabulary

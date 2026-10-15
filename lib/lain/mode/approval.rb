@@ -9,8 +9,8 @@ module Lain
     #
     # All run the deterministic rungs first, so a triage deny or a rule deny
     # decides under any. They differ only in what stands below those rungs:
-    # `ask` parks the call for a surface (a human, or the automatic approver
-    # the `auto_approve` layer turns on), `auto` asks a model judge first and
+    # `ask` parks the call for a surface (a human, or the secret oracle),
+    # `auto` asks a model judge first and
     # parks only what it cannot settle, and `bypass` approves it. There is no
     # "is this an edit" predicate between them: only `bash` asks to be gated,
     # so a level that gated edits and not commands would gate nothing different.

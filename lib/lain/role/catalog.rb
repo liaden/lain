@@ -34,10 +34,9 @@ module Lain
         Role.new(name: :researcher, only: %i[read_file list_files glob grep web_fetch web_search],
                  max_iterations: 60),
         Role.new(name: :court_clerk, only: %i[read_file list_files memory_read memory_write]),
-        # {Approval::AutoSurface}'s judge. Unattended because the sweep that
-        # asked it waits on its answer with the judged call still parked: a
-        # question of its own would hold that call until the queue's clock
-        # denied it.
+        # {Approval::Judge}'s role. Unattended because the gate waits on its
+        # answer with the judged call still unparked: a question of its own
+        # would hold that call until the judge's bound lapsed.
         Role.new(name: :auto_approver, only: %i[read_file list_files glob grep], unattended: true),
         # {Approval::Gate::Adjudicator}'s sibling of `auto_approver`, judging an
         # ARTIFACT rather than one waiting tool call. Two roles because reusing

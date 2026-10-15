@@ -169,8 +169,8 @@ module PlainChatPromptGuards
         def attached? = true
         def watch(_queue) = Async::Task.current.sleep
       end.new
-      surfaces = Lain::CLI::Repl::ApprovalSurfaces.new(approvals: queue, auto_surface: nil, secret_surface: nil,
-                                                       tty:, conductor:)
+      surfaces = Lain::CLI::Repl::ApprovalSurfaces.new(approvals: queue, secret_surface: nil, tty:,
+                                                       conductor:)
       surfaces.bind_editor(editor)
       replies.bind_editor(editor)
       replies.bind_commands(registry)

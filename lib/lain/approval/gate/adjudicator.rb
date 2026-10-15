@@ -42,7 +42,7 @@ module Lain
       # rule, so a tightening cannot land on one path and miss this one.
       class Adjudicator
         # One string, so a journal reader can never confuse a
-        # machine-adjudicated artifact gate with {AutoSurface}'s tool-call
+        # machine-adjudicated artifact gate with a tool-call judge's
         # approvals or with a human's.
         ROLE = :gate_adjudicator
         SURFACE = ROLE.to_s
@@ -61,7 +61,7 @@ module Lain
         TERMINAL_POLICY = "adjudicated"
 
         # The WHOLE stripped answer must be a verdict token, a trailing period
-        # tolerated. Deliberately a SECOND copy of {AutoSurface}'s regex rather
+        # tolerated. Deliberately a SECOND copy of {Judge}'s regex rather
         # than a shared constant: that class gates TOOL CALLS under its own
         # persona, so the two contracts are separately owned and either may
         # tighten without the other moving.

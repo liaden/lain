@@ -533,13 +533,6 @@ RSpec.describe Lain::Approval::Queue do
         expect(bare).not_to be_humans_only
       end
     end
-
-    it "offers an automatic surface every parked call but that one, while every surface still sees it" do
-      parked_pendings(carried(barred: true), nil) do |barred, bare|
-        expect(queue.automatic).to eq([bare])
-        expect(queue.to_a).to eq([barred, bare])
-      end
-    end
   end
 
   # gate.rb's doctrine, applied to the queue's OWN writes: an unattended gate

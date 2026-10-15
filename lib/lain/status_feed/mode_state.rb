@@ -18,8 +18,8 @@ module Lain
     # comparison against the starting mode's names (`checkout ask` must render
     # nothing), and both rules already have exactly one home ({Mode::Scope},
     # {Mode::Approval} and {Mode::Layer} declare a `lighter`). Publishing only the LIGHTER would
-    # make a bench arm asking "was `auto_approve` on for this arm?"
-    # substring-match `"AA"` inside a rendered string. So all three ship.
+    # make a bench arm asking "was `notify` on for this arm?"
+    # substring-match `"BELL"` inside a rendered string. So all three ship.
     ModeState = Data.define(:scope, :approval, :layers, :lighter) do
       # String-keyed, for merging straight into {StatusFeed#observed}.
       def published = { "scope" => scope, "approval" => approval, "layers" => layers, "mode_lighter" => lighter }

@@ -161,7 +161,7 @@ module Lain
       attr_reader :ask_human, :askers, :supervisor, :conductor, :command_surface, :project
 
       # {ToolsetBuild}'s discoveries, not this object's state.
-      delegate :role_spawn, :auto_surface, to: :toolset_build
+      delegate :role_spawn, to: :toolset_build
 
       # The arrival queue the Repl's replier parks on, and the routing table an
       # answer names its set through.
@@ -814,8 +814,8 @@ module Lain
       end
 
       # What a chat can DO and what a child inherits is {ToolsetBuild}'s
-      # question. Held, not just called, because #role_spawn and #auto_surface
-      # delegate to what the build discovered.
+      # question. Held, not just called, because #role_spawn delegates to
+      # what the build discovered.
       attr_reader :toolset_build
 
       # The epic mount resolves to {EpicMount} or its NoEpic, which is why
@@ -1025,7 +1025,7 @@ module Lain
       def repl_over(agent:, tty:, backend:, input:)
         Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:,
                  supervisor:, middleware: @command_surface.middleware, attended: attended?,
-                 commands: @command_surface.commands, auto_surface:,
+                 commands: @command_surface.commands,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
                  echo_input: attended? && !input_socket_name.nil?, notes:)
       end

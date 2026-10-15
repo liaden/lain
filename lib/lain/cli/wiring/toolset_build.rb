@@ -21,18 +21,10 @@ module Lain
       # floor carries none and {Tools::Subagent::ChildBuilder} enrols one per
       # child on the run's {Askers}, over the child's own handle.
       #
-      # {#role_spawn} and {#auto_surface} are readable only once {#build} has
+      # {#role_spawn} and {#docent} are readable only once {#build} has
       # run, because they are things the build DISCOVERS rather than things it
       # is told.
       class ToolsetBuild
-        # Whether the `auto_approve` layer is on, asked of the board on every
-        # sweep of {Approval::AutoSurface}: the board is built after this build,
-        # and a captured layer set would keep deciding after
-        # `/mode -auto_approve`.
-        AutoApproveLayer = Data.define(:board) do
-          def call = board.call.mode_switch.layers.include?(:auto_approve)
-        end
-
         # What a child announces itself as at the approval gate when the spawn
         # bound no more specific name -- the tool's own default `name`, so a
         # park is at least separable from the human's own agent
@@ -60,14 +52,12 @@ module Lain
         # The orchestrator, and one level of children under it.
         EPIC_DEPTH = 2
 
-        # The repl-phase role-spawn seam a role/skill line folds through, the
-        # automatic approval surface over it (built for every run, deciding only
-        # while the `auto_approve` layer is on), and the docent ANSWERER -- all
-        # nil until {#build}. An answerer and not a {Review::Docent} because a
+        # The repl-phase role-spawn seam a role/skill line folds through, and the
+        # docent ANSWERER -- both nil until {#build}. An answerer and not a {Review::Docent} because a
         # docent is keyed to a changeset and a thread pane, and neither exists at
         # toolset-build time. What a RUN holds is the capability to spawn the
         # role.
-        attr_reader :role_spawn, :auto_surface, :docent
+        attr_reader :role_spawn, :docent
 
         # The run's ONE {Lain::Attachment::Store}, readable from construction
         # rather than from {#build}: it is a place, not a discovery.
@@ -221,7 +211,6 @@ module Lain
           @askers = askers
           @usage = usage
           @switchboard = switchboard
-          @auto_approve = AutoApproveLayer.new(board: switchboard)
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:,
                              isolation:, handback:, middleware:, display:)
           @parent_view = parent_view(backend, session)
@@ -247,7 +236,6 @@ module Lain
           base = capability_floor(recorder)
           @role_spawn = role_spawn_seam(base)
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
-          @auto_surface = Lain::Approval::AutoSurface.new(role_spawn: @role_spawn, enabled: @auto_approve)
           @floor = base
           submitter = EpicSubmit.in_chat(**@in_chat, asker: ask_human, role_spawn: @role_spawn)
           Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill, session_usage] +

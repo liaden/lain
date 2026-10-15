@@ -21,9 +21,8 @@ module SubagentGateSupport
   UNATTENDED_SPAWNS = [
     # Spawned when a worker's handback conflicts, with no human attached.
     Lain::Isolation::WorkerHandoff::ROLE,
-    # The opt-in third approval surface: it judges a call ALREADY parked on
-    # the queue.
-    Lain::Approval::AutoSurface::ROLE,
+    # The judge `auto` approval asks before it parks a call.
+    Lain::Approval::Judge::ROLE,
     # The artifact gate's two halves -- the judge, and the researcher it sends
     # to gather evidence first. `EVIDENCE_ROLE` is the one a hand-written list
     # misses, because that file names it second.

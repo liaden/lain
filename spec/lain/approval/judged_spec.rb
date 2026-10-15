@@ -134,7 +134,7 @@ RSpec.describe Lain::Approval::Judged do
 
     ruling = Sync do |task|
       settled = task.async { ladder.rule(bash, context) }
-      task.with_timeout(1) { queue.dequeue }.approve(surface: Lain::Approval::AutoSurface::SURFACE)
+      task.with_timeout(1) { queue.dequeue }.approve(surface: Lain::Approval::SecretSurface::SURFACE)
       settled.wait
     end
 

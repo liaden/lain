@@ -147,8 +147,8 @@ RSpec.describe "cockpit answer surfaces", :seam do
     terminal.rail = Lain::Frontend::Intake.new(screen: tty)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor: terminal, ask_human: askers.directory,
                                           questions: askers.questions)
-    surfaces = Lain::CLI::Repl::ApprovalSurfaces.new(approvals: queue, auto_surface: nil, secret_surface: nil,
-                                                     tty:, conductor: terminal)
+    surfaces = Lain::CLI::Repl::ApprovalSurfaces.new(approvals: queue, secret_surface: nil, tty:,
+                                                     conductor: terminal)
     attach(replies, surfaces) if editor
     registry = commands_over(replies, terminal)
     replies.bind_commands(registry)

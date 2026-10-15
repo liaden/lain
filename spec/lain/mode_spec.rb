@@ -4,11 +4,11 @@ RSpec.describe Lain::Mode do
   # Layer::NAMES is declaration order, and today that happens to coincide with
   # alphabetical order (mode/layer_spec.rb pins that coincidence with its own
   # canary). Deriving the expectation from NAMES rather than writing
-  # `%i[auto_approve goal]` by hand is what makes this spec a proof of
+  # `%i[goal vi]` by hand is what makes this spec a proof of
   # PRECEDENCE and not a proof that RSpec can sort an Array -- if a fifth layer
   # ever lands out of alphabetical position, this still passes and a
   # hand-written literal would not have.
-  let(:enabled_names) { %i[goal auto_approve] }
+  let(:enabled_names) { %i[goal vi] }
   let(:precedence_order) { Lain::Mode::Layer::NAMES.select { |name| enabled_names.include?(name) } }
 
   describe "construction" do
@@ -49,7 +49,7 @@ RSpec.describe Lain::Mode do
 
     it "fails loudly on an unknown layer, naming every alternative" do
       expect { described_class.new(layers: %i[nonsense]) }
-        .to raise_error(ArgumentError, /nonsense.*auto_approve.*goal.*notify.*vi/)
+        .to raise_error(ArgumentError, /nonsense.*goal.*notify.*vi/)
     end
 
     # A name-shaped value that just doesn't NAME a declared one raises the

@@ -5,27 +5,18 @@ module Lain
     # One composable, orthogonal toggle -- Emacs' minor mode. A layer is
     # DECLARATION only; scope and approval own the exclusive slots, and a layer is
     # everything that does not need one.
-    #
-    # `alters_outcome` is a declared field rather than a comment because a
-    # silently-active policy is a bug: the obligation is checked where a layer
-    # is BORN, so declaring one outcome-altering and silent raises, which binds
-    # the fifth layer somebody adds long after this file was reviewed. The
-    # converse is deliberately free -- a layer that cannot move an outcome may
-    # render nothing.
-    Layer = Data.define(:name, :lighter, :alters_outcome) do
+    Layer = Data.define(:name, :lighter) do
       # `Layer::Declaration` is qualified because constants defined inside a
       # `Data.define do ... end` block are lexically scoped to the ENCLOSING
       # module, not to the Data class -- a bare `Declaration` would resolve
       # against `Lain::Mode` and fail.
-      def initialize(name:, lighter:, alters_outcome:)
-        Layer::Declaration.check!(name:, lighter:, alters_outcome:)
+      def initialize(name:, lighter:)
+        Layer::Declaration.check!(name:, lighter:)
         # `-lighter.to_s` and not `lighter.to_s.freeze`: `Symbol#to_s` returns a
         # MUTABLE String, and one mutable member flips `Ractor.shareable?` to
         # false for the whole value.
-        super(name: name.to_sym, lighter: -lighter.to_s, alters_outcome:)
+        super(name: name.to_sym, lighter: -lighter.to_s)
       end
-
-      def alters_outcome? = alters_outcome
 
       def to_s = lighter.empty? ? name.to_s : "#{name} (#{lighter})"
     end
@@ -45,14 +36,8 @@ module Lain
       class Declaration < Declarative::Carrier
         attribute :name
         attribute :lighter, :string
-        attribute :alters_outcome
 
         validates :name, presence: true
-        # Not `presence: true` on a Boolean: `false.present?` is false, so a
-        # perfectly valid silent layer would be rejected. Inclusion is the check
-        # that actually means "is a Boolean".
-        validates :alters_outcome, inclusion: { in: [true, false] }
-        validates :lighter, presence: true, if: -> { alters_outcome }
       end
 
       # @param name [Symbol, String] one of {NAMES}
@@ -70,21 +55,15 @@ module Lain
       def self.all = DECLARED.values
 
       # Declared after the methods that read it, which reach it at call time, so
-      # nothing above needs a forward reference. `:auto_approve` is the only
-      # member that answers `alters_outcome?` today: {Approval::AutoSurface}
-      # watches every attended session's parked calls and decides one a human
-      # would otherwise have been asked about only while this layer is on,
-      # whether `--auto-approve` or `/mode +auto_approve` turned it on. The
-      # other three change what the human sees or how input is read, never what
-      # is permitted: `vi` reads the prompt in vi mode, and `notify` rings the
+      # nothing above needs a forward reference. No layer changes what is
+      # permitted: `vi` reads the prompt in vi mode, and `notify` rings the
       # terminal's bell when something arrives for the human, with a tmux
       # message inside tmux and nothing anywhere else -- which is why its lighter
       # says BELL and not something a desktop notifier would answer to.
       DECLARED = {
-        auto_approve: new(name: :auto_approve, lighter: "AA", alters_outcome: true),
-        goal: new(name: :goal, lighter: "GOAL", alters_outcome: false),
-        notify: new(name: :notify, lighter: "BELL", alters_outcome: false),
-        vi: new(name: :vi, lighter: "VI", alters_outcome: false)
+        goal: new(name: :goal, lighter: "GOAL"),
+        notify: new(name: :notify, lighter: "BELL"),
+        vi: new(name: :vi, lighter: "VI")
       }.freeze
       private_constant :DECLARED
 

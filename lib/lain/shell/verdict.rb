@@ -10,7 +10,7 @@ module Lain
     # blandest kind set the grammar can produce -- and it executes `id`. That is
     # why {CLAIM} travels on every record this object hands to a journal.
     #
-    # The answer is three-valued, which is the whole design. {Approval::AutoSurface}
+    # The answer is three-valued, which is the whole design. {Approval::Judge}
     # states the doctrine one rung up -- *"an ambiguous answer MUST fall toward
     # defer, never toward approve"* -- and this is the same rule made
     # deterministic:

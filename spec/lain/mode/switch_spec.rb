@@ -155,17 +155,16 @@ RSpec.describe Lain::Mode::Switch do
       expect(flips).to be_empty
     end
 
-    # The axes alone cannot see a layer flip: `/mode +auto_approve` moves
+    # The axes alone cannot see a layer flip: `/mode +notify` moves
     # neither, so a record without the layer sets would journal
-    # `checkout/ask -> checkout/ask` for a change that turns an outcome-altering
-    # layer on.
+    # `checkout/ask -> checkout/ask` for a change that turns a layer on.
     it "journals both layer sets, so a layer flip that moves no axis is still legible" do
-      switch.switch(Lain::Mode.new(layers: %i[auto_approve]), surface: "tty")
+      switch.switch(Lain::Mode.new(layers: %i[notify]), surface: "tty")
 
       record = flips.first
       expect(record.values_at("from_approval", "to_approval")).to eq(%w[ask ask])
       expect(record["from_layers"]).to eq([])
-      expect(record["to_layers"]).to eq(%w[auto_approve])
+      expect(record["to_layers"]).to eq(%w[notify])
     end
 
     it "journals layer names in precedence order, the order a LayerSet canonicalizes to" do

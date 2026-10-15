@@ -99,18 +99,23 @@ RSpec.describe Lain::CLI::Command::Mode do
   describe "/mode +layer and /mode -layer" do
     it "enables one layer without touching either axis" do
       switch = switch_for(:ask)
-      command.call("+auto_approve", env_for(switch))
+      command.call("+notify", env_for(switch))
 
       expect(switch.approval.name).to eq(:ask)
-      expect(switch.layers).to include(:auto_approve)
+      expect(switch.layers).to include(:notify)
     end
 
     it "disables one layer without touching either axis -- the other half of the toggle" do
-      switch = switch_for(:bypass, :auto_approve, :goal)
-      command.call("-auto_approve", env_for(switch))
+      switch = switch_for(:bypass, :notify, :goal)
+      command.call("-notify", env_for(switch))
 
       expect(switch.approval.name).to eq(:bypass)
       expect(switch.layers.names).to eq([:goal])
+    end
+
+    it "refuses +auto_approve as an unknown layer, listing goal, notify and vi" do
+      expect { command.call("+auto_approve", env_for(switch_for(:ask))) }
+        .to raise_error(Lain::Error, /auto_approve.*goal.*notify.*vi/)
     end
 
     it "disabling a layer that was never enabled is a no-op, not a refusal" do
@@ -188,14 +193,14 @@ RSpec.describe Lain::CLI::Command::Mode do
     # The most confined mode there is: nothing written reaches the checkout,
     # and nothing is decided without asking.
     it "lands in plan scope and ask approval from any mode" do
-      switch = switch_for(:bypass, :auto_approve, :goal, :notify)
+      switch = switch_for(:bypass, :vi, :goal, :notify)
       command.call("!", env_for(switch))
 
       expect([switch.scope.name, switch.approval.name]).to eq(%i[plan ask])
     end
 
-    it "clears every layer too -- a reset that leaves auto_approve on has not reset anything" do
-      switch = switch_for(:bypass, :auto_approve, :goal, :notify)
+    it "clears every layer too -- a reset that leaves a layer on has not reset anything" do
+      switch = switch_for(:bypass, :vi, :goal, :notify)
       command.call("!", env_for(switch))
 
       expect(switch.layers).to be_empty
@@ -361,10 +366,8 @@ RSpec.describe Lain::CLI::Command::Mode do
   end
 
   # The same command over the switch a real chat hands it -- a board's
-  # BoundSwitch -- read back through the predicate the automatic approval
-  # surface asks on every sweep, so a toggle here is the toggle that surface
-  # sees.
-  describe "the auto_approve layer, over a real board" do
+  # BoundSwitch -- read back through the layers the board reports.
+  describe "a layer, over a real board" do
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
     let(:tools) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
 
@@ -385,22 +388,22 @@ RSpec.describe Lain::CLI::Command::Mode do
                             .bind_session(Lain::Session.new)
     end
 
-    def engaged?(board) = Lain::CLI::Wiring::ToolsetBuild::AutoApproveLayer.new(board: -> { board }).call
+    def engaged?(board) = board.mode_switch.layers.include?(:notify)
 
-    it "engages the automatic approver on +auto_approve and withdraws it on -auto_approve" do
+    it "engages a layer on +notify and withdraws it on -notify" do
       board = board_for
       readings = [engaged?(board)]
-      command.call("+auto_approve", env_for(board.mode_switch))
+      command.call("+notify", env_for(board.mode_switch))
       readings << engaged?(board)
-      command.call("-auto_approve", env_for(board.mode_switch))
+      command.call("-notify", env_for(board.mode_switch))
 
       expect(readings << engaged?(board)).to eq([false, true, false])
     end
 
     it "withdraws a layer a human turned on, and the reset withdraws it too" do
-      %w[-auto_approve !].each do |args|
+      %w[-notify !].each do |args|
         board = board_for
-        command.call("+auto_approve", env_for(board.mode_switch))
+        command.call("+notify", env_for(board.mode_switch))
         launched = engaged?(board)
         command.call(args, env_for(board.mode_switch))
 
@@ -427,7 +430,7 @@ RSpec.describe Lain::CLI::Command::Mode do
     end
     let(:env) { env_for(driver.guarding(board.mode_switch)) }
 
-    # The reset enters plan scope; see the auto_approve layer's examples.
+    # The reset enters plan scope; see the layer examples above.
     around do |example|
       Dir.mktmpdir("lain-mode-reset") do |dir|
         @scratch = dir

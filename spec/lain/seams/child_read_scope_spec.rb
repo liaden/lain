@@ -88,9 +88,9 @@ RSpec.describe "A spawned child's read outside its scope", :seam do
     seen
   end
 
-  def child_calls(name, input, judged: [])
+  def child_calls(name, input)
     script.push(calls("tu_spawn", "subagent", { "prompt" => "look around" }), calls("tu_child", name, input),
-                *judged, text_response("child done"), text_response("parent done"))
+                text_response("child done"), text_response("parent done"))
   end
 
   it "parks a researcher's list_files of the operator's home, naming the researcher, and lists nothing" do
@@ -220,23 +220,6 @@ RSpec.describe "A spawned child's read outside its scope", :seam do
 
     expect(seen.map { |pending, decided| [pending.tool, decided, pending.surface] })
       .to eq([["list_files", false, "spec"]])
-    expect(result_of("tu_child")).to include("zettelkasten")
-  end
-
-  # With the auto_approve layer on, the automatic approver may answer it, as it
-  # may any parked call that carries no region.
-  it "releases a child's outside list_files on the automatic approver's approve" do
-    child_calls("list_files", { "path" => File.join(@home, ".local", "share") }, judged: [text_response("APPROVE")])
-    wiring, agent = wired
-    wiring.instance_variable_get(:@switchboard).mode_switch
-          .switch(Lain::Mode.new(layers: %i[auto_approve]), surface: "spec")
-
-    seen = researching(wiring, agent, answer: nil) do |task|
-      [task.async { wiring.auto_surface.watch(wiring.approvals) }]
-    end
-
-    expect(seen.map { |pending, _| [pending.tool, pending.surface] })
-      .to eq([["list_files", Lain::Approval::AutoSurface::SURFACE]])
     expect(result_of("tu_child")).to include("zettelkasten")
   end
 end

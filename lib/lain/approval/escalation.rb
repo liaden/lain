@@ -8,7 +8,7 @@ module Lain
     # idiom. A ladder is a VALUE -- an ordered list of named rungs -- and every
     # verdict it reaches is journaled attributed to the rung that reached it.
     #
-    #   Shell::Verdict / RuleChain  ->  surfaces (AutoSurface, the human)  ->  timeout
+    #   Shell::Verdict / RuleChain  ->  surfaces (the human, the oracle)  ->  timeout
     #        deterministic                        asking                     fail-closed
     #
     # It presents to {Middleware::Gate} as a ruling policy, `#rule(effect,
@@ -53,7 +53,7 @@ module Lain
     # So a HUMAN surface's allow is honoured and journaled `verdict: allow,
     # faulted: true`, naming the rung that broke -- enough for the bench to
     # exclude those runs without inventing a denial no authority ever made. An
-    # {AutoSurface} allow keeps being suppressed: an LLM adjudicator IS a later
+    # {SecretSurface} allow keeps being suppressed: a model adjudicator IS a later
     # automatic rung wearing a human's clothes. {Ruling#authority} tells them
     # apart.
     #
@@ -101,7 +101,7 @@ module Lain
 
         # NOT a synonym for the rung: the asking rung produces both, depending
         # on which surface won the race for the pending, and this is the whole
-        # reason an {AutoSurface}'s allow is suppressed over a fault where a
+        # reason a {SecretSurface}'s allow is suppressed over a fault where a
         # human's is honoured.
         AUTHORITIES = %i[automatic human].freeze
 
@@ -692,10 +692,9 @@ module Lain
         # files the detector flagged as holding credentials, and unlisted it
         # counted as HUMAN -- so the one surface built to release secrets was
         # the one this ladder trusted most, its allow surviving a fault that
-        # `auto_approver`'s identical judgement does not. Listed here, it is
+        # any other machine's does not. Listed here, it is
         # `:automatic` like every other machine.
-        AUTOMATIC = [AutoSurface::SURFACE, SecretSurface::SURFACE,
-                     Queue::TIMEOUT_SURFACE, Queue::ABANDONED_SURFACE].freeze
+        AUTOMATIC = [SecretSurface::SURFACE, Queue::TIMEOUT_SURFACE, Queue::ABANDONED_SURFACE].freeze
 
         APPROVED = "a surface approved this call"
         REFUSED = "a surface refused this call, or the window closed and the fail-closed doctrine did"

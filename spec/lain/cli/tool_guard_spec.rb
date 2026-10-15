@@ -1091,28 +1091,6 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(board.approvals.each.count).to eq(0)
     end
 
-    # With the auto_approve layer on, the model judge watches the same queue.
-    # A barred retry is a human's alone, so the judge is never asked about it
-    # and the call still waits for a person.
-    it "keeps the parked retry from an automatic surface, so a human still decides it" do
-      board = board_approving("cat notes.txt")
-      judge = Lain::Approval::AutoSurface.new(role_spawn: ->(*) { Lain::Tool::Result.ok("APPROVE") },
-                                              enabled: -> { true })
-      Sync { run_bash(board, "cat notes.txt") }
-
-      pending, told = Sync do |task|
-        ran = task.async { run_bash(board, "cat notes.txt", id: "tu_2") }
-        parked = task.with_timeout(5) { board.approvals.dequeue }
-        judge.sweep(board.approvals)
-        expect(parked).not_to be_decided
-        parked.approve(surface: Lain::Frontend::ApprovalPolicy::SURFACE)
-        [parked, task.with_timeout(30) { ran.wait }]
-      end
-
-      expect(pending.surface).to eq(Lain::Frontend::ApprovalPolicy::SURFACE)
-      expect(told.content).to include(key)
-    end
-
     # The stated limit: the scan sees credential SHAPES as printed. It catches an
     # accidental print, not a command written to reshape output past the
     # detector, which is why the approval predicates, not this layer, keep such a

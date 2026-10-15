@@ -944,13 +944,11 @@ RSpec.describe Lain::CLI::Switchboard do
     expect(pending).to be_approved
   end
 
-  # The auto_approve layer end to end, over the two objects a real chat builds
-  # it from, in the order the chat builds them: the toolset build first, which
-  # makes the surface over a thunk, then the board that holds the mode switch
-  # the surface reads. The provider answers APPROVE to anything, so a decision
-  # signed auto_approver is proof the surface ran, and a provider that was
-  # never asked is proof it did not.
-  describe "the auto_approve layer, over the toolset build a chat assembles" do
+  # A chat's board over the toolset build it is made with, in the order the chat
+  # builds them: the toolset build first, then the board that holds the mode
+  # switch. The provider answers APPROVE to anything, so a provider that was
+  # never asked is proof no judge ran.
+  describe "the board, over the toolset build a chat assembles" do
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
     let(:home) { "/home/tester" }
     let(:sensitivity) do
@@ -985,61 +983,11 @@ RSpec.describe Lain::CLI::Switchboard do
       )
     end
 
-    def typed(board, args)
-      Lain::CLI::Command::Mode.new.call(args, instance_double(Lain::CLI::Command::Env, mode_switch: board.mode_switch))
-    end
-
-    # The automatic surface as the Repl's fan-out spawns it, and the only
-    # watcher: whatever decides a pending here is that surface or the human the
-    # example plays after it.
-    def watching(board, build, task) = [task.async { build.auto_surface.watch(board.approvals) }]
-
     def dispatched(board, task, name, input)
       task.async { dispatch_call(name, input, toolset: board.toolset, layers: tool_stack(board), handler:) }
     end
 
     def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
-
-    # Scenario: turning the layer on lets the automatic approver decide
-    it "lets the automatic approver decide a call parked after /mode +auto_approve" do
-      board, build = chat
-      typed(board, "+auto_approve")
-
-      result = Sync do |task|
-        watchers = watching(board, build, task)
-        call = dispatched(board, task, "bash", { "command" => "rm -rf build" })
-        task.with_timeout(5) { call.wait }
-      ensure
-        [*watchers, call].compact.each(&:stop)
-      end
-
-      expect(board.mode_switch.approval.name).to eq(:ask)
-      expect(result).to eq(Lain::Tool::Result.ok("the interpreter ran"))
-      expect(decisions.map { |record| record["surface"] }).to eq([Lain::Approval::AutoSurface::SURFACE])
-    end
-
-    # Scenario: turning the layer off returns decisions to the human
-    it "leaves a call parked after /mode -auto_approve to the human, and never asks the role" do
-      board, build = chat
-      typed(board, "+auto_approve")
-      typed(board, "-auto_approve")
-
-      surfaces = Sync do |task|
-        watchers = watching(board, build, task)
-        call = dispatched(board, task, "bash", { "command" => "rm -rf build" })
-        pumped_until(task, reason: "the call to park") { board.approvals.any? }
-        settle_for(task, 0.3)
-        undecided = board.approvals.none?(&:decided?)
-        board.approvals.first.deny(surface: "tty")
-        task.with_timeout(1) { call.wait }
-        [undecided, decisions.map { |record| record["surface"] }]
-      ensure
-        [*watchers, call].compact.each(&:stop)
-      end
-
-      expect(surfaces).to eq([true, ["tty"]])
-      expect([provider.call_count, ran]).to eq([0, []])
-    end
 
     # Scenario: the launch flag shows its lighter
     it "seeds the approval from --approval, so the first prompt carries BYPASS" do
@@ -1075,17 +1023,15 @@ RSpec.describe Lain::CLI::Switchboard do
       expect([board.mode_switch.current, mode_records]).to eq([Lain::Mode.new, []])
     end
 
-    # Scenario: a denied path stays unliftable under the layer
+    # Scenario: a denied path stays unliftable
     it "refuses a protected private key at the path boundary before any surface is asked" do
-      board, build = chat
-      typed(board, "+auto_approve")
+      board, = chat
 
       result = Sync do |task|
-        watchers = watching(board, build, task)
         call = dispatched(board, task, "read_file", { "path" => "#{home}/.ssh/id_rsa" })
         task.with_timeout(1) { call.wait }
       ensure
-        [*watchers, call].compact.each(&:stop)
+        call&.stop
       end
 
       expect(result).to have_attributes(is_error: true, content: /no approval can lift this/)

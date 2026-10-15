@@ -9,7 +9,7 @@ module Lain
       # what is parked, and `y`/`n` on a row answers it -- the second surface
       # {Frontend::ApprovalPolicy} coexists with, first answer winning.
       #
-      # IT OBSERVES, IT DOES NOT CONSUME, which is {Approval::AutoSurface}'s
+      # IT OBSERVES, IT DOES NOT CONSUME, which is {Approval::QueueSurface}'s
       # rule and not a detail: the arrival queue hands each pending to exactly
       # ONE `dequeue` caller, and that caller is {Frontend::ApprovalPolicy} --
       # the surface that can ask a person. A second one here would STEAL

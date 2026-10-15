@@ -37,7 +37,7 @@ module Lain
       # Coupled to {Middleware::Gate}: this re-derives, from the same policy,
       # why the gate parked the call rather than reading a reason the gate
       # recorded. A gate that parks on some other ground must be mirrored here,
-      # or {AutoSurface} judges what this surface no longer claims.
+      # or the oracle judges what this surface no longer claims.
       #
       # @param pending [Approval::Queue::Pending]
       # @return [String, nil] the path the call names, followed by ` -> ` and

@@ -6,8 +6,7 @@ require "neovim"
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module ApprovalViewSpecSupport
   # The minimal effect {Approval::Queue::Pending} reads: a name, an input, and
-  # the tool_use_id the park record correlates on (auto_surface_spec's fixture
-  # shape, and approval_surfaces_spec's).
+  # the tool_use_id the park record correlates on.
   Effect = Struct.new(:name, :input, :tool_use_id)
 
   # An editor inlet that RECORDS instead of rendering. It answers the duck
