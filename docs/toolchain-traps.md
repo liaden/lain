@@ -376,6 +376,13 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   for Shift+Enter resets at EOF`. It is the second example of that group on this list, so the
   group's reset is worth a card of its own.
 
+  Added 2026-10-15, red once in a pre-commit suite on a quiet box (seed 50146) with a stray
+  `\e[>4;0m` row between a prompt and its verdict, and green alone and 3 of 3 runs of its file
+  with that seed, both with and without the change being landed: `a plain chat's inline prompts
+  over a real terminal a prompt the approval window decides ends its line with who decided it and
+  how, and a y typed afterwards decides nothing`. The stray bytes are the same Shift+Enter reset
+  as the two entries above, so that card covers this one too.
+
   Added 2026-09-29, red once in a whole-suite run (seed 59509) and green 3 of 3 alone. It counts
   every descriptor in `/proc/self/fd`, so anything else live in the same worker process moves the
   count: `Lain::Agent the graph CoreGraph hands out by default runs to completion holding no file
