@@ -31,8 +31,14 @@ module Lain
         # the three reviewers above hold `bash`, which writes.
         Role.new(name: :reviewer_code, only: %i[read_file list_files glob grep]),
         # Research walks many files and pages, so it gets a ceiling above the default.
-        Role.new(name: :researcher, only: %i[read_file list_files glob grep web_fetch web_search],
+        # Its shell and writer reach only its own kept lease.
+        Role.new(name: :researcher, only: %i[read_file list_files glob grep web_fetch web_search bash write_file],
                  max_iterations: 60),
+        # {Approval::Gate::Adjudicator}'s evidence spike: the researcher's old
+        # read-only set, unattended because the gate waits on its answer and
+        # nobody could answer a parked call.
+        Role.new(name: :evidence_researcher, only: %i[read_file list_files glob grep web_fetch web_search],
+                 max_iterations: 60, unattended: true),
         Role.new(name: :court_clerk, only: %i[read_file list_files memory_read memory_write]),
         # {Approval::Judge}'s role. Unattended because the gate waits on its
         # answer with the judged call still unparked: a question of its own

@@ -1484,7 +1484,8 @@ RSpec.describe Lain::Tools::Subagent do
         role = Lain::Role::Catalog.fetch(:researcher)
         read_union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new,
                                         Lain::Tools::Glob.new, Lain::Tools::Grep.new,
-                                        Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
+                                        Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
+                                        Lain::Tools::Bash.new, Lain::Tools::WriteFile.new])
         provider = mock(text_response("done"))
         tool = described_class.new(
           tool_middleware: ToolRegistry::UNGUARDED,

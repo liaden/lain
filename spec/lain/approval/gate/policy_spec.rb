@@ -421,7 +421,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
     let(:evidence_digest) { Lain::Canonical.digest(evidence_text) }
 
     def spawn_stub(verdict: "APPROVE", researcher: evidence_text)
-      PolicySpecSupport::ScriptedRoleSpawn.new(researcher:, gate_adjudicator: verdict)
+      PolicySpecSupport::ScriptedRoleSpawn.new(evidence_researcher: researcher, gate_adjudicator: verdict)
     end
 
     def adjudicated(spawn = spawn_stub, signoffs: queue, ledger: journal)

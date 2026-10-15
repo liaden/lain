@@ -67,7 +67,7 @@ RSpec.describe Lain::Role do
     it "defaults to attended, and the judges, the resolver, the docent, the critic and QA declare otherwise" do
       expect(Lain::Role::Catalog.fetch(:test_engineer).unattended).to be(false)
       expect(Lain::Role::Catalog.all.select(&:unattended).map(&:name))
-        .to eq(%i[auto_approver gate_adjudicator merge_resolver diff_docent diff_critic qa])
+        .to eq(%i[evidence_researcher auto_approver gate_adjudicator merge_resolver diff_docent diff_critic qa])
     end
 
     # Coerced like every member beside it, and for the shareability reason
@@ -273,8 +273,8 @@ RSpec.describe Lain::Role do
     it "names dev, test_engineer, the three reviewers, researcher, court_clerk, auto_approver, harness_improver" do
       expect(Lain::Role::Catalog.names).to contain_exactly(
         :dev, :test_engineer, :reviewer_sre, :reviewer_security, :reviewer_dba, :reviewer_code, :researcher,
-        :court_clerk, :auto_approver, :gate_adjudicator, :harness_improver, :meta_harness, :meta_summarizer,
-        :merge_resolver, :diff_docent, :diff_critic, :qa, :issue_orchestrator
+        :evidence_researcher, :court_clerk, :auto_approver, :gate_adjudicator, :harness_improver, :meta_harness,
+        :meta_summarizer, :merge_resolver, :diff_docent, :diff_critic, :qa, :issue_orchestrator
       )
     end
 

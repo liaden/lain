@@ -47,8 +47,8 @@ module Lain
         ROLE = :gate_adjudicator
         SURFACE = ROLE.to_s
 
-        # The spike. `researcher` gathers; it never judges.
-        EVIDENCE_ROLE = :researcher
+        # The spike. It gathers read-only; it never judges.
+        EVIDENCE_ROLE = :evidence_researcher
 
         # A fresh root for both spawns: neither child inherits the parent's
         # conversation, so a verdict is reached on the artifact and the evidence

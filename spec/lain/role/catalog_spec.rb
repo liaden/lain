@@ -21,6 +21,15 @@ RSpec.describe Lain::Role::Catalog do
     end
   end
 
+  describe "the evidence researcher" do
+    it "reads, searches and fetches only, and runs unattended" do
+      role = described_class.fetch(:evidence_researcher)
+
+      expect(role.only).to contain_exactly(:read_file, :list_files, :glob, :grep, :web_fetch, :web_search)
+      expect(role.unattended).to be(true)
+    end
+  end
+
   describe "the researcher" do
     it "searches the tree beside reading and fetching" do
       expect(described_class.fetch(:researcher).only).to include(:grep, :glob, :read_file, :list_files)

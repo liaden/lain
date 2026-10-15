@@ -242,7 +242,7 @@ RSpec.describe Lain::Prompt::Slots do
       {
         "court_clerk" => "blake3:4879b45773658d7cac5285a0bffc53ee79e7249d461df494fb8a579d3e00ed50",
         "dev" => "blake3:d07a3b13c813c36c6ce8ecd5034893c8b39ca6b2df6c2004a1125f8039a6b9ed",
-        "researcher" => "blake3:766929bd904b214d5667896599983ed3b5f34b4671288baa1b53f668d5ba61de",
+        "researcher" => "blake3:f054c82854ed44929b1d5af83cb4b84a97620965de3d586190f8d3613d1049f5",
         "reviewer_dba" => "blake3:fc9c90ceceeab6c7d82c2bea4fd828155dedd03eccbd5c23acf591ec2026f56e",
         "reviewer_security" => "blake3:ecb3aa0b4bc3c5edbc7441139277e9d56ea12eede714c2950c76e265a1edecd3",
         "reviewer_sre" => "blake3:a2368d9430c97547536f3ae515c23ca9c6a9a2b66e17d47aa598097f3d6b6539",

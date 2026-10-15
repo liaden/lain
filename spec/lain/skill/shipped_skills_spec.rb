@@ -493,6 +493,16 @@ RSpec.describe "shipped skills" do
       end
     end
 
+    it "tells the parent that researchers run commands and spikes in a lease, and names extends" do
+      with_empty_project do |renderer|
+        text = renderer.render("research-epic")
+
+        expect(text).to match(/researchers? (can|may) run commands/i)
+        expect(text).to match(/spike/i)
+        expect(text).to include("extends")
+      end
+    end
+
     it "tells the user to restart only when this chat created the epic" do
       with_empty_project do |renderer|
         sentence = renderer.render("research-epic").split(/(?<=\.)\s+/).grep(/restart/i)

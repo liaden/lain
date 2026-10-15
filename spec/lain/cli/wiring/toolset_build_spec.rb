@@ -622,6 +622,100 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         end
       end
 
+      # The chat's own research child through the assembly the exe runs: a real
+      # board in ask, the real queue, the real kept lease, and the real tools.
+      describe "the chat's research subagent working in its lease" do
+        let(:store) { Lain::Store.new }
+        let(:parent) { -> { Lain::Timeline.empty(store:) } }
+        let(:kept) { [] }
+        let(:project_root) { File.realpath(Dir.mktmpdir("research-project")) }
+        let(:project) { Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag) }
+        let(:switchboard) do
+          Lain::CLI::Wiring::BoardBuild.for(
+            chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model", project:,
+            paths:, toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) })
+          )
+        end
+        let(:state) { File.realpath(Dir.mktmpdir("research-state")) }
+        let(:paths) do
+          Lain::Paths.new(env: { "HOME" => File.join(File.realpath(Dir.mktmpdir("research-home")), "h"),
+                                 "XDG_STATE_HOME" => state })
+        end
+        let(:outside_dir) { Dir.mktmpdir("research-outside") }
+        let(:outside) { File.join(outside_dir, "elsewhere.rs") }
+        let(:calls) { [] }
+        let(:provider) { Lain::Provider::Mock.new(responses: [tool_response(*calls), text_response("done")]) }
+
+        after { FileUtils.rm_rf([state, project_root, outside_dir]) }
+
+        def run_call(name, input)
+          calls << ["c#{calls.size + 1}", name, input]
+          build = build_with(options, switchboard: -> { switchboard }, root: project_root, paths:)
+          before = leases
+          result = yield(build.build(recorder, ask_human:).fetch("subagent"))
+          kept.concat(leases - before)
+          result
+        end
+
+        def leases = Dir.glob(File.join(Lain::Tools::Subagent::Kept.home(paths, project_root), "scratch", "*"))
+
+        def dispatch(subagent)
+          subagent.call({ "prompt" => "go" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+        end
+
+        # Parks forever when no human answers, so the run is stopped once the
+        # queue has been looked at.
+        def parked_after(subagent)
+          Sync do |task|
+            run = task.async { dispatch(subagent) }
+            begin
+              settle_for(task, 0.5)
+              switchboard.approvals.map { |pending| [pending.requester, pending.input] }
+            ensure
+              run.stop
+            end
+          end
+        end
+
+        it "runs a version probe in its lease with no pending parked" do
+          parked = run_call("bash", { "command" => "rustc --version" }) do |subagent|
+            Sync { dispatch(subagent) }
+            switchboard.approvals.map { |pending| [pending.requester, pending.input] }
+          end
+
+          expect(parked).to be_empty
+          expect(Lain::Canonical.dump(provider.last_request.messages)).to match(/rustc \d/)
+        end
+
+        it "still asks for a read that leaves its lease" do
+          parked = run_call("bash", { "command" => "cat ../outside" }) { |subagent| parked_after(subagent) }
+
+          expect(parked.map(&:first)).to eq(["researcher"])
+        end
+
+        it "parks a curl for the human, with researcher as requester" do
+          parked = run_call("bash", { "command" => "curl -s http://127.0.0.1:11434/api/tags" }) do |subagent|
+            parked_after(subagent)
+          end
+
+          expect(parked.map(&:first)).to eq(["researcher"])
+        end
+
+        it "lands a file written relative to its cwd in the lease" do
+          run_call("write_file", { "path" => "main.rs", "content" => "fn main() {}\n" }) { |s| Sync { dispatch(s) } }
+
+          expect(kept.map { |dir| File.exist?(File.join(dir, "main.rs")) }).to eq([true])
+        end
+
+        it "refuses a write outside its lease" do
+          run_call("write_file", { "path" => outside, "content" => "x" }) { |s| Sync { dispatch(s) } }
+          result = Lain::Canonical.dump(provider.last_request.messages)
+
+          expect(result).to match(/refused.*outside|outside.*refused/m)
+          expect(File.exist?(outside)).to be(false)
+        end
+      end
+
       # The route `/meta` takes: a role spawned :inherit through the run's own
       # role-spawn seam, over the run's own Backend, from a chat whose session
       # holds a handoff cut on the parent's chain.
@@ -1153,8 +1247,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(handoff.reclaimed).to eq([Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s])
     end
 
-    # The researcher is read-only and the dev child holds `bash`: only a child
-    # that can run git is asked to rebase its own work.
+    # Both children hold `bash`, and only a child that can run git is asked to
+    # rebase its own work.
     it "syncs every child through the run's self-sync, which may ask only a child holding a shell" do
       sync = ToolsetBuildSync.new
       build = build_with(options, handback: Lain::CLI::Wiring::Handback.new(handoff:, sync:))
@@ -1163,7 +1257,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       build.role_spawn.call(:researcher, :fresh, "look")
       build.role_spawn.call(:dev, :fresh, "work")
 
-      expect(sync.askable).to eq([[Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s, false],
+      expect(sync.askable).to eq([[Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s, true],
                                   [Lain::Isolation::WorkerId.spawned(role: "dev", ordinal: 2).to_s, true]])
     end
   end

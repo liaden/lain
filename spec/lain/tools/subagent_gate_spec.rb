@@ -237,7 +237,7 @@ RSpec.describe "Subagent gating" do
     # loudly, rather than silently widening what runs unattended.
     it "spawns exactly the four roles this audit covers" do
       expect(SubagentGateSupport::UNATTENDED_SPAWNS)
-        .to eq(%i[merge_resolver auto_approver gate_adjudicator researcher])
+        .to eq(%i[merge_resolver auto_approver gate_adjudicator evidence_researcher])
     end
   end
 

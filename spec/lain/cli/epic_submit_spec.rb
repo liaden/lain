@@ -623,7 +623,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     def scripted(verdict)
       EpicSubmitSpecSupport::ScriptedRoleSpawn.new(
-        researcher: "the research names its sources, its method and two open questions", gate_adjudicator: verdict
+        evidence_researcher: "the research names its sources, its method and two open questions",
+        gate_adjudicator: verdict
       )
     end
 
@@ -1493,7 +1494,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     describe "the role spawn" do
       it "spawns an out-of-chat child over the backend's provider" do
-        result = pair.role_spawn.call(:researcher, :fresh, "gather evidence on the research")
+        result = pair.role_spawn.call(:evidence_researcher, :fresh, "gather evidence on the research")
 
         expect(result).to be_ok
         expect(text_of(result)).to eq("the evidence")

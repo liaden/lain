@@ -16,7 +16,7 @@ RSpec.describe "a spawned role's persona" do
                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
-  let(:union) { Lain::Toolset.new(%i[read_file list_files glob grep bash web_fetch web_search].map { |n| tool(n) }) }
+  let(:union) { Lain::Toolset.new(%i[read_file list_files glob grep bash write_file web_fetch web_search].map { |n| tool(n) }) }
 
   # Anonymous named capabilities: a role attenuates against tool NAMES, and the
   # child never executes a tool here (the mock settles on the first turn), so a
@@ -122,17 +122,16 @@ RSpec.describe "a spawned role's persona" do
     end
   end
 
-  it "keeps the researcher tree-read-only: schema posture renders exactly its only-set (no edit/write)" do
+  it "gives the researcher a shell and a writer for its own lease, and no edit_file" do
     with_project do |slots|
       tools = spawn(slots, :researcher).tools
 
-      # The researcher holds read + egress capabilities (web_fetch/web_search
-      # are tier-1 structural, no tree mutation) but never edit_file/write_file.
-      # `ask_human` rides beside them because every child is granted one of its
+      # The researcher's shell and writer are confined to its own lease by its
+      # stack; it never edits in place. `ask_human` rides beside them because every child is granted one of its
       # own, on top of its role's only-set: a question is not a tree mutation,
       # which is the same judgement `plan`'s READ_ONLY already records.
       expect(tools.map { |t| t["name"] })
-        .to match_array(%w[glob grep list_files read_file web_fetch web_search ask_human])
+        .to match_array(%w[glob grep list_files read_file web_fetch web_search bash write_file ask_human])
     end
   end
 

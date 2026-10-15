@@ -98,7 +98,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
   end
 
   def spawn_stub(researcher: evidence_text, verdict: "APPROVE")
-    AdjudicatorSpecSupport::ScriptedRoleSpawn.new(researcher:, gate_adjudicator: verdict)
+    AdjudicatorSpecSupport::ScriptedRoleSpawn.new(evidence_researcher: researcher, gate_adjudicator: verdict)
   end
 
   def adjudicator(spawn = spawn_stub, clock: Lain::RunClock::MONOTONIC, signoffs: queue)
@@ -170,11 +170,11 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       expect(decisions.first["policy"]).not_to eq(Lain::Approval::SignoffQueue::DEFERRED_POLICY)
     end
 
-    it "spawns the researcher first and the gate_adjudicator second, both on a fresh root" do
+    it "spawns the evidence researcher first and the gate_adjudicator second, both on a fresh root" do
       spawn = spawn_stub
       adjudicate(adjudicator(spawn))
 
-      expect(spawn.roles).to eq(%i[researcher gate_adjudicator])
+      expect(spawn.roles).to eq(%i[evidence_researcher gate_adjudicator])
       expect(spawn.calls.map { |c| c[:context_mode] }).to eq(%i[fresh fresh])
     end
 
@@ -274,7 +274,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       spawn = spawn_stub(researcher: raiser)
       adjudicate(adjudicator(spawn))
 
-      expect(spawn.roles).to eq([:researcher])
+      expect(spawn.roles).to eq([:evidence_researcher])
     end
 
     it "parks with no evidence digest, because none was gathered" do
@@ -288,7 +288,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       spawn = spawn_stub(researcher: ->(_p) { Lain::Tool::Result.error("read_file denied") })
       adjudicate(adjudicator(spawn))
 
-      expect(spawn.roles).to eq([:researcher])
+      expect(spawn.roles).to eq([:evidence_researcher])
       expect(gate.approved?(plan.digest)).to be(false)
       expect(queue.count).to eq(1)
     end
@@ -400,21 +400,21 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       approved, spawn = blank_spike("")
 
       expect(approved).to be(false)
-      expect(spawn.roles).to eq([:researcher])
+      expect(spawn.roles).to eq([:evidence_researcher])
     end
 
     it "refuses whitespace-only findings" do
       approved, spawn = blank_spike("  \n\t  ")
 
       expect(approved).to be(false)
-      expect(spawn.roles).to eq([:researcher])
+      expect(spawn.roles).to eq([:evidence_researcher])
     end
 
     it "refuses content blocks that carry no text at all" do
       approved, spawn = blank_spike([{ "type" => "image", "source" => {} }])
 
       expect(approved).to be(false)
-      expect(spawn.roles).to eq([:researcher])
+      expect(spawn.roles).to eq([:evidence_researcher])
     end
 
     it "parks with an error note and no evidence digest" do
@@ -429,7 +429,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     # same hole behind a narrower door: a spike answering one U+00A0 was
     # content-addressed and a bare APPROVE closed the gate on an empty evidence
     # section. Reproduced end-to-end before the fix at
-    # `approved=true roles=[:researcher, :gate_adjudicator] parked=0`.
+    # `approved=true roles=[:evidence_researcher, :gate_adjudicator] parked=0`.
     {
       "a non-breaking space (U+00A0)" => " ",
       "an ideographic space (U+3000)" => "　",
@@ -443,7 +443,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
         approved, spawn = blank_spike(blank)
 
         expect(approved).to be(false)
-        expect(spawn.roles).to eq([:researcher])
+        expect(spawn.roles).to eq([:evidence_researcher])
         expect(queue.count).to eq(1)
       end
     end
@@ -452,7 +452,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       approved, spawn = blank_spike((+"\xff\xfe").force_encoding(Encoding::BINARY))
 
       expect(approved).to be(false)
-      expect(spawn.roles).to eq([:researcher])
+      expect(spawn.roles).to eq([:evidence_researcher])
     end
 
     it "still accepts findings whose only ASCII is padding around real text" do
@@ -564,7 +564,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     it "allows a re-run after a DEFERRAL -- a parked gate was never settled" do
       answers = %w[MAYBE APPROVE]
       spawn = AdjudicatorSpecSupport::ScriptedRoleSpawn.new(
-        researcher: evidence_text, gate_adjudicator: ->(_p) { Lain::Tool::Result.ok(answers.shift) }
+        evidence_researcher: evidence_text, gate_adjudicator: ->(_p) { Lain::Tool::Result.ok(answers.shift) }
       )
       adj = adjudicator(spawn)
 
