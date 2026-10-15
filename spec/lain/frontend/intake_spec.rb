@@ -742,6 +742,43 @@ RSpec.describe Lain::Frontend::Intake do
     end
   end
 
+  describe "the approval key" do
+    it "reaches the rail's cycle at once, with nothing published" do
+      pressed = []
+      cycling = described_class.new(screen:, on_cycle: -> { pressed << :cycled })
+
+      cycling.cycle
+
+      expect([pressed, cycling.published.kind]).to eq([%i[cycled], nil])
+    end
+
+    it "reaches it under an open prompt and leaves that prompt open for its answer" do
+      pressed = []
+      cycling = described_class.new(screen:, on_cycle: -> { pressed << :cycled })
+
+      answer = Sync do |task|
+        task.async do
+          pumped_until(task) { cycling.published.kind == :approval }
+          cycling.cycle
+          cycling << line("y", cycling.published.generation)
+        end
+        cycling.read(:approval, "[y/N] ")
+      end
+
+      expect([pressed, answer]).to eq([%i[cycled], "y"])
+    end
+
+    it "says a cycle that failed rather than raising it into the producer that carried the key" do
+      cycling = described_class.new(screen:, on_cycle: -> { raise Lain::Error, "journal closed" })
+
+      expect([cycling.cycle, screen.said]).to eq([nil, [[:note, "approval did not change: journal closed"]]])
+    end
+
+    it "does nothing on a rail built with nowhere to send it" do
+      expect(rail.cycle).to be_nil
+    end
+  end
+
   # `/stop` is the one line that is not a line. While an ask is in flight the
   # prompt in front of the human belongs to whatever that ask parked on, so a
   # producer has no other way to reach the run; at `you>` there is no ask, and

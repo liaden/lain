@@ -36,7 +36,8 @@ module Lain
     # needs them: `context` carries what the pane cannot derive (the command
     # names it completes against, since it holds no registry), `touch` is the
     # pane's answer to `untouched?`, and `closed` is the goodbye that tells a
-    # clean shutdown from a kill.
+    # clean shutdown from a kill. `cycle` is the approval key pressed in the
+    # pane ({Frontend::Intake#cycle}).
     class InputSocket
       # What an `--input` option asks for. The name is the tmux session's, so
       # two cockpits on one project do not share a socket.
@@ -353,6 +354,7 @@ module Lain
         when "signal" then @rail << Frontend::Intake::Signal.new(name: frame["name"].to_s.to_sym)
         when "eof" then @rail << Frontend::Intake::Eof.new
         when "touch" then client.touched(frame["generation"].to_i, frame["untouched"] == true)
+        when "cycle" then @rail.cycle
         end
       end
 

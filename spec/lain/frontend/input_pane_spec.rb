@@ -1009,3 +1009,42 @@ RSpec.describe Lain::Frontend::InputPane do
     end
   end
 end
+
+# The pane's idle keyboard over a real PTY: the approval key taken out of a
+# cooked read the moment it is pressed, and nothing else about the terminal moved.
+RSpec.describe Lain::Frontend::InputPane::CycleKey do
+  let(:pty) { PTY.open }
+  let(:keyboard) { pty.first }
+  let(:terminal) { pty.last }
+  let(:presses) { [] }
+  let(:subject_key) { described_class.new(terminal, ->(ended) { presses << ended }) }
+
+  after { pty.each { |io| io.close unless io.closed? } }
+
+  def eol = `stty -F #{terminal.path} -a`[/eol = [^;]*/]
+
+  def typed(bytes)
+    keyboard.write(bytes)
+    sleep 0.1
+    subject_key.read_nonblock(65_536, exception: false)
+  end
+
+  it "says the key ended the read only when nothing was typed after it" do
+    reads = subject_key.ending_reads { [typed("\e[Z"), typed("ab\e[Zcd\e[Zef\n")] }
+
+    expect([reads, presses]).to eq([["", "abcdef\n"], [true, false, false]])
+  end
+
+  it "never arms a terminal already raw, and leaves it raw" do
+    terminal.raw!
+    armed_eol = subject_key.ending_reads { eol }
+
+    expect([armed_eol, terminal.echo?]).to eq(["eol = <undef>", false])
+  end
+
+  it "keeps a mode the terminal was switched to while it was armed" do
+    subject_key.ending_reads { terminal.raw! }
+
+    expect([eol, terminal.echo?]).to eq(["eol = <undef>", false])
+  end
+end

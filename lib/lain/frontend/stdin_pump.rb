@@ -66,6 +66,8 @@ module Lain
       # How often the wait looks again.
       HOLD_POLL = 0.01
 
+      CYCLE_KEY = "S-Tab"
+
       # A cooked terminal's 4096-byte line buffer keeps 4095 content bytes and drops the rest without a word.
       CUT_AT = 4095
       CUT_NOTICE = "a line that long was cut by the terminal, so it was not kept; paste it at the idle prompt"
@@ -86,6 +88,21 @@ module Lain
       end
 
       def self.terminal?(input) = input.respond_to?(:tty?) && input.tty?
+
+      # One line editor per process means one binding, so the first terminal
+      # pump started owns the key; a chat and a pane each start one. A key that
+      # cannot be had costs the human the key, never the prompt. The open
+      # prompt's header is repainted at once, since it names the level.
+      def self.bind_cycle(rail, screen)
+        return if LineEditor.bound?(CYCLE_KEY)
+
+        LineEditor.bind(CYCLE_KEY) do |_draft|
+          rail.cycle
+          screen.restyled
+        end
+      rescue LineEditor::KeyTaken => e
+        screen.render_warning("the approval key is off -- #{e.message}")
+      end
 
       # @param rail [Intake] where lines go and prompts come from
       # @param screen [Frontend::TTY] composes and draws the prompt, and says
@@ -116,13 +133,15 @@ module Lain
 
       # Seats the input and serves prompts until stopped. Seating waits until
       # here because it re-points the process's own descriptor, which building
-      # an object must never do.
+      # an object must never do; binding the approval key waits for the same
+      # reason, since it rebinds the process's one line editor.
       #
       # @param task [Async::Task] the task the pump's reader fiber is spawned
       #   under, so it ends when the conversation does
       # @return [Async::Task] what stops the pump
       def start(task)
         @lines = Lines.new(seated(@input))
+        StdinPump.bind_cycle(@rail, @screen) if StdinPump.terminal?(@input)
         @told = @rail.attach(self)
         task.async { run }
       end
@@ -360,10 +379,24 @@ module Lain
       # was typed back into it.
       def opened(draw, typed_back)
         return draw.carried = put_aside(@typeahead.drain(draw.carried), noted: draw.carried) if draw.prompt.answer?
-        return unless typed_back.empty?
 
+        # The read is said to be open first: the sweep below reads the
+        # terminal, and a pane asking meanwhile whether this prompt is being
+        # typed at would be told it is.
+        editing(draw) if typed_back.empty?
+        drop_typed_cycles
+      end
+
+      def editing(draw)
         @editing = draw
         @rail.opened(draw.prompt)
+      end
+
+      # The approval key pressed while no prompt was drawn sat in the terminal
+      # for this read; replayed now it would flip long after it was meant to.
+      def drop_typed_cycles
+        cycle = LineEditor.keystroke(CYCLE_KEY).pack("C*")
+        @typeahead.type_back(LineEditor.typed_ahead(@input).b.gsub(cycle, ""))
       end
 
       def editor_read(draw, typed_back)

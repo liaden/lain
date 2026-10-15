@@ -36,6 +36,7 @@ module SlowFiles
     spec/lain/provider/http/stall_protection_spec.rb
     spec/lain/review/deletability_spec.rb
     spec/lain/review/source/github_pr_spec.rb
+    spec/lain/seams/approval_cycle_key_spec.rb
     spec/lain/seams/input_pane_socket_spec.rb
     spec/lain/seams/plain_chat_prompt_guards_spec.rb
     spec/lain/seams/qa_sandbox_pane_resolution_spec.rb

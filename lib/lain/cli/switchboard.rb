@@ -60,6 +60,13 @@ module Lain
       # that launched it, which no surface of the running session can be.
       LAUNCH_SURFACE = "launch"
 
+      # Who a flip of the approval key is attributed to.
+      KEY_SURFACE = "key"
+
+      # Where the approval key moves each level. It never lands on `bypass`: a
+      # key pressed by accident must not hand the run approval nobody judges.
+      APPROVAL_CYCLE = { ask: :auto, auto: :ask, bypass: :ask }.freeze
+
       # The wiring entry: resolves the journal the chronicle carries, then
       # builds the switches over it.
       #
@@ -326,6 +333,15 @@ module Lain
         end
       end
 
+      # The approval key's flip, journaled and applied as a `/mode` flip is,
+      # with the scope and the layers left where they are.
+      #
+      # @param surface [String] who pressed it, for the journal
+      # @return [Mode] the mode in force after it
+      def cycle_approval(surface:)
+        @mode_switch.flip(surface:) { |current| current.with(approval: APPROVAL_CYCLE.fetch(current.approval.name)) }
+      end
+
       # Writes the mode the session launched in, once the session header is
       # down. A second call writes nothing.
       #
@@ -544,18 +560,21 @@ module Lain
           @scoping = scoping
           @resolve = resolve
           @apply = apply
+          @lock = Thread::Mutex.new
         end
 
+        def switch(mode, surface:) = @lock.synchronize { switched(mode, surface:) }
+
+        # The mode the block makes of the one in force, read and flipped under
+        # one lock: the approval key flips from the input socket's thread while
+        # `/mode` flips from the chat's fiber, and two unserialized flips both
+        # read the same mode and break the journal's chain of records.
+        #
         # A live view failing after a record landed does not stop the apply:
         # the mode record committed the flip, so the gate follows it before the
         # failure is raised.
-        def switch(mode, surface:)
-          move = @scoping.move(mode.scope)
-          resolution, recorded = recorded(move, mode, surface)
-          failures = [recorded, JournalTee.landed { @apply.call(resolution, surface:) }].compact
-          raise failures.first unless failures.empty?
-
-          @switch.current
+        def flip(surface:)
+          @lock.synchronize { switched(yield(@switch.current), surface:) }
         end
 
         # What the last flip's scope move said: the words giving a spike back
@@ -563,6 +582,15 @@ module Lain
         def said = @said || ""
 
         private
+
+        def switched(mode, surface:)
+          move = @scoping.move(mode.scope)
+          resolution, recorded = recorded(move, mode, surface)
+          failures = [recorded, JournalTee.landed { @apply.call(resolution, surface:) }].compact
+          raise failures.first unless failures.empty?
+
+          @switch.current
+        end
 
         # `ensure`, so a cancelled flip gives its lease back too.
         def recorded(move, mode, surface)

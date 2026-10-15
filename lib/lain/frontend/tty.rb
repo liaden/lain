@@ -184,7 +184,25 @@ module Lain
       # than an escape Pastel would strip.
       #
       # @return [String] the one line the editor draws
-      def compose(text) = @composer.compose("#{warmth_prefix}#{@theme.paint(:prompt, text)}").editor_line(@output)
+      def compose(text)
+        @composed = text
+        rendering = @composer.compose(styled(text))
+        @header = rendering.header
+        rendering.editor_line(@output)
+      end
+
+      # The open prompt's header composed again, for a key that changed what it
+      # says -- the approval key's lighter. Only a header of the same row count
+      # is repainted, since the rows it takes are the ones above the prompt.
+      #
+      # @return [LineEditor::Repaint, nil] nil when nothing above the line changed
+      def restyled
+        fresh = @composer.compose(styled(@composed)).header
+        return nil if @header.nil? || fresh == @header || fresh.size != @header.size
+
+        @header = fresh
+        LineEditor::Repaint.new(rows: fresh.size, paint: -> { repaint(fresh) })
+      end
 
       # A prompt with no line editor under it -- a stream that is not a terminal.
       def print_prompt(text)
@@ -442,6 +460,17 @@ module Lain
       end
 
       def noted(&block) = @notes.note(&block)
+
+      def styled(text) = "#{warmth_prefix}#{@theme.paint(:prompt, text)}"
+
+      # Raw mode returns no carriage on a newline, and the old prompt rows go
+      # with `\e[J` so the editor draws its own beneath.
+      def repaint(rows)
+        @countdown.writing do
+          @output.print("#{rows.map { |row| "\r\e[K#{row}\r\n" }.join}\e[J")
+          @output.flush
+        end
+      end
 
       # The human's own bytes, said back: a control character they typed ahead
       # -- a Ctrl-D, a paste bracket -- is shown rather than sent to the screen.

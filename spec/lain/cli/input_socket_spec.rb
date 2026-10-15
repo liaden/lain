@@ -227,6 +227,27 @@ RSpec.describe Lain::CLI::InputSocket do
       expect(sink.names.pop).to eq(:sigint)
     end
 
+    context "with a rail the approval key cycles" do
+      let(:cycles) { Thread::Queue.new }
+      let(:rail) { Lain::Frontend::Intake.new(on_cycle: -> { cycles << :cycled }) }
+
+      it "routes a cycle frame to the rail's cycle, with nothing published" do
+        send_frame(connect, { "v" => "cycle" })
+
+        expect(cycles.pop(timeout: 5)).to eq(:cycled)
+      end
+
+      it "routes it while a prompt waits, and that prompt still takes its answer" do
+        client = connect
+        answered = publish(:approval, "[y/N] ")
+        generation = next_frame(client, of: "prompt")["generation"]
+        send_frame(client, { "v" => "cycle" })
+        send_frame(client, { "v" => "line", "text" => "y", "generation" => generation })
+
+        expect([cycles.pop(timeout: 5), answered.pop(timeout: 5)]).to eq([:cycled, "y"])
+      end
+    end
+
     it "ends the read when the pane's stream ends" do
       client = connect
       answered = publish(:you, "you> ")

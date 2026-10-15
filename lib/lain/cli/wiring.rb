@@ -285,7 +285,7 @@ module Lain
         startup = [*resumed&.notices, *memory_notices(recorder, resumed), *backend.startup_notices]
         startup.each(&notice)
         tty = open_terminal(agent, notice, startup)
-        rail = Lain::Frontend::Intake.new(screen: tty, history: history_for(tty), notes:)
+        rail = Lain::Frontend::Intake.new(screen: tty, history: history_for(tty), notes:, on_cycle: approval_key)
         @conductor = open_conductor(tty, rail)
         @conductor.guard do
           build_repl(tty:, agent:, backend:, input: input_for(rail, tty))
@@ -431,16 +431,24 @@ module Lain
       class ScreenNotices < SimpleDelegator
         def initialize(tty, lines)
           super(tty)
-          @lines = lines
+          @lines = lines.dup
+          @open = false
         end
 
         def run
           __getobj__.run do |screen|
+            @open = true
             @lines.each { |line| screen.render_warning(line) }
             yield screen
           end
         end
+
+        # A warning given before the screen opens -- the line editor refusing
+        # the approval key as the pump starts -- would be wiped with it.
+        def render_warning(line) = @open ? __getobj__.render_warning(line) : @lines << line
       end
+
+      def approval_key = -> { @switchboard.cycle_approval(surface: Switchboard::KEY_SURFACE) }
 
       # Nobody types into a chat run under --non-interactive, so nothing reads.
       # An attended chat reads its own stdin unless `--input socket:<name>` puts

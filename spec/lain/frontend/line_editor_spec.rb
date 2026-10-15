@@ -63,9 +63,10 @@ RSpec.describe Lain::Frontend::LineEditor do
   # The `|| :ed_insert` fallback is not a convenience -- it is what Reline's own
   # expand does for an unbound single byte, so an unregistered key behaves here
   # exactly as it would under a human's fingers.
-  def press(editor, byte = ctrl_g)
-    char = [byte].pack("c*").force_encoding(Encoding::UTF_8)
-    editor.input_key(Reline::Key.new(char, config.key_bindings.get([byte]) || :ed_insert, false))
+  def press(editor, key = ctrl_g)
+    bytes = Array(key)
+    char = bytes.pack("c*").force_encoding(Encoding::UTF_8)
+    editor.input_key(Reline::Key.new(char, config.key_bindings.get(bytes) || :ed_insert, false))
   end
 
   # The operator's real configuration: an inputrc that selects vi editing mode,
@@ -658,6 +659,79 @@ RSpec.describe Lain::Frontend::LineEditor do
     end
   end
 
+  describe "Shift+Tab, a key bound by its whole escape sequence" do
+    def shift_tab = [27, 91, 90]
+
+    it "fires its handler on ESC [ Z and leaves the draft as typed" do
+      seen = []
+      described_class.bind("S-Tab") do |buffer|
+        seen << buffer
+        nil
+      end
+      editor = editor_typing("draft")
+
+      press(editor, shift_tab)
+
+      expect([seen, editor.whole_buffer, editor.finished?]).to eq([["draft"], "draft", false])
+    end
+
+    it "binds over the gate's own Shift+Tab, a completion move lain never turns on" do
+      described_class.load_inputrc
+
+      expect { described_class.bind("S-Tab") { |_buffer| nil } }.not_to raise_error
+      expect(config.key_bindings.get(shift_tab)).to eq(described_class::ACTION)
+    end
+
+    it "leaves the gate's other escape sequences where they were, the up arrow among them" do
+      described_class.load_inputrc
+      up = config.key_bindings.get([27, 91, 65])
+      reset_reline
+
+      described_class.bind("S-Tab") { |_buffer| nil }
+
+      expect([up, config.key_bindings.get([27, 91, 65])]).to eq(%i[ed_prev_history ed_prev_history])
+    end
+
+    it "is bound by its name, whatever the case, and apart from the control keys" do
+      described_class.bind("S-Tab") { |_buffer| nil }
+
+      expect([described_class.bound?("s-tab"), described_class.bound?("C-g")]).to eq([true, false])
+    end
+
+    it "fires in vi insert and vi command mode too" do
+      fired = []
+      described_class.bind("S-Tab") { |_buffer| fired.push(config.editing_mode_is?(:vi_command)).then { nil } }
+
+      %i[vi_insert vi_command].each do |mode|
+        config.editing_mode = mode
+        press(editor_typing("draft"), shift_tab)
+      end
+
+      expect(fired).to eq([false, true])
+    end
+
+    it "leaves a lone ESC taking vi insert mode to command mode" do
+      described_class.bind("S-Tab") { |_buffer| nil }
+      config.editing_mode = :vi_insert
+
+      press(editor_typing("abc"), [27])
+
+      expect(config.editing_mode_is?(:vi_command)).to be(true)
+    end
+
+    it "refuses Shift+Tab when the user's inputrc has bound it" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "inputrc")
+        File.write(path, %("\\e[Z": abort\n))
+        ENV["INPUTRC"] = path
+        config.reset_variables
+
+        expect { described_class.bind("S-Tab") { |_buffer| nil } }
+          .to raise_error(described_class::KeyTaken, /inputrc/)
+      end
+    end
+  end
+
   describe "registering on a taken key" do
     it "raises rather than silently shadowing a key the line editor already binds" do
       expect { described_class.bind("C-a") { |_buffer| nil } }
@@ -894,7 +968,77 @@ RSpec.describe Lain::Frontend::LineEditor do
   # otherwise break the prompt at runtime and in silence -- the key-action seam
   # would simply stop firing, and the mode indicator would simply not appear.
   # These fail loudly instead.
+  describe "a key action that repaints the rows above the prompt" do
+    let(:moves) { [] }
+    let(:painted) { [] }
+
+    # A two-line draft with the cursor on its second line, as Reline itself
+    # renders it: drawn into a StringIO so no terminal is touched, with the
+    # prompt starting `base_y` rows down the screen.
+    def drawn_draft(base_y)
+      editor = multiline_editor
+      editor.insert_multiline_text("one\ntwo")
+      editor.instance_variable_get(:@rendered_screen).base_y = base_y
+      output = Reline::IOGate.instance_variable_get(:@output)
+      Reline::IOGate.instance_variable_set(:@output, StringIO.new)
+      editor.send(:render)
+      editor
+    ensure
+      Reline::IOGate.instance_variable_set(:@output, output)
+    end
+
+    def repaint_from(editor)
+      allow(Reline::IOGate).to receive(:move_cursor_up) { |rows| moves << rows }
+      allow(Reline::IOGate).to receive(:move_cursor_column)
+      described_class.bind("C-g") { |_buffer| described_class::Repaint.new(rows: 1, paint: -> { painted << :row }) }
+      press(editor)
+    end
+
+    it "climbs past every row of the draft to the header above the prompt, then paints it" do
+      editor = drawn_draft(5)
+
+      repaint_from(editor)
+
+      expect([editor.instance_variable_get(:@rendered_screen).cursor_y, moves, painted, editor.whole_buffer])
+        .to eq([0, [2], [:row], "one\ntwo"])
+    end
+
+    it "lets a fault in the paint itself through rather than hiding it after the cursor moved" do
+      editor = drawn_draft(5)
+      allow(Reline::IOGate).to receive(:move_cursor_up) { |rows| moves << rows }
+      allow(Reline::IOGate).to receive(:move_cursor_column)
+      described_class.bind("C-g") { |_buffer| described_class::Repaint.new(rows: 1, paint: -> { nil.row }) }
+
+      expect { press(editor) }.to raise_error(NoMethodError, /row/)
+      expect(moves).to eq([2])
+    end
+
+    it "paints nothing when the header has already scrolled off the top of the screen" do
+      repaint_from(drawn_draft(0))
+
+      expect([moves, painted]).to eq([[], []])
+    end
+  end
+
   describe "the Reline surface lain is pinned to" do
+    it "still keeps the rendered-screen state a repaint moves" do
+      editor = Reline::LineEditor.new(config)
+
+      expect([Reline::LineEditor::RenderedScreen.members & %i[base_y cursor_y],
+              editor.respond_to?(:clear_rendered_screen_cache, true)]).to eq([%i[base_y cursor_y], true])
+    end
+
+    it "repaints nothing, and keeps the read, when that state is not what lain expects" do
+      painted = []
+      described_class.bind("C-g") { |_buffer| described_class::Repaint.new(rows: 1, paint: -> { painted << :row }) }
+      editor = editor_typing("draft")
+      editor.instance_variable_set(:@rendered_screen, Object.new)
+
+      press(editor)
+
+      expect([painted, editor.whole_buffer]).to eq([[], "draft"])
+    end
+
     it "still leaves C-g free in every keymap lain binds into" do
       expect(Reline::KeyActor::EMACS_MAPPING[ctrl_g]).to be_nil
       expect(Reline::KeyActor::VI_COMMAND_MAPPING[ctrl_g]).to be_nil
@@ -1054,6 +1198,12 @@ RSpec.describe Lain::Frontend::LineEditor do
             buffer
           end
         end
+        if ARGV[1] == "shift_tab"
+          Lain::Frontend::LineEditor.bind("S-Tab") do |_buffer|
+            File.write(ARGV[2], "hit\n", mode: "a")
+            nil
+          end
+        end
         File.write(ARGV[0], Lain::Frontend::LineEditor.new.read("> ").inspect)
       RUBY
     end
@@ -1137,6 +1287,14 @@ RSpec.describe Lain::Frontend::LineEditor do
         _, hits = fire_times("\x18\x18")
 
         expect(hits.size).to eq(2)
+      end
+    end
+
+    it "fires Shift+Tab off the terminal's ESC [ Z and types none of it into the line" do
+      Dir.mktmpdir do |dir|
+        line = drive_child("xterm", "draft\e[Z\r", dir, "shift_tab")
+
+        expect([line, File.readlines(File.join(dir, "hits")).size]).to eq(['"draft"', 1])
       end
     end
 

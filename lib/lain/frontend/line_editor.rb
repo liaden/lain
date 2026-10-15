@@ -84,6 +84,11 @@ module Lain
         "submits on Enter without applying the continuation rule (a Reline limitation). " \
         "The rule works in vi insert mode."
 
+      # What a key action returns to have the rows above the prompt painted
+      # again: `paint` writes `rows` whole rows, and the prompt and the buffer
+      # are drawn afresh beneath them.
+      Repaint = Data.define(:rows, :paint)
+
       # Raised rather than shadowing. A key silently stolen from the line
       # editor -- or from another lain action -- is a defect the human finds
       # only when a key they have muscle memory for stops doing what it did.
@@ -134,22 +139,25 @@ module Lain
         # paste) only in the same lazy branch that reads inputrc, so any early
         # read has to install them too or they are skipped for good.
         #
-        # A gate default that begins with a byte lain binds alone (the emacs
-        # C-x C-x under lain's C-x) would make that byte a prefix, so it would
-        # wait out Reline's key-sequence timeout instead of firing; those are
-        # dropped. `claiming` names bytes about to be bound.
+        # A gate default that begins with a key lain binds (the emacs C-x C-x
+        # under lain's C-x) would make that key a prefix, so it would wait out
+        # Reline's key-sequence timeout instead of firing; those are dropped.
+        # `claiming` names byte sequences about to be bound.
         def load_inputrc(claiming: [])
           config = ::Reline.core.config
           install_gate_defaults(config, claiming) unless config.loaded?
           bind_newlines(config)
         end
 
-        # Register `handler` on `name`, a control key written the way a human
-        # writes it ("C-g"). The handler is called with the whole buffer typed
+        # Register `handler` on `name`, a key written the way a human writes it
+        # ("C-g", "S-Tab"). The handler is called with the whole buffer typed
         # so far and returns either replacement text or nil; see {Registry}.
         def bind(name, &handler) = registry.bind(name, &handler)
 
         def bound?(name) = registry.bound?(name)
+
+        # The bytes a terminal sends for `name`.
+        def keystroke(name) = registry.sequence_for(name)
 
         def unbind_all = registry.clear
 
@@ -158,7 +166,7 @@ module Lain
         def install_gate_defaults(config, claiming)
           config.read
           ::Reline.core.io_gate.set_default_key_bindings(
-            SinglesOnly.new(config, registry.claimed_bytes + claiming)
+            SinglesOnly.new(config, registry.claimed_sequences + claiming)
           )
         end
 
@@ -278,7 +286,7 @@ module Lain
 
     class LineEditor
       # Hands a gate the config to install its defaults into, minus any
-      # multi-byte default whose first byte is one lain owns outright.
+      # default that begins with a whole key lain owns outright.
       class SinglesOnly < SimpleDelegator
         def initialize(config, owned)
           super(config)
@@ -286,7 +294,7 @@ module Lain
         end
 
         def add_default_key_binding_by_keymap(keymap, keystroke, target)
-          return if keystroke.size > 1 && @owned.include?(keystroke.first)
+          return if @owned.any? { |key| keystroke.size > key.size && keystroke.first(key.size) == key }
 
           __getobj__.add_default_key_binding_by_keymap(keymap, keystroke, target)
         end
@@ -373,7 +381,7 @@ module Lain
       # Reline::LineEditor CLASS. A per-instance registry would be a fiction
       # over shared state, and the first two callers to register would fight.
       class Registry
-        # Reline's binding for a byte, per keymap. lain binds into ALL THREE and
+        # Reline's binding for a single byte, per keymap. lain binds into ALL THREE and
         # refuses any key any one of them genuinely claims.
         #
         # vi_insert must be among them even though it binds C-g and C-x to
@@ -413,13 +421,18 @@ module Lain
         # The asymmetry is deliberate: an inputrc saying `"\C-g": self-insert`
         # reports :self_insert, which is NOT in this list and so DOES raise
         # KeyTaken. Someone who names a key in their inputrc has spoken about it.
-        NOT_A_CLAIM = [nil, ACTION, :ed_insert].freeze
+        #
+        # :completion_journey_up is the ANSI gate's own default for Shift+Tab,
+        # and it moves only through Reline's autocompletion menu, which lain
+        # never turns on: the key does nothing for the human until lain binds it.
+        NOT_A_CLAIM = [nil, ACTION, :ed_insert, :completion_journey_up].freeze
 
-        # "C-g" and "c-G" name the same key; nothing else names a key at all.
-        # Deliberately narrow -- a control byte is the whole free space worth
-        # having, and a name lain cannot translate must fail loudly rather than
-        # register a binding that can never fire.
-        KEY_NAME = /\AC-([a-z])\z/i
+        # "C-g" and "c-G" name the same key, as do "S-Tab" and "s-tab";
+        # nothing else names a key at all. Deliberately narrow -- a name lain
+        # cannot translate must fail loudly rather than register a binding that
+        # can never fire.
+        CONTROL_NAME = /\AC-([a-z])\z/i
+        NAMED_SEQUENCES = { "s-tab" => "\e[Z".bytes.freeze }.freeze
 
         def initialize
           @handlers = {}
@@ -429,23 +442,23 @@ module Lain
         def bind(name, &handler)
           raise ArgumentError, "#{name}: a key action needs a handler" unless handler
 
-          byte = byte_for(name)
-          LineEditor.load_inputrc(claiming: [byte])
-          claim = claimed_by(byte)
+          sequence = sequence_for(name)
+          LineEditor.load_inputrc(claiming: [sequence])
+          claim = claimed_by(sequence)
           raise KeyTaken, "#{name} is already bound by #{claim}" if claim
 
           # Keymaps FIRST. A handler stored before the routing exists leaves
           # `bound?` answering true for a key that goes nowhere -- a
           # registration that reports success and can never fire.
-          KEYMAPS.each_key { |keymap| ::Reline.core.config.add_default_key_binding_by_keymap(keymap, [byte], ACTION) }
-          @handlers[byte] = handler
-          verify_routing(name, byte)
+          KEYMAPS.each_key { |keymap| ::Reline.core.config.add_default_key_binding_by_keymap(keymap, sequence, ACTION) }
+          @handlers[sequence] = handler
+          verify_routing(name, sequence)
           name
         end
 
-        def bound?(name) = @handlers.key?(byte_for(name))
+        def bound?(name) = @handlers.key?(sequence_for(name))
 
-        def claimed_bytes = @handlers.keys
+        def claimed_sequences = @handlers.keys
 
         # Drops lain's handlers. It does NOT return the keys to Reline: the
         # keymap entry still routes to ACTION, where dispatch finds no handler
@@ -474,7 +487,7 @@ module Lain
         #
         # @return [String, nil] replacement text, or nil to leave the buffer be
         def dispatch(key, buffer)
-          handler = @handlers[byte_of(key)]
+          handler = @handlers[sequence_of(key)]
           handler && replacement_from(handler.call(buffer))
         rescue StandardError => e
           # A handler is other code running inside the line editor: its failure
@@ -486,30 +499,32 @@ module Lain
           nil
         end
 
+        def sequence_for(name)
+          letter = CONTROL_NAME.match(name.to_s)&.captures&.first
+          return [letter.downcase.ord - "a".ord + 1] if letter
+
+          NAMED_SEQUENCES.fetch(name.to_s.downcase) do
+            raise ArgumentError, %(#{name} is not a key name such as "C-g" or "S-Tab")
+          end
+        end
+
         private
 
         # THE conversion this seam lives or dies by. Reline indexes its keymaps
-        # by Integer byte but hands a bound method `key.char`, which
+        # by byte sequence but hands a bound method `key.char`, which
         # key_stroke.rb:55 builds as
         # `matched_bytes.pack('c*').force_encoding(@encoding)` -- a STRING, "\a"
-        # for C-g. Keying the registry on the raw argument produces a seam that
-        # registers happily, routes correctly, fires, and then silently matches
-        # no handler. Integer is accepted too, for a caller reaching in directly
-        # or a future Reline.
-        def byte_of(key) = key.is_a?(Integer) ? key : key.to_s.each_byte.first
+        # for C-g and "\e[Z" for Shift+Tab. Keying the registry on the raw
+        # argument produces a seam that registers happily, routes correctly,
+        # fires, and then silently matches no handler. Integer is accepted too,
+        # for a caller reaching in directly or a future Reline.
+        def sequence_of(key) = key.is_a?(Integer) ? [key] : key.to_s.bytes
 
         def replacement_from(result)
           return nil unless result
-          return result if result.is_a?(String)
+          return result if result.is_a?(String) || result.is_a?(Repaint)
 
-          raise TypeError, "a key action returns replacement text or nil, got #{result.class}"
-        end
-
-        def byte_for(name)
-          letter = KEY_NAME.match(name.to_s)&.captures&.first
-          raise ArgumentError, %(#{name} is not a control-key name such as "C-g") unless letter
-
-          letter.downcase.ord - "a".ord + 1
+          raise TypeError, "a key action returns replacement text, a Repaint or nil, got #{result.class}"
         end
 
         # Who already owns this key, or nil. Three sources, and the third is
@@ -519,38 +534,42 @@ module Lain
         # to. Verified: with `"\C-g": abort` in an inputrc, key_bindings.get([7])
         # is :abort while EMACS_MAPPING[7] is still nil, so a key that looks free
         # in the MAPPING constants can be taken by the human.
-        def claimed_by(byte)
-          return "lain" if @handlers.key?(byte)
+        def claimed_by(sequence)
+          return "lain" if @handlers.key?(sequence)
 
-          keymap, mapping = KEYMAPS.find { |_, table| !NOT_A_CLAIM.include?(table[byte]) }
-          return "the line editor in the #{keymap} keymap (as #{mapping[byte]})" if keymap
+          keymap, mapping = KEYMAPS.find { |_, table| !NOT_A_CLAIM.include?(mapped(table, sequence)) }
+          return "the line editor in the #{keymap} keymap (as #{mapped(mapping, sequence)})" if keymap
 
-          inputrc = inputrc_binding(byte)
+          inputrc = inputrc_binding(sequence)
           inputrc && "the user's inputrc (as #{inputrc})"
         end
+
+        # The MAPPING constants are indexed by single byte, so a longer
+        # sequence is never in one; the live table below still sees it.
+        def mapped(table, sequence) = sequence.size == 1 ? table[sequence.first] : nil
 
         # THE guard against a bind that succeeds and hands back a key which does
         # nothing. Writing into every keymap is necessary and not sufficient:
         # what decides whether a key works is the keymap in force, so ask.
-        def verify_routing(name, byte)
-          routed = active_binding(byte)
+        def verify_routing(name, sequence)
+          routed = active_binding(sequence)
           return if routed == ACTION
 
-          @handlers.delete(byte)
+          @handlers.delete(sequence)
           raise KeyTaken, "#{name} did not take: the active keymap routes it to #{routed.inspect}"
         end
 
         # The live table for the CURRENT editing mode -- the one that will
         # actually be in force, which is not necessarily the one lain asked
         # for: an inputrc `set editing-mode vi` selects it before lain looks.
-        def active_binding(byte)
+        def active_binding(sequence)
           LineEditor.load_inputrc
-          ::Reline.core.config.key_bindings.get([byte])
+          ::Reline.core.config.key_bindings.get(sequence)
         end
 
         # See NOT_A_CLAIM for the bindings that read as taken and are not.
-        def inputrc_binding(byte)
-          bound = active_binding(byte)
+        def inputrc_binding(sequence)
+          bound = active_binding(sequence)
           bound unless NOT_A_CLAIM.include?(bound)
         end
       end
@@ -558,7 +577,7 @@ module Lain
   end
 end
 
-# The one method lain adds to a stdlib class, and the only place anything here
+# The two methods lain adds to a stdlib class, and the only place anything here
 # reaches into Reline's editor at all. There is no Proc-shaped alternative --
 # Reline dispatches a key to a method name (see {Lain::Frontend::LineEditor::ACTION}).
 #
@@ -571,6 +590,7 @@ Reline::LineEditor.class_eval do
   def lain_key_action(key)
     replacement = Lain::Frontend::LineEditor.registry.dispatch(key, whole_buffer)
     return if replacement.nil?
+    return lain_repaint(replacement) if replacement.is_a?(Lain::Frontend::LineEditor::Repaint)
 
     # Reline has no single verb for "replace the whole buffer": set_current_line
     # reaches only the cursor's own line, and delete_text with no arguments
@@ -580,5 +600,26 @@ Reline::LineEditor.class_eval do
     # ivars, only three of its public methods.
     (whole_buffer.count("\n") + 1).times { delete_text }
     insert_multiline_text(replacement)
+  end
+
+  # Reline's own `ed_clear_screen` move, and the one place this seam touches
+  # its rendered-screen state: the rows above are written afresh from the
+  # prompt's first row up, and the cache is dropped so the render that follows
+  # every key draws the prompt and the buffer whole beneath them. Rows the
+  # screen has already scrolled away are left alone, and so is everything when
+  # a Reline release has moved that state: a header left stale costs less than
+  # the read.
+  def lain_repaint(repaint)
+    base_y, cursor_y = begin
+      [@rendered_screen.base_y, @rendered_screen.cursor_y]
+    rescue NoMethodError
+      nil
+    end
+    return if base_y.nil? || base_y < repaint.rows || !respond_to?(:clear_rendered_screen_cache, true)
+
+    Reline::IOGate.move_cursor_up(cursor_y + repaint.rows)
+    Reline::IOGate.move_cursor_column(0)
+    repaint.paint.call
+    clear_rendered_screen_cache
   end
 end

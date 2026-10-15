@@ -2054,6 +2054,28 @@ RSpec.describe Lain::CLI::Wiring do
       expect(transcripts).to eq([true, false])
     end
 
+    it "hands the chat's Intake the approval key, which flips the board" do
+      built = Hash.new { |hash, key| hash[key] = [] }
+      [Lain::Frontend::Intake, Lain::CLI::Switchboard].each do |klass|
+        allow(klass).to receive(:new).and_wrap_original do |original, *args, **kwargs, &block|
+          original.call(*args, **kwargs, &block).tap { |made| built[klass] << made }
+        end
+      end
+
+      flipped = Dir.mktmpdir do |dir|
+        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                                     tty_factory: tty_factory(dir), conductor_opener:)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        board = built[Lain::CLI::Switchboard].last
+        before = board.mode_switch.approval.name
+        built[Lain::Frontend::Intake].sole.cycle
+        wiring.conductor.close(reason: :exit)
+        [before, board.mode_switch.approval.name]
+      end
+
+      expect(flipped).to eq(%i[ask auto])
+    end
+
     # A line typed mid-run is one note however it arrives, so the Agent that
     # folds it and every reader that can take it must hold the same queue.
     it "hands a built chat's Agent, Intake, StdinPump and Repl one HumanNotes" do
@@ -4395,6 +4417,26 @@ end
 # it has a permissive default -- which is exactly how an unwired guard ships
 # green forever. So what is asserted here is the IDENTITY of what arrives,
 # alongside the default staying indistinguishable from the tool's own.
+RSpec.describe Lain::CLI::Wiring::ScreenNotices do
+  # The alternate screen wipes whatever was said before it opened, so a warning
+  # given then -- a key the line editor would not give up -- is said once it is up.
+  it "says a warning given before the screen opened once it is up, after the startup notices" do
+    said = []
+    screen = Object.new
+    screen.define_singleton_method(:render_warning) { |line| said << line }
+    screen.define_singleton_method(:run) do |&conversation|
+      said << :opened
+      conversation.call(self)
+    end
+    notices = described_class.new(screen, ["startup"])
+
+    notices.render_warning("the approval key is off")
+    notices.run { notices.render_warning("later") }
+
+    expect(said).to eq([:opened, "startup", "the approval key is off", "later"])
+  end
+end
+
 RSpec.describe Lain::CLI::Wiring::BaseTools do
   let(:recorder) { Lain::Memory::Recorder.new }
   let(:channel) { RecordingChannel.new }

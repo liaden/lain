@@ -97,6 +97,8 @@ module Lain
         def self.remember(_line) = nil
       end
 
+      UNCYCLED = -> {}
+
       # An answer, including the answer nobody gave -- a `nil` text -- which is
       # why "not yet" needs a value of its own, and why a line that ended the
       # drawing it came from is told apart from one that did not.
@@ -123,10 +125,12 @@ module Lain
       # @param history [#remember] takes each line that reaches `you>`, whole --
       #   {Discretion} in a chat someone types into
       # @param notes [#take?] offered each line that arrives with nothing published, before it is held
-      def initialize(screen: Unseen, history: Unrecorded, notes: CLI::HumanNotes::Null)
+      # @param on_cycle [#call] what the approval key does, called on the producer's own stack
+      def initialize(screen: Unseen, history: Unrecorded, notes: CLI::HumanNotes::Null, on_cycle: UNCYCLED)
         @screen = screen
         @history = history
         @notes = notes
+        @on_cycle = on_cycle
         @inbound = Thread::Queue.new
         @lock = Thread::Mutex.new
         @turns = []
@@ -143,6 +147,23 @@ module Lain
         sent = lifts?(value) ? Signal.new(name: :stop) : value
         sent.is_a?(Signal) ? @sink.signal(sent.name) : deliver(sent)
         self
+      end
+
+      # The approval key, pressed at a producer. Neither a line nor a {Signal}:
+      # a signal ends in {CLI::Shutdown}'s closed table and is dropped between
+      # asks, and a line answers a prompt or is held for one, while the key
+      # acts at once at `you>`, at a parked call's `[y/N]` and with no prompt.
+      #
+      # A flip that fails is said rather than raised: it runs on the line
+      # editor's key loop or on a socket's reader, and neither may die of it.
+      #
+      # @return [nil]
+      def cycle
+        @on_cycle.call
+        nil
+      rescue StandardError => e
+        @screen.render_note("approval did not change: #{e.message}")
+        nil
       end
 
       # Where a signal from a producer lands -- {CLI::Signals}' sink duck, routed

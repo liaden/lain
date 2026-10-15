@@ -713,6 +713,57 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  describe "#cycle_approval, the approval key" do
+    def cycled(from, presses)
+      board = switchboard(approval: from)
+      Array.new(presses) { board.cycle_approval(surface: "key").approval.name }
+    end
+
+    it "moves ask to auto and auto back to ask" do
+      expect([cycled(:ask, 2), cycled(:auto, 2)]).to eq([%i[auto ask], %i[ask auto]])
+    end
+
+    it "never lands on bypass: from bypass it goes to ask, then to auto" do
+      expect(cycled(:bypass, 3)).to eq(%i[ask auto ask])
+    end
+
+    it "journals the flip as a mode switch from the key's surface, and the gate follows" do
+      board = switchboard(approval: :auto)
+
+      board.cycle_approval(surface: "key")
+
+      expect([mode_records.last.values_at("from_approval", "to_approval", "surface"),
+              policy_records.last.values_at("from", "to", "surface"), board.policy_switch.current])
+        .to eq([%w[auto ask key], %w[auto ask key], board.ladder])
+    end
+
+    # The key flips from the input socket's thread while `/mode` flips from the
+    # chat's fiber. A journal that takes its time is where two unserialized
+    # flips would both read the same mode and break the chain of records.
+    it "keeps the chain of flips unbroken when the key and /mode flip from two threads at once" do
+      slow = Class.new(SimpleDelegator) { def record(entry) = sleep(0.0002).then { __getobj__.record(entry) } }
+      board = described_class.new(journal: slow.new(journal), model: "claude-opus-4-8", toolset: base)
+      slash = lambda { |i|
+        board.mode_switch.switch(board.mode_switch.current.with(approval: i.even? ? :bypass : :ask), surface: "tty")
+      }
+
+      [Thread.new { 60.times { board.cycle_approval(surface: "key") } },
+       Thread.new { 60.times { |i| slash.call(i) } }].each(&:join)
+
+      links = mode_records.each_cons(2).map { |a, b| a["to_approval"] == b["from_approval"] }
+      expect([links.uniq, mode_records.last["to_approval"], policy_records.last["to"]])
+        .to eq([[true], board.mode_switch.approval.name.to_s, board.mode_switch.approval.name.to_s])
+    end
+
+    it "keeps the layers and the scope in force" do
+      board = switchboard(approval: :auto, layers: %i[notify])
+
+      after = board.cycle_approval(surface: "key")
+
+      expect([after.scope.name, after.layers.names]).to eq([:checkout, %i[notify]])
+    end
+  end
+
   # The layers every tool call of a session passes before it is interpreted,
   # built over this board and driven through the real runner. The interpreter
   # is a Mock that records, so "it did not run" is an observation rather than

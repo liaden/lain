@@ -24,9 +24,11 @@ module Lain
     # mode as a flip from itself, once its session file has a header to
     # follow, and readers take that record as a single point, not a move.
     #
-    # Like {Approval::PolicySwitch}, there is deliberately no lock: a flip is
-    # straight-line Ruby with no yield point, and a fiber only interleaves at an
-    # IO yield, so the command's write and a render's read cannot tear.
+    # There is no lock here: a render's read takes one reference and cannot
+    # tear. The flip's read-and-write is not atomic -- the journal write
+    # between them can yield or switch threads -- so a session's writers go
+    # through {CLI::Switchboard::BoundSwitch#flip}, which serializes them,
+    # since the approval key flips from the input socket's thread.
     class Switch
       attr_reader :current
 
