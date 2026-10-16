@@ -25,6 +25,14 @@ module Lain
           path
         end
 
+        # @param path [String]
+        # @return [Array<String>] the names in a directory
+        def children(path) = Dir.children(path).sort
+
+        # @param path [String]
+        # @return [Boolean]
+        def directory?(path) = File.directory?(path)
+
         # execvp skips a directory or a file without the x bit and keeps searching.
         #
         # @param path [String]

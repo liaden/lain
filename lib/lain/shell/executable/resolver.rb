@@ -61,6 +61,7 @@ module Lain
             @stat = stat
             @env = env
             @cwd = cwd
+            @run_files = RunFiles.new(cwd:, stat:)
           end
 
           # @param term [Term]
@@ -69,16 +70,36 @@ module Lain
 
           private
 
-          def unwrap(argv, env, wrappers)
+          def unwrap(argv, env, wrappers, files = [])
+            found = @run_files.of(argv)
+            return unresolved(argv.first.to_s, env, wrappers) unless found
+
+            files += found
             peel = Peel.of(argv, env)
-            return resolve(argv.first.to_s, env, wrappers) unless peel
+            return with_run_files(resolve(argv.first.to_s, env, wrappers), files) unless peel
 
             inner = [*wrappers, resolve(argv.first, env, [])]
             case peel.outcome
-            when :run then unwrap(peel.command, peel.env, inner)
-            when :hidden_env then unresolved(peel.command.first, env, inner)
-            else unresolved(argv.first, env, inner)
+            when :run then unwrap(peel.command, peel.env, inner, files)
+            when :hidden_env then hidden(peel, env, inner, files)
+            else with_run_files(unresolved(argv.first, env, inner), files)
             end
+          end
+
+          # What the wrapper's own env hides is the program, but its words still name files.
+          def hidden(peel, env, wrappers, files)
+            with_run_files(unresolved(peel.command.first, env, wrappers), [*files, *@run_files.of(peel.command)])
+          end
+
+          def with_run_files(executable, paths)
+            Executable.new(**executable.to_h, run_files: paths.uniq.map { |path| run_file(path) })
+          end
+
+          def run_file(path)
+            paths = paths_of(links([path]), @stat.realpath(path))
+            RunFiles::Entry.new(path:, klass: klass(paths), fresh: fresh?(paths))
+          rescue SystemCallError
+            RunFiles::Entry.new(path:, klass: :unresolved, fresh: false)
           end
 
           def unresolved(name, env, wrappers, anomalies: anomalies_of(env))
@@ -122,11 +143,15 @@ module Lain
           def identify(name, resolved, shadowed, anomalies, wrappers)
             chain = links([resolved])
             realpath = @stat.realpath(resolved)
-            paths = [*chain, *chain.map { |link| canonical(link) }, realpath].uniq
+            paths = paths_of(chain, realpath)
             Executable.new(name:, resolved:, realpath:, chain:, shadowed:, anomalies:,
-                           klass: klass(paths), fresh: paths.any? { |path| @fresh.fresh?(path) }, run_files: [],
+                           klass: klass(paths), fresh: fresh?(paths), run_files: [],
                            wrappers:)
           end
+
+          def paths_of(chain, realpath) = [*chain, *chain.map { |link| canonical(link) }, realpath].uniq
+
+          def fresh?(paths) = paths.any? { |path| @fresh.fresh?(path) }
 
           def shadowed(hits, index)
             own = @stat.realpath(hits[index])
