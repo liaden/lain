@@ -1,6 +1,6 @@
 # QA round 24 fixes: a command's paths, a child's place, and a window that refuses
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -252,6 +252,13 @@ card adds (`Policy`, `Policy::Confined` and `Policy::Null` all answer it; the va
 joined to the next stage by `&&`. Every other `cd`, `pushd` or `popd` (bare, `-`, after `;`, `||`, `|` or `&`,
 or inside a subshell) makes the rest of the command opaque, because naming a path under the wrong directory is a
 bypass, not a false positive. A `-C <dir>` option (`git`, `make`, `tar`) makes its stage opaque for the same reason.
+
+**The quoting rule** (amended at execution: `Shell::Verdict` has no unquoter to reuse, it abstains on every quoted
+word). `Named` carries its own small unquoter and reads a word only when its quoting is wholly literal: a
+single-quoted span is taken as written, and a double-quoted span is taken as written only when it holds none of
+`$`, a backtick, `\` or `!`. A backslash outside quotes, or any span it cannot read for certain, makes the command
+opaque. Opaque is the safe direction (it parks), so the unquoter never guesses. `Policy#home` may be `nil` (the
+anchor is optional, and `Policy::Null` answers `nil`); a `~` word with no home makes the command opaque.
 
 **Acceptance criteria**
 
@@ -657,7 +664,8 @@ Spec file: `spec/lain/sensitivity/regions_spec.rb`
 **Files:** `lib/lain/prompt/environment.rb`, `lib/lain/prompt/slots.rb`, `lib/lain/role.rb`,
 `lib/lain/tools/subagent.rb`, `spec/lain/prompt/environment_spec.rb`, `spec/lain/prompt/slots_spec.rb`,
 `spec/lain/role_prelude_wiring_spec.rb`, `spec/lain/cli/chat_launch_spec.rb`, `spec/lain/tools/subagent_spec.rb`,
-`spec/lain/role_spec.rb`
+`spec/lain/role_spec.rb`; added at execution, each a 1-line `render_role` expectation: `spec/lain/cli/wiring/toolset_build_spec.rb`,
+`spec/lain/cli/epic_driver/issue_actor_spec.rb`, `spec/lain/skill/role_spawn_spec.rb`, the `test_generation` spec
 **Reuse:** `Environment` is a `Data` (`with(cwd:)`); `ChildBuilder#build` already holds `worker_env`
 (`subagent.rb:~1473`); `Role#child_context` (`role.rb:61-64`) renders segment 0 and the role tail
 **Shared-file wiring:** `ARCHITECTURE.md`: a child's working directory is stated in its role tail, after the cache
@@ -668,11 +676,12 @@ the judge)
 
 **The design.** A child's segment 0 is a child form of the system render: the environment block with its
 working-directory line replaced by `Working directory: stated after your role instructions` (the same bytes for
-every child, so siblings still share the cached prefix). The role tail, which sits after the breakpoint, starts
-with `Working directory: <worker_env.cwd>`. The main agent's render is unchanged. So `Slots` gains a child
+every child, so siblings still share the cached prefix). The role tail, which sits after the breakpoint, ends
+with `Working directory: <worker_env.cwd>` (amended at execution: "starts" contradicted segment 0's wording). The main agent's render is unchanged. So `Slots` gains a child
 render, and `Role#child_context` and `Persona#child_context` take `worker_env:`. `Persona.new(role, slots)` keeps
 its signature, so its constructors in `skill/role_spawn.rb:113` and `cli/wiring/toolset_build.rb:440` do not
-change. `Persona::Null` answers `child_context` with the same keyword.
+change. `Persona::Null` answers `child_context` with the same keyword. The keyword is optional (`worker_env: nil` keeps today's render) for the 2 callers that
+are not a chat's children, `consolidation.rb` and `cli/improve.rb`.
 
 **Acceptance criteria**
 
@@ -1161,6 +1170,38 @@ Spec file: `spec/lain/approval/judged_spec.rb`, `spec/lain/frontend/neovim/appro
 - Output discipline: the line must reach the transcript through a `Sink` or `Channel`, never `$stdout`
   (`spec/output_discipline_spec.rb`).
 
+### T25: Keep the input pane in raw mode while idle, so a header can redraw          [risk: high]
+
+**Depends on:** T20 (both edit the pane's input path)
+**Files:** `lib/lain/frontend/input_pane.rb`, `lib/lain/frontend/stdin_pump.rb`, `spec/lain/frontend/input_pane_spec.rb`,
+`spec/lain/seams/input_pane_socket_spec.rb`
+**Reuse:** T18's `reheaded`/`retracted` walk-up-and-clear; the pump's draft state (`untouched?`, `editing?`)
+**Shared-file wiring:** none
+**Reachable from:** `InputPane#received` -> `idle`/`headed`/`restyled`, run by `InputPane.open(...).run` from `exe/lain`
+
+Added at execution by user ruling (2026-10-15), after T18's second stop condition fired: in cooked mode the pane
+cannot see a half-typed draft, so it cannot redraw a header of a different row count while a child runs (d24-7's
+route). The pane keeps its own line buffer in raw mode while idle, so it always knows the draft.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a spawn's fleet row redraws the header while a child runs
+  Given an input pane idle while a child runs, with no draft typed
+  When the chat publishes a 2-row header in place of a 1-row one
+  Then exactly 2 header rows are on screen
+
+Scenario: a draft typed while idle survives a header redraw
+  Given the human has typed "abc" at the idle pane and not sent it
+  When the header changes row count
+  Then "abc" is still on the input row and is what Enter sends
+```
+Spec file: `spec/lain/frontend/input_pane_spec.rb`, `spec/lain/seams/input_pane_socket_spec.rb`
+
+**Stop and report if:**
+- `spec/lain/frontend/input_pane_spec.rb`'s "leaves a header of a different row count for the next prompt" cannot be
+  rewritten to the new behaviour without losing the draft guard.
+
 ## Integration checks
 
 1. `bundle exec rake pspec` green, and the example count at or above the count before the first card (CLAUDE.md:
@@ -1177,3 +1218,41 @@ Spec file: `spec/lain/approval/judged_spec.rb`, `spec/lain/frontend/neovim/appro
    reached" sections are that round's coverage debts.
 
 ## Execution log
+
+Base `main` at `10379a13`, 2026-10-15. `git worktree list` at start: the main checkout and
+`/home/tara/tmp/lain-qa-2026-10-08-tree` (detached, `b6a3efb2`). No `card/*` branches.
+
+Hooks, from `.pre-commit-config.yaml`. A Ruby commit runs `bundle exec rake compile check` (rubocop on the whole
+repo plus `rake pspec`, about 60 to 90s), `yard-lint --staged`, whitespace and end-of-file fixers, and the
+commit-msg lint (subject at most 72 chars, no trailing period, no em or en dashes, no trailers). A plan-only commit
+runs the gherkin lint and the fixers. Agent-runnable checks on their own paths: `bundle exec rubocop <paths>`,
+`bundle exec yard-lint <path>` per changed lib file, and the spec files by path. The suite cannot run beside other
+tests (`TMPDIR` is shared): each worktree gets its own `TMPDIR` under `~/tmp/lain-T<id>`. No path needs user
+approval.
+
+- T1, T2, T8, T9, T10, T15, T16, T17, T18, T19, T21, T23 started (cut from `10379a13`).
+
+- T2 stop: Verdict has no unquoter to reuse; card amended with "The quoting rule" (Named's own narrow unquoter).
+- T10 stop: 6 render_role assertions and 2 lib callers outside Files; card amended (Files, optional worker_env:,
+  the role tail ENDS with the working directory).
+- Scope widened at execution, each with its reason in the card's commit: T9 (a bare GitHub token shape, which T8's
+  rule needs to close c24-7), T1 (a 20,000-entry bound on Survey::Walk: `/survey /` never ended), T17 (the window
+  cut is decided in the Ollama decoder, `Response#window_cut`), T19, T16 and T17 (specs outside Files their change
+  broke), T10 (in-place children lease at the chat's cwd, `CLI::Wiring#fleet_isolation`).
+- T18 stop (cooked mode cannot see a draft): user ruled the idle route a new card, T25 (raw mode while idle). T18
+  closes only the published-prompt route; d24-7 moves to T25.
+- T20: the repro's key C-x is lain's completion key, and Reline claims every other C-letter. User ruled out new
+  keybinding machinery; config now refuses, by name, any key the line editor would refuse, so S-Tab is the one
+  working value. A vi editing-mode default was offered as a follow-up, not done.
+- T21: a drainer still booting can read as absent (exit 3); documented, the pid record is a follow-up.
+- Rulings on T2 and T5 review findings: an interpreter running inline code is opaque; a planted link stays a final
+  refuse even for rm; a bare word whose resolved path is denied and outside the root refuses; the landing check
+  runs on a verdict abstention when Named is not opaque.
+- Flakes recorded by name in docs/toolchain-traps.md: 4 terminal specs (aaecf5bf, 85a5e3a1). The approval-window
+  one went red twice; a repeat becomes a follow-up card.
+- My error: a failed zsh stacking loop made an empty dir `lib/lain/shell/named.rb` in the main checkout; T19's first
+  landing went 149 red. Removed; no commit affected.
+- Landed: T23 189ac416, T19 94a9d675, T15 d03f1614, T9 d1fa9651, T16 68c6bf10, T21 c768f923, T1 74e111ab,
+  T8 7bde7938, T18 e0b05dd4, T10 5d03429e, T13 df571d03.
+- In flight at this entry: T2 (fix round), T3 (waits for T2), T5 (fix round), T11 (fix round), T17 (fix round),
+  T20 (review). Not started: T4, T6, T7, T12, T14, T22, T24, T25.
