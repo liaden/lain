@@ -22,6 +22,22 @@ module Lain
       # seam and the chat subagent's are the SAME object.
       attr_reader :seam
 
+      # Where one role's children work when that role keeps each a directory
+      # of its own: the seam they spawn over, already confined to the lease and
+      # announcing the role, and the {Tools::Subagent::Kept} that leases it.
+      Placed = Data.define(:seam, :kept)
+
+      # A placed role spawned where its lease cannot hold it.
+      class Refused < Error; end
+
+      # What a placed role becomes under {#never_parking}: that guard holds no
+      # child in a lease, so the spawn refuses rather than run one unconfined.
+      Unplaceable = Data.define(:role) do
+        def seam = raise(Refused, "#{role} keeps a lease of its own, which a never-parking spawn cannot hold it in")
+
+        def kept = seam
+      end
+
       # `toolset` and `slots` stay their own keywords rather than joining the
       # seam: each adopter attenuates over a different base union, and `slots`
       # is the persona source the seam's shape has no use for.
@@ -43,10 +59,13 @@ module Lain
       # @param max_depth [Integer] how many levels a child may still spawn
       # @param compaction [Tools::Subagent::ParentView, #call] what every child
       #   it builds reads its parent's held cuts through
+      # @param placed [Hash{Symbol => Placed}] by role name, the roles whose
+      #   children each work in a kept directory of their own
       # @param spawn_over [Hash] the loose seam members, when no seam is given
       def initialize(toolset:, slots:, seam: nil, max_depth: 1, compaction: Tools::Subagent::ParentView::None,
-                     **spawn_over)
+                     placed: {}, **spawn_over)
         @seam = Tools::Subagent::Seam.resolve(seam, **spawn_over)
+        @placed = placed
         @toolset = toolset
         @slots = slots
         @max_depth = max_depth
@@ -70,7 +89,8 @@ module Lain
 
       # This spawn, lending its children an environment the caller already
       # holds rather than leasing each a checkout of its own. Every other seam
-      # member is unchanged, so they run behind the same guard and gate.
+      # member is unchanged, so they run behind the same guard and gate. A
+      # placed role still works in its own kept directory instead.
       #
       # @param worker_env [WorkerEnv] the held checkout's environment
       # @param lane [String, nil] a lane name of its own for the lent children,
@@ -80,18 +100,19 @@ module Lain
       # @raise [Isolation::Leases::Lane::Refused] when git would not accept the name
       def within(worker_env, lane: nil)
         self.class.new(seam: @seam.with(isolation: lent(worker_env, lane)), toolset: @toolset, slots: @slots,
-                       max_depth: @max_depth, compaction: @compaction)
+                       max_depth: @max_depth, compaction: @compaction, placed: @placed)
       end
 
       # This spawn, its children built through the seam guard's never-parking
       # copy ({CLI::ToolGuard::NeverParking}): what an approval judge spawns
       # through, because it waits on the child with the judged call parked.
-      # It reads no parent's cuts: a judge spawns :fresh.
+      # It reads no parent's cuts: a judge spawns :fresh. A placed role
+      # refuses here.
       #
       # @return [RoleSpawn]
       def never_parking
         self.class.new(seam: @seam.with(tool_middleware: @seam.tool_middleware.never_parking), toolset: @toolset,
-                       slots: @slots, max_depth: @max_depth)
+                       slots: @slots, max_depth: @max_depth, placed: unplaceable)
       end
 
       private
@@ -108,12 +129,17 @@ module Lain
       # plus the model this one child was bound to. The seam, union and ceiling
       # this instance already held.
       def build_subagent(role, context_mode, model)
+        place = placed(role)
         Tools::Subagent.new(
-          seam: @seam, toolset: @toolset, policy: role.spawn_policy(prefix: context_mode),
+          seam: place.seam, toolset: @toolset, policy: role.spawn_policy(prefix: context_mode),
           persona: Role::Persona.new(role:, slots: @slots), model:, budget: role.budget,
-          max_depth: @max_depth, name: role.name.to_s, compaction: @compaction
+          max_depth: @max_depth, name: role.name.to_s, compaction: @compaction, kept: place.kept
         )
       end
+
+      def unplaceable = @placed.to_h { |name, _| [name, Unplaceable.new(name)] }
+
+      def placed(role) = @placed.fetch(role.name) { Placed.new(seam: @seam, kept: Tools::Subagent::Unkept) }
     end
   end
 end

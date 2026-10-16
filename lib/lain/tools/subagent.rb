@@ -917,11 +917,16 @@ module Lain
                   "in a new worktree of it on a branch of its own; without it, in an empty scratch directory. " \
                   "Under plan scope it is still checked, but the subagent works in the plan's spike instead."
 
+        # A lease never holds the project itself, and a task names its files
+        # relative to the project, so the child is told where to read them.
+        PROJECT = "The project is at %<root>s; read its files by absolute path."
+
         SCRATCH = "Your working directory is %<dir>s, an empty scratch directory of your own that is kept after " \
-                  "you finish, and a write outside it is refused."
+                  "you finish, and a write outside it is refused. #{PROJECT}".freeze
 
         SPIKE = "Your working directory is %<dir>s, in a new worktree of %<repo>s checked out on the branch " \
-                "%<branch>s, which keeps what you commit after you finish, and a write outside it is refused."
+                "%<branch>s, which keeps what you commit after you finish, and a write outside it is refused. " \
+                "#{PROJECT}".freeze
 
         # An `extends` naming no repository the researcher may work in.
         class Refused < Error; end
@@ -1017,11 +1022,11 @@ module Lain
           Confined.new(worker_env: lease.worker_env, reminder: yield(lease.worker_env), kept: -> { record.call(:kept) })
         end
 
-        def scratched = confined(@scratch.acquire, @scratch) { |env| format(SCRATCH, dir: env.cwd) }
+        def scratched = confined(@scratch.acquire, @scratch) { |env| format(SCRATCH, dir: env.cwd, root: @root) }
 
         def spiked(spike, repo)
           lease = spike.attached(spike.acquire)
-          confined(lease, spike) { |env| format(SPIKE, dir: env.cwd, repo:, branch: lease.origin.branch) }
+          confined(lease, spike) { |env| format(SPIKE, dir: env.cwd, repo:, branch: lease.origin.branch, root: @root) }
         end
 
         # Both sides by real path, so a link cannot carry a researcher out.

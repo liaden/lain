@@ -171,7 +171,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
 
       expect(worktrees.size).to eq(1)
       expect(plan_branches).to contain_exactly(start_with("lain/plan/"))
-      expect(first_request(provider)).to include(worktrees.first, plan_branches.first)
+      expect(first_request(provider)).to include(worktrees.first, plan_branches.first, "The project is at #{@repo}")
       expect(provider.requests.first.system.last["text"]).to end_with("Working directory: #{worktrees.first}")
       expect(provider.requests.last.messages.to_s).to include("OTHER.md")
       expect(File.read(File.join(worktrees.first, "OTHER.md"))).to eq("the other repository\n")
@@ -217,6 +217,90 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
 
       expect(worktrees.uniq.size).to eq(2)
       expect(plan_branches.uniq.size).to eq(2)
+    end
+  end
+
+  # A role skill reaches the researcher through the run's one role spawn
+  # rather than the `subagent` tool, and it is kept to its lease all the same.
+  describe "spawned by a role skill" do
+    before { seed(@repo, { "x.rb" => "x = 1\n" }) }
+
+    def role_spawn(provider)
+      build = toolset_build(provider)
+      build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty }))
+      build.role_spawn
+    end
+
+    def critique(provider) = role_spawn(provider).call(:researcher, :fresh, "critique x.rb")
+
+    def tool_result(provider)
+      provider.requests.last.messages.flat_map { Array(_1["content"]) }
+              .find { _1.is_a?(Hash) && _1["type"] == "tool_result" }.fetch("content").to_s
+    end
+
+    it "writes in its kept lease, leaving the project's working tree and HEAD unchanged" do
+      head = git("rev-parse", "HEAD", dir: @repo)
+      write = tool_response(["w1", "write_file", { "path" => "CRITIQUE.md", "content" => "fine\n" }])
+      provider = Lain::Provider::Mock.new(responses: [write, text_response("done")])
+
+      critique(provider)
+      dirs = kept_dirs(first_request(provider)).tap { @leased.concat(_1) }
+      dir = dirs.first
+
+      expect(dirs.size).to eq(1)
+
+      expect(File.read(File.join(dir, "CRITIQUE.md"))).to eq("fine\n")
+      expect(git("status", "--porcelain", dir: @repo)).to be_empty
+      expect(git("rev-parse", "HEAD", dir: @repo)).to eq(head)
+    end
+
+    it "is refused a write inside the project, naming its lease" do
+      write = tool_response(["w1", "write_file", { "path" => File.join(@repo, "a.rb"), "content" => "x" }])
+      provider = Lain::Provider::Mock.new(responses: [write, text_response("done")])
+
+      critique(provider)
+      dirs = kept_dirs(first_request(provider)).tap { @leased.concat(_1) }
+      dir = dirs.first
+
+      expect(dirs.size).to eq(1)
+
+      expect(tool_result(provider)).to start_with("write_file refused").and include(dir)
+      expect(File.exist?(File.join(@repo, "a.rb"))).to be(false)
+    end
+
+    # Its lease starts empty, so the skill's relative argument is not there;
+    # the child is told the project's path to read it by.
+    it "is told where the project is, and reads the skill's file by that path" do
+      read = tool_response(["r1", "read_file", { "path" => File.join(@repo, "x.rb") }])
+      provider = Lain::Provider::Mock.new(responses: [read, text_response("done")])
+
+      critique(provider)
+      @leased.concat(kept_dirs(first_request(provider)))
+
+      expect(first_request(provider)).to include("The project is at #{@repo}")
+      expect(tool_result(provider)).to include("x = 1")
+    end
+
+    it "parks as the researcher, on the approval row and in the journal" do
+      list = tool_response(["l1", "list_files", { "path" => @other }])
+      provider = Lain::Provider::Mock.new(responses: [list, text_response("done")])
+      seen = []
+
+      Sync do |task|
+        human = task.async do
+          pending = board.approvals.dequeue
+          seen << pending.requester
+          pending.deny(surface: "spec")
+        end
+        task.with_timeout(30) { critique(provider) }
+        @leased.concat(kept_dirs(first_request(provider)))
+      ensure
+        human&.stop
+      end
+
+      expect(seen).to eq(["researcher"])
+      expect(Lain::Journal.records(journal_io.string.lines, type: "approval_pending").map { _1["requester"] }.to_a)
+        .to eq(["researcher"])
     end
   end
 

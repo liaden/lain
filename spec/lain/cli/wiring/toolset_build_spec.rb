@@ -1239,8 +1239,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   end
 
   # Where the run's handoff reaches the spawn lane: the ONE Leases this build
-  # wraps the run's isolation in, so a child spawned through any adopter of the
-  # seam -- the chat's researcher tool, a role spawn -- ends its lease there.
+  # wraps the run's isolation in, so an unplaced role's child ends its lease
+  # there. A researcher keeps a lease of its own, on either route.
   describe "the handback a child's lease ends in" do
     let(:provider) { Lain::Provider::Mock.new(responses: [text_response("done")]) }
     let(:parent) { -> { Lain::Timeline.empty(store: Lain::Store.new) } }
@@ -1250,9 +1250,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       build = build_with(options, handback: Lain::CLI::Wiring::Handback.new(handoff:))
       build.build(recorder, ask_human:)
 
-      build.role_spawn.call(:researcher, :fresh, "look")
+      build.role_spawn.call(:test_engineer, :fresh, "look")
 
-      expect(handoff.reclaimed).to eq([Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s])
+      expect(handoff.reclaimed).to eq([Lain::Isolation::WorkerId.spawned(role: "test_engineer", ordinal: 1).to_s])
     end
 
     # Both children hold `bash`, and only a child that can run git is asked to
@@ -1262,10 +1262,10 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       build = build_with(options, handback: Lain::CLI::Wiring::Handback.new(handoff:, sync:))
       build.build(recorder, ask_human:)
 
-      build.role_spawn.call(:researcher, :fresh, "look")
+      build.role_spawn.call(:test_engineer, :fresh, "look")
       build.role_spawn.call(:dev, :fresh, "work")
 
-      expect(sync.askable).to eq([[Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s, true],
+      expect(sync.askable).to eq([[Lain::Isolation::WorkerId.spawned(role: "test_engineer", ordinal: 1).to_s, true],
                                   [Lain::Isolation::WorkerId.spawned(role: "dev", ordinal: 2).to_s, true]])
     end
   end

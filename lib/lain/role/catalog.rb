@@ -31,7 +31,8 @@ module Lain
         # the three reviewers above hold `bash`, which writes.
         Role.new(name: :reviewer_code, only: %i[read_file list_files glob grep]),
         # Research walks many files and pages, so it gets a ceiling above the default.
-        # Its shell and writer reach only its own kept lease.
+        # Its shell and writer reach only its own kept lease, whether the chat's
+        # `subagent` tool or a role skill spawned it.
         Role.new(name: :researcher, only: %i[read_file list_files glob grep web_fetch web_search bash write_file],
                  max_iterations: 60),
         # {Approval::Gate::Adjudicator}'s evidence spike: the researcher's old

@@ -360,9 +360,12 @@ module Lain
 
         # One seam serves every role: role, policy and persona are chosen PER
         # CALL from the parsed role name and context mode, so what is fixed
-        # here is only what they all share.
+        # here is only what they all share. The researcher is placed as the
+        # chat's `subagent` tool places it, so a role skill cannot reach past
+        # its kept lease either.
         def role_spawn_seam(base)
-          Lain::Skill::RoleSpawn.new(seam:, toolset: base, slots: library.slots, compaction: @parent_view)
+          placed = { RESEARCHER => Lain::Skill::RoleSpawn::Placed.new(seam: researcher_seam, kept: research_leases) }
+          Lain::Skill::RoleSpawn.new(seam:, toolset: base, slots: library.slots, compaction: @parent_view, placed:)
         end
 
         # The chat's held cuts, read by a child at its spawn, over a Source of
@@ -393,14 +396,16 @@ module Lain
         # into the session record. `announces_as:` is the human-facing half of
         # the same name -- the tool stays "subagent" because that is what the
         # model calls, so an arrival note says "researcher" instead.
-        #
-        # Each child works in a directory of its own that outlives it, and its
-        # stack holds it there: outside plan the board confines nothing.
         def research_subagent(base)
-          held = announcing(RESEARCHER.to_s).then { _1.with(tool_middleware: _1.tool_middleware.with(confined: true)) }
-          Lain::Tools::Subagent.new(seam: held, toolset: base, policy: backend.spawn_policy(RESEARCHER),
+          Lain::Tools::Subagent.new(seam: researcher_seam, toolset: base, policy: backend.spawn_policy(RESEARCHER),
                                     persona: persona(RESEARCHER), max_depth: 1, announces_as: RESEARCHER.to_s,
                                     budget: Lain::Role::Catalog.fetch(RESEARCHER).budget, kept: research_leases)
+        end
+
+        # Confined by its own stack, because outside plan the board confines
+        # nothing, and a researcher's lease outlives it.
+        def researcher_seam
+          announcing(RESEARCHER.to_s).then { _1.with(tool_middleware: _1.tool_middleware.with(confined: true)) }
         end
 
         # Related directories are read off the board when a child is spawned,

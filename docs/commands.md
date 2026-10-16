@@ -748,6 +748,10 @@ front of you instead of beside you.
 A chat's researcher subagent gets its own directory, whatever `--isolation` says, and **keeps
 it**. It can run commands (`bash`, with its working directory in the lease) and write files there,
 and it cannot write outside it: a write aimed at the project is refused naming the lease.
+A researcher a role skill spawns (`@researcher[/skill]`) gets a kept scratch lease of its own (a
+role skill cannot name `extends`), refuses a write outside it the same way, and asks approval as
+`researcher`. Either way, a researcher's first message names its working directory and the
+project's path, so it reads project files by absolute path.
 
 | What | Where |
 |---|---|

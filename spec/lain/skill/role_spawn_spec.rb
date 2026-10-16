@@ -432,4 +432,86 @@ RSpec.describe Lain::Skill::RoleSpawn do
       end.to raise_error(ArgumentError, "unknown keyword: :max_dept")
     end
   end
+
+  # ---- A role placed in a kept directory of its own ---------------------------
+  #
+  # The chat's researcher keeps a lease on every route, so a role skill that
+  # names it spawns over the researcher's own seam and into its own directory.
+  describe "a role with a place of its own" do
+    let(:base_seen) { [] }
+    let(:placed_seen) { [] }
+    let(:researcher_union) do
+      Lain::Toolset.new(union.to_a + [Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
+    end
+
+    def recording(into) = ->(worker_env) { ToolRegistry::UNGUARDED.call(worker_env).tap { into << worker_env } }
+
+    def kept(root)
+      Lain::Tools::Subagent::Kept.new(root:, paths: Lain::Paths.new(env: { "HOME" => root }), related: ->(_) { false },
+                                      scratch: Lain::Isolation::Scratch.new(root:, prefix: "research-"))
+    end
+
+    def placed_spawn(provider, root)
+      place = described_class::Placed.new(
+        seam: Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:,
+                                              tool_middleware: recording(placed_seen)),
+        kept: kept(root)
+      )
+      seam(provider:, toolset: researcher_union, tool_middleware: recording(base_seen), placed: { researcher: place })
+    end
+
+    it "spawns the placed role in a kept directory of its own, over its place's seam" do
+      Dir.mktmpdir do |root|
+        provider = mock(tool_response(["r1", "read_file", { "path" => "/nowhere/at/all" }]), text_response("done"))
+
+        placed_spawn(provider, File.realpath(root)).call(:researcher, :fresh, "go")
+        dir = placed_seen.map(&:cwd).first
+
+        expect(base_seen).to be_empty
+        expect(dir).to start_with(File.join(File.realpath(root), "research-"))
+        expect(provider.requests.first.system.last["text"]).to end_with("Working directory: #{dir}")
+      end
+    end
+
+    it "leaves a role with no place spawning over the held seam" do
+      Dir.mktmpdir do |root|
+        provider = mock(tool_response(["r1", "read_file", { "path" => "/nowhere/at/all" }]), text_response("done"))
+
+        placed_spawn(provider, root).call(:dev, :fresh, "go")
+
+        expect(placed_seen).to be_empty
+        expect(base_seen.size).to eq(1)
+      end
+    end
+
+    # The never-parking guard holds no child in a lease, so a placed role
+    # refuses there rather than running unconfined.
+    it "refuses a placed role through never_parking, before any spawn" do
+      Dir.mktmpdir do |root|
+        provider = mock(text_response("unused"))
+        spawn = placed_spawn(provider, root)
+        guard = spawn.seam.tool_middleware
+        guard.define_singleton_method(:never_parking) { guard }
+
+        expect { spawn.never_parking.call(:researcher, :fresh, "go") }
+          .to raise_error(described_class::Refused, /researcher/)
+        expect(provider.requests).to be_empty
+      end
+    end
+
+    it "refuses a placed role's lease under never_parking, whichever member is read first" do
+      expect { described_class::Unplaceable.new(:researcher).kept }
+        .to raise_error(described_class::Refused, /researcher/)
+    end
+
+    it "keeps the placed role in its own directory within a held environment" do
+      Dir.mktmpdir do |root|
+        provider = mock(tool_response(["r1", "read_file", { "path" => "/nowhere/at/all" }]), text_response("done"))
+
+        placed_spawn(provider, File.realpath(root)).within(Lain::WorkerEnv.default).call(:researcher, :fresh, "go")
+
+        expect(placed_seen.map(&:cwd)).to contain_exactly(start_with(File.join(File.realpath(root), "research-")))
+      end
+    end
+  end
 end
