@@ -126,6 +126,9 @@ module Lain
         # @return [nil] no home was configured
         def home = nil
 
+        # @return [nil] no root was configured
+        def root = nil
+
         # Nothing is related, so a flagged region still asks.
         def related?(_path) = false
 
@@ -182,6 +185,9 @@ module Lain
 
         # @return [String, nil] the policy's home as configured
         def home = @anchors[:home]
+
+        # @return [String, nil] the policy's project root as configured
+        def root = @anchors[:root]
 
         # @param effect [Lain::Effect]
         # @param cwd [String] absolute
@@ -285,6 +291,9 @@ module Lain
 
       # @return [String, nil] the home as configured, nil when none was
       def home = @anchors[:home]
+
+      # @return [String, nil] the project root as configured, nil when none was
+      def root = @anchors[:root]
 
       # What {#filter} classifies a listing row by. A readable row reaching the
       # filter is already absolute ({Middleware::WithholdSecretPaths#reading}

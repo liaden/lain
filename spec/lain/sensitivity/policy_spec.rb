@@ -410,6 +410,21 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
+  describe "#root" do
+    let(:anchored) { described_class.new(sensitivity:, home:, root: cwd) }
+
+    it "is the root it was configured with, and nil when none was" do
+      expect([anchored.root, policy.root]).to eq([cwd, nil])
+    end
+
+    it "is the same root through a confinement, and nil for the null policy" do
+      null = described_class::Null.instance
+
+      expect([anchored.confined(roots: ["/w"]).root, null.root, null.confined(roots: ["/w"]).root])
+        .to eq([cwd, nil, nil])
+    end
+  end
+
   describe "#home" do
     let(:anchored) { described_class.new(sensitivity:, home:) }
 

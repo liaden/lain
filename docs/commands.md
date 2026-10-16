@@ -665,6 +665,7 @@ those rungs.
 * **`ask`** parks the call. You answer it, or the [secret oracle](#lain-chat) does for a read
   it may.
 * **`auto`** asks a judge first: a fresh, tool-limited `auto_approver` child shown the one call,
+  with the project root, the working directory, the requester and any named path outside the root,
   bounded at 30 seconds. It answers approve, deny or unsure. Approve and deny settle the call.
   **Unsure parks it for you**, and so does a judge that errors or runs out of time (a fault never
   turns into an approve). Calls that touch a credential, a protected path, a named or configured

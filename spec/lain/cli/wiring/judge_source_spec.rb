@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::CLI::Wiring::JudgeSource do
-  let(:question) { { requester: "main", tool: "bash", input: { "command" => "rm -rf build" } } }
+  let(:question) { { tool: "bash", input: { "command" => "rm -rf build" }, place: } }
+  let(:place) { Lain::Approval::Judge::Place.new(root: "/p", cwd: "/p", requester: "main", outside: []) }
   let(:judge) { instance_double(Lain::Approval::Judge, call: :approve) }
 
   it "reads the spawn seam at the first judged call, not when it is built" do
@@ -28,6 +29,14 @@ RSpec.describe Lain::CLI::Wiring::JudgeSource do
     verdict = described_class.new(-> {}).call(**question) { |why| faults << why }
 
     expect([verdict, faults]).to eq([:fault, ["IOError: no spawn seam"]])
+  end
+
+  it "forwards the place to the judge" do
+    allow(Lain::Approval::Judge).to receive(:new).and_return(judge)
+
+    described_class.new(-> {}).call(**question)
+
+    expect(judge).to have_received(:call).with(**question)
   end
 
   it "answers :fault with no callback given" do

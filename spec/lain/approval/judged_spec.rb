@@ -158,6 +158,55 @@ RSpec.describe Lain::Approval::Judged do
     expect(spawn.calls.sole[:prompt]).to include("researcher-7")
   end
 
+  describe "what the judge is told about where the call runs" do
+    def prompt_for(effect, within: context)
+      spawn = spawn_answering("approve")
+      ruled(rung(spawn), effect, within:)
+      spawn.calls.sole[:prompt].lines.map(&:strip)
+    end
+
+    it "names the project root, the leased working directory and the requester" do
+      lease = Lain::WorkerEnv.new(cwd: "/state/leases/r1", env: {}, checkout: "/state/leases/r1")
+      leased = context.with(worker_env: lease, requester: "researcher")
+
+      expect(prompt_for(bash("ls"), within: leased))
+        .to include("project root: #{root.inspect}", "working directory: \"/state/leases/r1\"",
+                    "requester: \"researcher\"")
+    end
+
+    it "shows a path under the home but outside the project as outside" do
+      expect(prompt_for(bash("ls ~/.cargo/registry")))
+        .to include("outside the project root: #{"#{home}/.cargo/registry".inspect}")
+    end
+
+    it "shows the walk root of a glob with an absolute pattern as outside" do
+      expect(prompt_for(call("glob", { "pattern" => "/tmp/x/**/*.rs" })))
+        .to include("outside the project root: \"/tmp/x\"")
+    end
+
+    it "shows a path in the requester's own checkout as not outside" do
+      lease = Lain::WorkerEnv.new(cwd: "/state/leases/r1", env: {}, checkout: "/state/leases/r1")
+      leased = context.with(worker_env: lease, requester: "researcher")
+
+      expect(prompt_for(bash("ls src"), within: leased)).to include("outside the project root: none")
+    end
+
+    it "shows a path in a related directory as not outside" do
+      related = Lain::Sensitivity::Rules.new(related: ["#{home}/notes"])
+      under = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:, rules: related),
+                                            home:, root:)
+      spawn = spawn_answering("approve")
+
+      settled(rung(spawn, under:), bash("ls ~/notes"))
+
+      expect(spawn.calls.sole[:prompt]).to include("outside the project root: none")
+    end
+
+    it "shows a path inside the project as not outside" do
+      expect(prompt_for(bash("ls src"))).to include("outside the project root: none")
+    end
+  end
+
   describe "tier 0" do
     it "never asks the judge about a read on a credential-named path, and parks it" do
       spawn = spawn_answering("approve")

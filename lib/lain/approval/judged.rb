@@ -136,7 +136,7 @@ module Lain
         return handed_down(effect, context, abstain(UNJUDGEABLE)) unless judgeable?(effect, context)
 
         cause = nil
-        verdict = @judge.call(requester: Queue.requester_for(context), tool: effect.name, input: effect.input) do |why|
+        verdict = @judge.call(tool: effect.name, input: effect.input, place: place_for(effect, context)) do |why|
           cause = why
         end
         ruled(verdict, effect, context, cause)
@@ -170,6 +170,30 @@ module Lain
         !named.opaque? && reached.none?(&:nil?) && [*named_by_field(effect), *reached.flatten].all? do |path|
           verdict_on(path, context).oracle_approvable?
         end
+      end
+
+      # A path in the requester's own checkout is where it works, not outside it.
+      def place_for(effect, context)
+        root = @policy.root || ::Lain::Sensitivity::Policy.base_of(context)
+        cwd = ::Lain::Session.cwd_of(context)
+        held = [root, ::Lain::Sensitivity::Policy.base_of(context)]
+        Judge::Place.new(root:, cwd:, requester: Queue.requester_for(context),
+                         outside: named_paths(effect, context, cwd).reject { within?(held, _1) })
+      end
+
+      def named_paths(effect, context, cwd)
+        field = named_by_field(effect)
+        base = field && Queue.resolved(field, cwd)
+        [base, glob_root(effect, base || cwd), *named_in(effect, context).paths.map(&:resolved)].compact.uniq
+      end
+
+      def glob_root(effect, base)
+        pattern = effect.input.is_a?(Hash) && (effect.input["pattern"] || effect.input[:pattern])
+        pattern.is_a?(String) && effect.name == "glob" ? ::Lain::Tools::Glob.walk_root(pattern, base) : nil
+      end
+
+      def within?(roots, path)
+        roots.any? { path == _1 || path.start_with?(File.join(_1, "")) } || @policy.in_related_tree?(path)
       end
 
       def named_by_field(effect) = ::Lain::Sensitivity::Policy.path_in(effect)

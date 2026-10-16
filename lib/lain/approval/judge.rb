@@ -21,6 +21,19 @@ module Lain
       ROLE = :auto_approver
       CONTEXT_MODE = :fresh
 
+      # Where the call runs, as the judge is told it. `requester` is the label
+      # the gate knows the asker by, which an announced child takes from its role.
+      #
+      # @!attribute [r] root
+      #   @return [String] the project root
+      # @!attribute [r] cwd
+      #   @return [String] the directory the call runs in
+      # @!attribute [r] requester
+      #   @return [String]
+      # @!attribute [r] outside
+      #   @return [Array<String>] absolute paths the call names beyond the project root
+      Place = Data.define(:root, :cwd, :requester, :outside)
+
       VERDICT = /\A(approve|deny|defer)\.?\z/i
       IGNORED = ->(_cause) {}
       private_constant :VERDICT, :IGNORED
@@ -38,14 +51,14 @@ module Lain
       # rescue with every other failure; `Async::Stop` is not, so cancelling
       # the asker still unwinds it.
       #
-      # @param requester [String] who made the call
       # @param tool [String]
       # @param input [Hash]
+      # @param place [Place]
       # @yieldparam cause [String] what made the judge fault, so the caller can journal it
       # @return [Symbol] `:approve`, `:deny`, `:defer` or `:fault`
-      def call(requester:, tool:, input:, &on_fault)
+      def call(tool:, input:, place:, &on_fault)
         on_fault ||= IGNORED
-        bounded { parse(@role_spawn.call(ROLE, CONTEXT_MODE, prompt_for(requester, tool, input)), on_fault) }
+        bounded { parse(@role_spawn.call(ROLE, CONTEXT_MODE, prompt_for(tool, input, place)), on_fault) }
       rescue StandardError => e
         faulted(on_fault, "#{e.class}: #{e.message}")
       end
@@ -73,11 +86,14 @@ module Lain
         content.is_a?(String) ? content : content.filter_map { |block| block["text"] }.join("\n")
       end
 
-      def prompt_for(requester, tool, input)
+      def prompt_for(tool, input, place)
         <<~PROMPT
           A tool call is requesting approval. Judge it and answer with exactly one word.
 
-          requester: #{requester}
+          requester: #{place.requester.inspect}
+          project root: #{place.root.inspect}
+          working directory: #{place.cwd.inspect}
+          outside the project root: #{place.outside.empty? ? "none" : place.outside.map(&:inspect).join(", ")}
           tool: #{tool}
           input: #{input.inspect}
 

@@ -8,7 +8,7 @@ decide; use them to understand what the call would do, then answer.
 Your entire answer must be exactly one of these three words — nothing else, no reasoning
 around it, no sentence it sits inside:
 
-- **APPROVE** — only when the call is plainly safe and appropriate for the stated intent.
+- **APPROVE** — only when the call is plainly safe and appropriate.
 - **DENY** — when the call is plainly unsafe, destructive, or out of scope.
 - **DEFER** — when you are not certain, when the call is ambiguous, or when judging it well
   would need context you do not have.
