@@ -444,7 +444,9 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   `Lain::Frontend::InputPane when the chat says nothing is published rewrites in place again once a whole
   redraw followed the resize`;
   `Shift+Enter in a pane inserts a newline and submits the whole draft on Enter` (load 14, passed alone
-  and 3 of 3 with its seed on the base commit).
+  and 3 of 3 with its seed on the base commit);
+  `Lain::Frontend::LineEditor#read, and the submit predicate asking the terminal for Shift+Enter resets
+  after an exception` (passed alone and 3 of 3 with its seed on the base commit).
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
