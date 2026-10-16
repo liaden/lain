@@ -418,7 +418,7 @@ module Lain
       # Every approval level's ladder over one classifier factory, the triage
       # rung and the rules chain each built over it.
       def ladders(classifiers)
-        triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict)
+        triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict, policy: @sensitivity)
         rules = @approving.call(@rules, classifiers)
         { ask: build_ladder(triage:, rules:), auto: judged_ladder(triage:, rules:),
           bypass: bypass_ladder(triage:, rules:) }.freeze
@@ -433,7 +433,7 @@ module Lain
       # below them is the bottom, where a command nothing confined goes to a
       # human at any level ({Unconfinable}).
       def plan_ladders(classifiers, root)
-        triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict)
+        triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict, policy: @sensitivity)
         rules = @approving.call(@rules.map { |rule| DeniesOnly.new(rule) }, classifiers)
         asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Unattended.new
         { ask: confined_ladder("plan ask", triage:, rules:, asking:, otherwise: asking, root:),

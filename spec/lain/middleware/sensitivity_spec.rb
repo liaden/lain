@@ -295,6 +295,26 @@ RSpec.describe Lain::Middleware::Sensitivity do
       expect(refused(in_session(project)).content).to include("refused", "notes.txt", "no approval can lift this")
       expect(journal.map(&:reason)).to eq(["system"])
     end
+
+    # Scenario: a link to /etc/shadow is refused on the bash route under every level
+    #
+    # This layer reads only a bash call's cwd, so it lets the call through, and
+    # the gate's triage rung refuses the link it names before anybody is asked.
+    it "refuses a bash call naming a project link to the shadow file at the gate, parking nothing", :seam do
+      File.symlink("/etc/shadow", File.join(project, "notes.txt"))
+      parked = StringIO.new
+      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: parked), timeout: 0.05)
+      shell = Lain::Toolset.new([Lain::Tools::Bash.new])
+      ladder = Lain::Approval::Escalation.for(queue:, tools: shell, journal: [],
+                                              triage: Lain::Approval::Escalation::Triage.new(policy:))
+      layers = [layer, Lain::Middleware::Gate.new(policy: ladder, sensitivity: policy)]
+
+      result = dispatch_call("bash", { "command" => "cat notes.txt" }, toolset: shell, layers:,
+                                                                       context: in_session(project))
+
+      expect(result.content).to include("refused", "/etc/shadow", "no approval will lift this")
+      expect(parked.string).to be_empty
+    end
   end
 
   # The classifier resolves a relative path against the project, so a worker

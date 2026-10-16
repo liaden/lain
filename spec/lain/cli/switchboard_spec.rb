@@ -483,6 +483,37 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  # Scenario: a link to /etc/shadow is refused on the bash route under every level
+  describe "a bash call naming a link to the shadow file" do
+    around do |example|
+      Dir.mktmpdir("lain-switchboard-link") do |dir|
+        @project = File.realpath(dir)
+        File.symlink("/etc/shadow", File.join(@project, "shadowlink"))
+        example.run
+      end
+    end
+
+    let(:policy) do
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: @project),
+                                    home: "/home/tester", root: @project)
+    end
+
+    it "is refused finally under ask, auto and bypass, naming the file, and parks nothing" do
+      board = switchboard(sensitivity: policy, judge: judge_answering(:approve))
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @project, env: {}))
+      call = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "cat shadowlink" }, "tu_1")
+
+      rulings = %i[ask auto bypass].map do |level|
+        board.mode_switch.switch(mode(level), surface: "tty")
+        board.policy_switch.current.rule(call, session)
+      end
+
+      expect(rulings).to all(be_deny.and(be_final))
+      expect(rulings.map(&:told)).to all(include("/etc/shadow"))
+      expect(board.approvals).to be_none
+    end
+  end
+
   # The card that built the ledger owns this: the masking arm reads it and the
   # prompt arm writes it, through different files in different waves, so two
   # half-wirings would give the run two ledgers and a release control that
@@ -1429,6 +1460,38 @@ RSpec.describe Lain::CLI::Switchboard do
         plan!
 
         expect(board.guard_inputs.scope.current).to be(session.scope)
+      end
+
+      # Scenario: a link to /etc/shadow is refused on the bash route under every level
+      it "refuses a link to the shadow file in the spike finally, at every level" do
+        board(sensitivity: Lain::Sensitivity::Policy.new(
+          sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: @home), home: "/home/tester"
+        ))
+        call = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "cat shadowlink" }, "tu_1")
+
+        rulings = %i[ask auto bypass].map do |level|
+          plan!(level)
+          link = File.join(spiked, "shadowlink")
+          File.symlink("/etc/shadow", link) unless File.symlink?(link)
+          board.policy_switch.current.rule(call, session)
+        end
+
+        expect(rulings).to all(be_deny.and(be_final))
+        expect(rulings.map(&:told)).to all(include("/etc/shadow"))
+      end
+
+      # The spike is the plan's own checkout, so a bare protected name inside
+      # it reaches a human, as it would in the project.
+      it "leaves a bare protected name in the spike to a human" do
+        board(sensitivity: Lain::Sensitivity::Policy.new(
+          sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: @home), home: "/home/tester", root: @home
+        ), classifiers: Lain::CLI::Wiring::BoardBuild::Classifiers.new(home: "/home/tester", cwd: @home, root: @home))
+        plan!(:ask)
+        call = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "grep -rn .netrc lib" }, "tu_1")
+
+        pending_call = parked(->(_gated, context) { board.policy_switch.call(call, context) })
+
+        expect(pending_call).to be_humans_only
       end
 
       it "judges a child lent the spike by the plan ladder for the level in force" do

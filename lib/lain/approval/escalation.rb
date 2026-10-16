@@ -450,26 +450,20 @@ module Lain
       # once approved -- which is a property of the execution, not a licence to
       # skip the human.
       #
-      # == ...with one refusal read off the allowed argv
+      # == ...with one refusal read off the paths a command names
       #
-      # An allow hands over the PARSED WORDS, the only place in this ladder
-      # where a path a command names can be read without guessing. So the allow
-      # branch asks a {Sensitivity} about each word and refuses when one is a
-      # path nothing may read.
+      # The paths come from {Shell::Named}, never from the command text, and a
+      # path nothing may read refuses.
       #
-      # Three properties hold it in scope, each with a spec:
-      #
-      # * *The argv, never the command string.* A signal read off one flat field
-      #   is confident about text it has not understood, so a command the
-      #   verdict abstained on is not scanned at all. `cat '~/.ssh/id_rsa'`
-      #   abstains and reaches a human; it does not deny on a substring.
-      # * *Denied only, and only when written as a path.* A GATED path stays an
-      #   abstention -- an abstention already reaches a human, and a second
-      #   gating notion here would decide nothing the queue does not. A denied
-      #   name written as a BARE word is named in the record and nothing more;
-      #   {PATHLIKE} carries that ruling and its measurement.
-      # * *Inert until wired.* No home is known where a ladder is built, so the
-      #   classifier is injected and defaults to {AnyPath}.
+      # * *A doubted command is read only when every path in it is literal.*
+      #   The verdict abstains on a quote, a redirect or a builtin, none of
+      #   which changes which file `cat` opens; an expansion does, so
+      #   `cat "$HOME/.ssh/id_rsa"` reaches a human rather than denying on a
+      #   substring.
+      # * *Denied only.* A GATED path stays an abstention, which already reaches
+      #   a human.
+      # * *Inert until wired*: the classifier and the policy default to
+      #   protecting nothing.
       class Triage
         NAME = "triage"
 
@@ -484,7 +478,7 @@ module Lain
         NOT_JUDGED = "this rung judges only the tools whose input is a command string"
         NOT_A_COMMAND = "the call carries no command string to judge"
         NOT_SAFE = "an allow claims the command is literal and fully understood, never that it is safe"
-        PROTECTED = "the command's argv names a path no approval may lift"
+        PROTECTED = "the command names a path no approval may lift"
         # The same refusal as a model reads it, where the sentence around it
         # already says no approval will lift it.
         TOLD_PROTECTED = "the command names a path this session protects"
@@ -501,29 +495,32 @@ module Lain
         # and not `sensitivity exempt:`, which subtracts from the gated half
         # only.
         #
-        # The trade is deliberate and small. A denied path named as a bare word
-        # DROPS FROM DENY TO ABSTAIN: still named in the record, the call still
-        # reaches a human because {Triage} downgrades every allow anyway,
-        # `Tools::Bash` is gated regardless, and the read boundary proper
-        # ({Sensitivity::Policy}) classifies the RESOLVED path when a tool opens
-        # it. This rung is a bonus refusal on unambiguous evidence, and a word
-        # with neither a separator nor a tilde is not that.
+        # So a denied NAME written as a bare word inside the project DROPS FROM
+        # DENY TO ABSTAIN: still named in the record, and the call still reaches
+        # a human. Outside the project the false positive was never measured, so
+        # `cat shadow` from `/etc` refuses.
         #
-        # The tilde arm earns its place only barely. It needs the `verdict:`
-        # seam in every case, since today's {Shell::Verdict} abstains on any
-        # word matching its `EXPANDING`. Past that, a SLASHLESS tilde word is
-        # rewritten by {Sensitivity} to the home directory ITSELF, so the arm
-        # fires when that directory is denied -- either by a `sensitivity
-        # denied:` rule naming the home's basename, or by a home that is a denied
-        # path in its own right (`/home/.gnupg`, `/home/x/.netrc`; both
-        # verified). It stays because the two objects agree deliberately about
-        # what a leading `~` means, and dropping it would silently disagree.
+        # Where a word LANDS refuses whatever its spelling, and that is a trade
+        # too: the refusal fires on the link's own name, so `rm`, `readlink` or
+        # `ls -l` of a planted link to `/etc/shadow` is refused as well, and a
+        # human removes the link by hand.
+        #
+        # The tilde arm needs the `verdict:` seam, since {Shell::Verdict}
+        # abstains on any word matching its `EXPANDING`; a bare `~` names the
+        # home itself, which a project may deny by its basename.
         PATHLIKE = %r{/|\A~}
 
         # A long command can name many, and a Journal line wants the shape
         # rather than the census. Bounds the RENDERING only -- every word is
         # still classified, or a refusal could hide behind eight harmless ones.
         MAX_NAMED = 8
+
+        # One named path this session protects, and whether the refusal may act
+        # on it; {PATHLIKE} says when.
+        Refusal = Data.define(:word, :why, :decisive)
+
+        # bash opens it as its own directory, where lain's process would open lain's.
+        PROC_CWD = %r{\A/proc/(?:self|thread-self)/cwd(?=/|\z)}
 
         # The classifier of a session that protects nothing: an inert default
         # answering the same messages a real one does, so no branch below guards
@@ -560,66 +557,140 @@ module Lain
         #   fault, by design -- approves the read. A factory resolves the cwd
         #   itself and falls back to a classifier refusing NOTHING when it
         #   cannot, because a wiring error is not evidence about a path.
-        def initialize(verdict: Shell::Verdict.new, tools: COMMAND_TOOLS, field: FIELD, sensitivity: AnyPath.new)
+        # @param policy [Sensitivity::Policy, #judge, #home, #confined] judges where
+        #   a named path lands, since only it spells a landing under the
+        #   configured home and root as well as the real ones; resolves `~`; and
+        #   says what lies outside the project
+        def initialize(verdict: Shell::Verdict.new, tools: COMMAND_TOOLS, field: FIELD, sensitivity: AnyPath.new,
+                       policy: Sensitivity::Policy::Null.instance)
           @verdict = verdict
           @tools = tools.to_a.map { |name| -name.to_s }.freeze
           @field = -field.to_s
           @sensitivity = sensitivity
+          @policy = policy
           freeze
         end
 
         def name = NAME
 
-        def call(effect, _context)
+        def call(effect, context)
           return Ruling.abstain(rung: NAME, because: NOT_JUDGED) unless @tools.include?(effect.name)
 
           command = effect.input[@field]
           return Ruling.abstain(rung: NAME, because: NOT_A_COMMAND) unless command.is_a?(String)
 
-          judge(@verdict.call(command), effect)
+          judge(@verdict.call(command), effect, context)
         end
 
         private
 
-        def judge(decision, effect)
+        def judge(decision, effect, context)
           return denied(because(decision), told: decision.reason) if decision.deny?
-          return literal(decision, effect) if decision.allow?
+          return literal(decision, effect, context) if decision.allow?
+
+          doubted(decision, effect, context)
+        end
+
+        def literal(decision, effect, context)
+          decisive, bare = refused(effect, context, allowed: true).partition(&:decisive)
+          return protected(decision, decisive) unless decisive.empty?
+          return Ruling.abstain(rung: NAME, because: because(decision, named(BARE, bare))) unless bare.empty?
+
+          Ruling.abstain(rung: NAME, because: because(decision, NOT_SAFE))
+        end
+
+        def doubted(decision, effect, context)
+          decisive = refused(effect, context, allowed: false).select(&:decisive)
+          return protected(decision, decisive) unless decisive.empty?
 
           Ruling.abstain(rung: NAME, because: because(decision))
         end
 
-        # The only branch with an argv to read: `term` is
-        # {Shell::Verdict::NO_TERM} on a deny and on every abstention, so a path
-        # check anywhere else would interrogate a Null Object about a path
-        # nobody wrote.
-        def literal(decision, effect)
-          written, bare = refused(decision.term, effect.input[CWD_FIELD]).partition { |word, _| word.match?(PATHLIKE) }
-          unless written.empty?
-            return denied(because(decision, named(PROTECTED, written)), told: named(TOLD_PROTECTED, written))
-          end
-
-          return Ruling.abstain(rung: NAME, because: because(decision, named(BARE, bare))) unless bare.empty?
-
-          Ruling.abstain(rung: NAME, because: because(decision, NOT_SAFE))
+        def protected(decision, refusals)
+          denied(because(decision, named(PROTECTED, refusals)), told: named(TOLD_PROTECTED, refusals))
         end
 
         # Both of this rung's refusals are final: an exclusion and a protected
         # path are the session's own rules, and no human's answer changes them.
         def denied(reason, told:) = Ruling.deny(rung: NAME, because: reason, final: true, told:)
 
-        # EVERY word of every stage, argv0 included. {PATHLIKE} is applied
-        # AFTER classification rather than before, so a bare match can still be
-        # named in the record.
-        def refused(term, cwd)
-          classifier = @sensitivity.call(cwd)
-          term.words.uniq.filter_map do |word|
-            verdict = classifier.classify(word)
-            [word, verdict.explanation] if verdict.denied?
+        # An opaque reading names paths only up to where it stopped, which a
+        # doubted command cannot vouch for. Paths come in stage order, so a
+        # `cd` target is where the stages after it run.
+        def refused(effect, context, allowed:)
+          cwd = effect.input[CWD_FIELD]
+          dir = directory(cwd, context)
+          named = Shell::Named.of(effect.input[@field], cwd: dir, home: @policy.home)
+          return [] if named.opaque? && !allowed
+
+          judges = [@sensitivity.call(cwd), project(context)]
+          here = dir
+          named.paths.filter_map do |path|
+            refusal(path, in_place(path.resolved, here), dir, judges).tap { here = path.resolved if path.directory }
           end
         end
 
+        # The board's root, and the checkout this call's worker or spike runs in,
+        # whose own files share the names a project's do.
+        def project(context) = @policy.confined(roots: [Sensitivity::Policy.base_of(context)])
+
+        # The landing first: a link named `.netrc` that opens `/etc/shadow` is
+        # refused for the file it opens, not left as a bare protected name.
+        def refusal(path, resolved, dir, judges)
+          redirect = Landing.redirect(resolved, cwd: dir)
+          return by_name(path, [resolved, *redirect], *judges) if redirect.nil? || moved_with?(resolved, redirect, dir)
+
+          verdict = @policy.judge(redirect, cwd: dir)
+          return by_name(path, [resolved], *judges) unless verdict.denied?
+
+          Refusal.new(word: path.word, why: "lands on #{redirect}, which is #{verdict.explanation}", decisive: true)
+        end
+
+        # Each spelling by name, the real one included, so a cwd that is itself
+        # a link out of the project is judged where it really is.
+        def by_name(path, spellings, classifier, project)
+          verdict = spellings.lazy.map { classifier.classify(_1) }.find(&:denied?)
+          return unless verdict
+
+          Refusal.new(word: path.word, why: "is #{verdict.explanation}",
+                      decisive: path.word.match?(PATHLIKE) || outside?(project, File.dirname(spellings.first)))
+        end
+
+        # A link at or above the word's own directory moves the project with
+        # it, so the word has not left for another file, and its real spelling
+        # is judged by name; nor has the same file under a home reached
+        # through a link.
+        def moved_with?(resolved, redirect, dir)
+          beside?(redirect, resolved) || Landing.of(redirect, cwd: dir, home: @policy.home).include?(resolved)
+        end
+
+        def beside?(redirect, resolved)
+          parent = File.dirname(resolved)
+          redirect == File.join(Landing.of(parent, cwd: parent).first, File.basename(resolved))
+        rescue Error, SystemCallError
+          false
+        end
+
+        # A directory denied in its own right is treated as outside, the
+        # direction a refusal errs in.
+        def outside?(project, directory)
+          verdict = project.judge(directory, cwd: directory)
+          verdict.denied? || verdict.reason == Sensitivity::Policy::OUTSIDE_PROJECT.reason
+        end
+
+        def in_place(resolved, dir) = resolved.sub(PROC_CWD) { dir }
+
+        # Where `Tools::Bash` runs the command. A cwd nothing can resolve costs
+        # the relative anchoring only, never the refusal of an absolute path.
+        def directory(cwd, context)
+          base = ::Lain::Session.cwd_of(context)
+          cwd.is_a?(String) ? File.expand_path(cwd, base) : base
+        rescue ArgumentError, EncodingError
+          base
+        end
+
         def named(label, refusals)
-          "#{label}: #{refusals.first(MAX_NAMED).map { |word, why| "#{word.inspect} is #{why}" }.join("; ")}"
+          "#{label}: #{refusals.first(MAX_NAMED).map { "#{_1.word.inspect} #{_1.why}" }.join("; ")}"
         end
 
         # {Shell::Verdict::CLAIM} rides on every record, so nothing a Journal

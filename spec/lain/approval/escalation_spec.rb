@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "stringio"
+require "tmpdir"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 #
@@ -759,10 +761,19 @@ RSpec.describe Lain::Approval::Escalation do
     let(:base) { "/srv/project" }
     let(:classifiers) { EscalationSpecSupport::Classifiers.new(home:, base:) }
 
-    def triaged(command, cwd: nil, sensitivity: classifiers, verdict: Lain::Shell::Verdict.new)
-      rung = described_class::Triage.new(sensitivity:, verdict:)
+    def triaged(command, cwd: nil, sensitivity: classifiers, verdict: Lain::Shell::Verdict.new,
+                policy: Lain::Sensitivity::Policy::Null.instance, context: nil)
+      rung = described_class::Triage.new(sensitivity:, verdict:, policy:)
       input = { "command" => command, "cwd" => cwd }.compact
-      ladder(rung).call(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input:), nil)
+      ladder(rung).call(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input:), context)
+    end
+
+    # A checkout under home, which is where the bare-word names were measured.
+    def in_checkout(command)
+      checkout = "#{home}/checkout"
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: checkout, root: checkout),
+                                             home:, root: checkout)
+      triaged(command, policy:, context: Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: checkout, env: {})))
     end
 
     # Scenario: a literal read of a denied path is denied
@@ -812,12 +823,13 @@ RSpec.describe Lain::Approval::Escalation do
 
       expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
       expect(rulings.first["reason"]).to include(described_class::Triage::NOT_SAFE)
-      expect(classifiers.paths).to eq(%w[ls -la])
+      expect(classifiers.paths)
+        .to eq(Lain::Shell::Named.of("ls -la", cwd: Lain::Session.cwd_of(nil), home: nil).paths.map(&:resolved))
     end
 
     # Scenario: an unparseable command still abstains
-    it "attempts no path check at all when the verdict did not understand the command" do
-      expect(triaged("echo hi; ls")).to be(false)
+    it "attempts no path check at all when neither the verdict nor the path reader could read the command" do
+      expect(triaged("for f in *.key; do cat $f; done")).to be(false)
 
       expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
       expect(classifiers.paths).to be_empty
@@ -834,15 +846,19 @@ RSpec.describe Lain::Approval::Escalation do
 
       expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
       expect(rulings.first["reason"]).to include(described_class::Triage::NOT_SAFE)
-      expect(classifiers.paths).to include("./.env")
+      expect(classifiers.paths).to include(File.join(Lain::Session.cwd_of(nil), ".env"))
     end
 
     # Scenario: the deny is read off argv, not the string
-    it "denies off the argv and never off the raw command text" do
+    #
+    # A single-quoted word is literal, so bash opens the key the doubted
+    # command names; an expansion is not, so nothing is read off it.
+    it "denies off the named paths and never off the raw command text" do
       expect(triaged("cat '#{home}/.ssh/id_ed25519'")).to be(false)
+      expect(triaged(%(cat "$HOME/.ssh/id_ed25519"))).to be(false)
 
-      expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
-      expect(classifiers.paths).to be_empty
+      expect(rulings.select { _1["rung"] == "triage" }.map { _1["verdict"] }).to eq(%w[deny abstain])
+      expect(classifiers.paths).to eq(["#{home}/.ssh/id_ed25519"])
     end
 
     # A home-anchored name is the pair that shows WHOSE cwd a relative word
@@ -869,7 +885,7 @@ RSpec.describe Lain::Approval::Escalation do
     # under `$HOME` with nothing anywhere able to lift it, `[sensitivity]
     # exempt` included (it subtracts from the gated half only).
     it "does not refuse a bare word that merely matches a protected name" do
-      expect(triaged("grep -n Cookies lib/lain/sensitivity.rb", cwd: home)).to be(false)
+      expect(in_checkout("grep -n Cookies lib/lain/sensitivity.rb")).to be(false)
 
       expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
       expect(rulings.first["reason"]).to include(described_class::Triage::BARE, '"Cookies"')
@@ -878,32 +894,29 @@ RSpec.describe Lain::Approval::Escalation do
     # `.netrc`, `.gnupg`, `.password-store` and `*.kdbx` match from ANY cwd, so
     # the bare-word class is not confined to a session sitting in `$HOME`.
     it "leaves the any-cwd names bare too, so a checkout stays greppable from anywhere" do
-      expect(triaged("grep -rn .netrc lib spec")).to be(false)
+      expect(in_checkout("grep -rn .netrc lib spec")).to be(false)
 
       expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
       expect(rulings.first["reason"]).to include(described_class::Triage::BARE, '".netrc"')
     end
 
-    # The tilde half of the ruling, and it is doubly out of reach by accident
-    # rather than by design: today's Shell::Verdict abstains on any word
-    # carrying a `~`, and `Sensitivity` rewrites a SLASHLESS tilde word to the
-    # home directory itself, which no built-in rule names. It takes an injected
-    # verdict AND a project that denied its own home's basename to observe --
-    # but `verdict:` is a seam and `[sensitivity] denied` is a real key, so the
-    # arm is reachable rather than dead, and a rule nothing exercises rots.
+    # Shell::Verdict abstains on any word carrying a `~`, so the tilde half of
+    # the ruling takes an injected verdict and a project that denied its own
+    # home's basename to observe. `~user` is opaque to the path reader and is
+    # not refused here; the verdict's abstention still sends it to a human.
     it "treats a tilde word as written-as-a-path even with no separator in it" do
       denied = Lain::Sensitivity::Rules.from({ "denied" => [File.basename(home)] })
       allowing = lambda do |_command|
-        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec allows",
-                                           term: Lain::Shell::Term.of(%w[cat ~somebody]))
+        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec allows", term: Lain::Shell::Term.of(%w[cat ~]))
       end
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: base), home:)
 
-      answer = triaged("irrelevant", verdict: allowing,
-                                     sensitivity: EscalationSpecSupport::Classifiers.new(home:, base:, rules: denied))
+      answer = triaged("cat ~", verdict: allowing, policy:,
+                                sensitivity: EscalationSpecSupport::Classifiers.new(home:, base:, rules: denied))
 
       expect(answer).to be(false)
       expect(rulings.first).to include("verdict" => "deny")
-      expect(rulings.first["reason"]).to include('"~somebody"')
+      expect(rulings.first["reason"]).to include('"~"')
     end
 
     it "still refuses the same name the moment it is written as a path" do
@@ -955,6 +968,180 @@ RSpec.describe Lain::Approval::Escalation do
       leased = Lain::WorkerEnv.new(cwd: "/srv/lease", env: {}, checkout: "/srv/lease")
 
       expect(factory.for(leased)).to be(factory)
+    end
+  end
+
+  # A word is judged where it lands as well as by its name, so a link in the
+  # project is refused for the file it opens.
+  describe "the triage rung's landing check" do
+    around do |example|
+      Dir.mktmpdir("lain-triage-landing") do |dir|
+        @project = File.realpath(dir)
+        example.run
+      end
+    end
+
+    def ruled(command, cwd: nil, root: @project, home: "/home/tester", checkout: nil)
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:)
+      rung = described_class::Triage.new(sensitivity: EscalationSpecSupport::Classifiers.new(home:, base: root),
+                                         policy:)
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: checkout || root, env: {}, checkout:))
+      input = { "command" => command, "cwd" => cwd }.compact
+      ladder(rung).rule(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input:), session)
+    end
+
+    def shadow_link(name = "shadowlink") = File.symlink("/etc/shadow", File.join(@project, name))
+
+    # Scenario: a link to /etc/shadow is refused on the bash route under every level
+    it "refuses a bare word linked to the shadow file finally, naming the file it lands on" do
+      File.symlink("/etc/shadow", File.join(@project, "shadowlink"))
+
+      ruling = ruled("cat shadowlink")
+
+      expect(ruling).to be_deny.and be_final
+      expect(ruling.told).to include('"shadowlink"', "/etc/shadow")
+    end
+
+    # Scenario: a project's own etc/shadow is not that file
+    it "does not refuse a project's own etc/shadow as an account file" do
+      FileUtils.mkdir_p(File.join(@project, "etc"))
+      File.write(File.join(@project, "etc", "shadow"), "not the account database\n")
+
+      ruled("cat etc/shadow")
+
+      expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
+    end
+
+    # Scenario: the /proc/self/root alias is refused
+    it "refuses the /proc/self/root alias of the sudo policy finally" do
+      ruling = ruled("cat /proc/self/root/etc/sudoers")
+
+      expect(ruling).to be_deny.and be_final
+      expect(ruling.told).to include("/etc/sudoers")
+    end
+
+    # The verdict abstains on a quote, a redirect and a program it does not
+    # know, but the paths are still literal, so where they land is still read.
+    it "refuses a link the verdict abstained on, when every path is still literal" do
+      shadow_link
+
+      rulings = ["cat 'shadowlink'", "cat < shadowlink", "sed -n 1p shadowlink"].map { ruled(_1) }
+
+      expect(rulings).to all(be_deny.and(be_final))
+      expect(rulings.map(&:told)).to all(include("/etc/shadow"))
+    end
+
+    it "reads /proc/self/cwd as the directory the command runs in" do
+      shadow_link
+
+      rulings = %w[/proc/self/cwd/shadowlink /proc/thread-self/cwd/shadowlink].map { ruled("cat #{_1}") }
+
+      expect(rulings).to all(be_deny.and(be_final))
+    end
+
+    it "reads /proc/self/cwd after a cd as the directory that cd moved to" do
+      FileUtils.mkdir_p(File.join(@project, "sub"))
+      File.symlink("/etc/shadow", File.join(@project, "sub", "shadowlink"))
+
+      expect(ruled("cd sub && cat /proc/self/cwd/shadowlink")).to be_deny.and be_final
+    end
+
+    # Outside the project a bare word is not a project file that shares a
+    # protected name, so its name alone refuses.
+    it "refuses a bare word naming a protected file outside the project, however the directory was reached" do
+      rulings = [ruled("cd /etc && cat shadow"), ruled("cat shadow", cwd: "/etc")]
+
+      expect(rulings).to all(be_deny.and(be_final))
+    end
+
+    # A human removes a planted link by hand: naming the link refuses whatever
+    # the program does with it.
+    it "refuses a program that would not follow the link as well" do
+      shadow_link
+
+      expect(%w[rm readlink].map { ruled("#{_1} shadowlink") }).to all(be_deny.and(be_final))
+    end
+
+    it "judges where a word lands before its name, so a link under a protected name still refuses" do
+      shadow_link(".netrc")
+
+      ruling = ruled("cat .netrc")
+
+      expect(ruling).to be_deny.and be_final
+      expect(ruling.told).to include('".netrc" lands on /etc/shadow')
+    end
+
+    it "does not count a link above the project as a word's landing" do
+      FileUtils.mkdir_p(File.join(@project, "data", "proj", "lib"))
+      File.symlink(File.join(@project, "data"), File.join(@project, "work"))
+
+      ruled("grep -rn .netrc lib", root: File.join(@project, "work", "proj"))
+
+      expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
+    end
+
+    # The same file under a home reached through a link is the name already
+    # judged, so the refusal reports the name rather than a landing.
+    it "reports a path under a linked home by its name, not as a landing" do
+      FileUtils.mkdir_p(File.join(@project, "var", "u"))
+      File.symlink(File.join(@project, "var"), File.join(@project, "h"))
+      home = File.join(@project, "h", "u")
+      root = File.join(@project, "repo").tap { FileUtils.mkdir_p(_1) }
+
+      ruling = ruled("cat #{home}/.netrc", root:, home:)
+
+      expect(ruling).to be_deny.and be_final
+      expect(ruling.told).to include("is a protected path")
+      expect(ruling.told).not_to include("lands on")
+    end
+
+    # The kernel follows a cwd that links to nothing when the target appears,
+    # so the rung reads it rather than failing on it.
+    it "judges a word under a cwd that links to nothing without faulting" do
+      File.symlink(File.join(@project, "gone"), File.join(@project, "dangling"))
+
+      ruled("cat notes.txt", cwd: "dangling")
+
+      expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
+    end
+
+    # A leased worker's checkout lies outside the board's root, and its own
+    # files share the protected names a checkout's do.
+    it "counts a leased worker's own checkout as inside the project" do
+      home = File.join(@project, "home")
+      root = File.join(home, "dev", "proj").tap { FileUtils.mkdir_p(File.join(_1, "lib")) }
+      lease = File.join(home, "worktrees", "proj-w1").tap { FileUtils.mkdir_p(File.join(_1, "lib")) }
+
+      ["grep -rn .netrc lib", "grep -rn Cookies lib"].each { ruled(_1, root:, home:, checkout: lease) }
+
+      expect(rulings.select { _1["rung"] == "triage" }.map { _1["verdict"] }).to eq(%w[abstain abstain])
+    end
+
+    it "counts a directory denied in its own right as outside the project" do
+      home = File.join(@project, "home")
+      FileUtils.mkdir_p(File.join(home, ".gnupg"))
+      root = File.join(@project, "repo").tap { FileUtils.mkdir_p(_1) }
+
+      expect(ruled("cat pubring.kbx", cwd: File.join(home, ".gnupg"), root:, home:)).to be_deny.and be_final
+    end
+
+    # A project link into a home reached through a link: the real spelling is
+    # judged too, so the protected file behind it refuses.
+    it "refuses a path through a project link into a home reached through a link" do
+      FileUtils.mkdir_p(File.join(@project, "var", "u", ".ssh"))
+      File.symlink(File.join(@project, "var"), File.join(@project, "h2"))
+      root = File.join(@project, "repo").tap { FileUtils.mkdir_p(_1) }
+      File.symlink(File.join(@project, "var", "u"), File.join(root, "h"))
+
+      ruling = ruled("cat h/.ssh/id_rsa", root:, home: File.join(@project, "h2", "u"))
+
+      expect(ruling).to be_deny.and be_final
+    end
+
+    it "leaves a bare word whose name alone is protected to a human" do
+      ruled("grep -rn .netrc lib")
+
+      expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
     end
   end
 

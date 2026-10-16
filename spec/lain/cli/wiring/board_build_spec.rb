@@ -554,9 +554,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         aliased = bash_of("cat /proc/self/root#{home}/.kube/config", "cwd" => root)
 
         expect(board.policy_switch.call(bash_of("cat #{home}/.kube/config", "cwd" => root), nil)).to be(false)
-        while_parked(board, aliased) do
-          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
-        end
+        expect(board.policy_switch.call(aliased, nil)).to be(false)
+        expect(rulings.last).to include("rung" => "triage", "verdict" => "deny", "final" => true)
       end
     end
 
@@ -656,7 +655,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # A symlink in the checkout -- git stores them, so a clone can ship one --
     # spells a file outside the root with a path that is lexically inside it.
     # The approving rule checks where the path really lands.
-    it "leaves a read through an in-root symlink to outside the root parking for a human" do
+    it "refuses a read through an in-root symlink to a protected file outside the root" do
       in_tree do |root, home|
         FileUtils.mkdir_p(File.join(home, ".config", "gh"))
         File.symlink(home, File.join(root, "h"))
@@ -664,26 +663,26 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         board = board_over(root, home)
 
         %w[h/.config/gh/hosts.yml link/etc/shadow].each do |path|
-          while_parked(board, bash_of("cat #{path}", "cwd" => root)) do
-            expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
-          end
+          expect(board.policy_switch.call(bash_of("cat #{path}", "cwd" => root), nil)).to be(false)
+          expect(rulings.last).to include("rung" => "triage", "verdict" => "deny", "final" => true)
         end
       end
     end
 
     # The cwd a bash call runs in is the CLEANED one: `inner/../h` is `h`, and
     # `h` links to home, so the read below is of home's own credential file.
-    it "parks a call whose cleaned cwd lands outside the root through a symlink" do
+    it "refuses a call whose cleaned cwd lands on a protected file through a symlink" do
       in_tree do |root, home|
         FileUtils.mkdir_p([File.join(root, "lib", "deep"), File.join(home, ".config", "gh")])
         File.write(File.join(home, ".config", "gh", "hosts.yml"), "oauth_token: ghp_FAKE\n")
         File.symlink(home, File.join(root, "h"))
         File.symlink(File.join(root, "lib", "deep"), File.join(root, "inner"))
         board = board_over(root, home)
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: {}))
+        call = bash_of("cat .config/gh/hosts.yml", "cwd" => "inner/../h")
 
-        while_parked(board, bash_of("cat .config/gh/hosts.yml", "cwd" => "inner/../h")) do
-          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
-        end
+        expect(board.policy_switch.call(call, session)).to be(false)
+        expect(rulings.last).to include("rung" => "triage", "verdict" => "deny", "final" => true)
       end
     end
 

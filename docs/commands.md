@@ -676,9 +676,13 @@ The same holds for `~/.ssh/id_rsa`. Only file modes stop them. The judge under `
 these, but it is a model and can be wrong. If a session must not read a file, make its mode
 `ask` or take the file out of reach.
 
-**Account and sudo files are always refused**, under every level and for every agent:
-`/etc/shadow`, `/etc/gshadow`, `/etc/sudoers`, `/etc/sudoers.d/*` and their `-` backups, by absolute
-path, with `..` and links resolved. The refusal says no approval can lift it. A project's own
+**Account and sudo files are refused**, under every level and for every agent:
+`/etc/shadow`, `/etc/gshadow`, `/etc/sudoers`, `/etc/sudoers.d/*` and their `-` backups, by name or
+through a link on every file tool. On `bash`, every path a command names is checked whenever lain can
+read every path in it, whether or not the shell verdict understood the command. A command it cannot
+read for certain (an expansion, a `..` after a directory name, or a `cd` not joined by `&&`) is not
+checked: under `ask` it goes to you, under `auto` to the judge, and under `bypass` it is approved. The
+refusal says no approval can lift it. A project's own
 `etc/shadow` is not that file. A chat's **child** (a researcher, say) also has its reads of
 `/etc/passwd` and `/etc/group` refused, not parked, and told its home directory is in its
 environment block; your own agent's read of those still asks.
