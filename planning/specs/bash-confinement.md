@@ -359,7 +359,7 @@ Spec file: `spec/lain/cli/tool_guard_spec.rb`, `spec/lain/middleware/sensitivity
 - `tool_guard_spec.rb:138-139` or `:513-514` (stack order) change: this card adds a constructor argument and must not move a layer.
 - `spec/journalable_surface_spec.rb` rejects the carrier change.
 
-### T5: Carry the deciding rule's name on a Ruling          [risk: medium]
+### [x] T5: Carry the deciding rule's name on a Ruling          [risk: medium]
 
 **Depends on:** T3
 **Files:** `lib/lain/approval/escalation.rb`, `spec/lain/approval/escalation_spec.rb`
@@ -437,7 +437,7 @@ end
 **Stop and report if:**
 - A non-bash tool's context starts answering `ruling`: `GUARDED_TOOLS` limits `Carried` to bash, and readers duck-type with `respond_to?(:ruling)`.
 
-### T7: Parse the bench arm flags once and record them in the session header          [risk: medium]
+### [x] T7: Parse the bench arm flags once and record them in the session header          [risk: medium]
 
 **Depends on:** none
 **Files:** `lib/lain/cli/arms.rb` (new), `exe/lain`, `lib/lain/cli/wiring.rb`, `lib/lain/cli/wiring/toolset_build.rb`, `lib/lain/cli/wiring/board_build.rb`, `lib/lain/session_record.rb`, `lib/lain/session_record/scribe.rb`, `spec/lain/cli/arms_spec.rb` (new), `spec/lain/session_record_spec.rb`, `spec/lain/cli/wiring_spec.rb`
@@ -786,7 +786,7 @@ Spec file: `spec/lain/approval/composed_term_spec.rb`, `spec/lain/cli/wiring/boa
 - `Classifiers`'s own `WorkerEnv` (`board_build.rb:480`, empty env) is what the rule resolves against for the main agent: it must be the session's worker env, through `#for(worker_env)`.
 - `composed_term.rb:215-219`'s comment ("changes no decision") is left as is: rewrite it to say what the class now decides.
 
-### T15: Build the Landlock helper crate          [risk: high]
+### [x] T15: Build the Landlock helper crate          [risk: high]
 
 **Depends on:** none
 **Files:** `crates/lain-fence/Cargo.toml` (new), `crates/lain-fence/src/main.rs` (new), `crates/lain-fence/src/rules.rs` (new), `crates/lain-fence/src/status.rs` (new), `crates/lain-fence/tests/fence.rs` (new)
@@ -854,7 +854,7 @@ Spec file: `crates/lain-fence/tests/memfd.rs`
 **Stop and report if:**
 - Any of `ruby -e 1`, `git status`, `cargo --version` under the fence fails because the filter refuses a memfd the runtime needs (glibc, JITs): report which, with the flags it used.
 
-### T17: Name the paths a sandbox must mask, from the one Policy          [risk: high]
+### [x] T17: Name the paths a sandbox must mask, from the one Policy          [risk: high]
 
 **Depends on:** none
 **Files:** `lib/lain/sensitivity/policy.rb`, `spec/lain/sensitivity/policy_spec.rb`
@@ -937,7 +937,7 @@ Spec file: `spec/lain/confine/mask_list_spec.rb`, `spec/lain/cli/switchboard_spe
 - Listing plus hashing costs more than 20 ms on this repo, measured with `nice`, serially, on a quiet box. (Classifying the whole listing costs about 1.2 s here, per the T17 review, which is why only new names are classified.)
 - A mask target is a symlink: masks go on resolved paths, or bwrap aborts.
 
-### T19: Let a pipeline hand extra file descriptors to its stages          [risk: medium]
+### [x] T19: Let a pipeline hand extra file descriptors to its stages          [risk: medium]
 
 **Depends on:** T1
 **Files:** `lib/lain/shell/pipeline.rb`, `lib/lain/exec/local.rb`, `spec/lain/shell/pipeline_spec.rb`, `spec/lain/exec/local_spec.rb`
@@ -1422,7 +1422,7 @@ Spec file: none (docs). `spec/lain/comment_census_spec.rb` reads `CLAUDE.md`, no
 **Stop and report if:**
 - A scenario cannot be driven on this box (no Landlock ABI 9, no bwrap): say so in the scenario.
 
-### T33: Let in-process observers fold every journal record          [risk: high]
+### [x] T33: Let in-process observers fold every journal record          [risk: high]
 
 **Depends on:** none
 **Files:** `lib/lain/journal.rb`, `spec/lain/journal_spec.rb`
@@ -1487,3 +1487,12 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 14:12 Landed in one quiet window: T1 `3971846f`, T2 `0734d22a`, T3 `134d0500`, T4 `6f2c704b`, T6 `d58b3b39`, T21 `12fad042`. Each through the commit hook's full suite, green. Worktrees and branches removed.
 - 14:12 Interfaces amended from the T8 review: `Executable` gains `wrappers`; the Stat port is `#lstat, #readlink, #realpath, #executable?, #writable?`; T13 journals `Executable#to_journal`. T9 amended: `Gemfile.lock` and `.envrc` are run files. T8 ruling: an unmodelled command runner (nohup, setsid, stdbuf, xargs, sudo, find -exec and kin) resolves `:unresolved` with the runner as a wrapper; `bundle exec X` stays `:unresolved`, decided later by its run files.
 - 14:12 Note for T13: `Shell::Pipeline::Refusals#resolvable?` keeps its own PATH search that drops empty entries; the preflight should read the resolver.
+- 14:13 T5, T19 started from `c58fc0b6`.
+- 14:14 T7 approved. Note for T14: remove the placeholder `_arms = arms` in `BoardBuild.for` once ComposedTerm reads the arm.
+- 14:16 T17 accepted cost: nothing under any `.git` segment is masked, so a token in `.git/config`'s remote URL is readable by bash under the reader profile while `read_file` still asks first. Git breaks (exit 128) when its own files are masked.
+- 14:17 Note for T14 and T28 (from T8): an interpreter stage (`sh -c`, `bash x`, `ruby x`) resolves as the interpreter, classed by its own path; what it runs is a run file (T9). Neither ComposedTerm nor the bar may approve on the stage class alone.
+- 14:17 T5 scope widened to `spec/lain/cli/wiring/board_build_spec.rb` for its BoardBuild.for criterion.
+- 14:19 T19 approved. Notes for T23: a handed fd reaches every descendant of a stage, so a backgrounded or setsid grandchild can hold strace's writer past exit and past the group kill. `Exec::Sandboxed` closes its writer in an `ensure` (the Timeout path too) and reads the trace under the call's deadline (IO.select or read_nonblock), recording a missing EOF as an incomplete trace. Pass only fds 3 and up; wrap only `Exec::Local`.
+- 14:19 T15 notes for later cards: closing every fd above 2 also closes a make or cargo jobserver fd, so passing an fd through the fence needs a new flag; a fence test skip still counts as a pass in libtest's summary on a box without Landlock (accepted; CI does not run cargo test).
+- 14:20 T5 approved (main session read the diff after the reviewer's in-place restore).
+- 14:29 Landed in the second window: T5 `78d83eec`, T7 `af3b7aaf`, T15 `bd84f5d1` (cargo fmt, clippy, test and deny ran in the hook), T17 `5159bd1f`, T19 `ded26bbe`, T33 `e36a67d0`. All green. T8's second review requested changes (a lexical `..` fold in link chains gives the wrong class and freshness through a symlinked directory); asked the user.
