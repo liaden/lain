@@ -16,6 +16,7 @@ module Lain
     # "exactly once" means what the model reads it to mean.
     class EditFile < Tool
       include Tool::FileTarget
+      include Tool::JournalsWrites
 
       # The wire shape: the path to edit, the exact text to find, and its
       # replacement.
@@ -129,13 +130,14 @@ module Lain
 
         session = session_of(invocation).record_pre_image(path) { contents }
         edited = contents.sub(input.old_string) { input.new_string }
-        File.write(path, edited)
-        # The read-set entry is refreshed so a later edit_file call still sees
-        # this path as read, and the write-set records it as this session's
-        # snapshot scope ({Workspace::Snapshot}: write-set only, the documented
-        # bash gap).
-        session.record_read(path, tool_use_id: invocation&.tool_use_id).record_write(path, wrote: edited)
-        Tool::Result.ok("replaced 1 occurrence of old_string in #{path}")
+        journalled_write(path, edited, invocation) do
+          # The read-set entry is refreshed so a later edit_file call still sees
+          # this path as read, and the write-set records it as this session's
+          # snapshot scope ({Workspace::Snapshot}: write-set only, the documented
+          # bash gap).
+          session.record_read(path, tool_use_id: invocation&.tool_use_id).record_write(path, wrote: edited)
+          Tool::Result.ok("replaced 1 occurrence of old_string in #{path}")
+        end
       end
 
       # `String#scan` counts NON-overlapping matches, which would call "aa" in

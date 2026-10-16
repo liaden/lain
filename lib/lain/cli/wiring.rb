@@ -134,7 +134,10 @@ module Lain
         #   -c`": the rung after it is a deny that does not fall through to the
         #   string arm.
         # @param journal [#<<] the session's journal, where {Lain::Tools::Bash}
-        #   writes the {Lain::Telemetry::ShellArm} record of every call's arm.
+        #   writes the {Lain::Telemetry::ShellArm} record of every call's arm,
+        #   and the write tools the {Lain::Telemetry::FileWritten} of every
+        #   write. A child's tools are these same instances, so its writes land
+        #   here too.
         #   Handed down by {Lain::CLI::Wiring::ToolsetBuild}, which holds the
         #   run's one journal already. Null by default for the same reason
         #   `verdict:` is permissive by default -- a floor built with no session
@@ -149,7 +152,7 @@ module Lain
           walking = { walk_limit: search.limit, include: search.include }
           [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new(**walking), Lain::Tools::Glob.new(**walking),
            Lain::Tools::Grep.new(**walking),
-           Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new, Lain::Tools::TodoWrite.new,
+           Lain::Tools::EditFile.new(journal:), Lain::Tools::WriteFile.new(journal:), Lain::Tools::TodoWrite.new,
            Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat),
            Lain::Tools::MemoryRead.new(index: recorder),
            Lain::Tools::Bash.new(exec:, verdict:, journal:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,

@@ -14,6 +14,7 @@ module Lain
     # same discipline, so a model cannot blind-clobber a file it never read.
     class WriteFile < Tool
       include Tool::FileTarget
+      include Tool::JournalsWrites
 
       # The wire shape: the path to write, and its full new contents.
       class Input < Tool::Input
@@ -91,13 +92,14 @@ module Lain
         session = session_of(invocation)
         failing("write", path) do
           session.record_pre_image(path) { File.file?(path) ? File.binread(path) : nil }
-          File.write(path, input.content)
-          # The session now KNOWS this file's contents, so recording the read
-          # lets a following write_file or edit_file see it as read. The
-          # write-set mirrors edit_file's ({Workspace::Snapshot}: write-set
-          # only, the documented bash gap).
-          session.record_read(path, tool_use_id: invocation&.tool_use_id).record_write(path, wrote: input.content)
-          Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{path}")
+          journalled_write(path, input.content, invocation) do
+            # The session now KNOWS this file's contents, so recording the read
+            # lets a following write_file or edit_file see it as read. The
+            # write-set mirrors edit_file's ({Workspace::Snapshot}: write-set
+            # only, the documented bash gap).
+            session.record_read(path, tool_use_id: invocation&.tool_use_id).record_write(path, wrote: input.content)
+            Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{path}")
+          end
         end
       end
     end

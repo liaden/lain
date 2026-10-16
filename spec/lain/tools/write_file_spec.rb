@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "timeout"
 require "tmpdir"
 
@@ -347,5 +348,88 @@ RSpec.describe Lain::Tools::WriteFile do
     expect do
       Timeout.timeout(3) { tool.call({ path:, content: "b" }, invocation_with(Lain::Session.new)) }
     end.to raise_error(Lain::Tool::ContractViolation, /never read/)
+  end
+
+  # What a write leaves behind is what lets a later reader tell whether the
+  # program on PATH is the one a tool planted: device and inode name the file,
+  # and ctime moves on every rewrite where no unprivileged process can set it back.
+  describe "journalling the identity of what it wrote" do
+    let(:journal) { RecordingChannel.new }
+    let(:floor) { Lain::CLI::Wiring::BaseTools.build(Lain::Memory::Recorder.new, journal:) }
+    let(:production) { floor.find { |member| member.name == "write_file" } }
+
+    def written(path) = journal.events.grep(Lain::Telemetry::FileWritten).select { |record| record.path == path }
+    def ctime_ns(stat) = (stat.ctime.tv_sec * 1_000_000_000) + stat.ctime.tv_nsec
+
+    it "journals the path, device, inode and ctime the file has after the write, keyed by the call" do
+      path = File.join(File.realpath(tmpdir), "bin", "cat").tap { |planted| FileUtils.mkdir_p(File.dirname(planted)) }
+
+      production.call({ path:, content: "#!/bin/sh\n" }, invocation_with(Lain::Session.new, tool_use_id: "tu_cat"))
+
+      stat = File.stat(path)
+      expect(written(path)).to contain_exactly(
+        have_attributes(tool_use_id: "tu_cat", device: stat.dev, inode: stat.ino, ctime: ctime_ns(stat))
+      )
+    end
+
+    it "journals the ctime an overwrite left, not the one the file had before it" do
+      path = File.realpath(write("old.txt", "v1\n"))
+      session = Lain::Session.new.record_read(path)
+      # The ctime clock is coarse: without a tick, the stats before and after could agree.
+      sleep 0.02
+
+      production.call({ path:, content: "v2\n" }, invocation_with(session, tool_use_id: "tu_over"))
+
+      stat = File.stat(path)
+      expect(written(path)).to contain_exactly(have_attributes(tool_use_id: "tu_over", inode: stat.ino,
+                                                               ctime: ctime_ns(stat)))
+    end
+
+    it "journals the file a write through a symlink landed in, not the link" do
+      target = File.realpath(write("target.txt", "t\n"))
+      link = File.join(File.realpath(tmpdir), "link").tap { |name| File.symlink(target, name) }
+
+      production.call({ path: link, content: "via link\n" }, invocation_with(Lain::Session.new.record_read(link)))
+
+      expect(written(target).map(&:inode)).to eq([File.stat(target).ino])
+      expect(written(link)).to be_empty
+    end
+
+    it "journals nothing for a write refused before it wrote" do
+      path = write("unread.txt", "theirs")
+
+      expect do
+        production.call({ path:, content: "mine" }, invocation_with(Lain::Session.new))
+      end.to raise_error(Lain::Tool::ContractViolation, /never read/)
+      expect(written(path)).to be_empty
+    end
+  end
+
+  # The bytes are on disk by the time the record is built, so a journal that
+  # cannot take it must not turn a landed write into a reported failure.
+  describe "a journal that fails after the bytes land" do
+    def landed_with(journal)
+      path = File.join(tmpdir, "landed.txt")
+      session = Lain::Session.new
+      result = described_class.new(journal:).call({ path:, content: "landed" }, invocation_with(session))
+      [result, session, path]
+    end
+
+    it "still reports the write, and the session still knows it was written" do
+      full = Class.new { def <<(_record) = raise(Errno::ENOSPC, "journal") }.new
+      result, session, path = landed_with(full)
+
+      expect(result).to have_attributes(is_error: false)
+      expect(session.read?(path)).to be(true)
+      expect(session.written?(path)).to be(true)
+    end
+
+    it "does not let a closed Journal escape the tool" do
+      closed = Lain::Journal.open(File.join(tmpdir, "session.ndjson")).tap(&:close)
+      result, session, path = landed_with(closed)
+
+      expect(result).to have_attributes(is_error: false)
+      expect(session.written?(path)).to be(true)
+    end
   end
 end

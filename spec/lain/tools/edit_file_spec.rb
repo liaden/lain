@@ -457,4 +457,82 @@ RSpec.describe Lain::Tools::EditFile do
       end
     end.to raise_error(Lain::Tool::ContractViolation, /never read/)
   end
+
+  # A child's tools are the floor's own instances, attenuated, so its edit
+  # journals through the same keyword the parent's does. The child Agent's own
+  # journal discards and its display tees onto the run's channel, so neither
+  # may be where this record goes.
+  describe "journalling the identity of what it wrote" do
+    let(:journal) { RecordingChannel.new }
+    let(:display) { RecordingChannel.new }
+    let(:floor) { Lain::Toolset.new(Lain::CLI::Wiring::BaseTools.build(Lain::Memory::Recorder.new, journal:)) }
+
+    def written(path) = journal.events.grep(Lain::Telemetry::FileWritten).select { |record| record.path == path }
+
+    def child(*responses)
+      seam = Lain::Tools::Subagent::Seam.new(
+        provider: Lain::Provider::Mock.new(responses:),
+        context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256) },
+        parent: Lain::Timeline.empty(store: Lain::Store.new), journal:, display_channel: display,
+        tool_middleware: ToolRegistry.gated(policy: Lain::Middleware::Gate::ApproveAll.new)
+      )
+      Lain::Tools::Subagent.new(seam:, toolset: floor, policy: Lain::Role::Catalog[:dev].spawn_policy(posture: :schema),
+                                budget: Lain::Agent::Budget.new, max_depth: 1)
+    end
+
+    it "lands a child's edit in the session journal and shows the display nothing new" do
+      path = File.realpath(write("notes.txt", "hello world"))
+      # The ctime clock is coarse: without a tick, the stats before and after the edit could agree.
+      sleep 0.02
+
+      child(tool_response(["c1", "read_file", { "path" => path }]),
+            tool_response(["c2", "edit_file", { "path" => path, "old_string" => "hello", "new_string" => "bye" }]),
+            text_response("done"))
+        .call({ "prompt" => "edit it" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+
+      stat = File.stat(path)
+      expect(File.read(path)).to eq("bye world")
+      expect(written(path)).to contain_exactly(
+        have_attributes(tool_use_id: "c2", inode: stat.ino,
+                        ctime: (stat.ctime.tv_sec * 1_000_000_000) + stat.ctime.tv_nsec)
+      )
+      expect(display.events.grep(Lain::Telemetry::FileWritten)).to be_empty
+    end
+
+    it "journals nothing for an edit whose old_string does not match" do
+      path = File.realpath(write("notes.txt", "hello world"))
+      editor = floor.to_a.find { |member| member.name == "edit_file" }
+
+      result = editor.call({ path:, old_string: "zzz", new_string: "bye" },
+                           invocation_with(Lain::Session.new.record_read(path)))
+
+      expect(result).to have_attributes(is_error: true)
+      expect(written(path)).to be_empty
+    end
+
+    it "journals nothing for an edit refused before it wrote" do
+      path = write("unread.txt", "hello world")
+      editor = floor.to_a.find { |member| member.name == "edit_file" }
+
+      expect do
+        editor.call({ path:, old_string: "hello", new_string: "bye" }, invocation_with(Lain::Session.new))
+      end.to raise_error(Lain::Tool::ContractViolation, /never read/)
+      expect(written(path)).to be_empty
+    end
+  end
+
+  # The bytes are on disk by the time the record is built, so a journal that
+  # cannot take it must not turn a landed edit into a reported failure.
+  it "still reports an edit, and the session still knows it, when the journal fails after the bytes land" do
+    path = write("hello.txt", "hello world")
+    session = Lain::Session.new.record_read(path)
+    full = Class.new { def <<(_record) = raise(Errno::ENOSPC, "journal") }.new
+
+    result = described_class.new(journal: full).call({ path:, old_string: "hello", new_string: "bye" },
+                                                     invocation_with(session))
+
+    expect(result).to have_attributes(is_error: false)
+    expect(File.read(path)).to eq("bye world")
+    expect(session.written?(path)).to be(true)
+  end
 end
