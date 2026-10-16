@@ -359,6 +359,11 @@ ThreadSafety/ClassInstanceVariable:
 # owns it: it joins the thread for the result, and its own ensure kills and joins it
 # when the task is stopped, so no walk outlives the call that started it.
 #
+# The ninth is Confine::MaskList#prime, one thread per session that classifies the project
+# listing once at toolset build. That first pass costs about a second, and run on the first
+# bash call it stalled the model's turn. The thread touches only the list's own state, and
+# #masks joins it and re-raises its error, so a failed classification is never silent.
+#
 # Specs spawn threads to TEST concurrency -- channel_spec's drop-oldest races are the
 # subject, not an accident -- so spec/ is excluded wholesale.
 ThreadSafety/NewThread:
@@ -366,6 +371,7 @@ ThreadSafety/NewThread:
     - "lib/lain/cli/fleet_windows.rb"
     - "lib/lain/cli/input_socket.rb"
     - "lib/lain/cli/prompt_breaker.rb"
+    - "lib/lain/confine/mask_list.rb"
     - "lib/lain/frontend/neovim.rb"
     - "lib/lain/frontend/neovim/rpc_thread.rb"
     - "lib/lain/frontend/tty.rb"

@@ -1028,6 +1028,12 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  it "exposes the one policy it was given" do
+    policy = home_policy
+
+    expect(switchboard(sensitivity: policy).sensitivity).to be(policy)
+  end
+
   it "hands /approve a tty-signing drain prompt whose reads route through the conductor" do
     conductor = instance_double(Lain::CLI::Conductor)
     prompt = switchboard.surface_kwargs(conductor:).fetch(:approval_prompt)
