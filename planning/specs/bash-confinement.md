@@ -193,10 +193,10 @@ module Lain
     # chain: [String] each link from `resolved` to `realpath`
     # shadowed: [String] later PATH hits, deduped by realpath
     # anomalies: [Symbol] :empty_path_entry, :relative_path_entry, :project_path_entry, :exported_function, :ld_preload
-    # run_files: [RunFile] what an interpreter or build tool will run (T9)
+    # run_files: [RunFiles::Entry] what an interpreter or build tool will run (T9); nil means unresolved
 
     class Executable
-      RunFile = Data.define(:path, :klass, :fresh)
+      # RunFiles::Entry, as built: Data.define(:path, :klass, :fresh)
 
       # One per session, shared by the ladder (T14), the bash call (T13) and the judge (T27).
       # @param stat [#lstat, #readlink, #realpath, #executable?, #writable?] a filesystem port; File in production
@@ -487,7 +487,7 @@ end
 - `cli/resume.rb` or `cli/resume/mismatch_notices.rb` read the header's key set exactly.
 - `Bench::Harness` or another `ToolsetBuild` / `BoardBuild.for` caller breaks: the keyword defaults to `Arms::OFF`.
 
-### T8: Resolve each stage's program into a classified Shell::Executable          [risk: high]
+### [x] T8: Resolve each stage's program into a classified Shell::Executable          [risk: high]
 
 **Depends on:** none
 **Files:** `lib/lain/shell/executable.rb` (new), `lib/lain/shell/executable/resolver.rb` (new), `lib/lain/shell/executable/stat.rb` (new), `spec/lain/shell/executable_spec.rb` (new), `spec/lain/shell/executable/resolver_spec.rb` (new)
@@ -539,7 +539,7 @@ Spec file: `spec/lain/shell/executable/resolver_spec.rb`, `spec/lain/shell/execu
 - Resolving 15 PATH entries costs more than 1 ms per stage on a quiet box (research measured 0.096 ms). Measure with `nice`, serially, only when no suite runs (`pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` reads 0).
 - `system` cannot be decided without root: a directory the user cannot write is the test, by `File.writable?` up the chain, not by owner.
 
-### T9: Classify the file an interpreter or build tool will run          [risk: medium]
+### [x] T9: Classify the file an interpreter or build tool will run          [risk: medium]
 
 **Depends on:** T8
 **Files:** `lib/lain/shell/executable/run_files.rb` (new), `lib/lain/shell/executable/resolver.rb`, `spec/lain/shell/executable/run_files_spec.rb` (new)
@@ -579,7 +579,7 @@ Spec file: `spec/lain/shell/executable/run_files_spec.rb`
 **Stop and report if:**
 - `Shell::Parse` reports the term covered while dropping the stage after `cat <<EOF | bash` (research, `judge-opaque`): mark the term unresolved and report it, rather than fixing the parser here.
 
-### T10: Journal the file identity of every write the write tools make          [risk: high]
+### [x] T10: Journal the file identity of every write the write tools make          [risk: high]
 
 **Depends on:** T7
 **Files:** `lib/lain/telemetry/file_written.rb` (new), `lib/lain/tools/write_file.rb`, `lib/lain/tools/edit_file.rb`, `lib/lain/cli/wiring.rb`, `spec/lain/telemetry/file_written_spec.rb` (new), `spec/lain/tools/write_file_spec.rb`, `spec/lain/tools/edit_file_spec.rb`
@@ -827,7 +827,7 @@ Spec file: `crates/lain-fence/tests/fence.rs`
 - `#![forbid(unsafe_code)]` cannot hold: the `landlock` crate's safe API covered every rule in the spike.
 - The tests cannot run in CI because the runner lacks Landlock: mark them to skip with a printed reason on an ABI below 4, never to pass silently.
 
-### T16: Refuse executable memfds in the fence          [risk: high]
+### [x] T16: Refuse executable memfds in the fence          [risk: high]
 
 **Depends on:** T15
 **Files:** `crates/lain-fence/src/seccomp.rs` (new), `crates/lain-fence/src/main.rs`, `crates/lain-fence/tests/memfd.rs` (new)
@@ -892,7 +892,7 @@ def mask_paths(files, cwd:, within: cwd) = ... # Array<Mask>
 **Stop and report if:**
 - The listing filter and `mask_paths` disagree on any path in `policy_spec.rb`'s fixtures: they must share `Rows#classify`'s code path (the file header at :271-275).
 
-### T18: Keep the session's mask list current          [risk: medium]
+### [x] T18: Keep the session's mask list current          [risk: medium]
 
 **Depends on:** T17
 **Files:** `lib/lain/confine/mask_list.rb` (new), `lib/lain/cli/switchboard.rb`, `spec/lain/confine/mask_list_spec.rb` (new), `spec/lain/cli/switchboard_spec.rb`
@@ -962,7 +962,7 @@ Spec file: `spec/lain/shell/pipeline_spec.rb`, `spec/lain/exec/local_spec.rb`
 - `close_others: true` (`pipeline.rb:425-427`) closes the handed fd before exec: the per-stage option must name it, as the probe did.
 - A handed fd stays open in the parent after the run and blocks the reader's EOF.
 
-### T20: Turn a profile into a bwrap, strace and fence prefix          [risk: high]
+### [x] T20: Turn a profile into a bwrap, strace and fence prefix          [risk: high]
 
 **Depends on:** T15
 **Files:** `lib/lain/confine.rb` (new, the namespace's docstring), `lib/lain/confine/profile.rb` (new), `lib/lain/confine/launcher.rb` (new), `lib/lain/confine/bwrap.rb` (new), `spec/lain/confine/profile_spec.rb` (new), `spec/lain/confine/bwrap_spec.rb` (new)
@@ -1043,7 +1043,7 @@ end
 **Stop and report if:**
 - An argv in a trace line holds an embedded quote or newline that strace escapes: parse strace's escaping, and report any shape the fixture set does not cover.
 
-### T22: Probe which sandbox layers this kernel offers          [risk: medium]
+### [x] T22: Probe which sandbox layers this kernel offers          [risk: medium]
 
 **Depends on:** T15
 **Files:** `lib/lain/confine/probe.rb` (new), `spec/lain/confine/probe_spec.rb` (new)
@@ -1496,3 +1496,20 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 14:19 T15 notes for later cards: closing every fd above 2 also closes a make or cargo jobserver fd, so passing an fd through the fence needs a new flag; a fence test skip still counts as a pass in libtest's summary on a box without Landlock (accepted; CI does not run cargo test).
 - 14:20 T5 approved (main session read the diff after the reviewer's in-place restore).
 - 14:29 Landed in the second window: T5 `78d83eec`, T7 `af3b7aaf`, T15 `bd84f5d1` (cargo fmt, clippy, test and deny ran in the hook), T17 `5159bd1f`, T19 `ded26bbe`, T33 `e36a67d0`. All green. T8's second review requested changes (a lexical `..` fold in link chains gives the wrong class and freshness through a symlinked directory); asked the user.
+- 14:30 T10, T16, T18, T20, T22 started from `5d03aaaa`.
+- 14:31 User ruling on T8: fix the blocker, then the same reviewer re-runs only the dotdot probes and spec files.
+- 14:33 T16 scope widened to `crates/lain-fence/src/status.rs` (the status line must name memfd_noexec). Ruling: fail closed on kernels without MFD_NOEXEC_SEAL.
+- 14:34 Notes for T23 (from the T22 review): the Profiles spec drives a Probe whose strace is absent, and a no-trace reader profile still runs confined. For T25: check supports? for each layer separately so the journal says which are missing; Probe#abi is the number if a minimum is ever needed.
+- 14:34 T18 review rulings: masks are filtered by existence at read time only; pruned directories (tmp, vendor, node_modules, target) still list their own top-level files; MaskList#prime classifies on a background thread, and T25 calls it at toolset build so the 1.1 s first pass never lands on a bash call.
+- 14:45 Landed: T8 `acb33f4a`, T18 `cfd60afb` (with the .rubocop.yml NewThread wiring), T22 `56421eb8`. All green.
+- 14:45 Notes for T23 from the T20 review: a mask target missing at run time fails the whole call (bwrap exits 1), so the mask list must be current; a missing exec file exits 125; a planted program refused through PATH lets execvp fall through to the next PATH entry, so "fails with EACCES" means the refusal is recorded, not that the call fails; the trace lists lain-fence itself and every ENOENT PATH miss. Bundler under the reader profile needs `~/.bundle/config`, which may hold gem-source credentials: T23 decides between granting it and setting BUNDLE_USER_CONFIG=/dev/null after the env scrub. From the T16 review: under strace --seccomp-bpf a memfd_create refused by the fence's filter does not appear in the trace.
+- 14:45 Notes for T12 from the T10 review: FileWritten reaches observers as an object and resumed lineages as string-keyed hashes; ctime nanoseconds exceed 2^53.
+- 14:45 T9 started from `56421eb8`.
+- 14:50 T9 stop condition: Shell::Parse drops the stage after `cat <<EOF | bash` and reports one stage. Not live: Verdict abstains on any heredoc_redirect, so the ladder never approves it. Note for T13 and T14: a term the Verdict does not fully understand resolves as unresolved; never resolve from Parse's stages alone.
+- 14:53 T9 review REQUEST-CHANGES (sh -s reads stdin, git worktree and hooksPath not followed, python -m, make -C, bare test runners). Rule set: under-reporting run files is the unsafe direction, so unsure means unresolved. Interfaces: RunFile is RunFiles::Entry.
+- 14:59 Landed: T10 `93aa92e4`, T16 `55f7b407`. Both green.
+- 14:59 Notes for T14 and T28 (from the T9 review): `git config --global core.hooksPath` is a gated write to a home config, never a read-only git stage; GIT_DIR and GIT_CONFIG* in the worker env are not read by the run-file rules. For T30 (from the T20 review): granting /proc whole exposes /proc/net/tcp, the host's socket list, since the network namespace is not unshared.
+- 14:59 T11 started from `55f7b407`.
+- 14:59 T12 started from `55f7b407`.
+- 15:00 T9, T20 approved. Note for T23: Confine::Bwrap takes the profile's first read dir as the project root (written in Profile's docstring); Profiles must keep the root first.
+- 15:05 Landed: T9 `05dbb6c7`, T20 `584bf5e5`. Both green.
