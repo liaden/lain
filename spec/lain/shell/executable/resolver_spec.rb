@@ -100,6 +100,31 @@ RSpec.describe Lain::Shell::Executable::Resolver do
     expect(stage.sole.klass).to eq(:project)
   end
 
+  # A lease cuts a copy of the project, so what it holds is the project's
+  # whether or not anything in this lineage has changed it.
+  describe "a worker a lease cut a checkout for" do
+    def leased(checkout, path) = Lain::WorkerEnv.new(cwd: checkout, env: { "PATH" => path }, checkout:)
+
+    it "classes a file in the checkout :project and flags its directory on PATH" do
+      cat = plant("#{home}/lease/bin/cat")
+
+      stage = resolver.for(leased("#{home}/lease", "#{File.dirname(cat)}:/usr/bin"))
+                      .call(Lain::Shell::Term.of(%w[cat x])).sole
+
+      expect(stage).to have_attributes(resolved: cat, klass: :project)
+      expect(stage.anomalies).to include(:project_path_entry)
+    end
+
+    it "classes the checkout's file :project when the checkout is spelled through a symlink" do
+      plant("#{home}/lease/bin/cat")
+      File.symlink("#{home}/lease", "#{home}/leaselink")
+
+      stage = resolver.for(leased("#{home}/leaselink", "#{home}/lease/bin")).call(Lain::Shell::Term.of(%w[cat x])).sole
+
+      expect(stage.klass).to eq(:project)
+    end
+  end
+
   it "classes a file :user when any directory above it is writable, not only its parent" do
     locked = plant("#{home}/a/bin/tool")
     File.chmod(0o555, locked)

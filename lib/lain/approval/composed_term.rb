@@ -36,17 +36,21 @@ module Lain
     # 11. THE LISTING PREDICATE: every entry of every directory an `ls` lists
     #     classifies ordinary, by its own name and where it lands, and not by
     #     exemption -- `ls` prints the names `list_files` withholds.
+    # 12. THE CLASS PREDICATE, when the rule is built with `classes:`: every
+    #     stage's program, every wrapper around it and every file it runs
+    #     resolves to a system file, or a user file unchanged this lineage, with
+    #     no PATH or env anomaly.
     #
-    # {#approvable?} is the whole conjunction on one line and every predicate is
+    # {#approvable?} holds predicates 1 to 11 on one line and every predicate is
     # total over a term on its own, so another is one more `&&` plus one more
     # method. That is not tidiness, and it has been TESTED rather than claimed:
     # predicates 6, 7, 8 and 9 were each added after the rest shipped, and each
     # cost one `&&` and one method here -- two for 9, which needs a rescue of
     # its own -- and no existing predicate's logic changed.
     # Predicates 7 and 8 also each cost a message on the injected factory
-    # (`#confinement`, `#content`), and 7 the lexical test {Root} answers. The `PATH`-trust rung
-    # ("the program `execvp` finds is under a trusted prefix") is still above
-    # this one, and bolts on the same way.
+    # (`#confinement`, `#content`), and 7 the lexical test {Root} answers.
+    # Predicate 12 cost `#executables` on the factory, and sits in {#decide}
+    # rather than the conjunction only because its answer also names the reason.
     #
     # == Predicate 6: a path can be spelled so the classifier cannot see it
     #
@@ -208,16 +212,18 @@ module Lain
     # The governing principle this chunk was planned around: auto-approval must
     # never be more permissive than a careful human reading the same command
     # string, and that is a FLOOR rather than a target. A qualified argv0 is
-    # refused under it; `PATH` is not checked, so this rule starts by inheriting
-    # whatever trust the string itself invites. That is a statement of where the
-    # implementation stands and never an argument for staying there.
+    # refused under it; without `classes:`, `PATH` is not checked, so this rule
+    # inherits whatever trust the string itself invites. That is a statement of
+    # where the implementation stands and never an argument for staying there.
     #
-    # A PROGRAM NAME IS NOT AN IDENTITY. `PATH` is inherited and uncontrolled --
-    # `WorkerEnv` merges onto the environment rather than clearing it, and
-    # `Exec.child_env` scrubs only bundler variables -- and no rung here asks
-    # whether the thing `execvp` finds is the program this list vouched for.
-    # Resolving argv0 and journalling the absolute path is the next rung, and it
-    # changes no decision.
+    # A PROGRAM NAME IS NOT AN IDENTITY. `PATH` is inherited and uncontrolled,
+    # so a bare `cat` runs whatever `execvp` finds first. Under `classes:` the
+    # resolved class decides: a system file, or a user file unchanged this
+    # lineage, may run with nobody asked; a project file, a fresh user file, an
+    # unresolved stage or a PATH anomaly abstains. The stage class alone never
+    # approves an interpreter or build tool: what it runs is classed too, and a
+    # run file that cannot be told abstains. Without `classes:` the name is
+    # still all this rule reads.
     class ComposedTerm < Rule
       # Named rather than sniffed, on {Escalation::Triage::COMMAND_TOOLS}'
       # precedent -- a different rule from that list, not a copy of it. A
@@ -472,10 +478,14 @@ module Lain
       #   It must be TOTAL, for the security reason {Escalation::Triage} states
       #   at length about the same seam. Measured, the failure direction here is
       #   at least safe: a raise reaches {RuleChain} as a fault and a fault
-      #   suppresses the allow (`Poisoned(decision: nil)`).
-      def initialize(sensitivity:)
+      #   suppresses the allow (`Poisoned(decision: nil)`). Under `classes:` it
+      #   also answers `#executables(term, cwd)`, one resolved stage per stage.
+      # @param classes [Boolean] whether predicate 12 rules; off, the bench arm's
+      #   baseline, approves by name as before it existed
+      def initialize(sensitivity:, classes: false)
         super()
         @sensitivity = sensitivity
+        @classes = classes
         freeze
       end
 
@@ -493,7 +503,8 @@ module Lain
         term = call.term
         return nil unless approvable?(term, call.input.cwd)
 
-        allow(call, because: format(APPROVED, programs: programs(term).join(", ")))
+        names = vouched_names(term, call.input.cwd)
+        names && allow(call, because: format(APPROVED, programs: names.join(", ")))
       end
 
       private
@@ -652,6 +663,28 @@ module Lain
       end
 
       def programs(term) = term.programs
+
+      # One resolution answers both the predicate and the reason, so the reason
+      # names the file that was judged. A raise abstains, as the other
+      # predicates' rescues do.
+      def vouched_names(term, cwd)
+        return programs(term) unless @classes
+
+        stages = @sensitivity.executables(term, cwd)
+        stages.map { |stage| "#{stage.name} at #{stage.resolved} (#{stage.klass})" } if stages.all? { trusted?(_1) }
+      rescue StandardError
+        nil
+      end
+
+      def trusted?(stage)
+        trusted_class?(stage.klass, stage.fresh) && stage.anomalies.empty? &&
+          stage.wrappers.all? { |wrapper| trusted?(wrapper) } &&
+          stage.run_files.all? { |file| trusted_class?(file.klass, file.fresh) }
+      end
+
+      # A user file is one this process could have swapped, so it is trusted
+      # only while nothing in this lineage has changed it.
+      def trusted_class?(klass, fresh) = klass == :system || (klass == :user && !fresh)
     end
   end
 end

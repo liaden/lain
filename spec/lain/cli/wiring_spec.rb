@@ -439,6 +439,59 @@ RSpec.describe Lain::CLI::Wiring do
 
       expect(seen).to match([armed.arms, armed.arms]).and(satisfy { |pair| pair.first.equal?(pair.last) })
     end
+
+    # A root apart from HOME, since a root holding HOME confines nothing and
+    # the rule would abstain for that reason instead.
+    describe "under --confine classes" do
+      let(:classed) do
+        described_class.new(options: { grace: 5, approval: "auto", confine: "classes" }, chronicle:, status_feed:,
+                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }),
+                            project: throwaway_project(@root))
+      end
+      let(:backend_root) { @root }
+
+      around do |example|
+        Dir.mktmpdir("lain-wiring-classes") do |dir|
+          base = File.realpath(dir)
+          @root = File.join(base, "repo")
+          @home = File.join(base, "home")
+          @state = File.join(base, "state")
+          FileUtils.mkdir_p([@root, @home, @state])
+          File.write(File.join(@root, "README.md"), "# A project\n")
+          example.run
+        end
+      end
+
+      # The session env is a snapshot of ENV taken when the board is built.
+      def board_on_path(path)
+        was = ENV.fetch("PATH")
+        ENV["PATH"] = path
+        recorder, session = classed.run_state(nil)
+        classed.wire_agent(channel:, recorder:, session:, backend:)
+        classed.instance_variable_get(:@switchboard)
+      ensure
+        ENV["PATH"] = was
+      end
+
+      def bash_of(command)
+        Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => command, "cwd" => @root })
+      end
+
+      it "allows a system cat, and the reason names the file that runs" do
+        ruling = board_on_path("/usr/bin").policy_switch.rule(bash_of("cat README.md"), nil)
+
+        expect(ruling).to have_attributes(verdict: :allow, rule: "composed_term")
+        expect(ruling.reason).to include("/usr/bin/cat")
+      end
+
+      it "hands the ladder the resolver the bash tool holds" do
+        board = board_on_path("/usr/bin")
+        rule = board.ladder.to_a[1].instance_variable_get(:@rules).last
+        from_ladder = rule.instance_variable_get(:@sensitivity).instance_variable_get(:@resolver)
+
+        expect(board.toolset.fetch("bash").instance_variable_get(:@resolver)).to equal(from_ladder)
+      end
+    end
   end
 
   # The record tee never reaches the transcript, so a write is told to the

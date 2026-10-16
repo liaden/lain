@@ -49,25 +49,28 @@ module Lain
         # @param config [Config] `.lain/config.rb`, whose remembered answers the board approves
         # @param judge [#call] what `auto` approval asks first, on {Switchboard#initialize}'s terms
         # @param display [#<<] where a call the judge approves is told to the human
-        # @param arms [Lain::CLI::Arms] the bench arms the run was started with
+        # @param arms [Lain::CLI::Arms] the bench arms the run was started with;
+        #   any `confine` but off rules approvals by the resolved class
+        # @param identity [Hash] `resolver:` and `worker_env:`, on {Classifiers#initialize}'s
+        #   terms: the session's ONE resolver, the instance the bash tool holds,
+        #   and the session's own env, whose PATH the main agent's stages resolve through
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
         def for(chronicle:, options:, model:, toolset:, project:, judge:, paths: Paths.new,
                 verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty,
                 config: Config.load(root: project.root), display: Channel::Null.instance,
-                arms: Lain::CLI::Arms::OFF)
-          # No arm reads this yet; the keyword is the seam later arms attach to.
-          _arms = arms
+                arms: Lain::CLI::Arms::OFF, **identity)
           # Compiled once: the exemption check stats the disk.
           table = rules(project:, paths:)
           # The SAME factory reaches both the triage rung and the approving
           # rule, so the two rungs cannot disagree about where a relative word
           # in one command's argv lands.
-          factory = classifiers(project:, paths:, table:)
+          factory = classifiers(project:, paths:, table:, **identity)
+          classes = arms.confine != :off
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
                           rules: [Lain::Approval::Remembered.from(config)].reject(&:empty?),
-                          approving: method(:approving),
+                          approving: ->(remembered, each) { approving(remembered, each, classes:) },
                           sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, test_layout: test_layout(project:), middleware:,
                           approval_timeout: Config.approval_timeout(root: project.root), judge:, display:)
@@ -132,11 +135,12 @@ module Lain
         #
         # @param remembered [Array<Lain::Approval::Rule>] call shapes `.lain/config.rb` pre-approves, kept
         #   ahead of the composed term
-        # @param factory [#call, #confinement, #content] the `cwd -> #classify` factory,
+        # @param factory [#call, #confinement, #content, #executables] the `cwd -> #classify` factory,
         #   on {Lain::Approval::ComposedTerm}'s terms
+        # @param classes [Boolean] whether the composed term rules by the resolved class
         # @return [Array<Lain::Approval::Rule>]
-        def approving(remembered, factory)
-          [*remembered, Lain::Approval::ComposedTerm.new(sensitivity: factory)].freeze
+        def approving(remembered, factory, classes: false)
+          [*remembered, Lain::Approval::ComposedTerm.new(sensitivity: factory, classes:)].freeze
         end
 
         # The session's ONE {Lain::Shell::Verdict}, over the programs this
@@ -219,10 +223,11 @@ module Lain
         #   word must stay under
         # @param paths [Paths]
         # @param table [Lain::Sensitivity::Rules] as on {.policy}
+        # @param identity [Hash] as on {.for}
         # @return [Classifiers]
-        def classifiers(project:, paths:, table:)
+        def classifiers(project:, paths:, table:, **identity)
           Classifiers.new(home: paths.home, cwd: project.cwd, rules: table, root: project.root,
-                          confinement: confinement(project:, paths:))
+                          confinement: confinement(project:, paths:), **identity)
         end
 
         # The boundary an automatic approval reads inside. A root holding the
@@ -473,15 +478,23 @@ module Lain
           # @param confinement [#contains?] the root an approved word must stay
           #   under; confining nothing by default, so a factory built without
           #   one can never be what approves
+          # @param resolver [#for] the session's resolver; by default every
+          #   stage is unresolved, so a factory built without one cannot vouch
+          # @param worker_env [Lain::WorkerEnv] the env the worker's commands
+          #   run under, whose PATH {#executables} resolves through; its cwd is
+          #   replaced by `cwd`, so the two cannot disagree
           # @raise [ArgumentError] from {Lain::Sensitivity}, when `home`, `cwd`
           #   or a root is not something a classifier can be anchored on
           def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty, root: nil, also_rooted: [],
-                         confinement: Lain::Approval::Root::NOWHERE)
+                         confinement: Lain::Approval::Root::NOWHERE,
+                         resolver: Lain::Shell::Executable::Resolver::NULL,
+                         worker_env: Lain::WorkerEnv.new(cwd:, env: {}))
             @home = home
             @rules = rules
             @roots = [root, *also_rooted].uniq.freeze
             @confinement = confinement
-            @worker_env = Lain::WorkerEnv.new(cwd:, env: {})
+            @worker_env = worker_env.with(cwd:)
+            @resolver = resolver
             @session = classifier(cwd)
             @nowhere = Confinement.new(Lain::Approval::Root::NOWHERE, @worker_env.cwd)
             freeze
@@ -531,13 +544,24 @@ module Lain
           # @return [Content] never nil, and never raising
           def content(cwd) = Content.new(confinement(cwd))
 
+          # Bound where the command will run, as the bash tool binds it.
+          #
+          # @param term [Lain::Shell::Term]
+          # @param cwd [String, nil] as on {#call}
+          # @return [Array<Lain::Shell::Executable>] one per stage, resolved
+          #   through this worker's PATH
+          # @raise [ArgumentError] when the cwd cannot be resolved
+          def executables(term, cwd)
+            @resolver.for(@worker_env.with(cwd: @worker_env.resolve(cwd))).call(term)
+          end
+
           # The factory a worker's commands are judged by. A worker a lease cut a
           # checkout for runs them in that checkout, which sits outside the
           # project root, so judged over this factory every word it names would
           # land in a project the command never touches: a link to a key there
           # reads as a file that does not exist. Its factory resolves a call's
-          # cwd from the worker's own and confines an approved word to the
-          # checkout.
+          # cwd from the worker's own, resolves its programs through the
+          # worker's own PATH, and confines an approved word to the checkout.
           #
           # What it protects is widened, never moved: the checkout carries a
           # copy of the tracked tree and the project's own is one absolute word
@@ -552,7 +576,8 @@ module Lain
             return self if checkout.nil?
 
             Classifiers.new(home: @home, cwd: worker_env.cwd, rules: @rules, root: checkout,
-                            also_rooted: @roots.compact, confinement: leased_confinement(checkout))
+                            also_rooted: @roots.compact, confinement: leased_confinement(checkout),
+                            resolver: @resolver, worker_env:)
           end
 
           private

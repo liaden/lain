@@ -30,13 +30,15 @@ module Lain
         end
 
         # The child inherits the host env with the worker's laid over it, a nil
-        # value deleting, so its PATH and its anomalies are read from that.
+        # value deleting, so its PATH and its anomalies are read from that. A
+        # checkout a lease cut is a copy of the project, so its files are the
+        # project's too.
         #
         # @param worker_env [WorkerEnv]
         # @return [Bound]
         def for(worker_env)
-          Bound.new(roots: @roots, fresh: @fresh, stat: @stat, env: @host_env.to_h.merge(worker_env.env).compact,
-                    cwd: worker_env.cwd)
+          Bound.new(roots: roots_of(worker_env.checkout), fresh: @fresh, stat: @stat,
+                    env: @host_env.to_h.merge(worker_env.env).compact, cwd: worker_env.cwd)
         end
 
         # A {Resolver} bound to one worker's env and cwd.
@@ -343,6 +345,10 @@ module Lain
         end
 
         NULL = Null.new.freeze
+
+        private
+
+        def roots_of(checkout) = checkout ? [*@roots, checkout, @stat.real(checkout)].uniq : @roots
       end
     end
   end

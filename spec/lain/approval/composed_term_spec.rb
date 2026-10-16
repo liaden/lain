@@ -1176,6 +1176,169 @@ RSpec.describe Lain::Approval::ComposedTerm do
     end
   end
 
+  # The real resolver over a PATH each example sets, so a stage resolves where
+  # execvp would find it. Freshness is by ctime against the lineage's start.
+  describe "ruled by the resolved class" do
+    # By default the lineage starts in the future, so no file reads as fresh.
+    def classed_rule(root, home, path:, classes: true, since: Time.now + 3600)
+      fresh = Lain::Shell::Executable::Fresh.for_lineage([], clock: -> { since })
+      resolver = Lain::Shell::Executable::Resolver.new(root:, fresh:)
+      factory = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+        home:, cwd: root, root:, confinement: Lain::Approval::Root.new(root), resolver:,
+        worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => path })
+      )
+      described_class.new(sensitivity: factory, classes:)
+    end
+
+    def planted_cat(dir)
+      on_disk(dir, "cat", "#!/bin/sh\nexec /usr/bin/cat \"$@\"\n", mode: 0o755)
+      dir
+    end
+
+    def with_readme(root) = on_disk(root, "README.md", "# A project\n")
+
+    it "allows a system stage, and its reason names the file that runs" do
+      in_tree do |root, home|
+        with_readme(root)
+
+        decision = classed_rule(root, home, path: "/usr/bin").decide(call_of("cat README.md", cwd: root))
+
+        expect(decision).to be_allow
+        expect(decision.reason).to include("cat at /usr/bin/cat (system)")
+      end
+    end
+
+    it "allows an unchanged user wrapper" do
+      in_tree do |root, home|
+        with_readme(root)
+        bin = planted_cat(File.join(home, ".local", "bin"))
+
+        expect(classed_rule(root, home, path: "#{bin}:/usr/bin").decide(call_of("cat README.md", cwd: root)))
+          .to be_allow
+      end
+    end
+
+    it "leaves a fresh user file to the judge" do
+      in_tree do |root, home|
+        with_readme(root)
+        since = Time.now - 60
+        bin = planted_cat(File.join(home, ".local", "bin"))
+
+        expect(classed_rule(root, home, path: "#{bin}:/usr/bin", since:).decide(call_of("cat README.md", cwd: root)))
+          .to be_nil
+      end
+    end
+
+    it "leaves a project file to the judge" do
+      in_tree do |root, home|
+        with_readme(root)
+        bin = planted_cat(File.join(root, "bin"))
+
+        expect(classed_rule(root, home, path: "#{bin}:/usr/bin").decide(call_of("cat README.md", cwd: root)))
+          .to be_nil
+      end
+    end
+
+    it "leaves an unresolved stage to the judge" do
+      in_tree do |root, home|
+        with_readme(root)
+
+        expect(classed_rule(root, home, path: home).decide(call_of("cat README.md", cwd: root))).to be_nil
+      end
+    end
+
+    it "leaves a PATH anomaly to the judge" do
+      in_tree do |root, home|
+        with_readme(root)
+
+        expect(classed_rule(root, home, path: ":/usr/bin").decide(call_of("cat README.md", cwd: root))).to be_nil
+      end
+    end
+
+    it "leaves a build tool whose run file is the project's to the judge" do
+      in_tree do |root, home|
+        on_disk(root, "Cargo.toml", "[package]\nname = \"demo\"\n")
+        bin = File.dirname(on_disk(File.join(home, "bin"), "cargo", "#!/bin/sh\n", mode: 0o755))
+
+        expect(classed_rule(root, home, path: bin).decide(call_of("cargo --version", cwd: root))).to be_nil
+      end
+    end
+
+    it "leaves a build tool to the judge when the directory the call runs in holds its run file" do
+      in_tree do |root, home|
+        on_disk(root, "crate/Cargo.toml", "[package]\nname = \"demo\"\n")
+        bin = File.dirname(on_disk(File.join(home, "bin"), "cargo", "#!/bin/sh\n", mode: 0o755))
+
+        expect(classed_rule(root, home, path: bin).decide(call_of("cargo --version", cwd: "crate"))).to be_nil
+        expect(classed_rule(root, home, path: bin).decide(call_of("cargo --version", cwd: root))).to be_allow
+      end
+    end
+
+    # The link sits in a user directory with no anomaly on PATH, so only the
+    # class of the file it lands on can refuse it.
+    it "leaves a user link to a project file to the judge" do
+      in_tree do |root, home|
+        with_readme(root)
+        bin = File.join(home, ".local", "bin")
+        FileUtils.mkdir_p(bin)
+        File.symlink(File.join(planted_cat(File.join(root, "bin")), "cat"), File.join(bin, "cat"))
+
+        expect(classed_rule(root, home, path: "#{bin}:/usr/bin").decide(call_of("cat README.md", cwd: root)))
+          .to be_nil
+      end
+    end
+
+    # No allowlisted program is a wrapper, so a resolver that reports one is
+    # stood in for; the rule must read what it is handed, not what it expects.
+    describe "given stages no real cat resolves to" do
+      def handing(root, home, answer)
+        factory = classed_rule(root, home, path: "/usr/bin").instance_variable_get(:@sensitivity)
+        stand_in = SimpleDelegator.new(factory)
+        stand_in.define_singleton_method(:executables) { |term, cwd| answer.call(term, cwd) }
+        described_class.new(sensitivity: stand_in, classes: true)
+      end
+
+      def system_cat(wrappers: [])
+        Lain::Shell::Executable.new(
+          name: "cat", resolved: "/usr/bin/cat", realpath: "/usr/bin/cat", chain: ["/usr/bin/cat"], shadowed: [],
+          anomalies: [], klass: :system, fresh: false, run_files: [], wrappers:
+        )
+      end
+
+      it "leaves a system stage under a project wrapper to the judge" do
+        in_tree do |root, home|
+          with_readme(root)
+          wrapper = Lain::Shell::Executable.new(**system_cat.to_h, name: "nice", klass: :project)
+
+          wrapped = ->(*) { [system_cat(wrappers: [wrapper])] }
+
+          expect(handing(root, home, ->(*) { [system_cat] }).decide(call_of("cat README.md", cwd: root))).to be_allow
+          expect(handing(root, home, wrapped).decide(call_of("cat README.md", cwd: root))).to be_nil
+        end
+      end
+
+      it "abstains rather than raising when resolving fails" do
+        in_tree do |root, home|
+          with_readme(root)
+
+          raising = ->(*) { raise Errno::EACCES }
+
+          expect(handing(root, home, raising).decide(call_of("cat README.md", cwd: root))).to be_nil
+        end
+      end
+    end
+
+    it "changes nothing when the arm is off" do
+      in_tree do |root, home|
+        with_readme(root)
+        bin = planted_cat(File.join(root, "bin"))
+
+        expect(classed_rule(root, home, path: "#{bin}:/usr/bin", classes: false)
+          .decide(call_of("cat README.md", cwd: root))).to be_allow
+      end
+    end
+  end
+
   describe "the classifier factory" do
     # No Null default, on the `faults:` keyword's precedent in the ladder's
     # rules rung: a rule that APPROVES and was wired with a classifier

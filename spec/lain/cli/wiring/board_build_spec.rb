@@ -798,6 +798,81 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
+  # The auto ladder under `--confine classes`, handed a resolver and a worker
+  # env as Wiring hands them, and a judge that records being asked so "left
+  # to the judge" is observable without parking.
+  describe "the term-approval rule, ruled by the resolved class" do
+    let(:asked) { [] }
+    let(:judge) { ->(**) { asked.push(:judge) && :deny } }
+
+    # By default the lineage starts in the future, so no file reads as fresh.
+    def classed_board(root, home, path:, confine: :classes, since: Time.now + 3600)
+      fresh = Lain::Shell::Executable::Fresh.for_lineage([], clock: -> { since })
+      board_over(root, home, options: { approval: "auto" }, judge:,
+                             arms: Lain::CLI::Arms.from(confine: confine.to_s),
+                             resolver: Lain::Shell::Executable::Resolver.new(root:, fresh:),
+                             worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => path }))
+    end
+
+    def planted_cat(dir)
+      FileUtils.mkdir_p(dir)
+      File.join(dir, "cat").tap do |cat|
+        File.write(cat, "#!/bin/sh\nexec /usr/bin/cat \"$@\"\n")
+        File.chmod(0o755, cat)
+      end
+      dir
+    end
+
+    it "allows a system stage, naming the file that runs" do
+      in_tree do |root, home|
+        File.write(File.join(root, "README.md"), "# A project\n")
+        board = classed_board(root, home, path: "/usr/bin")
+
+        expect(board.policy_switch.call(bash_of("cat README.md", "cwd" => root), nil)).to be(true)
+        expect(rulings.last).to include("rung" => "rules", "verdict" => "allow", "rule" => "composed_term")
+        expect(rulings.last["reason"]).to include("/usr/bin/cat")
+        expect(asked).to eq([])
+      end
+    end
+
+    it "leaves a project file to the judge" do
+      in_tree do |root, home|
+        File.write(File.join(root, "README.md"), "# A project\n")
+        board = classed_board(root, home, path: "#{planted_cat(File.join(root, "bin"))}:/usr/bin")
+
+        expect(board.policy_switch.call(bash_of("cat README.md", "cwd" => root), nil)).to be(false)
+        expect(rulings.find { |ruling| ruling["rung"] == "rules" }).to include("verdict" => "abstain")
+        expect(asked).to eq([:judge])
+      end
+    end
+
+    it "rules a leased child by its own PATH" do
+      in_tree do |root, home|
+        checkout = File.join(File.dirname(root), "lease")
+        File.write(File.join(FileUtils.mkdir_p(checkout).first, "x"), "x\n")
+        # The lineage starts in the future, so nothing is fresh: the planted cat
+        # is refused for lying in the checkout, not for being new.
+        board = classed_board(root, home, path: "/usr/bin")
+        leased = Lain::WorkerEnv.new(cwd: checkout, checkout:,
+                                     env: { "PATH" => "#{planted_cat(File.join(checkout, "bin"))}:/usr/bin" })
+
+        expect(board.policy_for(leased).call(bash_of("cat x", "cwd" => checkout), nil)).to be(false)
+        expect(asked).to eq([:judge])
+        expect(board.policy_switch.call(bash_of("cat README.md", "cwd" => root), nil)).to be(true)
+      end
+    end
+
+    it "changes nothing under --confine off" do
+      in_tree do |root, home|
+        File.write(File.join(root, "README.md"), "# A project\n")
+        board = classed_board(root, home, path: "#{planted_cat(File.join(root, "bin"))}:/usr/bin", confine: :off)
+
+        expect(board.policy_switch.call(bash_of("cat README.md", "cwd" => root), nil)).to be(true)
+        expect(asked).to eq([])
+      end
+    end
+  end
+
   # An exemption subtracts from the gated half, so one pattern broad enough to
   # lift a whole class of credential names is the table turned off by a
   # different spelling -- `.*` loaded and ungated every dot-named credential.

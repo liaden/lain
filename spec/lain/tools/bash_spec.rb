@@ -1219,12 +1219,13 @@ RSpec.describe Lain::Tools::Bash do
       end
     end
 
-    def run(command, env:, **options)
+    def run(command, env:, cwd: nil, **options)
       worker_env = Lain::WorkerEnv.new(cwd: root, env: ENV.to_h.merge(env))
       session = Lain::Session.new(worker_env:)
       backend, = recording_local
       described_class.new(exec: backend, journal:, resolver:, **options)
-                     .call({ command: }, Lain::Tool::Invocation.new(tool_use_id: "tu_r", context: session, channel:))
+                     .call({ command:, cwd: }.compact,
+                           Lain::Tool::Invocation.new(tool_use_id: "tu_r", context: session, channel:))
     end
 
     it "names each stage by what it will run, with a planted program first on the worker's PATH" do
@@ -1263,6 +1264,17 @@ RSpec.describe Lain::Tools::Bash do
       expect(resolutions.fetch(0).stages.first["resolved"]).to eq(planted)
     ensure
       FileUtils.remove_entry(lease)
+    end
+
+    it "names the run files of the directory the call runs in, not the session's" do
+      plant(root, "cargo")
+      FileUtils.mkdir_p(File.join(root, "crate"))
+      File.write(File.join(root, "crate", "Cargo.toml"), "[package]\n")
+
+      run("cargo --version", env: { "PATH" => "#{root}/bin:#{ENV.fetch("PATH")}" }, cwd: "crate")
+
+      expect(resolutions.fetch(0).stages.first["run_files"].map { |file| file["path"] })
+        .to eq([File.join(root, "crate", "Cargo.toml")])
     end
 
     it "reads the worker's env before any scrub, so an exported function shows" do

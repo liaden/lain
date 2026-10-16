@@ -282,7 +282,7 @@ module Lain
         arm = arm_for(decision)
         journal_arm(decision, arm, invocation)
         options = runtime(input, invocation)
-        journal_resolution(input.command, decision, invocation)
+        journal_resolution(input.command, decision, invocation, options[:cwd])
         capture = run_journalling_writes(input.command, options[:cwd], invocation) do
           @exec.call(command: on_arm(arm, input.command, decision), **options)
         end
@@ -327,8 +327,10 @@ module Lain
       end
 
       # Written before the exec, so a call that times out still leaves the account.
-      def journal_resolution(command, decision, invocation)
-        stages = resolve(command, decision, session_of(invocation).worker_env)
+      # Resolved where the command runs, since a relative PATH entry and a build
+      # tool's run files are read from there.
+      def journal_resolution(command, decision, invocation, cwd)
+        stages = resolve(command, decision, session_of(invocation).worker_env.with(cwd:))
         journal_record(Telemetry::ExecResolution.new(tool_use_id: invocation.tool_use_id,
                                                      stages: stages.map(&:to_journal)))
       end

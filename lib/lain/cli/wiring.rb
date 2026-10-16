@@ -814,8 +814,9 @@ module Lain
         @toolset_build.build(recorder, ask_human:)
       end
 
+      # Memoized: the bash tool and the approval ladder must resolve by one instance.
       def exec_resolver
-        Lain::Shell::Executable::Resolver.new(root:, fresh: observers.fresh)
+        @exec_resolver ||= Lain::Shell::Executable::Resolver.new(root:, fresh: observers.fresh)
       end
 
       # Total before #wire_agent has registered the real ones. Fails closed: with
@@ -940,7 +941,8 @@ module Lain
       def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
                                         verdict:, middleware: backend.middleware, config:, paths: @paths,
-                                        judge: JudgeSource.new(method(:role_spawn)), display: @channel, arms:)
+                                        judge: JudgeSource.new(method(:role_spawn)), display: @channel, arms:,
+                                        resolver: exec_resolver, worker_env: chat_env)
       end
 
       # The session's ONE {Lain::Shell::Verdict}, and the memo is the whole
