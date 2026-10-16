@@ -185,6 +185,26 @@ RSpec.describe Lain::Exec::Local do
       end
     end
 
+    it "never lets an exported shell function reach the shell" do
+      with_env("BASH_FUNC_cat%%" => "() {  echo PLANTED; }") do
+        capture = run("cat /dev/null; echo done")
+
+        expect(capture.stdout).to eq("done\n")
+      end
+    end
+
+    it "scrubs the loader injection variables" do
+      with_env("LD_PRELOAD" => "/nonexistent.so", "LD_AUDIT" => "/nonexistent-audit.so") do
+        expect(run("env").stdout).not_to match(/^LD_(?:PRELOAD|AUDIT)=/)
+      end
+    end
+
+    it "keeps LD_LIBRARY_PATH, because the child Ruby needs OpenSSL" do
+      with_env("LD_LIBRARY_PATH" => "/tmp/lain-libs") do
+        expect(run("env").stdout).to include("LD_LIBRARY_PATH=/tmp/lain-libs\n")
+      end
+    end
+
     it "keeps GEM_HOME, because the child still has to find its gems" do
       with_env("GEM_HOME" => "/tmp/lain-t1-gems") do
         expect(run(%(sh -c 'echo "[$GEM_HOME]"')).stdout).to include("[/tmp/lain-t1-gems]")

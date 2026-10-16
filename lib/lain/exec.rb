@@ -83,6 +83,12 @@ module Lain
     # command names, so the paths an approval rung read off it would be wrong.
     SHELL_ENV = /\ACDPATH\z/
 
+    # LD_LIBRARY_PATH is deliberately NOT here: the child Ruby needs it for OpenSSL.
+    LOADER_ENV = /\A(?:LD_PRELOAD|LD_AUDIT)\z/
+
+    # An exported bash function replaces a command the approval rungs named.
+    FUNCTION_ENV = /\ABASH_FUNC_/
+
     # Every spawn mechanism here INHERITS this process's environment and applies
     # `env` per key onto it, so the scrub has to name every framework var
     # actually present to inherit -- hence the union of the live ENV with the
@@ -98,7 +104,7 @@ module Lain
     # @return [Hash] those overrides plus an explicit nil for each framework or
     #   shell var
     def self.child_env(env)
-      polluted = (ENV.keys + env.keys).grep(Regexp.union(FRAMEWORK_ENV, SHELL_ENV)).uniq
+      polluted = (ENV.keys + env.keys).grep(Regexp.union(FRAMEWORK_ENV, SHELL_ENV, LOADER_ENV, FUNCTION_ENV)).uniq
       env.merge(polluted.to_h { |key| [key, nil] })
     end
   end
