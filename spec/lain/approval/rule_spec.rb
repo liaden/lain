@@ -53,6 +53,12 @@ RSpec.describe Lain::Approval::Rule do
   def call_for(tool, input) = described_class::Call.for(tool:, input:)
 
   # Scenario: a command tool's call carries the parsed term
+  describe ".rule_name" do
+    it "is the name every decision the rule makes carries" do
+      expect(Lain::Approval::ComposedTerm.rule_name).to eq("composed_term")
+    end
+  end
+
   describe "the term a Call carries" do
     it "reports the parse of its own command, stage by stage" do
       expect(call_for(bash, { "command" => "cat README.md | head -20" }).term)

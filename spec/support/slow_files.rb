@@ -24,6 +24,7 @@ module SlowFiles
     spec/lain/cli/repl_spec.rb
     spec/lain/cli/up_spec.rb
     spec/lain/exec/docker_spec.rb
+    spec/lain/exec/sandboxed_spec.rb
     spec/lain/frontend/line_editor_spec.rb
     spec/lain/frontend/neovim/diff_mode_spec.rb
     spec/lain/frontend/neovim/runtime/51_thread_spec.rb

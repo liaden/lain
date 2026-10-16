@@ -132,6 +132,8 @@ module Lain
       #   deadline's end also asks the daemon directly to stop and drop it.
       # @param stdout_sink [#<<] where stdout bytes are pumped as they arrive
       # @param stderr_sink [#<<] where stderr bytes are pumped as they arrive
+      # @param confinement [Confine::Request] checked for its type and otherwise
+      #   ignored: a container is not a sandbox
       # @return [Capture] what ran, whatever its exit status
       # @raise [Timeout] when the deadline passed, the client was killed and
       #   its container asked to stop directly -- the message names the
@@ -139,7 +141,9 @@ module Lain
       #   bounded deadline
       # @raise [Async::Stop] re-raised unchanged once the container has been asked to stop
       # @raise [Unsupported] when handed a PIPED term
-      def call(command:, cwd:, env:, timeout:, stdout_sink: Sink::Null.new, stderr_sink: Sink::Null.new)
+      def call(command:, cwd:, env:, timeout:, stdout_sink: Sink::Null.new, stderr_sink: Sink::Null.new,
+               confinement: Confine::Request::NONE)
+        confinement => Confine::Request
         crossing = crossing(env)
         name = @names.next
         @exec.call(command: Shell::Term.of(argv(command, cwd, crossing.keys, timeout, name)), cwd: @project,

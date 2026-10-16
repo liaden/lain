@@ -33,6 +33,16 @@ RSpec.describe Lain::Shell::Executable do
     end
   end
 
+  describe "#programs" do
+    it "lists every wrapper that runs it, outermost first, then itself" do
+      inner = described_class.unresolved("ruby", wrappers: [described_class.unresolved("bundle")])
+      outer = described_class.unresolved("nice")
+      executable = described_class.unresolved("x", wrappers: [outer, inner])
+
+      expect(executable.programs.map(&:name)).to eq(%w[nice bundle ruby x])
+    end
+  end
+
   it "deep-freezes what it is built from, so a resolved Executable is Ractor-shareable" do
     wrapper = described_class.unresolved(+"nice")
     executable = described_class.new(name: +"cat", resolved: +"/usr/bin/cat", realpath: +"/usr/bin/cat",

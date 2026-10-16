@@ -45,6 +45,10 @@ module Lain
       # @return [Boolean] whether the kernel bounds what the call may reach
       def confined? = !%i[none traced].include?(name)
 
+      # @param path [String] a resolved program
+      # @return [Boolean] whether the fence lets the call exec it
+      def runs?(path) = exec_files.include?(path) || exec_dirs.any? { path.start_with?("#{_1}/") }
+
       NONE = new(name: :none, trace: false)
       TRACED = new(name: :traced, trace: true)
 

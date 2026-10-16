@@ -40,6 +40,36 @@ RSpec.describe Lain::Confine::Trace do
       expect([record.tool_use_id, record.profile, record.truncated]).to eq(["toolu_1", :reader, false])
     end
 
+    it "is complete when every exec it holds has closed" do
+      expect(record_of(lines).incomplete).to be(false)
+    end
+
+    describe "read before its channel ended" do
+      def record_unended(text_lines)
+        described_class.new(trace_io(text_lines)).record(tool_use_id: "t", profile: :traced, ended: false)
+      end
+
+      it "is incomplete until its first process has exited" do
+        expect(record_unended(lines).incomplete).to be(true)
+      end
+
+      it "is complete once its first process has exited, whatever it left running" do
+        expect(record_unended([*lines, "10 +++ exited with 0 +++"]).incomplete).to be(false)
+        expect(record_unended([*lines, "10 +++ killed by SIGKILL +++"]).incomplete).to be(false)
+      end
+    end
+
+    it "is incomplete while an exec is still unfinished" do
+      unfinished = '20 execve("/usr/bin/cat", ["cat"], 0x1 /* 1 var */ <unfinished ...>'
+      expect(record_of([*lines, unfinished]).incomplete).to be(true)
+    end
+
+    it "is incomplete when its last line is cut short" do
+      record = described_class.new(StringIO.new("#{lines.join("\n")}\n11 execve(\"/usr/b"))
+                              .record(tool_use_id: "toolu_1", profile: :reader)
+      expect(record.incomplete).to be(true)
+    end
+
     it "does not count a failed lookup as a refusal" do
       missing = '14 execve("/nonexistent/x", ["x"], 0x1 /* 1 var */) = -1 ENOENT (No such file or directory)'
       record = record_of([missing])

@@ -56,13 +56,20 @@ module Lain
       # @param stderr_sink [#<<] where stderr bytes are pumped as they arrive
       # @param fds [Hash{Integer => IO}] descriptors handed to each stage of a
       #   term; the caller closes its own copies
+      # @param launch [#call] turns the term, once checked, into the one that runs
+      # @param pinned_env [Hash] laid over the env after the framework scrub,
+      #   which would otherwise delete a framework variable the caller sets
+      # @param confinement [Confine::Request] checked for its type and otherwise
+      #   ignored: this backend confines nothing
       # @return [Capture] what ran, whatever its exit status, holding at most
       #   one byte past the ceiling and counting every byte
       # @raise [Timeout] when the deadline passed and the group was killed
       def call(command:, cwd:, env:, timeout:, stdout_sink: Sink::Null.new, stderr_sink: Sink::Null.new,
-               fds: {})
+               fds: {}, launch: Shell::Pipeline::AS_WRITTEN, pinned_env: {}, confinement: Confine::Request::NONE)
+        confinement => Confine::Request
         capture = Capture::Bounded.new(ceiling: @ceiling, stdout_sink:, stderr_sink:)
-        @pipeline.call(term(command), cwd:, env: Exec.child_env(env), timeout:, capture:, fds:)
+        @pipeline.call(term(command), cwd:, env: Exec.child_env(env).merge(pinned_env), timeout:, capture:, fds:,
+                                      launch:)
       rescue Shell::Pipeline::Timeout => e
         raise Timeout, e.message
       end

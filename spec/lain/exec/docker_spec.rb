@@ -197,6 +197,20 @@ RSpec.describe Lain::Exec::Docker do
     end.new
   end
 
+  # A container is not a sandbox, and a confinement asked of one is ignored rather than half-applied.
+  describe "a confinement it is handed" do
+    it "is accepted, and changes neither the argv nor what reaches the inner exec" do
+      seen = lambda do
+        [argv.reject { _1 == name_flag(argv) }, inner.env, inner.sinks.keys]
+      end
+      run
+      plain = seen.call
+      run(confinement: Lain::Confine::Request::NONE)
+
+      expect(seen.call).to eq(plain)
+    end
+  end
+
   describe "the docker invocation it builds" do
     # STRUCTURE, not the first four elements: what follows `--rm` depends on
     # which client is answering (see "how the calling user reaches the

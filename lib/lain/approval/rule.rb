@@ -264,12 +264,16 @@ module Lain
       ANONYMOUS = "an anonymous rule must define #name -- a decision names the rule that made it"
       private_constant :ANONYMOUS
 
-      def name
-        basename = self.class.name.to_s.split("::").last.to_s
+      # @return [String] the name a decision this rule makes carries
+      # @raise [NotImplemented] for an anonymous rule class
+      def self.rule_name
+        basename = name.to_s.split("::").last.to_s
         raise NotImplemented, ANONYMOUS if basename.empty?
 
         basename.underscore
       end
+
+      def name = self.class.rule_name
 
       # @param _call [Call] the call to judge
       # @return [Decision, nil] nil meaning "no opinion", so the next rule decides

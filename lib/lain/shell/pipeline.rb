@@ -128,6 +128,8 @@ module Lain
       NOT_FOUND = 127
       NOT_PERMITTED = 126
 
+      AS_WRITTEN = :itself.to_proc
+
       # What a shell reports when it cannot enter its cwd. Refusing up front
       # answers with it rather than raising out of `spawn`.
       CHDIR_FAILED = 1
@@ -221,6 +223,9 @@ module Lain
       #   bounded by what the caller chose to retain.
       # @param fds [Hash{Integer => IO}] descriptors every stage inherits at
       #   the given number; the caller still owns, and closes, its own copies
+      # @param launch [#call] turns the checked term into the one that runs. The
+      #   refusals read the term as the caller wrote it, because a launcher's own
+      #   program is neither what the caller named nor on the downstream list.
       # @return [Exec::Capture] for every TERM, including every one that cannot run --
       #   which is the totality that matters, because a term is built from a
       #   {Tool::Input} the model wrote. NOT for every OBJECT: anything that is
@@ -229,16 +234,22 @@ module Lain
       # @raise [Timeout] when the deadline passes, after the groups are killed
       # @raise [Exception] whatever a caller's sink raises mid-pump, or a stop,
       #   after the groups are killed -- see {Run#collect}
-      def call(term, cwd:, env:, timeout:, capture:, fds: {})
+      def call(term, cwd:, env:, timeout:, capture:, fds: {}, launch: AS_WRITTEN)
         refusals = Refusals.new(term:, cwd:, env:).causes
         return refuse(refusals.first, capture) unless refusals.empty?
 
+        start(launch.call(term), cwd:, env:, timeout:, capture:, fds:)
+      end
+
+      private
+
+      # A launch that raises is a caller's bug, so it is built outside the
+      # rescue that turns a failed spawn into a shell-shaped refusal.
+      def start(term, cwd:, env:, timeout:, capture:, fds:)
         Run.new(term:, cwd:, env:, timeout:, grace: @grace, clock: @clock, setsid: @setsid, capture:, fds:).call
       rescue SystemCallError, ArgumentError => e
         refuse(Refusal.new(status: NOT_FOUND, message: "#{PARTIALLY_STARTED}: #{e.class}: #{e.message}"), capture)
       end
-
-      private
 
       def refuse(refusal, capture)
         capture.take(:stderr, "#{PREFIX}#{refusal.message}\n").finish(refusal.status)

@@ -73,4 +73,20 @@ RSpec.shared_examples "an exec backend answering for a term" do
       expect(unsupported?(term)).to be(!backend.takes_term?(term)), term.inspect
     end
   end
+
+  # The bash call hands every backend how it was approved; one that cannot
+  # confine a call must still take the keyword, or the call dies on it. Called
+  # directly rather than through the host, whose `#run_term` takes no keyword:
+  # a backend host declares no term it cannot run from the spec's own cwd.
+  it "takes a confinement on #call and answers each term as it does without one" do
+    declared_terms.each do |term|
+      refused = begin
+        backend.call(command: term, cwd: Dir.pwd, env: {}, timeout: 10, confinement: Lain::Confine::Request::NONE)
+        false
+      rescue Lain::Exec::Unsupported
+        true
+      end
+      expect(refused).to be(!backend.takes_term?(term)), term.inspect
+    end
+  end
 end

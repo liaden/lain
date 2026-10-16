@@ -58,8 +58,9 @@ module Lain
       # @param cwd [String] already resolved by the caller ({WorkerEnv#resolve})
       # @param env [Hash] the caller's overrides, before the framework scrub
       # @param timeout [Numeric] seconds before the daemon kills the command
-      # @param _no_live_output [Hash] the live sinks {Local} streams into,
-      #   accepted so the two backends answer one message and dropped here
+      # @param _no_live_output [Hash] the live sinks {Local} streams into and the
+      #   `confinement:` a bash call hands every backend, accepted so the
+      #   backends answer one message and dropped here: the daemon confines nothing
       # @return [Capture] what ran, whatever its exit status
       # @raise [Unsupported] when handed anything but a String
       # @raise [Timeout] when the daemon killed the command server-side

@@ -56,6 +56,19 @@ RSpec.describe Lain::Exec::Core do
     end
   end
 
+  describe "a confinement it is handed" do
+    it "is accepted, and changes nothing on the wire" do
+      run
+      plain = client.params
+      Sync do
+        described_class.new(client:).call(command: "echo hi", cwd: "/tmp", env: ENV.to_h, timeout: 5,
+                                          confinement: Lain::Confine::Request::NONE)
+      end
+
+      expect(client.params).to eq(plain)
+    end
+  end
+
   # The out-of-process half of exec. The daemon is lain's OWN child, so it
   # already carries BUNDLE_GEMFILE: an env map that merely OMITS the key leaves
   # the daemon's copy in place. Only an explicit nil -- msgpack nil, the

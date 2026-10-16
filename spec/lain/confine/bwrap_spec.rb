@@ -17,7 +17,7 @@ RSpec.describe Lain::Confine::Bwrap do
         %W[/usr/bin/bwrap --ro-bind / / --dev /dev --proc /proc
            --size #{Lain::Confine::Profile::TMPFS_BYTES} --tmpfs /tmp --unshare-pid --die-with-parent
            --ro-bind /dev/null /p/.env --
-           /usr/bin/strace -f --seccomp-bpf -e trace=execve,execveat -o /dev/fd/3 --
+           /usr/bin/strace -DD -f -s 256 --seccomp-bpf -e trace=execve,execveat -o /dev/fd/3 --
            /f/lain-fence --exec-dir /usr --exec-dir /h/.rustup/toolchains --exec-file /h/.local/bin/grep
            --read-dir /p --read-dir /usr --read-dir /etc --read-dir /proc --read-dir /dev/null
            --read-dir /dev/urandom --read-dir /tmp --read-dir /h/.rustup --read-dir /h/.cargo/bin
@@ -50,10 +50,37 @@ RSpec.describe Lain::Confine::Bwrap do
       expect(argv_of(launcher.wrap(term, untraced, trace_fd: 3))).not_to include("/usr/bin/strace")
     end
 
-    it "wraps a traced profile with strace only" do
+    # Nothing else closes the trace descriptor in an unconfined call, so the
+    # traced command would inherit it and could write its own exec lines. The
+    # relay keeps reading once the call stops, so a tracer left following a
+    # background process never blocks on the call's pipe.
+    it "wraps a traced profile with strace writing through a relay, and a shell that closes the trace descriptor" do
       expect(argv_of(launcher.wrap(term, Lain::Confine::Profile::TRACED, trace_fd: 5))).to eq(
-        %w[/usr/bin/strace -f --seccomp-bpf -e trace=execve,execveat -o /dev/fd/5 -- cat README.md]
+        ["/usr/bin/strace", "-DD", "-f", "-s", "256", "--seccomp-bpf", "-e", "trace=execve,execveat",
+         "-o", "|exec /usr/bin/tee -p /dev/fd/5 >/dev/null", "--",
+         "/bin/sh", "-c", 'exec "$@" 5>&-', "sh", "cat", "README.md"]
       )
+    end
+
+    # Tracers sharing one channel interleave their lines and lose execs.
+    it "gives every stage a trace descriptor of its own, each counted up from the first" do
+      piped = Lain::Shell::Term.new(pipelines: [Lain::Shell::Term.of(%w[cat f], %w[head -1]).pipelines.sole,
+                                                Lain::Shell::Term.of(%w[pwd]).pipelines.sole])
+      wrapped = launcher.wrap(piped, Lain::Confine::Profile::TRACED, trace_fd: 3)
+
+      expect(wrapped.stages.map { |stage| stage.argv[stage.argv.index("-o") + 1] }).to eq(
+        ["|exec /usr/bin/tee -p /dev/fd/3 >/dev/null 4>&- 5>&-",
+         "|exec /usr/bin/tee -p /dev/fd/4 >/dev/null 3>&- 5>&-",
+         "|exec /usr/bin/tee -p /dev/fd/5 >/dev/null 3>&- 4>&-"]
+      )
+      expect(wrapped.stages.map { _1.argv[_1.argv.index("/bin/sh") + 2] }).to all(eq('exec "$@" 3>&- 4>&- 5>&-'))
+    end
+
+    it "writes a reader stage's trace straight to its own descriptor" do
+      piped = Lain::Shell::Term.of(%w[cat f], %w[head -1])
+      wrapped = launcher.wrap(piped, reader, trace_fd: 3)
+
+      expect(wrapped.stages.map { |stage| stage.argv[stage.argv.index("-o") + 1] }).to eq(%w[/dev/fd/3 /dev/fd/4])
     end
 
     it "returns the term unchanged under :none" do
@@ -69,7 +96,7 @@ RSpec.describe Lain::Confine::Bwrap do
                                     ])
       wrapped = launcher.wrap(piped, Lain::Confine::Profile::TRACED, trace_fd: 3)
       expect(wrapped.pipelines.map { |pipeline| pipeline.stages.map { [_1.argv.last(2), _1.discards] } })
-        .to eq([[[%w[-- ls], [:stderr]], [%w[wc -l], []]], [[%w[-- pwd], []]]])
+        .to eq([[[%w[sh ls], [:stderr]], [%w[wc -l], []]], [[%w[sh pwd], []]]])
     end
   end
 

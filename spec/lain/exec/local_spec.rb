@@ -249,6 +249,15 @@ RSpec.describe Lain::Exec::Local do
   # offers. Declared below as this backend's row of the seam's truth table; the
   # CONTRACT that row is checked against is one shared file, so the seam's third
   # required message cannot stay a promise only a comment makes.
+  describe "a confinement it is handed" do
+    it "is ignored when it is a request, and refused loudly when it is anything else" do
+      expect(backend.call(command: "printf hi", cwd: Dir.pwd, env: {}, timeout: 10,
+                          confinement: Lain::Confine::Request::NONE).stdout).to eq("hi")
+      expect { backend.call(command: "printf hi", cwd: Dir.pwd, env: {}, timeout: 10, confinement: :reader) }
+        .to raise_error(NoMatchingPatternError)
+    end
+  end
+
   describe "the terms it says it can take" do
     def run_term(term) = run(term)
     def terms_taken = [Lain::Shell::Term.of(%w[printf hi]), Lain::Shell::Term.of(%w[printf hi], %w[cat])]

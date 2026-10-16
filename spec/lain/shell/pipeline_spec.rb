@@ -352,6 +352,42 @@ RSpec.describe Lain::Shell::Pipeline do
     end
   end
 
+  # A launcher prefixes every stage with its own program, which is never on
+  # the downstream list and never the program the caller named.
+  describe "a term handed through a launch" do
+    let(:launch) do
+      lambda do |term|
+        Lain::Shell::Term.new(pipelines: term.pipelines.map do |pipeline|
+          Lain::Shell::Term::Pipeline.new(stages: pipeline.stages.map do |stage|
+            Lain::Shell::Term::Stage.new(argv: ["/usr/bin/env", *stage.argv], discards: stage.discards)
+          end)
+        end)
+      end
+    end
+
+    def launched(*argvs)
+      pipeline.call(Lain::Shell::Term.of(*argvs), cwd: Dir.pwd, env: {}, timeout: 10, launch:,
+                                                  capture: Lain::Exec::Capture::Bounded.new(ceiling: 1024))
+    end
+
+    it "is checked as the caller wrote it, so a piped term still runs" do
+      expect(launched(%w[printf a\nb\n], %w[head -1])).to have_attributes(exit_status: 0, stdout: "a\n")
+    end
+
+    it "lets a launch that raises propagate, since that is a caller's bug and not a spawn that failed" do
+      expect do
+        pipeline.call(Lain::Shell::Term.of(%w[true]), cwd: Dir.pwd, env: {}, timeout: 10,
+                                                      launch: ->(_term) { raise ArgumentError, "bad launch" },
+                                                      capture: Lain::Exec::Capture::Bounded.new(ceiling: 1024))
+      end.to raise_error(ArgumentError, "bad launch")
+    end
+
+    it "still names a missing program as not found" do
+      expect(launched(%w[no-such-program-anywhere]))
+        .to have_attributes(exit_status: 127, stderr: "lain: no-such-program-anywhere: command not found\n")
+    end
+  end
+
   describe "the first stage's stdin" do
     it "is /dev/null, and never the process's own" do
       read, write = IO.pipe

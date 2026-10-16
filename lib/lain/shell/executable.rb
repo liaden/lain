@@ -29,6 +29,9 @@ module Lain
           "run_files" => run_files.map(&:to_journal), "wrappers" => wrappers.map(&:to_journal) }
       end
 
+      # @return [Array<Executable>] every wrapper that runs this one, outermost first, then this one
+      def programs = [*wrappers.flat_map(&:programs), self]
+
       # @param name [String] the program word, as written or as unwrapped
       # @param anomalies [Array<Symbol>]
       # @param wrappers [Array<Executable>]

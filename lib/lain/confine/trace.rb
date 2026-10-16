@@ -2,15 +2,14 @@
 
 module Lain
   module Confine
-    # Reads the strace exec record a confined call wrote to its trace pipe. The pipe is drained
-    # to the end even past the cap, because a writer blocked on a full pipe would hang the call
-    # it is tracing; only the parsing stops.
+    # Reads the strace exec record one stage of a confined call wrote. Past the cap the input
+    # is still read to its end, so a writer on a pipe never blocks on it; only the parsing stops.
     class Trace
       CAP = 8 * 1024 * 1024
       CHUNK = 64 * 1024
       REFUSED = %w[EACCES EPERM].freeze
 
-      # @param io [#readpartial] the read end of the trace pipe
+      # @param io [#readpartial] the trace, read to its end
       # @param cap [Integer] the most bytes of trace that are parsed
       def initialize(io, cap: CAP)
         @io = io
@@ -19,17 +18,24 @@ module Lain
 
       # @param tool_use_id [String] the call this trace belongs to
       # @param profile [Symbol] the confinement profile it ran under
+      # @param ended [Boolean] false when the trace's channel was still open, in
+      #   which case the record is complete only once the first process traced
+      #   has exited: the tracer may still be following what it left running
       # @return [Telemetry::ExecRecord]
-      def record(tool_use_id:, profile:)
+      def record(tool_use_id:, profile:, ended: true)
         text, truncated = drain
-        execs, fd_execs = Parser.new.parse(text).partition { |call| call[:fd].nil? }
-        Telemetry::ExecRecord.new(tool_use_id:, profile:, truncated:,
+        parser = Parser.new
+        execs, fd_execs = parser.parse(text).partition { |call| call[:fd].nil? }
+        unsettled = parser.open? || cut_short?(text) || !(ended || parser.first_exited?)
+        Telemetry::ExecRecord.new(tool_use_id:, profile:, truncated:, incomplete: !truncated && unsettled,
                                   execs: execs.map { |call| call.slice(:path, :argv0, :rc) },
                                   refusals: refusals(execs + fd_execs),
                                   fd_execs: fd_execs.map { |call| call.slice(:fd, :path, :argv0, :rc, :errno) })
       end
 
       private
+
+      def cut_short?(text) = !text.empty? && !text.end_with?("\n")
 
       def refusals(calls)
         calls.select { |call| REFUSED.include?(call[:errno]) }.map { |call| call.slice(:path, :errno) }
@@ -57,6 +63,8 @@ module Lain
         CALL = /\A(?:(?<pid>\d+)\s+)?(?<name>execve|execveat)\((?<args>.*)\z/
         RESUMED = /\A(?:(?<pid>\d+)\s+)?<\.\.\. (?:execve|execveat) resumed>(?<tail>.*)\z/
         UNFINISHED = /\s*<unfinished \.\.\.>\z/
+        PID = /\A(?<pid>\d+)\s/
+        EXITED = /\A(?<pid>\d+)\s+\+\+\+ (?:exited with|killed by) /
         RESULT = /\)\s+=\s+(?<rc>-?\d+)(?:\s+(?<errno>E[A-Z0-9]+))?(?:\s+\(.*\))?\s*\z/
         ESCAPE = /\\(?:(?<octal>[0-7]{1,3})|x(?<hex>\h{1,2})|(?<char>.))/m
         SIMPLE = { "n" => "\n", "t" => "\t", "r" => "\r", "v" => "\v", "f" => "\f", "a" => "\a", "b" => "\b" }.freeze
@@ -67,8 +75,16 @@ module Lain
           lines = text.split("\n", -1)
           lines.pop
           @pending = {}
+          @first = lines.lazy.filter_map { PID.match(_1)&.[](:pid) }.first
+          @exited = lines.filter_map { EXITED.match(_1)&.[](:pid) }
           lines.filter_map { |line| read(line.b) }
         end
+
+        # @return [Boolean] whether an exec the trace began has not yet closed
+        def open? = !@pending.empty?
+
+        # @return [Boolean] whether the first process the trace names has exited
+        def first_exited? = @exited.include?(@first)
 
         private
 

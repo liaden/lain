@@ -323,7 +323,7 @@ ThreadSafety/ClassInstanceVariable:
     - "lib/lain/tool/contracts.rb"
     - "lib/lain/tool/input.rb"
 
-# The eight deliberate thread groups, and they have four legitimate owners.
+# The ten deliberate thread groups, and they have four legitimate owners.
 #
 # Four are the frontend's: the neovim RPC drain/resend pair and its rpc_thread, the
 # TTY reader, and prompt_breaker's watchdog -- each a supervised reader
@@ -364,6 +364,11 @@ ThreadSafety/ClassInstanceVariable:
 # bash call it stalled the model's turn. The thread touches only the list's own state, and
 # #masks joins it and re-raises its error, so a failed classification is never silent.
 #
+# The tenth is Exec::Sandboxed's trace pump, one thread per traced call. Each stage's tracer
+# writes into a pipe while the command runs, and an unread pipe would stall the traced
+# command once it fills, so the pump drains every stage's pipe alongside the run. The call
+# stops and joins it before returning, and closes every pipe in its own ensure.
+#
 # Specs spawn threads to TEST concurrency -- channel_spec's drop-oldest races are the
 # subject, not an accident -- so spec/ is excluded wholesale.
 ThreadSafety/NewThread:
@@ -372,6 +377,7 @@ ThreadSafety/NewThread:
     - "lib/lain/cli/input_socket.rb"
     - "lib/lain/cli/prompt_breaker.rb"
     - "lib/lain/confine/mask_list.rb"
+    - "lib/lain/exec/sandboxed.rb"
     - "lib/lain/frontend/neovim.rb"
     - "lib/lain/frontend/neovim/rpc_thread.rb"
     - "lib/lain/frontend/tty.rb"

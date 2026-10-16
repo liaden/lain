@@ -74,6 +74,19 @@ RSpec.describe Lain::Confine::Profile do
     end
   end
 
+  describe "#runs?" do
+    subject(:profile) { described_class.reader(root: "/p", home: "/h", exec_files: ["/h/.local/bin/grep"]) }
+
+    it "runs a program beneath an exec dir, or one granted by name" do
+      expect([profile.runs?("/usr/bin/cat"), profile.runs?("/h/.local/bin/grep")]).to eq([true, true])
+    end
+
+    it "runs nothing else, and a dir's name is not a prefix of its neighbour's" do
+      expect([profile.runs?("/p/bin/cat"), profile.runs?("/usrx/bin/cat"), profile.runs?("/h/.local/bin/rg")])
+        .to eq([false, false, false])
+    end
+  end
+
   describe "NONE" do
     it "is neither traced nor confined" do
       expect([described_class::NONE.name, described_class::NONE.trace, described_class::NONE.confined?])
