@@ -54,18 +54,30 @@ module Lain
     # from a recording. It merges on `profile:`'s own rule, so a run that
     # recorded none writes no key.
     #
+    # `arms:` is the bench arms that are on (`CLI::Arms#to_header`); an empty
+    # hash writes no key, so a run with every arm off keeps the older header.
+    #
     # `writer:` is the process writing the file ({Liveness::Writer}), so a
     # reader elsewhere can tell a crashed session from a quiet one; an
     # unrecorded writer writes no field.
     def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil, profile: {},
-               compaction: {}, writer: Liveness::Writer::UNRECORDED)
+               compaction: {}, arms: {}, writer: Liveness::Writer::UNRECORDED)
       record = { "type" => HEADER_TYPE, "context_class" => context.class.name,
                  "model" => context.model, "max_tokens" => context.max_tokens,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "head" => head,
                  "tools" => toolset.to_schema, "reminders" => workspace.reminders }
-      record = record.merge(context_pipeline(context), profile, compaction, writer.to_header)
+      record = record.merge(context_pipeline(context), profile, compaction, arms_section(arms), writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
+    end
+
+    # The bench arms that are on, nested under one key so a reader of the
+    # header's flat keys never mistakes one for a profile field.
+    #
+    # @param arms [Hash{String=>String}] `CLI::Arms#to_header`
+    # @return [Hash{String=>Hash}] empty when every arm is off
+    def arms_section(arms)
+      arms.empty? ? {} : { "arms" => arms }
     end
 
     # The header field naming which catalog pipeline rendered the session, and

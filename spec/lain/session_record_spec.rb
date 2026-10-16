@@ -111,6 +111,18 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("session").first).to include("compact_fallback" => "none")
   end
 
+  it "writes the arms that are on under one arms key" do
+    described_class.new(journal:, context:, toolset:, workspace:, arms: { "confine" => "reader" })
+
+    expect(of_type("session").first).to include("arms" => { "confine" => "reader" })
+  end
+
+  it "writes no arms key when every arm is off" do
+    scribe
+
+    expect(of_type("session").first).not_to have_key("arms")
+  end
+
   it "writes no compaction key when the run recorded no section" do
     scribe
 

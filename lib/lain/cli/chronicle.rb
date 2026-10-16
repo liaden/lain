@@ -272,10 +272,10 @@ module Lain
       # than resolved from: nothing defaults a fallback to a recording.
       # @see SessionRecord::Scribe#initialize
       def start(context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
-                profile: RunProfile::UNRECORDED, compaction: {})
+                profile: RunProfile::UNRECORDED, compaction: {}, arms: {})
         @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:,
                                             resumed_from:, written:, message_journal: @tee, live: @live,
-                                            profile: profile.to_header, compaction:)
+                                            profile: profile.to_header, compaction:, arms:)
         self
       end
 

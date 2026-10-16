@@ -59,6 +59,9 @@ module Lain
         # role.
         attr_reader :role_spawn, :docent
 
+        # @return [Lain::CLI::Arms] the bench arms the run was started with
+        attr_reader :arms
+
         # The run's ONE {Lain::Attachment::Store}, readable from construction
         # rather than from {#build}: it is a place, not a discovery.
         #
@@ -189,6 +192,7 @@ module Lain
         #   journals are read from
         # @param config [Lain::Config] `.lain/config.rb`, which names each epic
         #   stage's gate policy
+        # @param arms [Lain::CLI::Arms] the bench arms the run was started with
         # @option options [String] :exec the transport the `exec:` default
         #   resolves, with `:exec_image` the only other keys this class reads.
         #   `--auto-approve` is not among them: it seeds the mode's layer on
@@ -199,7 +203,9 @@ module Lain
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
                        handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
                        middleware: Lain::Config::Middleware.empty, display: Lain::Channel::Null.instance,
-                       exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))
+                       exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:),
+                       arms: Lain::CLI::Arms::OFF)
+          @arms = arms
           @library = library
           @backend = backend
           @attachments = attachments

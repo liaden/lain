@@ -158,7 +158,7 @@ module Lain
         end
       end
 
-      attr_reader :ask_human, :askers, :supervisor, :conductor, :command_surface, :project
+      attr_reader :ask_human, :askers, :supervisor, :conductor, :command_surface, :project, :arms
 
       # {ToolsetBuild}'s discoveries, not this object's state.
       delegate :role_spawn, to: :toolset_build
@@ -255,6 +255,7 @@ module Lain
                      conductor_opener: Lain::CLI::Conductor.public_method(:open),
                      stdin: Lain::Frontend::StdinPump.process_input)
         @options = options
+        @arms = CLI::Arms.from(options)
         @chronicle = chronicle
         @status_feed = status_feed
         @run_clock = run_clock
@@ -387,7 +388,7 @@ module Lain
         # refusal must land ahead of the header.
         switchboard(backend, toolset)
         chronicle.start(context: backend.context, toolset:, profile: backend.run_profile,
-                        compaction: backend.compaction_header, **resume_start(resumed))
+                        compaction: backend.compaction_header, arms: arms.to_header, **resume_start(resumed))
         @switchboard.journal_launch
         # ASSIGNED to an ivar, not merely returned: the `parent` thunk above and
         # the usage thunk #build_toolset passes both read this slot at CALL time.
@@ -867,7 +868,7 @@ module Lain
                                           handback:, epic: epic_mount(notice),
                                           attachments:, middleware: backend.middleware, paths: @paths,
                                           display: @channel,
-                                          config:)
+                                          config:, arms:)
         @toolset_build.build(recorder, ask_human:)
       end
 
@@ -984,7 +985,7 @@ module Lain
       def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
                                         verdict:, middleware: backend.middleware, config:, paths: @paths,
-                                        judge: JudgeSource.new(method(:role_spawn)), display: @channel)
+                                        judge: JudgeSource.new(method(:role_spawn)), display: @channel, arms:)
       end
 
       # The session's ONE {Lain::Shell::Verdict}, and the memo is the whole

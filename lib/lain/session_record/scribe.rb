@@ -149,10 +149,12 @@ module Lain
       #   (`CLI::RunProfile#to_header`); empty writes none
       # @param compaction [Hash{String=>Object}] the run's compaction section
       #   (`CLI::Backend#compaction_header`); empty writes none
+      # @param arms [Hash{String=>String}] the bench arms that are on
+      #   (`CLI::Arms#to_header`); empty writes none
       # @param writer [Liveness::Writer] the process writing this session
       def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
                      message_journal: nil, live: Channel::Null.instance, profile: {}, compaction: {},
-                     writer: Liveness::Writer.current)
+                     arms: {}, writer: Liveness::Writer.current)
         @journal = journal
         @message_journal = message_journal || journal
         @live = live
@@ -162,7 +164,7 @@ module Lain
         # ORDER is the claim.
         @spawned = Set.new
         @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:, profile:,
-                                         compaction:, writer:)
+                                         compaction:, arms:, writer:)
       end
 
       # The {Event::ChainWriter} observer duck: journal an off-render-chain

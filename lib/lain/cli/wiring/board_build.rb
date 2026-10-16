@@ -49,12 +49,16 @@ module Lain
         # @param config [Config] `.lain/config.rb`, whose remembered answers the board approves
         # @param judge [#call] what `auto` approval asks first, on {Switchboard#initialize}'s terms
         # @param display [#<<] where a call the judge approves is told to the human
+        # @param arms [Lain::CLI::Arms] the bench arms the run was started with
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
         def for(chronicle:, options:, model:, toolset:, project:, judge:, paths: Paths.new,
                 verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty,
-                config: Config.load(root: project.root), display: Channel::Null.instance)
+                config: Config.load(root: project.root), display: Channel::Null.instance,
+                arms: Lain::CLI::Arms::OFF)
+          # No arm reads this yet; the keyword is the seam later arms attach to.
+          _arms = arms
           # Compiled once: the exemption check stats the disk.
           table = rules(project:, paths:)
           # The SAME factory reaches both the triage rung and the approving

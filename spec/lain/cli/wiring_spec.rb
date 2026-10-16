@@ -383,6 +383,64 @@ RSpec.describe Lain::CLI::Wiring do
     wiring.wire_agent(channel:, recorder:, session:, backend:)
   end
 
+  describe "the bench arms" do
+    let(:arm_options) { { grace: 5, confine: "reader", judge_facts: "facts", tripwire: "observe" } }
+    let(:armed) { described_class.new(options: arm_options, chronicle:, status_feed:) }
+
+    it "answers the parsed flags" do
+      expect([armed.arms.confine, armed.arms.judge_facts, armed.arms.tripwire]).to eq(%i[reader facts observe])
+    end
+
+    it "refuses a bad value when the wiring is built" do
+      expect { described_class.new(options: { confine: "sideways" }, chronicle:, status_feed:) }
+        .to raise_error(Lain::CLI::Arms::Unknown, /off, classes, reader/)
+    end
+
+    describe "the session header" do
+      let(:journal_io) { StringIO.new }
+      let(:state_dir) { Dir.mktmpdir("wiring-arms") }
+      let(:chronicle) do
+        Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io),
+                                 journal_path: File.join(state_dir, "session.ndjson"))
+      end
+
+      after { FileUtils.rm_rf(state_dir) }
+
+      def header_of(wiring)
+        recorder, session = wiring.run_state(nil)
+        wiring.wire_agent(channel:, recorder:, session:, backend:)
+        journal_io.string.each_line.map { |line| JSON.parse(line) }.find { |r| r["type"] == "session" }
+      end
+
+      it "holds the arms that are on" do
+        expect(header_of(armed)).to include("arms" => { "confine" => "reader", "judge_facts" => "facts",
+                                                        "tripwire" => "observe" })
+      end
+
+      it "holds no arms key when every arm is off" do
+        off = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+
+        expect(header_of(off)).not_to have_key("arms")
+      end
+    end
+
+    it "hands the toolset build and the board build the same instance" do
+      seen = []
+      allow(Lain::CLI::Wiring::ToolsetBuild).to receive(:new).and_wrap_original do |original, **kwargs|
+        seen << kwargs[:arms]
+        original.call(**kwargs)
+      end
+      allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
+        seen << kwargs[:arms]
+        original.call(**kwargs)
+      end
+      recorder, session = armed.run_state(nil)
+      armed.wire_agent(channel:, recorder:, session:, backend:)
+
+      expect(seen).to match([armed.arms, armed.arms]).and(satisfy { |pair| pair.first.equal?(pair.last) })
+    end
+  end
+
   # The record tee never reaches the transcript, so a write is told to the
   # human only through the channel the TTY drains.
   it "hands the main agent the transcript's channel as where written files are told" do

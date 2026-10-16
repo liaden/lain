@@ -275,6 +275,18 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(of_type("session").first).to include("provider" => "ollama", "num_batch" => 2048)
     end
 
+    it "pins the bench arms it is handed into that header" do
+      chronicle.start(context:, toolset:, arms: { "confine" => "reader" })
+
+      expect(of_type("session").first).to include("arms" => { "confine" => "reader" })
+    end
+
+    it "writes no arms key when none is handed" do
+      chronicle.start(context:, toolset:)
+
+      expect(of_type("session").first).not_to have_key("arms")
+    end
+
     # Loud, not lossy: an event arriving before the scribe exists must raise,
     # never silently vanish -- pre-start is wiring time, when no event can flow.
     it "raises NotStarted from the observer (and catch_up) before #start" do
