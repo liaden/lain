@@ -2027,6 +2027,14 @@ XDG path relative, which put machine state back inside the user's repository)
    for unknown programs, a credential-printing command denylist, `Shell::Parse` kinds per stage, the terminal
    flake family (5 recorded), a project's `system.md` reaching approver prompts, and read roots for dev
    children. Round 25 re-drives each closed finding (`planning/specs/qa-round-24-fixes.md`, Integration checks).
+59. **Planned (2026-10-16)**: `planning/specs/bash-confinement.md`, the research's "plan now" items
+   (`planning/binary-identity-research-2026-10.md`, untracked): the inherited env scrubbed of exported
+   functions and loader injection, every `bash` stage resolved into a journalled `Shell::Executable` with
+   ctime-based freshness, `ComposedTerm` ruling by the resolved class, its approvals run under bwrap, strace
+   and a new Landlock helper (`crates/lain-fence`) behind a launcher a gVisor or microVM backend can replace,
+   judge facts with a structured bar as an arm that starts off, an observe-only tripwire ledger, and the
+   requester on every ladder record. Each step is a CLI arm recorded in the session header; the safe arms
+   turn on by default last. 33 cards, panel-reviewed.
 
 ## Map of the documents
 
