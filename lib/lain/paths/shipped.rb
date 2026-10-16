@@ -24,11 +24,21 @@ module Lain
       # and {NVIM_PLUGIN_ROOT} each reached independently, at their own depth.
       GEM_ROOT = File.expand_path("../../..", __dir__)
 
-      # {Core::Child::WORKSPACE_TARGET}: where `cargo build` writes when
-      # `CARGO_TARGET_DIR` names nothing. A build OUTPUT, not a shipped file --
-      # grouped with the rest because it is the same gem-root arithmetic, not
-      # because it ships with the gem.
+      # Where `cargo build` writes when `CARGO_TARGET_DIR` names nothing. A
+      # build OUTPUT, not a shipped file -- grouped with the rest because it is
+      # the same gem-root arithmetic, not because it ships with the gem.
       CARGO_WORKSPACE_TARGET = File.join(GEM_ROOT, "target")
+
+      # CARGO_TARGET_DIR first, because that is how a linked worktree runs
+      # against the main checkout's build instead of compiling its own. Empty
+      # reads as unset: cargo refuses an empty value, so no build lives under one.
+      #
+      # @param env [Hash] where CARGO_TARGET_DIR is read from
+      # @return [String] absolute; the directory cargo builds into
+      def self.cargo_target(env: ENV)
+        configured = env["CARGO_TARGET_DIR"].to_s
+        configured.empty? ? CARGO_WORKSPACE_TARGET : File.expand_path(configured)
+      end
 
       # {Frontend::Neovim} injects this tree's `rtp`; {CLI::Up::Cockpit}
       # decides what a missing one means (a degrade, with a warning), so this

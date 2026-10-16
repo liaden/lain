@@ -18,26 +18,13 @@ module Lain
         end
       end
 
-      # Where `cargo build` writes when nothing redirects it. {Paths::Shipped}
-      # owns the gem-root arithmetic this and {Paths::NVIM_PLUGIN_ROOT} both
-      # used to rederive independently, each at its own file's depth.
-      WORKSPACE_TARGET = Paths::Shipped::CARGO_WORKSPACE_TARGET
-
       # Pinned, not derived: `rake core:build` builds debug and the :core-tagged
       # specs read what it wrote.
       PROFILE = "debug"
 
-      # CARGO_TARGET_DIR first, because that is how a linked worktree runs
-      # against the main checkout's build instead of compiling its own. Empty
-      # reads as unset: cargo refuses an empty value, so no build lives under one.
-      #
-      # @param env [Hash] where CARGO_TARGET_DIR is read from
+      # @param env [Hash] where CARGO_TARGET_DIR is read from, see {Paths::Shipped.cargo_target}
       # @return [String] absolute path to the compiled daemon
-      def self.binary(env: ENV)
-        configured = env["CARGO_TARGET_DIR"].to_s
-        target = configured.empty? ? WORKSPACE_TARGET : File.expand_path(configured)
-        File.join(target, PROFILE, "lain-core")
-      end
+      def self.binary(env: ENV) = File.join(Paths::Shipped.cargo_target(env:), PROFILE, "lain-core")
 
       # Resolved once, from the environment the process started in. Injectable
       # (`binary:`) so a packaged install can point elsewhere.

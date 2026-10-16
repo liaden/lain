@@ -69,6 +69,21 @@ RSpec.describe Lain::Paths::Shipped do
     end
   end
 
+  describe ".cargo_target" do
+    it "is CARGO_TARGET_DIR, expanded, when the environment names one" do
+      expect(described_class.cargo_target(env: { "CARGO_TARGET_DIR" => "/t/../shared" })).to eq("/shared")
+    end
+
+    it "reads an empty CARGO_TARGET_DIR as unset, since cargo refuses an empty one" do
+      expect(described_class.cargo_target(env: { "CARGO_TARGET_DIR" => "" }))
+        .to eq(described_class::CARGO_WORKSPACE_TARGET)
+    end
+
+    it "is the workspace target when nothing names one" do
+      expect(described_class.cargo_target(env: {})).to eq(described_class::CARGO_WORKSPACE_TARGET)
+    end
+  end
+
   describe "the daemon binary path honours a configured target directory" do
     it "resolves inside CARGO_TARGET_DIR when the environment names one" do
       configured = "/tmp/lain-shipped-spec-configured-target"
