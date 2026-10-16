@@ -402,11 +402,9 @@ module Lain
                                     budget: Lain::Role::Catalog.fetch(RESEARCHER).budget, kept: research_leases)
         end
 
-        # Confined by its own stack, because outside plan the board confines
-        # nothing, and a researcher's lease outlives it.
-        def researcher_seam
-          announcing(RESEARCHER.to_s).then { _1.with(tool_middleware: _1.tool_middleware.with(confined: true)) }
-        end
+        # Its kept lease names a checkout, so its own stack holds it there
+        # ({ToolGuard.child_stack}): outside plan the board confines nothing.
+        def researcher_seam = announcing(RESEARCHER.to_s)
 
         # Related directories are read off the board when a child is spawned,
         # since the board is built after this toolset.

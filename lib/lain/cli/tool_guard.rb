@@ -118,15 +118,12 @@ module Lain
       # announces a role copies the run's one seam with a different
       # `requester` and every other member shared.
       #
-      # `confined` holds every child inside the checkout its environment
-      # names, for a spawner that leases each child a directory of its own:
+      # A child whose lease cut a checkout is held inside it ({.child_stack}):
       # outside plan the board's scope confines nothing.
-      Spawned = Data.define(:chronicle, :board, :requester, :confined) do
-        def initialize(confined: false, **) = super
-
+      Spawned = Data.define(:chronicle, :board, :requester) do
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @return [Middleware::Stack] a fresh one per child
-        def call(worker_env) = ToolGuard.child_stack(chronicle, board.call, worker_env, requester:, confined:)
+        def call(worker_env) = ToolGuard.child_stack(chronicle, board.call, worker_env, requester:)
 
         # Read off the board as a child is built, never before.
         def guard_inputs = board.call.guard_inputs
@@ -238,27 +235,32 @@ module Lain
       # rungs read a command's words in that checkout -- on behalf of the child
       # `requester` names, as its read guard asks a release. The ledger and
       # listing filter stay the board's one, and the path policy is the board's
-      # confined to the child's scope ({.working}).
+      # confined to the child's scope ({.working}). A child whose environment
+      # names a checkout is held inside it, as plan scope holds one inside the
+      # spike; one that names none is held nowhere.
       #
       # @param chronicle [CLI::Chronicle] as on {.stack}
       # @param board [CLI::Switchboard] as on {.stack}
       # @param worker_env [WorkerEnv] the environment the child runs in
       # @param requester [String] who a human is told is asking
-      # @param confined [Boolean] whether a write or a command aimed outside
-      #   the checkout `worker_env` names is refused, as plan scope refuses one
-      #   outside the spike
       # @return [Middleware::Stack]
-      def child_stack(chronicle, board, worker_env, requester:, confined: false)
+      def child_stack(chronicle, board, worker_env, requester:)
         inputs = board.guard_inputs
+        held = worker_env.checkout ? [held_in(worker_env, home: inputs.sensitivity.home)] : []
         working(chronicle, inputs, worker_env, Asking.new(policy: inputs.policy_for.call(worker_env), requester:),
-                requester:, held: confined ? [held_in(worker_env)] : [])
+                requester:, held:)
       end
 
       # Read once, as the child is built: the checkout is the lease's, and a
       # lease never moves.
-      def held_in(worker_env)
+      #
+      # @param worker_env [WorkerEnv] the leased child's, naming its checkout
+      # @param home [String, nil] what a `~` in a command names
+      # @return [Middleware::ConfineToScope]
+      def held_in(worker_env, home:)
         scope = Session::Confined.new(worker_env:, reminder: "")
-        Middleware::ConfineToScope.new(scope: Held.new(current: scope), wording: Middleware::ConfineToScope::LEASE)
+        Middleware::ConfineToScope.new(scope: Held.new(current: scope), wording: Middleware::ConfineToScope::LEASE,
+                                       reach: Middleware::ConfineToScope::Reach.new(home:))
       end
 
       # A worker's stack, over the inputs it is guarded by, the checkout its

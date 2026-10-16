@@ -223,8 +223,9 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
       expect(outcome(child, "cat #{@repo}/README.md")).to eq(:parked)
     end
 
-    it "parks a call whose cwd is the parent's checkout" do
-      expect(outcome(child, "cat README.md", cwd: @repo)).to eq(:parked)
+    it "refuses a call whose cwd is the parent's checkout, naming the worktree" do
+      expect(outcome(child, "cat README.md", cwd: @repo)).to match([:refused, start_with("bash refused")
+        .and(include(checkout))])
     end
 
     it "parks a relative walk up to the parent's checkout" do
@@ -243,6 +244,98 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
       File.symlink(@repo, File.join(checkout, "up"))
 
       expect(outcome(child, "cat up/README.md")).to eq(:parked)
+    end
+  end
+
+  # The worktree is the child's whole place: what it writes and where its
+  # commands run stay there, while a read elsewhere is still the ladder's.
+  describe "a child's writes and moves into the parent's checkout" do
+    let(:writing) { Lain::Toolset.new([Lain::Tools::Bash.new, Lain::Tools::WriteFile.new]) }
+
+    def write(path)
+      Sync do
+        dispatch_call("write_file", { "path" => path, "content" => "n\n" },
+                      toolset: writing, layers: child.to_a, context: Lain::Session.new(worker_env: lease.worker_env))
+      end
+    end
+
+    def refused_naming_worktree = [:refused, start_with("bash refused").and(include(checkout))]
+
+    it "refuses an absolute write_file into the parent's checkout, naming the worktree" do
+      told = write(File.join(@repo, "notes.txt"))
+
+      expect(told).to have_attributes(is_error: true, content: start_with("write_file refused").and(include(checkout)))
+      expect(File.exist?(File.join(@repo, "notes.txt"))).to be(false)
+    end
+
+    it "refuses a cd into the parent's checkout before a write" do
+      expect(outcome(child, "cd #{@repo} && cat > x.rb")).to match(refused_naming_worktree)
+    end
+
+    it "refuses a cd into the parent's checkout with no write after it" do
+      expect(outcome(child, "cd #{@repo} && ls")).to match(refused_naming_worktree)
+    end
+
+    it "lets a write_file inside the worktree land there" do
+      auto!
+
+      expect(write("notes.txt")).to have_attributes(is_error: false)
+      expect(File.read(File.join(checkout, "notes.txt"))).to eq("n\n")
+    end
+
+    it "leaves an opaque command to the approval ladder" do
+      expect(outcome(child, "cd $D && ls")).to eq(:parked)
+    end
+  end
+
+  # The route a chat really takes: `--isolation worktree` resolved by the
+  # wiring, and a dev worker spawned through it. Only the model is scripted.
+  describe "a dev worker the wiring spawns under --isolation worktree" do
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 tool_response(["w1", "write_file",
+                                                { "path" => File.join(@repo, "notes.txt"), "content" => "x\n" }]),
+                                 text_response("worker done")
+                               ])
+    end
+
+    def offline_backend
+      mock = provider
+      Class.new(Lain::CLI::Backend) { define_method(:provider) { |**| mock } }
+           .new({ provider: "ollama", model: nil, max_tokens: 64 }, root: @repo)
+    end
+
+    def worktree_wiring
+      chronicle = Lain::CLI::Chronicle.new(journal: RecordingChannel.new,
+                                           journal_path: File.join(File.dirname(@repo), "session.ndjson"))
+      Lain::CLI::Wiring.new(options: { grace: 5, isolation: "worktree" }, chronicle:,
+                            status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+    end
+
+    def spawn_dev
+      state = File.join(File.dirname(@repo), "state")
+      with_env("XDG_STATE_HOME" => state, "XDG_RUNTIME_DIR" => File.join(File.dirname(@repo), "run")) do
+        trust_project(@repo, paths: Lain::Paths.new)
+        Dir.chdir(@repo) do
+          wiring = worktree_wiring
+          recorder, session = wiring.run_state(nil)
+          wiring.wire_agent(channel: RecordingChannel.new, recorder:, session:, backend: offline_backend)
+          Sync { |task| task.with_timeout(60) { wiring.role_spawn.call(:dev, :fresh, "work") } }
+        end
+      end
+    end
+
+    def tool_result(id)
+      provider.requests.flat_map(&:messages).flat_map { Array(_1["content"]) }.grep(Hash)
+              .find { _1["type"] == "tool_result" && _1["tool_use_id"] == id }
+    end
+
+    it "refuses its write_file into the parent's checkout, naming its worktree" do
+      spawn_dev
+
+      expect(tool_result("w1")).to include("is_error" => true)
+      expect(tool_result("w1")["content"].to_s).to start_with("write_file refused").and include("/worktrees/")
+      expect(File.exist?(File.join(@repo, "notes.txt"))).to be(false)
     end
   end
 

@@ -176,6 +176,60 @@ RSpec.describe Lain::Middleware::ConfineToScope do
     end
   end
 
+  # A lease reads a command's words too: every later stage runs where a `cd`
+  # lands, and a redirect writes where it names.
+  describe "holding a child's command to its own lease" do
+    subject(:guard) do
+      described_class.new(scope: board_scope, wording: described_class::LEASE,
+                          reach: described_class::Reach.new(home: nil))
+    end
+
+    def bash(command) = through(call("bash", { "command" => command }))
+
+    it "refuses a cd out of the lease whatever follows it, naming the lease" do
+      [bash("cd #{@checkout} && cat > x.rb"), bash("cd #{@checkout} && ls")].each do |result|
+        expect(result).to have_attributes(is_error: true, content: start_with("bash refused"))
+        expect(result.content).to include(@spike, @checkout.inspect, "Nothing was run")
+      end
+    end
+
+    it "refuses a redirect that writes outside the lease" do
+      result = bash("echo hi > #{File.join(@checkout, "y.rb")}")
+
+      expect(result).to have_attributes(is_error: true, content: include(File.join(@checkout, "y.rb")))
+    end
+
+    it "lets a cd and a write inside the lease through" do
+      expect(bash("mkdir -p sub && cd sub && echo hi > y.rb").content).to eq("ran")
+    end
+
+    it "leaves a read outside the lease to the approval ladder" do
+      expect(bash("cat #{File.join(@checkout, "a.rb")}").content).to eq("ran")
+    end
+
+    it "leaves an opaque command to the approval ladder" do
+      expect(bash("cd $D && ls").content).to eq("ran")
+    end
+
+    it "refuses a write named outside the lease before the command turns opaque" do
+      ["cd - && ls", "git -C sub log"].each do |tail|
+        result = bash("echo x > #{File.join(@checkout, "f")} && #{tail}")
+
+        expect(result).to have_attributes(is_error: true, content: include(File.join(@checkout, "f"))), tail
+      end
+    end
+
+    it "lets a write to the process's own streams through" do
+      ["echo e > /dev/stderr", "echo x | tee /dev/stdout", "echo x > /dev/tty", "echo x > /dev/fd/3"].each do |command|
+        expect(bash(command).content).to eq("ran"), command
+      end
+    end
+  end
+
+  it "reads only a command's cwd in plan scope" do
+    expect(through(call("bash", { "command" => "cd #{@checkout} && ls" })).content).to eq("ran")
+  end
+
   it "passes a tool it does not confine, whatever it names" do
     expect(through(call("read_file", { "path" => File.join(@checkout, "a.rb") })).content).to eq("ran")
   end

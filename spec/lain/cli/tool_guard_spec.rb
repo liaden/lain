@@ -559,17 +559,20 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     def env = Lain::WorkerEnv.new(cwd: @lease, env: {}, checkout: @lease)
 
-    def written(builder, path)
-      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "write_file",
-                                          input: { "path" => path, "content" => "x" })
-      context = Lain::Session.new(worker_env: env)
-      builder.call(env).call({ effect:, tool: Lain::Tools::WriteFile.new, context: }) do |inner|
-        inner.merge(result: Lain::Tool::Result.ok("written"))
+    def written(builder, path, worker_env: env)
+      acted(builder, Lain::Tools::WriteFile.new, { "path" => path, "content" => "x" }, worker_env)
+    end
+
+    def acted(builder, tool, input, worker_env = env)
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: tool.name, input:)
+      context = Lain::Session.new(worker_env:)
+      builder.call(worker_env).call({ effect:, tool:, context: }) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok("ran"))
       end.fetch(:result)
     end
 
     def held(board)
-      described_class::Spawned.new(chronicle:, board: -> { board }, requester: "researcher", confined: true)
+      described_class::Spawned.new(chronicle:, board: -> { board }, requester: "researcher")
     end
 
     it "refuses a write outside it by name, before any approval is asked" do
@@ -587,11 +590,31 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(written(held(board), File.join(@lease, "notes.md"))).to have_attributes(is_error: false)
     end
 
-    it "holds no child there unless its builder says so" do
+    it "refuses a leased child's cd out of its checkout" do
+      board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true))
+
+      expect(acted(held(board), Lain::Tools::Bash.new, { "command" => "cd /home/tester/project && ls" }))
+        .to have_attributes(is_error: true, content: start_with("bash refused").and(include(@lease)))
+    end
+
+    it "reads a `~` in a command as the board's home" do
+      sensitivity = Lain::Sensitivity::Policy.new(
+        sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: @lease), home: "/home/tester"
+      )
+      board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true), sensitivity:)
+      stack = ->(worker_env) { described_class.child_stack(chronicle, board, worker_env, requester: "subagent") }
+
+      expect(board.sensitivity.home).to eq("/home/tester")
+      expect(acted(stack, Lain::Tools::Bash.new, { "command" => "cd ~ && ls" }))
+        .to have_attributes(is_error: true, content: start_with("bash refused").and(include('"/home/tester"')))
+    end
+
+    it "holds no child whose environment names no checkout" do
       board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true))
       loose = described_class::Spawned.new(chronicle:, board: -> { board }, requester: "researcher")
 
-      expect(written(loose, "/home/tester/project/a.rb")).to have_attributes(is_error: false)
+      expect(written(loose, "/home/tester/project/a.rb", worker_env: Lain::WorkerEnv.new(cwd: @lease, env: {})))
+        .to have_attributes(is_error: false)
     end
   end
 
@@ -853,8 +876,10 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     def child_stack(worker_env) = described_class.child_stack(chronicle, board, worker_env, requester: "subagent")
 
-    it "is the parent's stack, guard for guard" do
-      expect(child_stack(env_at(@checkout, checkout: @checkout)).to_a.map(&:class)).to eq(guards(board).map(&:class))
+    it "is the parent's stack, guard for guard, with a leased child also held to its checkout" do
+      expect(child_stack(env_at(@checkout)).to_a.map(&:class)).to eq(guards(board).map(&:class))
+      expect(child_stack(env_at(@checkout, checkout: @checkout)).to_a.map(&:class))
+        .to eq(guards(board).map(&:class).insert(1, Lain::Middleware::ConfineToScope))
     end
 
     it "judges a leased child's writes at its own checkout too, through the board's one run" do
@@ -885,7 +910,8 @@ RSpec.describe Lain::CLI::ToolGuard do
       effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
 
       described_class.child_stack(chronicle, board, leased, requester: "subagent")
-                     .call({ effect:, tool: Lain::Tools::Bash.new, context: :the_session }) do |passed|
+                     .call({ effect:, tool: Lain::Tools::Bash.new,
+                             context: Lain::Session.new(worker_env: leased) }) do |passed|
                        passed.merge(result: Lain::Tool::Result.ok("the interpreter ran"))
                      end
 

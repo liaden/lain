@@ -132,13 +132,12 @@ lain --compact-strategy elide-tools+summarize-conversation \
 
 `--isolation worktree` resolves an `Isolation::Worktree` backend under a per-project root, decorated
 with whatever `.lain/services.rb` declares, and hands it to the `Supervisor` the chat fleet leases
-from. Two things are true and worth knowing before you reach for it:
+from. Worth knowing before you reach for it:
 
-- **Only actor-mode subagents lease.** One-shot spawns and `@role/skill` lines never touch the
-  supervisor, and plain `lain chat` constructs no actor-mode subagent — so on its own the flag
-  resolves a real backend that nothing leases from. Actor-mode children are what
-  [`/implement-epic`](#implement-epic) runs, and the epic driver builds its own worktree isolation
-  over the epic's working branch rather than leasing through this flag.
+- **One-shot and `@role` spawns lease too.** Under `--isolation worktree`, a one-shot spawn and an
+  `@role/skill` line each take a worktree of their own from the supervisor. Actor-mode children are
+  what [`/implement-epic`](#implement-epic) runs, and the epic driver builds its own worktree
+  isolation over the epic's working branch rather than leasing through this flag.
 - **A chat's workers do hand their commits back, through the merge coordinator.** A worker runs its
   fast checks (`check`, and `lint` on the files `lint_files` selects) before it rebases onto the
   branch, then queues for the coordinator and answers
@@ -150,6 +149,14 @@ from. Two things are true and worth knowing before you reach for it:
   worker ids restart at 1 per process, so a second `--isolation worktree` run in the same repo
   reaps the first's live checkouts. That is a deliberate trade — it is what lets a *crashed* run's
   leftovers get cleared before the next lease — not an oversight.
+- **A leased child stays in its checkout.** A worker's worktree, a researcher's kept lease or a lent
+  checkout: a `write_file` or `edit_file` path, a `bash` cwd, a `cd`, a redirect, and a path a known
+  writer (`tee`, `cp`, `mv`, `sed -i`, `dd of=` and the like) writes are refused when they land
+  outside it, before any approval is asked, even when a later `;` or `cd -` makes the rest
+  unreadable. A read outside the project still asks. A writer lain does not know, a script or build
+  tool, and a command whose paths cannot be named (an expansion such as `$D` anywhere in it) are
+  left to the approval ladder, so `bypass` approves them. The check reads the disk as it stands
+  before the command runs, so a link the command itself creates is not seen.
 
 A bad backend name, or `worktree` outside a git repository, is refused during wiring, before the
 journal is opened.
