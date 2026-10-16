@@ -20,6 +20,10 @@ module Lain
     # in bwrap's pid namespace, which ends with the call, so its children end
     # with it.
     #
+    # Only a refused exec is worded to the model. A write denial is not
+    # traced, and tracing openat would bring the benign probes (cgroup files,
+    # `/proc/stat`, thread names) back as noise.
+    #
     # Each stage writes its own trace channel, because tracers sharing one
     # interleave their lines and lose execs. Signalling a tracer is never an
     # option: a seccomp-filtered trace kills its tracees when the tracer exits.
@@ -81,7 +85,6 @@ module Lain
 
       def launch(profile) = ->(term) { @launcher.wrap(term, profile, trace_fd: TRACE_FD) }
 
-      # A String runs as one `sh -c` stage.
       def stages(command) = command.is_a?(String) ? 1 : command.stages.size
 
       def traced(confinement, profile, run, stages)
@@ -92,8 +95,8 @@ module Lain
           journal_trace(channels, confinement, profile, e)
           raise
         end
-        journal_trace(channels, confinement, profile, nil)
-        capture
+        record = journal_trace(channels, confinement, profile, nil)
+        profile.confined? ? worded(capture, record) : capture
       ensure
         channels&.close
       end
@@ -101,10 +104,35 @@ module Lain
       # A failure reading the trace must not replace the call's own, a
       # {Timeout} above all, which the caller tells apart from every other error.
       def journal_trace(channels, confinement, profile, in_flight)
-        @journal << channels.record(tool_use_id: confinement.tool_use_id, profile: profile.name)
+        channels.record(tool_use_id: confinement.tool_use_id, profile: profile.name).tap { @journal << _1 }
       rescue StandardError
         raise unless in_flight
       end
+
+      # The tool refuses an over-ceiling result whole, so the line replaces the
+      # output rather than being cut with it.
+      def worded(capture, record)
+        line = refused_paths(record).map { "#{format(REFUSED, path: printable(_1))}\n" }.join
+        return capture if line.empty?
+        return Capture.new(**capture.to_h, stderr: capture.stderr + line, size: capture.size + line.bytesize) if
+          capture.size + line.bytesize <= @ceiling
+
+        Capture::Bounded.new(ceiling: @ceiling).take(:stderr, line).finish(capture.exit_status)
+      end
+
+      # A refused PATH entry lets the shell fall through to the next one, so only
+      # a refusal with no later successful exec of the same basename counts.
+      def refused_paths(record)
+        record.refusals.map { _1[:path] }.uniq.reject { answered?(record.execs, _1) }
+      end
+
+      def answered?(execs, path)
+        refused = execs.rindex { _1[:path] == path && !_1[:rc].zero? }
+        refused && execs.drop(refused + 1).any? { _1[:rc].zero? && File.basename(_1[:path]) == File.basename(path) }
+      end
+
+      # A path is the command's to choose, and a newline in it would start a line of its own.
+      def printable(path) = path.dup.force_encoding(Encoding::UTF_8).scrub.gsub(/[[:cntrl:]]/) { _1.inspect[1..-2] }
 
       def unrunnable(profile, executables)
         return [] unless profile.confined?

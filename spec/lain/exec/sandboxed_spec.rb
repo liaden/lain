@@ -129,6 +129,98 @@ RSpec.describe Lain::Exec::Sandboxed do
         .to have_attributes(execs: [{ path: "/usr/bin/cat", argv0: "cat", rc: 0 }], incomplete: false)
     end
 
+    describe "wording a refusal the trace recorded" do
+      let(:planted) { File.join(root, "bin/x") }
+      let(:wording) { format(described_class::REFUSED, path: planted) }
+
+      def refused_exec(path) = %(10 execve("#{path}", ["x"], 0x0 /* 0 vars */) = -1 EACCES (Permission denied))
+      def ran_exec(path) = %(11 execve("#{path}", ["x"], 0x0 /* 0 vars */) = 0)
+
+      it "ends the output with the refusal for an exec the sandbox refused" do
+        writing(refused_exec(planted))
+
+        expect(run.stderr).to end_with("#{wording}\n")
+      end
+
+      it "adds nothing to a call with no refusal" do
+        writing(ran_exec("/usr/bin/cat"))
+
+        expect(run.stderr).not_to include("REFUSED")
+      end
+
+      it "treats a refusal followed by a successful exec of the same program as search noise" do
+        writing(refused_exec(planted), ran_exec("/usr/bin/x"))
+
+        expect(run.stderr).not_to include("REFUSED")
+      end
+
+      it "words a refusal that no later exec of the program answered, beside one that did" do
+        writing(refused_exec(planted), refused_exec("/other/y"), ran_exec("/usr/bin/y"))
+
+        expect(run.stderr).to end_with("#{wording}\n").and(satisfy { !_1.include?("/other/y") })
+      end
+
+      it "words a refusal that an unrelated successful exec of the same program came before" do
+        inner.behaviour = lambda do |fds:, **|
+          fds.fetch(3).write("#{ran_exec("/usr/bin/x")}\n")
+          fds.fetch(4).write("#{refused_exec(planted)}\n")
+          capture
+        end
+
+        expect(run(command: Lain::Shell::Term.of(%w[x a], %w[x b])).stderr).to end_with("#{wording}\n")
+      end
+
+      it "shows a path holding a newline on one line, so it cannot forge another" do
+        forged = "#{planted}\nforged"
+        writing(refused_exec(forged.gsub("\n", "\\n")))
+
+        stderr = run.stderr
+        expect(stderr).to include(format(described_class::REFUSED, path: "#{planted}\\nforged"))
+        expect(stderr.lines.size).to eq(1)
+      end
+
+      def loud(stdout, exit_status: 3, size: stdout.bytesize)
+        inner.behaviour = lambda do |fds:, **|
+          fds.fetch(3).write("#{refused_exec(planted)}\n")
+          Lain::Exec::Capture.new(exit_status:, stdout:, stderr: "", size:, ceiling: 4096)
+        end
+      end
+
+      it "keeps the line visible when it would push an output just under the ceiling over it" do
+        loud("a" * 4000)
+        capture = run
+
+        expect(capture).to have_attributes(exit_status: 3, stdout: "", stderr: a_string_ending_with("#{wording}\n"))
+        expect(Lain::Tools::Bash.render_output(capture)).to be_ok
+      end
+
+      it "keeps the line visible when the output is already over the ceiling" do
+        loud("a" * 4097, size: 9000)
+        capture = run
+
+        expect(capture).to have_attributes(exit_status: 3, stdout: "", stderr: a_string_ending_with("#{wording}\n"))
+        expect(Lain::Tools::Bash.render_output(capture)).to be_ok
+      end
+
+      it "counts the added line in the capture's size" do
+        writing(refused_exec(planted))
+        capture = run
+
+        expect(capture.size).to eq(capture.stdout.bytesize + capture.stderr.bytesize)
+      end
+
+      it "words nothing under a trace that confines nothing" do
+        traced = Struct.new(:profile) { def for(_request) = profile }.new(Lain::Confine::Profile::TRACED)
+        writing(refused_exec(planted))
+
+        auditing = described_class.new(inner:, launcher:, profiles: traced, journal:)
+        capture = auditing.call(command: Lain::Shell::Term.of(%w[cat a]), cwd: root, env: {}, timeout: 5,
+                                confinement: judged)
+
+        expect(capture.stderr).not_to include("REFUSED")
+      end
+    end
+
     it "hands each stage its own descriptor and merges their records in stage order" do
       inner.behaviour = lambda do |fds:, **|
         fds.fetch(4).write(%(20 execve("/usr/bin/head", ["head"], 0x0 /* 0 vars */) = 0\n))
@@ -273,6 +365,11 @@ RSpec.describe Lain::Exec::Sandboxed do
 
         expect(capture.stdout).not_to include("planted")
         expect(recorded("exec_record").sole.refusals).to include({ path: planted, errno: "EACCES" })
+      end
+
+      it "tells the model the refusal is final when the program had no other copy to fall through to" do
+        expect(run("cat README.md", env: { "PATH" => File.dirname(planted) }).stderr)
+          .to end_with("#{format(described_class::REFUSED, path: planted)}\n")
       end
 
       it "is refused when a term's stage execs it, which then falls through to the next PATH entry" do
