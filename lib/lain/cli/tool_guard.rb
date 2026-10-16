@@ -276,7 +276,8 @@ module Lain
       end
 
       def confined(inputs, worker_env)
-        inputs.with(sensitivity: inputs.sensitivity.confined(roots: [worker_env.checkout || worker_env.cwd]))
+        roots = worker_env.checkout ? [worker_env.checkout, *worker_env.read_roots] : [worker_env.cwd]
+        inputs.with(sensitivity: inputs.sensitivity.confined(roots:))
       end
 
       # The configured members, then the eight guards over one set of inputs,

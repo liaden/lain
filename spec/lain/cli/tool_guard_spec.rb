@@ -951,6 +951,40 @@ RSpec.describe Lain::CLI::ToolGuard do
         expect(board.policy.contexts).to be_empty
       end
 
+      it "reads a root the environment lends it without asking, and another directory still asks" do
+        lent = File.join(File.dirname(@project), "epics", "demo").tap { FileUtils.mkdir_p(_1) }
+        other = File.join(File.dirname(@project), "epics", "other")
+        child = child_stack(env_at(@checkout, checkout: @checkout).with(read_roots: [lent]))
+
+        [File.join(lent, "plans", "a.md"), File.join(other, "plans", "a.md")].each { read_through(child, _1) }
+
+        expect(board.policy.contexts.size).to eq(1)
+        confined = sensitivity.confined(roots: [@checkout, lent])
+        expect([lent, other].map { confined.judge(File.join(_1, "plans", "a.md"), cwd: @checkout).reason })
+          .to eq(%i[none outside_project])
+      end
+
+      it "holds a lent root to reads: a write there is still refused" do
+        lent = File.join(File.dirname(@project), "epics", "demo").tap { FileUtils.mkdir_p(_1) }
+        child = child_stack(env_at(@checkout, checkout: @checkout).with(read_roots: [lent]))
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_w", name: "write_file",
+                                            input: { "path" => File.join(lent, "x.md"), "content" => "x" })
+
+        result = child.call({ effect:, tool: Lain::Tools::WriteFile.new, context: :the_session }) do |passed|
+          passed.merge(result: Lain::Tool::Result.ok("wrote"))
+        end
+
+        expect(result[:result]).to be_error
+      end
+
+      it "lends nothing to an unleased environment: a read in the lent root still asks" do
+        lent = File.join(File.dirname(@project), "epics", "demo").tap { FileUtils.mkdir_p(_1) }
+
+        read_through(child_stack(env_at(@checkout).with(read_roots: [lent])), File.join(lent, "plans", "a.md"))
+
+        expect(board.policy.contexts.size).to eq(1)
+      end
+
       it "asks nothing for the main agent's read outside" do
         read_through(described_class.stack(chronicle, board), "/etc/hosts")
 

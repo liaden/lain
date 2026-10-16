@@ -178,18 +178,21 @@ module Lain
           #   the conflict is
           # @param journal [#<<] where the handback records land
           # @param strategy [Isolation::MergeStrategy] how a handback merges
+          # @param home [Lain::Epic::Home] the epic's own home, which its
+          #   issue orchestrators may read
           # @param shell_out_factory [#call] builds the git subprocess runner
-          def initialize(root:, role_spawn:, journal: Lain::Channel::Null.instance,
+          def initialize(root:, role_spawn:, home:, journal: Lain::Channel::Null.instance,
                          strategy: Lain::Isolation::MergeStrategy::DEFAULT,
                          shell_out_factory: Lain::Shell::Out.public_method(:new))
             @root = root
             @role_spawn = role_spawn
+            @home = home
             @journal = journal
             @strategy = strategy
             @shell_out_factory = shell_out_factory
           end
 
-          # @param worker_env [WorkerEnv] the actor's lease
+          # @param worker_env [WorkerEnv] the actor's lease, as {#reading} lent it
           # @param branch [String] the issue's branch, which its children are
           #   cut from and hand back onto
           # @return [Hash{Symbol=>Object}] the `isolation:` and `handoff:` the
@@ -203,6 +206,10 @@ module Lain
                                                            strategy: @strategy,
                                                            resolver: @role_spawn.within(worker_env)) }
           end
+
+          # @param worker_env [WorkerEnv] a lease
+          # @return [WorkerEnv] the same, with the epic's home lent for reading
+          def reading(worker_env) = worker_env.with(read_roots: [*worker_env.read_roots, @home.path])
 
           private
 
@@ -364,7 +371,8 @@ module Lain
           actor = @supervisor.adopt(role: ROLE, worker_id: lane) do |worker_env|
             held = cut(worker_env, issue.id)
             red = @tests.call(criteria, worker_env, subject:, level:, since: held.from, lane:)
-            spawner(worker_env, held.branch, lane).launch_actor(brief(issue, held, red), worker_env:)
+            lent = @lanes.reading(worker_env)
+            spawner(lent, held.branch, lane).launch_actor(brief(issue, held, red), worker_env: lent)
           end
           Launch.new(actor:, worker_id: lane, branch: held.branch.name, tests: red)
         end

@@ -208,7 +208,9 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
                                                                                                   root: repo))
   end
 
-  def child_lanes = described_class::Lanes.new(root: File.join(@root, "children"), role_spawn: build.role_spawn)
+  def child_lanes
+    described_class::Lanes.new(root: File.join(@root, "children"), role_spawn: build.role_spawn, home:)
+  end
 
   # The epic's supervisor, as the driver builds it: its checkouts are cut from
   # epic/demo, never from the chat's branch.
@@ -248,6 +250,24 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
                                                   "an order can be refunded", target, "epic/demo")
     expect(orchestrator.system.last["text"]).to start_with(backend.library.slots.render_role(:issue_orchestrator))
       .and end_with("Working directory: #{checkout}")
+  end
+
+  context "when the orchestrator reads its own plan" do
+    let(:script) do
+      [*test_engineer, tool_response(["r1", "read_file", { "path" => home.plan("a").path }]), text_response("read it")]
+    end
+
+    it "is lent its epic home to read, and the read returns the plan" do
+      supervising do |supervisor|
+        actor = launch(supervisor, "a").actor.tap(&:settle)
+
+        expect(actor.session.worker_env.read_roots).to eq([home.path])
+      end
+
+      sent = provider.requests.last.messages.flat_map { Array(_1["content"]) }.grep(Hash)
+      result = sent.find { |block| block["type"] == "tool_result" && block["tool_use_id"] == "r1" }
+      expect(Array(result["content"]).to_s).to include("the plan for a")
+    end
   end
 
   context "when the orchestrator hands the implementing to a dev child" do

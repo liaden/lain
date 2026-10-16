@@ -28,6 +28,19 @@ RSpec.describe Lain::WorkerEnv do
   # Where a leased worker's work lands, said by the lease rather than guessed
   # from the filesystem: a guard holds a child's writes at the checkout its
   # lease cut, and at nothing a directory merely looks like.
+  describe "#read_roots" do
+    it "is empty for the host's own environment" do
+      expect(described_class.default.read_roots).to eq([])
+    end
+
+    it "carries the directories it was lent for reading, deeply frozen and shareable" do
+      env = described_class.new(cwd: "/srv/w1", env: {}, read_roots: [+"/state/epics/demo"])
+
+      expect(env.read_roots).to eq(["/state/epics/demo"])
+      expect(Ractor.shareable?(env)).to be(true)
+    end
+  end
+
   describe "#checkout" do
     it "names no checkout for the host's own environment" do
       expect(described_class.default.checkout).to be_nil

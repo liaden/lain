@@ -634,7 +634,7 @@ module Lain
         # checkouts cannot collide with the issue actors' above them.
         def child_lanes
           IssueActor::Lanes.new(root: File.join(worktree_root, "children"), role_spawn: @toolset_build.role_spawn,
-                                journal: @journal, strategy:)
+                                home: @mount.home, journal: @journal, strategy:)
         end
 
         # The first attempt whose anchor is not standing. Bounded only by the
