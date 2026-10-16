@@ -1,0 +1,24 @@
+[package]
+name = "lain-fence"
+version = "0.1.0"
+edition = "2024"
+authors = ["Joel Johnson <johnson.joel.b@gmail.com>"]
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "lain-fence"
+path = "src/main.rs"
+
+[dependencies]
+# landlock(7) without unsafe. Its best-effort default makes an older kernel drop
+# the rights it lacks instead of refusing; the status line reports each drop.
+landlock = "0.4.7"
+# `close` without unsafe, for the inherited fds above stderr: a fenced command
+# must not write into a trace or status pipe its caller reads as evidence.
+nix = { version = "0.31", default-features = false, features = ["fs"] }
+# The status line is JSON, and a skipped path can hold any byte a shell allows.
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

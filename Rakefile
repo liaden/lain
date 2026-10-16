@@ -71,9 +71,9 @@ end
 
 # pre-commit runs its HOOKS serially -- overlap between checks has to happen
 # inside one hook. `rake compile check` is that hook's entry: compile once
-# (both need the extension), then rubocop and the parallel spec run fan out
-# together. Their streamed output may interleave; each tool's summary block
-# still lands intact at its end.
+# (the extension, which both need, and the lain-fence binary), then rubocop and
+# the parallel spec run fan out together. Their streamed output may interleave;
+# each tool's summary block still lands intact at its end.
 multitask check: %i[pspec rubocop]
 
 # The out-of-process exec daemon the :core-tagged specs drive. A plain `cargo
@@ -102,5 +102,7 @@ GEMSPEC = Gem::Specification.load("lain.gemspec")
 RbSys::ExtensionTask.new("lain", GEMSPEC) do |ext|
   ext.lib_dir = "lib/lain"
 end
+
+task(:compile) { sh "cargo build -p lain-fence --release" }
 
 task default: %i[compile pspec rubocop]
