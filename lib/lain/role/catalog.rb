@@ -119,7 +119,13 @@ module Lain
                  only: %i[read_file list_files glob grep edit_file write_file todo_write bash subagent run_skill])
       ].to_h { |role| [role.name, role] }.freeze
 
+      # The roles that decide or inform an approval; a project's slot file
+      # must not rewrite the prompt that judges its own approvals.
+      APPROVAL_ROLES = %i[auto_approver gate_adjudicator evidence_researcher].freeze
+
       class << self
+        def approval_roles = APPROVAL_ROLES
+
         # Raises rather than returning nil: asking for a role that does not
         # exist is a wiring error, and naming the whole catalog in the message
         # puts the fix one glance away.

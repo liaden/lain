@@ -599,7 +599,7 @@ There are no config files to write before the first run. Everything below has a 
 | Path | What it holds |
 |---|---|
 | `.lain/slots/*.md` | Prompt slot fills. What lands in the system prompt for this project. |
-| `.lain/slots/role/*.md` | Per-role prompt fills, over the shipped role templates. |
+| `.lain/slots/role/*.md` | Per-role prompt fills, over the shipped role templates. `auto_approver.md`, `gate_adjudicator.md` and `evidence_researcher.md` are refused at launch: those roles decide approvals, and a project must not rewrite the prompt that judges its own calls. A project's `system.md` fill still reaches every role, these included. |
 | `.lain/slots/skill/*.md` | Per-skill prompt fills. |
 | `.lain/skills/*.md` | Your skills, merged over the shipped catalog. Reachable as `@role/skill` at the prompt. |
 | `.lain/config.rb` | Your per-project settings: the `epics`, `approval`, `isolation`, `sensitivity`, `shell`, `tests` and `middleware` verbs. See [Configuration](docs/commands.md#configuration-configrb). |

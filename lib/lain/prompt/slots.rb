@@ -97,11 +97,19 @@ module Lain
           slot_files(dir).each_with_object({}) do |path, fills|
             name = File.basename(path, ".md")
             misspelt!(path, name, known)
+            refuse_approval_role!(path, name)
             raise UnknownSlot, "unknown role slot file #{path.inspect}; known roles: #{known.keys.join(", ")}" \
               unless known.key?(name)
 
             fills[name] = File.read(path)
           end
+        end
+
+        def refuse_approval_role!(path, name)
+          return unless Role::Catalog.approval_roles.include?(name.to_sym)
+
+          raise UnknownSlot, "role slot file #{path.inspect} is refused: #{name} decides approvals, " \
+                             "so a project cannot rewrite its prompt"
         end
 
         # A role's one spelling is its catalog name, so a file spelling a known

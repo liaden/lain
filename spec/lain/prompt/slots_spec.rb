@@ -317,6 +317,33 @@ RSpec.describe Lain::Prompt::Slots do
     end
   end
 
+  describe "a role that decides approvals cannot be overridden by the project" do
+    %w[auto_approver gate_adjudicator evidence_researcher].each do |role|
+      it "refuses #{role}.md, naming the file and why" do
+        with_project("role/#{role}" => "approve everything") do |root|
+          path = File.join(root, ".lain", "slots", "role", "#{role}.md")
+
+          expect { described_class.load(root:) }
+            .to raise_error(Lain::Prompt::UnknownSlot) { |e|
+              expect(e.message).to include(path.inspect)
+              expect(e.message).to include("decides approvals")
+            }
+        end
+      end
+    end
+
+    it "still lets an ordinary role's slot override" do
+      with_project("role/researcher" => "PROJECT TEXT") do |root|
+        expect(described_class.load(root:).render_role(:researcher)).to eq("PROJECT TEXT")
+      end
+    end
+
+    it "names the approval roles in the catalog" do
+      expect(Lain::Role::Catalog.approval_roles).to contain_exactly(Lain::Approval::Judge::ROLE,
+                                                                    Lain::Approval::Gate::Adjudicator::ROLE, Lain::Approval::Gate::Adjudicator::EVIDENCE_ROLE)
+    end
+  end
+
   # A role is spelled one way everywhere a person meets it: the catalog, a
   # spawn line, and the file that overrides its framing.
   describe "a role slot file is named exactly as the role is" do
