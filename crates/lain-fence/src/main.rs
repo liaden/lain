@@ -12,7 +12,11 @@
 //!
 //! TCP connect and bind are always handled, so with no `--connect-port` the
 //! command has no TCP at all, and it can never bind. Abstract Unix sockets and
-//! signals are always scoped to the domain.
+//! signals are always scoped to the domain. A seccomp filter refuses
+//! memfd_create(2) without `MFD_NOEXEC_SEAL`, since a memfd is executable
+//! code no path grant can name; the status line reports it as `memfd_noexec`.
+//! The filter kills any syscall from a foreign arch, so a 32-bit tool dies
+//! with SIGSYS and no `lain-fence:` line, never with a 125, 126 or 127 exit.
 //!
 //! `Execute` governs execve(2) only. A granted loader such as `ld.so` runs any
 //! ELF the command can read, so a read grant is an exec grant in practice.
@@ -27,11 +31,13 @@
 //!
 //! Exit codes: 125 for a bad invocation, 126 when Landlock enforces nothing,
 //! 127 when the exec itself fails. The command can exit 126 or 127 itself; only
-//! the fence's own failures write a `lain-fence:` line to stderr.
+//! the fence's own failures, and a seccomp filter it could not install, write a
+//! `lain-fence:` line to stderr.
 #![forbid(unsafe_code)]
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 mod rules;
+mod seccomp;
 mod status;
 
 use std::fs::{File, OpenOptions};
@@ -123,7 +129,7 @@ fn run(invocation: Invocation) -> ExitCode {
 }
 
 fn report(grants: &Grants) -> ExitCode {
-    match grants.restrict_self() {
+    match enforce(grants) {
         Ok(enforcement) => {
             match std::io::stdout().write_all(enforcement.status.line().as_bytes()) {
                 Ok(()) => ExitCode::SUCCESS,
@@ -142,7 +148,7 @@ fn fence(grants: &Grants, argv: &[String], status_fd: Option<RawFd>) -> ExitCode
     if let Err(message) = close_inherited(sink.as_ref().map(AsRawFd::as_raw_fd)) {
         return fail(NOT_ENFORCED, &message);
     }
-    let enforcement = match grants.restrict_self() {
+    let enforcement = match enforce(grants) {
         Ok(enforcement) => enforcement,
         Err(error) => return refused(&error),
     };
@@ -156,6 +162,17 @@ fn fence(grants: &Grants, argv: &[String], status_fd: Option<RawFd>) -> ExitCode
     }
     let error = Command::new(&argv[0]).args(&argv[1..]).exec();
     fail(EXEC_FAILED, &format!("exec {}: {error}", argv[0]))
+}
+
+fn enforce(grants: &Grants) -> Result<rules::Enforcement, rules::Error> {
+    let mut enforcement = grants.restrict_self()?;
+    let loaded = seccomp::install()
+        .inspect_err(|error| complain(&format!("seccomp filter not installed: {error}")))
+        .is_ok();
+    enforcement
+        .status
+        .seccomp_verdict(seccomp::MEMFD_NOEXEC, loaded);
+    Ok(enforcement)
 }
 
 fn refused(error: &rules::Error) -> ExitCode {
@@ -190,11 +207,15 @@ fn close_inherited(keep: Option<RawFd>) -> Result<(), String> {
     Ok(())
 }
 
+fn fail(code: u8, message: &str) -> ExitCode {
+    complain(message);
+    ExitCode::from(code)
+}
+
 #[expect(
     clippy::print_stderr,
-    reason = "the fenced command's stderr is where its caller reads why it did not run"
+    reason = "the fenced command's stderr is where its caller reads why it did not run, or ran with less"
 )]
-fn fail(code: u8, message: &str) -> ExitCode {
+fn complain(message: &str) {
     eprintln!("lain-fence: {message}");
-    ExitCode::from(code)
 }

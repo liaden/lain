@@ -17,6 +17,8 @@ landlock = "0.4.7"
 # `close` without unsafe, for the inherited fds above stderr: a fenced command
 # must not write into a trace or status pipe its caller reads as evidence.
 nix = { version = "0.31", default-features = false, features = ["fs"] }
+# seccomp(2) without new unsafe here: the BPF for the memfd_create rule.
+seccompiler = { version = "0.5", default-features = false }
 # The status line is JSON, and a skipped path can hold any byte a shell allows.
 serde_json = "1"
 

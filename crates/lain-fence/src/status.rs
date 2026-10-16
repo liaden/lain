@@ -34,6 +34,13 @@ impl Status {
         }
     }
 
+    /// A seccomp filter is reported among the Landlock rights, so a caller
+    /// reads one map to learn everything the fence enforced.
+    pub fn seccomp_verdict(&mut self, name: &str, enforced: bool) {
+        let verdict = if enforced { "enforced" } else { "dropped" };
+        self.rights.insert(name.into(), verdict.into());
+    }
+
     pub fn line(&self) -> String {
         let object = json!({ "abi": self.abi, "rights": self.rights, "skipped": self.skipped });
         format!("{object}\n")
@@ -147,6 +154,19 @@ mod tests {
             serde_json::from_str(&Status::new(&requested(), landlock, &[]).line()).unwrap();
 
         assert_eq!(line["abi"], 11);
+    }
+
+    #[test]
+    fn a_filter_verdict_sits_among_the_rights() {
+        let mut loaded = Status::new(&requested(), kernel(ABI::V9), &[]);
+        let mut refused = Status::new(&requested(), kernel(ABI::V9), &[]);
+
+        loaded.seccomp_verdict("memfd_noexec", true);
+        refused.seccomp_verdict("memfd_noexec", false);
+
+        assert_eq!(verdicts(&loaded)["memfd_noexec"], "enforced");
+        assert_eq!(verdicts(&refused)["memfd_noexec"], "dropped");
+        assert_eq!(verdicts(&loaded)["execute"], "enforced");
     }
 
     #[test]
