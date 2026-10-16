@@ -227,6 +227,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   def first_prompt(request) = request.messages.first["content"].first["text"]
 
   it "starts on epic/demo's tip, on a branch of its own, with its plan and criteria, after its tests are committed" do
+    checkout = nil
     supervising do |supervisor|
       launched = launch(supervisor, "a").tap { |row| row.actor.settle }
       checkout = launched.actor.session.worker_env.cwd
@@ -245,7 +246,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     orchestrator = provider.requests.last
     expect(first_prompt(orchestrator)).to include(home.plan("a").path, "an order totals its lines",
                                                   "an order can be refunded", target, "epic/demo")
-    expect(orchestrator.system.last["text"]).to eq(backend.library.slots.render_role(:issue_orchestrator))
+    expect(orchestrator.system.last["text"]).to start_with(backend.library.slots.render_role(:issue_orchestrator))
+      .and end_with("Working directory: #{checkout}")
   end
 
   context "when the orchestrator hands the implementing to a dev child" do

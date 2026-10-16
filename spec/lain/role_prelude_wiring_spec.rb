@@ -16,7 +16,7 @@ RSpec.describe "a spawned role's persona" do
                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
-  let(:union) { Lain::Toolset.new(%i[read_file list_files glob grep bash write_file web_fetch web_search].map { |n| tool(n) }) }
+  let(:union) { Lain::Toolset.new(%i[read_file list_files glob grep bash write_file edit_file todo_write web_fetch web_search].map { |n| tool(n) }) }
 
   # Anonymous named capabilities: a role attenuates against tool NAMES, and the
   # child never executes a tool here (the mock settles on the first turn), so a
@@ -69,9 +69,9 @@ RSpec.describe "a spawned role's persona" do
       system = spawn(slots, :researcher).system
 
       expect(system.size).to eq(2)
-      expect(system[0]["text"]).to eq(slots.render("system"))
+      expect(system[0]["text"]).to eq(slots.render_child)
       expect(system[0]["cache"]).to be(true)
-      expect(system[1]["text"]).to eq(slots.render_role(:researcher))
+      expect(system[1]["text"]).to start_with(slots.render_role(:researcher))
     end
   end
 
@@ -79,7 +79,7 @@ RSpec.describe "a spawned role's persona" do
     with_project do |slots|
       system = spawn(slots, :researcher).system
 
-      expect(system.map { |b| b["text"] }.count(slots.render("system"))).to eq(1)
+      expect(system.map { |b| b["text"] }.count(slots.render_child)).to eq(1)
     end
   end
 
@@ -109,6 +109,50 @@ RSpec.describe "a spawned role's persona" do
 
       expect(system.size).to eq(2)
       expect(system[0]["text"]).not_to eq(role.prelude(slots:))
+    end
+  end
+
+  # The place a child works in, through the real actor launch: the lease or
+  # worktree its adopter cut is the one the child is told.
+  def placed_system(slots, cwd, role_name = :researcher)
+    provider = mock(text_response("done"))
+    tool = role_subagent(slots, provider:, role: Lain::Role::Catalog.fetch(role_name))
+    Sync do
+      actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.new(cwd:, env: {}))
+      actor.settle
+      actor.stop
+    end
+    provider.last_request.system.map { |b| b["text"] }
+  end
+
+  def placed_slots(root) = Lain::Prompt::Slots.load(root:, environment: Lain::Prompt::Environment.fixed)
+
+  it "tells a researcher its lease, and not the launch directory" do
+    Dir.mktmpdir do |root|
+      text = placed_system(placed_slots(root), "/state/leases/r1").join("\n")
+
+      expect(text).to include("Working directory: /state/leases/r1")
+      expect(text).not_to include("Working directory: /work/project/src")
+    end
+  end
+
+  it "tells an epic worker its worktree" do
+    Dir.mktmpdir do |root|
+      expect(placed_system(placed_slots(root), "/w/issue-1", :dev).last).to end_with("Working directory: /w/issue-1")
+    end
+  end
+
+  it "keeps 2 researchers' first segment byte-identical, only the role tail naming each lease" do
+    Dir.mktmpdir do |root|
+      slots = placed_slots(root)
+      first = placed_system(slots, "/state/leases/r1")
+      second = placed_system(slots, "/state/leases/r2")
+
+      expect(first[0]).to eq(second[0])
+      expect(first[0]).not_to include("/state/leases/")
+      tail = slots.render_role(:researcher).chomp
+      expect([first[1], second[1]])
+        .to eq(["#{tail}\n\nWorking directory: /state/leases/r1", "#{tail}\n\nWorking directory: /state/leases/r2"])
     end
   end
 

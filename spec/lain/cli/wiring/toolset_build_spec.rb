@@ -891,10 +891,16 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           expect(subagent.description).to eq(subagent.description)
         end
 
-        it "frames its child with the researcher persona" do
+        it "frames its child with the researcher persona, working in its own kept scratch directory" do
+          kept = File.join(Lain::Paths.new.state_home, "research", "*", "scratch", "research-*")
+          before = Dir.glob(kept)
           subagent.call({ "prompt" => "go" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+          made = Dir.glob(kept) - before
+          FileUtils.rm_rf(made)
 
-          expect(provider.requests.first.system.last["text"]).to eq(library.slots.render_role(:researcher))
+          tail = provider.requests.first.system.last["text"]
+          expect(tail).to start_with(library.slots.render_role(:researcher).chomp)
+          expect(tail).to end_with("Working directory: #{made.first}")
         end
       end
     end
@@ -1107,8 +1113,10 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       issue_epic.run("run the plan")
 
-      expect(provider.requests[0].system.last["text"]).to eq(library.slots.render_role(:issue_orchestrator))
-      expect(provider.requests[1].system.last["text"]).to eq(library.slots.render_role(:dev))
+      expect(provider.requests[0].system.last["text"]).to start_with(library.slots.render_role(:issue_orchestrator))
+        .and end_with("Working directory: #{Dir.pwd}")
+      expect(provider.requests[1].system.last["text"]).to start_with(library.slots.render_role(:dev))
+        .and end_with("Working directory: #{Dir.pwd}")
     end
 
     context "when the orchestrator hands a review to a child" do

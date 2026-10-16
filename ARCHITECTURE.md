@@ -762,6 +762,11 @@ consequence worth remembering is that **under `:handler_union` the rendered sche
 determine the capability set**: 2 children with different `only` sets render byte-identical tools
 blocks, which is what makes the sibling cache sharing the posture exists for possible.
 
+**A chat's child is told its own working directory**, at the end of its role tail, after the cache breakpoint.
+Its segment 0 is the child form of the system render, whose environment block says the directory is stated after
+the role instructions, so 2 siblings in different leases or worktrees still share segment 0 byte for byte. The
+main agent's render is unchanged.
+
 **Every tool result has a static byte ceiling**, and they are one table rather than a constant
 per tool: `Tool::Bounds::CEILINGS` (`lib/lain/tool/bounds.rb`) maps all 16 result-returning tools
 to the same `RESULT_BYTES` of 16 KiB, measured on the bytes the model sees. The number is sized

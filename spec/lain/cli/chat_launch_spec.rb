@@ -508,12 +508,16 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
-  # The chat's researcher exactly as the wiring builds it: the subagent tool's
-  # seam hands its child the backend's own context.
-  def researcher_system(backend)
+  # The context the chat's real subagent seam hands a child, reshaped here by a
+  # researcher persona over the backend's slots -- the persona the wiring
+  # builds, though this spec builds its own -- for a child working in `lease`.
+  def researcher_system(backend, lease)
     tools = toolset_build_for(backend).build(Lain::Memory::Recorder.new,
                                              ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
-    tools.fetch("subagent").seam.context_factory.call.system
+    persona = Lain::Role::Persona.new(role: Lain::Role::Catalog.fetch(:researcher), slots: backend.slots)
+    persona.child_context(tools.fetch("subagent").seam.context_factory.call,
+                          worker_env: Lain::WorkerEnv.new(cwd: lease, env: {}))
+           .system.map { |block| block["text"] }
   end
 
   def toolset_build_for(backend)
@@ -546,7 +550,12 @@ RSpec.describe Lain::CLI::ChatLaunch do
                                   ENV.fetch("USER"), ENV.fetch("SHELL"), "(a git repository)",
                                   Lain::Prompt::Environment.os_name("/etc/os-release"))
         expect(backend.context.system).to eq(system)
-        expect(researcher_system(backend)).to include(system)
+        expect(system).to include("Working directory: #{cwd}")
+
+        bulk, tail = researcher_system(backend, "/state/leases/r1")
+        expect(bulk).to include(root, "/srv/related-app", Dir.home, "(a git repository)")
+        expect(bulk).not_to include("Working directory: #{cwd}")
+        expect(tail).to end_with("Working directory: /state/leases/r1")
       end
     end
   end

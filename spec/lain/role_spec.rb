@@ -180,6 +180,52 @@ RSpec.describe Lain::Role do
       end
     end
 
+    it "places a child: the bulk defers its working directory and the role tail ends by naming it" do
+      Dir.mktmpdir do |root|
+        slots = Lain::Prompt::Slots.load(root:, environment: Lain::Prompt::Environment.fixed)
+        worker_env = Lain::WorkerEnv.new(cwd: "/w/issue-1", env: {})
+        bulk, tail = sre.child_context(Lain::Context.new(model: "probe", max_tokens: 64), slots:, worker_env:)
+                        .system.map { _1["text"] }
+
+        expect(bulk).to eq(slots.render_child)
+        expect(tail).to eq("#{slots.render_role(:reviewer_sre).chomp}\n\nWorking directory: /w/issue-1")
+      end
+    end
+
+    # A process under LANG=C reads a directory's name as bytes, and the role
+    # text it joins is UTF-8.
+    it "names a non-ASCII working directory read as bytes" do
+      Dir.mktmpdir do |root|
+        slots = Lain::Prompt::Slots.load(root:, environment: Lain::Prompt::Environment.fixed)
+        worker_env = Lain::WorkerEnv.new(cwd: "/w/caf\u00e9".b, env: {})
+        tail = researcher.child_context(Lain::Context.new(model: "probe", max_tokens: 64), slots:, worker_env:)
+                         .system.last["text"]
+
+        expect(tail).to end_with("Working directory: /w/caf\u00e9")
+        expect(tail.encoding).to eq(Encoding::UTF_8)
+      end
+    end
+
+    # Under LANG=C the shipped role text is read as bytes too, and a UTF-8
+    # directory name cannot join it either.
+    it "names a non-ASCII working directory beside role text read as bytes" do
+      slots = Lain::Prompt::Slots.new(fills: {}, role_fills: { "researcher" => "Recherche \u2014 d\u00e9tail\n".b })
+      worker_env = Lain::WorkerEnv.new(cwd: "/w/caf\u00e9", env: {})
+      tail = researcher.child_context(Lain::Context.new(model: "probe", max_tokens: 64), slots:, worker_env:)
+                       .system.last["text"]
+
+      expect(tail).to eq("Recherche \u2014 d\u00e9tail\n\nWorking directory: /w/caf\u00e9")
+    end
+
+    it "keeps today's render for a caller that names no worker environment" do
+      Dir.mktmpdir do |root|
+        slots = Lain::Prompt::Slots.load(root:, environment: Lain::Prompt::Environment.fixed)
+        system = sre.child_context(Lain::Context.new(model: "probe", max_tokens: 64), slots:).system
+
+        expect(system.map { _1["text"] }).to eq(sre.prelude_segments(slots:))
+      end
+    end
+
     it "returns a frozen [bulk, role_tail] pair" do
       with_project do |slots|
         segments = sre.prelude_segments(slots:)

@@ -104,7 +104,7 @@ RSpec.describe Lain::Gherkin::TestGeneration do
     # fresh context mode: the child's first message IS the rendered prompt.
     expect(prompt_of(provider)).to include("the widget renders", "Given a mounted widget", "rspec")
     expect(prompt_of(provider)).not_to include("the widget feels right", "a human judges the feel")
-    expect(provider.last_request.system.last["text"]).to eq(slots.render_role(:test_engineer))
+    expect(provider.last_request.system.last["text"]).to start_with(slots.render_role(:test_engineer))
   end
 
   describe "the target path" do

@@ -83,6 +83,22 @@ RSpec.describe Lain::Prompt::Environment do
     end
   end
 
+  describe "#for_child" do
+    it "defers the working directory to the role instructions, keeping every other fact" do
+      text = described_class.fixed.for_child.to_s
+
+      expect(text).to include("- Working directory: stated after your role instructions", "/work/project",
+                              "/work/related", "/home/user")
+      expect(text).not_to include("/work/project/src")
+    end
+
+    it "renders the same bytes whatever the working directory was" do
+      elsewhere = described_class.fixed.with(cwd: "/elsewhere")
+
+      expect(elsewhere.for_child.to_s).to eq(described_class.fixed.for_child.to_s)
+    end
+  end
+
   describe ".none" do
     it "renders nothing" do
       expect(described_class.none.to_s).to eq("")

@@ -114,6 +114,10 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
     it "is what the explicit default name resolves to as well" do
       expect(resolve(described_class::DEFAULT)).to be_a(Lain::Isolation::Null)
     end
+
+    it "leases at the cwd it is resolved for, not the process's" do
+      expect(resolve(cwd: @project).acquire("w").worker_env.cwd).to eq(@project)
+    end
   end
 
   describe "the advertised set" do

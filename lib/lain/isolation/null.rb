@@ -7,7 +7,9 @@ module Lain
     # provisioned to reclaim.
     #
     # {WorkerEnv.default} is recomputed per `acquire`, never a frozen constant,
-    # so a lease taken after a `Dir.chdir` still names the current directory.
+    # so a lease taken after a `Dir.chdir` still names the current directory --
+    # unless the backend was built with the directory its workers run in, which
+    # is how a chat started with `--cwd` leases its in-place children there.
     class Null
       # `root:` has no default -- the root-defaults discipline
       # (`spec/lain/project/root_defaults_spec.rb`) exists precisely to stop a
@@ -18,15 +20,18 @@ module Lain
       #   means this backend was built with no root to search from
       # @param paths [Paths] supplies the XDG bases {#repo_root}'s search stops at
       # @param home [String, nil] the user's home directory, bounding that search
-      def initialize(root: nil, paths: Paths.new, home: paths.home_or_nil)
+      # @param cwd [String, nil] where every worker runs; nil means the process's
+      #   own directory at each `acquire`
+      def initialize(root: nil, paths: Paths.new, home: paths.home_or_nil, cwd: nil)
         @root = root
         @paths = paths
         @home = home
+        @cwd = cwd
       end
 
       # @param _worker_id [Object] ignored -- every worker shares one env
       # @return [Lease] a lease over the shared process env; release is a no-op
-      def acquire(_worker_id = nil) = Lease.new(worker_env: WorkerEnv.default)
+      def acquire(_worker_id = nil) = Lease.new(worker_env: shared_env)
 
       # No checkout is cut, so there is no branch to hand work back to.
       # @return [WorkingBranch::NONE]
@@ -59,6 +64,10 @@ module Lain
 
         raise Error, "--isolation none has no checkout to answer with, and #{nearest.searched(resolved)}"
       end
+
+      private
+
+      def shared_env = @cwd ? WorkerEnv.default.with(cwd: @cwd) : WorkerEnv.default
     end
   end
 end

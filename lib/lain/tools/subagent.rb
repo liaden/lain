@@ -1594,7 +1594,7 @@ module Lain
         def spawn_agent(chain, union, allowed, (pipeline_source, session))
           mailbox = child_mailbox(chain)
           Agent.new(
-            provider: @seam.provider, context: child_context,
+            provider: @seam.provider, context: child_context(session.worker_env),
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain, mailbox),
             model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed),
@@ -1686,12 +1686,13 @@ module Lain
         # factory one. The model binds LAST and outermost: it touches nothing the
         # other two read, and a Context is built before the child's first ask,
         # so a model the provider has not got is refused with no token spent.
-        def child_context
-          @model.bind(reshaped_context, provider: @seam.provider)
+        def child_context(worker_env)
+          @model.bind(reshaped_context(worker_env), provider: @seam.provider)
         end
 
-        def reshaped_context
-          @policy.prefix.child_context(@persona.child_context(@seam.context_factory.call), journal: @seam.journal)
+        def reshaped_context(worker_env)
+          @policy.prefix.child_context(@persona.child_context(@seam.context_factory.call, worker_env:),
+                                       journal: @seam.journal)
         end
       end
     end

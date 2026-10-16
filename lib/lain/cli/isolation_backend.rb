@@ -123,15 +123,18 @@ module Lain
       #   drop.
       # @param shell_out_factory [#call] builds the subprocess runner, injected
       #   as a factory so a spec substitutes it
+      # @param cwd [String, nil] where `--isolation none` runs its workers, the
+      #   run's own cwd; nil means the process's directory at each lease
       def initialize(name = nil, root: Dir.pwd, journal: Channel::Null.instance, paths: Paths.new,
                      home: paths.home_or_nil,
-                     shell_out_factory: Shell::Out.public_method(:new))
+                     shell_out_factory: Shell::Out.public_method(:new), cwd: nil)
         @name = name || DEFAULT
         @root = Project::Resolver.resolved(File.expand_path(root), File)
         @journal = journal
         @paths = paths
         @home = home
         @shell_out_factory = shell_out_factory
+        @cwd = cwd
       end
 
       # @return [#acquire] the concrete backend, journalled, then decorated by
@@ -149,7 +152,7 @@ module Lain
       def concrete
         case backend_name
         when "worktree" then worktree
-        else Isolation::Null.new(root: @root, paths: @paths, home: @home)
+        else Isolation::Null.new(root: @root, paths: @paths, home: @home, cwd: @cwd)
         end
       end
 

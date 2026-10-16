@@ -175,10 +175,12 @@ module Lain
           # would put a second marker in system, and {Context::CacheBreakpoints}
           # budgets its message markers assuming system spends exactly one
           # slot -- the extra mark can reach 5 on the wire, which Anthropic
-          # 400s (a recorded risk). Corollary: the factory context's own
-          # system joins the shared prefix AHEAD of the template, so it must
-          # be sibling-invariant too -- which it is, riding one injected
-          # factory per spawn seam.
+          # 400s (a recorded risk). Corollary: the context's own system joins
+          # the shared prefix AHEAD of the template, so siblings share it only
+          # where that system is the same bytes. A bare factory's is, riding
+          # one injected factory per spawn seam; a role persona's is not for
+          # siblings working in different places, whose role tails each name
+          # their own directory.
           #
           # The same cap is why caller-placed marks are STRIPPED from the
           # factory's system rather than kept: alone, a last-block mark merges

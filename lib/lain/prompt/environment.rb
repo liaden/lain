@@ -42,6 +42,11 @@ module Lain
 
       def self.expand(directory, home) = directory.sub(%r{\A~(?=/|\z)}) { home }
 
+      # The same facts for a child, whose working directory is its own and is
+      # stated after the cache breakpoint, so every child's block is the same bytes.
+      # @return [Environment]
+      def for_child = with(cwd: "stated after your role instructions")
+
       def to_s
         return "" if root.nil?
 

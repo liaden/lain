@@ -165,15 +165,17 @@ module Lain
         @role_templates = role_templates.dup.freeze
         @skill_slots = skill_slots
         @environment = environment.to_s.freeze
+        @child_environment = environment.for_child.to_s.freeze
         freeze
       end
 
       # The rendered prompt for +slot+, base template plus filled holes. Pure: a
       # function of the frozen fills and templates, byte-identical across calls.
-      def render(slot = "system")
-        engine = LockedBinding.new(resolve: method(:resolve), locals: { environment: @environment })
-        engine.render_template(@templates.fetch(slot.to_s), slot.to_s)
-      end
+      def render(slot = "system") = render_with(slot, @environment)
+
+      # {#render} as a child sees it: the environment's working directory is
+      # deferred to the role tail, so sibling children share these bytes.
+      def render_child(slot = "system") = render_with(slot, @child_environment)
 
       # The project override at `.lain/slots/role/<name>.md` if present, else the
       # shipped default. Pure and session-fixed exactly like {#render}, so two
@@ -217,6 +219,11 @@ module Lain
       end
 
       private
+
+      def render_with(slot, environment)
+        engine = LockedBinding.new(resolve: method(:resolve), locals: { environment: })
+        engine.render_template(@templates.fetch(slot.to_s), slot.to_s)
+      end
 
       # Top-level slots default to EMPTY: the substance of the shipped default
       # lives in the base template around the hole, so an override AUGMENTS it

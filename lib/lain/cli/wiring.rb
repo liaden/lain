@@ -557,9 +557,11 @@ module Lain
       # The root is the {Project}'s, not `Dir.pwd`: it is what
       # `.lain/services.rb` is read from and where the repository search starts,
       # so a run from a subdirectory declares the services its PROJECT
-      # declares.
+      # declares. The cwd is the project's too, so a child that works in place
+      # (the judge, a role skill) runs where {#chat_env} runs the chat.
       def fleet_isolation
-        @fleet_isolation ||= IsolationBackend.resolve(options[:isolation], root:, journal: durable_journal)
+        @fleet_isolation ||=
+          IsolationBackend.resolve(options[:isolation], root:, journal: durable_journal, cwd: project.cwd)
       end
 
       # The run's ONE display Channel, and {Lain::Channel::Null} until

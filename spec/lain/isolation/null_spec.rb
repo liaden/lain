@@ -22,6 +22,14 @@ RSpec.describe Lain::Isolation::Null do
         end
       end
     end
+
+    it "leases at the directory it was built with, wherever the process stands" do
+      Dir.mktmpdir do |dir|
+        place = File.realpath(dir)
+
+        expect(described_class.new(cwd: place).acquire("w").worker_env.cwd).to eq(place)
+      end
+    end
   end
 
   # No checkout is cut, so there is no branch to hand back to: the Null base,

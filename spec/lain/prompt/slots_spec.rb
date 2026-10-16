@@ -224,6 +224,16 @@ RSpec.describe Lain::Prompt::Slots do
       end
     end
 
+    it "renders a child's form with the working directory deferred, leaving the main render alone" do
+      with_project do |root|
+        slots = described_class.load(root:, environment: Lain::Prompt::Environment.fixed)
+
+        expect(slots.render_child).to include(Lain::Prompt::Environment.fixed.for_child.to_s)
+        expect(slots.render_child).not_to include("/work/project/src")
+        expect(slots.render).to include("- Working directory: /work/project/src")
+      end
+    end
+
     it "lets a project fill read the environment bare" do
       with_project("system" => "Env: <%= environment %>") do |root|
         slots = described_class.load(root:, environment: Lain::Prompt::Environment.fixed)

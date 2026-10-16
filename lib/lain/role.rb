@@ -33,13 +33,14 @@ module Lain
       Tool::SpawnPolicy.new(prefix:, posture:, only:, unattended:)
     end
 
-    # The child's system prelude as SEGMENTS: the role-invariant bulk first,
-    # then this role's tail. This -- not the joined String below -- is the
-    # cache-bearing surface. The spawn seam renders each segment as its own
-    # system block and marks the BULK, so the breakpoint sits between them and
-    # heterogeneous siblings share the cached tools-plus-bulk prefix; a fused
-    # String cannot, because one block gets one mark, after the role tail. Pure
-    # over the session-fixed `slots`, so repeated spawns render byte-identically.
+    # The role's system prelude as SEGMENTS: the role-invariant bulk first,
+    # then this role's tail, both as the main agent's render shows them. It is
+    # what a caller with no worker environment is framed with
+    # ({#child_context}); a placed child's segments differ from it only in
+    # where its working directory is named. Segments rather than one String
+    # because one block gets one mark, after the role tail, so heterogeneous
+    # siblings would share no cached prefix. Pure over the session-fixed
+    # `slots`, so repeated renders are byte-identical.
     def prelude_segments(slots:)
       [slots.render("system").freeze, slots.render_role(name).freeze].freeze
     end
@@ -52,15 +53,29 @@ module Lain
     end
 
     # The factory Context reshaped into this role's persona. Its system BECOMES
-    # the prelude segments as two blocks -- the shared bulk cache-marked, the
-    # role tail unmarked after the breakpoint -- REPLACING the factory's own
-    # system, never appending: the bulk already IS `slots.render("system")`, so
-    # appending to a factory whose system is that same render would emit the
-    # bulk twice. Everything else -- the render pipeline included -- rides
-    # through unchanged.
-    def child_context(context, slots:)
-      bulk, tail = prelude_segments(slots:)
+    # two blocks -- the shared bulk cache-marked, the role tail unmarked after
+    # the breakpoint -- REPLACING the factory's own system, never appending:
+    # the factory's system is the main render of the same slots, so appending
+    # would carry the bulk's text twice. Everything else -- the render
+    # pipeline included -- rides through unchanged.
+    #
+    # A child handed its `worker_env` is told its own working directory at the
+    # END of the role tail, after the breakpoint, and its bulk defers to it, so
+    # siblings in different places still share the bulk. Without one the render
+    # is the plain prelude, for callers that are not a chat's children.
+    def child_context(context, slots:, worker_env: nil)
+      bulk, tail = worker_env ? placed_segments(slots, worker_env.cwd) : prelude_segments(slots:)
       context.with_system([{ "type" => "text", "text" => bulk, "cache" => true }, { "type" => "text", "text" => tail }])
+    end
+
+    private
+
+    def placed_segments(slots, cwd) = [slots.render_child("system"), placed_tail(slots.render_role(name), cwd)]
+
+    # Joined as bytes: under LANG=C a directory name, and the role text too,
+    # arrive as bytes, and either cannot join the other while it is UTF-8.
+    def placed_tail(role_text, cwd)
+      String.new("#{role_text.b.chomp}\n\nWorking directory: #{cwd.b}", encoding: Encoding::UTF_8)
     end
   end
 
@@ -95,7 +110,7 @@ module Lain
     # branching on whether a role is present -- {Persona::Null} answers the same
     # message with the factory context untouched.
     Persona = Data.define(:role, :slots) do
-      def child_context(context) = role.child_context(context, slots:)
+      def child_context(context, worker_env:) = role.child_context(context, slots:, worker_env:)
     end
 
     class Persona
@@ -104,7 +119,7 @@ module Lain
       # byte-for-byte, so a roleless spawn renders exactly as it did before
       # roles existed. Frozen -- deep immutability is the shareable discipline.
       Null = Class.new do
-        def child_context(context) = context
+        def child_context(context, worker_env:) = context # rubocop:disable Lint/UnusedMethodArgument
       end.new.freeze
     end
   end

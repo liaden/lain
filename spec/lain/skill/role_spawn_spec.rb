@@ -121,9 +121,9 @@ RSpec.describe Lain::Skill::RoleSpawn do
 
     # The dev persona reshaped the child's system into the two prelude segments.
     expect(request.system.size).to eq(2)
-    expect(request.system.first["text"]).to eq(slots.render("system"))
+    expect(request.system.first["text"]).to eq(slots.render_child)
     expect(request.system.first["cache"]).to be(true)
-    expect(request.system.last["text"]).to eq(slots.render_role(:dev))
+    expect(request.system.last["text"]).to start_with(slots.render_role(:dev))
   end
 
   # ---- The fresh context mode -- no inherited parent conversation ------------
