@@ -85,14 +85,15 @@ end
 RSpec.describe Lain::Approval::SecretSurface do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  # A real detector over a real credential, so `outstanding` carries a region
-  # whose bytes this surface must never send anywhere.
-  let(:secret) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
-  let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=#{secret}\n") }
+  # A real detector over a real token, so `outstanding` carries a region whose
+  # bytes this surface must never send anywhere. Only its entropy flags it: a
+  # region a named pattern flagged is never the oracle's to release.
+  let(:secret) { "QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pEu7Wq" }
+  let(:regions) { Lain::Sensitivity::Regions.detect("see #{secret} here\n") }
   # An ordinary file holding a credential: the case the oracle exists for.
   let(:path) { "/repo/config/app.yml" }
   let(:outstanding) { Lain::Approval::Queue::Outstanding.new(path:, regions:) }
-  let(:faults) { [] }
+  let(:journaled) { [] }
   let(:sensitivity) do
     Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project", rules: Lain::Sensitivity::Rules.empty)
   end
@@ -109,7 +110,7 @@ RSpec.describe Lain::Approval::SecretSurface do
   end
 
   def surface(tier, threshold: 0.8)
-    described_class.new(oracle: tier, threshold:, journal: faults, path_gate:)
+    described_class.new(oracle: tier, threshold:, journal: journaled, path_gate:)
   end
 
   # Park ONE gated call, sweep the surface over it once, and answer with the
@@ -127,11 +128,52 @@ RSpec.describe Lain::Approval::SecretSurface do
     end
   end
 
-  it "approves a region in an ordinary file on a confident approve, and signs the release with its own name" do
+  it "approves an entropy-only region in an ordinary file on a confident approve, signed with its own name" do
     settled = parked(surface(oracle(verdict: "approve", confidence: 0.95)))
 
     expect(settled.approved?).to be(true)
     expect(settled.surface).to eq(described_class::SURFACE)
+  end
+
+  describe "a region a named pattern flagged" do
+    let(:path) { "/repo/notes/config.txt" }
+    let(:token) { "ghp_aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5" }
+    let(:flagged) do
+      Lain::Approval::Queue::Outstanding.new(path:, regions: Lain::Sensitivity::Regions.detect("token: #{token}\n"))
+    end
+
+    it "leaves a ghp_ token in an ordinary-named file parked for the human on a confident approve" do
+      settled = parked(surface(oracle(verdict: "approve", confidence: 0.95)), carrying: flagged)
+
+      expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+    end
+
+    it "journals the oracle's approve as deferred by rule, naming the call and never the token" do
+      parked(surface(oracle(verdict: "approve", confidence: 0.95)), carrying: flagged)
+
+      expect(journaled.last).to include("type" => described_class::DEFERRED_TYPE, "surface" => described_class::SURFACE,
+                                        "path" => path, "verdict" => "approve", "tool_use_id" => "tu_read_file",
+                                        "requester" => Lain::Approval::Queue::REQUESTER,
+                                        "because" => described_class::PATTERN_RULE)
+      expect(journaled.to_s).not_to include(token)
+    end
+
+    it "leaves a pattern region parked even beside an entropy-only one" do
+      mixed = Lain::Approval::Queue::Outstanding.new(
+        path:, regions: Lain::Sensitivity::Regions.detect("see #{secret} here\ntoken: #{token}\n")
+      )
+      expect(mixed.regions.map(&:detector)).to contain_exactly(:entropy, :pattern)
+
+      settled = parked(surface(oracle(verdict: "approve", confidence: 0.95)), carrying: mixed)
+
+      expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+    end
+
+    it "still denies one on a confident deny" do
+      settled = parked(surface(oracle(verdict: "deny", confidence: 0.95)), carrying: flagged)
+
+      expect([settled.approved?, settled.surface]).to eq([false, described_class::SURFACE])
+    end
   end
 
   it "denies on a confident deny, signed the same way" do
@@ -142,7 +184,7 @@ RSpec.describe Lain::Approval::SecretSurface do
   end
 
   it "never approves a region without a path gate to judge its path" do
-    settled = parked(described_class.new(oracle: oracle(verdict: "approve", confidence: 1.0), journal: faults))
+    settled = parked(described_class.new(oracle: oracle(verdict: "approve", confidence: 1.0), journal: journaled))
 
     expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
   end
@@ -215,7 +257,7 @@ RSpec.describe Lain::Approval::SecretSurface do
 
     it "leaves a gated path to the human when built without a path gate" do
       tier = oracle(verdict: "approve", confidence: 0.95)
-      park(described_class.new(oracle: tier, threshold: 0.8, journal: faults), ".env.local")
+      park(described_class.new(oracle: tier, threshold: 0.8, journal: journaled), ".env.local")
 
       expect(tier.asks).to be_empty
     end
@@ -271,15 +313,15 @@ RSpec.describe Lain::Approval::SecretSurface do
     it "journals the fault with the path it could not judge" do
       parked(surface(tier))
 
-      expect(faults.last).to include("type" => described_class::FAULT_TYPE, "path" => path,
-                                     "surface" => described_class::SURFACE)
-      expect(faults.last["error"]).to include("closed")
+      expect(journaled.last).to include("type" => described_class::FAULT_TYPE, "path" => path,
+                                        "surface" => described_class::SURFACE)
+      expect(journaled.last["error"]).to include("closed")
     end
 
     it "journals no region bytes in the fault either" do
       parked(surface(tier))
 
-      expect(faults.last.to_s).not_to include(secret)
+      expect(journaled.last.to_s).not_to include(secret)
     end
 
     it "survives an answer the schema rejects, the same way" do
@@ -314,12 +356,12 @@ RSpec.describe Lain::Approval::SecretSurface do
     end
 
     it "gives up on the stalled call and journals it, rather than waiting out the queue's own window" do
-      built = described_class.new(oracle: hanging, journal: faults, ask_timeout: 0.05)
+      built = described_class.new(oracle: hanging, journal: journaled, ask_timeout: 0.05)
 
       swept_with(built, count: 1)
 
-      expect(faults.last).to include("type" => described_class::FAULT_TYPE, "path" => path)
-      expect(faults.last["error"]).to include("Timeout")
+      expect(journaled.last).to include("type" => described_class::FAULT_TYPE, "path" => path)
+      expect(journaled.last["error"]).to include("Timeout")
     end
 
     # The bound has to clear a HEALTHY judgement or it manufactures the fault it
@@ -345,7 +387,7 @@ RSpec.describe Lain::Approval::SecretSurface do
     # Timeout, or a sweep still parked and about to approve.
     it "bounds the wait for a late answer too, not merely the call that started it" do
       tier = SecretSurfaceSpecSupport::LateOracle.new(0.3)
-      built = described_class.new(oracle: tier, journal: faults, ask_timeout: 0.05)
+      built = described_class.new(oracle: tier, journal: journaled, ask_timeout: 0.05)
       queue = Lain::Approval::Queue.new(journal:, timeout: 5)
 
       Sync do |task|
@@ -355,7 +397,7 @@ RSpec.describe Lain::Approval::SecretSurface do
 
         expect(tier.asks.size).to eq(1)
         expect(pending.decided?).to be(false)
-        expect(faults.last["error"]).to include("Timeout")
+        expect(journaled.last["error"]).to include("Timeout")
 
         pending.deny(surface: "tty")
         task.with_timeout(2) { gated.wait }
@@ -366,7 +408,7 @@ RSpec.describe Lain::Approval::SecretSurface do
 
     it "asks the NEXT pending in the same sweep, which is what an unbounded call would never reach" do
       tier = hanging
-      built = described_class.new(oracle: tier, journal: faults, ask_timeout: 0.05)
+      built = described_class.new(oracle: tier, journal: journaled, ask_timeout: 0.05)
 
       swept_with(built, count: 3)
 
@@ -484,17 +526,11 @@ RSpec.describe Lain::Approval::SecretSurface do
     expect(settled.surface).to eq(described_class::SURFACE)
   end
 
-  # The regions of a credential-named file, held by the real read-side
-  # boundary: an approve here would journal a release and send the bytes.
-  describe "a region pending on .env, through the read boundary", :seam do
-    around do |example|
-      Dir.mktmpdir("lain-secret-surface") do |made|
-        @dir = File.realpath(made)
-        File.write(File.join(@dir, ".env"), "API_KEY=#{secret}\n")
-        example.run
-      end
-    end
-
+  # Regions held by the real read-side boundary: an approve here would
+  # journal a release and send the bytes. The .env token is entropy-only, so
+  # the path gate and not the pattern rule is what holds it.
+  describe "a region pending through the read boundary", :seam do
+    let(:token) { "ghp_aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5" }
     let(:sensitivity) { Lain::Sensitivity.new(home: "/home/tester", cwd: @dir, rules: Lain::Sensitivity::Rules.empty) }
     let(:released) { [] }
     let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.2) }
@@ -503,12 +539,22 @@ RSpec.describe Lain::Approval::SecretSurface do
     end
     let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @dir, env: {})) }
 
-    def read_env(built)
-      read = Lain::Effect::ToolCall.new(tool_use_id: "tu_env", name: "read_file", input: { "path" => ".env" })
+    around do |example|
+      Dir.mktmpdir("lain-secret-surface") do |made|
+        @dir = File.realpath(made)
+        File.write(File.join(@dir, ".env"), "see #{secret} here\n")
+        FileUtils.mkdir_p(File.join(@dir, "notes"))
+        File.write(File.join(@dir, "notes", "config.txt"), "token: #{token}\n")
+        example.run
+      end
+    end
+
+    def read_through(built, path)
+      read = Lain::Effect::ToolCall.new(tool_use_id: "tu_read", name: "read_file", input: { "path" => path })
       Sync do |task|
         watcher = task.async { built.watch(queue) }
         Lain::Middleware::Stack.new([boundary]).call({ effect: read, context: session }) do |inner|
-          invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_env", context: inner.fetch(:context))
+          invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_read", context: inner.fetch(:context))
           inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input, invocation))
         end
       ensure
@@ -516,13 +562,24 @@ RSpec.describe Lain::Approval::SecretSurface do
       end
     end
 
-    it "journals no release and sends no bytes on a certain approve" do
+    it "journals no release and sends no bytes from .env on a certain approve" do
       tier = oracle(verdict: "approve", confidence: 1.0)
-      content = read_env(surface(tier)).fetch(:result).content
+      content = read_through(surface(tier), ".env").fetch(:result).content
 
       expect(tier.asks.size).to eq(1)
       expect(released.grep(Lain::Telemetry::ReadReleased)).to be_empty
       expect(content).not_to include(secret)
+    end
+
+    it "journals no release of a ghp_ token in an ordinary file on a certain approve, and records the deferral" do
+      tier = oracle(verdict: "approve", confidence: 1.0)
+      content = read_through(surface(tier), "notes/config.txt").fetch(:result).content
+
+      expect(tier.asks.size).to eq(1)
+      expect(released.grep(Lain::Telemetry::ReadReleased)).to be_empty
+      expect(content).not_to include(token)
+      expect(journaled).to include(a_hash_including("type" => described_class::DEFERRED_TYPE,
+                                                    "tool_use_id" => "tu_read"))
     end
   end
 

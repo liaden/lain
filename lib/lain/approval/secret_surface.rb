@@ -62,6 +62,16 @@ module Lain
       # to {QueueSurface} rather than to this constant.
       DEFAULT_ASK_TIMEOUT = 120
 
+      # A confident approve this surface was not allowed to give is journaled
+      # rather than dropped, so the bench can count the approves the rule
+      # withheld beside the ones it applied.
+      DEFERRED_TYPE = "approval_surface_deferred"
+
+      # Shown only a region count, the oracle cannot tell a token a named
+      # pattern recognised from one only entropy flagged, so it may never
+      # release the first kind.
+      PATTERN_RULE = "a region a named pattern flagged is a human's to release"
+
       # A defer at zero confidence, so {#settle}'s two questions both answer
       # no and the pending is left exactly where it was. A Null Object rather
       # than a nil, so no branch downstream guards.
@@ -130,11 +140,31 @@ module Lain
       # human or the clock. An approve also needs a path the classifier did not
       # gate for what it is, judged before the ask and again at the answer, so
       # a link repointed during the wait cannot slip through in either
-      # direction. A deny needs neither check, since refusing is always safe.
+      # direction. An approve over any region a named pattern flagged is
+      # journaled and never applied, whatever the path. A deny needs none of
+      # these checks, since refusing is always safe.
       def settle(pending, judged)
         answer = judged.answer
-        pending.approve(surface: SURFACE) if confident?(answer, "approve") && approvable?(judged.claimed, pending)
+        approve(pending, judged.claimed) if confident?(answer, "approve")
         pending.deny(surface: SURFACE) if confident?(answer, "deny")
+      end
+
+      def approve(pending, claimed)
+        return journal_deferred(pending, PATTERN_RULE) if pattern_flagged?(pending)
+
+        pending.approve(surface: SURFACE) if approvable?(claimed, pending)
+      end
+
+      def pattern_flagged?(pending) = pending.outstanding.regions.any? { !_1.entropy? }
+
+      # Swallowed on {#journal_declined}'s rule: evidence about a decision must
+      # never cost the decision.
+      def journal_deferred(pending, rule)
+        @journal << { "type" => DEFERRED_TYPE, "surface" => SURFACE, "tool" => pending.tool,
+                      "tool_use_id" => pending.tool_use_id, "requester" => pending.requester,
+                      "path" => path_of(pending), "verdict" => "approve", "because" => rule }
+      rescue StandardError
+        nil
       end
 
       def approvable?(claimed, pending) = [claimed, @path_gate.verdict_for(pending)].all? { _1&.oracle_approvable? }
