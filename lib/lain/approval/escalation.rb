@@ -245,7 +245,7 @@ module Lain
         decided = @consulted.lazy
                             .filter_map { |rung, name| decisive(consult(rung, name, effect, context), &remember) }
                             .first
-        answer(decided, faulted, effect)
+        answer(decided, faulted, effect, context)
       end
 
       # @return [Boolean] whether the call may be performed
@@ -253,7 +253,7 @@ module Lain
 
       private
 
-      def consult(rung, name, effect, context) = record(ask(rung, name, effect, context), effect)
+      def consult(rung, name, effect, context) = record(ask(rung, name, effect, context), effect, context)
 
       def ask(rung, name, effect, context)
         ruling = rung.call(effect, context)
@@ -284,12 +284,12 @@ module Lain
       # An allow reached over a fault is suppressed -- UNLESS a human made it,
       # in which case it stands and is re-recorded saying so. Everything else
       # passes straight through.
-      def answer(decided, faulted, effect)
-        return record(synthesized(nil, faulted), effect) if decided.nil?
+      def answer(decided, faulted, effect, context)
+        return record(synthesized(nil, faulted), effect, context) if decided.nil?
         return decided unless faulted && decided.allow?
-        return record(honoured(decided, faulted), effect) if decided.human?
+        return record(honoured(decided, faulted), effect, context) if decided.human?
 
-        record(synthesized(decided, faulted), effect)
+        record(synthesized(decided, faulted), effect, context)
       end
 
       # The three rulings nobody made as such: a human's allow restated so the
@@ -320,13 +320,15 @@ module Lain
       # `tool_use_id` rather than the tool name alone: parallel tool calls put
       # several gated calls of the SAME tool in flight, so the name cannot
       # attribute a ruling -- or a fault -- to the call it belongs to.
-      def record(ruling, effect)
-        @journal.record({ "type" => TYPE, "tool" => effect.name,
-                          "tool_use_id" => effect.tool_use_id }.merge(ruling.record))
+      def record(ruling, effect, context)
+        @journal.record({ "type" => TYPE, "tool" => effect.name, "tool_use_id" => effect.tool_use_id,
+                          "requester" => requester_of(context) }.compact.merge(ruling.record))
         ruling
       rescue StandardError
         ruling
       end
+
+      def requester_of(context) = Queue.requester_for(context, nil)
 
       # Where a broken RULE is reported. Under {RuleChain}'s Null default the
       # chain still refuses to promote an allow past a fault, but nobody is ever

@@ -432,6 +432,21 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.map { |record| record["tool"] }).to all(eq("bash"))
     end
 
+    it "names the requester a child's context carries, on a rung's final deny and on the bottom" do
+      child = Struct.new(:requester).new("researcher")
+
+      ladder(EscalationSpecSupport::Fixed.new("triage", :deny)).call(effect, child)
+      ladder(EscalationSpecSupport::Silent.new).call(effect, child)
+
+      expect(rulings.map { |record| record["requester"] }).to all(eq("researcher"))
+    end
+
+    it "leaves the requester off when the context names nobody" do
+      ladder(EscalationSpecSupport::Fixed.new("triage", :deny)).call(effect, nil)
+
+      expect(rulings.sole).not_to have_key("requester")
+    end
+
     it "names the fail-closed bottom when nothing above it answered" do
       ladder(EscalationSpecSupport::Silent.new).call(effect, nil)
 
@@ -516,12 +531,12 @@ RSpec.describe Lain::Approval::Escalation do
   # rung. A human is not a later rule -- they are the authority the whole ladder
   # exists to escalate to, and suppressing their answer inverts it.
   describe "a fault, and who is entitled to answer over one" do
-    def settled_by(rung, surface:, approve: true)
+    def settled_by(rung, surface:, approve: true, context: nil)
       queue = Lain::Approval::Queue.new(journal:, timeout: 1)
       built = ladder(rung, described_class::Surfaces.new(queue))
       answer = nil
       Sync do |task|
-        asked = task.async { answer = built.call(effect, nil) }
+        asked = task.async { answer = built.call(effect, context) }
         pending = task.with_timeout(1) { queue.dequeue }
         approve ? pending.approve(surface:) : pending.deny(surface:)
         task.with_timeout(1) { asked.wait }
@@ -540,6 +555,19 @@ RSpec.describe Lain::Approval::Escalation do
 
       expect(rulings.last).to include("rung" => "surfaces", "verdict" => "allow", "faulted" => true)
       expect(rulings.last["reason"]).to include("rules")
+    end
+
+    it "names the requester on the human allow it honours over a fault" do
+      settled_by(faulting, surface: "tty", context: Struct.new(:requester).new("researcher"))
+
+      expect(rulings.last).to include("verdict" => "allow", "faulted" => true, "requester" => "researcher")
+    end
+
+    it "names the requester on the automatic allow a fault suppresses" do
+      ladder(faulting, EscalationSpecSupport::Fixed.new("auto", :allow))
+        .call(effect, Struct.new(:requester).new("researcher"))
+
+      expect(rulings.last).to include("rung" => "rules", "verdict" => "deny", "requester" => "researcher")
     end
 
     # `AUTOMATIC`'s own comment predicted this exactly -- "an unlisted

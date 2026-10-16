@@ -135,7 +135,7 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
       pending_call = parked(child, "cat keylink")
 
       expect(pending_call).to have_attributes(tool: "bash", requester: "subagent")
-      expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+      expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain", "requester" => "subagent")
     end
 
     it "is not approved automatically when the call names the worktree as its cwd" do

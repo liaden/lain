@@ -242,13 +242,16 @@ module Lain
       end
 
       def handed_down(effect, context, why, error: nil)
-        record(why, effect, error)
+        record(why, effect, context, error)
         @asking.call(effect, context)
       end
 
+      def requester_of(context) = Queue.requester_for(context, nil)
+
       # Evidence about a call must never cost the call.
-      def record(ruling, effect, error)
+      def record(ruling, effect, context, error)
         @journal.record({ "type" => Escalation::TYPE, "tool" => effect.name, "tool_use_id" => effect.tool_use_id,
+                          "requester" => requester_of(context),
                           "error" => error }.compact.merge(ruling.record))
       rescue StandardError
         nil

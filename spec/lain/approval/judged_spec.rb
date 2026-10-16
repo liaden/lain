@@ -104,6 +104,14 @@ RSpec.describe Lain::Approval::Judged do
                                         "tool_use_id" => "tu_bash")
   end
 
+  it "names the requester on the record of a deferral" do
+    ruled(rung(spawn_answering("defer")), bash, within: context.with(requester: "researcher")) do |pending|
+      pending.approve(surface: "human_spec")
+    end
+
+    expect(escalations.sole).to include("reason" => "deferred", "requester" => "researcher")
+  end
+
   describe "what a human is shown of the judge" do
     let(:told) { [] }
 
