@@ -13,10 +13,11 @@ module Lain
   #
   # Every {#record} serializes the whole line in memory, then writes it -- newline
   # included -- in a single `write` under a monitor, with the fd in sync mode.
-  # Building the bytes before taking the lock keeps the critical section short;
-  # writing them as one buffer means a line is never torn, the same discipline the
-  # Rust `SharedWriter` follows so Ruby events and Rust `tracing` spans can share
-  # one fd and still parse line by line. The fd is the Journal's own -- a file
+  # Building the bytes before taking the lock keeps the critical section short,
+  # apart from the observers {#observe} runs inside it; writing them as one
+  # buffer means a line is never torn, the same discipline the Rust
+  # `SharedWriter` follows so Ruby events and Rust `tracing` spans can share one
+  # fd and still parse line by line. The fd is the Journal's own -- a file
   # under {Paths#sessions_dir} by default, a StringIO in specs -- and NEVER stderr.
   #
   # A value that cannot be encoded would otherwise tear a line or swallow an
@@ -171,6 +172,8 @@ module Lain
       @unwritten = Unwritten.new(owns_io ? path : nil)
       @monitor = Monitor.new
       @closed = false
+      @observers = []
+      @telling = Set.new.compare_by_identity
       # An event that reached #record is on the fd before the method returns,
       # which is what "synchronous and lossless" means.
       @io.sync = true if @io.respond_to?(:sync=)
@@ -184,7 +187,7 @@ module Lain
     # @return [self]
     # @raise [Closed] if the Journal has been closed
     def record(entry)
-      write_whole("#{encode(entry)}\n")
+      write_whole("#{encode(entry)}\n", [entry])
     end
     alias << record
 
@@ -196,7 +199,31 @@ module Lain
     # @return [self]
     # @raise [Closed] if the Journal has been closed
     def record_all(entries)
-      write_whole(entries.map { |entry| "#{encode(entry)}\n" }.join)
+      write_whole(entries.map { |entry| "#{encode(entry)}\n" }.join, entries)
+    end
+
+    # Observers are told under the monitor, after the bytes land, so they fold
+    # records in file order, except that a record written from a callback
+    # reaches the remaining observers before the record that caused it. An
+    # observer is told nothing written during its own callback, whether it or
+    # another observer wrote it.
+    #
+    # Running under the monitor keeps that order across threads, at a price:
+    # an observer must be cheap, must not block on a thread that writes this
+    # Journal, and must not take a lock held around a write to it elsewhere,
+    # or it stalls or deadlocks every writer.
+    #
+    # An observer receives the entry as given, a Hash or a `#to_journal`
+    # object, and must not mutate it. A StandardError it raises becomes a
+    # `journal_error` record; anything else reaches the writer, after the
+    # record has landed.
+    #
+    # @param observer [#<<] told each entry after it is written, never on the display
+    # @return [self]
+    def observe(observer)
+      # A new array, so a callback that registers an observer cannot grow the one being walked.
+      @monitor.synchronize { @observers = [*@observers, observer] }
+      self
     end
 
     # Hand this Journal's descriptor to another writer -- the Rust tracing
@@ -249,14 +276,40 @@ module Lain
 
     private
 
-    def write_whole(bytes)
+    def write_whole(bytes, entries)
       @monitor.synchronize do
         raise Closed, "journal is closed" if @closed
 
         @io.write(bytes)
         @io.fsync if @fsync && @io.respond_to?(:fsync)
+        entries.each { |entry| notify(entry) }
       end
       self
+    end
+
+    def notify(entry)
+      @observers.each { |observer| tell(observer, entry) unless @telling.include?(observer) }
+    end
+
+    def tell(observer, entry)
+      @telling << observer
+      observer << entry
+    rescue StandardError => e
+      record(observer_error(observer, entry, e))
+    ensure
+      @telling.delete(observer)
+    end
+
+    def observer_error(observer, entry, error)
+      {
+        "type" => "journal_error", "observer" => observer.class.to_s, "entry_type" => entry_type(entry),
+        "error" => "#{error.class}: #{error.message}", "backtrace" => error.backtrace&.first
+      }
+    end
+
+    def entry_type(entry)
+      named = entry.is_a?(Hash) ? entry["type"] || entry[:type] : nil
+      (named || entry.class.name).to_s
     end
 
     def descriptor

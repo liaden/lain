@@ -84,6 +84,127 @@ RSpec.describe Lain::Journal do
     end
   end
 
+  describe "#observe" do
+    let(:observer_class) do
+      Class.new do
+        attr_reader :seen
+
+        def initialize(&on_event)
+          @seen = []
+          @on_event = on_event
+        end
+
+        def <<(event)
+          @seen << event
+          @on_event&.call(event)
+        end
+      end
+    end
+
+    it "tells an observer every record, direct or teed, in write order, after each is on disk" do
+      on_disk = []
+      observer = observer_class.new { |event| on_disk << io.string.include?(%("type":"#{event["type"]}")) }
+      journal.observe(observer)
+
+      journal.record("type" => "direct")
+      Lain::CLI::JournalTee.new(journal).record("type" => "teed")
+
+      expect(observer.seen).to eq([{ "type" => "direct" }, { "type" => "teed" }])
+      expect(on_disk).to eq([true, true])
+    end
+
+    it "tells an observer each entry of a batch, in order" do
+      observer = observer_class.new
+      journal.observe(observer)
+
+      journal.record_all([{ "type" => "a" }, { "type" => "b" }])
+
+      expect(observer.seen).to eq([{ "type" => "a" }, { "type" => "b" }])
+    end
+
+    it "keeps the record and journals the observer's error when the observer raises" do
+      faulty = observer_class.new { |_event| raise ArgumentError, "fold failed" }
+      journal.observe(faulty)
+
+      journal.record("type" => "kept")
+
+      records = lines.map { |line| JSON.parse(line) }
+      expect(records.first).to include("type" => "kept")
+      expect(records.last).to include(
+        "type" => "journal_error", "observer" => faulty.class.to_s, "error" => "ArgumentError: fold failed",
+        "entry_type" => "kept"
+      )
+      expect(records.last["backtrace"]).to include("journal_spec.rb")
+    end
+
+    it "names an object entry's class in the observer's journal_error" do
+      journal.observe(observer_class.new { |_event| raise ArgumentError, "fold failed" })
+
+      journal.record(Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hi"))
+
+      expect(JSON.parse(lines.last)).to include("entry_type" => "Lain::Telemetry::ToolOutput")
+    end
+
+    it "does not re-enter an observer with the record it wrote back" do
+      observer = observer_class.new do |event|
+        journal.record("type" => "tripwire") unless event["type"] == "tripwire"
+      end
+      journal.observe(observer)
+
+      journal.record("type" => "exec_record")
+
+      expect(lines.map { |line| JSON.parse(line)["type"] }).to eq(%w[exec_record tripwire])
+      expect(observer.seen).to eq([{ "type" => "exec_record" }])
+    end
+
+    it "still tells other observers a record one observer wrote back" do
+      writer = observer_class.new { |_event| journal.record("type" => "tripwire") }
+      watcher = observer_class.new
+      journal.observe(writer)
+      journal.observe(watcher)
+
+      journal.record("type" => "exec_record")
+
+      expect(watcher.seen.map { |event| event["type"] }).to eq(%w[tripwire exec_record])
+    end
+
+    it "tells an observer nothing another observer wrote during its callback" do
+      first = observer_class.new { |event| journal.record("type" => "first_back") if event["type"] == "cause" }
+      second = observer_class.new { |event| journal.record("type" => "second_back") if event["type"] == "first_back" }
+      journal.observe(first)
+      journal.observe(second)
+
+      journal.record("type" => "cause")
+
+      expect(first.seen.map { |event| event["type"] }).to eq(%w[cause])
+      expect(lines.map { |line| JSON.parse(line)["type"] }).to eq(%w[cause first_back second_back])
+    end
+
+    it "does not tell an observer registered from a callback the record that triggered it" do
+      late = observer_class.new
+      registrar = observer_class.new { |event| journal.observe(late) if event["type"] == "trigger" }
+      journal.observe(registrar)
+
+      journal.record("type" => "trigger")
+      journal.record("type" => "after")
+
+      expect(late.seen).to eq([{ "type" => "after" }])
+    end
+
+    it "tells an observer records in file order under concurrent writers, direct and teed" do
+      observer = observer_class.new { |_event| Thread.pass }
+      journal.observe(observer)
+      tee = Lain::CLI::JournalTee.new(journal)
+
+      threads = Array.new(8) do |t|
+        Thread.new { 100.times { |i| (t.even? ? journal : tee).record("type" => "w#{t}-#{i}") } }
+      end
+      threads.each(&:join)
+
+      expect(observer.seen.map { |event| event["type"] }).to eq(lines.map { |line| JSON.parse(line)["type"] })
+    end
+  end
+
   describe "a value JSON cannot encode" do
     it "records a parseable journal_error instead of a torn line" do
       unencodable = Object.new
