@@ -80,7 +80,7 @@ module Lain
       private
 
       # The wire has ONE command shape. A term packed here would go out as
-      # `["sh", "-c", <a term>]`, which the daemon rejects at decode --
+      # `["/bin/sh", "-c", <a term>]`, which the daemon rejects at decode --
       # arriving back as a spawn-shaped Refused a caller then misreports as a
       # bad cwd. Refusing it at the door says what actually went
       # wrong; there is deliberately no join back to a string, for the reason
@@ -93,7 +93,7 @@ module Lain
 
       def params(command, cwd, env, timeout)
         {
-          "argv" => ["sh", "-c", command],
+          "argv" => [Local::SHELL, "-c", command],
           "cwd" => cwd,
           "env" => Exec.child_env(env),
           "timeout_ms" => (timeout * 1000).to_i

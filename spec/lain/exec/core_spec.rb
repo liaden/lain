@@ -35,7 +35,7 @@ RSpec.describe Lain::Exec::Core do
     it "sends the command as `sh -c`, the resolved cwd, and the timeout in milliseconds" do
       run(command: "echo hi", cwd: "/tmp", timeout: 5)
 
-      expect(client.params).to include("argv" => ["sh", "-c", "echo hi"], "cwd" => "/tmp",
+      expect(client.params).to include("argv" => ["/bin/sh", "-c", "echo hi"], "cwd" => "/tmp",
                                        "timeout_ms" => 5000)
     end
 
