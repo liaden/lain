@@ -68,6 +68,17 @@ RSpec.describe Lain::Telemetry::ReadRefused do
     expect(from_pathname).to be_deeply_frozen
   end
 
+  it "journals the requester when the refusal names one" do
+    named = described_class.new(tool_use_id: "tu_1", tool: "read_file", path: "/etc/passwd", reason: "denied",
+                                requester: "researcher")
+
+    expect(named.to_journal).to include("requester" => "researcher")
+  end
+
+  it "journals no requester key when the refusal names none" do
+    expect(event.to_journal).not_to have_key("requester")
+  end
+
   it "journals as a read_refused record that round-trips through JSON" do
     expect(event.journal_type).to eq("read_refused")
     expect(event.to_journal).to eq(

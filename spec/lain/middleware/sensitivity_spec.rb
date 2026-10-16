@@ -86,6 +86,20 @@ RSpec.describe Lain::Middleware::Sensitivity do
                                                reason: "protected")
     end
 
+    it "names the requester the layer was built for" do
+      named = described_class.new(sensitivity: policy, journal:, requester: "researcher")
+
+      through(named, reads("#{home}/.ssh/id_ed25519"))
+
+      expect(journal.first).to have_attributes(requester: "researcher")
+    end
+
+    it "names the default requester when none was given and the context names none" do
+      through(layer, reads("#{home}/.ssh/id_ed25519"))
+
+      expect(journal.first).to have_attributes(requester: Lain::Approval::Queue::REQUESTER)
+    end
+
     # The reason travels from the VERDICT, not from a constant here: a path a
     # project's own `[sensitivity] denied` names refuses under its own reason,
     # so "why is my file denied?" is answerable without reading our table.

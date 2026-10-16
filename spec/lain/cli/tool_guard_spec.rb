@@ -375,6 +375,17 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(Lain::Journal.records(journal_io.string.lines, type: "read_refused").to_a.size).to eq(1)
     end
 
+    it "names the child on a child's refused path" do
+      refused = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
+                                           input: { "path" => "/home/tester/.ssh/id_rsa" })
+
+      described_class.child_stack(chronicle, ToolGuardSpecBoard.new, Lain::WorkerEnv.default, requester: "researcher")
+                     .call({ effect: refused, tool: Lain::Tools::ReadFile.new, context: nil }) { |passed| passed }
+
+      expect(Lain::Journal.records(journal_io.string.lines, type: "read_refused").map { |r| r["requester"] }.to_a)
+        .to eq(["researcher"])
+    end
+
     # The check a child's stack is held to, on every stack built here: the
     # parent's, a chat child's and a run's with no chat alike.
     it "holds every stack it builds to the gate closing it" do

@@ -293,7 +293,7 @@ module Lain
                                  Middleware::WithholdSecretPaths.new(filter: path_filter(inputs)),
                                  Middleware::GuardTestLayout.new(run: inputs.test_layout, roots:, journal:),
                                  Middleware::WithholdAutomaticOutput.new(bar: inputs.bar, journal:),
-                                 remembered(inputs, requester, journal), *gating(inputs, policy, journal)])
+                                 remembered(inputs, requester, journal), *gating(inputs, policy, journal, requester)])
         )
       end
 
@@ -305,8 +305,8 @@ module Lain
                                           requester:)
       end
 
-      def gating(inputs, policy, journal)
-        [Middleware::Sensitivity.new(sensitivity: inputs.sensitivity, journal:),
+      def gating(inputs, policy, journal, requester)
+        [Middleware::Sensitivity.new(sensitivity: inputs.sensitivity, journal:, requester:),
          Middleware::Gate.new(policy:, sensitivity: inputs.sensitivity, denial: inputs.denial)]
       end
 

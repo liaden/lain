@@ -38,15 +38,20 @@ module Lain
     # write as a refused read. The derived type stays `read_refused`, because
     # renaming a shipped record would break every replay reader keyed on it to
     # fix a word.
-    ReadRefused = Data.define(:tool_use_id, :tool, :path, :reason) do
+    #
+    # `requester` names the child whose call was refused; it is absent when nil
+    # because an exact-key reader of old records would break if the key were always present.
+    ReadRefused = Data.define(:tool_use_id, :tool, :path, :reason, :requester) do
       include Journalable
 
-      def initialize(tool_use_id:, tool:, path:, reason:)
+      def initialize(tool_use_id:, tool:, path:, reason:, requester: nil)
         Carriers::ReadRefused.check!(path:, reason:, tool:)
 
         super(tool_use_id: tool_use_id.dup.freeze, tool: tool.to_s.dup.freeze,
-              path: path.to_s.dup.freeze, reason: reason.dup.freeze)
+              path: path.to_s.dup.freeze, reason: reason.dup.freeze, requester: requester && -requester.to_s)
       end
+
+      def to_journal = requester.nil? ? super.except("requester") : super
     end
   end
 end

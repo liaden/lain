@@ -53,9 +53,13 @@ module Lain
       #   ROOT-QUALIFIED, because inside this class body a bare `Sensitivity`
       #   is THIS CLASS.
       # @param journal [#<<] where {Telemetry::ReadRefused} lands
-      def initialize(sensitivity: ::Lain::Sensitivity::Policy::Null.instance, journal: Channel::Null.instance)
+      # @param requester [String, nil] the child this stack is built for; nil
+      #   reads the name off the call's context, as {RememberedDenials} does
+      def initialize(sensitivity: ::Lain::Sensitivity::Policy::Null.instance, journal: Channel::Null.instance,
+                     requester: nil)
         @sensitivity = sensitivity
         @journal = journal
+        @requester = requester
         super()
         freeze
       end
@@ -67,14 +71,16 @@ module Lain
         denial = @sensitivity.denial(env.fetch(:effect), cwd: ::Lain::Session.cwd_of(env[:context]))
         return downstream(env, &app) if denial.nil?
 
-        env.merge(result: refuse(denial))
+        env.merge(result: refuse(denial, requester_of(env[:context])))
       end
 
       private
 
-      def refuse(denial)
+      def requester_of(context) = @requester || Approval::Queue.requester_for(context, Approval::Queue::REQUESTER)
+
+      def refuse(denial, requester)
         @journal << Telemetry::ReadRefused.new(tool_use_id: denial.tool_use_id, tool: denial.tool,
-                                               path: denial.path, reason: denial.reason.to_s)
+                                               path: denial.path, reason: denial.reason.to_s, requester:)
         Tool::Result.error(
           "refused: #{denial.path} is #{denial.verdict.explanation}; no approval can lift this, " \
           "so name a different path rather than retrying this one in another form"
