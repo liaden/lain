@@ -963,6 +963,110 @@ RSpec.describe Lain::Tools::Bash do
       expect(arms.map(&:verdict)).to eq([:allow])
     end
 
+    describe "journalling what a command wrote by name" do
+      def written = journal.events.grep(Lain::Telemetry::FileWritten)
+
+      def no_file_written(suffix = "")
+        Class.new do
+          define_method(:<<) do |event|
+            if event.is_a?(Lain::Telemetry::FileWritten) && event.path.end_with?(suffix)
+              raise "unexpected #{event.path}"
+            end
+
+            self
+          end
+        end.new
+      end
+
+      def closed_journal
+        Class.new { def <<(_event) = raise(Lain::Journal::Closed, "closed") }.new
+      end
+
+      def run_in(dir, command, journal: self.journal)
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: ENV.to_h))
+        described_class.new(journal:).call({ command: },
+                                           Lain::Tool::Invocation.new(tool_use_id: "tu_w", context: session, channel:))
+      end
+
+      it "records a redirect's target by resolved path, with the ctime it has after the call" do
+        Dir.mktmpdir do |dir|
+          root = File.realpath(dir)
+          Dir.mkdir(File.join(root, "bin"))
+          run_in(root, "echo x > bin/cat")
+          stat = File.stat(File.join(root, "bin/cat"))
+
+          expect(written.map { |w| [w.tool_use_id, w.path, w.inode, w.ctime] })
+            .to eq([["tu_w", File.join(root, "bin/cat"), stat.ino,
+                     (stat.ctime.tv_sec * 1_000_000_000) + stat.ctime.tv_nsec]])
+        end
+      end
+
+      it "names the file a symlinked redirect landed in" do
+        Dir.mktmpdir do |dir|
+          root = File.realpath(dir)
+          File.symlink(File.join(root, "real"), File.join(root, "link"))
+          run_in(root, "echo x > link")
+
+          expect(written.map(&:path)).to eq([File.join(root, "real")])
+        end
+      end
+
+      it "leaves nothing for a named path that does not exist after the call" do
+        Dir.mktmpdir do |dir|
+          run_in(File.realpath(dir), "cat missing/nope > missing/out", journal: no_file_written)
+
+          expect(journal.events).to be_empty
+        end
+      end
+
+      it "leaves nothing for a mode string that is not a file" do
+        Dir.mktmpdir do |dir|
+          root = File.realpath(dir)
+          File.write(File.join(root, "f"), "")
+
+          expect { run_in(root, "chmod +x f", journal: no_file_written("+x")) }.not_to raise_error
+        end
+      end
+
+      it "leaves nothing for an existing target the command failed to change" do
+        Dir.mktmpdir do |dir|
+          root = File.realpath(dir)
+          File.write(File.join(root, "old"), "keep")
+          run_in(root, "cp nonexist old", journal: no_file_written)
+
+          expect(File.read(File.join(root, "old"))).to eq("keep")
+        end
+      end
+
+      it "leaves nothing for a directory the command made" do
+        Dir.mktmpdir do |dir|
+          run_in(File.realpath(dir), "mkdir d", journal: no_file_written)
+
+          expect(File.directory?(File.join(dir, "d"))).to be(true)
+        end
+      end
+
+      it "records an existing target the command changed" do
+        Dir.mktmpdir do |dir|
+          root = File.realpath(dir)
+          File.write(File.join(root, "old"), "keep")
+          run_in(root, "echo new > old")
+
+          expect(written.map(&:path)).to eq([File.join(root, "old")])
+        end
+      end
+
+      it "still runs the command when the journal is closed" do
+        Dir.mktmpdir do |dir|
+          root = File.realpath(dir)
+          result = run_in(root, "echo x > a", journal: closed_journal)
+
+          expect(result).to be_ok
+          expect(File.read(File.join(root, "a"))).to eq("x\n")
+        end
+      end
+    end
+
     # The Null default: {Tools::Subagent} runs an ungated handler and this file
     # constructs the tool alone, so a build with no journal has to write nowhere
     # rather than raise or fall back to the invocation's output channel.

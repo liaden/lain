@@ -2,7 +2,8 @@
 
 module Lain
   module Telemetry
-    # A file's identity just after a write: which file (device and inode) and
+    # A file's identity just after a write, by a write tool or by a path a bash
+    # command names as written (a redirect): which file (device and inode) and
     # which version of it (ctime). ctime rather than mtime because `touch -d`
     # sets mtime back, and no unprivileged process can set ctime.
     #

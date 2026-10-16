@@ -277,7 +277,10 @@ module Lain
         decision = @verdict.call(input.command)
         arm = arm_for(decision)
         journal_arm(decision, arm, invocation)
-        capture = @exec.call(command: on_arm(arm, input.command, decision), **runtime(input, invocation))
+        options = runtime(input, invocation)
+        capture = run_journalling_writes(input.command, options[:cwd], invocation) do
+          @exec.call(command: on_arm(arm, input.command, decision), **options)
+        end
         self.class.render_output(capture)
       rescue Exec::Timeout => e
         timed_out(input, e)
@@ -314,8 +317,57 @@ module Lain
       # further out -- one object consulted once, rather than two readings whose
       # agreement is a coincidence nothing enforces.
       def journal_arm(decision, arm, invocation)
-        @journal << Telemetry::ShellArm.new(tool_use_id: invocation.tool_use_id, verdict: decision.name,
-                                            arm:, reason: decision.reason, term: decision.term)
+        journal_record(Telemetry::ShellArm.new(tool_use_id: invocation.tool_use_id, verdict: decision.name,
+                                               arm:, reason: decision.reason, term: decision.term))
+      end
+
+      # Stats after the call, timeout included: a killed command may already
+      # have truncated its target.
+      def run_journalling_writes(command, cwd, invocation)
+        paths = []
+        before = {}
+        paths = Shell::Named.of(command, cwd:, home: nil).written.map(&:resolved).uniq
+        before = paths.to_h { |path| [path, identity(path)&.last] }
+        yield
+      ensure
+        journal_writes(paths, before, invocation)
+      end
+
+      # Only a file that is new or whose inode or ctime moved is journalled, so
+      # a failed command, a word {Shell::Named} took for a path, and a path that
+      # never existed leave nothing for the freshness check to misread.
+      def journal_writes(paths, before, invocation)
+        paths.each do |path|
+          resolved, stat = identity(path)
+          journal_record(file_written(resolved, stat, invocation)) if stat && !same_file_version?(stat, before[path])
+        end
+      end
+
+      def same_file_version?(stat, earlier)
+        earlier && stat.ino == earlier.ino && stat.ctime == earlier.ctime
+      end
+
+      def file_written(resolved, stat, invocation)
+        Telemetry::FileWritten.from_stat(stat, path: resolved, tool_use_id: invocation.tool_use_id)
+      end
+
+      # @return [Array(String, File::Stat), nil] resolved path and its stat,
+      #   nil when the path is not a file
+      def identity(path)
+        return unless File.file?(path)
+
+        resolved = File.realpath(path)
+        [resolved, File.stat(resolved)]
+      rescue SystemCallError
+        nil
+      end
+
+      # The command has run or is about to, so a journal that cannot take a
+      # record must not turn it into a reported failure.
+      def journal_record(record)
+        @journal << record
+      rescue SystemCallError, IOError, Journal::Closed
+        nil
       end
 
       # ASK BEFORE OFFERING. An allow yields a term, but a backend may have no
