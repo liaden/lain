@@ -744,6 +744,134 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
+  describe "#mask_paths" do
+    around do |example|
+      Dir.mktmpdir("lain-policy-masks") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p(%w[home/.ssh home/Documents project/config elsewhere].map { File.join(@base, _1) })
+        { "home/.ssh/id_qa" => "key\n", "home/Documents/plan.txt" => "x\n", "project/.env" => "A=1\n",
+          "project/config/master.key" => "k\n", "project/api_token.txt" => "t\n", "project/README.md" => "r\n",
+          "elsewhere/notes.txt" => "n\n" }.each { |path, body| File.write(File.join(@base, path), body) }
+        File.symlink(".env", File.join(@base, "project", "settings.txt"))
+        example.run
+      end
+    end
+
+    let(:home) { File.join(@base, "home") }
+    let(:cwd) { File.join(@base, "project") }
+    let(:id_key) { File.join(home, ".ssh", "id_qa") }
+    let(:listing) { [".env", "config/master.key", "settings.txt", "api_token.txt", "README.md", id_key] }
+
+    def masked(files, by: policy) = by.mask_paths(files, cwd:).map { [_1.path, _1.reason] }
+
+    it "masks every file the Policy does not call ordinary, where it lands, each once and with its reason" do
+      expect(masked(listing)).to eq([[File.join(cwd, ".env"), :credential],
+                                     [File.join(cwd, "config", "master.key"), :credential],
+                                     [File.join(cwd, "api_token.txt"), :named],
+                                     [id_key, :protected]])
+    end
+
+    it "masks a symlink's landing rather than the link" do
+      expect(masked(["settings.txt"])).to eq([[File.join(cwd, ".env"), :credential]])
+    end
+
+    it "masks a project's own gated rule" do
+      File.write(File.join(cwd, "plan.internal"), "i\n")
+      internal = Lain::Sensitivity::Rules.from({ "gated" => %w[*.internal] })
+      configured = described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd:, rules: internal))
+
+      expect(masked(["plan.internal"], by: configured)).to eq([[File.join(cwd, "plan.internal"), :configured]])
+    end
+
+    it "masks a file whose name is not valid UTF-8" do
+      File.write(File.join(cwd, "bad\xFFname.txt".b), "x\n")
+
+      expect(masked(["bad\xFFname.txt"]).map(&:last)).to eq([:malformed])
+    end
+
+    it "masks a link's landing when only the link's name is sensitive, with the name's reason" do
+      File.symlink("README.md", File.join(cwd, "readme.key"))
+
+      expect(masked(["readme.key"])).to eq([[File.join(cwd, "README.md"), :credential]])
+    end
+
+    it "never masks a file under the project's .git, whatever names it" do
+      FileUtils.mkdir_p(File.join(cwd, ".git"))
+      File.write(File.join(cwd, ".git", "index"), "i\n")
+      File.symlink(".git/index", File.join(cwd, "idx.pem"))
+      File.write(File.join(cwd, ".git-credentials"), "c\n")
+      FileUtils.mkdir_p(File.join(cwd, ".github"))
+      File.write(File.join(cwd, ".github", "x.pem"), "k\n")
+      rooted = described_class.new(sensitivity:, home:, root: cwd)
+
+      expect(masked(%w[idx.pem .git-credentials .github/x.pem], by: rooted).map(&:first))
+        .to eq([File.join(cwd, ".git-credentials"), File.join(cwd, ".github", "x.pem")])
+    end
+
+    it "never masks a file in a linked worktree's git dir, which lies outside the project" do
+      admin = File.join(@base, "main", ".git", "worktrees", "project")
+      FileUtils.mkdir_p(admin)
+      File.write(File.join(admin, "index"), "i\n")
+      File.write(File.join(cwd, ".git"), "gitdir: #{admin}\n")
+      File.symlink(File.join(admin, "index"), File.join(cwd, "idx.pem"))
+      rooted = described_class.new(sensitivity:, home:, root: cwd)
+
+      expect(masked(%w[idx.pem], by: rooted)).to be_empty
+    end
+
+    it "leaves out a dangling link and a name that does not exist" do
+      File.symlink("missing.env", File.join(cwd, "gone.env"))
+
+      expect(masked(%w[gone.env absent.env])).to be_empty
+    end
+
+    it "counts a secret directory name below `within`, though it sits outside the project" do
+      FileUtils.mkdir_p(File.join(@base, "elsewhere", "secrets"))
+      File.write(File.join(@base, "elsewhere", "secrets", "prod"), "p\n")
+      prod = File.join(@base, "elsewhere", "secrets", "prod")
+
+      expect(policy.mask_paths([prod], cwd:, within: File.join(@base, "elsewhere")).map(&:reason)).to eq([:named])
+      expect(policy.mask_paths([prod], cwd:)).to be_empty
+    end
+
+    it "agrees with the listing filter on every row the filter withholds as a secret" do
+      rows = [*listing.map { File.expand_path(_1, cwd) }, File.join(home, "Documents", "plan.txt")]
+      withheld = ->(row) { policy.filter.sift([row], within: cwd) { [_1] }.withheld }
+      secret = rows.select { |row| withheld.call(row).any? { described_class.masks?(_1) } }
+
+      expect(policy.mask_paths(rows, cwd:).map(&:path)).to eq(secret.map { File.realpath(_1) }.uniq)
+    end
+
+    it "is a deeply frozen value" do
+      expect(policy.mask_paths(listing, cwd:)).to all(satisfy { Ractor.shareable?(_1) })
+    end
+
+    describe "a location verdict" do
+      let(:documents) { File.join(home, "Documents", "plan.txt") }
+      let(:outside) { File.join(@base, "elsewhere", "notes.txt") }
+      let(:confined) { policy.confined(roots: [cwd]) }
+
+      it "is not a mask when the path is out of scope" do
+        expect(policy.judge(documents, cwd:).reason).to eq(:out_of_scope)
+        expect(masked([documents])).to be_empty
+      end
+
+      it "is not a mask when a confined policy judges the path outside the project" do
+        expect(confined.judge(outside, cwd:).reason).to eq(:outside_project)
+        expect(masked([outside], by: confined)).to be_empty
+      end
+    end
+
+    it "answers false from .masks? for a location verdict" do
+      expect([described_class::OUTSIDE_PROJECT, Lain::Sensitivity::Verdict.new(level: :gated, reason: :out_of_scope)]
+               .map { described_class.masks?(_1) }).to eq([false, false])
+    end
+
+    it "masks nothing under the Null policy" do
+      expect(described_class::Null.instance.mask_paths(listing, cwd:)).to eq([])
+    end
+  end
+
   # A child's reads stay in its project, its related directories and its own
   # tree; anything else parks for a human, whatever its name.
   describe "#confined" do

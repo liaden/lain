@@ -100,6 +100,10 @@ module Lain
       # a confined child may run anywhere in its scope and nowhere else unasked.
       READ_TOOLS = %w[read_file glob grep list_files ast_search file_symbols].freeze
 
+      # A file a sandbox hides from a call, and the verdict reason that hid it.
+      Mask = Data.define(:path, :reason)
+      LOCATIONS = %i[outside_project out_of_scope].freeze
+
       OUTSIDE_PROJECT = Verdict.new(level: :gated, reason: :outside_project)
       ACCOUNT_DATABASE = Verdict.new(level: :denied, reason: :account_database)
 
@@ -138,6 +142,8 @@ module Lain
         # Null's third answer needs no third object. A policy that gates
         # nothing listing everything is the same posture said once more.
         def filter = Filter::Null.instance
+
+        def mask_paths(_files, **) = []
 
         INSTANCE = new.freeze
 
@@ -197,6 +203,7 @@ module Lain
         def classify(path, within: nil) = @policy.classify(path, within:)
         def related?(path) = @policy.related?(path)
         def filter = @policy.filter
+        def mask_paths(...) = @policy.mask_paths(...)
 
         # @param effect [Lain::Effect]
         # @param cwd [String] absolute; the call's own base
@@ -432,7 +439,43 @@ module Lain
         Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path:, verdict:)
       end
 
+      # The files a sandbox must hide. Each name is judged as the listing
+      # filter judges it, and masked where it lands. So a link whose name
+      # alone is sensitive (`readme.key -> README.md`) masks its landing,
+      # although the filter keeps the landing's own row.
+      #
+      # @param files [Enumerable<String>] as listed, relative to `cwd` or absolute
+      # @param cwd [String] absolute
+      # @param within [String] absolute; see {.base_of}
+      # @return [Array<Mask>] one per landing, in listing order
+      def mask_paths(files, cwd:, within: cwd)
+        files.filter_map { |file| mask(file, cwd, within) }.uniq(&:path)
+      end
+
+      # A location verdict says where a call reached, not what a file holds,
+      # so a sandbox has nothing to hide there.
+      #
+      # @param verdict [Verdict]
+      # @return [Boolean] whether a sandbox hides a file judged so
+      def self.masks?(verdict) = !verdict.ordinary? && !LOCATIONS.include?(verdict.reason)
+
       private
+
+      # On the resolved path, because bwrap aborts on a symlink mask target,
+      # and only where the file exists, since bwrap creates a missing mask
+      # target on the host. Never in a git dir, whose files git needs to run
+      # at all; a linked worktree's lies outside the project.
+      def mask(file, cwd, within)
+        verdict = judge(file, cwd:, within:)
+        return nil unless self.class.masks?(verdict)
+
+        landing = File.realpath(file, cwd)
+        git_dir?(landing) ? nil : Mask.new(path: landing.freeze, reason: verdict.reason)
+      rescue SystemCallError, ArgumentError, EncodingError
+        nil
+      end
+
+      def git_dir?(landing) = landing.split(File::SEPARATOR).include?(".git")
 
       # The classifier resolves a relative path against its own cwd, not the
       # call's, and a landing under a directory nobody may enter cannot be
