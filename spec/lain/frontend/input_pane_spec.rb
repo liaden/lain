@@ -375,6 +375,53 @@ RSpec.describe Lain::Frontend::InputPane do
   # An ask in flight publishes nothing, and a pane that took nothing then had no
   # way to send the human's `/stop` or `/goal off` until the ask was over. The
   # keyboard here is a real terminal's slave side: only a console can be cooked.
+  describe "while a prompt is up" do
+    let(:pty) { PTY.open }
+    let(:reader) { pty.last }
+    let(:keyboard) { pty.first }
+
+    after { pty.each { |io| io.close unless io.closed? } }
+
+    it "redraws a header that grew a row over the old one at a prompt with nothing typed" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      screen.truncate(0) && screen.rewind
+
+      publish(chat, { "generation" => 3, "header" => "fleet:2\nrow b" })
+
+      expect(settles { screen.string.include?("row b") ? screen.string : nil })
+        .to start_with("\e[1A\r\e[J").and include("\r\e[Kfleet:2\nrow b\n")
+    end
+
+    it "redraws a header that lost a row over the old rows at a prompt with nothing typed" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:2\nrow b" })
+      settles { screen.string.include?("row b") || nil }
+      screen.truncate(0) && screen.rewind
+
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+
+      expect(settles { screen.string.include?("fleet:1") ? screen.string : nil })
+        .to start_with("\e[2A\r\e[J").and include("\r\e[Kfleet:1\n")
+    end
+
+    it "leaves a draft alone when the header changes row count" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(false)
+      Enumerator.produce { next_frame(chat, of: "touch") }.find { |touch| !touch["untouched"] }
+      screen.truncate(0) && screen.rewind
+
+      publish(chat, { "generation" => 3, "header" => "fleet:2\nrow b" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+
+      expect(screen.string).to eq("")
+    end
+  end
+
   describe "when the chat says nothing is published" do
     let(:pty) { PTY.open }
     let(:reader) { pty.last }

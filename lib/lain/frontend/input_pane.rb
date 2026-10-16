@@ -340,7 +340,7 @@ module Lain
 
       def prompted(task, client, frame)
         @layers.replace(Array(frame["layers"]).map(&:to_sym))
-        return reheaded(frame) if reheading?(frame)
+        return reheaded(task, client, frame) if reheading?(frame)
         return if drawing_already?(frame)
 
         redraw(task, client, frame)
@@ -348,20 +348,25 @@ module Lain
 
       # A new header under the prompt already drawn is rewritten in place, never
       # printed again: a second print stacks a row per change. Whatever cannot be
-      # rewritten safely -- a draft in the editor, a header of another row count,
-      # a window that moved -- waits for the next prompt, which draws whole. A
+      # rewritten safely -- a draft in the editor, a window that moved -- waits for the next
+      # prompt, which draws whole. A header of another row count is drawn whole at once. A
       # prompt drawn with no header has no rows to stack on, so it redraws.
       def reheading?(frame)
         frame["kind"] != "countdown" && @drawn["generation"] == frame["generation"] &&
           frame["header"] != @drawn["header"] && !@drawn["header"].to_s.empty?
       end
 
-      def reheaded(frame)
+      def reheaded(task, client, frame)
         header = frame["header"].to_s
-        return if editing? || @resized || !same_rows?(@drawn["header"].to_s, header)
+        return if editing? || @resized
 
-        rewrite(header)
-        @drawn = frame
+        if same_rows?(@drawn["header"].to_s, header)
+          rewrite(header)
+          @drawn = frame
+        else
+          @replaced = @drawn["header"].to_s.split("\n").size
+          redraw(task, client, frame)
+        end
       end
 
       # The THIRD thing that can call for a draw, and neither of the other two
@@ -438,6 +443,10 @@ module Lain
       def retracted
         @tty.print_prompt("\e[#{@adopted}A") if @adopted.to_i.positive?
         @adopted = 0
+        return unless @replaced.to_i.positive?
+
+        @tty.print_prompt("\e[#{@replaced}A\r\e[J")
+        @replaced = 0
       end
 
       def hint_for(frame)

@@ -361,6 +361,19 @@ RSpec.describe "a chat fed by an input pane", :seam do
     expect([first, redrawn]).to eq([true, true])
   end
 
+  it "redraws a prompt's header whole when a child spawn adds a row, taking the old one back first" do
+    cockpit_at("lines")
+    publish(fleet: %w[a], inbox_count: 1)
+    cockpit.settles(within: 5) { cockpit.screen.include?("fleet:1 inbox:1") || nil }
+
+    grown = (1..9).any? do |turns|
+      publish(fleet: %w[a], inbox_count: 1, fleet_tree: [fleet_row(turns:)])
+      cockpit.settles(within: 3) { cockpit.screen.include?("dev  running  #{turns}t") || nil }
+    end
+
+    expect([grown, cockpit.screen]).to match([true, /\e\[1A\r\e\[J\r\e\[K.{1,4}fleet:1 inbox:1 \r\n  dev  running/m])
+  end
+
   # The header is the frame, and a pane redraws a changed frame at whatever
   # column the line editor left the cursor on. Measured before the age left
   # the header: seven redraws and seven header prints in eight seconds, and a
