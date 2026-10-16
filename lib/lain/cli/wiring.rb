@@ -147,15 +147,18 @@ module Lain
         # @param search [Lain::SearchRules] the project's `search` table: ignored
         #   paths the file tools still read, and the walk limits. Empty by default
         #   for the headless callers, which run over lain's own state.
+        # @param resolver [#for] names what each stage of a bash call runs; the null
+        #   one resolves nothing, for a floor built with no session
         def build(recorder, exec: Lain::Exec::Local.new, verdict: Lain::Shell::Verdict.new,
-                  journal: Lain::Channel::Null.instance, search: Lain::SearchRules.empty)
+                  journal: Lain::Channel::Null.instance, search: Lain::SearchRules.empty,
+                  resolver: Lain::Shell::Executable::Resolver::NULL)
           walking = { walk_limit: search.limit, include: search.include }
           [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new(**walking), Lain::Tools::Glob.new(**walking),
            Lain::Tools::Grep.new(**walking),
            Lain::Tools::EditFile.new(journal:), Lain::Tools::WriteFile.new(journal:), Lain::Tools::TodoWrite.new,
            Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat),
            Lain::Tools::MemoryRead.new(index: recorder),
-           Lain::Tools::Bash.new(exec:, verdict:, journal:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
+           Lain::Tools::Bash.new(exec:, verdict:, journal:, resolver:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
            Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new(**walking),
            Lain::Tools::FileSymbols.new]
         end
@@ -806,9 +809,22 @@ module Lain
                                           verdict:, isolation: fleet_isolation,
                                           handback:, epic: epic_mount(notice),
                                           attachments:, middleware: backend.middleware, paths: @paths,
-                                          display: @channel,
+                                          display: @channel, resolver: exec_resolver,
                                           config:, arms:)
         @toolset_build.build(recorder, ask_human:)
+      end
+
+      def exec_resolver
+        Lain::Shell::Executable::Resolver.new(root:, fresh: observers.fresh)
+      end
+
+      # Total before #wire_agent has registered the real ones. Fails closed: with
+      # no lineage read, a never-fresh answer would let a rewritten file pass as
+      # untouched, so every path answers fresh.
+      def observers
+        @observers ||= Observers.new(fresh: Lain::Shell::Executable::Fresh.unknown(
+          Lain::Error.new("wire_agent has not registered the lineage"), faults: Lain::Channel::Null.instance
+        ))
       end
 
       # The reactor above the Agent that un-refuses model-dispatched actors,

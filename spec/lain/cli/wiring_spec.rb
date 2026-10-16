@@ -4470,6 +4470,14 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       wiring.wire_agent(channel:, recorder:, session:, backend: wired_backend)
     end
 
+    it "hands the bash tool a resolver over the Fresh the observers registered, not a fallback" do
+      agent = wire
+
+      resolver = agent.toolset.fetch("bash").instance_variable_get(:@resolver)
+
+      expect(resolver.instance_variable_get(:@fresh)).to be(wiring.instance_variable_get(:@observers).fresh)
+    end
+
     # Assigned as a SIDE EFFECT of building the agent: #switchboard is memoized
     # at its one call site, and three readers depend on that having happened.
     # Moving the memo into this module is the failure the card is written to

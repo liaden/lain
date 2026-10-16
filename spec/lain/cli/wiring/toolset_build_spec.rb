@@ -197,6 +197,22 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
+    describe "the resolver the bash tool names each stage with" do
+      def bash_resolver(toolset) = toolset.fetch("bash").instance_variable_get(:@resolver)
+
+      it "hands the bash tool the resolver it was built with, and its attenuated child the same one" do
+        resolver = Lain::Shell::Executable::Resolver.new(root: Dir.pwd, fresh: Lain::Shell::Executable::Fresh.for_lineage([]))
+        full = build_with(options, resolver:).build(recorder, ask_human:)
+
+        expect(bash_resolver(full)).to be(resolver)
+        expect(bash_resolver(full.fetch("subagent").attenuates_from)).to be(resolver)
+      end
+
+      it "defaults to a resolver that resolves nothing" do
+        expect(bash_resolver(toolset_build.build(recorder, ask_human:))).to be(Lain::Shell::Executable::Resolver::NULL)
+      end
+    end
+
     it "layers the capability floor, the child seam, and the three main-agent-only tools" do
       names = toolset_build.build(recorder, ask_human:).names
 

@@ -192,6 +192,8 @@ module Lain
         #   journals are read from
         # @param config [Lain::Config] `.lain/config.rb`, which names each epic
         #   stage's gate policy
+        # @param resolver [#for] the run's ONE {Lain::Shell::Executable::Resolver}, handed to
+        #   {BaseTools} so every bash tool, a child's included, names its stages by it
         # @param arms [Lain::CLI::Arms] the bench arms the run was started with
         # @option options [String] :exec the transport the `exec:` default
         #   resolves, with `:exec_image` the only other keys this class reads.
@@ -204,14 +206,13 @@ module Lain
                        handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
                        middleware: Lain::Config::Middleware.empty, display: Lain::Channel::Null.instance,
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:),
-                       arms: Lain::CLI::Arms::OFF)
+                       arms: Lain::CLI::Arms::OFF, resolver: Lain::Shell::Executable::Resolver::NULL)
           @arms = arms
           @library = library
           @backend = backend
           @attachments = attachments
-          @exec = exec
           @root = root
-          @verdict = verdict
+          bash_inputs(exec:, verdict:, resolver:)
           @epic = epic
           @in_chat = { chronicle:, root:, paths:, config: }.freeze
           @askers = askers
@@ -286,6 +287,12 @@ module Lain
 
         attr_reader :backend, :library, :seam, :epic, :askers
 
+        def bash_inputs(exec:, verdict:, resolver:)
+          @exec = exec
+          @verdict = verdict
+          @resolver = resolver
+        end
+
         # The floor, and the session-wide objects that reach it: where a command
         # becomes a process, which programs the project ruled out, and where the
         # bash tool's record of the arm it chose lands. The journal is read off
@@ -294,6 +301,7 @@ module Lain
         # constructor, so a second ivar would be a second thing to keep in step.
         def capability_floor(recorder)
           Lain::Toolset.new(BaseTools.build(recorder, exec: @exec, verdict: @verdict, journal: seam.journal,
+                                                      resolver: @resolver,
                                                       search: Lain::Config.search(root: @root)))
         end
 

@@ -1201,4 +1201,87 @@ RSpec.describe Lain::Tools::Bash do
       end
     end
   end
+
+  describe "journalling what each stage resolved to" do
+    let(:journal) { RecordingChannel.new }
+    let(:resolver) { Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh) }
+    let(:root) { File.realpath(Dir.mktmpdir) }
+
+    after { FileUtils.remove_entry(root) }
+
+    def resolutions = journal.events.grep(Lain::Telemetry::ExecResolution)
+
+    def plant(dir, name)
+      FileUtils.mkdir_p(File.join(dir, "bin"))
+      File.join(dir, "bin", name).tap do |path|
+        File.write(path, "#!/bin/sh\n")
+        File.chmod(0o755, path)
+      end
+    end
+
+    def run(command, env:, **options)
+      worker_env = Lain::WorkerEnv.new(cwd: root, env: ENV.to_h.merge(env))
+      session = Lain::Session.new(worker_env:)
+      backend, = recording_local
+      described_class.new(exec: backend, journal:, resolver:, **options)
+                     .call({ command: }, Lain::Tool::Invocation.new(tool_use_id: "tu_r", context: session, channel:))
+    end
+
+    it "names each stage by what it will run, with a planted program first on the worker's PATH" do
+      planted = plant(root, "cat")
+
+      run("cat README.md | wc -l", env: { "PATH" => "#{root}/bin:#{ENV.fetch("PATH")}" })
+
+      cat, wc = resolutions.fetch(0).stages
+      expect([cat["resolved"], cat["klass"]]).to eq([planted, "project"])
+      expect([File.basename(wc["resolved"]), wc["klass"]]).to eq(%w[wc system])
+      expect(resolutions.map(&:tool_use_id)).to eq(["tu_r"])
+    end
+
+    it "writes the resolution before the command runs" do
+      seen = nil
+      events = journal.events
+      backend = Class.new do
+        define_method(:takes_term?) { |_term| true }
+        define_method(:call) do |**|
+          seen = events.grep(Lain::Telemetry::ExecResolution).size
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+      end.new
+
+      described_class.new(exec: backend, journal:, resolver:).call({ command: "ls" }, invocation)
+
+      expect(seen).to eq(1)
+    end
+
+    it "resolves a leased child against its own env" do
+      lease = File.realpath(Dir.mktmpdir)
+      planted = plant(lease, "cat")
+
+      run("cat x", env: { "PATH" => "#{lease}/bin:#{ENV.fetch("PATH")}" })
+
+      expect(resolutions.fetch(0).stages.first["resolved"]).to eq(planted)
+    ensure
+      FileUtils.remove_entry(lease)
+    end
+
+    it "reads the worker's env before any scrub, so an exported function shows" do
+      run("ls", env: { "BASH_FUNC_ls%%" => "() { :; }" })
+
+      expect(resolutions.fetch(0).stages.first["anomalies"]).to include("exported_function")
+    end
+
+    it "resolves a command the verdict abstains on as one unresolved entry" do
+      run("cat <<EOF | bash\nx\nEOF", env: {})
+
+      expect(resolutions.fetch(0).stages.map { |stage| stage["klass"] }).to eq(["unresolved"])
+    end
+
+    it "journals unresolved stages under the default resolver" do
+      described_class.new(journal:).call({ command: "ls -la | wc -l" }, invocation)
+
+      expect(resolutions.fetch(0).stages.map { |stage| [stage["name"], stage["klass"]] })
+        .to eq([%w[ls unresolved], %w[wc unresolved]])
+    end
+  end
 end

@@ -218,11 +218,15 @@ module Lain
       #   lands. Null by default, so a tool built with no session around it --
       #   {Subagent} runs an ungated handler, and `bash_spec` constructs this
       #   tool alone -- writes nowhere and no caller guards on nil.
-      def initialize(exec: Exec::Local.new, verdict: Shell::Verdict.new, journal: Channel::Null.instance)
+      # @param resolver [#for] names what each stage resolves to before it runs;
+      #   the null default resolves every stage unresolved
+      def initialize(exec: Exec::Local.new, verdict: Shell::Verdict.new, journal: Channel::Null.instance,
+                     resolver: Shell::Executable::Resolver::NULL)
         super()
         @exec = exec
         @verdict = verdict
         @journal = journal
+        @resolver = resolver
       end
 
       def name = "bash"
@@ -278,6 +282,7 @@ module Lain
         arm = arm_for(decision)
         journal_arm(decision, arm, invocation)
         options = runtime(input, invocation)
+        journal_resolution(input.command, decision, invocation)
         capture = run_journalling_writes(input.command, options[:cwd], invocation) do
           @exec.call(command: on_arm(arm, input.command, decision), **options)
         end
@@ -319,6 +324,19 @@ module Lain
       def journal_arm(decision, arm, invocation)
         journal_record(Telemetry::ShellArm.new(tool_use_id: invocation.tool_use_id, verdict: decision.name,
                                                arm:, reason: decision.reason, term: decision.term))
+      end
+
+      # Written before the exec, so a call that times out still leaves the account.
+      def journal_resolution(command, decision, invocation)
+        stages = resolve(command, decision, session_of(invocation).worker_env)
+        journal_record(Telemetry::ExecResolution.new(tool_use_id: invocation.tool_use_id,
+                                                     stages: stages.map(&:to_journal)))
+      end
+
+      def resolve(command, decision, worker_env)
+        return [Shell::Executable.unresolved(command)] unless decision.allow?
+
+        @resolver.for(worker_env).call(decision.term)
       end
 
       # Stats after the call, timeout included: a killed command may already
