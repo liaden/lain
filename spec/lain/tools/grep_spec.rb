@@ -463,7 +463,7 @@ RSpec.describe Lain::Tools::Grep do
 
   describe "a tree git ignores part of" do
     def git_init(dir)
-      _out, err, status = Open3.capture3("git", "init", "-q", chdir: dir)
+      _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: dir)
       raise err unless status.success?
     end
 
@@ -518,7 +518,7 @@ RSpec.describe Lain::Tools::Grep do
 
     it "does not count a repository's ignored files held by a plain parent" do
       FileUtils.mkdir_p(File.join(tmpdir, "proj"))
-      _out, err, status = Open3.capture3("git", "init", "-q", chdir: File.join(tmpdir, "proj"))
+      _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: File.join(tmpdir, "proj"))
       raise err unless status.success?
 
       write("proj/.gitignore", "target/\n")
@@ -613,7 +613,7 @@ RSpec.describe Lain::Tools::Grep do
       end
 
       it "leaves no offload thread and no git child behind" do
-        Open3.capture3("git", "init", "-q", chdir: tmpdir)
+        Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: tmpdir)
         write("a.txt", "needle\n")
         spawned = Thread::Queue.new
         allow(Process).to receive(:spawn).and_wrap_original do |spawn, *argv, **options|

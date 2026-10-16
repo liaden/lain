@@ -95,7 +95,7 @@ RSpec.describe Lain::SearchRules do
     end
 
     def git(*argv)
-      _out, err, status = Open3.capture3("git", *argv, chdir: root)
+      _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", *argv, chdir: root)
       raise err unless status.success?
     end
 

@@ -203,7 +203,7 @@ RSpec.describe Lain::Tools::Grep, :core do
     end
 
     def git_init
-      system("git", "init", "-q", tmpdir, exception: true)
+      system(SeedRepo::SCRUB, "git", "init", "-q", tmpdir, exception: true)
     end
 
     # The daemon walks with ripgrep's `ignore` crate and the in-process walk
@@ -313,7 +313,7 @@ RSpec.describe Lain::Tools::Grep, :core do
   # change on either side reddens a test instead of silently altering a search.
   describe "ignore-handling gaps the daemon carries -- pinned, not smoothed over" do
     def git_init
-      system("git", "init", "-q", tmpdir, exception: true)
+      system(SeedRepo::SCRUB, "git", "init", "-q", tmpdir, exception: true)
     end
 
     # `git ls-files --cached` keeps a tracked file that also matches
@@ -322,7 +322,7 @@ RSpec.describe Lain::Tools::Grep, :core do
       git_init
       write("app/y.txt", "needle kept\n")
       write("target/x.txt", "needle tracked\n")
-      system("git", "-C", tmpdir, "add", "-f", "target/x.txt", exception: true)
+      system(SeedRepo::SCRUB, "git", "-C", tmpdir, "add", "-f", "target/x.txt", exception: true)
       write(".gitignore", "target/\n")
 
       ruby, core = differential("needle")

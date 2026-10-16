@@ -240,7 +240,7 @@ RSpec.describe Lain::Tools::ListFiles do
 
   describe "a recursive listing of a repository" do
     before do
-      _out, err, status = Open3.capture3("git", "init", "-q", chdir: tmpdir)
+      _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: tmpdir)
       raise err unless status.success?
 
       File.write(File.join(tmpdir, ".gitignore"), "target/\n")

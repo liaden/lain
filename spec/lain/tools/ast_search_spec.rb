@@ -328,7 +328,7 @@ RSpec.describe Lain::Tools::AstSearch do
   end
 
   it "skips files git ignores" do
-    _out, err, status = Open3.capture3("git", "init", "-q", chdir: tmpdir)
+    _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: tmpdir)
     raise err unless status.success?
 
     write(".gitignore", "target/\n")

@@ -579,7 +579,7 @@ RSpec.describe Lain::Isolation::Gc, :seam do
       dir = lease("w1")
       blob = run_git(@repo_root, "rev-parse", "HEAD:README").strip
       stages = (1..3).map { |stage| "100644 #{blob} #{stage}\tREADME\n" }.join
-      Open3.capture3({ "GIT_INDEX_FILE" => nil }, "git", "-C", dir, "update-index", "--index-info", stdin_data: stages)
+      Open3.capture3(SeedRepo::SCRUB, "git", "-C", dir, "update-index", "--index-info", stdin_data: stages)
 
       record = record_for(gc(at: now + (8 * day)), dir)
 

@@ -22,7 +22,7 @@ RSpec.describe Lain::FileWalk do
   end
 
   def git(*argv, chdir: root)
-    _out, err, status = Open3.capture3("git", *argv, chdir:)
+    _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", *argv, chdir:)
     raise err unless status.success?
   end
 
