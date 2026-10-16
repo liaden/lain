@@ -2022,6 +2022,11 @@ XDG path relative, which put machine state back inside the user's repository)
    exchange kept whole, short attestations, `shift: false` on ollama, the HUD's row-count redraw, a rebound
    approval key, `lain land wait` that knows a drainer, and the judge's decisions shown. 24 cards,
    panel-reviewed. The round's "not reached" sections stay round 25's coverage debts, by ruling.
+   **Done (2026-10-16)**: all 24 cards landed, plus a 25th the run added (the input pane keeps an idle draft
+   in raw mode while a child runs). Follow-ups: the judge path's open guardrail holes and a fail-closed default
+   for unknown programs, a credential-printing command denylist, `Shell::Parse` kinds per stage, the terminal
+   flake family (5 recorded), a project's `system.md` reaching approver prompts, and read roots for dev
+   children. Round 25 re-drives each closed finding (`planning/specs/qa-round-24-fixes.md`, Integration checks).
 
 ## Map of the documents
 

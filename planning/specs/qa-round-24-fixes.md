@@ -1,6 +1,6 @@
 # QA round 24 fixes: a command's paths, a child's place, and a window that refuses
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1256,3 +1256,36 @@ approval.
   T8 7bde7938, T18 e0b05dd4, T10 5d03429e, T13 df571d03.
 - In flight at this entry: T2 (fix round), T3 (waits for T2), T5 (fix round), T11 (fix round), T17 (fix round),
   T20 (review). Not started: T4, T6, T7, T12, T14, T22, T24, T25.
+
+- T2 took 4 review rounds. User ruling on `bundle exec X`: unwrap it, but X may not be the system X, so X's opaque
+  rules still apply, its narrowing rules do not, and every named path counts as possibly written.
+- T3: after the third review the user ruled "land as is". Its open holes (glob classes, directory walkers not on the
+  recursive list, file lists from stdin, git forms that print contents) go to a follow-up card, with the reviewer's
+  proposed fail-closed flip. Running a script is documented as the limit. The case list was handed to the user's
+  separate guardrail research.
+- T5: a link to an account or sudo file is refused on `bash` as on `read_file`; a project root reached through a
+  symlink, and a leased worker's checkout outside the board root, no longer refuse an ordinary read.
+- T6: `Policy#root`; the judge is told the requester, not a role name.
+- T7: refuses only the approval roles' own slot files; a project's `system.md` still reaches the approver prelude.
+  Follow-up.
+- T12: every leased child's writes are held to its checkout, not only the first.
+- T14: `WorkerEnv#read_roots`, lent only when there is a checkout. Dev children, `Compose` and `DbIndex` do not carry
+  it yet. Follow-up.
+- T4: a bash deny is remembered by every word the command reads as a path, never the call's directory or a directory
+  above it, a `cd` target or above, or an option word. User ruling: `ls ~` is still remembered when home is not
+  above the cwd (the card's blast radius).
+- T24 (the card's design): `Telemetry::JudgeApproved` on the `display:` channel, `Decorators::JudgeApproved` bounded
+  to 120 characters with control and format characters replaced, and `judge_deferred` on the queue's `Pending`,
+  shown on the nvim approval row and the plain-chat prompt. A fault is not marked deferred; a distinct "the judge
+  failed" mark is a product call, left as a follow-up.
+- T24 was stacked on T4's unlanded files; after T4 landed it was re-applied from its own diff onto `19c8685a`.
+- T25 (raw mode while idle): `InputPane::Draft` and `InputPane::Uncooked`. User ruling: Ctrl-C discards the idle
+  draft and Tab goes into it, as on main. Bracketed paste is on while idle. Ctrl-Z then fg re-uncooks the terminal.
+- Flake recorded: 7c2ba4b8 (a fifth terminal spec).
+- Landed: T11 467cdda1, T7 61787016, T17 8288e9ee, T22 fad6ce3f, T20 70698736, T2 d6db46f0, T5 723fc59c,
+  T12 122a154b, T3 92238114, T6 ad52f853, T14 e6e4d742, T4 19c8685a, T24 e246a265.
+- T25 landed 61e004a8. All 25 cards landed.
+- Integration checks at `61e004a8`: `rake pspec` 24,028 examples, 0 failures (13 pending); rubocop and clippy
+  clean; zeitwerk-census and comment-census `--check-tickets` pass. `spec-census --check` fails at 185 against a
+  ceiling of 184, and reads the same 185 entries at the base `10379a13`: it existed before this run. QA scenarios
+  corrected in 14 files. The round-25 manual re-drive is still owed.
