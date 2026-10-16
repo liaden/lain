@@ -28,8 +28,8 @@ end
 RSpec.describe Lain::Shell::Pipeline do
   subject(:pipeline) { described_class.new(grace: 0.2) }
 
-  def run(argvs, cwd: Dir.pwd, env: {}, timeout: 10, ceiling: 1_048_576, **sinks)
-    pipeline.call(Lain::Shell::Term.of(*argvs), cwd:, env:, timeout:,
+  def run(argvs, cwd: Dir.pwd, env: {}, timeout: 10, ceiling: 1_048_576, fds: {}, **sinks)
+    pipeline.call(Lain::Shell::Term.of(*argvs), cwd:, env:, timeout:, fds:,
                                                 capture: Lain::Exec::Capture::Bounded.new(ceiling:, **sinks))
   end
 
@@ -331,6 +331,27 @@ RSpec.describe Lain::Shell::Pipeline do
   # allows -- would read the human's keystrokes at the repl. Nothing else in
   # either spec file fails when that option is deleted, which is exactly why
   # this example exists.
+  describe "descriptors handed to the stages" do
+    it "lets a stage write to a handed descriptor, leaving stdout empty" do
+      reader, writer = IO.pipe
+      capture = run([["sh", "-c", "echo t >&3"]], fds: { 3 => writer })
+      writer.close
+
+      expect([reader.read, capture.stdout]).to eq(["t\n", ""])
+    ensure
+      reader&.close
+    end
+
+    it "keeps the parent's copy open, so closing it is the caller's to do" do
+      reader, writer = IO.pipe
+      run([["true"]], fds: { 3 => writer })
+
+      expect(writer).not_to be_closed
+    ensure
+      [reader, writer].each { |io| io&.close unless io&.closed? }
+    end
+  end
+
   describe "the first stage's stdin" do
     it "is /dev/null, and never the process's own" do
       read, write = IO.pipe

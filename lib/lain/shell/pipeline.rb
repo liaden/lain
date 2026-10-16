@@ -219,6 +219,8 @@ module Lain
       #   taken into as they arrive, and where a refusal's own line is written
       #   when the term never runs at all. The caller's, so what a run holds is
       #   bounded by what the caller chose to retain.
+      # @param fds [Hash{Integer => IO}] descriptors every stage inherits at
+      #   the given number; the caller still owns, and closes, its own copies
       # @return [Exec::Capture] for every TERM, including every one that cannot run --
       #   which is the totality that matters, because a term is built from a
       #   {Tool::Input} the model wrote. NOT for every OBJECT: anything that is
@@ -227,11 +229,11 @@ module Lain
       # @raise [Timeout] when the deadline passes, after the groups are killed
       # @raise [Exception] whatever a caller's sink raises mid-pump, or a stop,
       #   after the groups are killed -- see {Run#collect}
-      def call(term, cwd:, env:, timeout:, capture:)
+      def call(term, cwd:, env:, timeout:, capture:, fds: {})
         refusals = Refusals.new(term:, cwd:, env:).causes
         return refuse(refusals.first, capture) unless refusals.empty?
 
-        Run.new(term:, cwd:, env:, timeout:, grace: @grace, clock: @clock, setsid: @setsid, capture:).call
+        Run.new(term:, cwd:, env:, timeout:, grace: @grace, clock: @clock, setsid: @setsid, capture:, fds:).call
       rescue SystemCallError, ArgumentError => e
         refuse(Refusal.new(status: NOT_FOUND, message: "#{PARTIALLY_STARTED}: #{e.class}: #{e.message}"), capture)
       end
@@ -361,7 +363,7 @@ module Lain
       # arrive -- which is why it is a per-call object and {Pipeline} itself is
       # frozen.
       class Run
-        def initialize(term:, cwd:, env:, timeout:, grace:, clock:, setsid:, capture:)
+        def initialize(term:, cwd:, env:, timeout:, grace:, clock:, setsid:, capture:, fds:)
           @term = term
           @cwd = cwd
           @env = env
@@ -370,6 +372,7 @@ module Lain
           @clock = clock
           @setsid = setsid
           @capture = capture
+          @fds = fds
         end
 
         def call
@@ -404,12 +407,16 @@ module Lain
         # re-split, and `--` keeps a program named like an option from being read
         # as one.
         def commands(pipeline)
-          pipeline.stages.map { |stage| [@env, [@setsid, "setsid"], "--", *stage.argv, discarded(stage)] }
+          pipeline.stages.map { |stage| [@env, [@setsid, "setsid"], "--", *stage.argv, stage_options(stage)] }
         end
 
         # A stage's own options win over the pipeline's in Open3, which is how
         # one stage's stderr leaves the shared pipe.
         def discarded(stage) = stage.discards.to_h { |stream| [STREAM_OPTIONS.fetch(stream), File::NULL] }
+
+        # Named per stage because `close_others:` would otherwise close a
+        # handed descriptor before exec.
+        def stage_options(stage) = discarded(stage).merge(@fds)
 
         # Each stage leads its own session, and so its own group ({SETSID}),
         # which is what lets a timeout kill the command's own descendants rather

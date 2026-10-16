@@ -59,6 +59,19 @@ RSpec.describe Lain::Exec::Local do
     end
   end
 
+  describe "descriptors handed to a term" do
+    it "reaches the stage, which writes to it" do
+      reader, writer = IO.pipe
+      capture = backend.call(command: Lain::Shell::Term.of(["sh", "-c", "echo t >&3"]), cwd: Dir.pwd,
+                             env: ENV.to_h, timeout: 10, fds: { 3 => writer })
+      writer.close
+
+      expect([reader.read, capture.stdout]).to eq(["t\n", ""])
+    ensure
+      reader&.close
+    end
+  end
+
   describe "a command that leaves a background child behind" do
     def reap(pid)
       Process.kill("KILL", pid)

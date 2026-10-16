@@ -54,12 +54,15 @@ module Lain
       # @param timeout [Numeric] seconds before the process group is killed
       # @param stdout_sink [#<<] where stdout bytes are pumped as they arrive
       # @param stderr_sink [#<<] where stderr bytes are pumped as they arrive
+      # @param fds [Hash{Integer => IO}] descriptors handed to each stage of a
+      #   term; the caller closes its own copies
       # @return [Capture] what ran, whatever its exit status, holding at most
       #   one byte past the ceiling and counting every byte
       # @raise [Timeout] when the deadline passed and the group was killed
-      def call(command:, cwd:, env:, timeout:, stdout_sink: Sink::Null.new, stderr_sink: Sink::Null.new)
+      def call(command:, cwd:, env:, timeout:, stdout_sink: Sink::Null.new, stderr_sink: Sink::Null.new,
+               fds: {})
         capture = Capture::Bounded.new(ceiling: @ceiling, stdout_sink:, stderr_sink:)
-        @pipeline.call(term(command), cwd:, env: Exec.child_env(env), timeout:, capture:)
+        @pipeline.call(term(command), cwd:, env: Exec.child_env(env), timeout:, capture:, fds:)
       rescue Shell::Pipeline::Timeout => e
         raise Timeout, e.message
       end
