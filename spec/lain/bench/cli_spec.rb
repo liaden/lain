@@ -909,7 +909,7 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
-    # The invariant CLI::Wiring#project_memory states, held on the bench too: a
+    # The invariant CLI::Wiring::RunState#project_memory states, held on the bench too: a
     # sweep run from a subdirectory must measure recall against the memory of
     # the project it is in, not against an empty store nobody ever wrote to.
     it "keys --memory project to the project root, not to the process's cwd" do

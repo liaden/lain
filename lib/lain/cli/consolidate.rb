@@ -61,7 +61,7 @@ module Lain
       # @param profile [RunProfile] what the model flag band resolved
       # @param paths [Paths] resolves the session dir
       # @param project_dir [ProjectDir] keyed to the PROJECT's root rather than
-      #   to `Dir.pwd`, {CLI::Wiring#project_memory}'s invariant: consolidating
+      #   to `Dir.pwd`, {CLI::Wiring::RunState#project_memory}'s invariant: consolidating
       #   from a subdirectory must write into the memory of the project it is
       #   in. It locates the memory store and this pass's own journal.
       # @option options [String] :provider the model flag band's provider, which

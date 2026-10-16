@@ -386,7 +386,7 @@ module Lain
       # @param name [String, nil]
       # @raise [Refusal] on a name outside {MEMORIES}
       # Keyed to the PROJECT's root and never to `Dir.pwd`, the invariant
-      # {CLI::Wiring#project_memory} states: a sweep run from a subdirectory
+      # {CLI::Wiring::RunState#project_memory} states: a sweep run from a subdirectory
       # must measure recall against the memory of the project it is in, not
       # against an empty store nobody wrote to.
       def memory_store(name)
