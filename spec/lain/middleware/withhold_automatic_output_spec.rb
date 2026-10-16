@@ -200,4 +200,31 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       expect(env.fetch(:context)).to be(:the_session)
     end
   end
+
+  describe "the ruling a guarded call's tool can read" do
+    def through_gate(policy, tool)
+      gate = Lain::Middleware::Gate.new(policy:)
+      seen = []
+      guard.call({ effect: call_of("ls"), context: Lain::Session::Null.instance, tool: }) do |inner|
+        gate.call(inner) do |ran|
+          seen << ran.fetch(:context)
+          ran.merge(result: Lain::Tool::Result.ok("ok"))
+        end
+      end
+      seen.first
+    end
+
+    it "is the ruling the gate made" do
+      ruling = through_gate(Lain::Middleware::Gate::ApproveAll.new, Lain::Tools::Bash.new).ruling
+
+      expect([ruling.allow?, ruling.rung]).to eq([true, "approve_all"])
+    end
+
+    it "says nothing allowed a call the gate does not judge" do
+      ungated = instance_double(Lain::Tools::Bash, held?: false)
+      seen = through_gate(Lain::Middleware::Gate::ApproveAll.new, ungated)
+
+      expect([seen.ruling.allow?, seen.ruling.human?, seen.ruling.rule]).to eq([false, false, nil])
+    end
+  end
 end

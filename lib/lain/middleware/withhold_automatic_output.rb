@@ -94,7 +94,11 @@ module Lain
         # The ruling of a call no ladder ruled on, which allowed nothing.
         module Unruled
           def self.allow? = false
+          def self.human? = false
+          def self.rule = nil
         end
+
+        attr_reader :ruling
 
         def initialize(context, barred:)
           super(context)
@@ -110,7 +114,7 @@ module Lain
         end
 
         # Whether the call ran because a machine allowed it.
-        def automatically_allowed? = @ruling.allow? && !@ruling.human?
+        def automatically_allowed? = ruling.allow? && !ruling.human?
       end
 
       attr_reader :bar
