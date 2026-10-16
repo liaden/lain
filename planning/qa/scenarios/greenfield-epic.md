@@ -189,6 +189,8 @@ Checks, in the cockpit from §1:
    *Wrong looks like:* a note held as `held as your next prompt` and run as its own turn, a note that arrives in
    2 consecutive requests, a note typed in the last call that vanishes, or a prompt typed after the final
    reply echoed as `note for the agent`.
+   The system text of every agent says what a `<mailbox>` block is and that `human` is the person at the keyboard, so
+   the model treats the note as yours and not as part of its task (`prompt-slots-and-roles.md` §5b).
    Known quirk: `/resend` of a `lain://request` buffer that already holds a pending note claims nothing, so the
    model sees that note twice.
 
@@ -366,12 +368,19 @@ Checks:
 
 10. **Frugirl round 4 checks (default `auto`, relaunched without `--approval`).** Record the judge's latency
     per call and any approve that was wrong, and count the human prompts for the whole journey against
-    round 3's 37. No researcher reads `/etc/passwd` or lists `/home`: each such call is refused or
-    parks once and is then refused for that requester for the session with your reason. Press Shift+Tab
+    round 3's 37. Each call the judge approves leaves one stamped transcript line, `the judge approved
+    <tool>(<input>)`, and a call it left for you parks with `the judge deferred this` on its prompt and its
+    `lain://approval` row; a call that names a credential or a path lain cannot name for certain (`cat .env`,
+    `ls "$HOME"`) never reaches the judge and parks unmarked. No researcher reads `/etc/passwd` or lists `/home`: each such call is refused or
+    parks once and is then refused for that requester for the session with your reason. A deny you give on a
+    `bash` call is remembered by the paths its words name, so a later `read_file` of the same path is refused from
+    memory, while a deny of a command that names no path of its own (`rm -rf build`) remembers nothing. Press Shift+Tab
     in the `lain input` pane while a run is in flight: approval flips and the HUD shows it at once
     (a plain chat flips only at its prompts). A researcher's `rustc
     --version` runs with no prompt. Every researcher's first request carries the environment block
-    (`prompt-slots-and-roles.md` §5b), and its lease is under the state directory (`subagents-and-backends.md` §2c).
+    (`prompt-slots-and-roles.md` §5b), names its own lease as its working directory and not `frugirl`, and the lease
+    is under the state directory (`subagents-and-backends.md` §2c). Its first message names the lease and the
+    project's path, so it reads `frugirl` files by absolute path without parking.
 
 ## 7. `/research-epic` to an approved research gate
 

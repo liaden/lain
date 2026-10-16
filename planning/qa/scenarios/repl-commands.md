@@ -517,10 +517,15 @@ gated `bash` that no rung refuses (`wc -l README.md`, say), and check:
    parks too, journaled `fault`: never read a fault as an approve.
 3. **Tier 0 never reaches the judge.** Read a credential path (the fixture key's absolute path) and
    the journal's rung `auto` reason is `unjudgeable`, with the call parked or refused as `ask`
-   would, and no judge child in the journal for that `tool_use_id`.
+   would, and no judge child in the journal for that `tool_use_id`. A `bash` call is held to every path its
+   command names, so `cat .env` and a command lain cannot name the paths of (`cat "$HOME/.netrc"`) are
+   `unjudgeable` too, and park for you.
 4. **Headless.** `lain chat --non-interactive --prompt '<a gated call>'` with no `--approval` decides
    through the judge, and a call it is unsure of is refused, with the reason naming
    `--non-interactive`. The same run with `--approval ask` refuses every gated call.
+5. **The human can see what the judge did.** An approve leaves one stamped transcript line, `the judge approved
+   bash(...)`, naming the call. A defer marks the parked prompt and its `lain://approval` row with `the judge
+   deferred this`. Under `/mode ask` a parked call carries no such mark.
 
 ### 6b — `bypass`
 
@@ -552,11 +557,12 @@ Check five things and then stop:
    §5 gives. The `bash` spelling of the same probe goes through a different rung; drive it there,
    and read §5 before assuming the two answer alike.
 
-**Do not read item 4 as a shell boundary.** Under `bypass` Triage checks only the words of a command
-the shell verdict parsed, so `cat '/etc/shadow'`, `sudo cat /etc/shadow` and `cd /etc && cat shadow`
-are approved when they are not parsed, and only file modes stop them. `shell-term-approval.md`
-records the list. `/etc/shadow` as a `read_file` path or a plain `cat /etc/shadow` is refused as an
-account file under every level.
+**Do not read item 4 as a shell boundary.** Under `bypass` Triage checks the paths lain can name for
+certain from a command's words. `cat '/etc/shadow'`, `cd /etc && cat shadow` and a link to `/etc/shadow`
+are now refused as an account file under every level, but `sudo cat /etc/shadow`, a `$HOME/..`
+spelling, a glob and `cd /etc; cat shadow` are opaque, so they are approved, and only file modes stop
+them. `shell-term-approval.md` records the list. `/etc/shadow` as a `read_file` path or a plain
+`cat /etc/shadow` is refused as an account file under every level.
 
 One more, if `shell-term-approval.md` has already run in this tree: a command **barred** from
 automatic approval by a withheld output gets a *final* deny under `bypass`, telling the human to
@@ -577,9 +583,12 @@ with surface `key`. **In the pane it flips at once, even mid-run with no prompt 
 chat (own terminal) it flips only at a prompt: a Shift+Tab typed mid-run is dropped, not replayed at
 the next prompt (a replay is the finding), and a flip redraws the open prompt's header. Known gap, record
 it and do not fail it: after a paste containing Shift+Tab the pane row shows `^[[Z`.
-A user config `keys approval_cycle: "C-x"` moves the cycle to C-x (prompt, typeahead sweep and pane)
-and Shift+Tab then does nothing. `C-t` and `C-g` cannot be bound (Reline's transpose, and compose); a
-project `.lain/config.rb` naming `keys` is refused.
+`S-Tab` is the one value `keys approval_cycle:` accepts today. A key the user declares is checked at launch and
+the launch is refused with the file and line, naming the holder: `keys approval_cycle: "C-x"` reads `approval_cycle
+C-x is lain's completion key`, `"C-g"` reads `... is lain's compose key`, and every other `"C-<letter>"` (`"C-t"`, say)
+reads `... is held by the line editor ...`. Declaring `"S-Tab"` itself is refused the same way if your inputrc binds
+`\e[Z`. Leaving `keys` out never fails a launch: the default Shift+Tab is bound if it can be, and the chat says so
+when it cannot. A project `.lain/config.rb` naming `keys` is refused.
 In nvim, `:LainMode bypass` from any buffer journals a `mode_switch` from surface `nvim`, and
 `:LainMode nosuch` refuses in the editor. Known gap: it does not redraw an open terminal prompt
 header; the next prompt shows the new level.

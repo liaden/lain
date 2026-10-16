@@ -146,7 +146,7 @@ gone, so:
 §3's 128,000-token published window was confirmed by round 17.
 
 **And the wire, since the same round-20 forks read it:** the captured request body carries
-`options={"num_predict"=>4096,"num_batch"=>2048}` and `truncate=false` (a `--max-tokens 40` chat stopped at 40 on
+`options={"num_predict"=>4096,"num_batch"=>2048}` `truncate=false` and `shift=false` (a `--max-tokens 40` chat stopped at 40 on
 ollama.com), and `--max-tokens 0` refuses at construction. A body without `num_predict` is the round-19 defect
 (no generation cap on the ollama wire) back.
 

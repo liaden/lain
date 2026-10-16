@@ -695,8 +695,18 @@ argument.
 What to watch for:
 
 - **each issue runs in its own worktree**, cut from `epic/<slug>` and switched onto a lain-owned
-  branch `lain/issue/<slug>/<id>`. Nothing reaches the human's checkout, and nothing reaches
-  `epic/<slug>` before that issue's implementation gate;
+  branch `lain/issue/<slug>/<id>`. A worker's `write_file` or `edit_file`, its `bash` cwd, a `cd`, a redirect
+  and a path a known writer (`tee`, `cp`, `mv`, `sed -i`) writes are refused when they land outside its
+  worktree, naming the worktree, before any approval is asked. Drive it: have a worker `write_file` an
+  absolute path in the human's checkout and run `cd <checkout> && ls`; both are refused, even under `bypass`,
+  and the file does not exist. A script or build tool the rules do not know, and a command whose paths cannot be
+  named (an expansion such as `$D`), are left to the approval ladder, so this is a guard on named writes and not
+  a sandbox. Nothing reaches `epic/<slug>` before that issue's implementation gate;
+- **each worker is told its own place.** The first request of an issue's orchestrator, test engineer and dev
+  worker ends its role instructions with `Working directory: <that issue's worktree>`, not the human's checkout;
+- **an issue orchestrator reads its own epic's home without parking.** Under `epics_home :xdg`, its
+  `read_file` of `plans/<id>.md` in its epic home returns the plan and nothing parks. The same read of a
+  different epic's home still parks as `outside_project`, and a write there is still refused;
 - **the red step commits with `--no-verify`**, because the commit is red by design and a target
   project's own pre-commit hook would refuse exactly the state the step exists to record. Confirm
   the failing-test commit exists and that the tests in it actually fail;

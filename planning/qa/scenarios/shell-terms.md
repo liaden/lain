@@ -523,7 +523,7 @@ Spell them exactly as written; §1 explains why a `~` here would test nothing:
 | control | where it stops | what a bad rule would do |
 |---|---|---|
 | `cat .netrc` — **the bare word** | triage **abstains** and names it: `a word matches a protected name but is not written as a path, so this rung only says so: ".netrc" is a protected path`; the rules rung then says `no rule had an opinion` | approve it. `chunk-shell-term-approval.md`'s integration check 8 names this spelling as the single most important check in its list, and this document agrees |
-| `cat ./.netrc` — **the path-like form** | triage **denies**: `the command's argv names a path no approval may lift: "./.netrc" is a protected path`. It never reaches the rules rung and never reaches a human | — |
+| `cat ./.netrc` — **the path-like form** | triage **denies**: `the command names a path no approval may lift: "./.netrc" is a protected path`. It never reaches the rules rung and never reaches a human | — |
 | `cat .env`, with a real `.env` present | rules rung, `no rule had an opinion` → parks | approve it, if the predicate were "not denied" |
 | `grep -h -r . /home/YOU/.ssh`, with real keys present | rules rung → parks. **Confirm no key material was printed** | approve it, if word classification alone decided |
 | `/tmp/evil/cat README.md`, with a shim actually created there | rules rung → parks. **Confirm the shim did not run** | approve it, if the allowlist basenamed |
@@ -534,7 +534,7 @@ Spell them exactly as written; §1 explains why a `~` here would test nothing:
 
 **`cat .netrc` and `cat ./.netrc` behave differently, and neither may be approved.** The
 model controls the `./`. A denied word carrying no separator is deliberately **downgraded**
-from deny to abstain (`escalation.rb:411-439`), on the reasoning that a bare `Cookies` or
+from deny to abstain (`escalation.rb`, `PATHLIKE`), on the reasoning that a bare `Cookies` or
 `.netrc` would otherwise refuse `grep -n Cookies lib/lain/sensitivity.rb` in lain's own
 checkout — and the **first** of that downgrade's three stated reasons is *"the call still
 reaches a human because Triage downgrades every allow anyway"*, a premise `ComposedTerm`

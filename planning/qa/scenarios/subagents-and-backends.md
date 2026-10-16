@@ -237,6 +237,18 @@ directory so the check is a `find`.
    a researcher works, and how to clean up"): `git worktree remove <path>`, then delete the branch and
    `refs/lain/owned/heads/lain/plan/<key>`. A lease that `gc` reaped is the finding.
 
+7. **The role-skill route leases too.** Type `@researcher/critique lib/x.rb` (any skill the library offers to a
+   researcher). The researcher gets a kept scratch lease of its own, as in item 1: a `write_file` of
+   `CRITIQUE.md` lands in the lease and the project's working tree and `HEAD` are unchanged. A `write_file` of an
+   absolute path inside the project is refused naming the lease. The approval row and the journal name the
+   requester `researcher`, never `subagent`. A role skill cannot name `extends`, so there is no spike on this route.
+8. **The child is told where it is.** Read the researcher's first request in the journal (either route). Its system
+   text ends the role instructions with `Working directory: <the lease>`, and nowhere states the project's path as
+   its working directory (its segment 0 says `Working directory: stated after your role instructions`, byte for byte
+   the same for every sibling, so 2 researchers still share the cached prefix). Its first message names the lease and
+   the project's path, so it reads a project file by absolute path. The main agent's system text still names the
+   launch directory. A researcher that `cd`s or `ls`es the human's checkout believing it is home is the finding.
+
 A write that cannot land is itself journaled, as `ending_not_recorded` naming the spawn and which
 record was lost, rather than dropped silently.
 
@@ -263,7 +275,7 @@ This is the section the scenario exists for, and the question it used to open wi
 **Leasing by a model-dispatched spawn is no longer open** — `--isolation`'s help text and
 `CLI::Wiring` agree: the flag is resolved exactly once per launch (`Wiring#fleet_isolation`) and
 that one backend is shared between the `Supervisor` an actor adopts onto and the
-`Isolation::Leases` a **one-shot** dispatch holds through too (`Tools::Subagent#run_child`),
+`Isolation::Leases` a **one-shot** dispatch and an `@role` skill line hold through too (`Tools::Subagent#run_child`),
 including a nested spawn (`Subagent#descend` carries the same seam down). So this section is not
 about settling which of two claims is true; it is about **confirming a spawned child actually
 leased**, and the checks below are how a driver does that rather than takes the claim on trust.
@@ -303,6 +315,16 @@ What to check, in order:
 5. **`--isolation none` produces an `Isolation::Null` and not a stack of pass-throughs.** By-need
    decoration is a legibility policy: what it buys is that an undecorated run stays identifiable.
    Check the two runs' records differ in shape, not just in a name field.
+
+6. **A leased child is held to its checkout.** Under `--isolation worktree`, ask a `dev` worker to `write_file` an
+   absolute path in the human's checkout (`<project>/notes.txt`), then to run `cd <project> && cat > x.rb`, then
+   `cd <project> && ls`. Each is refused naming the worker's worktree, before any approval is asked (under `ask`
+   nothing parks, and under `bypass` it is still refused), and `<project>/notes.txt` does not exist. A
+   `write_file notes.txt` inside the worktree still runs and lands there. A path the command's words do not
+   reveal, such as `cd $D && ls`, is left to the approval ladder and is not refused here. A read of a project
+   file by a path tool still parks as `outside_project`, as before.
+7. **A worker is told its worktree.** The worker's first request ends its role instructions with
+   `Working directory: <its worktree>`, and does not name the human's checkout as its working directory.
 
 Then the crash, which is where the real-`git` seams are:
 

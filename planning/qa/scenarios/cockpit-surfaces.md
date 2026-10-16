@@ -111,7 +111,10 @@ Checks:
    with **3 ended children, the newest failed, none running**, the two rows are the newest two and the
    last line is `  +1 more`, so the failure is on screen. With **1 running parent that has 1 running
    child, plus 2 ended siblings**, the rows are the parent and its child. **Catches B-4 returning:** an
-   old success on screen with the newest `failed` row hidden under `+N more`.
+   old success on screen with the newest `failed` row hidden under `+N more`. **A finished judge is not an ended
+   row.** Under `auto`, let the judge look at 10 calls so 10 `auto_approver` children finish after a researcher
+   has: the ended rows still show the researcher and none shows an `auto_approver`. A judge that is running is
+   shown while it runs (it ends within 30 seconds, so look during a slow call).
 5. **The header carries NO age, and that is the check.** Leave the pane untouched with a child
    running and watch it for a minute: the header must not change, and the pane must not redraw.
    An age column here would make the frame differ from itself once a second — measured at seven
@@ -221,14 +224,36 @@ Checks:
     write. In a non-tty capture (`tmux -L "$QA_SOCK" pipe-pane` output read as a file, or `lain chat < /dev/null`
     piped to a file) nothing is wrapped.
     *Wrong looks like:* `configur` on one row and `ation` on the next, or a code line cut mid-token.
+15. **The header redraws when its row count changes, and a draft is never clobbered.** With a child
+    running and nothing typed, spawn a subagent so the fleet grows by a row: the header goes from 1 row to 2 in
+    place, and exactly 2 header rows are on screen (count them with `capture-pane -p -t <input>`, not by
+    eye). When the fleet shrinks back, exactly 1 header row is on screen and no stale row is left under it. Then
+    type `abc` without sending it and change the fleet again: `abc` stays on the input row and is what Enter
+    sends, and the new header is drawn whole at the next prompt. A header drawn twice, or a stale fleet row
+    left on screen, is the finding.
+16. **While a child runs and the pane is idle, typing goes into a draft the pane keeps.** Start an ask that runs
+    for 20 seconds or more, with no prompt parked. Type `abc` at the input row. The characters stay on the input
+    row, and a header redraw (spawn a child so the row count changes) leaves `abc` where it was and redraws
+    the header above it. Then each of these:
+    - **Ctrl-C discards the draft.** The input row is empty and nothing is sent. A second Ctrl-C with nothing typed
+      is the ordinary interrupt (`--grace`, the countdown above).
+    - **Tab goes into the draft** as a tab character; it does not trigger completion or move focus.
+    - **Ctrl-Z then `fg`** (suspend the `lain input` process, then resume it) leaves the pane working: the header
+      and the draft redraw, and a line typed after the resume reaches the chat.
+    - **A pasted multi-line draft is sent as one line.** Paste 3 lines in one go, then press Enter: the chat receives
+      one line holding all 3, not 3 prompts. A bracketed paste and a plain one both do this.
+    - **A very long line is sent whole.** A draft of more than 4,095 bytes arrives complete, with no cut and no
+      notice.
+    Read the journal for the sent lines, not the screen. A character typed in this state that is echoed by the
+    terminal instead of drawn by the pane (the draft shows twice), or a draft lost on a redraw, is the finding.
 
 **Three round-22 behaviours of the input pane, each a quick look.** The pane redraws its header only where
 it is: after an answered `[y/N]` nothing is written over the echoed answer, and the next prompt draws the
 header whole. `lain input` takes over the cockpit's input-pane slot, deriving the session from `TMUX_PANE`
 (not from `--name`, which defaults to `chat`), so a second pane started by hand adopts the recorded slot of
-**its own** cockpit. And a line the terminal cut at its canonical limit while an ask was running (4,095 bytes
-on a cooked terminal) is **held and said**, not committed: the human is told the terminal cut it and to paste it
-at the idle prompt; a 200-byte line mid-ask is held as typeahead as before.
+**its own** cockpit. And a long line typed while an ask is running is sent whole: a line of more than 4,095
+bytes (the terminal's canonical limit, which used to cut it and hold it with a notice) reaches the chat in full
+with no 4095-byte cut and no notice, and a 200-byte line mid-ask is held as typeahead as before.
 
 **Stopping an ask, and keeping the session.** Two gestures, one outcome:
 
@@ -1318,9 +1343,14 @@ What is worth checking:
   with the same row count rewrites the header rows where they are: watch `capture-pane -p -S -200` over 5 changes and count 1
   header row, not 5, with the prompt line intact. After an answered line the first idle tick prints the header once below the
   echo and later changes rewrite it in place, so the in-flight segment and `fleet:N` now move during a typed ask (they froze
-  for 68 s before). While the human has typed anything the HUD holds still, wrapped draft or not, and catches up at the next
-  prompt; a header of another row count and a resize likewise wait for the next whole draw. **Wrong looks like:** stacked
-  header rows, a draft or cursor disturbed by a redraw, or a HUD frozen for a whole ask with an empty editor.
+  for 68 s before). At a published prompt (a parked `[y/N]` or `command>`) the HUD holds still while the human has typed anything,
+  wrapped draft or not, and catches up at the next prompt. A header of another row count (a spawn adds a fleet row,
+  a child ends and one goes) is not left stale: with nothing typed the pane takes back the old rows and draws the
+  new header whole at once, so the screen holds exactly the new count of header rows; with a draft typed at such a
+  prompt the draft stays and the new header is drawn at the next prompt. While a child runs and the pane is idle, a
+  draft survives a row-count change (§0 check 16). A resize waits for the next whole draw. **Wrong looks like:**
+  stacked header rows, a stale fleet row, a draft or cursor disturbed by a redraw, or a HUD frozen for a whole ask
+  with an empty editor.
 - **`fleet:N` is an observation, not a check.** The trial read `fleet:0` after 2 one-shot subagents ran. The
   fix card found the count correct end to end (the spawn is journaled and published in one synchronous call) and
   could not reproduce it. While a one-shot child runs, record what `fleet:` reads and the clock time, and

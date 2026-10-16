@@ -135,9 +135,10 @@ launch, by name, before the session file is opened**, and so does a bad `--compa
 refusal, not an ask.
 
 **Why the tool results must be large, measured rather than assumed.** The elide half writes a
-per-message attestation of about **230 bytes** — role, digest, byte count. Over `"ok"`-sized tool
-results the attestation is *bigger than what it replaced*, so `shrinks?` is **false on every turn**;
-it turns true around **2 KB** of tool result. The driver is the elide half, not the oracle half.
+per-message attestation of about **170 bytes**: role, a 12 character digest, byte count (it was about 230
+with the full 71 character digest, so the break-even below was measured against the longer one and now sits lower:
+re-measure it). Over `"ok"`-sized tool results the attestation is *bigger than what it replaced*, so `shrinks?` is
+**false on every turn**; it turned true around **2 KB** of tool result with the old attestation. The driver is the elide half, not the oracle half.
 
 And a run that fails to shrink does not merely fail to demonstrate the strategy — **it pays for a
 model call and throws it away, every turn.** The derivation asks the oracle first and checks whether
@@ -208,7 +209,8 @@ Expected once occupancy climbs: `signals` stops being `[]`, a compaction is warr
 in this bench can make.** Pull the rewritten span out of the derived context and confirm the split:
 
 - **tool-carrying messages became attestations** — one line each, of the shape
-  `[<role> <digest> <bytes> bytes] …`, with the elision prose after it;
+  `[<role> <12 hex characters> <bytes> bytes] …`, with the elision prose after it. Count the attestation text
+  against the message count: a run with 176 elided messages costs about 40% of what the full digest cost;
 - **conversational turns survive verbatim and in position** — not summarized, not reordered;
 - a **lone** conversational turn sitting between two tool runs is *retained*, not summarized. The
   strategy deliberately declines to pay a model call to turn one message into one message, so an
@@ -256,6 +258,12 @@ driven — this is integration check 7 of the discharging chunk)*:
   last one instead of jumping to the full history, and no over-window refusal follows. Then resume with
   `--compact-keep 8`: the typed flag wins, and the notice reads
   `recorded with --compact-keep 4; continuing with 8 (the current flags win)`.
+- **A reply that fills the window is cut, not shifted.** Every ollama request sends `shift: false` beside
+  `truncate: false`, so a reply that reaches the context window stops there (`done_reason` length) instead of
+  ollama silently shifting the context and going on. Launch with `--num-ctx 1024` and ask for a count to 2000: the
+  reply ends short of `--max-tokens` and the line reads `the reply filled the context window; raise LAIN_NUM_CTX or
+  start a shorter chat`, not `raise --max-tokens`. A cut at `--max-tokens` with room left in the window still
+  reads the `--max-tokens` line.
 - **An over-window prompt is refused, not truncated.** Lain now asks ollama not to truncate, so a
   prompt past the loaded context comes back refused with the server's own count. *Driven
   2026-09-14* against the built binary (a 160 KB prompt, 32,768-token context):
@@ -351,6 +359,13 @@ rather than accumulating, and a collapse that would not shrink declined as `woul
 like any other. Resume afterwards and confirm the render is byte-identical; replay refuses a
 collapse naming a cut its file lacks, so a resumed session that renders the superseded summaries
 again is the finding.
+
+**A pinned prompt keeps the reply that answered it.** `/pin` the session's first prompt, run enough turns under
+`elide-tools+summarize-conversation` to force a cut, and read the rewritten span. The first prompt **and** the
+assistant reply that answered it both survive verbatim, and the summary covers only later messages. Before the
+fix the summary absorbed the reply and the model saw a question with no answer. Do the reverse: `/pin` an assistant
+reply, and the user prompt it answered is held with it. The running ask's open tool rounds are not held by
+this. Resume afterwards and confirm the held set is the same on the first resumed request.
 
 One open decision does still stand, so do not file it: a `/pin` on a turn inside a held range is
 silently ignored.

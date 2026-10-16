@@ -121,6 +121,12 @@ Then `--unbounded` over the same tree. It lifts two of the three ceilings. Wheth
 162k lines is *usable* is a separate question from whether it is *permitted* — record the wall
 time and what the sidebar does, and file the usability half separately from any correctness half.
 
+`--unbounded` does **not** lift the walk bound of 20,000 entries. `/survey /` (or `--unbounded` over any root
+holding more entries than that) ends, and refuses naming the bound and the root, rather than surveying part of
+the tree. It must return within seconds with a clean `lain:` line and no backtrace; a walk that never ends or
+grows in memory is the bound lost. Where a root of `/` is surveyed under a small bound, no row's path starts
+with a `/`.
+
 **Do not drive `--unbounded` before the plain refusal.** The refusal is the check; lifting it first
 spends the only chance to read it firing honestly.
 
@@ -200,6 +206,13 @@ detector-positive token and `vault-pass.txt` beside it, and survey it. Expect al
   the project, the directory name was invisible to it, and it read the file raw.
 - A question that reads an ordinary file of the tree answers normally. Naming a file by an absolute path under the surveyed
   root and by a path relative to it both resolve to the same file.
+- **The docent's brief names the file from the docent's own root.** `/survey ./sub` in a project, then a note on
+  `sub/hello.rb` line 2 and a question: the docent's first message names `hello.rb`, not `sub/hello.rb`, and its
+  `read_file` of that name returns the file. Over a tree outside the project (`/survey <abs path to $T>`), a note on
+  `lib/calc.rb` is briefed as `lib/calc.rb` and the docent's read returns the file with nothing parked. The notes and
+  the corpus the human sees keep their paths relative to the chat's directory. A docent that answers "no such file"
+  for a file the note is on is the brief naming it from the wrong root.
+- The docent is told its own working directory: the surveyed root, in the last line of its role instructions.
 
 Then the disclosure's own rule, both directions:
 

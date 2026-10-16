@@ -217,17 +217,18 @@ since neither implies the other:
 ```bash
 env -u LAIN_NUM_BATCH lain chat --provider ollama ... --prompt hi
 # -> session / request_sent's extra:    {"num_batch" => 2048}
-# -> the encoded wire body's options:  {"num_predict" => <max_tokens>, "num_batch" => 2048}, truncate=false
+# -> the encoded wire body's options:  {"num_predict" => <max_tokens>, "num_batch" => 2048}, truncate=false, shift=false
 ```
 
 Round 20 confirmed this on the wire from four forks (`num_predict` 4096, `num_batch` 2048,
-`truncate=false`).
+`truncate=false`). Every request also carries a top-level `shift=false` since round 24, so a reply that fills
+the window is cut instead of shifted.
 
 `max_tokens` is never the source of a silent zero here: a non-positive `--max_tokens` /
 `$LAIN_MAX_TOKENS` is refused at construction (`max_tokens must be positive, got 0`) before any
 request is built, so `num_predict` on the wire is never zero or absent.
 
-**Automated by** `spec/e2e/wire_contract_spec.rb`, "sends the launched options on every model call": a chat launched with `--num-batch 1024` puts `num_batch` 1024 and an integer `num_predict` in the `options` of every ollama request, a skill child's included. **Still needs a human:** the 2048 default with the knob unset, `extra={}` on another provider, the `session` and `request_sent` records' `extra`, and `truncate=false`.
+**Automated by** `spec/e2e/wire_contract_spec.rb`, "sends the launched options on every model call": a chat launched with `--num-batch 1024` puts `num_batch` 1024 and an integer `num_predict` in the `options` of every ollama request, a skill child's included. **Still needs a human:** the 2048 default with the knob unset, `extra={}` on another provider, the `session` and `request_sent` records' `extra`, `truncate=false` and `shift=false`.
 
 ## 7 — `--compact-strategy` resolves, and refuses, at LAUNCH
 

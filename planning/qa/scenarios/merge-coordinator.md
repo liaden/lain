@@ -92,6 +92,19 @@ lain land enqueue       # a new drainer starts and lands the stranded entry
 Record: the dead drainer's verify process may outlive it (known follow-up); the queued entry is landed
 by the next drainer, not lost; `wait` on the old id still reaches an answer.
 
+Then the case where nobody comes. Kill the drainer, and do **not** enqueue again. Run `lain land wait <id> --branch main`
+on a stranded id (no `--timeout`): once no live process has held the drain lock for 5 seconds it stops waiting
+and prints ``<id> is queued and no drainer is landing it (stale holder line from pid N); run `lain land drain --branch main` to land it``,
+exit 3 (not a hang, and not 2, which is only the timeout passing). Run the printed command: the entry lands and
+a second `wait` exits 0. A drainer still booting can read as absent for those 5 seconds, so a `wait` run in the same instant as
+the first `enqueue` may exit 3; running the printed command then is harmless, because the lock admits one drainer. With a
+live drainer holding the lock (a slow verify), `wait` keeps waiting past 5 seconds and exits 0 or, with `--timeout`, 2.
+
+Last, an unusable lock. `chmod 000 $QA/<the drain.lock path>` (the home directory `lain land status` reads is under
+the state root; find it with `find $QA -name drain.lock`). `lain land enqueue` and `lain land status` each refuse in one line
+naming the file (`cannot use the lock <path>: ...`), with no backtrace and without saying a drainer is landing the entry. For
+`enqueue`, a lock that is readable but not writable is refused the same way. Restore the mode afterwards.
+
 ## 7: A chat child hands back
 
 `lain chat --isolation worktree` with an actor-mode child that commits. Expect the child to run `check`
