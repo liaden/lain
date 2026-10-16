@@ -1,6 +1,6 @@
 # Bash confinement: binary identity, a reader sandbox, judge facts, and an observing tripwire
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (2 Rust cards: T15, T16)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust cards add Raph Levien and Andrew Gallant
@@ -187,7 +187,8 @@ These are the new shapes several cards share. Each card restates the part it own
 module Lain
   module Shell
     # One stage's program, resolved. Pure value; deeply frozen.
-    Executable = Data.define(:name, :resolved, :realpath, :chain, :shadowed, :anomalies, :klass, :fresh, :run_files)
+    Executable = Data.define(:name, :resolved, :realpath, :chain, :shadowed, :anomalies, :klass, :fresh, :run_files, :wrappers)
+    # wrappers: [Executable] each runner (nice, env, timeout, bundle exec...) resolved and classed; T27 prints them, T28's bar reads them
     # klass: :system | :user | :project | :unresolved
     # chain: [String] each link from `resolved` to `realpath`
     # shadowed: [String] later PATH hits, deduped by realpath
@@ -198,7 +199,7 @@ module Lain
       RunFile = Data.define(:path, :klass, :fresh)
 
       # One per session, shared by the ladder (T14), the bash call (T13) and the judge (T27).
-      # @param stat [#lstat, #stat, #readlink, #executable?] a filesystem port; File in production
+      # @param stat [#lstat, #readlink, #realpath, #executable?, #writable?] a filesystem port; File in production
       class Resolver
         NULL = ... # resolves every stage :unresolved; the default where no session exists
         def initialize(root:, fresh:, stat: Executable::Stat.new) = ...
@@ -244,7 +245,7 @@ end
 
 ## Tasks
 
-### T1: Scrub exported shell functions and loader injection from every child env          [risk: low]
+### [x] T1: Scrub exported shell functions and loader injection from every child env          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/exec.rb`, `spec/lain/exec/local_spec.rb`
@@ -283,7 +284,7 @@ FUNCTION_ENV = /\ABASH_FUNC_/
 - `spec/lain/exec/docker_spec.rb:539-588` or `spec/lain/exec/core_spec.rb:60-90` start failing: they pin the exact nil keys on the wire, and a new nil key there means the scrub reached a lent variable.
 - `spec/lain/grader/test_harness_spec.rb:53-70` fails: the grader passes its own env through `child_env`.
 
-### T2: Send lain-core an absolute shell          [risk: low]
+### [x] T2: Send lain-core an absolute shell          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/exec/core.rb`, `spec/lain/exec/core_spec.rb`
@@ -304,7 +305,7 @@ Spec file: `spec/lain/exec/core_spec.rb`
 **Stop and report if:**
 - `crates/lain-core/tests/lifecycle.rs` or `vsock_lifecycle.rs` assume the Ruby side sends `"sh"`: they pass `"sh"` themselves, so they should stay green; if not, the daemon resolves differently than assumed.
 
-### T3: Name the requester on every escalation record          [risk: medium]
+### [x] T3: Name the requester on every escalation record          [risk: medium]
 
 **Depends on:** none
 **Files:** `lib/lain/approval/escalation.rb`, `lib/lain/approval/judged.rb`, `spec/lain/approval/escalation_spec.rb`, `spec/lain/approval/judged_spec.rb`
@@ -336,7 +337,7 @@ Spec file: `spec/lain/approval/escalation_spec.rb`, `spec/lain/approval/judged_s
 - `escalation_spec.rb:414` (the exact `Ruling#record` keys) has to change: the requester belongs on the record hash `Escalation#record` builds, not on `Ruling#record`.
 - `spec/lain/seams/judged_approval_spec.rb` or `spec/lain/seams/child_worktree_approval_spec.rb` see a requester other than the child's name: the `Asking` wrapper (`cli/tool_guard.rb:92-104`) is not reaching the record.
 
-### T4: Name the requester on read_refused          [risk: low]
+### [x] T4: Name the requester on read_refused          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/middleware/sensitivity.rb`, `lib/lain/telemetry/read_refused.rb`, `lib/lain/cli/tool_guard.rb`, `spec/lain/middleware/sensitivity_spec.rb`, `spec/lain/cli/tool_guard_spec.rb`
@@ -397,7 +398,7 @@ Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told
 - Any `Ruling.allow`, `.deny`, `.abstain` or `.fault` call outside `escalation.rb` breaks (grep `Ruling\.` across `lib/` and `spec/`).
 - The board_build_spec example asserting a reason that starts `"composed_term:"` changes: the reason text stays as is.
 
-### T6: Let a bash call read the ruling that let it run          [risk: low]
+### [x] T6: Let a bash call read the ruling that let it run          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/middleware/withhold_automatic_output.rb`, `spec/lain/middleware/withhold_automatic_output_spec.rb`
@@ -559,7 +560,11 @@ Scenario: test runners run their file arguments
 
 Scenario: build tools run their config
   When it resolves make, rake, bundle exec, npm run or cargo build in the project
-  Then run_files hold the Makefile, Rakefile, Gemfile, package.json, Cargo.toml and build.rs that exist
+  Then run_files hold the Makefile, Rakefile, Gemfile, Gemfile.lock, package.json, Cargo.toml and build.rs that exist
+
+Scenario: direnv runs the project's envrc
+  When it resolves "direnv exec . rspec"
+  Then run_files hold .envrc
 
 Scenario: git runs hooks and config
   When it resolves "git commit"
@@ -721,7 +726,7 @@ Spec file: `spec/lain/tools/bash_spec.rb`, `spec/lain/cli/wiring/toolset_build_s
 **Interface**
 
 ```ruby
-Lain::Telemetry::ExecResolution = Data.define(:tool_use_id, :stages) # stages: Array<Hash> of Executable#to_h
+Lain::Telemetry::ExecResolution = Data.define(:tool_use_id, :stages) # stages: Array<Hash> of Executable#to_journal
 # Tools::Bash.new(exec:, verdict:, journal:, resolver: Shell::Executable::Resolver::NULL)
 ```
 
@@ -891,7 +896,7 @@ def mask_paths(files, cwd:, within: cwd) = ... # Array<Mask>
 
 **Depends on:** T17
 **Files:** `lib/lain/confine/mask_list.rb` (new), `lib/lain/cli/switchboard.rb`, `spec/lain/confine/mask_list_spec.rb` (new), `spec/lain/cli/switchboard_spec.rb`
-**Reuse:** `git ls-files -co --exclude-standard -z` with `-C <root>` (the `ls-files` trap in `CLAUDE.md`); `Policy#mask_paths`; the thunk pattern `switchboard: -> { @switchboard }` already used in `Wiring`
+**Reuse:** `git ls-files -z` with `-C <root>`, listing tracked, untracked AND ignored files (`-co` plus `-oi --exclude-standard`, with build and dependency directories such as `tmp/`, `vendor/`, `target/`, `node_modules/` pruned), because the secrets a mask exists for are usually gitignored (T17 review: `-co --exclude-standard` yielded 0 masks on this repo and missed a gitignored `.env`), (the `ls-files` trap in `CLAUDE.md`); `Policy#mask_paths`; the thunk pattern `switchboard: -> { @switchboard }` already used in `Wiring`
 **Shared-file wiring:** none
 **Reachable from:** `ToolsetBuild` (T25) builds `Confine::MaskList.new(root:, policy: -> { switchboard.sensitivity })`. The toolset is built before the switchboard (`cli/wiring.rb:386,862`), so the Policy is reached lazily, never built twice, keeping the 1 `Filter.new`
 
@@ -902,6 +907,10 @@ Scenario: an untracked secret is masked
   Given a git project with an untracked .env
   Then the mask list holds its resolved path
 
+Scenario: a gitignored secret is masked
+  Given a git project whose .gitignore lists .env and config/master.key, both present
+  Then the mask list holds both resolved paths
+
 Scenario: a new secret is masked from the next call on
   Given the list was built, then a .env.local appears
   When the list is asked again
@@ -910,6 +919,11 @@ Scenario: a new secret is masked from the next call on
 Scenario: an unchanged tree is not re-classified
   Given the listing's hash is unchanged
   Then mask_paths is not called again
+
+Scenario: a changed tree classifies only what is new
+  Given the list was built, then 1 file appears
+  When the list is asked again
+  Then mask_paths is called with the new name only, and earlier masks are kept unless their file is gone
 
 Scenario: only names that exist are masked
   Then no mask names a path absent at ask time
@@ -920,7 +934,7 @@ Scenario: the switchboard exposes the session's one Policy
 Spec file: `spec/lain/confine/mask_list_spec.rb`, `spec/lain/cli/switchboard_spec.rb`
 
 **Stop and report if:**
-- Listing plus hashing costs more than 20 ms on this repo, measured with `nice`, serially, on a quiet box.
+- Listing plus hashing costs more than 20 ms on this repo, measured with `nice`, serially, on a quiet box. (Classifying the whole listing costs about 1.2 s here, per the T17 review, which is why only new names are classified.)
 - A mask target is a symlink: masks go on resolved paths, or bwrap aborts.
 
 ### T19: Let a pipeline hand extra file descriptors to its stages          [risk: medium]
@@ -991,7 +1005,7 @@ end
 - The real-box scenario cannot run in the default suite because bwrap or Landlock is absent: tag it to skip with a printed reason, as the `:vsock` tier does (`spec/support/tags.rb:227-251`).
 - `ruby -e 1` or `git status` fail under the reader profile: the research found git needs `~/.gitconfig` or `~/.config/git/config` read and Rust probes need `~/.rustup` and `~/.cargo/bin`; add them to the reader set and report any other.
 
-### T21: Read the exec trace with a cap          [risk: medium]
+### [x] T21: Read the exec trace with a cap          [risk: medium]
 
 **Depends on:** none
 **Files:** `lib/lain/confine/trace.rb` (new), `lib/lain/telemetry/exec_record.rb` (new), `spec/lain/confine/trace_spec.rb` (new)
@@ -1461,3 +1475,15 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - **Shelved, needs the user's go-ahead:** the repo's own suite, `cargo test` and `pre-commit` under the stack, and trace volume at 12 workers (research, "Not measured"). Not run while the box is shared.
 
 ## Execution log
+
+- 2026-10-16 13:45 start. Base `main` at `09fdec21` (the plan's own commit; the only change since the grounding SHA `6be12e76` is this plan and ROADMAP item 59). `git worktree list` at start: `/home/tara/dev/lain 09fdec21 [main]`, `/home/tara/tmp/lain-qa-2026-10-08-tree b6a3efb2 (detached)`. Branches at start: `flake/review`, `main`, `spike/combined`, `spike/combined2`.
+- Hook checks (`.pre-commit-config.yaml`), as agent commands on own paths: whitespace and EOF on changed files; `shellcheck` on shell files; Rust: `cargo fmt -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check` (on Cargo.toml/lock/deny.toml change); Ruby: `bundle exec rubocop <paths>`, `bundle exec yard-lint <path>` per changed Ruby file; `bin/lint-gherkin-docs` on plan docs; commit-msg lint (72-char subject, no period, no dashes, no trailers). The ruby hook runs `rake compile check`, which is the full suite (`pspec`, about 58s at 12 workers) plus rubocop, so the hook run is the landing suite. A commit takes about 2 minutes. The suite must run alone (TMPDIR is shared state). Paths needing user approval: none known.
+- Worktrees under `tmp/worktrees/<card>` (ignored by `/tmp/`), each with its own `TMPDIR=$HOME/tmp/lain/wt-<card>` and a copy of the main checkout's built `lib/lain/lain.so` (ext unchanged since 2026-10-02).
+- 2026-10-16 13:50 T1, T2, T3, T4, T6, T7, T8, T15, T17, T21, T33 started. A separate user session edits markdown (references) in the main checkout during this run: stage card files by explicit path only, and check `git status` before each landing, since the hook's repo-wide autostash can roll back a tracked-file write made while it runs.
+- 13:50 T7 scope widened to `lib/lain/cli/chronicle.rb`: `Chronicle#start` must forward `arms:` for the header criterion; the card's Files list missed it.
+- 13:54 T18 amended before it is cut (T17 review): the listing includes gitignored files, and a changed tree classifies only new names. T17 rulings by the main session: mask every non-ordinary, non-location verdict (adds gated configured, gated protected, malformed); judge both a link's name and its landing and mask the landing if either is sensitive; never mask under `<root>/.git`, since git exits 128 when its own files are masked.
+- 13:57 T33 review note for T12 and T30 wiring: under `--no-journal --nvim`, `Chronicle::Null#durable_journal` is a /dev/null Journal and `wrap_tee` opens a separate one, so an observer on `durable_journal` misses teed records there. Register on both, or share the journal in `Null#wrap_tee`. Also: `Fresh` must fail closed on its own fault (journal faults fail open by design).
+- 14:02 T15 review rulings by the main session: the fence always handles TCP connect and bind, and no --connect-port means no TCP (the reader profile gets no network); the fence closes every fd above 2 before exec, so a fenced command cannot forge lines into strace's trace fd. Notes for T20: the reader set needs the mise ruby install dir, `~/.rustup` and `~/.cargo/bin`, `~/.config/git`, and in a linked worktree the main checkout's `.git`. For T22: a --status-fd that reaches EOF with no line is a failed start. For T23/T30: a granted loader (ld-linux) runs any readable ELF, so Execute governs execve only.
+- 14:12 Landed in one quiet window: T1 `3971846f`, T2 `0734d22a`, T3 `134d0500`, T4 `6f2c704b`, T6 `d58b3b39`, T21 `12fad042`. Each through the commit hook's full suite, green. Worktrees and branches removed.
+- 14:12 Interfaces amended from the T8 review: `Executable` gains `wrappers`; the Stat port is `#lstat, #readlink, #realpath, #executable?, #writable?`; T13 journals `Executable#to_journal`. T9 amended: `Gemfile.lock` and `.envrc` are run files. T8 ruling: an unmodelled command runner (nohup, setsid, stdbuf, xargs, sudo, find -exec and kin) resolves `:unresolved` with the runner as a wrapper; `bundle exec X` stays `:unresolved`, decided later by its run files.
+- 14:12 Note for T13: `Shell::Pipeline::Refusals#resolvable?` keeps its own PATH search that drops empty entries; the preflight should read the resolver.
