@@ -130,6 +130,8 @@ flowchart LR
   T10 --> T12
   T33 --> T12
   T7 --> T13
+  T12 --> T34
+  T34 --> T13
   T8 --> T13
   T9 --> T13
   T11 --> T13
@@ -224,7 +226,7 @@ module Lain
     # name: :none | :traced | :reader
 
     # What the bash call hands its exec: how it was approved and what it resolved to.
-    Request = Data.define(:ruling, :executables, :cwd, :root)
+    Request = Data.define(:ruling, :executables, :cwd, :root, :tool_use_id) # tool_use_id required: T30 matches exec_record to escalation by it
 
     # term in, term out
     module Launcher
@@ -618,7 +620,7 @@ Lain::Telemetry::FileWritten = Data.define(:tool_use_id, :path, :device, :inode,
 - `spec/journal_routing_discipline_spec.rb` objects: `file_written` goes to the durable journal only, which T33's observers read.
 - A child's tools turn out not to be the shared floor instances: report the construction site.
 
-### T11: Journal the identity of what a bash call wrote by name          [risk: medium]
+### [x] T11: Journal the identity of what a bash call wrote by name          [risk: medium]
 
 **Depends on:** T10
 **Files:** `lib/lain/tools/bash.rb`, `spec/lain/tools/bash_spec.rb`
@@ -643,7 +645,7 @@ Spec file: `spec/lain/tools/bash_spec.rb`
 **Stop and report if:**
 - `chmod +x f` yields a written path `<root>/+x` (research, `facts-fidelity`): skip any named path that does not exist after the call, and report the `Named` noise rather than fixing `Named` here.
 
-### T12: Answer whether a file is fresh, from the journal and ctime          [risk: high]
+### [x] T12: Answer whether a file is fresh, from the journal and ctime          [risk: high]
 
 **Depends on:** T7, T10, T33
 **Files:** `lib/lain/shell/executable/fresh.rb` (new), `lib/lain/cli/wiring.rb`, `spec/lain/shell/executable/fresh_spec.rb` (new), `spec/lain/cli/wiring_spec.rb`
@@ -1143,6 +1145,7 @@ Scenario: the request reaches the exec, through the production stack
   Given the toolset and guard stack built by Wiring, with a recording exec
   When ComposedTerm approves "cat README.md"
   Then the exec receives a Request whose ruling's rule is "composed_term" and whose executables match the call's exec_resolution record
+  And the Request's tool_use_id is the call's
 
 Scenario: a context with no ruling yields an unruled request
   Given a context that does not answer ruling
@@ -1462,6 +1465,29 @@ end
 - `spec/lain/journal_spec.rb`'s pin that each record is written whole under the monitor (the stray-`warn` interleave case in `CLAUDE.md` Output discipline) needs to change: observers run after the write, outside the bytes.
 - `spec/journal_routing_discipline_spec.rb` treats an observer as a display sink: observers are not the Channel.
 
+### T34: Extract the run-state cluster out of Wiring          [risk: low]
+
+**Depends on:** T12
+**Files:** `lib/lain/cli/wiring.rb`, `lib/lain/cli/wiring/run_state.rb` (new), `spec/lain/cli/wiring/run_state_spec.rb` (new), `spec/lain/cli/wiring_spec.rb`
+**Reuse:** the T12 review's measurement (Wiring at 299 of 300 lines after T12, with T13 still to add the Resolver); `CLI::Wiring::Observers` as the shape of an extracted Wiring collaborator
+**Shared-file wiring:** none
+**Reachable from:** `Wiring` builds one `CLI::Wiring::RunState` over root, paths, notice, chat_env and the chronicle, and delegates `run_state`, `memory_notices`, `memory_view`, `session_over` and `project_memory` to it
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: behaviour is unchanged
+  Given the run-state and memory methods moved out of Wiring
+  Then every existing wiring_spec example passes unchanged
+
+Scenario: Wiring has room for the Resolver
+  Then rubocop's Metrics/ClassLength on Wiring reports at least 20 lines under the limit
+```
+Spec file: `spec/lain/cli/wiring/run_state_spec.rb`, `spec/lain/cli/wiring_spec.rb`
+
+**Stop and report if:**
+- Any method in the cluster reads Wiring state beyond root, paths, notice, chat_env and the chronicle.
+
 ## Integration checks
 
 After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` and `pgrep -cf '[p]re-commit (hook-impl|run)'` both read 0):
@@ -1513,3 +1539,11 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 14:59 T12 started from `55f7b407`.
 - 15:00 T9, T20 approved. Note for T23: Confine::Bwrap takes the profile's first read dir as the project root (written in Profile's docstring); Profiles must keep the root first.
 - 15:05 Landed: T9 `05dbb6c7`, T20 `584bf5e5`. Both green.
+- 15:05 T23 started from `f44b7b9e`.
+- 15:06 T23 stop condition hit as the card foresaw: Pipeline::Refusals refused the wrapped term (strace and bwrap "not permitted downstream of a pipe"). Scope widened to `lib/lain/shell/pipeline.rb` and its spec for a `launch:` seam: refusals run on the original term, then the launcher wraps it.
+- 15:10 Landed: T11 `c69505c2`. Green.
+- 15:10 T12 rulings: JournalTee gains observe (delegates to its journal) and spec support's RecordingChannel gains a Journal-like observe; Wiring's ClassLength is met by extracting CLI::Wiring::Observers, which T30 also registers through; rule (a) stays scoped to the current lineage (Open decision 2).
+- 15:45 T12 review: APPROVE-WITH-FIXES. Added T34 (extract Wiring's run-state cluster, before T13): Wiring sits at 299 of 300 lines after T12 and T13 adds the Resolver there. Note for T13: Fresh#fresh? takes an absolute path.
+- 15:46 T23 review REQUEST-CHANGES. Rulings: under :traced, strace runs a shim that closes the trace fd before exec (a traced command could forge or hide execs); a traced call returns when its direct child exits and strace is detached afterwards, so background children survive as they did before this plan; truncated keeps meaning the cap and a missing EOF is a new `incomplete` member; Profiles confines to request.root; Request#tool_use_id required (Interfaces and T24 amended). Note for T30: an incomplete exec_record still counts its refusals. Note: `bundle exec` under the reader profile fails in this worktree through the mise shim; not live, since ComposedTerm never approves bundle exec.
+- 16:02 T23 rulings, round 2: strace under --seccomp-bpf kills its tracees when it exits, so signalling it would kill background jobs. A traced call writes its trace to an unlinked temp file (strace -DD, never signalled) and reads what the file holds when the command returns. A traced record is an audit trail, not tamper-proof (same-uid writes through /proc/<strace pid>/fd); the reader profile is the tamper-resistant one. Note for T30: weigh strong signals from :traced records accordingly.
+- 16:04 Landed: T12 `70c1010f`. Green. Base `main` also carries the user's own commits `3ec2881e` and `29a189fb` (references and ROADMAP).
