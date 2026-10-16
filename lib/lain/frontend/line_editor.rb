@@ -156,6 +156,9 @@ module Lain
 
         def bound?(name) = registry.bound?(name)
 
+        # Who holds `name` against {.bind}, or nil: the answer {.bind} refuses on.
+        def claim_on(name) = registry.claim_on(name)
+
         # The bytes a terminal sends for `name`.
         def keystroke(name) = registry.sequence_for(name)
 
@@ -460,6 +463,12 @@ module Lain
         end
 
         def bound?(name) = @handlers.key?(sequence_for(name))
+
+        def claim_on(name)
+          sequence = sequence_for(name)
+          LineEditor.load_inputrc(claiming: [sequence])
+          claimed_by(sequence) unless @handlers.key?(sequence)
+        end
 
         def claimed_sequences = @handlers.keys
 

@@ -685,9 +685,9 @@ RSpec.describe Lain::Config do
     end
 
     it "reads the approval cycle key the user declared" do
-      write_user("keys approval_cycle: \"C-x\"\n")
+      write_user("keys approval_cycle: \"s-tab\"\n")
 
-      expect(described_class.keys(paths:).approval_cycle).to eq("C-x")
+      expect(described_class.keys(paths:).approval_cycle).to eq("s-tab")
     end
 
     it "is Shift+Tab when the user has no config.rb" do

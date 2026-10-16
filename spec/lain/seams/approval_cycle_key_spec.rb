@@ -291,16 +291,22 @@ RSpec.describe "the approval key in an input pane", :seam do
       expect([lines_of("cycled"), heard]).to eq([[], [{ "heard" => "ab" }]])
     end
 
-    it "sends the configured key from an idle pane at once, and not Shift+Tab" do
+    it "refuses the completion key at config load, naming it" do
       user_binds("C-x")
-      idle_pane(eol: "^X")
 
-      press("BTab")
-      sleep 0.3
-      press("C-x")
-      wait_for { flips.any? }
+      expect { Lain::Config.keys(paths: Lain::Paths.new(env: env.merge("HOME" => dir))) }
+        .to raise_error(Lain::Config::Refusal, /C-x is lain's completion key/)
+    end
 
-      expect(flips).to eq([%w[auto ask]])
+    it "does not open a pane over a refused key, and says why" do
+      user_binds("C-x")
+      start_chat("idle", :ask)
+      wait_for { File.exist?(File.join(dir, "bound")) }
+      tmux("new-session", "-d", "-x", "100", "-y", "20", "-c", repo,
+           "#{RbConfig.ruby} -I lib exe/lain input --socket #{path}; sleep 30")
+      wait_for { screen.include?("completion key") }
+
+      expect([screen.include?("you>"), flips]).to eq([false, []])
     end
   end
 end

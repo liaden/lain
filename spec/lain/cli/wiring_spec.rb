@@ -2103,7 +2103,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     it "hands the chat's StdinPump the approval key the user's config names" do
       allow(Lain::Config).to receive(:keys)
-        .and_return(Lain::Config::Keys.from({ "approval_cycle" => "C-x" }, path: nil))
+        .and_return(Lain::Config::Keys.from({ "approval_cycle" => "s-tab" }, path: nil))
       keys = []
       allow(Lain::Frontend::StdinPump).to receive(:new).and_wrap_original do |original, *args, **kwargs, &block|
         keys << kwargs[:cycle_key]
@@ -2117,7 +2117,7 @@ RSpec.describe Lain::CLI::Wiring do
         wiring.conductor.close(reason: :exit)
       end
 
-      expect(keys).to eq(["C-x"])
+      expect(keys).to eq(["s-tab"])
     end
 
     # A registered command runs outside every ask, so prose typed meanwhile

@@ -136,7 +136,7 @@ RSpec.describe Lain::Frontend::InputPane do
   it "reads the approval key from the user's config when opened" do
     paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_CONFIG_HOME" => File.join(dir, "config") })
     FileUtils.mkdir_p(File.dirname(paths.user_config))
-    File.write(paths.user_config, "keys approval_cycle: \"C-x\"\n")
+    File.write(paths.user_config, "keys approval_cycle: \"s-tab\"\n")
     Lain::Project::Trust.for_user(paths:).grant!
     made = []
     allow(Lain::Frontend::StdinPump).to(receive(:new).and_wrap_original { |new, **kw| (made << kw) && new.call(**kw) })
@@ -146,7 +146,7 @@ RSpec.describe Lain::Frontend::InputPane do
     server.timeout = 5
     server.accept.tap { |chat| chat.timeout = 5 }
 
-    expect(settles { made.first&.fetch(:cycle_key) }).to eq("C-x")
+    expect(settles { made.first&.fetch(:cycle_key) }).to eq("s-tab")
   end
 
   it "draws the published prompt with the chat's header above it" do

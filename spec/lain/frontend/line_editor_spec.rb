@@ -1311,4 +1311,27 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect(read_through_pty("dumb", "typed\r")).to eq('"typed"')
     end
   end
+
+  describe ".claim_on" do
+    it "names what holds a key the line editor owns" do
+      expect(described_class.claim_on("C-t")).to include("ed_transpose_chars")
+    end
+
+    it "is nil for a key lain itself has bound, whose own handler is no claim" do
+      described_class.bind("S-Tab") { |_buffer| nil }
+
+      expect(described_class.claim_on("S-Tab")).to be_nil
+    end
+
+    it "names the user's inputrc when it binds the key" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "inputrc")
+        File.write(path, "\"\\e[Z\": menu-complete-backward\n")
+        ENV["INPUTRC"] = path
+        config.reset_variables
+
+        expect(described_class.claim_on("S-Tab")).to match(/inputrc.*menu_complete_backward/)
+      end
+    end
+  end
 end

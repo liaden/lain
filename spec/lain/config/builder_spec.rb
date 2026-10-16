@@ -247,7 +247,7 @@ RSpec.describe Lain::Config::Builder do
     end
 
     it "builds a keys table" do
-      expect(build_user("keys approval_cycle: \"C-x\"\n").keys.approval_cycle).to eq("C-x")
+      expect(build_user("keys approval_cycle: \"s-tab\"\n").keys.approval_cycle).to eq("s-tab")
     end
 
     it "leaves the approval cycle at Shift+Tab when keys is not declared" do

@@ -718,13 +718,12 @@ redraw an open terminal prompt's header, so the next prompt shows the new level.
 
 The key is a property of your terminal, so it is set only in the **user-level** config
 (`$XDG_CONFIG_HOME/lain/config.rb`, after `lain trust --user`), with a `keys` verb that takes
-`approval_cycle:`, as in `keys approval_cycle: "C-x"`. Its value is `"S-Tab"` (the default) or
-`"C-<letter>"`, and the configured key drives the prompt, the typeahead sweep and the pane. A project's
-`.lain/config.rb` that says `keys` is refused as a verb only the user's file may use, and an unknown name is
-refused at launch with the file and line. **Most control keys are not free.** The line editor
-(Reline) owns most of them already, so `C-t` is its transpose, `C-g` is the compose key, and
-neither can be bound. `C-x` is free. A key that is taken is not silently shared: the cycle is
-left off and the chat says so.
+`approval_cycle:`, as in `keys approval_cycle: "S-Tab"`. Its value is `"S-Tab"`, the only key that works today; the configured key drives the prompt, the
+typeahead sweep and the pane. A project's `.lain/config.rb` that says `keys` is refused as a verb only
+the user's file may use. A key you declare is checked at launch and refused with the file and line
+when lain holds it (`C-x` completion, `C-g` compose) or the line editor already holds it: every other
+`C-<letter>`, and `S-Tab` itself if your inputrc binds `\e[Z`. Leaving `keys` out never fails: with no
+declaration the default `S-Tab` is bound if it can be, and the chat says so when it cannot.
 
 #### `plan` scope
 
@@ -1173,8 +1172,9 @@ it to the chat and to every subagent it spawns. `lain bench`, `lain consolidate`
 and `lain epic submit` read none, so a bench arm does not change with the home directory.
 
 **The user-level file.** `$XDG_CONFIG_HOME/lain/config.rb` (by default `~/.config/lain/config.rb`)
-accepts only the `middleware` and `keys` verbs and applies to every project. `keys approval_cycle:` rebinds the
-[approval cycle key](#cycling-approval-from-the-keyboard) and is refused in a project's file. It runs only after
+accepts only the `middleware` and `keys` verbs and applies to every project. `keys approval_cycle:` names the
+[approval cycle key](#cycling-approval-from-the-keyboard), is refused in a project's file, and accepts only
+`"S-Tab"` today: every `C-<letter>` is held by lain or by the line editor. It runs only after
 `lain trust --user`, which shows the file and records its exact bytes. Trust is consent to bytes
 someone reviewed: it is not containment, and an agent that can write the file can also write the
 mark, as it can for a project today. Any changed byte asks again.
