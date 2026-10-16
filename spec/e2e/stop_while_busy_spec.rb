@@ -141,7 +141,9 @@ RSpec.describe "typing in a real cockpit while the model is busy", :e2e do
 
       cockpit.type("Next")
       await_chats(upstream, 2)
-      sent = JSON.generate(chats(upstream).last[:body].fetch("messages"))
+      sent = JSON.generate(chats(upstream).last[:body].fetch("messages").reject do |message|
+        message["role"] == "system"
+      end)
 
       expect(sent.scan("<mailbox>").size).to eq(1)
       expect(sent).to include("<mailbox>\\nhuman | hello\\nhuman | one\\nhuman | two\\n</mailbox>")
