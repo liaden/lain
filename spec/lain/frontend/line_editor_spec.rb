@@ -161,9 +161,7 @@ RSpec.describe Lain::Frontend::LineEditor do
         allow(Reline.core).to receive(:output).and_return(slave)
         yield
         slave.close
-        master.read_nonblock(1024)
-      rescue Errno::EIO
-        ""
+        pty_drained(master)
       ensure
         master&.close
       end
@@ -180,7 +178,7 @@ RSpec.describe Lain::Frontend::LineEditor do
         allow(Reline.core).to receive(:output).and_return(slave)
         during = nil
         allow(Reline).to receive(:readmultiline) do
-          during = master.read_nonblock(1024)
+          during = pty_read(master, request.bytesize)
           "hi"
         end
 

@@ -277,13 +277,14 @@ RSpec.describe Lain::Frontend::StdinPump do
       allow(Reline.core).to receive(:output).and_return(slave)
       during = nil
       allow(Reline).to receive(:readmultiline) do
-        during = master.read_nonblock(64)
+        during = pty_read(master, "\e[>4;1m".bytesize)
         "/approve"
       end
 
       pumped(terminal) { rail.read(:command, "command> ") }
+      slave.close
 
-      expect([during, master.read_nonblock(64)]).to eq(["\e[>4;1m", "\e[>4;0m"])
+      expect([during, pty_drained(master)]).to eq(["\e[>4;1m", "\e[>4;0m"])
     ensure
       slave&.close
       master&.close

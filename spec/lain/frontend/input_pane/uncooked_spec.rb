@@ -13,8 +13,6 @@ RSpec.describe Lain::Frontend::InputPane::Uncooked do
 
   def modes = `stty -F #{terminal.path} -a`.split(/[\s;]+/) & %w[icanon -icanon echo -echo isig -isig]
 
-  def written = keyboard.read_nonblock(65_536, exception: false).then { |bytes| bytes.is_a?(String) ? bytes : "" }
-
   it "turns line editing and echo off for the block, keeps signals, and gives the mode back after" do
     inside = described_class.new(terminal).around { modes }
 
@@ -22,9 +20,10 @@ RSpec.describe Lain::Frontend::InputPane::Uncooked do
   end
 
   it "turns bracketed paste on for the block and off after" do
-    inside = described_class.new(terminal).around { written }
+    inside = described_class.new(terminal).around { pty_read(keyboard, "\e[?2004h".bytesize) }
+    terminal.close
 
-    expect([inside, written]).to eq(["\e[?2004h", "\e[?2004l"])
+    expect([inside, pty_drained(keyboard)]).to eq(["\e[?2004h", "\e[?2004l"])
   end
 
   it "waits a recheck between waits that fail with EINVAL, rather than spinning" do
