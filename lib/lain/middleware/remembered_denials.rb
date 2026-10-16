@@ -30,7 +30,8 @@ module Lain
       RUNG = "remembered"
 
       # @param queue [#denied] the run's approval queue, or {Unattended}
-      # @param sensitivity [#gates?, #denial] the same path policy the gate asks
+      # @param sensitivity [#gates?, #denial, #judge, #home] the same path policy
+      #   the gate asks
       # @param denial [String] the gate's refusal, `%<name>s` standing for the tool
       # @param journal [#<<] where each refusal lands as an `escalation` record
       # @param requester [String, nil] who a child's stack asks for; nil reads
@@ -57,19 +58,43 @@ module Lain
 
       private
 
-      # A path the session refuses outright passes on to {Sensitivity}, whose
-      # final refusal says no approval can lift it, which a remembered no cannot.
       def remembered(effect, context)
         cwd = Session.cwd_of(context)
+        if effect.name == Approval::Queue::BASH
+          remembered_in_command(effect, context, cwd)
+        else
+          remembered_at(effect, context, cwd)
+        end
+      end
+
+      # A path the session refuses outright passes on to {Sensitivity}, whose
+      # final refusal says no approval can lift it, which a remembered no cannot.
+      def remembered_at(effect, context, cwd)
         path = ::Lain::Sensitivity::Policy.path_in(effect)
-        resolved = path && Approval::Queue.resolved(path, cwd)
-        reason = resolved && @queue.denied(requester: requester_of(context), path: resolved)
+        resolved = path && Approval::Queue.resolved(path, cwd, home: @sensitivity.home)
+        reason = resolved && denied_at(resolved, context)
         reason if reason && asked?(effect, context, cwd)
       end
+
+      # Each named path is held as a call on that path would be, so a command
+      # is refused only on a path a read of it would have parked.
+      def remembered_in_command(effect, context, cwd)
+        within = ::Lain::Sensitivity::Policy.base_of(context)
+        named = Approval::Queue.named(effect.input, cwd:, home: @sensitivity.home).paths.map(&:resolved)
+        named.lazy.map { [_1, denied_at(_1, context)] }.find { |path, reason| reason && asked_at?(path, cwd, within) }
+             &.last
+      end
+
+      def denied_at(path, context) = @queue.denied(requester: requester_of(context), path:)
 
       def asked?(effect, context, cwd)
         @sensitivity.denial(effect, cwd:).nil? &&
           @sensitivity.gates?(effect, cwd:, within: ::Lain::Sensitivity::Policy.base_of(context))
+      end
+
+      def asked_at?(path, cwd, within)
+        verdict = @sensitivity.judge(path, cwd:, within:)
+        !verdict.ordinary? && !verdict.denied?
       end
 
       def record(effect, reason, requester)

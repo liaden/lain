@@ -210,6 +210,23 @@ RSpec.describe Lain::CLI::Switchboard do
       expect(board.policy_switch.current).to be(board.ladder)
     end
 
+    # A denied command's `~` is the session's home, so the queue can remember
+    # the file it named.
+    it "gives the queue the policy's home, so a denied command's ~ path is remembered" do
+      board = switchboard(sensitivity: Lain::Sensitivity::Policy.new(
+        sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/p"), home: "/home/tester"
+      ))
+      reads = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "cat ~/notes" }, "tu_1")
+
+      Sync do |task|
+        asked = task.async { board.approvals.adjudicate(reads, nil) }
+        task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty", reason: "mine")
+        asked.wait
+      end
+
+      expect(board.approvals.denied(requester: "agent", path: "/home/tester/notes")).to eq("mine")
+    end
+
     it "wires the deterministic rungs below the surfaces, journaling to the session journal" do
       board = switchboard
 

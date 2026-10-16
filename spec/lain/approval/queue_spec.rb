@@ -562,6 +562,17 @@ RSpec.describe Lain::Approval::Queue do
       expect(queue.denied(requester: "agent", path: "/srv/secret/x")).to eq("not your business")
     end
 
+    it "reads ~ as the home it was built with" do
+      homed = described_class.new(journal:, home: "/home/u")
+      Sync do |task|
+        run = task.async { homed.adjudicate(lists("~/notes"), in_dir("/srv/p")) }
+        homed.dequeue.deny(surface: "spec", reason: "mine")
+        run.wait
+      end
+
+      expect(homed.denied(requester: "agent", path: "/home/u/notes")).to eq("mine")
+    end
+
     it "remembers a deny given no words as an empty reason, still a String" do
       denied_by_human(lists("/home"), reason: nil)
 
@@ -578,6 +589,95 @@ RSpec.describe Lain::Approval::Queue do
       denied_by_human(tool_call)
 
       expect(queue.denied(requester: "agent", path: Dir.pwd)).to be_nil
+    end
+
+    describe "a denied bash call" do
+      def runs(command, **input) = tool_call("bash", { "command" => command, **input })
+
+      def remembered_of(*paths) = paths.to_h { [_1, queue.denied(requester: "agent", path: _1)] }
+
+      it "is remembered by each path its command names, never by the directory it ran in" do
+        denied_by_human(runs("cat .env"), in_dir("/srv/p"))
+
+        expect(remembered_of("/srv/p/.env", "/srv/p", "/srv/p/README.md"))
+          .to eq("/srv/p/.env" => "not your business", "/srv/p" => nil, "/srv/p/README.md" => nil)
+      end
+
+      it "names its paths from the call's own cwd" do
+        denied_by_human(runs("cat .env", "cwd" => "sub"), in_dir("/srv/p"))
+
+        expect(queue.denied(requester: "agent", path: "/srv/p/sub/.env")).to eq("not your business")
+      end
+
+      it "reads ~ in the command as the home it was built with" do
+        homed = described_class.new(journal:, home: "/home/u")
+        Sync do |task|
+          run = task.async { homed.adjudicate(runs("cat ~/notes"), in_dir("/srv/p")) }
+          homed.dequeue.deny(surface: "spec", reason: "mine")
+          run.wait
+        end
+
+        expect(homed.denied(requester: "agent", path: "/home/u/notes")).to eq("mine")
+      end
+
+      it "remembers nothing for a ~ word when it was built with no home" do
+        denied_by_human(runs("cat ~/notes"), in_dir("/srv/p"))
+
+        expect(queue.denied(requester: "agent", path: "/srv/p/~/notes")).to be_nil
+      end
+
+      it "remembers nothing for a command whose paths cannot be named" do
+        denied_by_human(runs('cat "$HOME/.netrc"'), in_dir("/srv/p"))
+
+        expect(remembered_of("/srv/p", "/srv/p/.netrc").values).to all(be_nil)
+      end
+
+      it "remembers nothing a command only partly read names" do
+        denied_by_human(runs("cat .env; cd x; cat y"), in_dir("/srv/p"))
+
+        expect(queue.denied(requester: "agent", path: "/srv/p/.env")).to be_nil
+      end
+
+      it "remembers neither the directory it runs in nor any directory above it" do
+        ["git add .", "ls ..", "du -sh /srv/p"].each { denied_by_human(runs(_1), in_dir("/srv/p")) }
+
+        expect(remembered_of("/srv/p/.env", "/srv/p", "/srv").values).to all(be_nil)
+      end
+
+      # Asked again rather than refused: the human denied a look at the parent,
+      # not every read in the project below it.
+      it "remembers no directory at or above one a cd led to" do
+        denied_by_human(runs("cd /tmp/x && ls /tmp"), in_dir("/srv/p"))
+
+        expect(remembered_of("/tmp", "/tmp/.env").values).to all(be_nil)
+      end
+
+      it "does not remember a literal directory the call runs below" do
+        denied_by_human(runs("ls /home/u"), in_dir("/home/u/p"))
+
+        expect(remembered_of("/home/u", "/home/u/.netrc").values).to all(be_nil)
+      end
+
+      it "remembers no word that starts with a dash, but the operand beside it" do
+        denied_by_human(runs("ls -la"), in_dir("/srv/p"))
+        denied_by_human(runs("rm -rf f"), in_dir("/srv/p"))
+
+        expect(remembered_of("/srv/p/a", "/srv/p/f")).to eq("/srv/p/a" => nil, "/srv/p/f" => "not your business")
+      end
+
+      it "remembers a file a cd led to, but not the directory the cd named" do
+        denied_by_human(runs("cd x && cat .env"), in_dir("/srv/p"))
+
+        expect(remembered_of("/srv/p/x/.env", "/srv/p/x/a.rb"))
+          .to eq("/srv/p/x/.env" => "not your business", "/srv/p/x/a.rb" => nil)
+      end
+
+      it "remembers neither a glob's directory nor a recursive search's root" do
+        denied_by_human(runs("cat .e*"), in_dir("/srv/p"))
+        denied_by_human(runs("grep -r token ."), in_dir("/srv/p"))
+
+        expect(remembered_of("/srv/p", "/srv/p/.env", "/srv/p/lib/a.rb").values).to all(be_nil)
+      end
     end
 
     it "remembers nothing for a path that cannot be resolved" do

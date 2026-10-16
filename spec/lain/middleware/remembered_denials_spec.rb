@@ -124,6 +124,60 @@ RSpec.describe Lain::Middleware::RememberedDenials do
     expect(result).to have_attributes(is_error: true)
   end
 
+  it "reads a path's ~ as the policy's home" do
+    remembering("agent", "#{home}/notes")
+    homed = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project), home:)
+                                     .confined(roots: [project])
+
+    expect(through(lists("~/notes"), via: described_class.new(queue:, sensitivity: homed, denial:)).first)
+      .to have_attributes(is_error: true)
+  end
+
+  describe "a bash call" do
+    def runs(command, **input) = call("bash", { "command" => command, **input })
+
+    it "is refused when a path its command names was denied and is gated" do
+      remembering("agent", "#{project}/.env")
+
+      expect(through(runs("cat .env")).first)
+        .to have_attributes(is_error: true, content: 'approval denied for tool "bash": not your business')
+    end
+
+    it "reads ~ in the command as the policy's home" do
+      remembering("agent", "#{home}/notes")
+      homed = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project), home:)
+                                       .confined(roots: [project])
+
+      expect(through(runs("cat ~/notes"), via: described_class.new(queue:, sensitivity: homed, denial:)).first)
+        .to have_attributes(is_error: true)
+    end
+
+    it "passes a path the session refuses outright on to that refusal, whatever the queue remembers" do
+      remembering("agent", "#{home}/.ssh/id_ed25519")
+      reads = runs("cat #{home}/.ssh/id_ed25519")
+
+      expect(through(reads).last).to eq([reads])
+    end
+
+    it "passes when the denied path it names is ordinary" do
+      remembering("agent", "#{project}/lib/a.rb")
+
+      expect(through(runs("cat lib/a.rb")).first).to have_attributes(is_error: false)
+    end
+
+    it "is judged by the paths its command names, not by the directory it runs in" do
+      remembering("agent", "/home/joel")
+
+      expect(through(runs("make", "cwd" => "/home/joel")).first).to have_attributes(is_error: false)
+    end
+
+    it "passes when its paths cannot be named" do
+      remembering("agent", "#{project}/.env")
+
+      expect(through(runs('cat "$PWD/.env"')).first).to have_attributes(is_error: false)
+    end
+  end
+
   it "remembers nothing for a run with no queue" do
     unattended = described_class.new(queue: described_class::Unattended, sensitivity: policy, denial:)
 

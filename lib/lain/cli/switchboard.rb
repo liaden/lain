@@ -224,7 +224,7 @@ module Lain
         hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
-        @approvals = Approval::Queue.new(journal:, timeout: approval_timeout) if @attended
+        @approvals = Approval::Queue.new(journal:, timeout: approval_timeout, home: sensitivity.home) if @attended
         @toolset = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(approval:, layers:))

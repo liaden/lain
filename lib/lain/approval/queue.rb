@@ -39,6 +39,12 @@ module Lain
       # session names anyone: the parent's own turn.
       REQUESTER = "agent"
 
+      BASH = "bash"
+      HOMED = %r{\A~(/|\z)}
+      COMMAND = "command"
+      RUNS_IN = ::Lain::Sensitivity::Policy::PATH_FIELDS.fetch(BASH)
+      private_constant :HOMED, :COMMAND, :RUNS_IN
+
       Outstanding = Data.define(:path, :regions)
 
       # The sensitive regions of one file that approving a {Pending} would
@@ -286,9 +292,13 @@ module Lain
       #   fail-closed denial
       # @param clock [#call] monotonic seconds, injectable so specs pin latency
       # @param wall [#call] the time of day, as a Time, for naming when a call fires
+      # @param home [String, nil] what `~` means in a denied command, from
+      #   {Sensitivity::Policy#home}; with none, a command spelling a path
+      #   with `~` is not remembered
       def initialize(journal:, requester: REQUESTER, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC,
-                     wall: -> { Time.now })
+                     wall: -> { Time.now }, home: nil)
         @journal = journal
+        @home = home
         @requester = requester
         @timeout = timeout
         @clock = clock
@@ -361,14 +371,52 @@ module Lain
       # Where a call's path lands, spelled one way for both the recording and
       # the lookup; nil for a path no tool could resolve either.
       #
+      # A `~` is the session's home when one is known, as the policy reads it,
+      # so a path tool and a command spelling the same file meet.
+      #
       # @param path [String] as the call wrote it
       # @param cwd [String] absolute; where the call resolves a relative path
+      # @param home [String, nil] for a leading `~`; nil leaves it to the process
       # @return [String, nil]
-      def self.resolved(path, cwd)
-        File.expand_path(path, cwd)
+      def self.resolved(path, cwd, home: nil)
+        homed = home && path.match?(HOMED) ? File.join(home, path.delete_prefix("~")) : path
+        File.expand_path(homed, cwd)
       rescue ArgumentError, EncodingError
         nil
       end
+
+      # The paths a `bash` call's command names, read one way for the recording
+      # and the lookup.
+      #
+      # @param input [Object] the call's input; its `cwd` field, when it has
+      #   one, resolves against `cwd`
+      # @param cwd [String] absolute; the session's directory for the call
+      # @param home [String, nil] for `~`, as {Shell::Named.of} takes it
+      # @param directory [String, nil] where the call runs, for a caller that
+      #   already resolved it with {.directory_of}
+      # @return [Shell::Named] unreadable when the input holds no command
+      #   String, or names a directory that cannot be resolved
+      def self.named(input, cwd:, home:, directory: directory_of(input, cwd:, home:))
+        command = field(input, COMMAND)
+        return ::Lain::Shell::Named::UNREADABLE unless command.is_a?(String) && directory
+
+        ::Lain::Shell::Named.of(command, cwd: directory, home:)
+      end
+
+      # Where a `bash` call runs: its `cwd` field resolved against the
+      # session's, or the session's when it has none.
+      #
+      # @param input [Object] as the model sent it; only its `cwd` field is read
+      # @param cwd [String] absolute; the session's directory for the call
+      # @param home [String, nil] for a leading `~`
+      # @return [String, nil] nil for a field no tool could resolve
+      def self.directory_of(input, cwd:, home:)
+        at = field(input, RUNS_IN) || "."
+        at.is_a?(String) ? resolved(at, cwd, home:) : nil
+      end
+
+      def self.field(input, name) = input.is_a?(Hash) ? input[name] || input[name.to_sym] : nil
+      private_class_method :field
 
       # The reason a human gave when they denied this requester a call on
       # `path` or a directory above it, "" when they gave none.
@@ -429,11 +477,34 @@ module Lain
       # sit in {#settle}'s `ensure` without opening a gap between fibers. A
       # declined release is a no about a file's regions, not about its path.
       def remember(pending)
-        path = pending.path && Queue.resolved(pending.path, pending.cwd)
-        return unless path && human_denial?(pending) && pending.outstanding.none?
+        return unless human_denial?(pending) && pending.outstanding.none?
 
-        (@denials[pending.requester] ||= {})[path] = pending.reason.to_s
+        denied_paths(pending).each { (@denials[pending.requester] ||= {})[_1] = pending.reason.to_s }
       end
+
+      def denied_paths(pending)
+        return named_files(pending) if pending.tool == BASH
+
+        [pending.path && Queue.resolved(pending.path, pending.cwd, home: @home)].compact
+      end
+
+      # The directory a command runs in, anything above it, a `cd` target and
+      # a glob's or a search's root are each only where the files it touched
+      # live, so remembering one would refuse a whole tree the human was never
+      # asked about. A word starting with a dash is an option, whatever value
+      # it was read as carrying.
+      def named_files(pending)
+        directory = Queue.directory_of(pending.input, cwd: pending.cwd, home: @home)
+        named = Queue.named(pending.input, cwd: pending.cwd, home: @home, directory:)
+        return [] if named.opaque?
+
+        places = [directory, *named.paths.select(&:directory).map(&:resolved)]
+        named.paths.select { file_word?(_1) }.map(&:resolved).reject { |path| places.any? { at_or_below?(_1, path) } }
+      end
+
+      def file_word?(path) = !(path.directory || path.pattern || path.word.start_with?("-"))
+
+      def at_or_below?(place, path) = place == path || place.start_with?(below(path))
 
       # A machine's no, the clock's, or one a fault forced, is not a person's
       # judgement about a path, so none of these is held against later calls.

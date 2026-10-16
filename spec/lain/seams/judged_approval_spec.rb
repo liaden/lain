@@ -123,4 +123,111 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
       end
     end
   end
+
+  # A human's no under `ask` is held by the paths the call named, whatever tool
+  # named them, so the same file is not asked about twice.
+  context "when a human denied an earlier call under ask" do
+    let(:calls) { [] }
+    let(:provider) do
+      asked = calls.each_with_index.map { |(name, input), i| tool_response(["tu_#{i}", name, input]) }
+      Lain::Provider::Mock.new(responses: [*asked, text_response("settled")])
+    end
+    let(:wiring) do
+      Lain::CLI::Wiring.new(options: { grace: 5, approval: "ask" }, chronicle:,
+                            status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
+                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                            project: Lain::Project.new(root: @state, cwd: @cwd, kind: :project, detected_by: :flag))
+    end
+
+    def bash(command, **input) = ["bash", { "command" => command, **input }]
+    def read(path) = ["read_file", { "path" => path }]
+
+    def chat_agent
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)
+    end
+
+    def parks = Lain::Journal.records(journal_io.string.lines, type: "approval_pending").count
+
+    def parks_denying(reason)
+      agent = chat_agent
+      Sync do |task|
+        asked = task.async { agent.ask("look around") }
+        task.with_timeout(5) { wiring.approvals.dequeue }.deny(surface: "tty", reason:)
+        later = task.async { loop { wiring.approvals.dequeue.deny(surface: "tty") } }
+        task.with_timeout(5) { asked.wait }
+        later.stop
+      end
+      parks
+    end
+
+    def remembered = escalations.select { _1["rung"] == Lain::Middleware::RememberedDenials::RUNG }
+
+    context "when the denied call was a bash read" do
+      let(:calls) { [bash("cat .env"), read(".env")] }
+
+      it "refuses a later read of the same file from memory, with the human's reason" do
+        expect(parks_denying("keep out")).to eq(1)
+        expect(remembered).to contain_exactly(a_hash_including("tool" => "read_file", "verdict" => "deny"))
+        expect(provider.requests.last.messages.to_s).to include("keep out")
+      end
+    end
+
+    context "when the denied call was a read_file" do
+      let(:calls) { [read(".env"), bash("cat .env")] }
+
+      it "refuses a later bash read of the same file from memory" do
+        expect(parks_denying("keep out")).to eq(1)
+        expect(remembered).to contain_exactly(a_hash_including("tool" => "bash", "verdict" => "deny"))
+      end
+    end
+
+    # The chat's home is the project root here, and `.cargo/credentials.toml`
+    # is gated rather than refused outright, so its read would park.
+    context "when the denied bash read named its file through ~" do
+      let(:calls) { [bash("cat ~/.cargo/credentials.toml"), read("~/.cargo/credentials.toml")] }
+
+      it "refuses a later read of the same file from memory" do
+        expect(parks_denying("keep out")).to eq(1)
+        expect(remembered).to contain_exactly(a_hash_including("tool" => "read_file", "verdict" => "deny"))
+      end
+    end
+
+    context "when the denied command named no secret" do
+      let(:calls) { [bash("rm -rf build", "cwd" => "."), read(".env")] }
+
+      it "parks a later read in the same directory for the human" do
+        expect(parks_denying("no deletes")).to eq(2)
+        expect(remembered).to be_empty
+      end
+    end
+
+    context "when the denied command named only the directory it ran in" do
+      let(:calls) { [bash("git add ."), read(".env")] }
+
+      it "parks a later read in that directory for the human" do
+        expect(parks_denying("no staging")).to eq(2)
+        expect(remembered).to be_empty
+      end
+    end
+
+    context "when the denied command named the directory above" do
+      let(:calls) { [bash("ls .."), read(".env")] }
+
+      it "parks a later read below it for the human" do
+        expect(parks_denying("not there")).to eq(2)
+        expect(remembered).to be_empty
+      end
+    end
+
+    # `.netrc` is refused outright, so a file that parks stands in for it.
+    context "when the denied command's paths could not be named" do
+      let(:calls) { [bash('cat "$HOME/.env"'), read("~/.env")] }
+
+      it "parks a later read of the file it may have meant for the human" do
+        expect(parks_denying("keep out")).to eq(2)
+        expect(remembered).to be_empty
+      end
+    end
+  end
 end

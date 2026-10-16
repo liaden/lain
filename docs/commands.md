@@ -708,10 +708,13 @@ refusal says no approval can lift it. A project's own
 `/etc/passwd` and `/etc/group` refused, not parked, and told its home directory is in its
 environment block; your own agent's read of those still asks.
 
-**A deny you give is remembered.** When you deny a call on a path, that requester (the main agent,
-or all researchers together) is refused the same path, and anything under it, for the rest of the
-session, with your reason, whatever the tool. A timeout or an automatic deny is not remembered,
-and another requester still asks.
+**A deny you give is remembered.** When you deny a call, that requester (the main agent, or all
+researchers together) is refused a later call of any tool on a path the denied call named, or anything
+under it, for the rest of the session, with your reason, but only when that later call would have asked
+you. A `bash` call is remembered by every word its command reads as a path, but never by a word that
+starts with `-`, the directory it runs in or a directory above it, a `cd` target or a directory above
+one, or a glob's or a search's root; a command whose paths cannot all be named is not remembered. A
+timeout or an automatic deny is not remembered, and another requester still asks.
 
 **What runs without anyone asking.** The shell rule approves a command with no human and no model
 only when every word of it is ordinary and under the project root. That now includes:
