@@ -268,6 +268,16 @@ RSpec.describe Lain::FileWalk do
     end
   end
 
+  describe "#relative_tree under a root of /" do
+    it "ends at its entry bound and names every path relative to /" do
+      files, directories = Timeout.timeout(5) { described_class.new(root: "/", entries: 3000).relative_tree }
+
+      expect(files.size).to be <= 3000
+      expect(files + directories).to all(satisfy { !_1.start_with?("/") })
+      expect(directories.size).to be <= files.flat_map { |f| f.split("/").size - 1 }.sum
+    end
+  end
+
   describe "an entry limit" do
     it "stops listing at the limit and counts the entry that did not fit" do
       30.times { write("f#{format("%02d", _1)}.txt") }

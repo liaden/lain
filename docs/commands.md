@@ -517,7 +517,7 @@ lain survey open help                        # a directory actually named `help`
 | Flag | Default | What it does |
 |---|---|---|
 | `--scope` | unset — the round opens at `cumulative` | The same three registered strategies `lain review` offers. A corpus does not answer all of them — see below. |
-| `--unbounded` | `false` | Present the whole tree however large it is. It lifts the corpus file ceiling below; the separate `/critique` packing ceiling still holds. |
+| `--unbounded` | `false` | Present the whole tree however large it is. It lifts the corpus file ceiling below; the separate `/critique` packing ceiling still holds. It does not lift the 20,000-entry walk bound: a root holding more entries is refused with the bound and the root named, rather than surveyed in part. |
 
 **`--permissive` is not a flag of this command.** It chooses the rule a *verdict* is judged
 under, and `lain survey` renders a tree and submits nothing; the in-session

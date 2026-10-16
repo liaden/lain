@@ -86,6 +86,9 @@ module Lain
       # Kept under this name because the survey's own spec bounds its git by it.
       GIT_TIMEOUT = FileWalk::GIT_TIMEOUT
 
+      # The same bound `glob` and `list_files` walk under.
+      ENTRIES = Tool::Bounds::WalkLimit::DEFAULT.entries
+
       Listing = Data.define(:path, :absolute, :size, :verdict)
 
       # One path the survey may read: how it is named, where it is, how big it
@@ -143,10 +146,12 @@ module Lain
       #   carries the home and cwd a path is resolved against, and constructing
       #   one here would be a second classifier able to disagree with the gate.
       #   Both live paths pass the board's {Sensitivity::Policy} itself
+      # @param entries [Integer] files and directories the walk may list; a larger tree is refused
       # @param shell_out_factory [#call] builds the subprocess runner, the
       #   `shell_out_factory` seam every git caller here takes
-      # @raise [Refused] when `root` is not a directory
-      def initialize(root:, sensitivity:, shell_out_factory: Shell::Out.public_method(:new))
+      # @raise [Refused] when `root` is not a directory, or holds more than `entries`
+      def initialize(root:, sensitivity:, entries: ENTRIES, shell_out_factory: Shell::Out.public_method(:new))
+        @entries = entries
         @root = File.expand_path(root)
         raise Refused, "#{root} is not a directory, so there is nothing to survey" unless File.directory?(@root)
 
@@ -169,10 +174,14 @@ module Lain
       # order. {FileWalk} lists a repository with git and walks anything else by
       # hand, so the guarantee is this method's to make, not its source's.
       def candidates
-        FileWalk.new(root: @root, links: true, shell_out_factory: @shell_out_factory)
-                .map { |absolute| absolute.delete_prefix("#{@root}#{File::SEPARATOR}") }
-                .uniq.sort
+        walk = FileWalk.new(root: @root, links: true, entries: @entries, shell_out_factory: @shell_out_factory)
+        relatives = walk.map { |absolute| absolute.delete_prefix(File.join(@root, "")) }
+        raise Refused, too_large unless walk.listed <= @entries
+
+        relatives.uniq.sort
       end
+
+      def too_large = "more than #{@entries} entries under #{@root}, so it is too large to survey"
 
       def sift(relatives)
         decided = relatives.filter_map { |relative| decide(relative) }

@@ -23,6 +23,13 @@ RSpec.describe Lain::Tools::ListFiles do
     path
   end
 
+  it "lists / recursively with entries relative to it" do
+    result = Timeout.timeout(30) { tool.call(path: "/", recursive: true) }
+
+    expect(result.is_error).to be(false)
+    expect(result.content.split("\n").grep(%r{\A/})).to be_empty
+  end
+
   it "lists the immediate entries of a directory, sorted" do
     touch("b.txt")
     touch("a.txt")

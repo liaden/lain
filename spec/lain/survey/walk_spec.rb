@@ -48,6 +48,40 @@ RSpec.describe Lain::Survey::Walk do
 
   def listing(relative) = walk.files.find { |file| file.path == relative }
 
+  describe "a root of /" do
+    let(:fake_walk) do
+      Class.new do
+        include Enumerable
+
+        def each(&) = %w[/etc/passwd /etc/hosts].each(&)
+        def listed = 2
+      end.new
+    end
+
+    it "names every row relative to /, none with a leading slash" do
+      allow(Lain::FileWalk).to receive(:new).and_return(fake_walk)
+
+      surveyed = described_class.new(root: "/", sensitivity: Lain::Sensitivity.new(home:, cwd: "/"))
+
+      expect(surveyed.files.map(&:path) + surveyed.withheld.map(&:path)).to eq(%w[etc/hosts etc/passwd])
+    end
+  end
+
+  describe "an entry bound" do
+    it "refuses a tree larger than the bound, naming the bound and the root" do
+      5.times { write("f#{_1}.rb") }
+
+      expect { described_class.new(root:, sensitivity:, entries: 3) }
+        .to raise_error(described_class::Refused, /3 entries.*#{Regexp.escape(root)}/)
+    end
+
+    it "surveys a tree of exactly the bound" do
+      3.times { write("f#{_1}.rb") }
+
+      expect(described_class.new(root:, sensitivity:, entries: 3).files.size).to eq(3)
+    end
+  end
+
   describe "what enters the corpus" do
     it "keeps a denied path out and says why it is out" do
       write(".ssh/id_ed25519", private_key)

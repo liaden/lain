@@ -67,7 +67,7 @@ module Lain
     # A directory exists here only when a listed file lies under it.
     # @return [Array(Array<String>, Array<String>)] files, then directories
     def relative_tree
-      prefix = "#{String.new(@root, encoding: Encoding::UTF_8)}/"
+      prefix = File.join(String.new(@root, encoding: Encoding::UTF_8), "")
       files = map { String.new(_1, encoding: Encoding::UTF_8).delete_prefix(prefix) }
       [files, files.flat_map { ancestors(_1) }.uniq]
     end

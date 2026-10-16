@@ -23,6 +23,13 @@ RSpec.describe Lain::Tools::Glob do
     path
   end
 
+  it "answers a path of / with names relative to it" do
+    result = Timeout.timeout(30) { tool.call(pattern: "*.conf", path: "/") }
+
+    expect(result.is_error).to be(false)
+    expect(result.content.split("\n").grep(%r{\A/})).to be_empty
+  end
+
   it "returns matches in deterministic sorted order" do
     touch("b.rb")
     touch("a.rb")
