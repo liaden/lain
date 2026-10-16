@@ -18,7 +18,7 @@ RSpec.describe Lain::Telemetry::LandingBatch do
   end
 
   it "answers landing_batch to no other Journalable" do
-    others = ObjectSpace.each_object(Class).select { |klass| klass.include?(Lain::Telemetry::Journalable) }
+    others = ObjectSpace.each_object(Class).select { |klass| klass.include?(Lain::Telemetry::Journalable) && klass.name }
                         .reject { |klass| klass == described_class }
                         .select { |klass| klass.name.split("::").last.underscore == "landing_batch" }
 
