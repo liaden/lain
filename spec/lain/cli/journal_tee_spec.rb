@@ -103,6 +103,18 @@ RSpec.describe Lain::CLI::JournalTee do
   end
 
   # AC: the tee fans out.
+  # A Chronicle built over a tee registers its observers through it, so they
+  # must land on the journal every record goes through.
+  it "registers an observer on its journal, which then sees each record the tee writes" do
+    seen = []
+    tee = described_class.new(journal, [])
+
+    expect(tee.observe(seen)).to be(tee)
+    tee << { "type" => "probe" }
+
+    expect(seen).to eq([{ "type" => "probe" }])
+  end
+
   describe "fanning out to N sinks" do
     let(:channel) { Lain::Channel::DropOldest.new }
     let(:status_feed) { instance_double(Lain::StatusFeed) }

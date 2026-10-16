@@ -22,6 +22,7 @@ module Lain
         def initialize
           @live = Channel::Null.instance
           @transition_listener = Agent::TransitionListener::Null
+          @observers = []
         end
 
         # Nil is the honest answer: --no-journal has no file, and /fork reads
@@ -49,6 +50,18 @@ module Lain
         # collaborator of a run asks for it. Never the tee: under --nvim that
         # is nvim's own journal, and these records were never nvim's to fold.
         def durable_journal = @durable_journal ||= Journal.new(io: File.open(File::NULL, "ab"))
+
+        # Durable records and teed ones land in 2 different journals here, so
+        # an observer goes on both, including a tee wrapped after it.
+        #
+        # @param observer [#<<] see {Journal#observe}
+        # @return [self]
+        def observe(observer)
+          @observers << observer
+          durable_journal.observe(observer)
+          @tee_journal&.observe(observer)
+          self
+        end
 
         def catch_up(_timeline) = self
         def close(**) = self
@@ -79,6 +92,8 @@ module Lain
         # way.
         def wrap_tee(channel)
           journal = Journal.open
+          @observers.each { |observer| journal.observe(observer) }
+          @tee_journal = journal
           @tee = JournalTee.new(journal, channel)
           @live = LiveLeg.new(channel, journal:)
           journal
@@ -343,6 +358,16 @@ module Lain
       # {StatusFeed} and {FleetWindows}, which count what reaches them. A record
       # a live view DOES fold goes to {#record_journal} instead.
       def durable_journal = @journal
+
+      # The tee writes through the session journal too, so one registration
+      # sees every record.
+      #
+      # @param observer [#<<] see {Journal#observe}
+      # @return [self]
+      def observe(observer)
+        @journal.observe(observer)
+        self
+      end
 
       def catch_up(timeline)
         scribe.catch_up(timeline)

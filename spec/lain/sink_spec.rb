@@ -3,21 +3,6 @@
 require "json"
 require "tmpdir"
 
-# A tiny in-memory stand-in for Lain::Channel: records everything pushed so we
-# can assert on emitted events without depending on Channel's threading.
-class RecordingChannel
-  attr_reader :events
-
-  def initialize
-    @events = []
-  end
-
-  def push(event)
-    @events << event
-    self
-  end
-end
-
 RSpec.describe Lain::Sink do
   describe Lain::Sink::IOAdapter do
     subject(:adapter) { described_class.new(channel, tool_use_id: "toolu_123", stream: :stdout) }

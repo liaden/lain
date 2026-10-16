@@ -434,6 +434,20 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
+  describe "#observe" do
+    it "tells an observer each record the session journal writes, durable or teed" do
+      seen = []
+      chronicle.observe(seen)
+      tee = chronicle.wrap_tee([])
+
+      chronicle.durable_journal << { "type" => "durable" }
+      chronicle.record_journal << { "type" => "teed" }
+
+      expect(seen.map { |record| record["type"] }).to eq(%w[durable teed])
+      expect(tee).to be(journal)
+    end
+  end
+
   # The live views follow what the session file says, so the records that move
   # the head reach them too: once in the file, and told to the views after it.
   describe "the head moves, once #wrap_tee has run" do
@@ -805,6 +819,23 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(null.durable_journal).to be(first)
       expect(first).to be_a(Lain::Journal)
       expect { first << { "type" => "probe" } }.not_to raise_error
+    end
+
+    # --no-journal + --nvim: the durable records and the teed ones go to two
+    # different journals, and an observer must see both.
+    it "tells an observer what the durable journal and the --nvim tee's own journal write" do
+      allow(Lain::Journal).to receive(:open).with(no_args).and_return(Lain::Journal.new(io: StringIO.new))
+      before_tee = []
+      after_tee = []
+      null.observe(before_tee)
+      null.wrap_tee([])
+      null.observe(after_tee)
+
+      null.durable_journal << { "type" => "durable" }
+      null.record_journal << { "type" => "teed" }
+
+      expect([before_tee, after_tee].map { |seen| seen.map { |record| record["type"] } })
+        .to eq([%w[durable teed], %w[durable teed]])
     end
 
     it "shares that journal with the record reader while no tee is wrapped" do

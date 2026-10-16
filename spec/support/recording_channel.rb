@@ -9,13 +9,22 @@ class RecordingChannel
 
   def initialize
     @events = []
+    @observers = []
   end
 
+  # Like Lain::Journal: each observer is told every record after it lands.
   def push(event)
     @events << event
+    @observers.each { |observer| observer << event }
     self
   end
   alias << push
+
+  # The journal's duck, for the specs that build a Chronicle over this.
+  def observe(observer)
+    @observers << observer
+    self
+  end
 
   # The status feed's duck, for the specs that tee onto this as one.
   def transition_listener = Lain::Agent::TransitionListener::Null

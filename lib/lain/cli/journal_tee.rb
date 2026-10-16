@@ -76,6 +76,16 @@ module Lain
       # writes through `#record`.
       alias record <<
 
+      # Every record the tee writes goes through its journal, so an observer
+      # registered there sees them all.
+      #
+      # @param observer [#<<] see {Journal#observe}
+      # @return [self]
+      def observe(observer)
+        @journal.observe(observer)
+        self
+      end
+
       # The Journal's batch spelling: the durable leg lands whole in one write,
       # then every sink is told each event in order.
       #

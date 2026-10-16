@@ -1255,6 +1255,81 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
+  describe "which files a chat counts as fresh" do
+    let(:session_io) { StringIO.new }
+    let(:chronicle) do
+      Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: session_io), journal_path: "fresh-session.ndjson")
+    end
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }) }
+    let(:wiring) do
+      described_class.new(options: { grace: 5 }, chronicle:, status_feed:, paths:, project: throwaway_project(@state))
+    end
+    let(:backend_root) { @state }
+    let(:cat) { File.join(@state, "bin", "cat") }
+    let(:mock_provider) do
+      write = ["tu_write", "write_file", { "path" => cat, "content" => "x" }]
+      bash = ["tu_bash", "bash", { "command" => "printf hi" }]
+      Lain::Provider::Mock.new(responses: [tool_response(write), tool_response(bash), text_response("settled")])
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-wiring-fresh") do |state|
+        @state = File.realpath(state)
+        FileUtils.mkdir_p(File.join(@state, "bin"))
+        example.run
+      end
+    end
+
+    def fresh = wiring.instance_variable_get(:@observers).fresh
+
+    def converse(prompt, resumed: nil)
+      recorder, session = wiring.run_state(resumed)
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend:, resumed:)
+      wiring.instance_variable_get(:@switchboard)
+            .mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
+      agent.ask(prompt)
+    end
+
+    # The lineage starts after every file here, so only a write record can
+    # make one fresh.
+    context "when the chat resumes a lineage of 2 session files" do
+      let(:old) { File.join(@state, "old.sh").tap { |path| File.write(path, "") } }
+      let(:untouched) { File.join(@state, "untouched.sh").tap { |path| File.write(path, "") } }
+
+      def session_file(name, *records, resumed_from: nil)
+        header = { "ts" => "2099-01-01T00:00:00.000000Z", "type" => "session", "resumed_from" => resumed_from }
+        File.write(File.join(paths.sessions_dir, name),
+                   [header.compact, *records].map { |record| "#{JSON.generate(record)}\n" }.join)
+      end
+
+      def resumed
+        written = Lain::Telemetry::FileWritten.from_stat(File.stat(old), path: old, tool_use_id: "tu_0")
+        session_file("first.ndjson", written.to_journal)
+        session_file("second.ndjson", resumed_from: { "file" => "first.ndjson" })
+        Lain::CLI::Resume::Result.new(file: "second.ndjson",
+                                      timeline: Lain::Timeline.new(head_digest: nil, store: Lain::Store.new),
+                                      session: Lain::Session.new, open: false, notices: [],
+                                      recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty))
+      end
+
+      it "remembers the first file's write, and folds this session's own" do
+        converse("plant it", resumed:)
+
+        expect([old, untouched, cat].map { |path| fresh.fresh?(path) }).to eq([true, false, true])
+      end
+
+      context "when the chat started with --no-journal" do
+        let(:chronicle) { Lain::CLI::Chronicle::Null.new }
+
+        it "still folds this session's own write" do
+          converse("plant it", resumed:)
+
+          expect([untouched, cat].map { |path| fresh.fresh?(path) }).to eq([false, true])
+        end
+      end
+    end
+  end
+
   # The model phase's translator for a prompt the provider refused whole is
   # composed HERE, beside the turn phase's window refresh, and not inside the
   # chronicle's instrumentation: under --no-journal the chronicle has no model

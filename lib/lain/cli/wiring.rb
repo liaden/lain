@@ -385,6 +385,7 @@ module Lain
         parent = -> { @agent.timeline }
         @supervisor = supervise
         @ask_human = wire_askers(parent)
+        @observers = Observers.register(chronicle:, paths: @paths, resumed:)
         toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, session:, notice:)
         # Resolved BEFORE the record opens, and the statement order IS the
         # guarantee -- see #switchboard for what can refuse here and why a
@@ -587,9 +588,7 @@ module Lain
       # A fresh chat opens on the store head; a resumed one re-opens the view
       # its own record carried, so nothing another chat wrote in between joins
       # this session's manifest or moves a root it already recorded.
-      def memory_view(resumed)
-        resumed ? project_memory.resumed(resumed.recorder) : project_memory.view
-      end
+      def memory_view(resumed) = resumed ? project_memory.resumed(resumed.recorder) : project_memory.view
 
       # A resumed Session already exists -- {Lain::SessionRecord::Replay} built
       # it over the view it folded -- so it is pointed at the re-opened view
