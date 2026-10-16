@@ -2036,6 +2036,20 @@ XDG path relative, which put machine state back inside the user's repository)
    requester on every ladder record. Each step is a CLI arm recorded in the session header; the safe arms
    turn on by default last. 33 cards, panel-reviewed.
 
+60. **Proposed (2026-10-16, not yet folded)**: `planning/hn-agent-landscape-2026-10.md`, the
+   September and October HN scans reconciled. The 2026-09-22 scan's 24 items had no ROADMAP line;
+   against the plan today they are 0 covered, 18 partial, 6 new, and 3 cite code that has since
+   moved. The 2026-10-16 scan adds items 64 to 90. Two touch item 59 directly: its fence limits TCP
+   by port, but with no network namespace DNS and UDP stay open, which is the channel OpenAI's agent
+   escaped through this window; and its observe-only tripwire has no measured time from hit to stop
+   (the incident's alert came at 12 minutes, the stop about 2.5 hours later). Four are fixes with
+   known answers: `PriceBook` and `ContextWindow` are wrong for the Claude 5.5 family, a 5.5 wire
+   pass (Opus 5.5 rejects the forced `tool_choice` structured output sends), `Agent::Budget` has no
+   dollar ceiling and `Subagent` no width cap, and `Compare` prints no interval or cost per solved
+   task. Research before planning: DNS and control-plane reach under confinement, a five-arm
+   compaction sweep scored on the cache, provenance labels against the approval judge, and a spike
+   on a local logprob judge.
+
 ## Map of the documents
 
 - **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
@@ -2054,5 +2068,6 @@ XDG path relative, which put machine state back inside the user's repository)
 - **Grounding sources:** `references/` — `INDEX.md`, `SCOPE.md`, `memory-and-retrieval.md`,
   `oss-inspiration.md`, `prompt-caching-mechanics.md`, `firecracker-microvm-isolation.md`,
   26 papers in `papers/rst/`, reference impls in `repos/`, and the recurring HN scans
-  (`hn-agent-landscape-2026-07.md` … `-2026-08-18.md`).
+  (`hn-agent-landscape-2026-07.md` … `-2026-10-16.md`), reconciled against this plan in
+  `planning/hn-agent-landscape-2026-08.md` and `planning/hn-agent-landscape-2026-10.md`.
 - **Origin brainstorm:** `TODO.md` — the raw idea list this ROADMAP reconciles.
