@@ -1337,6 +1337,38 @@ RSpec.describe Lain::Approval::Escalation do
     end
   end
 
+  describe "the rule that decided" do
+    let(:allower) { EscalationSpecSupport::Allower.new }
+
+    it "names the rule behind a rules rung allow, on the ruling and on its record" do
+      ruling = ladder(rules_rung(allower)).rule(effect, nil)
+
+      expect(ruling.rule).to eq(allower.name)
+      expect(rulings.last).to include("rung" => "rules", "verdict" => "allow", "rule" => allower.name)
+    end
+
+    it "names the rule behind a rules rung deny" do
+      denier = EscalationSpecSupport::Denier.new
+
+      expect(ladder(rules_rung(denier)).rule(effect, nil).rule).to eq(denier.name)
+    end
+
+    it "names no rule on a ruling no rule made, and leaves the key off its record" do
+      ruling = ladder(EscalationSpecSupport::Fixed.new("judge", :allow)).rule(effect, nil)
+
+      expect(ruling.rule).to be_nil
+      expect(rulings.sole).not_to have_key("rule")
+    end
+
+    it "keeps the rule on the abstention a bar turns its allow into" do
+      barred = Lain::Middleware::WithholdAutomaticOutput::Carried.new(:the_session, barred: true)
+
+      ladder(rules_rung(allower)).rule(effect, barred)
+
+      expect(rulings.first).to include("verdict" => "abstain", "rule" => allower.name)
+    end
+  end
+
   describe ".for, which is how a session wires it" do
     let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.05) }
     let(:built) { described_class.for(queue:, tools:, journal:, rules: [EscalationSpecSupport::Raiser.new]) }

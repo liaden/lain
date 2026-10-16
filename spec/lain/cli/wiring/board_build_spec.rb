@@ -559,6 +559,19 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "tells the term rule's allow from a config rule's allow, on the ruling and in the journal" do
+      in_tree(config: %(approval do\n  allow "bash", command: "make check"\nend\n)) do |root, home|
+        board = board_over(root, home)
+
+        composed = board.ladder.rule(bash_of("cat README.md | head -20", "cwd" => root), nil)
+        remembered = board.ladder.rule(bash_of("make check"), nil)
+
+        expect([composed.rule, remembered.rule]).to eq(%w[composed_term remembered])
+        expect(rulings.select { |ruling| ruling["verdict"] == "allow" }.map { |ruling| ruling["rule"] })
+          .to eq(%w[composed_term remembered])
+      end
+    end
+
     # IDENTITY at the construction site, on the triage-factory example's shape:
     # every behavioural example above still passes on a board whose rule was
     # handed a classifier refusing nothing, so the object is asserted directly.

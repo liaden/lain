@@ -86,7 +86,7 @@ module Lain
       # What one rung said, and everything a journal needs to attribute it.
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
       # so `Ractor.shareable?` holds and the record is safe to share.
-      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said)
+      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule)
 
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
@@ -131,8 +131,12 @@ module Lain
         # `said` is kept apart from `told` because the gate appends it to its
         # own sentence rather than replacing that sentence, and off {#record}
         # because the queue's `approval_decision` already journals it.
+        #
+        # `rule` names the {Rule} behind a ruling the rules rung made, so two
+        # allows from one rung can be told apart; nil for any other rung. Off
+        # {#record} too: {Escalation#record} adds it only when present.
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil,
-                       said: nil)
+                       said: nil, rule: nil)
           unless VERDICTS.include?(verdict)
             raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
@@ -141,7 +145,7 @@ module Lain
           end
 
           super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:,
-                final: final == true, told: -(told || reason).to_s, said: spoken(said))
+                final: final == true, told: -(told || reason).to_s, said: spoken(said), rule: spoken(rule))
         end
 
         def allow? = verdict == :allow
@@ -272,7 +276,7 @@ module Lain
       def barred(ruling, context)
         return ruling unless ruling.allow? && !ruling.human? && Escalation.barred?(context)
 
-        Ruling.abstain(rung: ruling.rung, because: "#{BARRED}: #{ruling.reason}")
+        Ruling.abstain(rung: ruling.rung, because: "#{BARRED}: #{ruling.reason}", rule: ruling.rule)
       end
 
       def decisive(ruling)
@@ -322,7 +326,7 @@ module Lain
       # attribute a ruling -- or a fault -- to the call it belongs to.
       def record(ruling, effect, context)
         @journal.record({ "type" => TYPE, "tool" => effect.name, "tool_use_id" => effect.tool_use_id,
-                          "requester" => requester_of(context) }.compact.merge(ruling.record))
+                          "requester" => requester_of(context), "rule" => ruling.rule }.compact.merge(ruling.record))
         ruling
       rescue StandardError
         ruling
@@ -414,14 +418,14 @@ module Lain
           return Ruling.fault(rung: NAME, because: broke(answer.fault)) if faulted
           return Ruling.abstain(rung: NAME, because: NO_OPINION) if answer.nil?
 
-          Ruling.allow(rung: NAME, because: attributed(answer))
+          Ruling.allow(rung: NAME, because: attributed(answer), rule: decided(answer).rule)
         end
 
         # The model is told the rule's own reason: the journal's attribution
         # prefixes a name the reason usually already starts with.
         def refusal(answer, faulted)
           Ruling.deny(rung: NAME, because: attributed(answer), fault: faulted, final: true,
-                      told: decided(answer).reason)
+                      told: decided(answer).reason, rule: decided(answer).rule)
         end
 
         def attributed(answer)
