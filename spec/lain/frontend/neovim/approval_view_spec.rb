@@ -481,6 +481,31 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       end
     end
 
+    describe "a call the judge deferred" do
+      let(:marked) { Class.new { def judge_deferred? = true }.new }
+
+      def deferred = Lain::Approval::PolicySwitch::Requested.new(marked, "researcher")
+
+      def row_of(context)
+        Sync do |task|
+          queue = Lain::Approval::Queue.new(journal:, timeout: window)
+          parked = task.async { queue.adjudicate(effect, context) }
+          spun_until { queue.one? }
+          view.sweep(queue)
+          parked.stop
+        end
+        rpc.last[:lines].first
+      end
+
+      it "says so on its row" do
+        expect(row_of(deferred)).to include("the judge deferred this")
+      end
+
+      it "leaves a call parked at ask unmarked" do
+        expect(row_of(asked_by("researcher"))).not_to include("judge")
+      end
+    end
+
     it "stamps how many leading lines are rows, so the editor's keys are inert on the rest" do
       gated(timeout: window) { |_queue| nil }
 

@@ -50,9 +50,9 @@ RSpec.describe Lain::Approval::Judged do
     JudgedSpecSupport::ScriptedRoleSpawn.new(&answer || ->(_) { Lain::Tool::Result.ok(text) })
   end
 
-  def rung(spawn, asking: Lain::Approval::Escalation::Surfaces.new(queue), timeout: 30, under: policy)
+  def rung(spawn, asking: Lain::Approval::Escalation::Surfaces.new(queue), timeout: 30, under: policy, **rest)
     described_class.new(judge: Lain::Approval::Judge.new(role_spawn: spawn, timeout:), policy: under, asking:,
-                        journal:)
+                        journal:, **rest)
   end
 
   def call(name, input) = Lain::Effect::ToolCall.new(tool_use_id: "tu_#{name}", name:, input:)
@@ -102,6 +102,59 @@ RSpec.describe Lain::Approval::Judged do
     expect([ruling.verdict, ruling.authority]).to eq(%i[allow human])
     expect(escalations.sole).to include("rung" => "auto", "verdict" => "abstain", "reason" => "deferred",
                                         "tool_use_id" => "tu_bash")
+  end
+
+  describe "what a human is shown of the judge" do
+    let(:told) { [] }
+
+    it "tells the display which call the judge approved" do
+      ruled(rung(spawn_answering("approve"), display: told), bash("git log --oneline -5"))
+
+      expect(told).to eq([Lain::Telemetry::JudgeApproved.new(call: 'bash({"command" => "git log --oneline -5"})')])
+    end
+
+    it "says nothing about a call the judge denied" do
+      ruled(rung(spawn_answering("deny"), display: told), bash)
+
+      expect(told).to be_empty
+    end
+
+    it "marks the parked call as one the judge deferred" do
+      ruled(rung(spawn_answering("defer")), bash) do |pending|
+        expect(pending.judge_deferred?).to be(true)
+        pending.approve(surface: "human_spec")
+      end
+    end
+
+    it "keeps the requester and directory of the call it marks" do
+      ruled(rung(spawn_answering("defer")), bash) do |pending|
+        expect([pending.requester, pending.cwd]).to eq(["main", root])
+        pending.approve(surface: "human_spec")
+      end
+    end
+
+    it "does not mark a call the judge faulted on" do
+      ruled(rung(spawn_answering { Lain::Tool::Result.error("approve") }), bash) do |pending|
+        expect(pending.judge_deferred?).to be(false)
+        pending.deny(surface: "human_spec")
+      end
+    end
+
+    it "does not mark a call it never judged" do
+      ruled(rung(spawn_answering("approve")), bash("cat ~/.ssh/id_rsa")) do |pending|
+        expect(pending.judge_deferred?).to be(false)
+        pending.deny(surface: "human_spec")
+      end
+    end
+
+    it "does not mark a call parked with no judge at all" do
+      parked = Sync do |task|
+        task.async { queue.adjudicate(bash, context) }
+        task.with_timeout(1) { queue.dequeue }.tap { _1.deny(surface: "human_spec") }
+      end
+
+      expect(parked.judge_deferred?).to be(false)
+    end
   end
 
   it "parks after the bound when the judge hangs, journaling a fault" do

@@ -103,6 +103,7 @@ module Lain
       # @param judge [#call] what `auto` approval asks first, on `new`'s terms.
       #   REQUIRED here, as `test_layout:` is: defaulted, a real chat's `auto`
       #   would quietly hand every call to a human
+      # @param display [#<<] told each call the judge approves; the run's display channel
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [String] :approval the session starts at this approval
@@ -113,9 +114,9 @@ module Lain
                    sensitivity: Sensitivity::Policy::Null.instance,
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
-                   approval_timeout: Approval::Queue::DEFAULT_TIMEOUT)
+                   approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
-            verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:,
+            verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -212,13 +213,16 @@ module Lain
       # @param judge [#call] the {Approval::Judge} `auto` approval asks before
       #   anyone else. {DEFERRING} by default, so a board built with no model
       #   behind it parks under `auto` exactly as under `ask`
+      # @param display [#<<] as on {.for}
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
                      verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
                      attended: true, approval: :ask, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
-                     approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, judge: DEFERRING)
+                     approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
+                     display: Channel::Null.instance)
         @attended = attended
+        @display = display
         @journal = journal
         @spike = spike
         hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:)
@@ -507,7 +511,7 @@ module Lain
 
       def judged
         asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Approval::Judged::Unattended.new
-        Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal)
+        Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display)
       end
 
       # `bypass` approval's ladder, built for attended and unattended sessions

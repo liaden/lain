@@ -23,6 +23,7 @@ module Lain
       FAULT = "fault"
       UNJUDGEABLE = "unjudgeable"
       BASH = "bash"
+      CALL = "%<tool>s(%<input>s)"
       NOTHING_NAMED = ::Lain::Shell::Named.new(paths: [].freeze, opaque: false)
 
       # The files a named path stands for when the judge would be asked: the
@@ -114,13 +115,20 @@ module Lain
         end
       end
 
+      # The ladder reads contexts by respond_to?, so this wrapper stays invisible to it.
+      class Deferred < SimpleDelegator
+        def judge_deferred? = true
+      end
+
       # @param judge [#call] answers `:approve`, `:deny`, `:defer` or `:fault` ({Judge})
       # @param policy [Sensitivity::Policy] what decides whether a call's path may be judged
       # @param asking [#call] the rung a call goes to when the judge does not
       #   settle it: {Escalation::Surfaces}, or {Unattended}
       # @param journal [#record]
-      def initialize(judge:, policy:, asking:, journal:)
+      # @param display [#<<] told a {Telemetry::JudgeApproved} for each call the judge approves
+      def initialize(judge:, policy:, asking:, journal:, display: ::Lain::Channel::Null.instance)
         @judge = judge
+        @display = display
         @policy = policy
         @asking = asking
         @journal = journal
@@ -146,11 +154,23 @@ module Lain
 
       def ruled(verdict, effect, context, cause)
         case verdict
-        when :approve then Escalation::Ruling.allow(rung: NAME, because: APPROVED)
+        when :approve then approved(effect)
         when :deny then Escalation::Ruling.deny(rung: NAME, because: DENIED)
-        when :defer then handed_down(effect, context, abstain(DEFERRED))
+        when :defer then handed_down(effect, Deferred.new(context), abstain(DEFERRED))
         else faulted(effect, context, cause)
         end
+      end
+
+      # Evidence about a call must never cost the call, so a notice that fails is lost.
+      def approved(effect)
+        show(effect)
+        Escalation::Ruling.allow(rung: NAME, because: APPROVED)
+      end
+
+      def show(effect)
+        @display << Telemetry::JudgeApproved.new(call: format(CALL, tool: effect.name, input: effect.input.inspect))
+      rescue StandardError
+        nil
       end
 
       # Marked faulted so the ladder suppresses an automatic allow from below,

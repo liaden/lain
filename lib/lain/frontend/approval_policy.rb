@@ -60,6 +60,9 @@ module Lain
       REASONED_NO = /\A(?:nope|nah|no?)(?:(?:[[:punct:]]*\s+)+|[[:punct:]]+)(?<reason>\S.*)\z/i
       private_constant :REASONED_NO
 
+      # What a surface says of a call the judge looked at and left for a human.
+      JUDGE_DEFERRED = "the judge deferred this"
+
       REFUSED = "a y or n answers the approval"
 
       # How a prompt another surface decided ends its line.
@@ -290,9 +293,11 @@ module Lain
       # is the property the escaped path above relies on.
       def prompt_for(pending)
         "#{pending.outstanding.preamble}#{landing(pending)}#{pending.requester} " \
-          "asks (auto-denies in #{pending.window_face}): " \
+          "asks (auto-denies in #{pending.window_face}#{judged(pending)}): " \
           "approve #{pending.tool}(#{pending.input.inspect})? [y/N] "
       end
+
+      def judged(pending) = pending.judge_deferred? ? "; #{JUDGE_DEFERRED}" : ""
 
       # Where a linked path lands, because its name says nothing about what it
       # opens. Both ends `inspect`ed, on the preamble's rule: both are

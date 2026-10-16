@@ -570,8 +570,10 @@ module Lain
         # wraps into many rows still runs `.inspect` on its input once.
         def summary_for(pending, call)
           deadline = "#{pending.remaining_face} left, denies at #{pending.fires_at_face}"
-          "#{pending.requester}  #{pending.outstanding.preamble}#{call}  #{deadline}".lstrip
+          "#{pending.requester}  #{pending.outstanding.preamble}#{judged(pending)}#{call}  #{deadline}".lstrip
         end
+
+        def judged(pending) = pending.judge_deferred? ? "(#{ApprovalPolicy::JUDGE_DEFERRED}) " : ""
       end
     end
   end

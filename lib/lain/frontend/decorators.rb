@@ -35,6 +35,7 @@ module Lain
         return SnapshotNarrowed.new(event) if event.is_a?(::Lain::Agent::SnapshotSlot::SnapshotNarrowed)
         return PromptUnclosed.new(event) if event.is_a?(TTY::PromptUnclosed)
         return FilesWritten.new(event) if event.is_a?(Telemetry::FilesWritten)
+        return JudgeApproved.new(event) if event.is_a?(Telemetry::JudgeApproved)
 
         nil
       end

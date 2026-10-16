@@ -70,6 +70,28 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
                                                     "reason" => Lain::Approval::Judged::DEFERRED))
   end
 
+  context "when the judge approves the call" do
+    let(:channel) { Lain::Channel.new }
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 tool_response(["tu_1", "bash", { "command" => "git log --oneline -5" }]),
+                                 text_response("APPROVE"),
+                                 text_response("settled")
+                               ])
+    end
+
+    it "puts one judge-approved line on the run's display channel, rendered as a stamped transcript line" do
+      recorder, session = wiring.run_state(nil)
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
+      Sync { agent.ask("show the log") }
+      channel.close
+      theme = Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false))
+      lines = channel.drain.grep(Lain::Telemetry::JudgeApproved).map { Lain::Frontend::Decorators.for(_1).render(theme) }
+
+      expect(lines).to eq(['the judge approved bash({"command" => "git log --oneline -5"})'])
+    end
+  end
+
   # The project is not where the process stands, so a judge told the process's
   # directory would be told a place the call does not run in.
   it "tells the judge the project's working directory" do

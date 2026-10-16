@@ -1123,7 +1123,8 @@ RSpec.describe Lain::Approval::Queue do
     it "takes no ledger, so `decide` has nothing to release into" do
       expect(described_class::Pending.instance_method(:initialize).parameters)
         .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key timeout],
-                %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall]])
+                %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
+                %i[key judge_deferred]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

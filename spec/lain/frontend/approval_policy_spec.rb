@@ -40,6 +40,19 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(output.string).to include("researcher").and include("bash").and include("rm -rf /tmp/x")
   end
 
+  it "says in the question when the judge deferred the call" do
+    deferred = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, judge_deferred: true)
+    policy_for("n\n").decide(deferred)
+
+    expect(output.string).to include("the judge deferred this")
+  end
+
+  it "does not mention a judge for a call parked at ask" do
+    policy_for("n\n").decide(pending)
+
+    expect(output.string).not_to include("judge")
+  end
+
   it "says in the question how long the human has before it auto-denies" do
     slow = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, timeout: 300)
     policy_for("n\n").decide(slow)

@@ -984,7 +984,7 @@ module Lain
       def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
                                         verdict:, middleware: backend.middleware, config:, paths: @paths,
-                                        judge: JudgeSource.new(method(:role_spawn)))
+                                        judge: JudgeSource.new(method(:role_spawn)), display: @channel)
       end
 
       # The session's ONE {Lain::Shell::Verdict}, and the memo is the whole
