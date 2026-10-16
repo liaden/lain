@@ -78,4 +78,49 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
     expect(Dir.pwd).not_to eq(@cwd)
     expect(provider.requests[1].system.last["text"]).to end_with("Working directory: #{@cwd}")
   end
+
+  context "when the command reads a credential" do
+    let(:command) { "cat .env" }
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 tool_response(["tu_1", "bash", { "command" => command }]),
+                                 text_response("APPROVE"),
+                                 text_response("settled")
+                               ])
+    end
+
+    def denied_park
+      recorder, session = wiring.run_state(nil)
+      agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)
+
+      Sync do |task|
+        asked = task.async { agent.ask("show me the env file") }
+        parked = task.with_timeout(5) { wiring.approvals.dequeue }
+        parked.deny(surface: "tty")
+        task.with_timeout(5) { asked.wait }
+        parked
+      end
+    end
+
+    def parked_unjudged
+      [denied_park.tool.to_s, provider.requests.none? { _1.messages.to_s.include?("requesting approval") }]
+    end
+
+    it "parks it for the human without spawning the judge" do
+      expect(parked_unjudged).to eq(["bash", true])
+      expect(escalations).to include(a_hash_including("rung" => "auto", "verdict" => "abstain",
+                                                      "reason" => Lain::Approval::Judged::UNJUDGEABLE))
+    end
+
+    context "when it names the credential through ~" do
+      let(:command) { "cat ~/notes" }
+
+      it "reads ~ as the chat's own home, not the process's" do
+        File.write(File.join(@state, ".env"), "TOKEN=1\n")
+        File.symlink(File.join(@state, ".env"), File.join(@state, "notes"))
+
+        expect(parked_unjudged).to eq(["bash", true])
+      end
+    end
+  end
 end

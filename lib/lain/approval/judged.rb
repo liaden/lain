@@ -9,6 +9,8 @@ module Lain
     # approval, or one whose path the classifier gated for what it is (a
     # credential, a name, an operator's rule, a protected or malformed path),
     # never reaches the judge, because a model approve could not apply to it.
+    # A `bash` call is held to every path its command names ({Shell::Named}),
+    # and one whose paths cannot be named never reaches the judge either.
     #
     # Whatever this rung hands down, it first journals one `escalation` record
     # of its own saying why, so a reader can tell a call the judge deferred
@@ -20,6 +22,74 @@ module Lain
       DEFERRED = "deferred"
       FAULT = "fault"
       UNJUDGEABLE = "unjudgeable"
+      BASH = "bash"
+      NOTHING_NAMED = ::Lain::Shell::Named.new(paths: [].freeze, opaque: false)
+
+      # The files a named path stands for when the judge would be asked: the
+      # path, every match of its glob, and every entry below a recursive
+      # reader's root. A judge that has not weighed every file a call reads is
+      # not judging the call, so past a bound the answer is nil, never a sample.
+      module Reach
+        MATCHES = 64
+        # A checkout's `.git` alone passes this. Walking and judging a tree just
+        # under it measured about 300ms, which is what a call pays before the
+        # judge is even asked; further costs more than the park it would save.
+        ENTRIES = 2000
+        RECURSIVE = "/**"
+        WALKED = File::FNM_PATHNAME | File::FNM_DOTMATCH
+
+        # @param path [Shell::Named::Path]
+        # @return [Array<String>, nil] absolute; nil when there are too many
+        def self.of(path)
+          pattern = path.pattern
+          found = if pattern.nil? then []
+                  elsif pattern.include?(RECURSIVE) then below(pattern)
+                  else matches(path.resolved, pattern)
+                  end
+          found && [path.resolved, *found]
+        rescue SystemCallError
+          nil
+        end
+
+        # Globbed from the fixed directory rather than from `/`, so a directory
+        # named `w[1]` is a name and not a pattern.
+        def self.matches(directory, pattern)
+          return unless pattern.start_with?(directory)
+
+          relative = pattern.delete_prefix(directory).delete_prefix("/")
+          bounded(Dir.glob(relative, base: directory).map { File.join(directory, _1) }, MATCHES)
+        end
+
+        # Dot entries included, because a recursive reader opens them; and
+        # only what fits the bound is walked, because `find /` is a pattern too.
+        def self.below(pattern)
+          root, rest = pattern.split(RECURSIVE, 2)
+          root = "/" if root.empty?
+          entries = bounded(walk(root).first(ENTRIES + 1), ENTRIES)
+          return entries if entries.nil? || rest.empty?
+
+          inside = "**#{rest}"
+          entries.select { File.fnmatch?(inside, _1.delete_prefix(root).delete_prefix("/"), WALKED) }
+        end
+
+        def self.bounded(found, limit) = found.size > limit ? nil : found
+
+        # Through links too, because `grep -R`, `cp -L` and `tar h` follow them;
+        # a directory already walked by its real path is not walked again, so a
+        # link back up the tree ends.
+        def self.walk(root) = Enumerator.new { |entries| descend(root, entries, Set.new) }
+
+        def self.descend(directory, entries, walked)
+          return unless File.directory?(directory) && walked.add?(File.realpath(directory))
+
+          Dir.each_child(directory) do |name|
+            entry = File.join(directory, name)
+            entries << entry
+            descend(entry, entries, walked)
+          end
+        end
+        private_class_method :matches, :below, :bounded, :walk, :descend
+      end
 
       # The asking rung of a session nobody is attached to. A barred call is
       # refused finally, on {Escalation::Remainder}'s terms: no approval at this
@@ -95,8 +165,32 @@ module Lain
       def judgeable?(effect, context)
         return false if Escalation.barred?(context)
 
-        path = ::Lain::Sensitivity::Policy.path_in(effect)
-        path.nil? || verdict_on(path, context).oracle_approvable?
+        named = named_in(effect, context)
+        reached = named.paths.map { Reach.of(_1) }
+        !named.opaque? && reached.none?(&:nil?) && [*named_by_field(effect), *reached.flatten].all? do |path|
+          verdict_on(path, context).oracle_approvable?
+        end
+      end
+
+      def named_by_field(effect) = ::Lain::Sensitivity::Policy.path_in(effect)
+
+      # A command's cwd says nothing about the files it reads.
+      def named_in(effect, context)
+        return NOTHING_NAMED unless effect.name == BASH
+
+        command = command_in(effect.input)
+        cwd = command_cwd(effect, context)
+        return ::Lain::Shell::Named::UNREADABLE unless command.is_a?(String) && cwd
+
+        ::Lain::Shell::Named.of(command, cwd:, home: @policy.home)
+      end
+
+      def command_in(input) = input.is_a?(Hash) ? input["command"] || input[:command] : nil
+
+      def command_cwd(effect, context)
+        File.expand_path(named_by_field(effect) || ".", ::Lain::Session.cwd_of(context))
+      rescue ArgumentError
+        nil
       end
 
       def verdict_on(path, context)

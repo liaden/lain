@@ -50,8 +50,9 @@ RSpec.describe Lain::Approval::Judged do
     JudgedSpecSupport::ScriptedRoleSpawn.new(&answer || ->(_) { Lain::Tool::Result.ok(text) })
   end
 
-  def rung(spawn, asking: Lain::Approval::Escalation::Surfaces.new(queue), timeout: 30)
-    described_class.new(judge: Lain::Approval::Judge.new(role_spawn: spawn, timeout:), policy:, asking:, journal:)
+  def rung(spawn, asking: Lain::Approval::Escalation::Surfaces.new(queue), timeout: 30, under: policy)
+    described_class.new(judge: Lain::Approval::Judge.new(role_spawn: spawn, timeout:), policy: under, asking:,
+                        journal:)
   end
 
   def call(name, input) = Lain::Effect::ToolCall.new(tool_use_id: "tu_#{name}", name:, input:)
@@ -67,6 +68,14 @@ RSpec.describe Lain::Approval::Judged do
       ruling = task.async { subject.call(effect, within) }
       human&.call(task.with_timeout(1) { queue.dequeue })
       ruling.wait
+    end
+  end
+
+  # Denies whatever parks, and lets a call the judge settled finish unparked.
+  def settled(subject, effect, within: context)
+    Sync do |task|
+      human = task.async { queue.dequeue.deny(surface: "human_spec") }
+      subject.call(effect, within).tap { human.stop }
     end
   end
 
@@ -181,6 +190,66 @@ RSpec.describe Lain::Approval::Judged do
       expect(escalations.map { _1["reason"] }).to eq(%w[unjudgeable unjudgeable])
     end
 
+    describe "a bash command" do
+      def parked_unjudged(command, under: policy, **rest)
+        spawn = spawn_answering("approve")
+        ruling = ruled(rung(spawn, under:), bash(command, **rest)) { |pending| pending.deny(surface: "human_spec") }
+        [ruling.rung, spawn.calls.size, escalations.last&.slice("rung", "reason", "tool")]
+      end
+
+      def judged?(command, under: policy)
+        spawn = spawn_answering("approve")
+        settled(rung(spawn, under:), bash(command))
+        spawn.calls.size == 1
+      end
+
+      it "never asks the judge about a read of a credential, and parks it" do
+        expect(parked_unjudged("cat .env"))
+          .to eq(["surfaces", 0, { "rung" => "auto", "reason" => "unjudgeable", "tool" => "bash" }])
+      end
+
+      it "never asks the judge about a command whose paths it cannot name" do
+        expect(parked_unjudged('cat "$X"').take(2)).to eq(["surfaces", 0])
+      end
+
+      it "never asks the judge about a cd into a credential directory" do
+        expect(parked_unjudged("cd secrets && ls").take(2)).to eq(["surfaces", 0])
+      end
+
+      it "never asks the judge about a credential the command's cwd field puts it beside" do
+        expect(parked_unjudged("cat shadow", "cwd" => "/etc").take(2)).to eq(["surfaces", 0])
+      end
+
+      it "reads ~ under the policy's home, and parks it where the policy has none" do
+        expect([judged?("ls ~/project/lib"),
+                judged?("ls ~/project/lib", under: Lain::Sensitivity::Policy::Null.instance)]).to eq([true, false])
+      end
+
+      it "judges a command keyed by symbol, and parks one with no readable command rather than faulting" do
+        asked = [{ command: "ls src" }, nil, "ls src", { "command" => %w[ls src] }].map do |input|
+          spawn = spawn_answering("approve")
+          ruling = settled(rung(spawn), call("bash", input))
+          [ruling.verdict, spawn.calls.size]
+        end
+
+        expect(asked).to eq([[:allow, 1], [:deny, 0], [:deny, 0], [:deny, 0]])
+      end
+
+      it "parks a command whose cwd field cannot be resolved, rather than faulting" do
+        rulings = ["~nosuchuser-lain-spec", "a\0b"].map { parked_unjudged("ls", "cwd" => _1).take(2) }
+
+        expect(rulings).to eq([["surfaces", 0], ["surfaces", 0]])
+      end
+
+      it "still asks the judge about an ordinary command" do
+        spawn = spawn_answering("approve")
+
+        ruling = ruled(rung(spawn), bash("git log --oneline -5"))
+
+        expect([ruling.verdict, spawn.calls.size]).to eq([:allow, 1])
+      end
+    end
+
     it "judges a call whose path is ordinary" do
       spawn = spawn_answering("approve")
 
@@ -202,7 +271,7 @@ RSpec.describe Lain::Approval::Judged do
 
       def asked_about(effect, within)
         spawn = spawn_answering("approve")
-        ruled(rung(spawn), effect, within:) { |pending| pending.deny(surface: "human_spec") }
+        settled(rung(spawn), effect, within:)
         spawn.calls.size
       end
 
@@ -212,6 +281,107 @@ RSpec.describe Lain::Approval::Judged do
         File.symlink(".env", File.join(root, "notes.txt"))
 
         expect(asked_about(call("read_file", { "path" => "notes.txt" }), context)).to eq(0)
+      end
+
+      describe "a bash command's patterns" do
+        before do
+          FileUtils.mkdir_p([File.join(root, "secrets"), File.join(root, "src"), File.join(home, ".ssh")])
+          File.write(File.join(root, ".env"), "TOKEN=1\n")
+          File.write(File.join(root, "secrets", "a"), "hunter2\n")
+          File.write(File.join(root, "src", "a.rb"), "1\n")
+          File.write(File.join(home, ".ssh", "id_rsa"), "key\n")
+        end
+
+        def asked_about_command(command) = asked_about(bash(command), context)
+
+        it "never asks the judge about a glob that matches a credential" do
+          commands = ["cat .en?", "cat .e*", "cat .[e]nv", "ls secret?", "cat ~/.ss?/id_rsa"]
+
+          expect(commands.to_h { [_1, asked_about_command(_1)] }).to eq(commands.to_h { [_1, 0] })
+        end
+
+        it "asks the judge about a glob whose matches are all ordinary" do
+          expect(asked_about_command("cat src/*.rb *env")).to eq(1)
+        end
+
+        it "never asks the judge about a glob with more matches than it may weigh" do
+          many = File.join(root, "many")
+          FileUtils.mkdir_p(many)
+          (described_class::Reach::MATCHES + 1).times { File.write(File.join(many, "f#{_1}.txt"), "") }
+
+          expect(asked_about_command("cat many/*.txt")).to eq(0)
+        end
+
+        it "never asks the judge about a recursive read of a tree whose only credential is .env" do
+          FileUtils.mkdir_p(File.join(root, "only"))
+          File.write(File.join(root, "only", ".env"), "TOKEN=1\n")
+          File.write(File.join(root, "only", "a.rb"), "1\n")
+
+          expect([asked_about_command("grep -r needle only"), asked_about_command("grep -r needle src")]).to eq([0, 1])
+        end
+
+        it "never asks the judge about a recursive read through a link to a directory holding .env" do
+          elsewhere = File.join(@base, "elsewhere")
+          holder = File.join(root, "holder")
+          FileUtils.mkdir_p([elsewhere, holder])
+          File.write(File.join(elsewhere, ".env"), "TOKEN=1\n")
+          File.symlink(elsewhere, File.join(holder, "d"))
+          File.symlink(holder, File.join(holder, "loop"))
+          commands = ["grep -R needle holder", "rg -L needle holder", "cp -rL holder copy", "diff -r holder src",
+                      "tar chf x.tar holder", "zip -r x.zip holder"]
+
+          expect(commands.to_h { [_1, asked_about_command(_1)] }).to eq(commands.to_h { [_1, 0] })
+        end
+
+        it "judges a tree-free git command by the entries its <rev>:<path> matches, dot directories included" do
+          FileUtils.mkdir_p(File.join(root, ".hidden"))
+          File.symlink(File.join(root, ".env"), File.join(root, ".hidden", "notes"))
+
+          expect([asked_about_command("git ls-tree HEAD:src"), asked_about_command("git ls-tree HEAD:notes")])
+            .to eq([1, 0])
+        end
+
+        it "walks a link back up the tree once, and judges the tree" do
+          File.symlink(File.join(root, "src"), File.join(root, "src", "again"))
+
+          expect(asked_about_command("grep -R needle src")).to eq(1)
+        end
+
+        it "never asks the judge about a recursive read of a tree it cannot read whole" do
+          locked = File.join(root, "locked", "inner")
+          FileUtils.mkdir_p(locked)
+          File.chmod(0o000, locked)
+
+          expect(asked_about_command("grep -r needle locked")).to eq(0)
+        ensure
+          File.chmod(0o755, locked)
+        end
+
+        it "matches a glob under a directory whose own name holds glob characters" do
+          odd = %w[w[1] w{a,b}].map { File.join(root, _1) }
+          FileUtils.mkdir_p(odd)
+          odd.each { File.write(File.join(_1, ".env"), "TOKEN=1\n") }
+
+          within = odd.map { context.with(worker_env: Lain::WorkerEnv.new(cwd: _1, env: {})) }
+
+          expect(within.map { asked_about(bash("cat .e*"), _1) }).to eq([0, 0])
+        end
+
+        it "asks the judge about a git log that prints no file contents, in a tree too big to walk" do
+          wide = File.join(root, "wide")
+          FileUtils.mkdir_p(wide)
+          (described_class::Reach::ENTRIES + 1).times { File.write(File.join(wide, "f#{_1}"), "") }
+
+          expect([asked_about_command("git log --oneline -5"), asked_about_command("git log -p")]).to eq([1, 0])
+        end
+
+        it "never asks the judge about a recursive read of a tree larger than it may walk" do
+          wide = File.join(root, "wide")
+          FileUtils.mkdir_p(wide)
+          (described_class::Reach::ENTRIES + 1).times { File.write(File.join(wide, "f#{_1}"), "") }
+
+          expect(asked_about_command("grep -r x wide")).to eq(0)
+        end
       end
 
       it "counts a named directory below a checkout the cwd sits under" do

@@ -669,7 +669,20 @@ those rungs.
   **Unsure parks it for you**, and so does a judge that errors or runs out of time (a fault never
   turns into an approve). Calls that touch a credential, a protected path, a named or configured
   path, or a path the classifier could not read are never shown to the judge at all: they go
-  straight to you. A headless run (`--non-interactive`) has no one to park for, so there an unsure
+  straight to you.
+  A `bash` command is held to every path its words name. A glob is held to every file it
+  matches, and a recursive reader (`grep -r`, `find`, `rg`, `cp -r`, `rsync -a`, `tar c`) to
+  every file below its root, through links. `git diff`, `git show` and a plain `git log`
+  print file contents or commit bodies, so they are held to the whole checkout; only
+  `git status`, `ls-files`, `ls-tree`, `rev-parse`, `shortlog` and a `git log` whose format
+  prints no body (`--oneline`, `short`, or a format without `%b`) are not. So `cat .e*` or
+  `grep -r x .` beside a credential goes straight to you. So do a glob with more than 64
+  matches, a tree of more than 2,000 entries, a `shopt` or `set`, and a command whose paths
+  lain cannot name for certain: an expansion such as `$HOME`, a loop, inline code, or a `cd`
+  not joined to the next command by `&&`. These lists are known to be incomplete: some readers
+  lain does not know still reach the judge. A script a command runs (`bash x.sh`, `make`) is
+  judged by the command's words, never by what the script reads.
+  A headless run (`--non-interactive`) has no one to park for, so there an unsure
   call is **refused**, and so is a call that would have gone to a human.
 * **`bypass`** approves what the rules allow. It is the old approve-all, renamed. Nothing else
   stands between the model and the command.

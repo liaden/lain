@@ -224,6 +224,31 @@ RSpec.describe Lain::Shell::Named do
       expect(patterns("git status")).to be_empty
     end
 
+    it "reads the whole tree for log only when it prints file contents or commit bodies" do
+      ["git log -p", "git log --patch", "git log -u", "git log -Skey", "git log -Gkey", "git log --follow -p f",
+       "git log --format=%B", "git log --pretty=format:%h%b", "git log --format=%+b", "git log --format=%-B",
+       "git log '--format=% b'", "git log --oneline -p"]
+        .each { expect(patterns(_1)).to include("/p/**"), _1 }
+      ["git log --oneline -5", "git log --format=%s", "git log --pretty=oneline", "git log --pretty=short",
+       "git log --oneline --stat", "git log --format=%B --oneline", "git log --format=%x25b"]
+        .each { expect(patterns(_1)).not_to include("/p/**"), _1 }
+    end
+
+    it "reads the whole tree for every subcommand but the few that print no file contents" do
+      ["git stash show", "git stash list", "git archive HEAD", "git format-patch -1 --stdout", "git reflog -p",
+       "git whatchanged", "git range-diff A...B", "git cat-file -p HEAD", "git notes show", "git commit -m x",
+       "git annotate f", "git"]
+        .each { expect(patterns(_1)).to include("/p/**"), _1 }
+      ["git status", "git ls-files", "git ls-tree -r HEAD", "git rev-parse HEAD", "git shortlog"]
+        .each { expect(patterns(_1)).to be_empty, _1 }
+    end
+
+    it "reads the whole tree for a log whose format prints commit bodies, the default included" do
+      ["git log", "git log -5", "git log --stat", "git log --name-only", "git log --pretty", "git log --pretty=fuller",
+       "git log --format=email", "git log --oneline --format=%B"]
+        .each { expect(patterns(_1)).to include("/p/**"), _1 }
+    end
+
     it "scopes -c to before the subcommand" do
       expect(named("git log -c")).not_to be_opaque
       expect(named("git -ccore.pager=less log")).to be_opaque
@@ -323,6 +348,12 @@ RSpec.describe Lain::Shell::Named do
       expect(patterns("cp -a src dst")).to eq(%w[/p/src/**])
       expect(patterns("tar czf a.tgz src")).to eq(%w[/p/src/**])
       expect(patterns("zip -r a.zip src")).to eq(%w[/p/src/**])
+    end
+
+    it "marks the sources of a recursive rsync or scp" do
+      ["rsync -r src dst", "rsync -a src dst", "rsync -av src dst", "rsync --recursive src dst",
+       "rsync --archive src dst", "scp -r src host:dst"].each { expect(patterns(_1)).to eq(%w[/p/src/**]), _1 }
+      expect(patterns("rsync src dst")).to be_empty
     end
 
     it "marks every operand of a recursive diff" do
@@ -691,6 +722,15 @@ RSpec.describe Lain::Shell::Named do
       result = named("for f in *.key; do cat $f; done")
       expect(result).to be_opaque
       expect(result.paths).to be_empty
+    end
+
+    it "makes a shopt or set stage, and everything after it, opaque" do
+      ["shopt -s dotglob; cat *", "shopt -s globstar && cat **/.env", "set -f; cat *", "shopt -s nocaseglob",
+       "cat a && set +f && cat b"].each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "answers one shared unreadable value" do
+      expect(described_class.of("cat $x", cwd: "relative", home: nil)).to equal(described_class::UNREADABLE)
     end
 
     it "makes an assignment before the program opaque" do

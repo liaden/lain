@@ -58,6 +58,7 @@ module Lain
       # @return [Array<Path>]
       def written = paths.select(&:written)
 
+      # What every command this object cannot read answers.
       UNREADABLE = new(paths: [].freeze, opaque: true)
 
       # One word's quoting undone, when every span of it is literal: a
@@ -281,9 +282,20 @@ module Lain
           "sort" => ["", %w[--compress-program]]
         }.freeze
 
-        # The git subcommands that read the whole tree, and those that take a
-        # `<rev>:<path>` whose path is relative to the tree, not to the cwd.
-        GIT_TREE_READERS = %w[diff log show grep stash blame].freeze
+        # The git subcommands that print no file contents. An allowlist, because
+        # nearly every other one can print a blob, a patch or a commit body (a
+        # body can quote any file); `log` joins them only when it prints neither.
+        # Last, those that take a `<rev>:<path>` whose path is relative to the
+        # tree, not to the cwd.
+        GIT_TREE_FREE = %w[status ls-files ls-tree rev-parse shortlog].freeze
+        GIT_PATCH = ["puSGLUc", %w[
+          --patch --unified --patch-with-stat --patch-with-raw --word-diff --color-words --cc --remerge-diff
+        ]].freeze
+        # The last of these git reads decides the format. A bare `--pretty` is
+        # medium, which prints the body, as `log`'s default does.
+        GIT_FORMAT_OPTION = /\A--(oneline\z|format(=|\z)|pretty(=|\z))/
+        GIT_BODY_FORMATS = %w[medium full fuller raw email mboxrd].freeze
+        GIT_BODY = /%[-+ ]?[bB]/
         GIT_REV_PATHS = %w[show cat-file diff grep ls-tree archive blame log].freeze
         REV_PATH = /\A[^:]*:(?:[0-3]:)?(.*)\z/m
         GIT_READ_ONLY = %w[
@@ -320,7 +332,7 @@ module Lain
         RECURSES = {
           **GREPS.to_h { [_1, ["rR", %w[--recursive --dereference-recursive]]] },
           "cp" => ["rRa", %w[--recursive --archive]], "zip" => ["r", %w[--recurse-paths]],
-          "diff" => ["r", %w[--recursive]]
+          "diff" => ["r", %w[--recursive]], "rsync" => ["ra", %w[--recursive --archive]], "scp" => ["r", []]
         }.freeze
         ALWAYS_RECURSES = %w[rg ag ack].freeze
         PATTERN_OPTION = ["ef", %w[--regexp --file --files]].freeze
@@ -379,12 +391,13 @@ module Lain
         end
 
         # @return [Array<Symbol>] `:root` when it searches the directory it runs
-        #   in without naming it, `:written` when it writes there
+        #   in without naming it, `:written` when it writes there, which covers
+        #   the reading too
         def implied
           return [] if @untrusted
 
-          if (@command == "find" && find_roots.empty?) || (searches? && searched.empty?) || git_tree? then [:root]
-          elsif implied_write? then [:written]
+          if implied_write? then [:written]
+          elsif (@command == "find" && find_roots.empty?) || (searches? && searched.empty?) || git_tree? then [:root]
           else []
           end
         end
@@ -503,9 +516,18 @@ module Lain
         def git_tree?
           return false unless @command == "git"
 
-          subcommand, *rest = operands
-          GIT_TREE_READERS.include?(word(subcommand)) ||
-            (word(subcommand) == "add" && (@argv.flag?("A", %w[--all]) || rest.any? { word(_1) == "." }))
+          subcommand = word(operands.first)
+          return false if GIT_TREE_FREE.include?(subcommand)
+
+          subcommand != "log" || @argv.flag?(*GIT_PATCH) || git_body?
+        end
+
+        def git_body?
+          chosen = @argv.options.map { @argv.words[_1] }.grep(GIT_FORMAT_OPTION).last
+          return true if chosen.nil?
+
+          format = chosen == "--oneline" ? "oneline" : chosen.partition("=").last
+          format.empty? || GIT_BODY_FORMATS.include?(format) || GIT_BODY.match?(format)
         end
 
         def implied_write?
@@ -542,6 +564,7 @@ module Lain
 
           case @command
           when "cp" then @argv.values(*TARGET).empty? ? operands[0...-1] : operands
+          when "rsync", "scp" then operands[0...-1]
           when "zip" then operands.drop(1)
           when "diff" then operands
           else searched
@@ -607,6 +630,9 @@ module Lain
         ].freeze
 
         DIRECTORY_CHANGERS = %w[cd pushd popd].freeze
+        # Each changes how bash expands the words after it: `dotglob` lets `*`
+        # match `.env`, `set -f` stops globbing, `globstar` makes `**` recurse.
+        SHELL_OPTIONS = %w[shopt set].freeze
         AND = "&&"
         AFTER_A_CD = [AND, "|"].freeze
         LONG_VALUE = /\A--[^=]+=/
@@ -653,6 +679,7 @@ module Lain
           stage = @result.stages[index]
           raws = [*stage.argv, *stage.redirects.flat_map(&:extra_words)]
           words = Words.new(raws:, literals: raws.map { Word.read(_1) })
+          return halt if SHELL_OPTIONS.include?(words.texts.first)
           return change_directory(index, words) if DIRECTORY_CHANGERS.include?(words.texts.first)
 
           name(stage, words)
@@ -867,7 +894,7 @@ module Lain
         def stage_end(stage) = [stage.byte_range.end, *stage.redirects.map { _1.byte_range.end }].max
       end
 
-      private_constant :Word, :Argv, :Program, :SedScript, :Walk, :UNREADABLE
+      private_constant :Word, :Argv, :Program, :SedScript, :Walk
     end
   end
 end
