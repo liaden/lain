@@ -120,15 +120,15 @@ RSpec.describe "the approval key in an input pane", :seam do
   end
 
   # A pane typing into a chat with no prompt open, once the pane's terminal
-  # ends a read at ESC, which is when the key can arrive as it is pressed.
-  def idle_pane(eol: "^[")
+  # is uncooked, so each key arrives as it is pressed.
+  def idle_pane
     start_chat("unpublished", :auto)
     wait_for { File.exist?(File.join(dir, "bound")) }
     tmux("new-session", "-d", "-x", "100", "-y", "20", "-c", repo,
          "#{RbConfig.ruby} -I lib exe/lain input --socket #{path}")
     wait_for { File.exist?(File.join(dir, "welcomed")) }
     pane_tty = tmux("display-message", "-p", "\#{pane_tty}").first.strip
-    wait_for { Open3.capture2("stty", "-F", pane_tty, "-a").first.include?("eol = #{eol}") }
+    wait_for { Open3.capture2("stty", "-F", pane_tty, "-a").first.include?("-icanon") }
   end
 
   # The user's config.rb for the pane process, under the same trusted state home.
@@ -248,8 +248,8 @@ RSpec.describe "the approval key in an input pane", :seam do
     expect([flips, screen.include?("^[")]).to eq([[%w[auto ask]], false])
   end
 
-  # Mid-run, the pane's terminal is still the kernel's line editor, so a
-  # correction typed there has to reach the chat as corrected.
+  # Mid-run, the pane holds the line itself, so a correction typed there has
+  # to reach the chat as corrected.
   it "sends a line typed into an idle pane whole, Z and a correction included" do
     idle_pane
 

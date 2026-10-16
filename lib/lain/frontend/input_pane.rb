@@ -14,7 +14,8 @@ module Lain
     # IT RUNS THE SAME RAIL IT FEEDS. A local {Intake} mirrors the chat's
     # publications and a local {StdinPump} serves them, so the line editor, the
     # completion menu and the typeahead rule are the ones a plain chat has
-    # rather than a second implementation of them. The generation on the wire
+    # rather than a second implementation of them; only a line typed while
+    # nothing is published is the pane's own {Draft}. The generation on the wire
     # is the CHAT's: a line only ever leaves here as the answer to the prompt it
     # was read at, because the local rail has already held anything typed
     # before that prompt drew. The mirror keeps no history: the chat's own
@@ -35,8 +36,10 @@ module Lain
     # can type `/stop` or `/goal off` to it: so each finished line goes to the
     # chat stamped with no generation, and the chat's rail decides -- a stop
     # lands as the signal it is, anything else is held for `you>`. No editor
-    # opens for it: the terminal stays cooked, so a Ctrl-C still reaches the
-    # pane's own trap as it does with nothing to type at.
+    # opens for it. The terminal is uncooked with its signals left on, so a
+    # Ctrl-C still reaches the pane's own trap, and the pane keeps the {Draft}
+    # itself: a cooked terminal hides a half-typed line until Enter, and a
+    # header of another row count cannot be redrawn over words it cannot see.
     #
     # A stream that simply ends is the chat restarting, and the pane reconnects
     # to the same path. Only the chat's `closed` goodbye, or a HUP or TERM sent
@@ -78,7 +81,7 @@ module Lain
       # @param cycle_key [String] the key that cycles approval, from the user's config
       def initialize(path:, tty:, input: StdinPump.process_input, commands: [], layers: [], tick: TICK,
                      geometry: Geometry.for(input), cycle_key: StdinPump::CYCLE_KEY)
-        @cycle_bytes = CycleKey.bytes(cycle_key)
+        @keys = Draft::Keys.for(LineEditor.keystroke(cycle_key).pack("C*"))
         @cycle_key = cycle_key
         @path = path
         @tty = tty
@@ -136,6 +139,7 @@ module Lain
         @reported = @client = nil
         @quit = @idle = @settled = @answered = @resized = @below_echo = false
         @shown = @wanted = ""
+        @draft = Draft.new(keys: @keys)
       end
 
       # A signal the pane's traps or its line editor recorded. With a chat to
@@ -148,6 +152,7 @@ module Lain
       def signal(name)
         return quit if name == :sigterm || @client.nil?
 
+        @draft.discard { |kind, value| drafted(@client, kind, value) } if name == :sigint
         emit(@client, { "v" => "signal", "name" => name.to_s })
       end
 
@@ -244,8 +249,6 @@ module Lain
         end
       end
 
-      # The read that was open is withdrawn so the terminal stays cooked: only
-      # a cooked one hands over a finished line with no editor to open.
       def idle(task, client, header)
         @wanted = header
         return headed if @idle
@@ -259,14 +262,32 @@ module Lain
 
       # The header rows sit a known distance above the input row, so they are
       # rewritten in place between a saved and a restored cursor and whatever
-      # the human has typed stays where it is: cooked mode gives the pane no way
-      # to read that row back. A header of another row count would move the
-      # input row, so it waits for the next prompt, which draws it whole.
+      # the human has typed stays where it is. A header of another row count
+      # moves the input row, so it is drawn whole only when the pane can see
+      # the draft to put back; on a terminal that stayed cooked it waits for
+      # the next prompt.
       def restyled
-        return if !@settled || @resized || @wanted == @shown || !same_rows?(@shown, @wanted)
+        return unless restylable?
 
+        same_rows?(@shown, @wanted) ? rewrite(@wanted) : redrafted
         @shown = @wanted
-        rewrite(@wanted)
+      end
+
+      def restylable?
+        @settled && !@resized && @wanted != @shown && !@shown.empty? && !@wanted.empty? &&
+          (same_rows?(@shown, @wanted) || @draft.seen?)
+      end
+
+      def redrafted
+        up = @shown.split("\n").size + @draft.rows(columns) - 1
+        @tty.print_prompt("\e[#{up}A\r\e[J#{CLEAR_ROW}#{@wanted}\n#{@draft.shown}")
+        @adopted = @wanted.split("\n").size if @adopted.to_i.positive?
+      end
+
+      def columns
+        @input.respond_to?(:winsize) ? @input.winsize.last : 0
+      rescue IOError, SystemCallError
+        0
       end
 
       # After an answered line the echo's row count is unknown, so the first
@@ -280,7 +301,7 @@ module Lain
         @below_echo = false
         @shown = @wanted
         @adopted = @wanted.split("\n").size
-        @tty.print_prompt("#{CLEAR_ROW}#{@wanted}\n")
+        @tty.print_prompt("#{CLEAR_ROW}#{@wanted}\n#{@draft.shown}")
       end
 
       def same_rows?(shown, wanted)
@@ -300,37 +321,35 @@ module Lain
       # cooked inside the pump's terminal lock, so taking that lock first arms
       # the wait only after the mode has settled.
       def unprompted(client)
-        keyboard = CycleKey.new(@input, ->(ended) { cycled(client, erase: ended) }, key: @cycle_bytes)
-        typeahead = StdinPump::Typeahead.new(input: keyboard)
-        return unless typeahead.console?
+        return unless StdinPump::Typeahead.new(input: @input).console?
 
         # Not held means the read would not let go; waiting anyway risks the
         # lost wakeup, while not waiting would drop every line for certain.
         @pump.exclusively do
-          @settled = true
-          headed
-          keyboard.ending_reads do
-            typeahead.listen(kept: -> { @carried || StdinPump::Typeahead::NOTHING }) { |typed| sent(client, typed) }
+          Uncooked.new(@input).around do |terminal|
+            @draft = Draft.new(keys: @keys, seen: terminal.uncooked?)
+            @settled = true
+            headed
+            terminal.reads { |bytes| typed(client, bytes) }
           end
         end
       end
 
-      # The cooked terminal echoed the key as `^[[Z`. Taken back off the row
-      # only when it ended the read, the one case where it was echoed last.
-      def cycled(client, erase:)
-        emit(client, { "v" => "cycle" })
-        @tty.print_prompt("#{"\b" * CycleKey.echoed(@cycle_bytes)}\e[K") if erase
+      def typed(client, bytes) = @draft.take(bytes) { |kind, value| drafted(client, kind, value) }
+
+      def drafted(client, kind, value)
+        case kind
+        when :echo then @tty.print_prompt(value)
+        when :cycle then emit(client, { "v" => "cycle" })
+        when :line then sent(client, value)
+        end
       end
 
-      # A partial line, one ended by Ctrl-D, waits for the rest of it.
-      def sent(client, typed)
-        StdinPump.uncut(typed, @tty).each do |line|
-          emit(client, { "v" => "line", "text" => line, "generation" => 0 })
-        end
-        # A finished line's echoed newline moved the cursor off the input row, so
-        # the rows above are no longer a known distance away.
-        forget_rows if typed.lines.any?
-        @carried = typed
+      # A finished line's echoed newline moved the cursor off the input row, so
+      # the rows above are no longer a known distance away.
+      def sent(client, line)
+        emit(client, { "v" => "line", "text" => line, "generation" => 0 })
+        forget_rows
       end
 
       def forget_rows
@@ -472,8 +491,8 @@ module Lain
       def stop_drawing
         @drawing&.stop
         @drawing = nil
-        @pump.keep(@carried.partial) if @carried
-        @carried = nil
+        @pump.keep(@draft.partial) unless @draft.partial.empty?
+        @draft = Draft.new(keys: @keys)
         @idle = @settled = false
         @drawn = NOTHING_DRAWN
       end
@@ -545,140 +564,6 @@ module Lain
         end
 
         def dispose = @ingress.dispose
-      end
-
-      # The pane's keyboard with nothing published, the approval key taken out
-      # of each read and pressed. A cooked terminal hands a reader nothing until
-      # a line ends, so while it is read ESC, the key's first byte, is made a
-      # line end too (VEOL): a read returns at the ESC, the rest of the key is
-      # read at once with the terminal briefly uncooked, and `ESC [ Z` is the
-      # key. Anything else stays in the line as typed, and a lone ESC is held
-      # for the next read, since a line of nothing but ESC says nothing.
-      class CycleKey < SimpleDelegator
-        # @param name [String] a key as {LineEditor.bind} names it
-        # @return [String] the bytes a terminal sends for it
-        def self.bytes(name) = LineEditor.keystroke(name).pack("C*").freeze
-
-        # Columns the cooked echo gives the key: `^[` for the escape, then `[Z`.
-        def self.echoed(key) = key.each_char.sum { |char| char.match?(/[[:cntrl:]]/) ? 2 : 1 }
-
-        # How long the rest of the key may take to follow its ESC. A terminal
-        # sends the three bytes together; a human typing ESC does not.
-        FOLLOW = 0.05
-        READ_LIMIT = StdinPump::Typeahead::READ_LIMIT
-
-        # Linux's `struct termios` as TCGETS and TCSETS move it: four flag
-        # words and the line discipline, then the control characters. An
-        # ioctl rather than spawning `stty`, which raced the countdown's raw
-        # window. Anywhere else the key works at a prompt only, through the editor.
-        TCGETS = 0x5401
-        TCSETS = 0x5402
-        LFLAG_AT = 12
-        ICANON = 0o2
-        VTIME_AT = 17 + 5
-        VMIN_AT = 17 + 6
-        VEOL_AT = 17 + 11
-
-        # @param input [IO] the pane's keyboard
-        # @param pressed [#call] told each press, and whether it ended the read
-        # @param key [String] the bytes of the approval key, from {.bytes}
-        def initialize(input, pressed, key: CycleKey.bytes(StdinPump::CYCLE_KEY))
-          super(input)
-          @key = key
-          @pressed = pressed
-          @held = +""
-          @armed = false
-        end
-
-        # Only VEOL moves, against the terminal as it is at each end, so a mode
-        # another reader set meanwhile -- a countdown's raw window -- stands. A
-        # terminal already raw is not cooked, so there is no line to end.
-        def ending_reads
-          @armed = cooked? && changed { |set| (@eol = set.getbyte(VEOL_AT)) && set.setbyte(VEOL_AT, @key.getbyte(0)) }
-          yield
-        ensure
-          changed { |set| set.setbyte(VEOL_AT, @eol) } if @armed
-          @armed = false
-        end
-
-        def read_nonblock(...)
-          read = __getobj__.read_nonblock(...)
-          return read unless @armed && read.is_a?(String)
-
-          typed = "#{@held}#{read.b}"
-          typed << follow(@key.bytesize - 1) if typed.end_with?(@key[0])
-          pressed_out(typed)
-        end
-
-        private
-
-        # The pressed callable is told whether the key ended the read, the one
-        # case where its echo is the last thing on the row.
-        def pressed_out(typed)
-          *kept, last = typed.split(@key, -1)
-          kept.each_index { |at| @pressed.call(at == kept.size - 1 && last.empty?) }
-          @held = last.end_with?(@key[0]) ? @key[0].dup : +""
-          "#{kept.join}#{@held.empty? ? last : last.chop}"
-        end
-
-        def termios
-          return nil unless RUBY_PLATFORM.include?("linux") && __getobj__.respond_to?(:ioctl)
-
-          ("\0".b * 64).tap { |buffer| __getobj__.ioctl(TCGETS, buffer) }
-        rescue SystemCallError, IOError, NotImplementedError
-          nil
-        end
-
-        # The termios read now, changed by the block, written straight back.
-        def changed
-          set = termios
-          return false unless set
-
-          yield set
-          __getobj__.ioctl(TCSETS, set)
-          true
-        rescue SystemCallError, IOError, NotImplementedError
-          false
-        end
-
-        def cooked? = lflag(termios).anybits?(ICANON)
-
-        def lflag(set) = set ? set.unpack1("L<", offset: LFLAG_AT) : 0
-
-        def canonical(set, on, vmin, vtime)
-          set[LFLAG_AT, 4] = [on ? lflag(set) | ICANON : lflag(set) & ~ICANON].pack("L<")
-          set.setbyte(VMIN_AT, vmin)
-          set.setbyte(VTIME_AT, vtime)
-        end
-
-        # The bytes already typed after the ESC wait in the kernel's line, which
-        # only an uncooked read hands over. Everything waiting is taken, not
-        # just the key's length: bytes left behind uncooked are not lines to
-        # the kernel once it is cooked again, so a paste's rest would sit there
-        # until the human next pressed Enter.
-        def follow(count)
-          before = termios
-          uncooked = before && changed { |set| canonical(set, false, 0, 0) }
-          return "" unless uncooked
-
-          deadline = RunClock::MONOTONIC.call + FOLLOW
-          "#{Enumerator.produce { more(deadline) }.lazy.take_while(&:itself).first(count).join}#{waiting}"
-        ensure
-          changed { |set| canonical(set, true, before.getbyte(VMIN_AT), before.getbyte(VTIME_AT)) } if uncooked
-        end
-
-        def waiting
-          rest = __getobj__.read_nonblock(READ_LIMIT, exception: false)
-          rest.is_a?(String) ? rest.b : ""
-        end
-
-        def more(deadline)
-          left = deadline - RunClock::MONOTONIC.call
-          return nil if left <= 0 || !__getobj__.wait_readable(left)
-
-          byte = __getobj__.read_nonblock(1, exception: false)
-          byte.is_a?(String) ? byte.b : nil
-        end
       end
 
       # The pane's own window, as an ioctl on its own terminal answers for it.

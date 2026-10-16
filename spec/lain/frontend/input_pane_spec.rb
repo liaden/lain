@@ -113,15 +113,6 @@ RSpec.describe Lain::Frontend::InputPane do
               .find { |answer| !answer.nil? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline }
   end
 
-  it "backs the cooked echo of a configured key off by that key's width" do
-    keyed = described_class.new(path:, tty:, input: reader, commands:, layers:, tick: 0.01, geometry:, cycle_key: "C-x")
-    allow(tty).to receive(:print_prompt)
-
-    keyed.send(:cycled, nil, erase: true)
-
-    expect(tty).to have_received(:print_prompt).with("\b\b\e[K")
-  end
-
   it "hands its pump the approval key it was given" do
     made = []
     allow(Lain::Frontend::StdinPump).to(receive(:new).and_wrap_original { |new, **kw| (made << kw) && new.call(**kw) })
@@ -439,21 +430,6 @@ RSpec.describe Lain::Frontend::InputPane do
       expect(settles { commands == ["idle"] || nil }).to be(true)
     end
 
-    # What the idle reader found, recorded after the read and before its
-    # handling. The handling has no yield in it, so a frame sent after this
-    # returns is handled after the pane has taken the read.
-    def watch_idle_reads
-      reads = Queue.new
-      allow(Lain::Frontend::StdinPump::Typeahead).to receive(:new).and_wrap_original do |make, **opts|
-        make.call(**opts).tap do |typeahead|
-          allow(typeahead).to receive(:finished).and_wrap_original do |read, *args|
-            read.call(*args).tap { |typed| reads << typed if typed }
-          end
-        end
-      end
-      reads
-    end
-
     # A "touch" report for the prompt drawn before the withdrawal may already be
     # waiting, so silence is judged on the lines sent, not on the socket.
     def sent_so_far(chat)
@@ -461,10 +437,9 @@ RSpec.describe Lain::Frontend::InputPane do
       waiting.is_a?(String) ? waiting.lines.map { |line| JSON.parse(line) } : []
     end
 
-    def taken(chat, reads)
-      reads.pop(timeout: 5) || raise("the idle reader read nothing")
-      say(chat, { "v" => "context", "commands" => ["taken"] })
-      expect(settles { commands == ["taken"] || nil }).to be(true)
+    # The pane echoes what its idle reader took, so the echo is the read.
+    def taken(typed)
+      settles { screen.string.end_with?(typed) || nil } || raise("the idle reader read nothing")
     end
 
     it "redraws a changed header over its own rows and returns the cursor, without touching the input row" do
@@ -482,7 +457,8 @@ RSpec.describe Lain::Frontend::InputPane do
         .to eq("\e7\e[2A\r\e[Kfleet:2\n\r\e[Krow b\n\e8")
     end
 
-    it "leaves a header of a different row count for the next prompt, as it cannot see its input row" do
+    # The pane holds the idle draft itself, so the input row is its own to clear and redraw.
+    it "redraws a header that grew a row while a child runs, taking the old row back first" do
       chat = open_pane
       publish(chat, { "generation" => 3, "header" => "fleet:1" })
       settles { screen.string.include?("fleet:1") || nil }
@@ -492,10 +468,28 @@ RSpec.describe Lain::Frontend::InputPane do
       screen.truncate(0) && screen.rewind
 
       say(chat, { "v" => "unpublished", "header" => "fleet:2\nrow b" })
-      say(chat, { "v" => "context", "commands" => ["after"] })
-      settles { commands == ["after"] || nil }
 
-      expect(screen.string).to eq("")
+      expect(settles { screen.string.include?("row b") ? screen.string : nil })
+        .to eq("\e[1A\r\e[J\r\e[Kfleet:2\nrow b\n")
+    end
+
+    it "puts a draft typed while a child runs back under a header of another row count, and Enter sends it" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:1" })
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      settles { commands == ["idle"] || nil }
+      keyboard.write("abc")
+      settles { screen.string.end_with?("abc") || nil }
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:2\nrow b" })
+      redrawn = settles { screen.string.include?("row b") ? screen.string.dup : nil }
+      keyboard.write("\r")
+
+      expect([redrawn, next_frame(chat, of: "line")])
+        .to eq(["\e[1A\r\e[J\r\e[Kfleet:2\nrow b\nabc", { "v" => "line", "text" => "abc", "generation" => 0 }])
     end
 
     it "draws nothing over the rows once a line was sent, since the cursor left the input row" do
@@ -735,41 +729,37 @@ RSpec.describe Lain::Frontend::InputPane do
       expect(next_frame(chat, of: "line")["text"]).to eq(body)
     end
 
-    it "refuses a too-long pasted segment with the cut notice and still sends the line typed after it" do
+    it "sends a pasted segment longer than a cooked terminal's line whole, then the line typed after it" do
       chat = open_pane
       unpublished(chat)
 
       keyboard.write("\e[200~#{"a" * 4200}\n\e[201~\r")
       keyboard.write("after\r")
 
-      expect(next_frame(chat, of: "line")["text"]).to eq("after")
-      expect(screen.string).to include("cut by the terminal")
+      expect([next_frame(chat, of: "line")["text"], next_frame(chat, of: "line")["text"]]).to eq(["a" * 4200, "after"])
     end
 
-    it "joins a partial line ended by Ctrl-D to what is typed after it" do
-      reads = watch_idle_reads
+    it "drops a Ctrl-D from a draft, which goes on with what is typed after it" do
       chat = open_pane
       unpublished(chat)
       keyboard.write("par\x04")
-      taken(chat, reads)
+      taken("par")
 
       keyboard.write("tial\r")
 
       expect(next_frame(chat, of: "line")["text"]).to eq("partial")
     end
 
-    it "does not send a line of 4095 bytes, and says the terminal cut it" do
-      reads = watch_idle_reads
+    it "sends a line of 4095 bytes whole, since the pane holds the line rather than the terminal" do
       chat = open_pane
       unpublished(chat)
-      keyboard.write("#{"a" * 4095}\r")
-      taken(chat, reads)
 
-      expect(sent_so_far(chat).map { |frame| frame["v"] }).not_to include("line")
-      expect(screen.string).to include("cut by the terminal").and include("idle prompt")
+      keyboard.write("#{"a" * 4095}\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("a" * 4095)
     end
 
-    it "sends a line of 4094 bytes, one under the cut" do
+    it "sends a line of 4094 bytes" do
       chat = open_pane
       unpublished(chat)
 
@@ -787,17 +777,6 @@ RSpec.describe Lain::Frontend::InputPane do
       expect(next_frame(chat, of: "line")["text"]).to eq("a" * 200)
     end
 
-    it "leaves a raw terminal's bytes alone, since they are a countdown's keys" do
-      chat = open_pane
-      unpublished(chat)
-      reader.raw!
-
-      keyboard.write("c")
-
-      expect(settles { reader.read_nonblock(1, exception: false).then { |key| key if key.is_a?(String) } }).to eq("c")
-      expect(sent_so_far(chat).map { |frame| frame["v"] }).not_to include("line")
-    end
-
     # Reline is stubbed: what is pinned is that the partial line reaches the
     # editor's typeahead when a prompt takes the terminal, not Reline's own keys.
     it "hands a partial line to the prompt the chat then publishes" do
@@ -806,15 +785,156 @@ RSpec.describe Lain::Frontend::InputPane do
       # A prompt read before the partial line is taken (generation 3, drawn
       # while "unpublished" is still in flight) never answers: it is withdrawn.
       allow(Reline).to receive(:readmultiline) { ungot.empty? ? sleep : "#{ungot.pack("C*")}tial" }
-      reads = watch_idle_reads
       chat = open_pane
       unpublished(chat)
       keyboard.write("par\x04")
-      taken(chat, reads)
+      taken("par")
 
       publish(chat, { "generation" => 5 })
 
       expect(next_frame(chat, of: "line")).to eq({ "v" => "line", "text" => "partial", "generation" => 5 })
+    end
+
+    it "hands a draft with a line end to the next prompt as a paste, so the line end is not an Enter" do
+      ungot = []
+      allow(Reline::IOGate).to receive(:ungetc) { |byte| ungot.unshift(byte) }
+      allow(Reline).to receive(:readmultiline) { ungot.empty? ? sleep : ungot.pack("C*") }
+      chat = open_pane
+      unpublished(chat)
+      keyboard.write("\e[200~one\ntwo\e[201~")
+      taken("two")
+
+      publish(chat, { "generation" => 5 })
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("\e[200~one\ntwo\e[201~")
+    end
+
+    it "clears what a withdrawn prompt left on the input row before it echoes a draft" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("abc")
+
+      expect(settles { screen.string.end_with?("abc") || nil } && screen.string).to end_with("\r\e[Kabc")
+    end
+
+    it "keeps a Tab in the draft, as a cooked terminal did" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("\tb\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("\tb")
+    end
+
+    it "echoes a draft itself, the terminal echoing nothing" do
+      chat = open_pane
+      unpublished(chat)
+      keyboard.write("abc")
+      taken("abc")
+
+      expect(keyboard.read_nonblock(65_536, exception: false).to_s).not_to include("abc")
+    end
+
+    it "takes a pasted draft's every row back on Ctrl-U, since a backspace cannot climb a line end" do
+      chat = open_pane
+      unpublished(chat)
+      keyboard.write("\e[200~one\ntwo\e[201~")
+      taken("two")
+
+      keyboard.write("\x15")
+
+      expect(settles { screen.string.end_with?("\e[1A\r\e[J") || nil }).to be(true)
+    end
+
+    it "erases one word on Ctrl-W" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("one two\x17three\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("one three")
+    end
+
+    it "kills the draft on Ctrl-U" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("abc\x15xyz\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("xyz")
+    end
+
+    it "erases both columns of a wide character on Backspace" do
+      chat = open_pane
+      unpublished(chat)
+      keyboard.write("a\u6f22")
+      taken("\u6f22")
+
+      keyboard.write("\x7f")
+
+      expect(settles { screen.string.end_with?("\b\b  \b\b") || nil }).to be(true)
+    end
+
+    it "joins a character split across 2 reads" do
+      chat = open_pane
+      unpublished(chat)
+      keyboard.write("a\xE6".b)
+      taken("a")
+
+      keyboard.write("\xBC\xA2\r".b)
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("a\u6f22")
+    end
+
+    it "takes the approval key split across 2 reads as the key" do
+      chat = open_pane
+      unpublished(chat)
+      keyboard.write("x\e[")
+      taken("x")
+
+      keyboard.write("Zy\r")
+
+      expect([next_frame(chat, of: "cycle"), next_frame(chat, of: "line")["text"]]).to eq([{ "v" => "cycle" }, "xy"])
+    end
+
+    it "sends no line for a blank Enter" do
+      chat = open_pane
+      unpublished(chat)
+
+      keyboard.write("   \rreal\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("real")
+    end
+
+    it "walks up every row a wrapped draft covers when the header changes row count" do
+      reader.winsize = [24, 10]
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:1" })
+      keyboard.write("a" * 25)
+      taken("a" * 25)
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:2\nrow b" })
+
+      expect(settles { screen.string.include?("row b") ? screen.string : nil }).to start_with("\e[3A\r\e[J")
+    end
+
+    it "prints the draft back under a header drawn below an answered echo" do
+      allow(Reline).to receive(:readmultiline).and_return("list the files", nil)
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      next_frame(chat, of: "line")
+      say(chat, { "v" => "unpublished", "header" => "" })
+      keyboard.write("abc")
+      taken("abc")
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "model:1s" })
+
+      expect(settles { screen.string.empty? ? nil : screen.string }).to eq("\r\e[Kmodel:1s\nabc")
     end
   end
 
@@ -946,6 +1066,26 @@ RSpec.describe Lain::Frontend::InputPane do
       example.run
     ensure
       saved.each { |name, handler| Signal.trap(name, handler) }
+    end
+
+    it "discards the idle draft on Ctrl-C, as a cooked terminal did" do
+      pty = PTY.open
+      keyed = described_class.new(path:, tty:, input: pty.last, commands:, layers:, tick: 0.01, geometry:)
+      @running = Thread.new { keyed.run }
+      server.timeout = 5
+      chat = server.accept.tap { |client| client.timeout = 5 }
+      publish(chat, { "generation" => 3 })
+      say(chat, { "v" => "unpublished" })
+      pty.first.write("abc")
+      settles { screen.string.end_with?("abc") || nil }
+
+      deliver("INT")
+      next_frame(chat, of: "signal")
+      pty.first.write("d\r")
+
+      expect(next_frame(chat, of: "line")["text"]).to eq("d")
+    ensure
+      pty&.each(&:close)
     end
 
     it "goes to the chat rather than interrupting the pane" do
@@ -1090,55 +1230,5 @@ RSpec.describe Lain::Frontend::InputPane do
     it "tells the human the key may be lost and to press it again" do
       expect(described_class::UNHELD).to include("swallowed").and include("press it again")
     end
-  end
-end
-
-# The pane's idle keyboard over a real PTY: the approval key taken out of a
-# cooked read the moment it is pressed, and nothing else about the terminal moved.
-RSpec.describe Lain::Frontend::InputPane::CycleKey do
-  let(:pty) { PTY.open }
-  let(:keyboard) { pty.first }
-  let(:terminal) { pty.last }
-  let(:presses) { [] }
-  let(:subject_key) { described_class.new(terminal, ->(ended) { presses << ended }) }
-  let(:ctrl_x) { described_class.new(terminal, ->(ended) { presses << ended }, key: "\x18") }
-
-  after { pty.each { |io| io.close unless io.closed? } }
-
-  def eol = `stty -F #{terminal.path} -a`[/eol = [^;]*/]
-
-  def typed(bytes)
-    keyboard.write(bytes)
-    sleep 0.1
-    subject_key.read_nonblock(65_536, exception: false)
-  end
-
-  it "says the key ended the read only when nothing was typed after it" do
-    reads = subject_key.ending_reads { [typed("\e[Z"), typed("ab\e[Zcd\e[Zef\n")] }
-
-    expect([reads, presses]).to eq([["", "abcdef\n"], [true, false, false]])
-  end
-
-  it "takes the configured key out of a read, and leaves Shift+Tab as typed" do
-    reads = ctrl_x.ending_reads do
-      keyboard.write("ab\x18cd\e[Z\n")
-      sleep 0.1
-      ctrl_x.read_nonblock(65_536, exception: false)
-    end
-
-    expect([reads, presses]).to eq(["abcd\e[Z\n", [false]])
-  end
-
-  it "never arms a terminal already raw, and leaves it raw" do
-    terminal.raw!
-    armed_eol = subject_key.ending_reads { eol }
-
-    expect([armed_eol, terminal.echo?]).to eq(["eol = <undef>", false])
-  end
-
-  it "keeps a mode the terminal was switched to while it was armed" do
-    subject_key.ending_reads { terminal.raw! }
-
-    expect([eol, terminal.echo?]).to eq(["eol = <undef>", false])
   end
 end

@@ -18,7 +18,8 @@ module InputPaneSocket
   # closed so nothing on this side can read a line at all. `lines` reads `you>`
   # until the stream ends; `approval` parks one gated call through a real
   # Approval::Queue and answers it through the real terminal surface;
-  # `countdown` supervises an ask a Ctrl-C can open a grace window on.
+  # `countdown` supervises an ask a Ctrl-C can open a grace window on;
+  # `running` supervises one until told it is done, then reads `you>` again.
   CHILD = <<~RUBY
     require "lain"
     require "json"
@@ -88,12 +89,22 @@ module InputPaneSocket
       log.puts(JSON.generate({ "response" => outcome.response, "closed" => outcome.closed? }))
     end
 
+    running = lambda do |task|
+      conductor.read_prompt("you> ")
+      conductor.supervise(task, -> { Lain::Timeline.empty }) do
+        File.write(File.join(dir, "asking"), "")
+        Async::Task.current.sleep(0.05) until File.exist?(File.join(dir, "done"))
+        "answered"
+      end
+      log.puts(JSON.generate({ "heard" => conductor.read_prompt("you> ") }))
+    end
+
     File.write(File.join(dir, "bound"), "yes")
     conductor.guard do
       Sync do |task|
         socket.start(task)
         { "lines" => lines, "approval" => approval, "countdown" => countdown,
-          "parked" => parked }.fetch(shape).call(task)
+          "parked" => parked, "running" => running }.fetch(shape).call(task)
       end
     end
     socket.stop
@@ -378,6 +389,26 @@ RSpec.describe "a chat fed by an input pane", :seam do
   # column the line editor left the cursor on. Measured before the age left
   # the header: seven redraws and seven header prints in eight seconds, and a
   # six-row pane down to one row for its prompt.
+  # While an ask runs the pane is idle, and its terminal holds no line the pane cannot see.
+  it "redraws the header whole while an ask runs when a spawn adds a row, keeping a draft Enter then sends" do
+    cockpit_at("running")
+    cockpit.type("go\r")
+    cockpit.settles { File.exist?(File.join(dir, "asking")) || nil }
+    publish(fleet: %w[a], inbox_count: 1)
+    cockpit.settles(within: 5) { cockpit.screen.include?("fleet:1 inbox:1") || nil }
+    cockpit.type("abc")
+    cockpit.settles { cockpit.screen.end_with?("abc") || nil }
+
+    publish(fleet: %w[a], inbox_count: 1, fleet_tree: [fleet_row])
+    redrawn = cockpit.settles { cockpit.screen.include?("dev  running") || nil }
+    cockpit.type("\r")
+    FileUtils.touch(File.join(dir, "done"))
+
+    expect([redrawn, cockpit.settles { cockpit.heard.find { |record| record.key?("heard") } }, cockpit.screen])
+      .to match([true, { "heard" => "abc" },
+                 /\e\[1A\r\e\[J\r\e\[K.{1,4}fleet:1 inbox:1 \r\n  dev  running[^\n]*\r\nabc\r\n/m])
+  end
+
   it "redraws nothing while only the clock moves under a running fleet" do
     cockpit_at("lines")
     publish(fleet: %w[a], fleet_tree: [fleet_row])
