@@ -37,6 +37,16 @@ class SurveySubdirectoryEditor
   def bind_changeset_review(review) = @bound = review
 end
 
+# The real inlet, remembering the identity of every conversation it was asked to draw.
+class SurveySubdirectoryInlet < Lain::Frontend::Neovim::RenderInlet
+  def drawn = (@drawn ||= [])
+
+  def set_thread(identity, lines)
+    drawn << identity
+    super
+  end
+end
+
 # The one file the survey is about. Above the chunker's granularity floor, so it
 # chunks to a unit a row can name and a verdict can find unreviewed. A top-level
 # constant because a constant assigned inside an example group is one RuboCop
@@ -94,7 +104,7 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
   let(:record) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: record) }
   let(:rail) { SurveySubdirectoryRail.new }
-  let(:inlet) { Lain::Frontend::Neovim::RenderInlet.new(waker: -> {}) }
+  let(:inlet) { SurveySubdirectoryInlet.new(waker: -> {}) }
   let(:editor) { SurveySubdirectoryEditor.new(rpc: inlet) }
   let(:questions) { Async::Queue.new }
   # `cwd:` is what {Command::Surface} threads from {Lain::Project}'s other half,
@@ -466,6 +476,38 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
       raise "no sidebar row names #{name} in #{drawn.fetch("lines").inspect}" if line.nil?
 
       yield(line + 1, drawn.fetch("generation")).tap { inlet.drain(@editor) }
+    end
+  end
+
+  # The docent's child stands in the surveyed tree, so the file a note is on has
+  # to be named from there; the sidebar's name (from the chat's cwd) would send
+  # it to a path that does not exist under its root.
+  describe "the brief a docent is handed" do
+    let(:briefs) { [] }
+    let(:spawn) { ->(_role, _mode, prompt) { Lain::Tool::Result.ok("an answer").tap { briefs << prompt } } }
+    let(:env) do
+      build_command_env(replies:, chronicle:, role_spawn: instance_double(Lain::Skill::RoleSpawn, within: spawn))
+    end
+
+    def asked_on_greeter
+      surveyed("lib")
+      editor.bound.wrote_annotation({ "path" => "lib/greeter.rb", "side" => "new", "line" => 2,
+                                      "anchor_text" => "class Greeter", "text" => "why?", "kind" => "note",
+                                      "revision" => "corpus", "drifted" => false })
+      Sync { editor.bound.ask(inlet.drawn.last.fetch("id"), "why this?").task&.wait }
+    end
+
+    it "names the noted file relative to the surveyed tree" do
+      asked_on_greeter
+
+      expect(briefs.first).to include("greeter.rb, new side")
+      expect(briefs.first).not_to include("lib/greeter.rb")
+    end
+
+    it "leaves the sidebar naming the file from the chat's cwd" do
+      asked_on_greeter
+
+      expect(rows).to eq(["lib/greeter.rb"])
     end
   end
 end

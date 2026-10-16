@@ -49,9 +49,10 @@ end
 RSpec.describe "a survey docent reading outside the project", :seam do
   let(:value) { "hunter2-the-value" }
   let(:record) { StringIO.new }
+  let(:read_path) { File.join(@tree, "secrets", "prod") }
   let(:provider) do
     read = Lain::Response.new(content: [{ "type" => "tool_use", "id" => "tu_read", "name" => "read_file",
-                                          "input" => { "path" => File.join(@tree, "secrets", "prod") } }],
+                                          "input" => { "path" => read_path } }],
                               stop_reason: :tool_use)
     done = Lain::Response.new(content: [{ "type" => "text", "text" => "done" }], stop_reason: :end_turn)
     Lain::Provider::Mock.new(responses: [read, done])
@@ -114,5 +115,20 @@ RSpec.describe "a survey docent reading outside the project", :seam do
     expect(sent).to include("approval denied")
     expect(sent).not_to include(value)
     expect(record.string).not_to include(value)
+  end
+
+  context "when the docent reads the file the brief names" do
+    let(:read_path) { "doc.md" }
+
+    it "is briefed the name from its own root, and the read returns the file unparked" do
+      surveyed_question(DocentRootEditor.new)
+      brief = provider.requests.first.messages.to_s
+      sent = provider.requests.flat_map(&:messages).to_s
+
+      expect(brief).to include("doc.md, new side")
+      expect(brief).not_to include("../")
+      expect(sent).to include("One line of prose.").and(satisfy { |text| text.scan("One line of prose.").size > 1 })
+      expect(sent).not_to include("approval denied")
+    end
   end
 end

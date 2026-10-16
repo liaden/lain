@@ -209,7 +209,7 @@ module Lain
           closing = closing_for(env, surface)
           # The gesture rails, complete before a human can touch the sidebar.
           env.replies.bind_changeset_review(handover(session, env, scope, closing,
-                                                     docent_of(session, env, surface, target)))
+                                                     docent_of(session, env, surface, walk)))
           closing.drawing(session) { drawn_and_held(walk, session, scope, banner) }.tap { surface.focus }
         end
 
@@ -292,10 +292,15 @@ module Lain
           Lain::Review::Handover::Closing.new(outbox: @outbox, rails: env.replies, surface:)
         end
 
-        def docent_of(session, env, surface, root)
-          spawn = env.role_spawn.within(worker_env_at(root))
-          Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn:,
+        def docent_of(session, env, surface, walk)
+          spawn = env.role_spawn.within(worker_env_at(target_of(walk)))
+          Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn:, name_for: from_root_of(walk),
                                    journal: env.chronicle.record_journal, supervisor: env.supervisor)
+        end
+
+        # Notes are named from the chat's cwd for the human; the docent's child stands in the surveyed tree.
+        def from_root_of(walk)
+          ->(path) { Lain::Review::Source::Corpus::Prefix.between(walk.root, File.expand_path(path, @cwd)) }
         end
 
         # A tree outside the project is gated by names counted from ITS root, so

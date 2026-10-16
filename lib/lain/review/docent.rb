@@ -171,6 +171,9 @@ module Lain
         def standing? = STANDING.include?(state)
       end
 
+      # The path as the anchor names it, for a docent whose answerer works where the human does.
+      AS_ANCHORED = :itself.to_proc
+
       # What {#ask} answers, and the duck {CLI::HumanReplies::Gestures} asks of
       # it: `#asked?` decides whether the human is owed a sentence, and `#report`
       # is that sentence. `task` is the handle on the work -- nil when nothing
@@ -269,13 +272,14 @@ module Lain
       #   with the review it belongs to
       # @param supervisor [#track] the fleet each answer's task is registered
       #   with, so `/stop` and a session's close reach it; nothing by default
+      # @param name_for [#call] see {#initialize}
       # @return [Docent, Object] a docent, or {Handover::Unattended}
-      def self.for(changeset:, surface:, spawn:, journal:, supervisor: Supervisor::Null)
+      def self.for(changeset:, surface:, spawn:, journal:, supervisor: Supervisor::Null, name_for: AS_ANCHORED)
         return Handover::Unattended unless surface.respond_to?(:thread_view)
 
         answerer = Answerer.new(spawn:)
         runner = ->(&block) { supervisor.track(Reactor.call(&block), role: answerer.role) }
-        new(changeset:, view: surface.thread_view, answerer:, journal:, runner:)
+        new(changeset:, view: surface.thread_view, answerer:, journal:, runner:, name_for:)
       end
 
       # @param changeset [Review::Changeset] the diff every question is about;
@@ -292,9 +296,12 @@ module Lain
       # @param role [Symbol, nil] the name this arm goes on the record under,
       #   for an answerer that cannot name itself. nil asks the answerer
       #   (see {Answerer#role}) and falls back to {ANONYMOUS_ARM}.
+      # @param name_for [#call] `(String) -> String`; the anchor's path as the
+      #   answerer's own working directory names it
       def initialize(changeset:, view:, answerer: Unanswerable, journal: Channel::Null.instance,
-                     dossier: {}, runner: Reactor, role: nil)
+                     dossier: {}, runner: Reactor, role: nil, name_for: AS_ANCHORED)
         @changeset = changeset
+        @name_for = name_for
         @view = view
         @answerer = answerer
         @journal = journal
@@ -461,7 +468,8 @@ module Lain
       def refused(report) = Asked.new(report:, asked: false, task: nil)
 
       def brief(conversation, question)
-        Brief.of(conversation, changeset: @changeset, dossier: @dossier, question:)
+        Brief.of(conversation, changeset: @changeset, dossier: @dossier, question:,
+                               path: @name_for.call(conversation.anchor.path))
       end
 
       def render(conversation) = @view.show(conversation.anchor, conversation.entries)
@@ -821,7 +829,7 @@ module Lain
     end
 
     class Docent
-      Brief = Data.define(:anchor, :hunk, :shown_line, :base_ref, :head_ref, :dossier, :question)
+      Brief = Data.define(:anchor, :path, :hunk, :shown_line, :base_ref, :head_ref, :dossier, :question)
 
       # Everything the child sees, and nothing else. A pure value with one
       # rendering, which is what makes {#key} mean something: two records
@@ -862,11 +870,12 @@ module Lain
         #   the diff itself never reaches the child
         # @param dossier [Hash{String=>String}] title to body, in the order given
         # @param question [String] the human's own words
+        # @param path [String] the anchor's file as the answerer's own directory names it; required
         # @return [Brief]
-        def self.of(conversation, changeset:, dossier:, question:)
+        def self.of(conversation, changeset:, dossier:, question:, path:)
           anchor = conversation.anchor
           shown = changeset.projected_line(anchor.side, anchor.path, anchor.line)
-          new(anchor:, hunk: conversation.hunk, shown_line: shown, base_ref: changeset.base_ref,
+          new(anchor:, path:, hunk: conversation.hunk, shown_line: shown, base_ref: changeset.base_ref,
               head_ref: changeset.head_ref, dossier:, question:)
         end
 
@@ -887,7 +896,7 @@ module Lain
         end
 
         def where
-          "#{anchor.path}, #{anchor.side} side, line #{shown_line}#{in_heading}#{quoted}\n" \
+          "#{path}, #{anchor.side} side, line #{shown_line}#{in_heading}#{quoted}\n" \
             "base #{base_ref}, head #{head_ref}"
         end
 
