@@ -220,6 +220,16 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`, `GIT_DISCOVERY_ACROSS_FILESYSTEM`,
   `GIT_REPLACE_REF_BASE`, `GIT_NO_REPLACE_OBJECTS`, `GIT_GRAFT_FILE`, `GIT_SHALLOW_FILE` and
   `GIT_IMPLICIT_WORK_TREE`; never a blanket `GIT_*`, since specs set `GIT_CONFIG_GLOBAL` on purpose.
+- **A commit hook in a LINKED WORKTREE also exports `GIT_DIR`**, which a hook on main does not.
+  Under it, a fixture's bare `git init -q` in any temp dir reinitializes the worktree's admin dir,
+  and git, with a `GIT_DIR` and no work tree, guesses BARE: `core.bare = true` lands in the
+  `.git/config` every worktree shares, and main answers "this operation must be run in a work tree"
+  until it is set back with `git config core.bare false`. A fixture's `update-index` lands in
+  that worktree's index instead (every file staged deleted, a stray `UU README`). Seen 2026-10-16
+  from one `git commit` in a worktree, and reproduced in a throwaway repo: 12 spec sites spawned
+  git through `Open3` or `system` with no environment, or with only `GIT_INDEX_FILE` cleared.
+  `spec/git_fixture_scrub_discipline_spec.rb` now fails on a git spawn with no environment first;
+  it cannot judge a partial one, so pass `SeedRepo::SCRUB` whole.
 - **Mutation harnesses lie by default here, and same-size mutants are the NORM.** `20`→`10`,
   `<=`→`<` and `min_by`→`max_by` are all byte-identical in length, so they collide with
   bootsnap's `(mtime-seconds, size)` iseq key and run against **stale bytecode** while `git diff`
@@ -366,32 +376,13 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   alone: `a line typed while an ask is in flight on the chat's own terminal keeps a line typed
   mid-ask for the next prompt, once`.
 
-  Added 2026-10-09, red once in a pre-commit suite (seed 63896, load about 2 before the run) and
-  green alone and 3 of 3 runs of its file with that seed: `Lain::Frontend::LineEditor#read, and the
-  submit predicate asking the terminal for Shift+Enter resets after an exception`.
-
-  Added 2026-10-14, red once in a pre-commit suite (seed 48225, an implementer's spec run beside
-  it) with `expected "\e[>4;1m" to end with "\e[>4;0m"`, and green alone and 3 of 3 runs of its file
-  with that seed: `Lain::Frontend::LineEditor#read, and the submit predicate asking the terminal
-  for Shift+Enter resets at EOF`. It is the second example of that group on this list, so the
-  group's reset is worth a card of its own.
-
   Added 2026-10-15, red once in a pre-commit suite on a quiet box (seed 50146) with a stray
   `\e[>4;0m` row between a prompt and its verdict, and green alone and 3 of 3 runs of its file
   with that seed, both with and without the change being landed: `a plain chat's inline prompts
   over a real terminal a prompt the approval window decides ends its line with who decided it and
-  how, and a y typed afterwards decides nothing`. The stray bytes are the same Shift+Enter reset
-  as the two entries above, so that card covers this one too.
-
-  Seen again 2026-10-15, red once in a pre-commit suite (seed 9063, load about 3 with 2 agents
-  idle) and green alone and 3 of 3 runs of the Shift+Enter spec files with that seed, on the base
-  commit and with the change: `Lain::Frontend::LineEditor#read, and the submit predicate asking
-  the terminal for Shift+Enter resets at EOF`. Its second sighting, so the reset card is now owed.
-
-  Seen again 2026-10-15, red once in a pre-commit suite (seed 61060, load about 2) and green alone
-  and 3 of 3 runs of the Shift+Enter spec files with that seed, on the base commit and with the
-  change: `Lain::Frontend::LineEditor#read, and the submit predicate asking the terminal for
-  Shift+Enter resets after an exception`. Its second sighting too.
+  how, and a y typed afterwards decides nothing`. The stray bytes are the Shift+Enter reset the
+  retired LineEditor names below were about, but their fix was to how a spec reads a PTY it owns,
+  and this example reads a real chat's terminal, so it stays live.
 
   Added 2026-09-29, red once in a whole-suite run (seed 59509) and green 3 of 3 alone. It counts
   every descriptor in `/proc/self/fd`, so anything else live in the same worker process moves the
@@ -435,21 +426,39 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   that hypothesis was tested and rejected 2026-08-23.
 
   Added 2026-10-15, from a pre-commit run and a reviewer's run beside about 10 agents running specs (load
-  13). Each passed alone; the first 2 also passed 3 of 3 runs with their worker seed on the base commit.
-  All 3 read terminal bytes before a write that is still in flight lands, so a red under load is timing:
-  `Lain::Frontend::LineEditor#read, and the submit predicate asking the terminal for Shift+Enter writes the
-  request before the read and the reset after it, on a terminal`;
+  13). Each passed alone, and each reads terminal bytes before a write that is still in flight lands, so a
+  red under load is timing. 2 LineEditor names from this run are retired below.
   `a plain chat's inline prompts over a real terminal a prompt the approval window decides ends its line
-  with who decided it and how, and a y typed afterwards decides nothing`;
+  with who decided it and how, and a y typed afterwards decides nothing` (passed 3 of 3 with its worker
+  seed on the base commit);
   `Lain::Frontend::InputPane when the chat says nothing is published rewrites in place again once a whole
   redraw followed the resize`;
-  `Shift+Enter in a pane inserts a newline and submits the whole draft on Enter` (load 14, passed alone
-  and 3 of 3 with its seed on the base commit);
-  `Lain::Frontend::LineEditor#read, and the submit predicate asking the terminal for Shift+Enter resets
-  after an exception` (passed alone and 3 of 3 with its seed on the base commit).
+  and `Shift+Enter in a pane inserts a newline and submits the whole draft on Enter` (load 14, passed alone
+  and 3 of 3 with its seed on the base commit).
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-16: `Lain::Frontend::LineEditor#read, and the submit predicate asking the terminal for
+    Shift+Enter resets at EOF`, `... resets after an exception` and `... writes the request before
+    the read and the reset after it, on a terminal` (red 6 times across seeds 63896, 48225, 9063 and
+    61060, with `expected "\e[>4;1m" to end with "\e[>4;0m"`). The spec read the PTY master once
+    with `read_nonblock` as soon as the slave closed, and the kernel hands a slave's write across from
+    deferred work, so under load the reset had not landed yet. The proof is forced: with every slave
+    write delivered 100ms late, the old specs failed 5 of 13, the fixed ones 0. `PtyBytes` in
+    `spec/support/pty_bytes.rb` now waits for the bytes it expects, or reads to the EIO that follows
+    the last of them. The same read was in `StdinPump`'s `asks the terminal for Shift+Enter around a
+    command> read` and `InputPane::Uncooked`'s bracketed paste example, which use it too.
+  - 2026-10-16: `Lain::Frontend::TTY a note rendered while a prompt is drawn holds the note while the
+    prompt is drawn, keeps the typed words, and prints the note as the prompt closes` (red once in a
+    whole-suite run, worker seed 45006, with `Expected 23 to be < nil`, and green 3 of 3 alone with that
+    seed). It waited for the note to show and then looked for the next `you>`, which the child draws a
+    moment later. With the child made to pause 0.5s before its second prompt it failed 3 of 3. It
+    now waits for a `you>` below the note before it reads the screen.
+  - 2026-10-16: `Lain::Telemetry::LandingBatch answers landing_batch to no other Journalable` (red
+    once in a hook suite, worker seed 13907, with `undefined method 'split' for nil`). It walks
+    `ObjectSpace` for every Journalable and read each one's name, and an anonymous Journalable an
+    earlier spec in the same worker left alive has none. With one kept alive it failed every time;
+    it now skips a class with no name, as `journal_discriminators_spec` already did.
   - 2026-10-08: `typing in a real cockpit while the model is busy consumes the question when an ask
     parked on it is stopped` (red in 3 hook suites, with `"/stop" shown in the input pane never held
     within 10s` in an example that took 6 to 8s). `WaitUntil` looked at the condition a second time
