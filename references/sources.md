@@ -64,7 +64,9 @@ knowledge is split roughly: ~50% arXiv preprints, ~30% engineering writeups from
   (news ages), labelled ⚠️ LLM-generated. Runs: `hn-agent-landscape-2026-07.md` (first),
   `hn-agent-landscape-2026-08.md` (2026-07-18 → 2026-08-06),
   `hn-agent-landscape-2026-08-14.md` (2026-08-06 → 2026-08-14),
-  `hn-agent-landscape-2026-08-18.md` (2026-08-13 → 2026-08-18).
+  `hn-agent-landscape-2026-08-18.md` (2026-08-13 → 2026-08-18),
+  `hn-agent-landscape-2026-09-22.md` (2026-08-17 to 2026-09-22),
+  `hn-agent-landscape-2026-10-16.md` (2026-09-21 to 2026-10-16).
 - **Window each run from the previous run's date and write the delta**, not a re-survey. Carry the
   previous runs' story IDs as an exclusion set; the 2026-08 run excluded 27 and still shortlisted 42
   from 367.
@@ -117,6 +119,26 @@ knowledge is split roughly: ~50% arXiv preprints, ~30% engineering writeups from
   fetched story whose id never appears in the written survey. The 2026-08-18 run had **5 fetched
   threads (568 comments) cited nowhere at all**, which is a different and more obvious failure than
   the sampling one and takes one script to detect.
+- **⚠️ Algolia caps every result set at 1,000 hits, with no error. Slice any pass whose count
+  equals the cap.** The 2026-09-22 run's query-free and `show_hn` passes each returned exactly
+  1,000; `search_by_date` is newest first, so both silently dropped the older half of a 5-week
+  window. Re-run in 3-day slices they recovered **3,547 stories**, 90 of which made the
+  shortlist. The 2026-10-16 run sliced every date-ordered pass by 3 days from the start and
+  logged each slice's count against the cap: no slice reached it.
+- **Vet arXiv IDs in ONE serial batch after the readers finish, never per reader.** In the
+  2026-10-16 run 11 parallel readers each called `export.arxiv.org` and every one was refused
+  with HTTP 429 or an empty body; two left retry loops running after they reported, and the API
+  then kept refusing this machine for over an hour. The `arxiv.org/abs/<id>` pages stayed up:
+  one serial pass reading each page's `citation_title` meta tag, 1.5 s apart, vetted all 77 IDs.
+  Tell readers to record IDs and leave vetting to that pass.
+- **Follow commenters' links as a primary task, not a bonus.** Told to open the repo, paper or
+  postmortem behind every plausibly useful comment link, the 2026-10-16 readers opened about 410
+  and found the run's sharpest material there: OpenAI's DNS-escape writeup, the provenance-label
+  gateway numbers, CliffCompaction's repo and the 121-case tamper corpus all sat one link below
+  the story.
+- **Check a reader's claim about Lain's own plan before it reaches the plan.** One 2026-10-16
+  reader reported that the bash-confinement spec had no egress policy; the spec fences TCP by
+  port and the real gap was DNS and UDP. A one-grep check narrowed the finding.
 - **Read the shortlist for METHOD comments, not only for topic matter.** Two of the highest-value
   items in the 2026-08-18 window were methodological asides on stories whose *subject* was
   mundane: a complete freeze-list for agent benchmarking buried in a reply to a model-comparison

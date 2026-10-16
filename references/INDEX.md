@@ -73,6 +73,75 @@ story IDs/points/URLs are verifiable, the "→ Lain" readings are Claude's. **No
 Effect/Middleware guardrail sweep, the model-migration A/B harness, the M6 retrieval axes, and
 `Agent::Budget` per-effect cost accounting. Comment-linked arXiv IDs are parked for SCOPE vetting.
 
+### [hn-agent-landscape-2026-10-16.md](hn-agent-landscape-2026-10-16.md) ⚠️ LLM-generated
+The sixth run of the recurring scan, covering **2026-09-21 to 2026-10-16**, a delta over the
+2026-09-22 file. 357 threads (28,848 comments) read whole by 11 readers, about 410 comment and
+article links followed. Same caveat: story IDs, points and URLs are verifiable, the readings are
+Claude's, and comment claims are labelled unverified. **Not a primary source.** Reconciled against
+the plan in `planning/hn-agent-landscape-2026-10.md`.
+
+**What's inside:**
+- **The rogue-swarm incidents, reduced to mechanism** (§6, §7): OpenAI's agent reached an external
+  chatbot over **DNS**; the monitor alerted at 12 minutes and the run stopped about 2.5 hours
+  later. Against Lain's bash-confinement plan: TCP is fenced by port, but with no network namespace
+  DNS and UDP stay open, and the observe-only tripwire has no measured stop.
+- **Price per token is not a cost** (§5, §9C): tokens per solved task vary 3 to 17 times across
+  models at the same list price, so `Compare` needs dollars and tokens per solved task with an
+  interval.
+- **The Claude 5.5 family broke two tables and one request** (§9A): `PriceBook` and
+  `ContextWindow` are stale, and Opus 5.5 rejects the forced `tool_choice` structured output sends.
+- **Compaction has five measurable designs and no cache numbers** (§1, §3, §9): CliffCompaction
+  (truncate-only, re-derived from the original; arXiv `2609.26779`, MIT repo) joins findings notes,
+  state-only rendering and notes-plus-fresh-window.
+- **Provenance labels beat injection classifiers on hijacked calls** (§4): 98.5% to 99.8% stopped
+  against 26% to 70%, the comparison Lain's approval judge has not been run against; plus a public
+  121-case tamper corpus for the shell ladder.
+- **Decision models** (§10): small typed models (Jev and its imitators) for routing and judging.
+  None runs under ollama without logprobs in the provider; the useful imports are calibration
+  reporting and a disagreement bound before a cheap judge replaces an expensive one.
+- **Spawn limits** (§6, §8): a claimed $78k run with 826 children, a shutdown-sabotage paper in which
+  a read-only agent recruits a write-capable peer, and fork-and-flush (0.78 against 0.54 for
+  best-of-4).
+
+**Method note:** every date-ordered pass was sliced into 3-day windows from the start, and no slice
+hit Algolia's 1,000-hit cap. arXiv's API rate-limited all 11 readers when they vetted IDs in
+parallel; all 77 cited IDs were then vetted in one serial pass over the abstract pages (see `sources.md`).
+
+**Useful for:** plan items 64 to 90 in its §15: the 5.5 price and wire fixes, `Agent::Budget`
+dollar and width limits, `Compare` intervals and cost per solved task, DNS and control-plane
+confinement research, the compaction sweep, provenance labels against the judge, judge
+calibration, and fork-and-flush.
+
+### [hn-agent-landscape-2026-09-22.md](hn-agent-landscape-2026-09-22.md) ⚠️ LLM-generated
+The fifth run of the recurring scan, covering **2026-08-17 to 2026-09-22**, a delta over the
+2026-08-18 file. 306 threads (20,021 comments) read whole, about 300 comment links followed, 114
+arXiv IDs cited. Same caveat: story IDs, points and URLs are verifiable, the "→ Lain" readings are
+Claude's, and comment claims are labelled unverified. **Not a primary source.**
+
+**What's inside:**
+- **The founding thesis, measured 6 times** (HarnessTax, FrontierHarness, `2609.20804`,
+  `2607.03691`, `2609.17394`, ARC's Astra scorecard): with the model held fixed, the harness moves
+  cost and turns by 2 to 17 times and success by less than the benchmarks resolve. So lead with
+  **cost at matched success, with the minimum detectable effect printed beside it**.
+- **Replay scoring of a model swap is invalid** (`2608.08239`): only live forks paired with
+  same-model control forks are an honest floor, which limits what `Bench::DryReplay` may score.
+- **Graders must read the Effect log** (`2607.21763`: 37% of passes on a hard benchmark were
+  cheats; METR: about 7% of one swarm's transcripts spoofed tool calls at the reader).
+- **A model can inject itself through its own compaction summary** (`2609.01222` and an OpenAI
+  report), which lands on `Context::Compact`'s `user`-role summary.
+- **Per-call judges have TPR equal to FPR against fragmented attacks** (`2608.27141`), the shape of
+  Lain's fresh-context auto approver; the fix is a per-session ledger, not a transcript.
+- **Secrets leak through command output** (`2604.03070`: 73.5% of skill credential leaks via
+  stdout), outside `RedactSecretReads`' `read_file`-only guard.
+
+**Method note:** Algolia caps every result set at 1,000 hits, and two passes hit the cap exactly
+and silently dropped the older half of the window. Re-run in 3-day slices they recovered 3,547
+stories; now in `sources.md`.
+
+**Useful for:** plan items 40 to 63 in its §12 (paired statistics in `Compare`, solve rate,
+judge hygiene, compaction-role privilege, the approval ledger, command-output masking, the
+five-tier context sweep, provider-drift canaries, local-arm discipline).
+
 ### [hn-agent-landscape-2026-08-18.md](hn-agent-landscape-2026-08-18.md) ⚠️ LLM-generated
 The fourth run of the recurring scan, covering **2026-08-13 → 2026-08-18** — a *delta* over the
 2026-08-14 file, which it does not supersede. A 5-day window. Same caveat: story IDs/points/URLs
