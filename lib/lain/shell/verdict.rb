@@ -80,77 +80,8 @@ module Lain
         ["", "&>"] => %i[stdout stderr]
       }.freeze
 
-      # THE GENERATING RULE for the six families below: a name belongs here when
-      # something the MODEL writes -- an argument, a flag, or the stdin it pipes
-      # in -- can name the program that ends up executing. The Design's first
-      # non-negotiable is that there is no string for the model to control, and
-      # each of these hands one back.
-      #
-      # It follows that SYNONYMS are not optional. `sh` without `dash`, or `sudo`
-      # without `doas`, is not a check; both are on `PATH` here.
-      #
-      # The list is HAND-MAINTAINED and therefore incomplete -- `sudoers(5)` has
-      # made exactly this point since the 1990s, and a comment claiming otherwise
-      # would be the defect. Extend it by applying the rule, not by guessing.
-      #
-      # Known and deliberately absent: `make`, `cargo`, `rake`, `go`, `mvn`,
-      # `gradle`, `dotnet`. What they run comes from a BUILD FILE this layer does
-      # not model at all, so listing them would buy nothing while abstaining on
-      # most of what a session legitimately runs. That is a judgement about where
-      # the threat lives, not a proof they cannot execute: `make -f -` reads a
-      # makefile from STDIN and `make --eval=` takes one inline, `mvn exec:exec`
-      # names an executable in a property, `go run` takes a package path. Both
-      # make exceptions ALLOW today; what stops them mattering is that a working
-      # recipe needs a newline or quoting to carry its TAB-indented line, and both
-      # of those abstain -- a fact about today's tiers, not a guarantee. `bundle`
-      # is ON the list because `bundle exec <program>` names the program in the
-      # ARGUMENT, which is the rule exactly.
-      #
-      # `make` is not the next `time`, and the difference is worth recording:
-      # `time` was special because the PARSER hides its tail behind full coverage
-      # and bland kinds, so nothing structural could see it. `make -f Makefile`
-      # hides nothing and is exactly what it looks like.
-
-      # A command handed over as an argument, now or on a timer.
-      TAKES_A_COMMAND = %w[
-        eval source . alias command builtin exec xargs parallel find watch
-        strace ltrace script systemd-run gdb ssh docker podman kubectl
-        npx npm bundle at batch crontab
-      ].freeze
-
-      # A shell or an interpreter: `-c`, `-e`, or a program on stdin. `awk` and
-      # `sed` are here rather than filed as utilities because that is what they
-      # are -- `awk 'BEGIN{system("id")}'`, `sed 'e id'`.
-      INTERPRETERS = %w[
-        sh bash dash zsh ksh mksh ash csh tcsh fish rbash busybox
-        perl python python2 python3 ruby irb node deno bun php lua tclsh java awk sed
-      ].freeze
-
-      # Wrappers whose whole job is to exec the program their arguments name.
-      # `time` and `coproc` are here because tree-sitter-bash does not model them
-      # as keywords, so `time { echo PWNED; }` and `time rm -rf /tmp/x` reach FULL
-      # coverage as ordinary commands: neither the kind tier nor the byte backstop
-      # says anything about them, and this list is the only thing that abstains.
-      WRAPPERS = %w[
-        env nice ionice taskset chrt setarch timeout nohup setsid stdbuf flock
-        chroot unshare nsenter time coproc
-      ].freeze
-
-      # The same shape, with a privilege change on the way through.
-      PRIVILEGE = %w[sudo su runuser doas pkexec setpriv].freeze
-
-      # Interactive programs with a documented shell escape: `less` is the
-      # motivating one, so its whole family is here with it.
-      SHELL_ESCAPES = %w[less more most man info vi vim nvim ed emacs nano psql mysql sqlite3].freeze
-
-      # Run a program named in their own options. `git` is here for a measured
-      # reason -- `-c core.fsmonitor=id`, `-c include.path=...`,
-      # `-c alias.<new-name>=!sh` all execute, and `git status --short` is
-      # structurally indistinguishable from `ls -la`.
-      OPTION_DIRECTED = %w[git tar rsync].freeze
-
-      PROGRAM_RUNNERS =
-        (TAKES_A_COMMAND + INTERPRETERS + WRAPPERS + PRIVILEGE + SHELL_ESCAPES + OPTION_DIRECTED).freeze
+      # The families, and the rule that puts a name in one, are in {Programs}.
+      PROGRAM_RUNNERS = Programs::RUNNERS
 
       # Bash's reserved words, minus the two that also EXECUTE and so live in
       # {WRAPPERS}. As an argv0 these are not programs at all: the string was a
@@ -442,7 +373,6 @@ module Lain
       NOT_A_PIPELINE = "the stages are joined by something other than pipes and &&"
       EXCLUDED = "the session's capability set excludes"
       private_constant :NOTHING_TO_RUN, :NOT_UNDERSTOOD, :NOT_A_PIPELINE, :EXCLUDED, :Doubts
-      private_constant :TAKES_A_COMMAND, :INTERPRETERS, :WRAPPERS, :PRIVILEGE, :SHELL_ESCAPES, :OPTION_DIRECTED
     end
   end
 end

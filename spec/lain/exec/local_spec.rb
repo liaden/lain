@@ -173,6 +173,18 @@ RSpec.describe Lain::Exec::Local do
       end
     end
 
+    it "scrubs CDPATH, so a cd lands where the approval rungs named it" do
+      Dir.mktmpdir("lain-cdpath") do |dir|
+        %w[cwd/x elsewhere/x].each { FileUtils.mkdir_p(File.join(dir, _1)) }
+        lent = ENV.to_h.merge("CDPATH" => File.join(dir, "elsewhere"))
+        with_env("CDPATH" => File.join(dir, "elsewhere")) do
+          capture = backend.call(command: "cd x && pwd -P", cwd: File.join(dir, "cwd"), env: lent, timeout: 10)
+
+          expect(capture.stdout).to eq("#{File.realpath(File.join(dir, "cwd/x"))}\n")
+        end
+      end
+    end
+
     it "keeps GEM_HOME, because the child still has to find its gems" do
       with_env("GEM_HOME" => "/tmp/lain-t1-gems") do
         expect(run(%(sh -c 'echo "[$GEM_HOME]"')).stdout).to include("[/tmp/lain-t1-gems]")

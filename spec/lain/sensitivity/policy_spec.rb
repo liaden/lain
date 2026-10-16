@@ -410,6 +410,23 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
+  describe "#home" do
+    let(:anchored) { described_class.new(sensitivity:, home:) }
+
+    it "is the home it was configured with, and nil when none was" do
+      expect([anchored.home, policy.home]).to eq([home, nil])
+    end
+
+    it "is the same home through a confinement" do
+      expect(anchored.confined(roots: ["/w"]).home).to eq(home)
+    end
+
+    it "is nil on the Null and its confinement" do
+      null = described_class::Null.instance
+      expect([null.home, null.confined(roots: ["/w"]).home]).to eq([nil, nil])
+    end
+  end
+
   # The listing filter is one of this object's answers over the SAME classifier,
   # rather than something a caller builds beside it. That is what keeps "the
   # gate refused a path the listing enumerated" out: `Filter.new` happens in

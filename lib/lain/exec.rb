@@ -79,6 +79,10 @@ module Lain
     # widening this to `GEM_` changes which ones it can see.
     FRAMEWORK_ENV = /\A(?:BUNDLE_|BUNDLER_|RSPEC_|RUBYOPT\z)/
 
+    # Inherited env that moves a `cd` somewhere other than the directory the
+    # command names, so the paths an approval rung read off it would be wrong.
+    SHELL_ENV = /\ACDPATH\z/
+
     # Every spawn mechanism here INHERITS this process's environment and applies
     # `env` per key onto it, so the scrub has to name every framework var
     # actually present to inherit -- hence the union of the live ENV with the
@@ -91,9 +95,10 @@ module Lain
     # isolation belongs to an out-of-process boundary, not to an env override.
     #
     # @param env [Hash] the caller's overrides ({WorkerEnv#env})
-    # @return [Hash] those overrides plus an explicit nil for each framework var
+    # @return [Hash] those overrides plus an explicit nil for each framework or
+    #   shell var
     def self.child_env(env)
-      polluted = (ENV.keys + env.keys).grep(FRAMEWORK_ENV).uniq
+      polluted = (ENV.keys + env.keys).grep(Regexp.union(FRAMEWORK_ENV, SHELL_ENV)).uniq
       env.merge(polluted.to_h { |key| [key, nil] })
     end
   end

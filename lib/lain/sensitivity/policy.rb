@@ -123,6 +123,9 @@ module Lain
         # @return [Confined]
         def confined(roots:) = Confined.new(policy: self, roots:, anchors: {})
 
+        # @return [nil] no home was configured
+        def home = nil
+
         # Nothing is related, so a flagged region still asks.
         def related?(_path) = false
 
@@ -176,6 +179,9 @@ module Lain
         # @param roots [Array<String>] absolute; added to the ones held
         # @return [Confined]
         def confined(roots:) = Confined.new(policy: @policy, roots: [*@roots, *roots], anchors: @anchors)
+
+        # @return [String, nil] the policy's home as configured
+        def home = @anchors[:home]
 
         # @param effect [Lain::Effect]
         # @param cwd [String] absolute
@@ -276,6 +282,9 @@ module Lain
         @filter = Filter.new(sensitivity: Rows.new(self))
         freeze
       end
+
+      # @return [String, nil] the home as configured, nil when none was
+      def home = @anchors[:home]
 
       # What {#filter} classifies a listing row by. A readable row reaching the
       # filter is already absolute ({Middleware::WithholdSecretPaths#reading}

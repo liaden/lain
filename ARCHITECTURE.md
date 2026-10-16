@@ -836,6 +836,51 @@ names, and **word text** — a glob, a tilde, a brace and a backslash have no no
 newline as whitespace, so `echo hi\nrm -rf /tmp/x` arrives as two stages and an EMPTY separator
 list. Reading separator texts cannot see it; N stages against N−1 pipes can.
 
+`Shell::Named` reads the same parse for a different question: which paths a command names. It resolves each one
+against the directory its stage runs in, so an approval rung can ask about the files a `bash` call touches rather
+than about its `cwd`; `Named.from` takes a parse a caller already holds. It names every word past the program
+(and the program when written as a path), an option's attached or `=` value, a `name=value` operand's value,
+and each redirect target, but not `/dev/null` or a descriptor duplication. A glob is named by its fixed
+directory and carries its absolute pattern. A recursive reader carries `<root>/**` on each root, or on the cwd
+when it names none: grep `-r`, rg, ag, ack, `cp -r`, `diff -r`, `tar c`, `zip -r`, find, and git's diff,
+log, show, grep, stash, blame and `add -A`. A git `<rev>:<path>` operand carries `<cwd>/**/<path>`.
+
+A `cd` moves the later stages only when its one directory is literal and `&&` joins it on both sides; its target
+is marked as a directory. `#written` is a lower bound. It covers output redirects, the writers Named lists (tee,
+touch, mkdir, rm, mv, chmod and kin, the destination of cp, ln, install, rsync, scp and `git clone`, `dd of=`,
+`sed -i`, a created tar archive, zip's archive), and the output options it lists.
+
+The command is opaque, and every consumer parks on it, when Named finds any of these:
+
+- a parse that is not covered, or a node kind beyond literal words, quotes, lists, pipelines and redirects;
+- an expansion, an assignment, a subshell or an unquoted brace;
+- a backslash, or a double-quoted `$`, backtick, `\` or `!`;
+- a `~` with no home, or another user's `~`;
+- a `..` after a named segment, or after a `cd`;
+- a `cd`, `pushd` or `popd` that does not bind;
+- a directory option: `--directory`, `--chdir`, `--cwd`, `--work-tree`, `-d` for patch and unzip, `-x` for
+  ruby and perl, and `-C` in any cluster, except for grep, egrep, fgrep, zgrep, rg, ag, ack, diff and ls, where
+  it means context lines or columns, and perl, where it is a Unicode flag;
+- a program that runs other programs. Named reads Verdict's families from `Shell::Programs`: every wrapper,
+  privilege changer, command-taker and shell escape. Within the shells, interpreters and option-directed
+  programs, it parks:
+  - a shell given `-c` or `-s`, or reading its script from stdin;
+  - an interpreter given inline code, or reading its script from stdin;
+  - awk without a script file;
+  - find with an action that runs or deletes;
+  - git, tar, rsync or sort with an option that names a program;
+  - sed with a command that runs, reads or writes outside it, or with a script file (`-f`), unless
+    `--sandbox` is given;
+- an extraction that may write names the archive chose anywhere: tar or bsdtar with `-P` or
+  `--absolute-names`, cpio `-i` without `--no-absolute-filenames`, `git apply --unsafe-paths` and
+  `unzip -:`.
+
+Build tools and script runners (make, rake, cargo, `ruby x.rb`) are named but may read and write anywhere: Named
+sees their argv, not their code. `bundle exec X` may not run the `X` its name says, so every rule that makes `X`
+opaque still applies, but none that claims to know what `X` reads, writes or where it runs; otherwise `X` is
+named like a script runner, and every path it names is marked as possibly written. `Exec.child_env` scrubs `CDPATH`, so a `cd`
+lands where Named resolved it.
+
 ## The secret boundary
 
 The split is forced by *when the answer is available*: a path classifier can answer before a file
