@@ -1990,7 +1990,7 @@ RSpec.describe Lain::Frontend::TTY do
       press("Enter")
 
       expect(submitted).to eq('"half a sentence"')
-      shows(/note 0 of the fleet/)
+      shows(/note 0 of the fleet.*you>/m)
       after_submit = screen.split("you> half a sentence", 2).last
       expect(after_submit.index("note 0 of the fleet")).to be < after_submit.index("you>")
     end
