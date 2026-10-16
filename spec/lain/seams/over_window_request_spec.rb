@@ -243,7 +243,7 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
       ask.attempt("hello")
 
       expect(chat_bodies.first.keys)
-        .to contain_exactly("model", "messages", "stream", "tools", "truncate", "options")
+        .to contain_exactly("model", "messages", "stream", "tools", "truncate", "shift", "options")
       expect(chat_bodies.first["options"].keys).to contain_exactly("num_predict", "num_batch")
       expect(journaled("window_pressure")).to be_empty
     end

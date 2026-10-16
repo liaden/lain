@@ -26,10 +26,15 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
       expect(encoder.encode(request)).to include(truncate: false)
     end
 
+    it "forbids a context shift beside it, so a reply that fills the window is cut" do
+      expect(encoder.encode(request)).to include(truncate: false, shift: false)
+    end
+
     it "asks it on every request, whatever else the request carries" do
       encoded = encoder.encode(request(stream: true, extra: { "num_ctx" => 8192, "think" => true }))
 
-      expect(encoded).to include(truncate: false, think: true, options: { num_predict: 64, num_ctx: 8192 })
+      expect(encoded).to include(truncate: false, shift: false, think: true,
+                                 options: { num_predict: 64, num_ctx: 8192 })
     end
   end
 
@@ -51,7 +56,7 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
       encoded = encoder.encode(request)
 
       expect(encoded).to eq(model: "qwen3:4b", messages: [{ role: "user", content: "hi" }], stream: false,
-                            truncate: false, options: { num_predict: 64 })
+                            truncate: false, shift: false, options: { num_predict: 64 })
       expect(encoded.key?(:format)).to be(false)
     end
 
@@ -78,7 +83,7 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
       encoded = encoder.encode(request(extra: { "repeat_penalty" => 1.1 }))
 
       expect(encoded).to eq(model: "qwen3:4b", messages: [{ role: "user", content: "hi" }], stream: false,
-                            truncate: false, options: { num_predict: 64 })
+                            truncate: false, shift: false, options: { num_predict: 64 })
     end
 
     # Review SHOULD-FIX: a nil marker (key present, value nil) must no-op

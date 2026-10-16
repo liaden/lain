@@ -79,9 +79,14 @@ module Lain
         # prompt count and the context it loaded, on the streaming and the
         # non-streaming path alike -- probed on 0.32.12, re-verified byte-identical
         # on 0.34.4 -- see {Ollama#window_exceeded}.
+        #
+        # `shift: false` for the same reason on the output side: a reply that
+        # fills the window would otherwise slide the context along and carry
+        # on, dropping the oldest tokens unseen. Asked not to, it stops with
+        # `done_reason: length`.
         def encode(request)
-          { model: request.model, messages: encode_messages(request), stream: request.stream, truncate: false }
-            .merge(optional_fields(request))
+          { model: request.model, messages: encode_messages(request), stream: request.stream, truncate: false,
+            shift: false }.merge(optional_fields(request))
         end
 
         private

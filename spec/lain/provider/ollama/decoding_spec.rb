@@ -22,8 +22,8 @@ RSpec.describe Lain::Provider::Ollama::Decoding do
     end.new(journal)
   end
 
-  def decode(body, journal = [])
-    decoder(journal).send(:build_response, body)
+  def decode(body, journal = [], ceiling = nil)
+    decoder(journal).send(:build_response, body, ceiling)
   end
 
   def body(done_reason: "stop", **message)
@@ -344,5 +344,32 @@ RSpec.describe Lain::Provider::Ollama::Decoding do
 
     expect(decode(closed)).to stop_with(Lain::StopReason::UNKNOWN)
     expect(records(closed).map(&:kind)).to eq([:empty_answer])
+  end
+
+  # ollama says `length` for two different cuts: the request's own num_predict
+  # spent, or the context window filled (the shift is refused). Only the count
+  # tells them apart, and only the provider knows the ceiling it sent.
+  describe "a length stop" do
+    def cut(eval_count) = body(content: "x", done_reason: "length").merge("eval_count" => eval_count)
+
+    it "is marked a window cut when it fell short of the ceiling" do
+      expect(decode(cut(300), [], 1024).window_cut).to be(true)
+    end
+
+    it "is not marked when the ceiling itself was spent" do
+      expect(decode(cut(1024), [], 1024).window_cut).to be(false)
+    end
+
+    it "is not marked when no count was reported" do
+      expect(decode(cut(0), [], 1024).window_cut).to be(false)
+    end
+
+    it "is not marked when no ceiling is known" do
+      expect(decode(cut(300)).window_cut).to be(false)
+    end
+
+    it "is not marked on a stop that was not a length" do
+      expect(decode(body(content: "x").merge("eval_count" => 5), [], 1024).window_cut).to be(false)
+    end
   end
 end

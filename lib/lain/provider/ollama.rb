@@ -283,7 +283,7 @@ module Lain
       # asks it whether the last failure can have been the first to send.
       def complete(request)
         witness = ErrorWrapping::WireWitness.new
-        admitted { wrapping_errors(witness) { build_response(dispatch(request, witness)) } }
+        admitted { wrapping_errors(witness) { build_response(dispatch(request, witness), request.max_tokens) } }
       end
 
       # The window this server is actually serving `model` with, or nil.

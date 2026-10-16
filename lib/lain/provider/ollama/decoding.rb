@@ -130,7 +130,9 @@ module Lain
 
         private
 
-        def build_response(body)
+        # `ceiling` is the generation cap the request sent, which is what tells
+        # a spent cap from a full window: both arrive as done_reason "length".
+        def build_response(body, ceiling = nil)
           message = body["message"] || {}
           envelope = prose_tool_call(message)
           stray = stray_markup(body, message, envelope)
@@ -138,7 +140,8 @@ module Lain
           silent = said_nothing?(heard(message, spoken, stray))
           response = Response.new(id: nil, model: body["model"], content: decode_content(spoken),
                                   stop_reason: decode_stop_reason(body, message, envelope, silent),
-                                  usage: build_usage(body), raw: body, malformed: finding(envelope, silent, stray))
+                                  usage: build_usage(body), raw: body, malformed: finding(envelope, silent, stray),
+                                  window_cut: window_cut?(body, ceiling))
           note_prose_tool_call(body, envelope) unless envelope.nil?
           note_stray_markup(body, stray) unless stray.nil?
           note_empty_answer(body) if silent
@@ -292,6 +295,12 @@ module Lain
           when "length" then StopReason::MAX_TOKENS
           else StopReason.normalize(body["done_reason"])
           end
+        end
+
+        # A zero count is a server that did not report one, not a reply of no length.
+        def window_cut?(body, ceiling)
+          generated = body["eval_count"].to_i
+          body["done_reason"] == "length" && !ceiling.nil? && generated.positive? && generated < ceiling
         end
 
         def build_usage(body)

@@ -70,6 +70,8 @@ module Lain
 
         RAISE_MAX_TOKENS = "raise --max-tokens (now %d); a thinking model's reasoning counts against it"
 
+        FILLED_WINDOW = "the reply filled the context window; raise LAIN_NUM_CTX or start a shorter chat"
+
         WAIT_LONGER = "set LAIN_STREAM_STALL_TIMEOUT to wait longer (in seconds; 0 turns the stall check off)"
 
         NOTHING_FOLDED = -> {}
@@ -83,14 +85,14 @@ module Lain
           failure = response.failure
           @tty.render_response(response) unless failure.withholds_text? || response.text.empty?
           @tty.render_error(failure.message)
-          remedy_for(failure).each { |line| @tty.render_error(line) }
+          remedy_for(response).each { |line| @tty.render_error(line) }
           nil
         end
 
-        def remedy_for(failure)
-          return [] unless failure.stop_reason == ::Lain::StopReason::MAX_TOKENS
+        def remedy_for(response)
+          return [] unless response.stop_reason == ::Lain::StopReason::MAX_TOKENS
 
-          [format(RAISE_MAX_TOKENS, @agent.context.max_tokens)]
+          [response.window_cut ? FILLED_WINDOW : format(RAISE_MAX_TOKENS, @agent.context.max_tokens)]
         end
 
         # A torn ask: journal the turns that did commit, anchor the stop, then
