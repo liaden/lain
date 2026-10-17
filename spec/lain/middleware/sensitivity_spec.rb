@@ -33,6 +33,16 @@ RSpec.describe Lain::Middleware::Sensitivity do
   let(:policy) { denying(classifier) }
   let(:layer) { described_class.new(sensitivity: policy, journal:) }
 
+  describe "the account database" do
+    it "tells a confined child where its home really is, with no $HOME placeholder" do
+      confined = Lain::Sensitivity::Policy.new(sensitivity: classifier, home:).confined(roots: [project])
+      result = result_of(described_class.new(sensitivity: confined, journal:), reads("/etc/passwd"))
+
+      expect(result.content).to include("refused: /etc/passwd", "the agent's home directory is #{home}")
+      expect(result.content).not_to include("$HOME")
+    end
+  end
+
   describe "a denied path" do
     it "refuses it, naming the path as a protected path" do
       result = result_of(layer, reads("#{home}/.ssh/id_ed25519"))

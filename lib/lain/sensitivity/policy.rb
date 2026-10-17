@@ -2,7 +2,7 @@
 
 module Lain
   class Sensitivity
-    Denial = Data.define(:tool_use_id, :tool, :path, :verdict)
+    Denial = Data.define(:tool_use_id, :tool, :path, :verdict, :advice)
 
     # What {Policy#denial} answers with: which call, which tool, the path as
     # that call wrote it, and the {Verdict} that refused it.
@@ -26,6 +26,14 @@ module Lain
     # input held, and coercing it here would duplicate the normalization
     # {Telemetry::ReadRefused} already does on the way into the record.
     class Denial
+      # @param tool_use_id [String]
+      # @param tool [String]
+      # @param path [String]
+      # @param verdict [Verdict]
+      # @param advice [String, nil] where the model should look instead, when
+      #   the refusing layer knows
+      def initialize(tool_use_id:, tool:, path:, verdict:, advice: nil) = super
+
       def reason = verdict.reason
     end
 
@@ -166,7 +174,7 @@ module Lain
       # through unasked.
       #
       # A child's read of the account database is refused rather than gated:
-      # a researcher looking for its own home there is told to read `$HOME`
+      # a researcher looking for its own home there is told where that is
       # instead, rather than parking a human on a question it can answer
       # itself. The main agent's read of the same files still asks.
       class Confined
@@ -235,8 +243,10 @@ module Lain
         def account_denial(call, cwd)
           hit = walked(call, cwd).find { account_file?(_1) }
           hit && Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path: Policy.path_in(call) || hit,
-                            verdict: ACCOUNT_DATABASE)
+                            verdict: ACCOUNT_DATABASE, advice: home_advice)
         end
+
+        def home_advice = home && "the agent's home directory is #{home}".freeze
 
         def account_file?(named)
           ACCOUNT_FILES.include?(named) || landings(named).intersect?(ACCOUNT_FILES)

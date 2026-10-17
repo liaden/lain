@@ -117,13 +117,13 @@ RSpec.describe "A spawned child's read outside its scope", :seam do
     expect(researching(wiring, agent) { [] }.map { |pending, _| pending.tool }).to eq(["glob"])
   end
 
-  it "refuses a researcher's read of /etc/passwd without parking it, pointing at $HOME" do
+  it "refuses a researcher's read of /etc/passwd without parking it, naming the real home" do
     child_calls("read_file", { "path" => "/etc/passwd" })
     wiring, agent = wired
 
     expect(researching(wiring, agent) { [] }).to be_empty
-    expect(result_of("tu_child")).to include("refused: /etc/passwd", "home directory is $HOME")
-    expect(result_of("tu_child")).not_to include("root:")
+    expect(result_of("tu_child")).to include("refused: /etc/passwd", "home directory is #{@home}")
+    expect(result_of("tu_child")).not_to include("$HOME", "root:")
   end
 
   it "refuses a researcher's glob rooted at /etc/group without parking it" do

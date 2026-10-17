@@ -45,6 +45,9 @@ module Lain
     # on every question, so a layer that asked twice -- once to decide, once to
     # refuse -- could be told two different things about one call.
     class Sensitivity < Base
+      FINAL = "no approval can lift this, so name a different path rather than retrying this one in another form"
+      private_constant :FINAL
+
       # @param sensitivity [#denial] the session's ONE path policy, answering
       #   `(effect, cwd:) -> Lain::Sensitivity::Denial | nil`. Injected, never built
       #   here: building a {Lain::Sensitivity} raises on an unusable cwd, and a
@@ -81,11 +84,10 @@ module Lain
       def refuse(denial, requester)
         @journal << Telemetry::ReadRefused.new(tool_use_id: denial.tool_use_id, tool: denial.tool,
                                                path: denial.path, reason: denial.reason.to_s, requester:)
-        Tool::Result.error(
-          "refused: #{denial.path} is #{denial.verdict.explanation}; no approval can lift this, " \
-          "so name a different path rather than retrying this one in another form"
-        )
+        Tool::Result.error("refused: #{[named(denial), denial.advice, FINAL].compact.join("; ")}")
       end
+
+      def named(denial) = "#{denial.path} is #{denial.verdict.explanation}"
     end
   end
 end

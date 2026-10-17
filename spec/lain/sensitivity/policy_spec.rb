@@ -1007,12 +1007,20 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
 
     describe "the account database" do
-      it "refuses a read of /etc/passwd, saying the home directory is $HOME" do
+      it "refuses a read of /etc/passwd, saying where the home directory really is" do
         denial = confined.denial(read("/etc/passwd"), cwd: root)
 
         expect(denial).to have_attributes(tool: "read_file", path: "/etc/passwd", reason: :account_database)
         expect(denial.verdict).to have_attributes(denied?: true)
-        expect(denial.verdict.explanation).to include("home directory is $HOME")
+        expect(denial.advice).to eq("the agent's home directory is #{home}")
+        expect(Ractor.shareable?(denial.advice)).to be(true)
+        expect(denial.verdict.explanation).not_to include("$HOME")
+      end
+
+      it "gives no home advice when the policy holds no home" do
+        null = described_class::Null.instance.confined(roots: [worker])
+
+        expect(null.denial(read("/etc/passwd"), cwd: worker).advice).to be_nil
       end
 
       it "refuses the backup copies the system keeps of both files" do
