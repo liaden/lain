@@ -234,8 +234,8 @@ RSpec.describe "lain bench arms" do
       record = LainCLI::Bench.commands.fetch("record").options.fetch(:max_tokens)
 
       expect(command.options.fetch(:max_tokens)).to have_attributes(default: ceiling)
-      expect(command.options.fetch(:max_tokens).description).to include("else #{ceiling}", "whole file bodies")
-      expect(record.description).to include("else #{Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens)}")
+      expect(command.options.fetch(:max_tokens).description).to include("default #{ceiling}", "whole file bodies")
+      expect(record.description).to include("default #{Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens)}")
     end
   end
 

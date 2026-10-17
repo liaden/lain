@@ -1536,11 +1536,11 @@ RSpec.describe Lain::StatusFeed do
     it "republishes when the approval moves" do
       feed = described_class.new(path:)
       feed << mode_switch(to_layers: %i[vi])
-      allow(File).to receive(:write).and_call_original
+      allow(File).to receive(:binwrite).and_call_original
 
       feed << mode_switch(to_approval: :bypass, to_layers: %i[vi])
 
-      expect(File).to have_received(:write).once
+      expect(File).to have_received(:binwrite).once
     end
 
     # `/mode +notify` moves neither axis. A guard comparing the axes ALONE
@@ -1549,11 +1549,11 @@ RSpec.describe Lain::StatusFeed do
     it "republishes a layer flip that never moved an axis" do
       feed = described_class.new(path:)
       feed << mode_switch(to_layers: %i[vi])
-      allow(File).to receive(:write).and_call_original
+      allow(File).to receive(:binwrite).and_call_original
 
       feed << mode_switch(to_layers: %i[notify vi])
 
-      expect(File).to have_received(:write).once
+      expect(File).to have_received(:binwrite).once
       expect(published["mode_lighter"]).to eq("ASK BELL VI")
     end
 
@@ -1561,21 +1561,21 @@ RSpec.describe Lain::StatusFeed do
       feed = described_class.new(path:)
       feed << mode_switch(to_approval: :bypass)
       feed << spawn_event("a")
-      allow(File).to receive(:write).and_call_original
+      allow(File).to receive(:binwrite).and_call_original
 
       feed << spawn_event("a") # redelivery: nothing this feed derives moved
 
-      expect(File).not_to have_received(:write)
+      expect(File).not_to have_received(:binwrite)
     end
 
     it "skips the write on a redelivered mode_switch, which moves no derived field" do
       feed = described_class.new(path:)
       feed << mode_switch(to_approval: :bypass)
-      allow(File).to receive(:write).and_call_original
+      allow(File).to receive(:binwrite).and_call_original
 
       feed << mode_switch(to_approval: :bypass)
 
-      expect(File).not_to have_received(:write)
+      expect(File).not_to have_received(:binwrite)
     end
 
     # Scope.for/Approval.for/Layer.for raise ArgumentError on an undeclared
@@ -1899,7 +1899,7 @@ RSpec.describe Lain::StatusFeed do
       good_bytes = File.read(path)
 
       now = t2
-      allow(File).to receive(:write).and_raise(Errno::ENOSPC)
+      allow(File).to receive(:binwrite).and_raise(Errno::ENOSPC)
       # The refusal is NAMED because the destination moved from the
       # project's own `.lain/`, which the user is by definition working in, to
       # a state home that can be read-only or occupied, so a bare errno now
@@ -1925,11 +1925,11 @@ RSpec.describe Lain::StatusFeed do
     it "skips the write+rename entirely when the derived state did not change" do
       feed = described_class.new(path:)
       feed << spawn_event("a")
-      allow(File).to receive(:write).and_call_original
+      allow(File).to receive(:binwrite).and_call_original
 
       feed << spawn_event("a") # redelivery: fleet dedups, so nothing actually changed
 
-      expect(File).not_to have_received(:write)
+      expect(File).not_to have_received(:binwrite)
     end
 
     # The guard compares #observed alone. A clock is not a change: comparing it
@@ -1939,12 +1939,12 @@ RSpec.describe Lain::StatusFeed do
       now = 0.0
       feed = described_class.new(path:, run_clock: Lain::RunClock.new(clock: -> { now }))
       feed << spawn_event("a")
-      allow(File).to receive(:write).and_call_original
+      allow(File).to receive(:binwrite).and_call_original
 
       now = 90.0
       feed << spawn_event("a")
 
-      expect(File).not_to have_received(:write)
+      expect(File).not_to have_received(:binwrite)
     end
 
     # ... but a publish the observed state DID earn carries measures read at

@@ -49,8 +49,6 @@ module ErrorTaxonomyDiscipline
       "two raise sites in `lain worktrees gc`; the isolation backend's same-named sibling IS rescued",
     "Lain::Grader::TestHarness::Adapter::Unparseable" =>
       "one raise site inside the rspec adapter",
-    "Lain::Isolation::SelfSync::Failed" =>
-      "several raise sites over git subprocesses, all read as messages",
     "Lain::Provider::HTTP::ConfigurationError" =>
       "vendored from ruby_llm 1.16.0 -- deleting it forks the vendor, see the file header",
     "Lain::Provider::HTTP::InvalidRoleError" =>
