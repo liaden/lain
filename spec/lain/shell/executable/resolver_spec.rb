@@ -368,6 +368,18 @@ RSpec.describe Lain::Shell::Executable::Resolver do
       expect(resolve(%w[cat], path: "bin:/usr/bin").sole.anomalies).to include(:relative_path_entry)
     end
 
+    it "resolves a ./ program to a path with no ./ segment" do
+      plant("#{root}/bin/x")
+
+      expect(resolve(%w[./bin/x], path: "/usr/bin").sole.resolved).to eq("#{root}/bin/x")
+    end
+
+    it "resolves a ./ PATH entry to a path with no ./ segment" do
+      plant("#{root}/bin/x")
+
+      expect(resolve(%w[x], path: "./bin:/usr/bin").sole.resolved).to eq("#{root}/bin/x")
+    end
+
     it "reads an empty PATH as one empty entry, searching the cwd" do
       plant("#{root}/cat")
 

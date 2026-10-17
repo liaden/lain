@@ -162,7 +162,9 @@ module Lain
           end
 
           # execvp does not expand a tilde, so neither does this.
-          def absolute(path) = path.start_with?("/") ? path : File.join(@cwd, path)
+          def absolute(path)
+            Pathname.new(path.start_with?("/") ? path : File.join(@cwd, path)).cleanpath(true).to_s
+          end
 
           def links(chain)
             last = chain.last
