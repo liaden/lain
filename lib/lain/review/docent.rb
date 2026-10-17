@@ -906,11 +906,7 @@ module Lain
           end
         end
 
-        def patch = [header, *hunk.lines].join("\n")
-
-        def header
-          "@@ -#{hunk.old_start},#{hunk.old_count} +#{hunk.new_start},#{hunk.new_count} @@ #{hunk.heading}".rstrip
-        end
+        def patch = [hunk.header, *hunk.lines].join("\n")
 
         # Origin markers stripped, so each side reads as the code did rather than
         # as a diff of it. A "\ No newline at end of file" line belongs to

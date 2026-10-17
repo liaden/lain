@@ -29,6 +29,15 @@ module Lain
       CONTENT_SCHEME = "hunk-content-v1"
       SPAN_SCHEME = "hunk-span-v1"
 
+      # The unified-diff hunk header, the inverse of `Source::Parser::HUNK`. A
+      # mixin rather than a method of this class, because
+      # {Source::Corpus::UnitHunk} answers the duck without being a Hunk and
+      # must render the same line.
+      module Header
+        def header = "@@ -#{old_start},#{old_count} +#{new_start},#{new_count} @@ #{heading}".rstrip
+      end
+      include Header
+
       # The review keys for a WHOLE changeset's hunks, in the order given. The
       # batch is a precondition, not a convenience: a hunk cannot tell on its own
       # that it is duplicated, so keying one at a time hands two byte-identical

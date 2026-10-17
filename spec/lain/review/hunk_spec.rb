@@ -25,6 +25,13 @@ RSpec.describe Lain::Review::Hunk do
     expect { hunk(old_start: "ten") }.to raise_error(ArgumentError, /Integer/)
   end
 
+  describe "#header" do
+    it "renders the unified-diff header the parser reads back" do
+      expect(hunk.header).to eq("@@ -10,3 +10,3 @@ def call")
+      expect(hunk(heading: "").header).to eq("@@ -10,3 +10,3 @@")
+    end
+  end
+
   describe "the key ignores position" do
     it "is unchanged when 500 lines are inserted above it and the header renumbers" do
       expect(sole_key_of(hunk(new_start: 510))).to eq(sole_key_of(hunk))

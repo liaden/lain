@@ -72,6 +72,8 @@ module Lain
         # two-rung rule written for units, and the two must not drift into two
         # answers.
         class UnitHunk
+          include Hunk::Header
+
           # @param unit [Survey::Unit]
           # @return [UnitHunk]
           def self.of(unit) = new(unit:, lines: unit.lines.map { -"#{MARKER}#{_1}" }.freeze)

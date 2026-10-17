@@ -317,10 +317,7 @@ module Lain
           ["--- #{old_side}", "+++ #{new_side}", *file.hunks.map { |hunk| hunk_text(hunk) }].join("\n")
         end
 
-        def self.hunk_text(hunk)
-          header = "@@ -#{hunk.old_start},#{hunk.old_count} +#{hunk.new_start},#{hunk.new_count} @@ #{hunk.heading}"
-          [header.rstrip, *hunk.lines].join("\n")
-        end
+        def self.hunk_text(hunk) = [hunk.header, *hunk.lines].join("\n")
         private_class_method :hunk_text
       end
 
