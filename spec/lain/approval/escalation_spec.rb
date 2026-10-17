@@ -653,6 +653,32 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.last).to include("rung" => "rules", "verdict" => "deny", "requester" => "researcher")
     end
 
+    it "reads the terminal's fault surface as automatic, because nobody answered" do
+      settled_by(faulting, surface: Lain::Frontend::ApprovalPolicy::FAULT_SURFACE, approve: false)
+
+      expect(rulings.last).to include("rung" => "surfaces", "verdict" => "deny", "authority" => "automatic")
+    end
+
+    it "records an abandoned call as an automatic deny by the surfaces rung, and the stop still propagates" do
+      queue = Lain::Approval::Queue.new(journal:, timeout: 5)
+      built = ladder(described_class::Surfaces.new(queue))
+      stopped = nil
+      Sync do |task|
+        asked = task.async do
+          built.call(effect, nil)
+        rescue Async::Stop
+          stopped = true
+          raise
+        end
+        task.with_timeout(1) { queue.dequeue }
+        asked.stop
+      end
+
+      expect(stopped).to be(true)
+      expect(rulings.last).to include("rung" => "surfaces", "verdict" => "deny", "authority" => "automatic",
+                                      "tool_use_id" => "tu_1")
+    end
+
     # `AUTOMATIC`'s own comment predicted this exactly -- "an unlisted
     # automatic surface's allow survives a fault, and that one fails visibly in
     # a review of a file whose whole subject is adjudication" -- and one card
@@ -688,26 +714,8 @@ RSpec.describe Lain::Approval::Escalation do
 
     def descended(klass) = klass.subclasses.flat_map { |sub| [sub, *descended(sub)] }
 
-    # A fourth name was added to this list, and it is the one that does NOT
-    # describe a person: `tty_fault` signs the fail-closed denial
-    # {Frontend::ApprovalPolicy#answered} writes when the prompt itself raised,
-    # so nobody answered it. Its true home is `Surfaces::AUTOMATIC`, beside
-    # {Queue::TIMEOUT_SURFACE} and {Queue::ABANDONED_SURFACE} -- the other two
-    # decisions nobody made -- and it is still not there. What kept it out was
-    # the require manifest, and that is gone: the loader resolves the name from
-    # either side now, so this is a known misclassification rather than a
-    # forced one. DO NOT MOVE IT in passing, which
-    # changes how {Approval::Escalation} classifies every surface and is owed to
-    # a card of its own.
-    #
-    # Unlisted, `Escalation::Surfaces#call` reads it as `:human`. That is
-    # harmless HERE and only here: the ladder's own asymmetry (see the comment
-    # above `AUTOMATIC`) is about an ALLOW surviving a fault, and this surface
-    # can only ever deny. Do not read the entry as a claim that a person
-    # refused; the Journal record says `tty_fault` precisely so nothing does.
     def human_surfaces
-      [Lain::Frontend::ApprovalPolicy::SURFACE, Lain::Frontend::ApprovalPolicy::FAULT_SURFACE,
-       Lain::Frontend::Neovim::ApprovalView::SURFACE]
+      [Lain::Frontend::ApprovalPolicy::SURFACE, Lain::Frontend::Neovim::ApprovalView::SURFACE]
     end
 
     def unaccounted(names) = names - described_class::Surfaces::AUTOMATIC - human_surfaces

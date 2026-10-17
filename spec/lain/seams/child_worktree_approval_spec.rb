@@ -114,6 +114,9 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
     e
   end
 
+  # The parked call's teardown stops it, which the ladder records after the rules rung's abstain.
+  def rules_ruling = rulings.select { _1["rung"] == "rules" }.last
+
   def verdict(told) = told.content == "the command ran" ? :approved : [:refused, told.content]
 
   # Every deterministic rung abstained, so the call waits on the board's one
@@ -135,13 +138,14 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
       pending_call = parked(child, "cat keylink")
 
       expect(pending_call).to have_attributes(tool: "bash", requester: "subagent")
-      expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain", "requester" => "subagent")
+      expect(rules_ruling).to include("rung" => "rules", "verdict" => "abstain", "requester" => "subagent")
+      expect(rulings.last).to include("rung" => "surfaces", "verdict" => "deny", "authority" => "automatic")
     end
 
     it "is not approved automatically when the call names the worktree as its cwd" do
       parked(child, "cat keylink", cwd: checkout)
 
-      expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+      expect(rules_ruling).to include("rung" => "rules", "verdict" => "abstain")
     end
   end
 
@@ -170,7 +174,7 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
       pending_call = parked(parent, "cat README.md", cwd: checkout)
 
       expect(pending_call).to have_attributes(tool: "bash")
-      expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+      expect(rules_ruling).to include("rung" => "rules", "verdict" => "abstain")
     end
   end
 

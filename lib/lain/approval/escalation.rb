@@ -81,6 +81,7 @@ module Lain
       HONOURED = "a human authorized this despite a fault at"
       RUNG_BROKE = "the rung itself failed, which is not an answer"
       BARRED = "an automatic allow does not answer for a command whose automatically approved output was withheld"
+      ABANDONED = "the requester was stopped during this rung, so nobody answered"
       TYPE = "escalation"
 
       # What one rung said, and everything a journal needs to attribute it.
@@ -284,7 +285,14 @@ module Lain
 
       private
 
-      def consult(rung, name, effect, context) = record(ask(rung, name, effect, context), effect, context)
+      def consult(rung, name, effect, context)
+        record(ask(rung, name, effect, context), effect, context)
+      rescue Async::Stop
+        # Stopped while parked: the queue journals the abandonment, but the
+        # ladder's own stream would otherwise show a call that never settled.
+        record(Ruling.deny(rung: name, because: ABANDONED, authority: :automatic), effect, context)
+        raise
+      end
 
       def ask(rung, name, effect, context)
         ruling = rung.call(effect, context)
@@ -800,7 +808,8 @@ module Lain
         # the one this ladder trusted most, its allow surviving a fault that
         # any other machine's does not. Listed here, it is
         # `:automatic` like every other machine.
-        AUTOMATIC = [SecretSurface::SURFACE, Queue::TIMEOUT_SURFACE, Queue::ABANDONED_SURFACE].freeze
+        AUTOMATIC = [SecretSurface::SURFACE, Queue::TIMEOUT_SURFACE, Queue::ABANDONED_SURFACE,
+                     ::Lain::Frontend::ApprovalPolicy::FAULT_SURFACE].freeze
 
         APPROVED = "a surface approved this call"
         REFUSED = "a surface refused this call, or the window closed and the fail-closed doctrine did"

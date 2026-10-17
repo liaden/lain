@@ -188,6 +188,13 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(approval.decision).to eq(:deny)
   end
 
+  it "signs an EOF denial with the fault surface, never as a person's answer" do
+    approval = pending
+    policy_for("").decide(approval)
+
+    expect(approval).to have_attributes(surface: described_class::FAULT_SURFACE)
+  end
+
   it "is a no-op on a pending another surface already decided" do
     approval = pending
     approval.deny(surface: "nvim")
@@ -673,6 +680,18 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     described_class.new(output:, reader: ->(_prompt) {}).decide(approval)
 
     expect(approval.decision).to eq(:deny)
+  end
+
+  it "does not let the queue remember an EOF denial as a human's" do
+    queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new))
+    call = Lain::Effect::ToolCall.new(tool_use_id: "call_1", name: "bash", input: { "command" => "make deploy" })
+    Sync do |task|
+      parked = task.async { queue.adjudicate(call, nil) }
+      described_class.new(output:, reader: ->(_prompt) {}).decide(task.with_timeout(2) { queue.dequeue })
+      task.with_timeout(2) { parked.wait }
+    end
+
+    expect(queue.denied_call(requester: "agent", tool: "bash", input: call.input, cwd: Dir.pwd)).to be_nil
   end
 
   # The conductor reads the `[y/N]` in a task of its own beneath this surface's,

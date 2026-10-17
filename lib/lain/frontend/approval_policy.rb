@@ -34,16 +34,9 @@ module Lain
       # {Approval::Escalation} weighs a person's authority differently from a
       # machine's.
       #
-      # It BELONGS in {Approval::Escalation::Surfaces::AUTOMATIC}, beside
-      # {Approval::Queue::TIMEOUT_SURFACE} and ABANDONED_SURFACE, and it is
-      # still not there. What kept it out was load order -- `AUTOMATIC` was
-      # evaluated while `lain/approval` loaded, before this class existed -- and
-      # that constraint is gone: the loader resolves the name from either side
-      # now. THE MISCLASSIFICATION REMAINS, as a known defect rather than a
-      # forced one: the ladder reads this as `:human`, which weighs a broken
-      # terminal's denial as a person's, and is harmless only because this
-      # surface can only ever deny. Moving the constant changes an approval
-      # path, so it is its own change and not a comment's to make.
+      # Listed in {Approval::Escalation::Surfaces::AUTOMATIC}, so the ladder weighs
+      # it as a machine's. EOF at the prompt is signed with it too: a closed
+      # stdin is nobody answering.
       FAULT_SURFACE = "tty_fault"
 
       # Anything else -- a bare "enter", "n", garbage, or EOF -- denies. Approving
@@ -196,7 +189,7 @@ module Lain
         return false if pending.decided?
 
         answer = read_until_decided(pending)
-        pending.decide(affirmative?(answer), surface: SURFACE, reason: reason_in(answer))
+        pending.decide(affirmative?(answer), surface: answer.nil? ? FAULT_SURFACE : SURFACE, reason: reason_in(answer))
       end
 
       private
