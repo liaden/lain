@@ -1,6 +1,6 @@
 # QA round 25 fixes: containment that holds, a recovery that recovers, and calls that say why
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (1 card edits nvim Lua: T37)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -68,18 +68,30 @@ issue exits 1 (refusal site not found); inbox rows reading `0s`.
 
 The executor checks this before cutting any worktree:
 
-1. **The main checkout holds no other session's uncommitted `lib/` or `spec/` edits.** On 2026-10-17, while this plan
-   was written, a 2nd session had about 94 files modified in the main checkout (small rewrites such as
-   `client&.close` to `client.close`, and a `CONTENT_SHAPES` constant in `sensitivity/regions.rb`), among them
-   `frontend/input_pane.rb`, `frontend/input_pane/draft.rb`, `sensitivity/regions.rb`, `sensitivity.rb`,
-   `approval/judge.rb`, `approval/rule.rb`, `cli/up.rb`, `cli/epic_driver/issue_actor.rb`,
-   `provider/response_wal/reader.rb`, `isolation/working_branch.rb` and `isolation/verifier/command.rb`. If
-   `git status --porcelain lib spec` lists anything beyond the confinement plan's open card, ask the user whether to
-   wait for that session to commit. Never stash or commit another session's edits.
+1. **The main checkout holds no other session's uncommitted `lib/` or `spec/` edits.** The 94-file batch a 2nd
+   session held while this plan was written has landed as the simplification commits (`eed22aa8` to `8dc84539`).
+   2 plans are still in flight in other sessions: bash-confinement (its T24 uncommitted in the main checkout as
+   `tools/bash.rb`, `bash_spec.rb` and `toolset_build_spec.rb`) and idle compaction
+   (`planning/specs/idle-compaction.md`, T1 landed as `c6a3ab70`, T2a staged). If `git status --porcelain lib spec`
+   lists anything beyond those 2 plans' open cards, ask the user whether to wait for that session to commit. Never
+   stash or commit another session's edits.
 2. **Base SHA.** Cut every card's worktree from `main` as it stands after step 1, and record that SHA in the Execution
-   log. Line numbers in this plan are from `963d53b9`; an implementer re-reads each cited site before editing it.
+   log. Line numbers in this plan were re-checked at `c6a3ab70` (Grounding, "Re-checked"); an implementer re-reads
+   each cited site before editing it.
 3. **BC.** Read `planning/specs/bash-confinement.md`'s `status:` line. Cards depending on **BC** wait until it reads
    `done`. BC is a precondition, not a card.
+4. **Idle compaction.** Read `planning/specs/idle-compaction.md`'s Execution log. 6 cards here share files or behaviour
+   with its cards, and neither plan's graph says so. Run them in this order, and whichever lands second rebases onto
+   the other:
+
+   | this plan | idle compaction | shared | order |
+   |---|---|---|---|
+   | T14 | T2b | `compaction/source.rb`; a cut prepared at idle becomes the newest held cut, which is T14's handoff case | T14 first, or T2b states what `handoff` does after a prepared cut |
+   | T9 | T3 | `agent.rb` | either; rebase |
+   | T32 | T4 | `Backend#refuse_compaction_flags!` and its `compaction?` early return, `chat_launch.rb`, `backend_spec.rb`, `chat_launch_spec.rb`; T4 adds a 6th `CompactionProfile` member | T4 first; T32 builds profiles by keyword |
+   | T52 | T4 | `chat_launch.rb` beside `@typed_compaction` and `#compaction`, `MismatchNotices#call` | T4 first |
+   | T33 | T6, T7 | `Bench::Session::Recording` (member list and its explicit `initialize`), the loader's `Recording.new`, the `Variance` guards | T6 and T7 first; T33 copies T6's mixed-schedule guard |
+   | T60 | T8 | `planning/qa/scenarios/session-and-window.md` (T8: §7, §7a and a new idle section; T60: §9c) | T8 first |
 
 ## Grounding
 
@@ -107,6 +119,15 @@ Probed rather than read:
   (`web_fetch.rb:132`), `ToolGuard.detached`/`held_in`/`child_stack` (`tool_guard.rb:341,260,247`),
   `EpicQueue::Advances` (`epic_queue.rb:298`), `Variance#guard_compaction!` (`variance.rb:153`),
   `RunClock#record_input` (`run_clock.rb:76`), `WorkingBranch::TRUNK` (`working_branch.rb:22`).
+
+**Re-checked 2026-10-17 at `c6a3ab70`**, after 44 simplification commits and idle compaction's T1. 5 read-only passes
+re-read every card's citations. Every named reuse target above still sits at its cited line. No commit did a card's
+work. `6a73d39c` (the env-variable cleanup) changed the premise of T10, T12 and T56, and those cards say so. The rest
+were line drift, fixed in place. New helpers a card may reuse: `Tool::Result#text` (`6265bb59`), `Checkout#run` and
+`#run!` (`a4f5da45`), `Shell::Out.ok?` (`63c307e6`), `Journal.parse` (`b9b4fed6`), and the spec matchers
+`journal_records`, `be_deeply_frozen` and `have_same_digest_as`. A new `status_feed_spec` example stubs
+`File.binwrite`, not `File.write` (`8dc84539`). Don't quote CLAUDE.md's 21,730 example count: specs were deleted
+since.
 
 Files read: `lib/lain/cli/tool_guard.rb`, `lib/lain/bench/{cli,harness,spawn_seam,variance}.rb`,
 `lib/lain/bench/session{,/loader}.rb`, `lib/lain/arm/driver.rb`, `lib/lain/exec{,/local,/core,/docker}.rb`,
@@ -337,6 +358,13 @@ flowchart LR
   T40 --> T60
   T48 --> T60
   T57 --> T60
+  T8 --> T60
+  T10 --> T60
+  T12 --> T60
+  T13 --> T60
+  T35 --> T60
+  T50 --> T60
+  T54 --> T60
 ```
 
 Cards with no incoming edge can start at once: T1, T2, T4, T10, T11, T13 to T16, T19, T20, T23, T28 to T33, T35 to T43, T45, T46, T48, T49, T62. **BC** is a precondition node, not a card (Preflight, step 3).
@@ -347,9 +375,9 @@ Cards with no incoming edge can start at once: T1, T2, T4, T10, T11, T13 to T16,
 
 **Depends on:** none
 **Files:** `lib/lain/cli/tool_guard.rb`, `lib/lain/bench/cli.rb`, `spec/lain/cli/tool_guard_spec.rb`, `spec/lain/bench/harness_spec.rb`, `spec/lain/bench/cli_spec.rb`
-**Reuse:** `ToolGuard.held_in` and `child_stack` (`tool_guard.rb:247-263`), `Middleware::ConfineToScope` with `wording: LEASE` and `Reach`; `Sensitivity::Policy::Null#confined(roots:)` and `Confined#gates?`; the `Unasked` rung (`tool_guard.rb:~175`) as the deny precedent
+**Reuse:** `ToolGuard.held_in` and `child_stack` (`tool_guard.rb:247-263`), `Middleware::ConfineToScope` with `wording: LEASE` and `Reach`; `Sensitivity::Policy::Null#confined(roots:)` and `Confined#gates?`; the `Unasked` rung (`tool_guard.rb:198`, built at :359-360) as the deny precedent
 **Shared-file wiring:** none
-**Reachable from:** `exe/lain` `bench arms` to `Bench::CLI#arms_report` to `SpawnSeam` (`bench/spawn_seam.rb:99-150`) to `Harness::INSTRUMENTATION` (`bench/harness.rb:107-111`) to `ToolGuard.detached(journal:).call(worker_env)`, where `worker_env` comes from the worktree lease (`checkout:` set). Also `Consolidation#detached_guard`, `CLI::Improve#guard_stack`
+**Reachable from:** `exe/lain` `bench arms` to `Bench::CLI#arms_report` to `SpawnSeam` (`bench/spawn_seam.rb:99-150`) to `Harness::INSTRUMENTATION` (`bench/harness.rb:104-111`) to `ToolGuard.detached(journal:).call(worker_env)`, where `worker_env` comes from the worktree lease (`checkout:` set). Also `Consolidation#detached_guard`, `CLI::Improve#guard_stack`
 
 **Acceptance criteria**
 
@@ -480,7 +508,7 @@ end
 
 **Depends on:** T1, T2
 **Files:** `lib/lain/middleware/redact_secret_reads.rb`, `lib/lain/middleware/withhold_automatic_output.rb` (its class doc's ruling), `spec/lain/middleware/redact_secret_reads_spec.rb`, `spec/lain/middleware/withhold_automatic_output_spec.rb`, `spec/lain/cli/tool_guard_spec.rb`
-**Reuse:** `RedactSecretReads::Rows` (`:548-639`), `Sensitivity::Regions.detect`, `Sensitivity::Masking.render`, `Telemetry::SearchRedacted`'s shape; `Exec::ChildEnv::SECRET` (T2) for the literal backstop
+**Reuse:** `RedactSecretReads::Rows` (`:548-639`), `Sensitivity::Regions.detect`, `Sensitivity::Masking.render`, `Telemetry::SearchRedacted`'s shape; `Exec::ChildEnv::SECRET` (T2) for the literal backstop; `Tool::Result#text` to read a result's text
 **Shared-file wiring:** none
 **Reachable from:** `RedactSecretReads` is in every guard stack `ToolGuard` builds (`tool_guard.rb` `layered`), main agent and children
 
@@ -526,7 +554,7 @@ Spec file: `spec/lain/middleware/redact_secret_reads_spec.rb`, `spec/lain/cli/to
 **Files:** `lib/lain/provider/response_wal.rb`, `lib/lain/provider/response_wal/reader.rb`, `lib/lain/provider/spool/null.rb`, `lib/lain/provider/spool/rotating_frame.rb`, `lib/lain/provider/ollama/retry_tap.rb`, `lib/lain/provider/anthropic/retry_tap.rb`, `lib/lain/provider/ollama.rb`, `lib/lain/provider/anthropic.rb`, `lib/lain/cli/chronicle.rb`, `spec/lain/provider/response_wal_spec.rb`, `spec/lain/provider/ollama/retry_tap_spec.rb`, `spec/lain/provider/anthropic/retry_tap_spec.rb`, `spec/lain/cli/chronicle_spec.rb`
 **Reuse:** `ResponseWal#open_frame(request_digest:)` (`:174`), the frame header record (`:153-155`), `Reader::Entry`
 **Shared-file wiring:** none
-**Reachable from:** `CLI::Chronicle#spool` (`chronicle.rb:~123-131`) via `Wiring#spooled_provider` (`wiring.rb:758`) to `Backend#provider(spool:)` (`backend.rb:274-280`); each provider's retry tap opens the frame
+**Reachable from:** `CLI::Chronicle#spool` (`chronicle.rb:262`), whose `RelocatableSpool#open_frame` (`chronicle.rb:126`) also gains `wire:`, via `Wiring#spooled_provider` (`wiring.rb:758`) to `Backend#provider(spool:)` (`backend.rb:274-280`); each provider's retry tap opens the frame
 
 **Acceptance criteria**
 
@@ -629,11 +657,11 @@ Scenario: an incomplete frame is reported once
   And the 2nd resume prints neither the notice nor the open-file warning
 
 Scenario: a live writer's file is never closed
-  Given the file's writer is alive (the same liveness check open_notice uses, resume.rb:389-394, moved where salvage can call it)
+  Given the file's writer is alive (the same liveness check open_notice uses, resume.rb:390-394, moved where salvage can call it)
   Then nothing is appended
 
 Scenario: a fork never salvages
-  Then resume_spec's fork example (around line 790) passes unchanged
+  Then resume_spec's `describe "fork mode"` group (line 729) passes unchanged
 ```
 Spec file: `spec/lain/cli/resume_spec.rb`
 
@@ -644,7 +672,7 @@ Spec file: `spec/lain/cli/resume_spec.rb`
 
 **Depends on:** T4, T5
 **Files:** `lib/lain/provider/retry_narration.rb` (new), `lib/lain/provider/ollama/retry_tap.rb`, `lib/lain/provider/anthropic/retry_tap.rb`, `lib/lain/provider/anthropic.rb`, `spec/lain/provider/retry_narration_spec.rb` (new), `spec/lain/provider/ollama/retry_tap_spec.rb`, `spec/lain/provider/anthropic/retry_tap_spec.rb`
-**Reuse:** the Ollama tap's `@journal` (`ollama.rb:238`); `Anthropic#initialize`'s `journal:`; `spec/journal_routing_discipline_spec.rb`'s rule
+**Reuse:** the Ollama tap's `@journal` (`ollama.rb:234`), which already journals `AdmissionNarrowed` (`retry_tap.rb:191`); `Anthropic#initialize`'s `journal:`; `spec/journal_routing_discipline_spec.rb`'s rule
 **Shared-file wiring:** none
 **Reachable from:** `Backend#provider` passes `journal: run_journal` (`backend.rb:274-280`) to both providers, which pass it to their taps
 
@@ -704,6 +732,7 @@ Spec file: `spec/lain/provider/ollama/decoding_spec.rb`, `spec/lain/cli/repl/ask
 **Reuse:** `Agent#commit_and_account` (`agent.rb:566-578`); `Timeline#commit(meta:)`
 **Shared-file wiring:** none
 **Reachable from:** `Agent#transition` on a `:truncated` or `:context_full` response, in every agent the CLI builds
+**Order:** idle compaction's T3 also edits `agent.rb` (Preflight step 4)
 
 **Acceptance criteria**
 
@@ -735,14 +764,18 @@ Spec file: `spec/lain/agent_spec.rb`, `spec/lain/provider/ollama_streaming_spec.
 **Files:** `lib/lain/cli/backend/ollama_tier.rb`, `spec/lain/cli/backend/ollama_tier_spec.rb`
 **Reuse:** `Provider::Admission.local?`, `Admission::ENV_KEY`
 **Shared-file wiring:** none
-**Reachable from:** `OllamaTier#startup_notices`, built by `Backend` for `--provider ollama-cloud`
+**Reachable from:** `OllamaTier#startup_notices` (`ollama_tier.rb:172`), built by `Backend` for `--provider ollama-cloud`
+
+`6a73d39c` retired `LAIN_OLLAMA_CLOUD_CONCURRENCY`, so `width_notice` (`ollama_tier.rb:222-229`) already names
+`LAIN_PROVIDER_CONCURRENCY`. What remains: it reports the declared width while a loopback base is held to 1, and
+never says the base is loopback.
 
 **Acceptance criteria**
 
 ```gherkin
 Scenario: a loopback cloud base says why its width is 1
-  Given --provider ollama-cloud with base https://127.0.0.1:9443
-  Then the notice says the base is a loopback address held to 1 request, and names LAIN_PROVIDER_CONCURRENCY, not LAIN_OLLAMA_CLOUD_CONCURRENCY
+  Given --provider ollama-cloud with base https://127.0.0.1:9443 and LAIN_PROVIDER_CONCURRENCY=3
+  Then the notice says the base is a loopback address held to 1 request, not 3
 
 Scenario: plural
   Then a width of 1 reads "up to 1 cloud request at once"
@@ -780,7 +813,7 @@ Spec file: `spec/lain/cli/backend/window_book_spec.rb`
 
 **Depends on:** T2
 **Files:** `lib/lain/cli/pane_command.rb`, `spec/lain/cli/pane_command_spec.rb`
-**Reuse:** `RUNTIME_ENV` (`pane_command.rb:41`); the owners' constants for each name
+**Reuse:** `RUNTIME_ENV` (`pane_command.rb:37`) and `PANE_ENV`, which is now `EnvDefaults::READ` (5 flag-default names, `env_defaults.rb:42`); the owners' constants for each name. `LAIN_ENV_PASS` goes in `RUNTIME_ENV`, never in `READ`
 **Shared-file wiring:** none
 **Reachable from:** `CLI::Up` builds every pane through `PaneCommand.call`
 
@@ -796,7 +829,7 @@ Scenario: the human's pass list reaches the chat pane
   Then the chat pane's command exports it
 
 Scenario: no operator variable is forgotten again
-  Then a spec scanning lib/ and exe/ for LAIN_ literals finds each in PANE_ENV, RUNTIME_ENV or a named exclusion list (suite controls and LAIN_PREFLIGHT)
+  Then a spec scanning lib/ and exe/ for LAIN_ literals finds each in PANE_ENV, RUNTIME_ENV or a named exclusion list (suite controls, LAIN_PREFLIGHT, and EnvDefaults::RETIRED, whose 7 retired names are string literals)
 ```
 Spec file: `spec/lain/cli/pane_command_spec.rb`
 
@@ -830,9 +863,10 @@ Spec file: `spec/lain/config/middleware_spec.rb`
 
 **Depends on:** none
 **Files:** `lib/lain/compaction/source.rb`, `lib/lain/compaction/source/held_cut.rb`, `spec/lain/compaction/source_spec.rb`, `spec/lain/compaction/source/held_cut_spec.rb`
-**Reuse:** `Reporting#droppable?` (already "droppable past the held cut that a rewrite would shrink", `source.rb:389,857`)
+**Reuse:** `Reporting#droppable?` (already "droppable past the held cut that a rewrite would shrink", `source.rb:383-389`; `decide` records it at :857)
 **Shared-file wiring:** none
-**Reachable from:** `Agent#room_after` to `Compaction::Source#handoff` (`source.rb:528`)
+**Reachable from:** `Agent#room_after` (`agent.rb:689`) to `Compaction::Source#handoff` (`source.rb:528`, `stuck?` at :565)
+**Order:** before idle compaction's T2b (Preflight step 4). `source.rb` is near its 300-line `ClassLength`, a limit T2b also names
 
 **Acceptance criteria**
 
@@ -843,7 +877,7 @@ Scenario: a refusal after one cut, with turns droppable, compacts
   Then handoff returns false, and the next render advances the cut
 
 Scenario: a refusal with nothing droppable still hands off
-  Then the "handing off when no cut can make room" group (source_spec ~2861-3330) passes unchanged
+  Then the "handing off when no cut can make room" group (source_spec 2859 to the end of the file) passes unchanged
 ```
 Spec file: `spec/lain/compaction/source_spec.rb`, `spec/lain/compaction/source/held_cut_spec.rb`
 
@@ -930,7 +964,7 @@ Scenario: the HUD stays live after a sent line
   Then the screen reads "\r\e[Kfleet:2\n\e7\e[1A\r\e[Kfleet:3\n\e8"
 
 Scenario: the repaint guards hold
-  Then one repaint per drag, more than 1 HUD print, and no repaint when still all pass
+  Then "repaints once at the end of a drag, not once per size it passes through" and "repaints nothing while the geometry holds still" pass, and so does "keeps the HUD live below an answered line's echo, drawing it once and then rewriting it in place" (line 538; check it does not already cover the new HUD case)
 ```
 Spec file: `spec/lain/frontend/input_pane_spec.rb`
 
@@ -957,7 +991,7 @@ Scenario: a narrow pane still clamps
   Then the row is cut at 60
 
 Scenario: nvim's status view is unchanged
-  Then StatusView still clamps at 80
+  Then a new status_view_spec example pins StatusView's clamp at 80 (none exists today), and it passes before and after
 ```
 Spec file: `spec/lain/frontend/input_pane_spec.rb`, `spec/lain/status_feed/fleet_spec.rb`, `spec/lain/status_feed/reading_spec.rb`
 
@@ -996,7 +1030,7 @@ Spec file: `spec/lain/cli/repl_spec.rb`, `spec/lain/cli/conductor_spec.rb`
 
 **Depends on:** none
 **Files:** `lib/lain/approval/escalation.rb`, `lib/lain/approval/queue.rb`, `lib/lain/telemetry/approval_pending.rb`, `lib/lain/frontend/approval_policy.rb`, `lib/lain/frontend/neovim/approval_view.rb`, `lib/lain/cli/repl/approval_surfaces.rb`, `spec/lain/approval/escalation_spec.rb`, `spec/lain/approval/queue_spec.rb`, `spec/lain/telemetry/approval_pending_spec.rb`, `spec/lain/frontend/approval_policy_spec.rb`, `spec/lain/frontend/neovim/approval_view_spec.rb`, `spec/lain/cli/repl/approval_surfaces_spec.rb`
-**Reuse:** `Judged::Deferred` (`judged.rb:112`) and `judge_deferred?` as the pattern (it stays, reading the notes); `Queue#admit` (`queue.rb:457`); `ApprovalPolicy::JUDGE_DEFERRED`
+**Reuse:** `Judged::Deferred` (`judged.rb:119`) and `judge_deferred?` as the pattern (it stays, reading the notes); `Queue#admit` (`queue.rb:455`); `ApprovalPolicy::JUDGE_DEFERRED`
 **Shared-file wiring:** none
 **Reachable from:** `Escalation#rule` wraps the context it hands the bottom rung; `Queue#admit` reads it into `Pending`, built by `Switchboard` for every session
 
@@ -1217,7 +1251,7 @@ Spec file: `spec/lain/approval/queue_spec.rb`, `spec/lain/middleware/remembered_
 
 **Depends on:** T61
 **Files:** `lib/lain/approval/escalation.rb`, `spec/lain/approval/escalation_spec.rb`, `spec/lain/cli/tool_guard_spec.rb`
-**Reuse:** `Escalation::Bypass::TOLD` (`escalation.rb:722`); the human-facing advice already in `Bypass::REFUSED`
+**Reuse:** `Escalation::Bypass::TOLD` (`escalation.rb:721`); the human-facing advice already in `Bypass::REFUSED`
 **Shared-file wiring:** none
 **Reachable from:** `Switchboard` under `/mode bypass`
 
@@ -1232,7 +1266,7 @@ Scenario: the refusal says one thing
 Spec file: `spec/lain/approval/escalation_spec.rb`, `spec/lain/cli/tool_guard_spec.rb`
 
 **Stop and report if:**
-- `switchboard_spec.rb` or `subagent_gate_spec.rb` assert the mode-switch half on the model's text.
+- `spec/lain/cli/switchboard_spec.rb` or `spec/lain/tools/subagent_gate_spec.rb` assert the mode-switch half on the model's text.
 
 ### T27: Name the call, the time and the closer on approval lines          [risk: low]
 
@@ -1263,7 +1297,7 @@ Spec file: `spec/lain/frontend/approval_policy_spec.rb`, `spec/lain/frontend/tty
 
 **Depends on:** none
 **Files:** `lib/lain/frontend/tty.rb`, `spec/lain/frontend/tty_spec.rb`
-**Reuse:** `TTY::Inbox::GESTURE` (`tty.rb:712`), `Inbox#document_for` (`:844-847`)
+**Reuse:** `TTY::Inbox::GESTURE` (`tty.rb:721`), `Inbox#document_for` (`:853-856`)
 **Shared-file wiring:** none
 **Reachable from:** `TTY#render_asked` (`tty.rb:357`) in a plain chat; `render_arrival` and the `/inbox` drain in a cockpit
 
@@ -1280,13 +1314,13 @@ Scenario: a cockpit keeps both gestures
 Spec file: `spec/lain/frontend/tty_spec.rb`
 
 **Stop and report if:**
-- GESTURE's other 7 spec readers (`repl_spec`, `input_pane_spec`, `inbox_view_spec`, `annotate_spec`, `rpc_thread_spec`, `review_spec`, `survey_subdirectory_spec`) read the plain-chat text rather than the constant; they must stay green.
+- `tty_spec.rb:867`, the only spec that reads `Inbox::GESTURE`, goes red, or the constant has to go: it stays.
 
 ### T28: Tell the model a call stopped while parked never ran          [risk: medium]
 
 **Depends on:** none
 **Files:** `lib/lain/agent/tool_runner.rb`, `lib/lain/tool/cancellation.rb`, `lib/lain/telemetry/tool_cancelled.rb`, `spec/lain/agent/tool_runner_spec.rb`, `spec/lain/tool/cancellation_spec.rb`, `spec/lain/seams/tool_cancellation_spec.rb`, `spec/lain/telemetry/tool_cancelled_spec.rb`
-**Reuse:** `ToolRunner::Answers#dispatching` (`tool_runner.rb:73`), `partition` (`:95`), `Tool::Cancellation::NOTICES`
+**Reuse:** `ToolRunner::Answers#dispatching` (`tool_runner.rb:73`), `partition` (`:92`), `Tool::Cancellation::NOTICES`
 **Shared-file wiring:** none
 **Reachable from:** `Agent` builds `ToolRunner`; the gate tells the context a call passed it
 
@@ -1337,7 +1371,7 @@ Spec file: `spec/lain/role_spec.rb`, `spec/lain/prompt/slots_spec.rb`
 
 **Depends on:** none
 **Files:** `lib/lain/shell/named.rb`, `spec/lain/shell/named_spec.rb`
-**Reuse:** `Named::Walk#option_paths` and `#operand_paths` (`named.rb:793-815`); `FIND_EXPRESSION` (`:552`)
+**Reuse:** `Named::Walk#option_paths` and `#operand_paths` (`named.rb:793-815`); `FIND_EXPRESSION` (defined at `:308`)
 **Shared-file wiring:** none
 **Reachable from:** `Shell::Named.of`, read by `ConfineToScope`, `Escalation`, `Judged`, `Queue` and `Tools::Bash`
 
@@ -1395,6 +1429,7 @@ Spec file: `spec/lain/shell/executable/resolver_spec.rb`
 **Files:** `lib/lain/cli/backend.rb`, `lib/lain/cli/backend/ceiling.rb`, `lib/lain/compaction.rb`, `spec/lain/cli/chat_launch_spec.rb`, `spec/lain/cli/backend_spec.rb`, `spec/lain/compaction_spec.rb`
 **Reuse:** `Backend#refuse_compaction_flags!` and `#refuse_keep!` (`backend.rb:581-647`); `Backend::Ceiling`; `InvalidKeep`
 **Shared-file wiring:** none
+**Order:** after idle compaction's T4, which edits `refuse_compaction_flags!`, its `compaction?` early return and the same 2 specs, and adds a 6th `CompactionProfile` member (Preflight step 4). Build profile fixtures by keyword.
 **Reachable from:** `ChatLaunch#call` (`chat_launch.rb:114`) calls `backend.refuse_compaction_flags!` before the journal opens
 
 **Acceptance criteria**
@@ -1422,7 +1457,8 @@ Spec file: `spec/lain/cli/chat_launch_spec.rb`, `spec/lain/cli/backend_spec.rb`
 **Files:** `lib/lain/bench/variance.rb`, `lib/lain/bench/session.rb`, `lib/lain/bench/session/loader.rb`, `spec/lain/bench/variance_spec.rb`, `spec/lain/bench/session/loader_spec.rb`
 **Reuse:** `Variance#guard_compaction!` (`variance.rb:153`) and its spec at `variance_spec.rb:252-262`
 **Shared-file wiring:** none
-**Reachable from:** `lain bench variance` builds `Bench::Variance` over `Session::Loader` recordings
+**Reachable from:** `lain bench variance` builds `Bench::Variance` over `Session::Loader` recordings (`loader.rb:75`, the one lib `Recording.new`)
+**Order:** after idle compaction's T6 and T7, which add `schedule` and `compaction_tally` to `Recording` and a mixed-schedule guard beside `guard_compaction!` (Preflight step 4). `Recording` is a `Data.define` with an explicit `initialize` (`bench/session.rb:221-229`), so `arms:` goes in both.
 
 **Acceptance criteria**
 
@@ -1443,7 +1479,7 @@ Spec file: `spec/lain/bench/variance_spec.rb`
 
 **Depends on:** T1
 **Files:** `lib/lain/arm/driver.rb`, `lib/lain/telemetry/grade_record.rb`, `lib/lain/bench/cli.rb`, `spec/lain/arm/driver_spec.rb`, `spec/lain/telemetry/grade_record_spec.rb` (new), `spec/lain/bench/cli_spec.rb`
-**Reuse:** `Driver#fold` (`driver.rb:~255-262`), `Failed#row`, `Measured`
+**Reuse:** `Driver#fold` (`driver.rb:232-241`), `Failed#row`, `Measured`
 **Shared-file wiring:** none
 **Reachable from:** `Bench::CLI#arms_report` to `Arm::Driver`
 
@@ -1470,9 +1506,9 @@ Spec file: `spec/lain/arm/driver_spec.rb`, `spec/lain/bench/cli_spec.rb`
 
 **Depends on:** none
 **Files:** `lib/lain/cli/up.rb`, `exe/lain`, `spec/lain/cli/up_spec.rb`
-**Reuse:** `Tmux#argv` (`up.rb:265`); `Up.adopt_input` (`up.rb:1018`)
+**Reuse:** `Tmux#argv` (`up.rb:265`); `Up.adopt_input` (`up.rb:1016`); the dead-pane remedy at `up.rb:706`
 **Shared-file wiring:** none
-**Reachable from:** `exe/lain` `up` and `input`
+**Reachable from:** `exe/lain` `up` and `input` (`exe/lain:1255`)
 
 **Acceptance criteria**
 
@@ -1499,7 +1535,7 @@ Spec file: `spec/lain/cli/up_spec.rb`
 **Files:** `lib/lain/cli/epic_queue.rb`, `lib/lain/cli/epic_submit.rb`, `spec/lain/cli/epic_queue_spec.rb`, `spec/lain/cli/epic_submit_spec.rb`
 **Reuse:** `Approval::Gate::Policy::Boundary` (`gate/policy.rb:51-69`); `Epic::Stage#ensure_open!` (`epic/stage.rb:105-110`); `Epic::STAGES`
 **Shared-file wiring:** none
-**Reachable from:** `lain epic approve|deny` to `EpicQueue#drain` (`epic_queue.rb:128`); `lain epic submit` to `EpicSubmit#settled` (`epic_submit.rb:608`)
+**Reachable from:** `lain epic approve|deny` to `EpicQueue#drain` (`epic_queue.rb:128`); `lain epic submit` to `EpicSubmit#settled` (`epic_submit.rb:605`)
 
 **Acceptance criteria**
 
@@ -1653,7 +1689,7 @@ Spec file: `spec/lain/dsl_catalog_spec.rb`, `spec/lain/config/builder_spec.rb`
 
 **Depends on:** none
 **Files:** `lib/lain/tools/subagent/lineage.rb`, `spec/lain/tools/subagent/lineage_spec.rb`, `spec/lain/consolidation_spec.rb`
-**Reuse:** `Lineage#adopted` and `recorded?` (`lineage.rb:~175-181`)
+**Reuse:** `Lineage#next_adoption`, `#adopted` and `#recorded?` (`lineage.rb:177`, `:186`, `:197`)
 **Shared-file wiring:** none
 **Reachable from:** `Tools::Subagent` builds `Lineage#spawn` for every spawn
 
@@ -1676,9 +1712,9 @@ Spec file: `spec/lain/tools/subagent/lineage_spec.rb`, `spec/lain/consolidation_
 
 **Depends on:** none
 **Files:** `lib/lain/isolation/checkout.rb`, `lib/lain/cli/worktrees.rb`, `spec/lain/isolation/checkout_spec.rb`, `spec/lain/isolation/gc_spec.rb`
-**Reuse:** `Isolation::Gc#initialize(trunk:)`; `WorkingBranch::TRUNK` as the last fallback
+**Reuse:** `Isolation::Gc#initialize(trunk:)`; `WorkingBranch::TRUNK` as the last fallback; `Checkout#run` and `Shell::Out.ok?` for the probe
 **Shared-file wiring:** none
-**Reachable from:** `CLI::Worktrees#reaper` (`worktrees.rb:75-78`) builds `Gc`
+**Reachable from:** `CLI::Worktrees#reaper` (`worktrees.rb:73-76`) builds `Gc`
 
 **Acceptance criteria**
 
@@ -1715,7 +1751,7 @@ Scenario: the refusal names the real home
 Spec file: `spec/lain/middleware/sensitivity_spec.rb`, `spec/lain/sensitivity/policy_spec.rb`
 
 **Stop and report if:**
-- `Escalation`'s use of the same explanation (`escalation.rb:652,661`) renders it where no home is known.
+- `Escalation`'s use of the same explanation (`approval/escalation.rb:652,661`) renders it where no home is known.
 
 ### T45: Stop shipping lain's own paths in skill templates          [risk: low]
 
@@ -1829,7 +1865,7 @@ Spec file: `spec/lain/tools/web_fetch_spec.rb`
 
 **Depends on:** BC, T20
 **Files:** `lib/lain/approval/judged.rb`, `lib/lain/telemetry/judge_approved.rb`, `lib/lain/frontend/decorators/judge_approved.rb`, `spec/lain/approval/judged_spec.rb`, `spec/lain/frontend/decorators/judge_approved_spec.rb`
-**Reuse:** `Judged#approved`'s `show` (`judged.rb:165`); `Judged::Deferred`; `Escalation::Noted` (T20)
+**Reuse:** `Judged#approved`'s `show` (called at `judged.rb:166`, defined at `:170`); `Judged::Deferred`; `Escalation::Noted` (T20)
 **Shared-file wiring:** none
 **Reachable from:** `Switchboard#judged` builds `Approval::Judged` under `auto`
 
@@ -1885,7 +1921,8 @@ Spec file: `spec/lain/approval/judged_spec.rb`, `spec/lain/approval/judge_spec.r
 **Files:** `lib/lain/cli/arms.rb`, `lib/lain/cli/chat_launch.rb`, `lib/lain/cli/resume/mismatch_notices.rb`, `lib/lain/cli/wiring.rb`, `spec/lain/cli/arms_spec.rb`, `spec/lain/cli/chat_launch_spec.rb`, `spec/lain/cli/resume/mismatch_notices_spec.rb` (new)
 **Reuse:** `CompactionProfile`'s typed-over-recorded shape and `from_header`; `MismatchNotices#compaction_notices`
 **Shared-file wiring:** none
-**Reachable from:** `ChatLaunch#converse` passes `arms:` to the `Wiring` factory; `--resume` and `lain fork` share `ChatLaunch#recorded_header`
+**Reachable from:** today `Wiring#initialize` builds `CLI::Arms.from(options)` itself (`wiring.rb:264`) and `ChatLaunch#converse` (`chat_launch.rb:423`) passes no arms. This card moves that construction into `ChatLaunch`, typed over recorded like `#compaction` (`:238`), and passes `arms:` to the `Wiring` factory. `MismatchNotices#call(profile:, model:, compaction:)` (`mismatch_notices.rb:46`) gains `arms:`, and its caller (`chat_launch.rb:377-381`) passes it. `--resume` and `lain fork` share `ChatLaunch#recorded_header` (`:387`)
+**Order:** after idle compaction's T4 (Preflight step 4). A header with no `arms` key means off; it does not take T4's "absent means turn" default
 
 **Acceptance criteria**
 
@@ -1908,7 +1945,7 @@ Spec file: `spec/lain/cli/arms_spec.rb`, `spec/lain/cli/chat_launch_spec.rb`, `s
 
 **Depends on:** T52, T13, T5
 **Files:** `lib/lain/config.rb`, `lib/lain/config/middleware.rb`, `lib/lain/session_record.rb`, `lib/lain/session_record/scribe.rb`, `lib/lain/cli/chronicle.rb`, `lib/lain/cli/wiring.rb`, `spec/lain/session_record_spec.rb`, `spec/lain/config/middleware_spec.rb`, `spec/lain/cli/chronicle_spec.rb`
-**Reuse:** `Project::Trust#digest` (`project/trust.rb:166-174`); `SessionRecord.header`'s `arms_section` idiom
+**Reuse:** `Project::Trust#digest` (`project/trust.rb:159-166`); `SessionRecord.header`'s `arms_section` idiom
 **Shared-file wiring:** none
 **Reachable from:** `Wiring` (`wiring.rb:352`) passes `middleware: backend.middleware.to_header` to `chronicle.start`
 
@@ -1931,9 +1968,9 @@ Spec file: `spec/lain/session_record_spec.rb`, `spec/lain/config/middleware_spec
 
 **Depends on:** BC
 **Files:** `lib/lain/tools/bash.rb`, `lib/lain/shell/verdict.rb`, `spec/lain/tools/bash_spec.rb`, `spec/lain/shell/verdict_spec.rb`
-**Reuse:** `Shell::Parse`'s stages; `Named::Walk`'s per-stage directory (`named.rb:624-711`); `RunFiles`; `Executable.unresolved`
+**Reuse:** `Shell::Parse`'s stages; `Named::Walk`'s per-stage directory (`shell/named.rb:624-711`); `RunFiles`; `Executable.unresolved`
 **Shared-file wiring:** none
-**Reachable from:** `Tools::Bash#perform` to `#resolve` (`bash.rb:348`), built by `BaseTools.build`
+**Reachable from:** `Tools::Bash#perform` to `#resolve` (`bash.rb:348` with confinement T24 applied, 338 without), built by `BaseTools.build`
 
 **Acceptance criteria**
 
@@ -1955,7 +1992,8 @@ Scenario: builtins are not resolved
 Spec file: `spec/lain/tools/bash_spec.rb`, `spec/lain/shell/verdict_spec.rb`
 
 **Stop and report if:**
-- `bash_spec.rb:1338-1348` (one unresolved entry for an abstained command) is not the only pair that flips.
+- `bash_spec.rb:1338-1348` (one unresolved entry for an abstained command; 1286-1292 without confinement T24) is not the only pair that flips.
+- Confinement T24 hands `journal_resolution`'s stages to `Confine::Request` as `executables:`, so parsed stages reach the sandbox and the judge too. Nothing in confinement T25 or T27 to T30 may treat a `basis: "parsed"` stage as a resolved program; if one does, report it.
 - The judge facts (confinement T27) read `exec_resolution`: the `basis` field must keep them from treating a parsed stage as what ran.
 
 ### T55: Journal a docker call's binaries as unresolved, and say why          [risk: medium]
@@ -1989,7 +2027,7 @@ Spec file: `spec/lain/shell/executable/resolver_spec.rb`, `spec/lain/cli/wiring_
 **Files:** `lib/lain/config/builder.rb`, `lib/lain/config.rb`, `lib/lain/exec/child_env.rb`, `lib/lain/exec/local.rb`, `lib/lain/exec/docker.rb`, `lib/lain/cli/wiring/toolset_build.rb`, `spec/lain/config/builder_spec.rb`, `spec/lain/exec/child_env_spec.rb`, `spec/lain/cli/wiring/toolset_build_spec.rb`
 **Reuse:** `Exec::ChildEnv.new(pass:)` (T2); `ToolsetBuild`'s exec construction (`toolset_build.rb:202-209`)
 **Shared-file wiring:** none
-**Reachable from:** `ToolsetBuild` builds `Exec::Local`/`Exec::Docker` with `child_env: ChildEnv.new(pass: config.env_pass + LAIN_ENV_PASS)`
+**Reachable from:** `ToolsetBuild` builds `Exec::Local`/`Exec::Docker` with `child_env: ChildEnv.new(pass: config.env_pass + LAIN_ENV_PASS)`. `LAIN_ENV_PASS` reaches a pane through `PaneCommand::RUNTIME_ENV` (T12); it is not an `EnvDefaults::READ` name
 
 **Acceptance criteria**
 
@@ -2058,7 +2096,7 @@ Spec file: `spec/lain/cli/wiring_spec.rb`, `spec/lain/cli/isolation_backend_spec
 
 **Depends on:** BC
 **Files:** `lib/lain/shell/executable/fresh.rb`, `lib/lain/cli/wiring/observers.rb`, `spec/lain/shell/executable/fresh_spec.rb`, `spec/lain/cli/wiring/observers_spec.rb`
-**Reuse:** `Fresh.unknown`, `Fresh#degraded?`
+**Reuse:** `Fresh.unknown` (`fresh.rb:57`) and its private `@degraded`, which this card exposes as a new `Fresh#degraded?`; `Journal::Line.classify` (`a0d117f1`) if a torn tail must be told from damage
 **Shared-file wiring:** none
 **Reachable from:** `CLI::Wiring::Observers.register` builds `Fresh.for_lineage`
 
@@ -2079,29 +2117,49 @@ Spec file: `spec/lain/shell/executable/fresh_spec.rb`, `spec/lain/cli/wiring/obs
 
 ### T60: Update the QA scenarios the fixes changed          [risk: low]
 
-**Depends on:** BC, T7, T9, T11, T14, T16, T21, T23, T27, T29, T30, T32, T36, T37, T38, T39, T40, T48, T57
-**Files:** `planning/qa/scenarios/cockpit-surfaces.md`, `planning/qa/scenarios/failure-injection.md`, `planning/qa/scenarios/ollama-cloud-arm.md`, `planning/qa/scenarios/prompt-slots-and-roles.md`, `planning/qa/scenarios/secret-boundary.md`, `planning/qa/scenarios/bench-arms.md`, `planning/qa/scenarios/session-and-window.md`, `planning/qa/scenarios/shell-term-approval.md`, `planning/qa/scenarios/epic-tier.md`, `planning/qa/scenarios/changeset-review.md`
+**Depends on:** BC, T7, T8, T9, T10, T11, T12, T13, T14, T16, T21, T23, T27, T29, T30, T32, T35, T36, T37, T38, T39, T40, T48, T50, T54, T57; idle compaction's T8 (`session-and-window.md`)
+**Files:** `planning/qa/README.md`, `planning/qa/method.md`, and in `planning/qa/scenarios/`: `cockpit-surfaces.md`,
+`failure-injection.md`, `ollama-cloud-arm.md`, `prompt-slots-and-roles.md`, `secret-boundary.md`, `bench-arms.md`,
+`session-and-window.md`, `shell-term-approval.md`, `epic-tier.md`, `changeset-review.md`, `greenfield-epic.md`,
+`rails-blog.md`, `config-middleware.md`, `rust-cli.md`
 **Reuse:** each card's acceptance criteria
 **Shared-file wiring:** `ROADMAP.md` item 61 marked done
 **Reachable from:** n/a (docs)
 
+Round 25's close-out wrote notes into the scenarios, uncommitted in the main checkout when this plan was re-checked.
+Several read "awaiting a ruling" for findings the Rulings section has since ruled. This card turns those notes into
+the ruled behaviour, and turns each note on a fixed finding into a check that the fix holds. It edits notes that are
+already there rather than adding a second text beside them.
+
 **Acceptance criteria**
 
 ```gherkin
-Scenario: no scenario expects the old behaviour
-  Then cockpit-surfaces §0 check 16 has no "FAILS as written" note
-  And failure-injection §1b says a severed reply is committed, marked, and the model told
-  And ollama-cloud-arm §6b counts provider_retry records in the journal
+Scenario: no scenario expects the old behaviour or awaits a ruling made here
+  Then cockpit-surfaces §0 check 16 has no "FAILS as written" note, and says Ctrl-C over a draft discards it and sends nothing
+  And method.md and README.md no longer warn against Ctrl-C over a draft (b25-8)
+  And failure-injection's note under counts_absent (find it by text: it is not under §1b) says a severed reply is committed, marked, and the model told
+  And ollama-cloud-arm §6b counts provider_retry records in the journal, not at the stub
+  And ollama-cloud-arm's width notes say a loopback base is held to 1 (T10)
   And prompt-slots-and-roles §5c says a project's system.md never reaches an approval role
-  And secret-boundary drops the g25-1 note and adds a bash-output masking check
-  And bench-arms adds the launch repo's git status and a parent sentinel after each run
-  And each scenario touched names round 26 as the re-check
+  And secret-boundary drops the g25-1 hedge on the password: ${DB_PASS} row and adds a bash-output masking check
+  And bench-arms keeps its launch-repo git status and parent sentinel check and names l25-1 as fixed
+
+Scenario: each note on a fixed finding becomes a check
+  Then greenfield-epic (k25-1, k25-3), rails-blog (c25-1, c25-4), config-middleware (j25-3), rust-cli and shell-term-approval (a25-3, e25-1), epic-tier and changeset-review (h25-1, h25-10), cockpit-surfaces (b25-3, b25-5) and session-and-window §9c (resume keeps the arms) each state the fixed behaviour
+
+Scenario: no scenario names a retired variable
+  Then no scenario names LAIN_OLLAMA_CLOUD_CONCURRENCY (ollama-cloud-arm, greenfield-epic) or LAIN_MAX_TOKENS (session-and-window), all retired by 6a73d39c
+
+Scenario: the re-check is named
+  Then each scenario touched names round 26 as the re-check
 ```
 Spec file: none (docs).
 
 **Stop and report if:**
-- A scenario section depends on a card that did not land: leave it and list it.
-- Any scenario file is modified and uncommitted in the main checkout (round 25's own corrections, or confinement T32's `secret-boundary.md` and `bash-confinement.md`): it waits until those are committed.
+- A scenario section depends on a card that did not land: leave its note as it is and list it.
+- Any scenario file is modified and uncommitted in the main checkout (round 25's close-out notes, confinement T32's
+  `secret-boundary.md`, idle compaction T8's `session-and-window.md`): it waits until those are committed. On
+  2026-10-17 this held for every file above, so the close-out notes must be committed before this card starts.
 
 ## Integration checks
 
@@ -2123,3 +2181,23 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   - a25-1 (confinement's cards): `--confine reader` runs bwrap; `--tripwire observe` writes a `tripwire` record.
 
 ## Execution log
+
+### Run 1, 2026-10-17
+
+- Base: `main` at `HEAD` when the run started (`1c37a9d5`), not the plan's re-check SHA `c6a3ab70`. Each worktree is
+  cut from the then-current `HEAD`. Plan committed on top of it before the first cut.
+- Preflight: `git status --porcelain lib spec` lists only confinement T24 (`tools/bash.rb`, `bash_spec.rb`,
+  `toolset_build_spec.rb`). Idle compaction is `status: done`, so every row of Preflight step 4 has its other side
+  landed. T14 lands after idle compaction's T2b, so T14 states what `handoff` does after a prepared cut.
+  bash-confinement reads `status: in-progress`: T50 to T59 wait on BC. T60 also waits on the uncommitted scenario
+  notes.
+- `git worktree list` at start: main `1c37a9d5`; `tmp/worktrees/T24` and `tmp/worktrees/T27` (`card/T24`, `card/T27`,
+  the confinement plan's); `tmp/worktrees/hn-2026-10-16`; `~/tmp/lain-qa-2026-10-08-tree` (detached). Branches also
+  `flake/review`, `spike/combined`, `spike/combined2`. This run names its worktrees `tmp/worktrees/r25-T<id>` and
+  branches `card/r25-T<id>` so they cannot collide with the confinement plan's `card/T24` and `card/T27`.
+- Hooks: a commit touching Ruby or Rust runs `bundle exec rake compile check` (rubocop on the whole repo plus
+  `rake pspec`, about 60 to 90s), `yard-lint --staged`, the whitespace and EOF fixers; a staged plan doc runs
+  `bin/lint-gherkin-docs <file>`; `bin/lint-commit-msg` runs on the message (subject at most 72 chars, no period,
+  no dashes, no trailers). Agent checks on their own paths: `bundle exec rspec <files>`,
+  `bundle exec rubocop <files>`, `bundle exec yard-lint <files>`. The suite cannot run beside other tests (`TMPDIR`
+  is shared); each worktree gets `TMPDIR=$HOME/tmp/lain/r25-T<id>`. No path needs user approval.
