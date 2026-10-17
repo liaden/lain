@@ -449,6 +449,57 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
     end
 
+    context "when a credential line names where the secret is read from" do
+      [
+        "password: ${DB_PASS}",
+        'token = ENV.fetch("GITHUB_TOKEN")',
+        'password: ENV["X_PASS"]',
+        "password: ${{ secrets.DB_PASS }}",
+        "password: $DB_PASS",
+        '{"password": "${{ secrets.DB_PASS }}"}',
+        "password: <%= ENV['X_PASS'] %>",
+        "#   password: Rails.application.credentials.dig(:smtp, :password),"
+      ].each do |line|
+        it "reports nothing for #{line}" do
+          expect(detect(line)).to be_empty
+        end
+      end
+
+      [
+        ["DB_PASSWORD=${DB_PASSWORD:-hunter2pass}", "hunter2pass"],
+        ["password: $hunter2pass", "hunter2pass"],
+        ["DB_PASSWORD=$ecretHunter2", "ecretHunter2"],
+        ["password: ENV[hunter2pass", "hunter2pass"],
+        ["password: <%hunter2pass", "hunter2pass"],
+        ["password: ${DB_PASS}hunter2pass", "hunter2pass"],
+        ['{"password": "$hunter2pass"}', "hunter2pass"],
+        ['{"password": "${X:-hunter2pass}"}', "hunter2pass"],
+        ["password: ENV[hunter2pass]", "ENV[hunter2pass]"],
+        ["password: ENV[:hunter2pass]", "ENV[:hunter2pass]"],
+        [%q(password: ENV['hunter2pass"]), %q(ENV['hunter2pass"])],
+        ["password: Rails.application.credentials.dig(:smtp,hunter2pass)", "hunter2pass"],
+        ["password: Rails.application.credentials.hunter2pass", "hunter2pass"]
+      ].each do |line, secret|
+        it "still masks the secret in #{line}" do
+          expect(detect(line).map(&:bytes).join).to include(secret)
+        end
+      end
+
+      # Accepted: `$DB_PASS` is the common shape, so a dull all-caps value after `$` goes unmasked.
+      it "accepts the miss on a low-entropy all-caps value after a dollar sign" do
+        expect(detect("password: $HUNTERTWOPASS")).to be_empty
+      end
+
+      it "still masks a real value in a comment" do
+        expect(detect("# password: hunter2pass").map(&:bytes)).to eq(["hunter2pass"])
+      end
+
+      it "still masks a real token inside a reference" do
+        token = "ghp_#{"aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gH3jK5"[0, 36]}"
+        expect(detect("password: ${#{token}}").map(&:bytes).join).to include(token)
+      end
+    end
+
     # No clean regex tells `-pager` from `-ppager`, and a false mask costs one
     # release decision; these pin the accepted cost.
     context "when a word merely looks like a value" do

@@ -136,9 +136,17 @@ module Lain
         "bearer header" => %r{\bAuthorization:[ \t]*Bearer[ \t]+(?<value>[A-Za-z0-9._~+/=-]{8,})}i
       }.freeze
 
-      # A reference or template (`${X}`, `<%= %>`) is where a secret is read
-      # FROM, so masking it hides a name and protects nothing.
-      PLACEHOLDER_VALUE = /\A[$<{]/
+      # A reference or template is where a secret is read FROM, so masking it hides
+      # a name and protects nothing. Whole values only: a prefix match would pass
+      # `${X:-hunter2pass}` or `$hunter2pass`, which carry the secret themselves.
+      # `$UPPER_NAME` is the common shape, so a dull all-caps value after `$` is an accepted miss.
+      REFERENCE_VALUE = /\A(?:
+        \$\{[A-Za-z_]\w*\}
+        | \$\{\{\s*[\w.]+\s*\}\}
+        | \$[A-Z_][A-Z0-9_]*
+        | ENV(?:\[\s*(?:"\w+"|'\w+')\s*\]|\.fetch\(\s*(?:"\w+"|'\w+')\s*\))
+        | Rails\.application\.credentials\.dig\((?:\s*:\w+\s*,?)*\)?
+      )\z/x
       REFERENCE_CHECKED = ["quoted password key", "suffixed password key", "url credentials"].freeze
 
       CONTENT_SHAPES = CredentialPatterns.for(:content).merge(PASSWORD_SHAPES).freeze
@@ -239,7 +247,7 @@ module Lain
           assignment = ASSIGNMENT.match(match[0])
           return span(match.begin(0), match[0], name, :pattern) unless assignment
 
-          return nil unless qualifies?(name, assignment[1], assignment[2])
+          return nil if reference?(assignment[2]) || !qualifies?(name, assignment[1], assignment[2])
 
           value_span(match, assignment, name)
         end
@@ -250,7 +258,9 @@ module Lain
           span(match.begin(:value), match[:value], name, :pattern)
         end
 
-        def real_value?(value) = !value.match?(PLACEHOLDER_VALUE) && substantial?(value)
+        def reference?(value) = unquote(value).match?(REFERENCE_VALUE)
+
+        def real_value?(value) = !reference?(value) && substantial?(value)
 
         # The emitted span is the UNQUOTED value. Quotes are the file's syntax,
         # not the secret: masking a span that carries its own delimiters would
