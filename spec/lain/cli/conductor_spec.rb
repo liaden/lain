@@ -609,6 +609,28 @@ RSpec.describe Lain::CLI::Conductor do
       signals.uninstall
     end
 
+    it "records input when a human> answer is read" do
+      run_clock = instance_double(Lain::RunClock, record_input: nil)
+      conductor = build_with_run_clock(run_clock:)
+      human_typing("postgres")
+
+      Sync { conductor.read_reply("human> ") }
+
+      expect(run_clock).to have_received(:record_input)
+    end
+
+    it "does not record an approval answer" do
+      run_clock = instance_double(Lain::RunClock, record_input: nil)
+      conductor = build_with_run_clock(run_clock:)
+      human_typing("y")
+      asked = Lain::Frontend::ApprovalPolicy::Asked.new("[y/N] ",
+                                                        instance_double(Lain::Approval::Queue::Pending, drawn: nil))
+
+      Sync { conductor.read_reply(asked) }
+
+      expect(run_clock).not_to have_received(:record_input)
+    end
+
     it "answering a prompt resets a REAL RunClock's idle measure (the AC, end to end)" do
       now = 1000.0
       run_clock = Lain::RunClock.new(clock: -> { now })

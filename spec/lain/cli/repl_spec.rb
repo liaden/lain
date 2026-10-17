@@ -834,12 +834,22 @@ RSpec.describe Lain::CLI::Repl do
       expect(tty).not_to have_received(:render_prompt_echo)
     end
 
-    it "does not echo a held line, though it dispatches" do
+    it "echoes a held line before it dispatches" do
+      order = []
       allow(replies).to receive(:take_held).and_return("held one", nil)
+      allow(tty).to receive(:render_prompt_echo) { |text| order << [:echo, text] }
+      allow(commands).to receive(:dispatch) { |text| order << [:dispatch, text] }
 
       repl(reading, echo_input: true).converse(first_prompt: "seed")
 
-      expect(dispatched).to eq(["seed", "held one"])
+      expect(order).to eq([[:dispatch, "seed"], [:echo, "held one"], [:dispatch, "held one"]])
+    end
+
+    it "does not echo a held line when echo is off" do
+      allow(replies).to receive(:take_held).and_return("held one", nil)
+
+      repl(reading).converse(first_prompt: "seed")
+
       expect(tty).not_to have_received(:render_prompt_echo)
     end
 

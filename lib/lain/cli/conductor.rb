@@ -233,7 +233,13 @@ module Lain
       #
       # The prompt is an ANSWER on the rail: what the human typed before it was
       # drawn is held, never taken as the answer to it.
-      def read_reply(text) = aside_of_countdown(answer_kind(text), text)
+      #
+      # Only a human talking to the model is activity: an approval answer is
+      # operator bookkeeping and must not reset the idle clock.
+      def read_reply(text)
+        kind = answer_kind(text)
+        aside_of_countdown(kind, text).tap { |line| @run_clock.record_input if line && kind == :human }
+      end
 
       # The chat's `command>` read, which answers nothing: what the human typed
       # ahead of it is read AT it, because a `/approve` typed a moment before

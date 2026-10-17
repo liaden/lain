@@ -206,7 +206,12 @@ module Lain
       # reads typeahead as the line it is and lets the human still edit it.
       def held_line
         @conductor.gather_typed_ahead if @goal_driver.active?
-        @replies.take_held
+        echoed(@replies.take_held)
+      end
+
+      def echoed(line)
+        @tty.render_prompt_echo(line) if @echo_input && line
+        line
       end
 
       # Whether any line is coming: not once the conductor has closed the
