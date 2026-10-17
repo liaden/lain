@@ -1222,6 +1222,112 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     end
   end
 
+  # A command's output has no file to key a release on, so its regions are
+  # masked on every call, whoever approved it, and nothing parks.
+  describe "a bash result" do
+    subject(:middleware) { described_class.new(ledger:, queue:, journal:, environment:) }
+
+    let(:token) { "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5" }
+    let(:environment) { {} }
+
+    def bash(command = nil, tool: Lain::Tools::Bash.new)
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_bash", name: "bash", input: { "command" => command })
+      Sync { dispatch(call, tool:) }.fetch(:result)
+    end
+
+    it "masks a token in the output, says so in a trailer, and parks nothing" do
+      result = bash("echo #{token}")
+
+      expect(result).to have_attributes(is_error: false)
+      expect(result.content).to include("--- stdout ---\n<redacted:1>\n")
+      expect(result.content.lines.last).to include("1 region was masked")
+      expect(result.content).not_to include(token)
+      expect(queue.to_a).to be_empty
+    end
+
+    it "masks a token a failed command's report quotes, and keeps it failed" do
+      result = bash(tool: ->(_input, _invocation) { Lain::Tool::Result.error("command timed out after 1s: #{token}") })
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to start_with("command timed out after 1s: <redacted:1>")
+    end
+
+    describe "a session secret no pattern matches" do
+      let(:value) { "abc123lowentropyvalue" }
+      let(:environment) { { "OLLAMA_API_KEY" => value } }
+
+      it "masks the value of a secret-named variable" do
+        expect(Lain::Sensitivity::Regions.detect("#{value}\n")).to be_empty
+
+        result = bash("echo #{value}")
+
+        expect(result.content).to include("--- stdout ---\n<redacted:1>\n")
+        expect(result.content).not_to include(value)
+      end
+    end
+
+    it "counts every region in the trailer" do
+      result = bash("echo #{token}; echo #{token.reverse}")
+
+      expect(result.content).to include("<redacted:1>\n<redacted:2>\n")
+      expect(result.content.lines.last).to include("2 regions were masked")
+    end
+
+    describe "a secret-named value the call's worker lends" do
+      let(:value) { "lowentropy-lent-1" }
+      let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: { "DEPLOY_TOKEN" => value })) }
+
+      it "masks it, though the process environment does not hold it" do
+        result = bash("printenv DEPLOY_TOKEN")
+
+        expect(result.content).to include("--- stdout ---\n<redacted:1>\n")
+        expect(result.content).not_to include(value)
+      end
+    end
+
+    describe "a call with no session" do
+      let(:session) { nil }
+
+      it "masks what the process environment names" do
+        expect(bash("echo #{token}").content).to include("--- stdout ---\n<redacted:1>\n")
+      end
+    end
+
+    describe "a short secret-named value" do
+      let(:environment) { { "DEBUG_TOKEN" => "1", "USE_SECRET" => "true", "SHORT_TOKEN" => "seven77" } }
+
+      it "is not a mask" do
+        expect(bash("echo 1 true seven77").content)
+          .to eq("exit status: 0\n--- stdout ---\n1 true seven77\n--- stderr ---\n")
+      end
+    end
+
+    describe "a long value under a name that is not secret-shaped" do
+      let(:environment) { { "DEPLOY_REGION" => "eu-west-1-zone" } }
+
+      it "is not a mask" do
+        expect(bash("echo eu-west-1-zone").content)
+          .to eq("exit status: 0\n--- stdout ---\neu-west-1-zone\n--- stderr ---\n")
+      end
+    end
+
+    describe "an environment that cannot be read" do
+      let(:environment) { Object.new.tap { |env| def env.to_h = raise(IOError, "environ unreadable") } }
+
+      it "withholds the result with a reason, never the raw bytes" do
+        result = bash("echo #{token}")
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include("bash could not be checked", "nothing was returned")
+        expect(result.content).not_to include(token)
+      end
+    end
+
+    it "leaves clean output byte-identical, with no trailer" do
+      expect(bash("echo hello").content).to eq("exit status: 0\n--- stdout ---\nhello\n--- stderr ---\n")
+    end
+  end
+
   describe "the absolute-path contract the ledger enforces" do
     it "resolves a relative path against the reading worker's cwd, never the process's" do
       write("notes.txt", one_secret)

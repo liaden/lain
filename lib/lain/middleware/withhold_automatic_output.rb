@@ -13,14 +13,15 @@ module Lain
     # prints: `cat notes.txt` over a pasted key is an ordinary path, and a rule
     # or `bypass` approval runs it with no human in the loop. So the output is
     # scanned on the way OUT, and only when the call ran under an automatic
-    # allow -- a human who approved the command saw what it would do and gets
-    # its bytes, and a refusal, a denied path or a closed window ran nothing,
-    # so what answers it is the gate's own sentence rather than output. Such a
+    # allow -- a refusal, a denied path or a closed window ran nothing, so what
+    # answers it is the gate's own sentence rather than output. Such a
     # sentence names the path it refused, and a long one can scan as a token.
     #
-    # It withholds rather than masks. A mask needs a release key a human can
-    # answer, and a command's output has no path to key one on; the move it
-    # names instead is a retry, which the bar sends to a human.
+    # A human-approved call is not withheld, but its bytes do not reach the
+    # model raw either: {RedactSecretReads} runs outside this layer and masks
+    # every `bash` result, whoever approved it, with no release. This layer
+    # withholds rather than masks because it also bars the command, so the
+    # retry it names goes to a human.
     #
     # == What it is not
     #

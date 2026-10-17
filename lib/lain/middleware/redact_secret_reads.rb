@@ -60,17 +60,36 @@ module Lain
     # unreadable with no move. A megabyte costs ~0.2s once, before anything parks.
     # If a cap is ever taken it must come back through `complete: false`, or every
     # read past it forgets its releases and re-prompts forever.
+    #
+    # == A command's output masks on every call, with no release
+    #
+    # A `bash` result names no file to key a release on, so its regions mask
+    # whoever approved the call and nothing parks. The detector misses a secret
+    # with no recognisable shape, so the value of every secret-named variable in
+    # the process environment is masked wherever it appears too. The live pane
+    # still streams the raw bytes as the command runs: that copy is the human's,
+    # and what is masked is the model's and the record's.
     class RedactSecretReads < Base
       # Exact membership, {RefuseSecretWrites::GUARDED_TOOLS}' rule: a tool that
       # returns file bytes under some other name is unguarded by design until it
-      # earns a place here. `bash` reading a file with `cat` is deliberately NOT
-      # in this set -- that is the path boundary's job.
+      # earns a place here. `bash` is masked as {COMMAND_TOOLS} and never parks:
+      # what file `cat` read is the path boundary's question.
       GUARDED_TOOLS = Set["read_file"].freeze
+
+      COMMAND_TOOLS = Set["bash"].freeze
+
+      # Higher than the floor {Rows::Row} seeks a recurrence at, because an
+      # environment value has no detector behind it: a 6 or 7 byte value such
+      # as "staging" recurs in ordinary output, and the placeholders would
+      # spell it back out.
+      LITERAL_FLOOR = 8
 
       # A row is a partial view, so its regions are masked and never parked: a park per
       # matched file would turn one search into a queue of prompts, and
       # `read_file` stays the way to ask.
       ROW_TOOLS = Set["grep", "ast_search"].freeze
+
+      SCANNED_TOOLS = [GUARDED_TOOLS, ROW_TOOLS, COMMAND_TOOLS].freeze
 
       # The provider content-block key this can read. Anything else in an Array
       # result is bytes this detector cannot see -- see {Scan}.
@@ -162,8 +181,11 @@ module Lain
       # @param related [#related?] answers whether an absolute path lies under
       #   a `sensitivity related:` directory, whose regions mask without asking.
       #   A default is safe here, unlike the two above: the default asks.
+      # @param environment [#to_h] read on every command result for the values
+      #   of secret-named variables, beside the calling worker's own
       # @raise [ArgumentError] on a nil ledger or queue
-      def initialize(ledger:, queue:, journal: Channel::Null.instance, requester: nil, related: Unrelated)
+      def initialize(ledger:, queue:, journal: Channel::Null.instance, requester: nil, related: Unrelated,
+                     environment: ENV)
         # A missing KEYWORD is Ruby's error; a nil VALUE is not, and nil is
         # exactly what `Switchboard#approvals` carries in an unattended run -- so
         # without this the argument that "no default means no silent approval"
@@ -176,6 +198,7 @@ module Lain
         @journal = journal
         @requester = requester
         @related = related
+        @environment = environment
         # Mutable, on a frozen object, deliberately: `freeze` seals the ivars,
         # not the Set they point at, and this is the run's accumulating
         # answer-memory -- {Sensitivity::Ledger}'s own posture, for its reason.
@@ -216,7 +239,7 @@ module Lain
       def call(env, &app)
         effect = env.fetch(:effect)
         carried = downstream(env, &app)
-        return carried unless GUARDED_TOOLS.include?(effect.name) || ROW_TOOLS.include?(effect.name)
+        return carried unless SCANNED_TOOLS.any? { _1.include?(effect.name) }
 
         guarded(carried, effect)
       end
@@ -229,6 +252,8 @@ module Lain
       # passes through here.
       def guarded(carried, effect)
         result = carried.fetch(:result)
+        # A failed command can still quote what it printed.
+        return printed(carried, result) if COMMAND_TOOLS.include?(effect.name)
         # A failed read carries a message, never file bytes, so there is nothing
         # here to mask and no read to record.
         return carried if result.error?
@@ -261,6 +286,22 @@ module Lain
         return mask(carried, effect, withheld) if declined?(withheld) || @related.related?(withheld.path)
 
         settle(carried, effect, withheld)
+      end
+
+      def printed(carried, result)
+        output = Output.new(result.text, secrets: session_secrets(carried.fetch(:context)))
+        return carried unless output.masked?
+
+        carried.merge(result: Tool::Result.new(content: output.to_s, is_error: result.error?))
+      end
+
+      # A child gets whatever its caller lends, whatever the name, so the
+      # worker's environment is read as well as the process's.
+      def session_secrets(context)
+        lent = (context || Session::Null.instance).worker_env.env
+        [@environment.to_h, lent].flat_map(&:to_a).filter_map do |name, value|
+          value if Exec::ChildEnv::SECRET.match?(name) && value.to_s.bytesize >= LITERAL_FLOOR
+        end.uniq
       end
 
       # Content this class cannot scan cannot be vouched for, so it is not sent.
@@ -570,10 +611,10 @@ module Lain
         # again, since a short one recurs in ordinary words and the placeholders
         # would spell it back out.
         class Row
-          # @return [Array(String, Boolean)] the row as sent, and whether it masked anything
+          # @return [Array(String, Integer)] the row as sent, and how many placeholders it holds
           def masked(unreleased, ordinals)
             spans = spans(unreleased)
-            [prefix + ::Lain::Sensitivity::Masking.render(text, spans, ordinals:), spans.any?]
+            [prefix + ::Lain::Sensitivity::Masking.render(text, spans, ordinals:), spans.size]
           end
 
           private
@@ -612,7 +653,7 @@ module Lain
         class Line
           def path = nil
 
-          def masked(_unreleased, _ordinals) = [text, false]
+          def masked(_unreleased, _ordinals) = [text, 0]
         end
 
         # @param content [String] the tool's rows, newline-joined
@@ -634,7 +675,7 @@ module Lain
         def mask(unreleased)
           ordinals = (1..).each
           rendered = @rows.map { _1.masked(unreleased.fetch(_1.path, []), ordinals) }
-          masked = rendered.count(&:last)
+          masked = rendered.count { |(_, placeholders)| placeholders.positive? }
           [*rendered.map(&:first), format(TRAILER, count: masked, noun: masked == 1 ? "row was" : "rows were")]
             .join("\n")
         end
@@ -659,6 +700,36 @@ module Lain
         def resolved(label) = Session.normalize_path(label, cwd: @anchor)
 
         def file?(path) = @directory ? File.file?(path) : path == @base
+      end
+
+      # One command's output as one {Rows::Row}, so a region and every
+      # recurrence of it, raw or escaped, mask alike. A secret-named value
+      # joins as a {Literal}, found only by its recurrences.
+      class Output
+        TRAILER = "%<count>d %<noun>s masked in this command's output; a command's output cannot be released."
+
+        Literal = Data.define(:bytes)
+
+        # Matches no detected region, so only its recurrences mask.
+        class Literal
+          def digest = nil
+        end
+
+        # @param text [String] the command's output
+        # @param secrets [Array<String>] values masked wherever they appear
+        def initialize(text, secrets:)
+          row = Rows::Row.new(prefix: "", text:, path: nil, regions: ::Lain::Sensitivity::Regions.detect(text))
+          @text, @count = row.masked(row.regions + secrets.map { Literal.new(bytes: _1) }, (1..).each)
+          freeze
+        end
+
+        def masked? = @count.positive?
+
+        # @return [String] the masked output, then the trailer saying how much was masked
+        def to_s
+          lead = @text.end_with?("\n") ? @text : "#{@text}\n"
+          lead + format(TRAILER, count: @count, noun: @count == 1 ? "region was" : "regions were")
+        end
       end
     end
   end

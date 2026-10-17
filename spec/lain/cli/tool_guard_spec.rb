@@ -322,7 +322,10 @@ RSpec.describe Lain::CLI::ToolGuard do
   describe "the gate every stack ends in" do
     def gate_of(stack) = stack.to_a.last
 
-    def dispatched(stack, name = "bash", context: :the_session)
+    # A real session, since a command's result is masked against its worker's environment.
+    let(:the_session) { Lain::Session.new }
+
+    def dispatched(stack, name = "bash", context: the_session)
       env = stack.call({ effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name:, input: {}),
                          tool: Lain::Tools::Bash.new, context: }) do |passed|
         passed.merge(result: Lain::Tool::Result.ok("the interpreter ran"))
@@ -406,7 +409,7 @@ RSpec.describe Lain::CLI::ToolGuard do
 
       dispatched(described_class.stack(chronicle, board))
 
-      expect(board.policy.contexts).to eq([:the_session])
+      expect(board.policy.contexts).to eq([the_session])
     end
 
     # A child asks the SAME policy, through a context naming the child, so a
@@ -420,7 +423,7 @@ RSpec.describe Lain::CLI::ToolGuard do
 
       expect(board.policy.contexts.map(&:requester)).to eq(%w[researcher])
       expect(board.policy.contexts.first.__getobj__).to be_a(Lain::Middleware::WithholdAutomaticOutput::Carried)
-      expect(board.policy.contexts.first.__getobj__.__getobj__).to be(:the_session)
+      expect(board.policy.contexts.first.__getobj__.__getobj__).to be(the_session)
     end
 
     # The read guard parks on the board's one queue too, so its release has to
@@ -1208,15 +1211,15 @@ RSpec.describe Lain::CLI::ToolGuard do
                                  rules: [Lain::Approval::Remembered.new(allow: commands.map { automatic(_1) })])
     end
 
-    def run_bash(board, command, id: "tu_1")
+    def run_bash(board, command, id: "tu_1", context: Lain::Session.new)
       layers = described_class.stack(chronicle, board).to_a
-      dispatch_call("bash", { "command" => command, "cwd" => @dir }, id:, toolset:, layers:, context: Lain::Session.new)
+      dispatch_call("bash", { "command" => command, "cwd" => @dir }, id:, toolset:, layers:, context:)
     end
 
     # The call parks, so a sibling fiber stands where a human's surface does.
-    def answered_by_human(board, command, approve:)
+    def answered_by_human(board, command, approve:, **)
       Sync do |task|
-        ran = task.async { run_bash(board, command, id: "tu_2") }
+        ran = task.async { run_bash(board, command, id: "tu_2", **) }
         pending = task.with_timeout(5) { board.approvals.dequeue }
         pending.decide(approve, surface: Lain::Frontend::ApprovalPolicy::SURFACE)
         [pending, task.with_timeout(30) { ran.wait }]
@@ -1320,12 +1323,20 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(told.content).to include("notes.txt")
     end
 
-    # Scenario: a human-approved print is untouched
-    it "hands a human-approved print the file's bytes" do
-      _, told = answered_by_human(board_approving, "cat notes.txt", approve: true)
+    # Scenario: a human-approved bash call's output is masked. The result is
+    # the block the runner committed, which the journal and display read.
+    it "masks a token a human-approved printenv prints, and parks nothing to release it" do
+      token = "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5"
+      lent = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @dir, env: { "GH_TOKEN" => token }))
+      board = board_approving
+
+      _, told = answered_by_human(board, "printenv GH_TOKEN", approve: true, context: lent)
 
       expect(told).to have_attributes(is_error: false)
-      expect(told.content).to include(key)
+      expect(told.content).to include("--- stdout ---\n<redacted:1>\n")
+      expect(told.content.lines.last).to include("1 region was masked")
+      expect(told.content).not_to include(token)
+      expect(board.approvals.each.count).to eq(0)
     end
 
     # Scenario: ordinary output passes
