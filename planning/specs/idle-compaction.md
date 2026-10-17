@@ -1,6 +1,6 @@
 # Idle compaction: commit the cut while the human is away
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -242,7 +242,7 @@ module Lain
         # @param ttl [Integer, nil] the provider's cache TTL in seconds; nil or 0 means none
         # @return [Symbol] :warm until elapsed passes the TTL (or the floor when there is none),
         #   then :cold when confirmed and :presumed_cold otherwise
-        def reading(elapsed:, ttl:, cold:, pending:)
+        def reading(elapsed:, ttl:, cold:) # pending carries nothing: presumed cold is !cold past the gate
         # @return [Boolean] false while this head is latched or the reading is warm
         def ready?(reading, head_digest)
         def latch(head_digest)
@@ -853,3 +853,80 @@ Spec file: none, prose
   whitespace and EOF fixers, and `bin/lint-commit-msg` at commit-msg. Agent-side checks:
   `bundle exec rubocop <paths>`, `bundle exec yard-lint <paths>`, specs by path. The suite cannot
   run beside other tests (shared `TMPDIR`). No paths need user approval.
+- T1 started (`card/ic-T1` at `9163060b`, sonnet).
+- T4 started (`card/ic-T4` at `9163060b`, sonnet).
+- T1 landed `c6a3ab70`. Panel: 1 should-fix, applied by the main session: the Journalable digits
+  stay as found, and the warning gains the 2026-10-17 re-count, 114 / 66 / 48.
+- T2a started (`card/ic-T2a` at `c6a3ab70`, sonnet).
+- T6 started (`card/ic-T6` at `c6a3ab70`, sonnet), ahead of T4 landing: it needs only the
+  `compact_schedule` key name, which the plan fixes.
+- T3 started (`card/ic-T3` at `c6a3ab70`, opus), ahead of T2b: written against the plan's
+  `prepare(base:, timeline:, usage:, session:)` duck with a recording double.
+- T2b started (`card/ic-T2b` at `c6a3ab70` plus T2a's 6 new files, opus), stacked on T2a in review.
+- T2a review: approve with fixes. `pending:` dropped from `IdleGate#reading` (the card's
+  interface block amended), WHAT comments cut, a 300-second boundary example added. Fix round sent.
+- T2a landing attempt 1 red: 1 failure, `plain_chat_prompt_guards_spec` "a prompt the approval
+  window decides ends its line ... decides nothing" (seed 13576, stray `\e[>4;0m` row), the
+  documented flake at `docs/toolchain-traps.md:378`. Box was not quiet (a reviewer's mutations).
+- T6 review: approve with fixes, mechanical (a freeze the spec never saw non-nil, an example that
+  cannot fail, a WHAT comment). Fix round sent.
+- T3 done; its review waits for T2a's landing window.
+- T2a landed `7afc82e7` (attempt 2). The flake passed alone 3 of 3 with seed 13576.
+- Ruling 2026-10-17 (owner): for the rest of this run, a red in a spec the card cannot plausibly
+  reach is noted and the landing retried once; no 3-run alone procedure unless there is reason to
+  suspect the card.
+- T2b stopped on its named condition (stale usage re-fires the summarizer); told to apply the
+  card's own remedy, a cut consumes the usage reading.
+- T6 landed `eb5b07b8` (attempt 3: 1 commit-msg reject on a 73-char subject, 1 unrelated red,
+  `subagent_concurrency_spec` "gathers every result into ONE user message", retried per the ruling).
+- T2b: remedy applied (`Preparation` marks the usage consumed until `Source#<<`). Review started, high.
+- T3 review started, high. T4 review: approve with fixes, mechanical, incl. the pre-existing
+  `Tags/Order` offense `yard-lint --staged` would flag in `backend.rb`. Fix round sent.
+- T7 started (`card/ic-T7` at `eb5b07b8`, sonnet), ahead of T2b: it reads only T2a's record names.
+- T4 landed `3786428c`.
+- T5 started (`card/ic-T5` at `3786428c`, sonnet), ahead of T3 and T2b: units against the
+  `prepare_idle` duck; the seam spec waits for both to be copied in after approval.
+- T7 review: approve with fixes (a spec helper wider than its need, a zero-guard narrowed instead
+  of excluding the new column by name, the `compaction` type pinned by a real record). The
+  reviewer's mutation backups failed silently and it restored by hand; the implementer re-checks.
+- T3 review (high): approve with fixes, mechanical. Taken: comment moves, a real-render equality
+  example, decline on a reentrant `try_enter` (`mon_owned?`), an `@raise`. Sent to T5: `working?`
+  reads true during a prepare over a non-reply head; the tick must keep `you>` published.
+  Deferred, not in this plan: a non-raising `Budget#exceeded?` in place of rescuing `check_tokens!`;
+  `/rewind`, `/undo` and the resend refusal texts naming an idle prepare rather than "a run".
+- T5 units done, seam pending T2b and T3. Follow-up, not in this plan: a spec at `HumanNotes#take?`
+  / `Intake` that a line typed while an idle prepare is in flight arrives as a prompt, not a note
+  (the tick touches no prompt state, so there is no live path today).
+- T7 landed `76b84ad2`, ahead of T2b (it reads only record names).
+- T3 landed `92bb3968`, ahead of T2b (no caller until T5).
+- T2b review (high): approve with fixes, 1 substantive: the usage consume was keyed on a TurnUsage
+  arriving, so a WindowExceeded refusal kept it (the `none` fallback lost its retry) and a 0-token
+  reply cleared it while Accounting kept the stale reading (a second summarizer call). Fix: key the
+  consume on the reading's value. Plus 2 examples for surviving mutants and 5 nits. A second review
+  follows. For T8's QA lines: the window HUD and StatusFeed show the pre-cut reading until the next
+  reply (over-reports, hides nothing).
+- T2b second review: approve. The remaining 2nd summarizer ask on the 0-token probe was an
+  ordinary byte-threshold compaction on a confirmed-cold cache. T2b landed `5424c9f3`.
+- T5 worktree fast-forwarded to `5424c9f3` for its seam spec.
+- T8 (docs) done and approved after 1 mechanical round (Journalable re-run: 116 / 66 / 50); lands
+  after T9. Its QA wiring diff waits for the owner's edits to session-and-window.md.
+- T5 done (seam spec green); review started, medium, with a production reachability trace.
+- T9 started (`card/ic-T9` at `5424c9f3`, sonnet), ahead of T5 landing: no shared files.
+- T9 scope widened by the main session: `backend.rb:595` answers the literal "turn" under `--no-compact` rather than borrowing DEFAULT_SCHEDULE.
+- T9 review: approve, to land after T5. spec/e2e green with the flip; no journey compares the header.
+- T5 review (medium): approve with fixes. Production reachability confirmed by a real Wiring#run
+  drive (compaction_prepared landed; the sleeping tick stops on quit). Fixes: pin the wired agent
+  and the fault sink in wiring_spec, 2 nits. Finding for docs (sent to T8): under a guessed
+  context window `approaching_window` is withdrawn, so idle prepares only past `--compact-bytes`,
+  silently. Follow-up, not in this plan: journal why an idle tick declined.
+- T5 landed `ab0b1c76`. T9 landed `0ad15bcb`. T8 landed `3abaff2f`.
+- Close-out 2026-10-17: `rake pspec` green, 24,527 examples, 0 failures (base `9163060b`: 24,444 by
+  `LAIN_SLOW=1 rspec --dry-run`; net +83, after removing `prepared_spec.rb`'s 18). rubocop clean
+  in every hook. `comment-census --check-tickets` and `--check-load-order`: 0 unclassified.
+  `zeitwerk-census`: 0 on every tier. Worktrees and branches match the start of the run.
+- Owed: the QA wiring for `planning/qa/scenarios/session-and-window.md` is held as a patch at
+  `~/tmp/lain/ic-T8-session-and-window.diff` until the owner commits their edits to that file.
+  The manual owner pass in Integration checks is not yet done.
+- Follow-ups, not in this plan: a non-raising `Budget#exceeded?`; refusal texts that name an idle
+  prepare; a spec at `HumanNotes#take?` / `Intake` for a line typed mid-prepare; journal why an
+  idle tick declined (a guessed window prepares only past `--compact-bytes`, silently).
