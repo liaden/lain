@@ -225,5 +225,36 @@ RSpec.describe Lain::CLI::PaneCommand do
       expect(described_class).not_to be_const_defined(:CONSENT_ENV)
       expect(described_class.lain_exports({ "LAIN_DESKTOP" => "0" })).to eq("")
     end
+
+    describe "operator variables" do
+      let(:root) { File.expand_path("../../..", __dir__) }
+
+      # Not variables a pane should carry: suite controls named in comments, the
+      # Neovim command string LAIN_START, and the pre-flight flag PaneCommand scrubs.
+      let(:excluded) { %w[LAIN_INTEGRATION LAIN_LIVE LAIN_NVIM LAIN_START LAIN_PREFLIGHT] }
+
+      it "exports the stream stall remedy" do
+        expect(described_class.runtime_exports({ "LAIN_STREAM_STALL_TIMEOUT" => "600" }))
+          .to eq("export LAIN_STREAM_STALL_TIMEOUT=600; ")
+      end
+
+      it "exports the human's pass list" do
+        expect(described_class.runtime_exports({ "LAIN_ENV_PASS" => "RAILS_ENV" }))
+          .to eq("export LAIN_ENV_PASS=RAILS_ENV; ")
+      end
+
+      it "keeps LAIN_ENV_PASS out of the flag-default list" do
+        expect(described_class::PANE_ENV).not_to include("LAIN_ENV_PASS")
+      end
+
+      it "accounts for every LAIN_ name in lib/ and exe/" do
+        # .lua reads no LAIN_ name, and a name built by interpolation is invisible to a text scan.
+        files = Dir[File.join(root, "{lib,exe}/**/*")].select { |f| File.file?(f) && f.end_with?(".rb", "lain") }
+        found = files.flat_map { |f| File.read(f).scan(/(?<![A-Z])LAIN_[A-Z][A-Z0-9_]*[A-Z0-9]/) }.uniq
+        known = described_class::PANE_ENV + described_class::RUNTIME_ENV + excluded + Lain::CLI::EnvDefaults::RETIRED
+
+        expect(found - known).to eq([])
+      end
+    end
   end
 end
