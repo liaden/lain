@@ -237,7 +237,7 @@ module Lain
       def frames(client)
         Enumerator.produce { client.gets }.lazy
                   .take_while { |line| !line.nil? }
-                  .filter_map { |line| CLI::InputSocket::Codec.load(line) }
+                  .filter_map { |line| StatusFeed::Reading.fitted(CLI::InputSocket::Codec.load(line), columns) }
       end
 
       # A frame kind this pane does not know is dropped: an older pane against a

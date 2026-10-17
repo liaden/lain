@@ -81,6 +81,21 @@ module Lain
       # HUD rather than beside it. It is handed to the row and clamped with it.
       LEAD = "  "
 
+      # A published frame with its fleet rows cut to a pane's width. The chat
+      # publishes rows wider than any pane may have because only the pane knows
+      # its window; the HUD line is not a row and is left whole.
+      #
+      # @param frame [Hash, nil] one decoded frame, with or without a header
+      # @param columns [Integer] the pane's width, zero when it cannot say
+      # @return [Hash, nil] the frame, its header cut
+      def self.fitted(frame, columns)
+        return frame unless frame&.key?("header")
+
+        width = columns.positive? ? columns : Fleet::Row::COLUMNS
+        hud, *rows = frame["header"].to_s.split("\n")
+        frame.merge("header" => [hud, *rows.map { |row| Fleet::Row.clamped(row, columns: width) }].join("\n"))
+      end
+
       # @param path [String] a published state file, absent or unreadable as
       #   often as not
       # @return [Reading] over whatever was there, or over nothing
@@ -158,7 +173,7 @@ module Lain
       # @return [Array<String>] the rows as drawn, indented under the HUD
       def fleet_rows
         rows = Array(@state["fleet_tree"])
-        drawn = shown(rows).map { |row| Fleet::Row.undated(row).listed("", under: LEAD) }
+        drawn = shown(rows).map { |row| Fleet::Row.undated(row).listed("", under: LEAD, columns: Fleet::Row::PUBLISHED) }
         rows.size > HEADER_ROWS ? [*drawn, "#{LEAD}+#{rows.size - HEADER_ROWS} more"] : drawn
       end
 

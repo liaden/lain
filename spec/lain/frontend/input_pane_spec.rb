@@ -438,6 +438,38 @@ RSpec.describe Lain::Frontend::InputPane do
     end
   end
 
+  describe "a fleet row wider than the pane" do
+    let(:pty) { PTY.open }
+    let(:reader) { pty.last }
+    let(:keyboard) { pty.first }
+    let(:row) { "  dev  running  3t  #{"x" * 90}" }
+
+    after { pty.each { |io| io.close unless io.closed? } }
+
+    def drawn_with(columns)
+      reader.winsize = [24, columns]
+      chat = open_pane
+      publish(chat, { "header" => "fleet:1\n#{row}" })
+      settles { screen.string.include?("fleet:1") || nil }
+      screen.string
+    end
+
+    it "draws the whole row in a pane wide enough for it" do
+      expect(drawn_with(120)).to include(row)
+    end
+
+    it "cuts the row at the pane's width in a narrower one" do
+      drawn = drawn_with(60)
+
+      expect(drawn).to include("#{row[0, 59]}\u2026")
+      expect(drawn).not_to include(row)
+    end
+
+    it "leaves the first line alone however narrow the pane" do
+      expect(drawn_with(5)).to include("fleet:1")
+    end
+  end
+
   describe "when the chat says nothing is published" do
     let(:pty) { PTY.open }
     let(:reader) { pty.last }

@@ -295,6 +295,11 @@ module Lain
         # minimum width, so a row inside it fits every terminal lain draws in.
         COLUMNS = 80
 
+        # What a surface that cannot know its reader's width publishes: the
+        # input pane's header crosses a socket, and the pane cuts it down to
+        # the window it has.
+        PUBLISHED = 200
+
         ELLIPSIS = "…"
 
         # A row with an AGE, for a surface where a redraw is free: nvim
@@ -353,7 +358,10 @@ module Lain
         #   It is part of the drawn line, so it is clamped with it -- prefixing
         #   a clamped row instead draws past the terminal's edge and wraps,
         #   costing the pane the row the clamp was there to save.
-        def listed(bullet, under: "") = Row.clamped("#{under}#{indent}#{bullet}#{columns.join(GAP)}")
+        # @param columns [Integer] the width the drawn line is cut to
+        def listed(bullet, under: "", columns: COLUMNS)
+          Row.clamped("#{under}#{indent}#{bullet}#{self.columns.join(GAP)}", columns:)
+        end
 
         def to_s = listed("")
 

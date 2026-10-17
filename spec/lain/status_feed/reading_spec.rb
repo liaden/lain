@@ -291,8 +291,36 @@ RSpec.describe Lain::StatusFeed::Reading do
 
       drawn = reading(fleet_tree: tree).header(now:).lines.last.chomp
 
-      expect(Lain::Ext::Prompt.width(drawn)).to be <= Lain::StatusFeed::Fleet::Row::COLUMNS
+      expect(Lain::Ext::Prompt.width(drawn)).to be <= Lain::StatusFeed::Fleet::Row::PUBLISHED
       expect(drawn).to end_with("\u2026")
+    end
+
+    # The pane knows its own width and the chat does not, so the chat publishes
+    # a row wider than the classic 80 and the pane cuts it to what it has.
+    it "publishes a row of 100 characters whole, for the pane to cut to its width" do
+      drawn = reading(fleet_tree: [row("dev", task: "x" * 90)]).header(now:).lines.last.chomp
+
+      expect(Lain::Ext::Prompt.width(drawn)).to be > Lain::StatusFeed::Fleet::Row::COLUMNS
+      expect(drawn).to end_with("x" * 90)
+    end
+
+    it "cuts a published frame's rows to a pane's width and leaves its HUD line whole" do
+      frame = { "v" => "prompt", "header" => "#{"h" * 70}\n  dev  #{"x" * 90}" }
+
+      cut = described_class.fitted(frame, 60)["header"].lines.map(&:chomp)
+
+      expect(cut.map { |line| Lain::Ext::Prompt.width(line) }).to eq([70, 60])
+    end
+
+    it "leaves a frame with no header, and no frame, as they came" do
+      expect(described_class.fitted({ "v" => "closed" }, 60)).to eq({ "v" => "closed" })
+      expect(described_class.fitted(nil, 60)).to be_nil
+    end
+
+    it "still bounds a row by the widest width it publishes" do
+      drawn = reading(fleet_tree: [row("dev", task: "\u65E5\u672C\u8A9E" * 40)]).header(now:).lines.last.chomp
+
+      expect(Lain::Ext::Prompt.width(drawn)).to be <= Lain::StatusFeed::Fleet::Row::PUBLISHED
     end
 
     # The header sits above a prompt a human is typing at, so it takes the top

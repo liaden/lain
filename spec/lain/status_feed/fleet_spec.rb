@@ -615,6 +615,19 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(row.to_s).to end_with("\u2026")
     end
 
+    it "clamps at the width a surface names, whole when it fits and cut when it does not" do
+      row = described_class.undated(published.merge("task" => "x" * 90))
+
+      expect(row.listed("", columns: 120)).to end_with("x" * 90)
+      expect(Lain::Ext::Prompt.width(row.listed("", columns: 60))).to eq(60)
+    end
+
+    it "keeps eighty as the width it clamps at when none is named" do
+      row = described_class.undated(published.merge("task" => "x" * 90))
+
+      expect(Lain::Ext::Prompt.width(row.to_s)).to eq(80)
+    end
+
     it "leaves a row inside the budget exactly as composed" do
       expect(described_class.undated(published).to_s).not_to end_with("\u2026")
     end
