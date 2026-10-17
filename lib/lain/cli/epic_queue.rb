@@ -130,9 +130,26 @@ module Lain
         rows = review.find(digest)
         raise UnknownDigest, unknown_message(digest, approved:) if rows.empty?
 
-        decisions = rows.map { |row| row.terminal(approved:, reason:) }
+        decisions = in_stage_order(rows).map { |row| row.terminal(approved:, reason:) }
+        ensure_open!(decisions) if approved
         advances = Advances.new(decisions) { epics }
         confirmation(digest, decisions, append(decisions, advances))
+      end
+
+      # Stable within a stage, so two issues' plans keep the fold's order.
+      def in_stage_order(rows) = rows.sort_by.with_index { |row, at| [row.stage_index, at] }
+
+      # A sign-off advances its epic as a verdict does, so it meets the same
+      # boundary. Each approval is folded in before the next is checked: one
+      # digest parked at research and at epic_plan opens epic_plan only over
+      # the research approval this same drain journals.
+      def ensure_open!(decisions)
+        queue = Approval::SignoffQueue.from_journal(journals.to_a)
+        boundary = Approval::Gate::Policy::Boundary.new(queue)
+        decisions.each do |decision|
+          boundary.ensure_open!(decision.stage, epic_slug: decision.epic_slug, issue_id: decision.issue_id)
+          queue.apply(decision.to_journal)
+        end
       end
 
       def epics = @epics ||= Epic.new(paths: @paths)
@@ -270,6 +287,10 @@ module Lain
                                      issue_id: item.issue_id, criteria_digest: item.criteria_digest)
         end
 
+        # `Lain::Epic`, spelled out: {CLI::Epic} is a sibling of this class, so a
+        # bare `Epic` resolves to THAT one and finds no STAGES.
+        def stage_index = Lain::Epic::STAGES.index(item.stage) || Lain::Epic::STAGES.size
+
         def to_s
           ["#{item.stage}  epic #{item.epic_slug}#{issue}  waiting #{self.class.waited_label(waited)}",
            "  question:  #{question || "<not recoverable from the journal>"}",
@@ -283,10 +304,6 @@ module Lain
         def issue = item.issue_id ? "  issue #{item.issue_id}" : ""
 
         def no_evidence = spiked ? "<none gathered -- the spike did not answer>" : "<none -- no spike ran>"
-
-        # `Lain::Epic`, spelled out: {CLI::Epic} is a sibling of this class, so a
-        # bare `Epic` resolves to THAT one and finds no STAGES.
-        def stage_index = Lain::Epic::STAGES.index(item.stage) || Lain::Epic::STAGES.size
       end
 
       # What a drain advances, by {Epic::Advance}'s rule, so a sign-off here

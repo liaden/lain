@@ -562,8 +562,13 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     def unaskable = command(gates: hands_off.merge("epic_plan" => "interactive"), input: nil)
 
+    # The boundary is checked before the policy is built, so epic_plan reaches
+    # the asker only over an approved research.
+    def research_approved = session("approved.ndjson", *approvals("research"))
+
     # Scenario: an unattended submit of an interactive stage refuses in words
     it "says stdin is not a terminal, naming the stage and the policies that would proceed" do
+      research_approved
       expect { unaskable.submit("epic_plan") }.to raise_error(Lain::Error) { |error|
         expect(error).to be_a(Lain::Approval::Gate::Policies::Refusal)
         expect(error.kind).to eq(:missing_seam)
@@ -585,6 +590,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # No wired path builds one, but the sentence must not depend on that: a
     # caller that hands over live streams and still no asker gets a reason.
     it "names the missing asker itself when the streams could have carried a question" do
+      research_approved
       askerless = described_class.new(root:, paths:, config: config(hands_off.merge("epic_plan" => "interactive")),
                                       input: tty, output: StringIO.new, asker: nil)
 
@@ -596,9 +602,19 @@ RSpec.describe Lain::CLI::EpicSubmit do
       # The regex is the discriminator, and it is load-bearing: `Refusal` is now
       # EVERY refusal this factory makes, so a bare class match would be
       # satisfied by an unknown-policy or unknown-seam refusal too.
+      research_approved
       expect { unaskable.submit("epic_plan") }
         .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan.*interactive.*not a terminal/m)
 
+      expect(gate_decisions.map { |record| record["policy"] }).to eq(["hands_off"])
+    end
+
+    # Scenario: an unattended submit meets the boundary first
+    it "names the stage boundary, not stdin, when research is not approved" do
+      expect { unaskable.submit("epic_plan") }.to raise_error(Lain::Epic::StageBlocked) { |error|
+        expect(error.message).to include("research not approved")
+        expect(error.message).not_to include("stdin")
+      }
       expect(gate_decisions).to be_empty
     end
 
@@ -994,6 +1010,18 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
     end
 
+    # The repair advances the epic, so it meets the boundary a verdict meets:
+    # a research denied since withdraws what epic_plan's approval stood on.
+    it "refuses to repair epic_plan over a research denied since, journaling no transition" do
+      session("plan-approved.ndjson", decision(digest: epic_plan_digest, stage: "epic_plan", approved: true,
+                                               policy: "hands_off"), at: "2026-01-01T00:00:01Z")
+      session("research-denied.ndjson", decision(digest: research_digest("v2\n"), stage: "research",
+                                                 policy: "signoff"), at: "2026-01-01T00:00:02Z")
+
+      expect { command.submit("epic_plan") }.to raise_error(Lain::Epic::StageBlocked, /research not approved/)
+      expect(stage_events).to be_empty
+    end
+
     it "journals no further stage transition over an approval that already advanced the epic" do
       session("advanced.ndjson", stage_event("research", event: "completed"), stage_event("epic_plan"),
               at: "2026-01-01T00:00:01Z")
@@ -1345,6 +1373,17 @@ RSpec.describe Lain::CLI::EpicSubmit do
       home.write_epic(graph_with("it works"))
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.plan("a").write("the plan for a\n")
+    end
+
+    # An implementation's repair writes nothing, so it has no boundary to
+    # meet: the epic driver re-submits one while a research revision waits.
+    it "still reports an implementation already approved while a research revision is parked" do
+      command.submit("issue_plan", issue: "a")
+      command.submit("implementation", issue: "a", digest: changeset)
+      session("zz-parked.ndjson", decision(digest: research_digest("v2\n"), stage: "research"),
+              at: Time.now.utc.iso8601(6))
+
+      expect(command.submit("implementation", issue: "a", digest: changeset)).to start_with("already approved")
     end
 
     it "journals the criteria the plan was approved with" do

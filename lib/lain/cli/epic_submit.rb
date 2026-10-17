@@ -604,13 +604,24 @@ module Lain
 
       def settled(stage, submission, required, records, journal)
         queue = Approval::SignoffQueue.from_journal(records)
-        policy = policy_for(stage, queue, journal)
+        open = -> { ensure_open!(stage, submission, queue) }
+        policy = policy_for(stage, queue, journal, &open)
         gate = Approval::Gate.from_journal(records, journal:, timeout: gate_timeout(policy))
-        advance = advance_for(stage, submission, journal)
-        return standing(submission, advance) if standing?(queue, submission)
+        advance = Lain::Epic::Advance.new(epic_slug: submission.slug, stage:, issue_id: submission.issue_id)
+        ready = advance_for(advance, journal)
+        return standing(submission, ready) { open.call if advance.moves? } if standing?(queue, submission)
 
         required.each { |plan| ensure_approved!(queue, plan) }
-        Verdict.new(submission:, stage:, policy:, gate:, queue:, advance:, journal:).call
+        Verdict.new(submission:, stage:, policy:, gate:, queue:, advance: ready, journal:).call
+      end
+
+      # The boundary a verdict meets inside {Approval::Gate::Policy#decide},
+      # asked here only on the two routes that never reach it: a standing
+      # approval's repair, and a policy that could not be built.
+      def ensure_open!(stage, submission, queue)
+        Approval::Gate::Policy::Boundary.new(queue)
+                                        .ensure_open!(stage.name, epic_slug: submission.slug,
+                                                                  issue_id: submission.issue_id)
       end
 
       # The ASKER says its own window ({Prompt#window}), never a type check
@@ -628,9 +639,8 @@ module Lain
       # Read BEFORE anything is decided, as the queue reads before it signs
       # off: a fold that refuses then refuses with nothing journaled, where
       # read after the verdict it left an approval that never moved the epic.
-      def advance_for(stage, submission, journal)
-        ready = Lain::Epic::Advance.new(epic_slug: submission.slug, stage:, issue_id: submission.issue_id)
-                                   .read(@epics)
+      def advance_for(advance, journal)
+        ready = advance.read(@epics)
         -> { ready.call(journal) }
       end
 
@@ -658,6 +668,8 @@ module Lain
       # late is exactly the failure the factory exists to prevent. Only the
       # asker is scoped to the submitted stage, because this command decides
       # that one stage and no other can ever ask it anything.
+      # A missing asker is the wrong refusal to read while the stage could not
+      # open anyway, so the yielded boundary check goes first.
       def policy_for(stage, queue, journal)
         deps = Approval::Gate::Policies::Deps.new(queue:, asker: Heard.over(@asker), journal:,
                                                   role_spawn: @role_spawn, brief: @brief)
@@ -665,6 +677,7 @@ module Lain
       rescue Approval::Gate::Policies::Refusal => e
         raise unless e.seams == ["asker"]
 
+        yield
         raise unattended(e, deps)
       end
 
@@ -699,8 +712,11 @@ module Lain
       # nobody waited. Reported, never decided.
       # The approval still runs {Epic::Advance}, which is how a re-submit
       # repairs an approval whose advance never landed; from the right state
-      # only, so a standing approval that did advance writes nothing more.
+      # only, so a standing approval that did advance writes nothing more, and
+      # only past the yielded boundary check, which the caller skips for an
+      # advance that writes nothing (an implementation's re-submit).
       def standing(submission, advance)
+        yield
         ["already approved #{submission.digest}",
          "  #{submission.stage} for epic #{submission.slug} -- nothing was decided again",
          "  #{advance.call}"].join("\n")

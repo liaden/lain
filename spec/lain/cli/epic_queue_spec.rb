@@ -47,6 +47,15 @@ RSpec.describe Lain::CLI::EpicQueue do
                                 .to_journal.merge("ts" => at)
   end
 
+  # The approvals a later stage's sign-off stands on: approving it opens its
+  # stage only over approved earlier ones, as a verdict does.
+  def approvals(*stages, at: "2026-07-28T05:00:00.000000Z", **scope)
+    stages.map do |stage|
+      decision(digest: "blake3:#{stage}-approved", at:, policy: "signoff", approved: true, answered_by: "human",
+               stage:, **scope)
+    end
+  end
+
   def evidence(digest:, at:, question:, slug: "alpha", stage: "research", text: "the spike found two answers")
     gated = { artifact_digest: digest, epic_slug: slug, stage:, question: }
     Lain::Approval::Gate::Adjudicator::GateEvidence.gathered(text, gated, latency: 2.0)
@@ -83,7 +92,8 @@ RSpec.describe Lain::CLI::EpicQueue do
       home.write_epic(Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "A"),
                                                      Lain::Epic::Issue.new(id: "b", title: "B")]))
       write_journal("20260728T060000-100.ndjson",
-                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                    [*approvals("research", "epic_plan"),
+                     decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
                               answered_by: "deferred", stage: "issue_plan", issue_id: "a")])
     end
 
@@ -111,7 +121,7 @@ RSpec.describe Lain::CLI::EpicQueue do
         expect(error.message).to include('"alpha"', "issue_plan", 'issue "a"', home.epic.path)
         expect(error.message).not_to include("inside the project")
       }
-      expect(gate_decisions.map { |record| record["policy"] }).to eq(["deferred"])
+      expect(gate_decisions.count { |record| record["artifact_digest"] == digest_a }).to eq(1)
     end
   end
 
@@ -162,7 +172,8 @@ RSpec.describe Lain::CLI::EpicQueue do
   describe "parked gates for two issues" do
     before do
       write_journal("20260728T060000-100.ndjson",
-                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                    [*approvals("research", "epic_plan"), *approvals("issue_plan", issue_id: "greet"),
+                     decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
                               answered_by: "deferred", stage: "implementation", issue_id: "greet"),
                      decision(digest: digest_b, at: "2026-07-28T06:10:00.000000Z", policy: "deferred",
                               answered_by: "deferred", stage: "implementation", issue_id: "shout")])
@@ -497,6 +508,90 @@ RSpec.describe Lain::CLI::EpicQueue do
 
     it "names every partition it signed off, so none is drained silently" do
       expect(queue.approve(digest_a)).to include("research", "epic_plan")
+    end
+  end
+
+  # Scenario: approving a later stage over a denied earlier one is refused
+  #
+  # A sign-off advances the epic exactly as a verdict does, so it meets the
+  # boundary a verdict meets: a withdrawn research approval holds epic_plan.
+  describe "approving a later stage over a denied earlier one" do
+    subject(:queue) { described_class.new(paths:, clock:, epics:) }
+
+    before do
+      home.research.write("the research, such as it is\n")
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: digest_c, at: "2026-07-28T05:00:00.000000Z", policy: "signoff",
+                              approved: true, answered_by: "human"),
+                     decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                              answered_by: "deferred", stage: "epic_plan"),
+                     decision(digest: digest_b, at: "2026-07-28T06:30:00.000000Z", policy: "signoff",
+                              answered_by: "human")])
+    end
+
+    # A deny advances nothing, so it drains a later stage whatever stands
+    # before it.
+    it "still records a deny over the denied research" do
+      expect(queue.deny(digest_a)).to start_with("denied #{digest_a}")
+      expect(refolded.drained?("alpha", "epic_plan")).to be(true)
+    end
+
+    it "refuses naming the research stage, and journals no sign-off and no stage transition" do
+      expect { queue.approve(digest_a) }.to raise_error(Lain::Epic::StageBlocked, /alpha.*epic_plan.*research/m)
+      expect(gate_decisions.count { |record| record["artifact_digest"] == digest_a }).to eq(1)
+      expect(journal_records.none? { |record| record["type"] == "stage_transition" }).to be(true)
+    end
+  end
+
+  # Two issues' plans under one digest keep the order they were parked in.
+  describe "a digest parked for two issues at one stage" do
+    before do
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                              answered_by: "deferred", stage: "issue_plan", issue_id: "b"),
+                     decision(digest: digest_a, at: "2026-07-28T06:30:00.000000Z", policy: "deferred",
+                              answered_by: "deferred", stage: "issue_plan", issue_id: "a")])
+    end
+
+    it "signs them off oldest park first" do
+      queue.deny(digest_a)
+
+      signoffs = gate_decisions.select { |record| record["policy"] == "signoff" }
+      expect(signoffs.map { |record| record["issue_id"] }).to eq(%w[b a])
+    end
+  end
+
+  # Scenario: a digest parked in 2 partitions approves in stage order
+  #
+  # The epic_plan park is the older one and carries evidence, so both the fold
+  # and the listing reach it first; the boundary still needs research signed
+  # off before it.
+  describe "a digest parked in two partitions, the later stage parked first" do
+    subject(:queue) { described_class.new(paths:, clock:, epics:) }
+
+    before do
+      home.research.write("the research, such as it is\n")
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                              answered_by: "deferred", stage: "epic_plan", evidence_digest: evidence_a),
+                     evidence(digest: digest_a, at: "2026-07-28T06:00:01.000000Z", stage: "epic_plan",
+                              question: "Is the plan whole?"),
+                     decision(digest: digest_a, at: "2026-07-28T06:30:00.000000Z", policy: "deferred",
+                              answered_by: "deferred")])
+    end
+
+    def stage_events
+      journal_records.select { |record| record["type"] == "stage_transition" }
+                     .map { |record| record.values_at("stage", "event") }
+    end
+
+    it "signs off research, then epic_plan, and moves the epic in that order" do
+      queue.approve(digest_a)
+
+      signoffs = gate_decisions.select { |record| record["policy"] == "signoff" }
+      expect(signoffs.map { |record| record["stage"] }).to eq(%w[research epic_plan])
+      expect(stage_events).to eq([%w[research completed], %w[epic_plan started],
+                                  %w[epic_plan completed], %w[issue_plan started]])
     end
   end
 
