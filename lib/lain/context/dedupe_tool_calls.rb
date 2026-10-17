@@ -50,7 +50,7 @@ module Lain
       # The concatenation of the per-message map against the whole-span
       # analysis, which is the elementwise law its spec holds it to.
       def call(messages)
-        stale_ids = stale_tool_use_ids(messages)
+        stale_ids = stale_tool_use_ids(messages).to_set
         messages.flat_map { |message| without_stale(message, stale_ids) }
       end
 

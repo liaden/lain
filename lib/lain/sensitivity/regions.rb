@@ -141,10 +141,12 @@ module Lain
       PLACEHOLDER_VALUE = /\A[$<{]/
       REFERENCE_CHECKED = ["quoted password key", "suffixed password key", "url credentials"].freeze
 
+      CONTENT_SHAPES = CredentialPatterns.for(:content).merge(PASSWORD_SHAPES).freeze
+
       # Issuer-fixed shapes are whole-match secrets; the assignment shapes are
       # gated and contribute only their value. Order is the table's own, so a
       # span both shapes reach is named by the one that says more.
-      PATTERNS = (CredentialPatterns.for(:content).keys + PASSWORD_SHAPES.keys).each_with_index.to_h.freeze
+      PATTERNS = CONTENT_SHAPES.keys.each_with_index.to_h.freeze
 
       class << self
         # A BOM defeats every line-anchored shape on line 1 -- `^` anchors before
@@ -222,7 +224,7 @@ module Lain
         end
 
         def pattern_candidates(scanned)
-          CredentialPatterns.for(:content).merge(PASSWORD_SHAPES).flat_map do |name, shape|
+          CONTENT_SHAPES.flat_map do |name, shape|
             matches(scanned, shape).filter_map { |match| pattern_candidate(name, match) }
           end
         end
