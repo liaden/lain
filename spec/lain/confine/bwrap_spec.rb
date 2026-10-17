@@ -51,13 +51,11 @@ RSpec.describe Lain::Confine::Bwrap do
     end
 
     # Nothing else closes the trace descriptor in an unconfined call, so the
-    # traced command would inherit it and could write its own exec lines. The
-    # relay keeps reading once the call stops, so a tracer left following a
-    # background process never blocks on the call's pipe.
-    it "wraps a traced profile with strace writing through a relay, and a shell that closes the trace descriptor" do
+    # traced command would inherit it and could write its own exec lines.
+    it "wraps a traced profile with strace writing to its descriptor, and a shell that closes the descriptor" do
       expect(argv_of(launcher.wrap(term, Lain::Confine::Profile::TRACED, trace_fd: 5))).to eq(
         ["/usr/bin/strace", "-DD", "-f", "-s", "256", "--seccomp-bpf", "-e", "trace=execve,execveat",
-         "-o", "|exec /usr/bin/tee -p /dev/fd/5 >/dev/null", "--",
+         "-o", "/dev/fd/5", "--",
          "/bin/sh", "-c", 'exec "$@" 5>&-', "sh", "cat", "README.md"]
       )
     end
@@ -69,9 +67,7 @@ RSpec.describe Lain::Confine::Bwrap do
       wrapped = launcher.wrap(piped, Lain::Confine::Profile::TRACED, trace_fd: 3)
 
       expect(wrapped.stages.map { |stage| stage.argv[stage.argv.index("-o") + 1] }).to eq(
-        ["|exec /usr/bin/tee -p /dev/fd/3 >/dev/null 4>&- 5>&-",
-         "|exec /usr/bin/tee -p /dev/fd/4 >/dev/null 3>&- 5>&-",
-         "|exec /usr/bin/tee -p /dev/fd/5 >/dev/null 3>&- 4>&-"]
+        ["/dev/fd/3", "/dev/fd/4", "/dev/fd/5"]
       )
       expect(wrapped.stages.map { _1.argv[_1.argv.index("/bin/sh") + 2] }).to all(eq('exec "$@" 3>&- 4>&- 5>&-'))
     end

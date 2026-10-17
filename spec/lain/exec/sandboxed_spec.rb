@@ -495,6 +495,19 @@ RSpec.describe Lain::Exec::Sandboxed do
       nil
     end
 
+    # The loop truncates the file before it writes, so a read can land on an empty one.
+    def loop_count(path)
+      Timeout.timeout(5) do
+        loop do
+          text = File.read(path)
+          return text.to_i unless text.empty?
+
+          sleep 0.01
+        end
+      end
+    end
+
+    # The call closes its end of the trace pipe when it ends; the tracer must outlive that.
     # An undrained pipe would stall the tracer, and so the loop, after about 270 iterations.
     it "keeps a background process the traced call left running at full speed, and holds no file in TMPDIR" do
       calltmp = File.join(@base, "calltmp")
@@ -503,11 +516,13 @@ RSpec.describe Lain::Exec::Sandboxed do
       loop_body = "n=0; while :; do /usr/bin/true; n=$((n+1)); echo $n > #{count}; done"
       run("nohup sh -c '#{loop_body}' >/dev/null 2>&1 & echo started",
           confinement: judged, env: { "TMPDIR" => calltmp })
+      # Under load the traced loop can take longer than a fixed second to write its first line.
+      Timeout.timeout(15) { sleep 0.05 until File.exist?(count) }
       sleep 1
-      before = File.read(count).to_i
+      before = loop_count(count)
       sleep 2
 
-      expect(File.read(count).to_i - before).to be > 200
+      expect(loop_count(count) - before).to be > 200
       expect(held_under(calltmp)).to be_empty
     ensure
       system("pkill", "-f", count)

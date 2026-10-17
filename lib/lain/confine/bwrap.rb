@@ -19,13 +19,10 @@ module Lain
       # @param fence [String] the lain-fence binary
       # @param bwrap [String]
       # @param strace [String]
-      # @param tee [String] the relay a traced stage's strace writes through; by
-      #   absolute path, because the command's own PATH must not choose it
-      def initialize(fence:, bwrap: "/usr/bin/bwrap", strace: "/usr/bin/strace", tee: "/usr/bin/tee")
+      def initialize(fence:, bwrap: "/usr/bin/bwrap", strace: "/usr/bin/strace")
         @fence = fence
         @bwrap = bwrap
         @strace = strace
-        @tee = tee
       end
 
       # @param term [Shell::Term]
@@ -74,24 +71,16 @@ module Lain
       # grandchild: the call ends when its command does rather than when every
       # process it left behind has, and the call's group kill never reaches the
       # tracer, which follows a background child until it exits. `-s` keeps a
-      # long path or argv0 from being cut at strace's default of 32 bytes.
+      # long path or argv0 from being cut at strace's default of 32 bytes. The
+      # tracer writes to the descriptor itself: a `|cmd` relay can lose its
+      # tracer at start under load, and a seccomp tracer that exits kills its
+      # tracees. A direct write outlives the call, since strace ignores SIGPIPE
+      # under -D and the tracee keeps running once the reader has closed.
       def trace(profile, own, fds)
         return [] unless profile.trace
 
         [@strace, "-DD", "-f", "-s", STRING_BYTES.to_s, "--seccomp-bpf", "-e", "trace=execve,execveat",
-         "-o", output(profile, own, fds), "--", *closing(profile, fds)]
-      end
-
-      # A traced stage's tracer outlives the call while it follows a background
-      # process, and once the call stops reading, a pipe would block it and
-      # stall that process. So it writes through `tee -p`, which carries on
-      # into /dev/null after the call's end of the pipe has gone. A reader's
-      # tracer dies with bwrap's namespace when the call ends, so it writes to
-      # its descriptor directly; a relay there could die before it forwarded.
-      def output(profile, own, fds)
-        return "/dev/fd/#{own}" if profile.confined?
-
-        ["|exec #{@tee} -p /dev/fd/#{own} >/dev/null", *closed(fds - [own])].join(" ")
+         "-o", "/dev/fd/#{own}", "--", *closing(profile, fds)]
       end
 
       # The fence closes every descriptor above 2 in a confined call. Nothing
