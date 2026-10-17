@@ -80,6 +80,6 @@ panel changed.
 
 ## Phase 5 — Emit
 
-- Write the plan to `planning/specs/<slug>.md` (lain's planning convention).
+- Write the plan where the project's conventions name (the conventions section above), as `<slug>.md`.
 - Add a one-line index entry in the roadmap/index doc pointing at it.
-- Tell the user the plan runs with `/execute-plan planning/specs/<slug>.md`.
+- Tell the user the plan runs with `/execute-plan <path to the plan>`.

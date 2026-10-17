@@ -109,14 +109,24 @@ RSpec.describe "shipped skills" do
   end
 
   describe "create-plan's scaffold drives a plan, not code" do
-    it "instructs grounding-before-planning, Gherkin acceptance criteria, and writing to planning/specs" do
+    it "instructs grounding-before-planning, Gherkin acceptance criteria, and writing where the conventions name" do
       with_empty_project do |renderer|
         scaffold = renderer.render("create-plan")
 
         expect(scaffold.downcase).to include("ground")
         expect(scaffold.downcase).to match(/before .*plan|ground.* first|ground.* before/)
         expect(scaffold).to match(/[Gg]herkin/)
-        expect(scaffold).to include("planning/specs")
+        expect(scaffold).to match(/Write the plan (to|where) .*conventions/)
+      end
+    end
+
+    it "ships no template that cites lain's own manifest or plan path" do
+      tree = File.expand_path("../../../lib/lain/prompt/templates", __dir__)
+      shipped = Dir.glob("**/*", base: tree).map { |f| File.join(tree, f) }.select { |f| File.file?(f) }
+
+      expect(shipped).not_to be_empty
+      shipped.each do |file|
+        expect(File.read(file)).not_to match(%r{require manifest|planning/specs/|lib/lain/|ROADMAP\.md}), file
       end
     end
 
