@@ -138,7 +138,7 @@ module Lain
         return downstream(env, &app) unless gated?(env)
 
         asked = unwrapped(env.fetch(:effect))
-        ruling = witnessed(@policy.rule(asked, env[:context]), env[:context])
+        ruling = witnessed(@policy.rule(asked, noting(env, asked)), env[:context])
         return downstream(env.merge(effect: asked), &app) if ruling.allow?
 
         env.merge(result: Tool::Result.error(refusal(ruling, asked.name.inspect)))
@@ -151,6 +151,27 @@ module Lain
         return format(FINAL, name:, because: ruling.told) if ruling.final?
 
         [format(@denial, name:), ruling.said].compact.join(": ")
+      end
+
+      # The path rule's reason travels to the human as a note on the context, the
+      # way a rung's abstention does; {Sensitivity::Policy#judge} is the same call
+      # {Approval::PathGate#verdict_for} makes, so the two cannot disagree.
+      def noting(env, effect)
+        context = env[:context]
+        return context unless effect.tool_call? && (env.fetch(:effect).approval? || env.fetch(:tool).held?) &&
+                              path_gated?(effect, context)
+
+        Approval::Escalation::Noted.new(context, path_verdict(effect, context).explanation)
+      end
+
+      def path_gated?(effect, context) = @sensitivity.gates?(effect, **where(context))
+
+      def path_verdict(effect, context)
+        @sensitivity.judge(::Lain::Sensitivity::Policy.path_in(effect), **where(context))
+      end
+
+      def where(context)
+        { cwd: ::Lain::Session.cwd_of(context), within: ::Lain::Sensitivity::Policy.base_of(context) }
       end
 
       def unwrapped(effect) = effect.approval? ? effect.effect : effect
@@ -174,9 +195,7 @@ module Lain
       # the interpreter, which reports it by name, rather than being gated on a
       # path in an input nothing will read.
       def judged?(effect, tool, context)
-        tool.held? &&
-          (tool.requires_approval? || @sensitivity.gates?(effect, cwd: ::Lain::Session.cwd_of(context),
-                                                                  within: ::Lain::Sensitivity::Policy.base_of(context)))
+        tool.held? && (tool.requires_approval? || path_gated?(effect, context))
       end
     end
   end

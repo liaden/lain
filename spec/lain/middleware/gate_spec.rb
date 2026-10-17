@@ -395,6 +395,53 @@ RSpec.describe Lain::Middleware::Gate do
       end
     end
 
+    describe "saying which path rule parked the call" do
+      def noted_for(effect, context: nil, sensitivity: self.sensitivity)
+        policy = spy
+        through(described_class.new(policy:, sensitivity:), effect, tool: held(effect.name, shipped), context:)
+        policy.contexts.first.parked_because
+      end
+
+      it "names a credential-shaped name" do
+        expect(noted_for(tool_call("read_file", { "path" => ".env.local" }))).to eq(["a credential-shaped name"])
+      end
+
+      it "names a path outside the project" do
+        confined = sensitivity.confined(roots: ["/home/tester/project"])
+
+        expect(noted_for(tool_call("read_file", { "path" => "/opt/x" }), sensitivity: confined).join)
+          .to include("outside the project")
+      end
+
+      it "keeps the notes of a context that already has some" do
+        inner = Lain::Approval::Escalation::Noted.new(Lain::Session.new, "earlier")
+
+        expect(noted_for(tool_call("read_file", { "path" => ".env.local" }), context: inner))
+          .to eq(["earlier", "a credential-shaped name"])
+      end
+
+      it "reaches the parked Pending and its approval_pending record", :seam do
+        journal = StringIO.new
+        queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal), timeout: 0.05)
+        gate = described_class.new(policy: queue, sensitivity:)
+
+        result, = Sync do
+          through(gate, tool_call("read_file", { "path" => ".env.local" }), tool: shipped.fetch("read_file"))
+        end
+
+        expect(result).to have_attributes(is_error: true)
+        expect(journal.string).to include("approval_pending").and include("a credential-shaped name")
+      end
+
+      it "adds nothing for a tier-gated call that names no gated path" do
+        policy = spy
+        through(described_class.new(policy:, sensitivity:), tool_call("bash", { "command" => "ls" }),
+                tool: held("bash", shipped))
+
+        expect(policy.contexts.first.respond_to?(:parked_because) && policy.contexts.first.parked_because).to be_falsey
+      end
+    end
+
     it "leaves an ordinary path to pass downstream untouched" do
       expect(asks?(tool_call("read_file", { "path" => "README.md" }), sensitivity:)).to be(false)
     end
