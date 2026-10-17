@@ -245,10 +245,8 @@ module Lain
         lines = Blocks.of(message).map { |part| block_line(part) }
         return "[#{attest(message)}] #{ELIDED}" if lines.empty?
 
-        ["[#{attest(message)}, #{pluralize(lines.size, "block")}]", *lines].join("\n")
+        ["[#{attest(message)}, #{lines.size} #{"block".pluralize(lines.size)}]", *lines].join("\n")
       end
-
-      def pluralize(count, noun) = "#{count} #{noun}#{"s" unless count == 1}"
 
       def attest(message) = self.class.attest(message)
 

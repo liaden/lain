@@ -100,11 +100,10 @@ module Lain
         def header
           procedural = distinct_tasks(:procedural)
           parallel = distinct_tasks(:parallel)
-          "Arm sweep — #{pluralize(@order.size, "task")} (#{procedural} procedural, #{parallel} parallel), " \
+          tasks = "#{@order.size} #{"task".pluralize(@order.size)}"
+          "Arm sweep — #{tasks} (#{procedural} procedural, #{parallel} parallel), " \
             "#{ARM_ORDER.size} arms (#{ARM_ORDER.join(" vs ")}); control: single-thread"
         end
-
-        def pluralize(count, word) = "#{count} #{count == 1 ? word : "#{word}s"}"
 
         def distinct_tasks(category)
           @measurements.select { |m| m.category == category }.map(&:task_id).uniq.size

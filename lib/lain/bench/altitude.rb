@@ -169,15 +169,13 @@ module Lain
       def warn_of_cost(tasks) = @sink.puts(format(COST_WARNING, arms: @arms.size, tasks:))
 
       def header(grouped)
-        ["Altitude — #{pluralize(grouped.values.sum(&:size), "task")} over " \
-         "#{pluralize(grouped.size, "size")}, #{pluralize(@arms.size, "arm")} " \
+        ["Altitude — #{counted(grouped.values.sum(&:size), "task")} over " \
+         "#{counted(grouped.size, "size")}, #{counted(@arms.size, "arm")} " \
          "(#{@arms.map(&:name).join(" vs ")})",
          "  fixture:   #{@fixture_path}"].join("\n")
       end
 
-      # A count of one has to read as one: "1 sizes" makes an experiment record
-      # look generated rather than written.
-      def pluralize(count, word) = "#{count} #{count == 1 ? word : "#{word}s"}"
+      def counted(count, word) = "#{count} #{word.pluralize(count)}"
 
       # One size's whole block: the banner, then one titled table per metric.
       def block(size, tasks)

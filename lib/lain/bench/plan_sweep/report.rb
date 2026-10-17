@@ -78,10 +78,8 @@ module Lain
 
         def header
           "Plan-shaped compaction sweep -- #{@arms.size} arms (shapes x densities), " \
-            "#{pluralize(@runs.size, "scripted run")}; baseline: reactive / none"
+            "#{@runs.size} #{"scripted run".pluralize(@runs.size)}; baseline: reactive / none"
         end
-
-        def pluralize(count, word) = "#{count} #{count == 1 ? word : "#{word}s"}"
       end
     end
   end
