@@ -31,16 +31,15 @@ module Lain
       # bound nobody can see.
       raise ArgumentError, "max_tokens must be positive, got #{ceiling}" unless ceiling.positive?
 
-      super(
-        model: -model.to_s,
-        system: system && Canonical.normalize(system),
-        tools: Canonical.normalize(tools),
-        messages: Canonical.normalize(messages),
-        max_tokens: ceiling,
-        stream: !stream.nil? && stream != false,
-        reasoning: reasoning && Canonical.normalize(reasoning),
-        extra: Canonical.normalize(extra)
-      )
+      identity = { model: -model.to_s, system: system && Canonical.normalize(system),
+                   tools: Canonical.normalize(tools), messages: Canonical.normalize(messages),
+                   max_tokens: ceiling, reasoning: reasoning && Canonical.normalize(reasoning) }
+      # Digested once, before `super` freezes the instance: a model call asks
+      # for it five or six times (the retry guard, the stream frame, the
+      # journal, the budget), and each ask was a full serialisation of the
+      # conversation.
+      @digest = Canonical.digest(self.class.cache_payload_of(**identity))
+      super(**identity, stream: !stream.nil? && stream != false, extra: Canonical.normalize(extra))
     end
 
     # The bytes that matter for cache identity: `stream` and `extra` are transport
@@ -52,14 +51,14 @@ module Lain
     # is a structural no-op and {Telemetry::RequestSent.from} can journal it
     # without a second deep walk of the full message history. The odd-looking
     # alphabetical key order is that contract, and request_spec pins it.
-    def cache_payload
+    def self.cache_payload_of(model:, system:, tools:, messages:, max_tokens:, reasoning:)
       { "max_tokens" => max_tokens, "messages" => messages, "model" => model,
         "reasoning" => reasoning, "system" => system, "tools" => tools }.freeze
     end
 
-    def digest
-      Canonical.digest(cache_payload)
-    end
+    def cache_payload = self.class.cache_payload_of(model:, system:, tools:, messages:, max_tokens:, reasoning:)
+
+    attr_reader :digest
 
     # Anthropic's cache is a prefix match over tools -> system -> messages. Any
     # byte change invalidates everything after it, so the prefix is what a

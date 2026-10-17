@@ -299,14 +299,14 @@ RSpec.describe Lain::Request do
       expect(event.to_journal.fetch("prefix_chain_version")).to eq(Lain::Request::PREFIX_CHAIN_VERSION)
     end
 
-    it "normalizes the payload once -- the digest's own pass -- not twice" do
+    it "does not normalize the payload again: the digest's own pass was taken at construction" do
       req = marked_request
       payload = req.cache_payload
       allow(Lain::Canonical).to receive(:normalize).and_call_original
 
       journaled(req)
 
-      expect(Lain::Canonical).to have_received(:normalize).with(payload).once
+      expect(Lain::Canonical).not_to have_received(:normalize).with(payload)
     end
 
     it "structurally shares the request's members rather than re-copying the message history" do
