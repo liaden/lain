@@ -64,12 +64,10 @@ module Lain
 
       def exclusively(repo)
         FileUtils.mkdir_p(File.dirname(state("lock", repo)))
-        File.open(state("lock", repo), File::RDWR | File::CREAT) do |lock|
-          return "another lain worktrees gc is running for #{repo}; this run did nothing" unless
-            lock.flock(File::LOCK_EX | File::LOCK_NB)
+        report = nil
+        return report if FileLock.new(state("lock", repo)).try { report = yield }
 
-          yield
-        end
+        "another lain worktrees gc is running for #{repo}; this run did nothing"
       end
 
       def reaper(repo, journal)
