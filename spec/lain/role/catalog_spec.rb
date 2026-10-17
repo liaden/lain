@@ -43,6 +43,13 @@ RSpec.describe Lain::Role::Catalog do
     end
   end
 
+  # The slot loader refuses a file for each of these, and the role renders
+  # sealed; one declaration keeps the two lists from drifting.
+  it "derives the approval roles from the roles that render sealed" do
+    expect(described_class.approval_roles).to eq(described_class.all.select(&:sealed).map(&:name))
+    expect(described_class.approval_roles).to contain_exactly(:auto_approver, :gate_adjudicator, :evidence_researcher)
+  end
+
   # The grant is the epic seam's to make: a chat attenuates every child from a
   # floor that holds neither name, so a second role naming one would be a role
   # no ordinary spawn could ever build.

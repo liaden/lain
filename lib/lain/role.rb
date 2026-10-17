@@ -1,15 +1,19 @@
 # frozen_string_literal: true
 
 module Lain
-  Role = Data.define(:name, :only, :unattended, :max_iterations) do
+  Role = Data.define(:name, :only, :unattended, :max_iterations, :sealed) do
     # `name` is the catalog key (`:test_engineer`); `only` normalizes to frozen
     # Symbols -- the tool names this role attenuates the spawn's union down to.
     # `unattended` is the guarantee described on the reopened class below. It
     # normalizes to a REAL boolean like every member beside it, and defaults to
-    # false: a role CLAIMS the guarantee, it never inherits one.
-    def initialize(name:, only:, unattended: false, max_iterations: Agent::Budget::DEFAULT_MAX_ITERATIONS)
+    # false: a role CLAIMS the guarantee, it never inherits one. `sealed` is a
+    # role that decides or informs an approval, so its prompt never carries the
+    # project's slot fills: a project must not write the prompt that judges it.
+    def initialize(name:, only:, unattended: false, max_iterations: Agent::Budget::DEFAULT_MAX_ITERATIONS,
+                   sealed: false)
       super(name: name.to_sym, only: Array(only).map(&:to_sym).freeze,
-            unattended: unattended ? true : false, max_iterations: Integer(max_iterations))
+            unattended: unattended ? true : false, max_iterations: Integer(max_iterations),
+            sealed: sealed ? true : false)
     end
 
     # The child's capability set: the spawn's union attenuated DOWN to `only`.
@@ -42,7 +46,7 @@ module Lain
     # siblings would share no cached prefix. Pure over the session-fixed
     # `slots`, so repeated renders are byte-identical.
     def prelude_segments(slots:)
-      [slots.render("system").freeze, slots.render_role(name).freeze].freeze
+      [slots.render("system", sealed:).freeze, slots.render_role(name).freeze].freeze
     end
 
     # The segments joined, for display and byte-level comparison only -- as a
@@ -70,7 +74,9 @@ module Lain
 
     private
 
-    def placed_segments(slots, cwd) = [slots.render_child("system"), placed_tail(slots.render_role(name), cwd)]
+    def placed_segments(slots, cwd)
+      [slots.render_child("system", sealed:), placed_tail(slots.render_role(name), cwd)]
+    end
 
     # Joined as bytes: under LANG=C a directory name, and the role text too,
     # arrive as bytes, and either cannot join the other while it is UTF-8.

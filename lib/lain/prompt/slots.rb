@@ -179,11 +179,12 @@ module Lain
 
       # The rendered prompt for +slot+, base template plus filled holes. Pure: a
       # function of the frozen fills and templates, byte-identical across calls.
-      def render(slot = "system") = render_with(slot, @environment)
+      # Sealed is for the prompt that judges the project's own approvals.
+      def render(slot = "system", sealed: false) = render_with(slot, @environment, sealed:)
 
       # {#render} as a child sees it: the environment's working directory is
       # deferred to the role tail, so sibling children share these bytes.
-      def render_child(slot = "system") = render_with(slot, @child_environment)
+      def render_child(slot = "system", sealed: false) = render_with(slot, @child_environment, sealed:)
 
       # The project override at `.lain/slots/role/<name>.md` if present, else the
       # shipped default. Pure and session-fixed exactly like {#render}, so two
@@ -228,8 +229,8 @@ module Lain
 
       private
 
-      def render_with(slot, environment)
-        engine = LockedBinding.new(resolve: method(:resolve), locals: { environment: })
+      def render_with(slot, environment, sealed:)
+        engine = LockedBinding.new(resolve: sealed ? ->(_name) { "" } : method(:resolve), locals: { environment: })
         engine.render_template(@templates.fetch(slot.to_s), slot.to_s)
       end
 

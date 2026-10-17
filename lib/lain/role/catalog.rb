@@ -39,18 +39,18 @@ module Lain
         # read-only set, unattended because the gate waits on its answer and
         # nobody could answer a parked call.
         Role.new(name: :evidence_researcher, only: %i[read_file list_files glob grep web_fetch web_search],
-                 max_iterations: 60, unattended: true),
+                 max_iterations: 60, unattended: true, sealed: true),
         Role.new(name: :court_clerk, only: %i[read_file list_files memory_read memory_write]),
         # {Approval::Judge}'s role. Unattended because the gate waits on its
         # answer with the judged call still unparked: a question of its own
         # would hold that call until the judge's bound lapsed.
-        Role.new(name: :auto_approver, only: %i[read_file list_files glob grep], unattended: true),
+        Role.new(name: :auto_approver, only: %i[read_file list_files glob grep], unattended: true, sealed: true),
         # {Approval::Gate::Adjudicator}'s sibling of `auto_approver`, judging an
         # ARTIFACT rather than one waiting tool call. Two roles because reusing
         # auto_approver.md would tell the model a tool call is pending on every
         # artifact gate. Unattended for `auto_approver`'s reason: the gate is
         # already waiting on its answer.
-        Role.new(name: :gate_adjudicator, only: %i[read_file list_files glob grep], unattended: true),
+        Role.new(name: :gate_adjudicator, only: %i[read_file list_files glob grep], unattended: true, sealed: true),
         Role.new(name: :harness_improver, only: %i[read_file list_files glob grep improvement_write]),
         Role.new(name: :meta_harness, only: %i[read_file list_files glob grep]),
         Role.new(name: :meta_summarizer, only: %i[read_file list_files glob grep]),
@@ -119,12 +119,10 @@ module Lain
                  only: %i[read_file list_files glob grep edit_file write_file todo_write bash subagent run_skill])
       ].to_h { |role| [role.name, role] }.freeze
 
-      # The roles that decide or inform an approval; a project's slot file
-      # must not rewrite the prompt that judges its own approvals.
-      APPROVAL_ROLES = %i[auto_approver gate_adjudicator evidence_researcher].freeze
-
       class << self
-        def approval_roles = APPROVAL_ROLES
+        # The roles that decide or inform an approval: they render sealed, and
+        # {Prompt::Slots} refuses a project file rewriting any of them.
+        def approval_roles = all.select(&:sealed).map(&:name)
 
         # Raises rather than returning nil: asking for a role that does not
         # exist is a wiring error, and naming the whole catalog in the message
