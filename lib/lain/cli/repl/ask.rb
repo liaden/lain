@@ -70,7 +70,7 @@ module Lain
 
         RAISE_MAX_TOKENS = "raise --max-tokens (now %d); a thinking model's reasoning counts against it"
 
-        FILLED_WINDOW = "the reply filled the context window; raise LAIN_NUM_CTX or start a shorter chat"
+        FILLED_WINDOW = "raise LAIN_NUM_CTX or start a shorter chat"
 
         WAIT_LONGER = "set LAIN_STREAM_STALL_TIMEOUT to wait longer (in seconds; 0 turns the stall check off)"
 
@@ -90,9 +90,11 @@ module Lain
         end
 
         def remedy_for(response)
-          return [] unless response.stop_reason == ::Lain::StopReason::MAX_TOKENS
-
-          [response.window_cut ? FILLED_WINDOW : format(RAISE_MAX_TOKENS, @agent.context.max_tokens)]
+          case response.stop_reason
+          when ::Lain::StopReason::CONTEXT_FULL then [FILLED_WINDOW]
+          when ::Lain::StopReason::MAX_TOKENS then [format(RAISE_MAX_TOKENS, @agent.context.max_tokens)]
+          else []
+          end
         end
 
         # A torn ask: journal the turns that did commit, anchor the stop, then

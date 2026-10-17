@@ -140,6 +140,14 @@ RSpec.describe Lain::Response do
       expect(failure.withholds_text?).to be(false)
     end
 
+    it "names a reply that filled the context window, keeping the text" do
+      failure = stopped(:context_full, text: "par").failure
+
+      expect(failure.message).to include("filled the context window")
+      expect(failure.message).not_to include("max_tokens")
+      expect(failure.withholds_text?).to be(false)
+    end
+
     it "stays deeply frozen" do
       expect(stopped(:malformed).failure).to be_deeply_frozen
     end

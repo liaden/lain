@@ -798,11 +798,11 @@ RSpec.describe Lain::Provider::Ollama do
       expect(described_class.new(transport: transport_sync(body)).complete(request)).to stop_with(:max_tokens)
     end
 
-    it "marks a length stop short of the request's max_tokens as cut by the window" do
+    it "reads a length stop short of the request's max_tokens as the window filling" do
       body = { "message" => { "role" => "assistant", "content" => "x" }, "done_reason" => "length", "eval_count" => 7 }
       response = described_class.new(transport: transport_sync(body)).complete(request(max_tokens: 64))
 
-      expect(response.window_cut).to be(true)
+      expect(response).to stop_with(:context_full)
     end
 
     it "maps the empty-string (connection-closed) reason to :unknown" do

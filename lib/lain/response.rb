@@ -11,12 +11,8 @@ module Lain
   #
   # `raw` carries the provider's own object for debugging and is deliberately not
   # part of #digest.
-  #
-  # `window_cut` is true only when the provider knows a `max_tokens` stop came
-  # from the context window filling rather than from the ceiling being spent.
-  Response = Data.define(:id, :model, :content, :stop_reason, :usage, :raw, :malformed, :window_cut) do
-    def initialize(content:, stop_reason:, id: nil, model: nil, usage: Usage.zero, raw: nil, malformed: nil,
-                   window_cut: false)
+  Response = Data.define(:id, :model, :content, :stop_reason, :usage, :raw, :malformed) do
+    def initialize(content:, stop_reason:, id: nil, model: nil, usage: Usage.zero, raw: nil, malformed: nil)
       super(
         id: id&.to_s&.freeze,
         model: model&.to_s&.freeze,
@@ -24,8 +20,7 @@ module Lain
         stop_reason: StopReason.admit(stop_reason),
         usage:,
         raw:,
-        malformed:,
-        window_cut:
+        malformed:
       )
     end
 

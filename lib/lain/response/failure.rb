@@ -17,6 +17,8 @@ module Lain
     end
 
     Failure::MESSAGES = { ::Lain::StopReason::MAX_TOKENS => "model hit max_tokens before finishing",
+                          ::Lain::StopReason::CONTEXT_FULL => "the reply filled the context window before the " \
+                                                              "model finished",
                           ::Lain::StopReason::REFUSAL => "model refused to continue",
                           ::Lain::StopReason::TRUNCATED => "truncated stream: the connection ended before the model " \
                                                            "finished (see its truncated_stream journal record)",

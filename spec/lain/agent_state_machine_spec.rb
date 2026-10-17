@@ -71,6 +71,15 @@ RSpec.describe Lain::Agent do
       end
     end
 
+    it "fails on a window cut, saying the window and not max_tokens" do
+      a = agent(text_response("x", stop_reason: :context_full))
+      response = a.ask("hi")
+
+      expect(a.state).to eq(:failed)
+      expect(response.failure.message).to include("context window")
+      expect(response.failure.message).not_to include("max_tokens")
+    end
+
     it "fails on an unrecognized stop_reason loudly, never a NoMethodError" do
       a = agent(Lain::Response.new(content: [], stop_reason: "coined_in_2099"))
 

@@ -35,6 +35,7 @@ stateDiagram-v2
   awaiting_model --> failed : unknown
   awaiting_model --> failed : malformed
   awaiting_model --> failed : truncated
+  awaiting_model --> failed : context_full
   awaiting_model --> stalled : stall
   stalled --> awaiting_model : replan
 ```

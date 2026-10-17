@@ -411,7 +411,7 @@ RSpec.describe Lain::SessionRecord::Salvage do
 
       outcome = described_class.new(entries: [sent_with_ceiling(digest)], frames:, timeline:).call
 
-      expect(outcome.response.window_cut).to be(true)
+      expect(outcome.response.stop_reason).to eq(:context_full)
     end
 
     it "commits nothing when the frame reassembles to no content, and names the frame in its notice" do

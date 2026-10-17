@@ -963,6 +963,15 @@ RSpec.describe Lain::Tools::Subagent do
       expect(result.content).to include(ceiling.to_s)
     end
 
+    it "floors a summary whose reply filled the context window, naming the window" do
+      provider = mock(text_response(oversized), text_response("half a sen", stop_reason: :context_full))
+
+      result = build_subagent(provider:).call({ "prompt" => "go" }, invocation)
+
+      expect(result.content).not_to include("half a sen")
+      expect(result.content).to include("filled the context window")
+    end
+
     it "floors a summary whose stream was cut off, whatever reason says so" do
       provider = mock(text_response(oversized), text_response("half a sen", stop_reason: :truncated))
 

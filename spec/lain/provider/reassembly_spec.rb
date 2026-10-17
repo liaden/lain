@@ -89,7 +89,7 @@ RSpec.describe Lain::Provider::Reassembly do
                              "done" => true, "done_reason" => "length", "eval_count" => 10)}\n"
       spool_ollama(cut)
 
-      expect(described_class.call(frame, ceiling: 64).window_cut).to be(true)
+      expect(described_class.call(frame, ceiling: 64).stop_reason).to eq(:context_full)
     end
 
     # The live decode journals a prose tool call; a reassembly has no session

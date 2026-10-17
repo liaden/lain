@@ -346,24 +346,25 @@ RSpec.describe Lain::Provider::Ollama::Decoding do
   describe "a length stop" do
     def cut(eval_count) = body(content: "x", done_reason: "length").merge("eval_count" => eval_count)
 
-    it "is marked a window cut when it fell short of the ceiling" do
-      expect(decode(cut(300), [], 1024).window_cut).to be(true)
+    it "is a context_full stop when it fell short of the ceiling" do
+      expect(decode(cut(300), [], 1024)).to stop_with(Lain::StopReason::CONTEXT_FULL)
     end
 
-    it "is not marked when the ceiling itself was spent" do
-      expect(decode(cut(1024), [], 1024).window_cut).to be(false)
+    it "is still max_tokens when the ceiling itself was spent" do
+      expect(decode(cut(1024), [], 1024)).to stop_with(Lain::StopReason::MAX_TOKENS)
     end
 
-    it "is not marked when no count was reported" do
-      expect(decode(cut(0), [], 1024).window_cut).to be(false)
+    it "is max_tokens when no count was reported" do
+      expect(decode(cut(0), [], 1024)).to stop_with(Lain::StopReason::MAX_TOKENS)
     end
 
-    it "is not marked when no ceiling is known" do
-      expect(decode(cut(300)).window_cut).to be(false)
+    it "is max_tokens when no ceiling is known" do
+      expect(decode(cut(300))).to stop_with(Lain::StopReason::MAX_TOKENS)
     end
 
-    it "is not marked on a stop that was not a length" do
-      expect(decode(body(content: "x").merge("eval_count" => 5), [], 1024).window_cut).to be(false)
+    it "is not a window cut on a stop that was not a length" do
+      expect(decode(body(content: "x").merge("eval_count" => 5), [], 1024))
+        .to stop_with(Lain::StopReason::END_TURN)
     end
   end
 end

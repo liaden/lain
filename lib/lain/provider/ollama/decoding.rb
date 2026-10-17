@@ -136,9 +136,8 @@ module Lain
           spoken = withheld(without_stray(message, stray), envelope)
           silent = said_nothing?(heard(message, spoken, stray))
           response = Response.new(id: nil, model: body["model"], content: decode_content(spoken),
-                                  stop_reason: decode_stop_reason(body, message, envelope, silent),
-                                  usage: build_usage(body), raw: body, malformed: finding(envelope, silent, stray),
-                                  window_cut: window_cut?(body, ceiling))
+                                  stop_reason: decode_stop_reason(body, message, envelope, silent, ceiling),
+                                  usage: build_usage(body), raw: body, malformed: finding(envelope, silent, stray))
           note_prose_tool_call(journal, body, envelope) unless envelope.nil?
           note_stray_markup(journal, body, stray) unless stray.nil?
           note_empty_answer(journal, body) if silent
@@ -274,22 +273,22 @@ module Lain
         # - Silence may not settle as an answer.
         # - Every other reason is left saying what it said, because a spent
         #   ceiling already names a cause a caller can act on.
-        def decode_stop_reason(body, message, envelope, silent)
+        def decode_stop_reason(body, message, envelope, silent, ceiling)
           return StopReason::TRUNCATED if body["done"] == false
           return StopReason::TOOL_USE unless Array(message["tool_calls"]).empty?
           return StopReason::MALFORMED unless envelope.nil?
 
-          reason = wire_stop_reason(body)
+          reason = wire_stop_reason(body, ceiling)
           silent && SETTLES_AS_ANSWER.include?(reason) ? StopReason::MALFORMED : reason
         end
 
         # The two enum values Ollama can express, with StopReason.normalize
         # closing the open enum ("" -> :unknown, and any load/unload edge string
         # likewise) so the mapping stays total.
-        def wire_stop_reason(body)
+        def wire_stop_reason(body, ceiling)
           case body["done_reason"]
           when "stop" then StopReason::END_TURN
-          when "length" then StopReason::MAX_TOKENS
+          when "length" then window_cut?(body, ceiling) ? StopReason::CONTEXT_FULL : StopReason::MAX_TOKENS
           else StopReason.normalize(body["done_reason"])
           end
         end

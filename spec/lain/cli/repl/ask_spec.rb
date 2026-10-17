@@ -149,13 +149,14 @@ RSpec.describe Lain::CLI::Repl::Ask do
         .with("raise --max-tokens (now 4096); a thinking model's reasoning counts against it").ordered
     end
 
-    it "names the context window, not the flag, when the provider marked a window cut" do
-      cut = Lain::Response.new(content: [], stop_reason: :max_tokens, window_cut: true)
+    it "names the context window, not the flag, when the reply filled the window" do
+      cut = Lain::Response.new(content: [], stop_reason: :context_full)
 
       ask.settle(cut)
 
-      expect(tty).to have_received(:render_error).with(a_string_matching(/context window/))
-      expect(tty).not_to have_received(:render_error).with(a_string_matching(/--max-tokens/))
+      expect(tty).to have_received(:render_error).with(a_string_matching(/filled the context window/))
+      expect(tty).to have_received(:render_error).with(a_string_matching(/LAIN_NUM_CTX/))
+      expect(tty).not_to have_received(:render_error).with(a_string_matching(/max_tokens/))
     end
 
     it "keeps the flag for an unmarked max_tokens stop, however few tokens it generated" do
