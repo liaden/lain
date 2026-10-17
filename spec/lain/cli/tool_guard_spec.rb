@@ -1299,8 +1299,8 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
 
     # Under `auto` there is no queue to park on, so the retry is refused, and
-    # the refusal names the way to a human rather than promising one.
-    it "refuses the same command under auto approval, naming /mode ask as the way to a human" do
+    # the refusal says so and holds no mode switch the model cannot make.
+    it "refuses the same command under bypass approval, telling the model not to re-send it" do
       board = board_approving("cat notes.txt")
       board.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "tty")
       Sync { run_bash(board, "cat notes.txt") }
@@ -1308,7 +1308,9 @@ RSpec.describe Lain::CLI::ToolGuard do
       told = Sync { run_bash(board, "cat notes.txt", id: "tu_2") }
 
       expect(told).to have_attributes(is_error: true)
-      expect(told.content).to include("a human must switch to /mode ask to approve it", "no approval will lift this")
+      expect(told.content).to include("no approval is possible while approval is bypass", "do not re-send it",
+                                      "no approval will lift this")
+      expect(told.content).not_to include("/mode ask")
       expect(told.content).not_to include("PRIVATE KEY")
       expect(board.approvals.each.count).to eq(0)
     end

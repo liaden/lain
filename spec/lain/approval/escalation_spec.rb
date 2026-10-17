@@ -1418,17 +1418,15 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.last).to include("rung" => described_class::Bypass::NAME, "verdict" => "deny")
     end
 
-    # A refusal nobody can lift at this approval level says so, and names the
-    # one move that reaches a human.
-    # The model cannot switch modes, so it is told who can, and that no
-    # approval is possible at this level -- which is what the gate's final
-    # sentence then says too.
-    it "tells the model only a human switching to /mode ask can approve a barred command under bypass approval" do
+    # The model cannot switch modes, so its refusal holds only what it can act
+    # on; the human's line says how to reach a human.
+    it "tells the model no approval is possible and not to re-send, without the mode switch" do
       ruling = described_class.bypass(tools:, journal:).rule(effect, carried(barred: true))
 
       expect(ruling).to be_final
-      expect(ruling.told).to include("a human must switch to /mode ask to approve it",
-                                     "no approval is possible while approval is bypass")
+      expect(ruling.told).to include("no approval is possible while approval is bypass", "do not re-send it")
+      expect(ruling.told).not_to include("/mode ask")
+      expect(ruling.reason).to include("switch to /mode ask")
     end
 
     it "leaves a deny for a barred command a deny" do

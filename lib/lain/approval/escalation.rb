@@ -750,14 +750,14 @@ module Lain
       #
       # A barred command is refused, and FINAL: there is no queue under `bypass`
       # to park it on, so no approval at this level lifts it. The model cannot
-      # switch modes, so it is told who can and that retrying will not help.
+      # switch modes, so it is told only that retrying will not help.
       class Bypass
         NAME = "bypass"
         BECAUSE = "approval is bypass, and no rung above refused this call"
-        REFUSED = "approval is bypass, and this command is barred from automatic approval"
+        REFUSED = "approval is bypass, and this command is barred from automatic approval; " \
+                  "switch to /mode ask to approve it"
         TOLD = "this command's automatically approved output held a credential, so only a human may approve " \
-               "it, and no approval is possible while approval is bypass -- a human must switch to /mode ask " \
-               "to approve it"
+               "it, and no approval is possible while approval is bypass; do not re-send it"
 
         # Frozen on {Triage}'s terms: a rung holds no state.
         def initialize = freeze
