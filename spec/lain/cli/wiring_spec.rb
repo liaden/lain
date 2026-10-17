@@ -2287,6 +2287,47 @@ RSpec.describe Lain::CLI::Wiring do
         .to eq([notes, notes, notes.mailbox])
     end
 
+    # The schedule decides whether a tick exists at all, so the surface a
+    # built Repl is handed is read back off the constructor it really got.
+    describe "the idle compaction surface" do
+      def idle_handed(schedule)
+        seen = []
+        allow(backend).to receive(:compaction_schedule).and_return(schedule)
+        allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
+          seen << kwargs[:idle]
+          original.call(**kwargs)
+        end
+        run_wiring
+        seen.sole
+      end
+
+      it "hands the Repl a ticking surface when the run is on the idle schedule" do
+        expect(idle_handed("idle")).to be_a(Lain::CLI::Repl::IdleCompaction)
+      end
+
+      it "ticks the chat's own agent and reports a fault on the display channel" do
+        built = {}
+        allow(Lain::Agent).to receive(:new).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs).tap { |agent| built.merge!(agent:, channel: kwargs[:display]) }
+        end
+        idle = idle_handed("idle")
+        allow(built[:agent]).to receive(:prepare_idle).and_raise(RuntimeError, "summarizer down")
+        pushed = []
+        allow(built[:channel]).to receive(:push) { |event| pushed << event }
+
+        idle.tick
+
+        expect(pushed).to include(
+          an_object_having_attributes(class: Lain::Telemetry::ToolOutput, tool_use_id: "lain:idle-compaction",
+                                      stream: :stderr, bytes: a_string_matching(/RuntimeError.*summarizer down/))
+        )
+      end
+
+      it "hands the Repl the Never surface when the run is on the turn schedule" do
+        expect(idle_handed("turn")).to be(Lain::CLI::Repl::IdleCompaction::Never)
+      end
+    end
+
     it "hands the chat's StdinPump the approval key the user's config names" do
       allow(Lain::Config).to receive(:keys)
         .and_return(Lain::Config::Keys.from({ "approval_cycle" => "s-tab" }, path: nil))

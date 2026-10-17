@@ -32,7 +32,8 @@ module Lain
                      middleware: Lain::Middleware::Stack.new, secret_surface: nil,
                      goal_driver: Lain::CLI::GoalDriver::Null, attended: true, input: Lain::Frontend::StdinPump::Idle,
                      echo_input: false, notes: HumanNotes::Null,
-                     mode_switch: Lain::Frontend::Neovim::ApprovalView::NoModeSwitch)
+                     mode_switch: Lain::Frontend::Neovim::ApprovalView::NoModeSwitch,
+                     idle: IdleCompaction::Never)
         @agent = agent
         @notes = notes
         @tty = tty
@@ -46,7 +47,7 @@ module Lain
         @attended = attended
         @echo_input = echo_input
         @mode_switch = mode_switch
-        name_lifetimes(replies:, supervisor:, approvals:, secret_surface:, tty:, conductor:)
+        name_lifetimes(replies:, supervisor:, idle:, approvals:, secret_surface:, tty:, conductor:)
       end
 
       # What this conversation was worth as a process exit status, for the one
@@ -115,9 +116,9 @@ module Lain
       # The conversation's lifetime, named by the object that owns it -- so
       # which fiber belongs to it, and who stops it, is read off a name rather
       # than off an ensure.
-      def name_lifetimes(replies:, supervisor:, **approval_seams)
+      def name_lifetimes(replies:, supervisor:, idle:, **approval_seams)
         @surfaces = ApprovalSurfaces.new(**approval_seams)
-        @conversation = ConversationScope.new(supervisor:, replies:, surfaces: @surfaces)
+        @conversation = ConversationScope.new(supervisor:, replies:, surfaces: @surfaces, idle:)
       end
 
       # The bridge over the agent's own override slot, sharing the nvim views'

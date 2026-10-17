@@ -986,7 +986,15 @@ module Lain
                  supervisor:, middleware: @command_surface.middleware, attended: attended?,
                  commands: @command_surface.commands,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
-                 echo_input: attended? && !input_socket_name.nil?, notes:, mode_switch: @switchboard.mode_switch)
+                 echo_input: attended? && !input_socket_name.nil?, notes:, mode_switch: @switchboard.mode_switch,
+                 idle: idle_compaction(agent:, backend:))
+      end
+
+      # The same route compaction's own diagnostics take, so a fault lands on the
+      # operator's screen and never in the conversation.
+      def idle_compaction(agent:, backend:)
+        sink = Sink::IOAdapter.new(channel, tool_use_id: "lain:idle-compaction", stream: :stderr)
+        Repl::IdleCompaction.for(backend.compaction_schedule, agent:, sink:)
       end
 
       # Its own method because it is a DIFFERENT unnamed object, which the

@@ -8,7 +8,8 @@ module Lain
       # outlive every per-ask Sync so the fleet has a home across asks, and every
       # surface a human answers through: the editor's gesture consumer, the
       # reply surfaces ({HumanReplies#session_surfaces}) and every watcher over
-      # the parked-approval queue ({ApprovalSurfaces#watch}).
+      # the parked-approval queue ({ApprovalSurfaces#watch}) -- and the idle
+      # compaction tick ({IdleCompaction}), which looks at a quiet chat.
       #
       # The surfaces live this long because the work that needs them does: a
       # docent child parks a gated read while the chat sits at rest, and a
@@ -42,7 +43,9 @@ module Lain
         # @param replies [#session_surfaces, #chat_surfaces] {HumanReplies}
         # @param surfaces [#watch] {ApprovalSurfaces}, whose `watch` answers nil
         #   under --non-interactive, where no queue was wired
-        def initialize(supervisor:, replies:, surfaces:)
+        # @param idle [#spawn] {IdleCompaction}, or its Never for the turn schedule
+        def initialize(supervisor:, replies:, surfaces:, idle: IdleCompaction::Never)
+          @idle = idle
           @supervisor = supervisor
           @replies = replies
           @approvals = surfaces
@@ -60,6 +63,7 @@ module Lain
           @surfaces.push(*@replies.session_surfaces(task))
           @surfaces.push(*@replies.chat_surfaces(task, attention:))
           @surfaces.push(*@approvals.watch(task, attention:))
+          @surfaces.push(@idle.spawn(task))
           self
         end
 
