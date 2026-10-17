@@ -356,7 +356,9 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     def write_crashed_session(name, request)
-      write_session(name, [open_header] + turn_records(committed) + [request_sent_record(request)])
+      dead = Lain::Liveness::Writer.current.with(start: "1")
+      write_session(name,
+                    [open_header.merge(dead.to_header)] + turn_records(committed) + [request_sent_record(request)])
     end
 
     def write_complete_frame(name, request, response)
@@ -584,23 +586,71 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     describe "an incomplete frame" do
-      it "surfaces provenance and leaves the session open, the file untouched" do
-        request = in_flight_request
-        write_crashed_session("20260101T000000-1.ndjson", request)
+      let(:name) { "20260101T000000-1.ndjson" }
+      let(:request) { in_flight_request }
+      let(:path) { File.join(paths.sessions_dir, name) }
+
+      def write_torn_frame
         raw = "event: message_start\ndata: {\"type\":\"message_start\""
-        Lain::Provider::ResponseWal.new(wal_path_for("20260101T000000-1.ndjson"))
+        Lain::Provider::ResponseWal.new(wal_path_for(name))
                                    .open_frame(request_digest: request.digest, wire: "anthropic-sse").append(raw)
         # crash: never closed -- the terminator never lands
+      end
 
-        path = File.join(paths.sessions_dir, "20260101T000000-1.ndjson")
-        lines_before = File.readlines(path).size
+      def written_records = File.foreach(path).map { |line| JSON.parse(line) }
+
+      it "reports the loss once and closes the file at the head it had" do
+        write_crashed_session(name, request)
+        write_torn_frame
+
+        first = resume.call
+        second = resume.call
+
+        expect(first.notices.join).to include("did not finish", request.digest)
+        expect(first.open?).to be(false)
+        expect(first.timeline.head_digest).to eq(committed.head_digest)
+        expect(written_records.last).to include("type" => "session_closed", "reason" => "salvaged",
+                                                "head" => committed.head_digest)
+        expect(second.notices.join).not_to include("did not finish", "not gracefully closed", "still open")
+      end
+
+      it "closes a file whose complete frame held no answer, naming the loss once" do
+        write_crashed_session(name, request)
+        frame = Lain::Provider::ResponseWal.new(wal_path_for(name))
+                                           .open_frame(request_digest: request.digest, wire: "anthropic-sse")
+        frame.append("event: ping\ndata: {\"type\":\"ping\"}\n\n")
+        frame.close(complete: true)
+
+        first = resume.call
+        second = resume.call
+
+        expect(first.notices.join).to include("held no answer")
+        expect(written_records.last).to include("type" => "session_closed", "reason" => "salvaged")
+        expect(second.notices.join).not_to include("held no answer")
+      end
+
+      it "appends nothing while the file's writer cannot be told from a live one" do
+        write_session(name, [open_header] + turn_records(committed) + [request_sent_record(request)])
+        write_torn_frame
+        before = File.read(path)
 
         result = resume.call
 
         expect(result.open?).to be(true)
-        expect(result.timeline.head_digest).to eq(committed.head_digest)
-        expect(result.notices.join).to include("did not finish", request.digest)
-        expect(File.readlines(path).size).to eq(lines_before)
+        expect(File.read(path)).to eq(before)
+      end
+
+      it "appends nothing while the file's writer is alive" do
+        live = Lain::Liveness::Writer.current
+        write_session(name, [open_header.merge(live.to_header)] + turn_records(committed) +
+                            [request_sent_record(request)])
+        write_torn_frame
+        before = File.read(path)
+
+        result = resume.call
+
+        expect(result.open?).to be(true)
+        expect(File.read(path)).to eq(before)
       end
     end
   end

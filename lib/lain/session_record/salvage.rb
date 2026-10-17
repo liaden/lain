@@ -71,6 +71,7 @@ module Lain
       Nothing = Data.define do
         def notice = nil
         def recovered? = false
+        def closes_file? = false
       end.new
 
       # A complete frame, reassembled -- and, ordinarily, freshly committed.
@@ -91,6 +92,7 @@ module Lain
       # is reported, never silent, even when a clean newer frame recovered fine.
       Recovered = Data.define(:request_digest, :response, :timeline, :newly_committed, :corruption) do
         def recovered? = true
+        def closes_file? = true
         def newly_committed? = newly_committed
 
         def turn = timeline.head
@@ -109,6 +111,7 @@ module Lain
       # frame and the `reason` for a reader to inspect.
       Unreadable = Data.define(:request_digest, :wire, :bytes, :reason, :corruption) do
         def recovered? = false
+        def closes_file? = true
 
         def notice
           base = "request #{request_digest}: the response log held no answer (#{frame}: #{reason}); " \
@@ -128,6 +131,7 @@ module Lain
       # Surfaced as provenance only; a caller must not commit it.
       Incomplete = Data.define(:request_digest, :bytes, :corruption) do
         def recovered? = false
+        def closes_file? = true
 
         def notice
           base = "request #{request_digest} did not finish before the crash (#{bytes} bytes recovered); " \

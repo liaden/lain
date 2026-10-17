@@ -187,7 +187,7 @@ module Lain
       def dir = @dir ||= @paths.sessions_dir
 
       # An OPEN recording gets one salvage attempt before anything else runs.
-      # {Salvager#close!} retroactively turns a Recovered crash into an ordinary
+      # {Salvager#close!} retroactively turns a crash whose writer is dead into an ordinary
       # closed file, so the reload below reuses the SAME
       # {Bench::Session::Loader}/{Bench::Session::Anchor} machinery every other
       # closed session already proves, rather than growing a parallel
@@ -197,7 +197,7 @@ module Lain
       def rebuild(path, current)
         recording = load_recording(path)
         outcome = salvage(path, recording)
-        recording = load_recording(path) if outcome.recovered?
+        recording = load_recording(path) if outcome.closes_file?
         resumed_result(path, recording, outcome, current)
       rescue Bench::Session::Corrupt, Store::MissingObject => e
         # Corrupt's own message names digests and reasons; only this layer still
@@ -263,16 +263,19 @@ module Lain
       end
 
       # Salvage only ever runs against an open session: a gracefully closed file
-      # already flushed everything it could. A Recovered outcome closes the file
-      # through {Salvager#close!}; {#rebuild} reloads it afterward.
+      # already flushed everything it could. Any outcome but Nothing closes the
+      # file through {Salvager#close!}, so a loss is reported once and not on
+      # every later resume; {#rebuild} reloads it afterward. Only a writer read
+      # as dead is closed over: a live or unknown one may still be mid-request.
       #
       # @return [SessionRecord::Salvage::Nothing, Recovered, Unreadable, Incomplete]
       def salvage(path, recording)
-        return SessionRecord::Salvage::Nothing unless recording.open?
+        return SessionRecord::Salvage::Nothing unless recording.open? && writer_dead?(path)
 
         salvager = Salvager.new(path:, timeline: recording.timeline)
-        salvager.close!(head_before: recording.timeline.head_digest) if salvager.outcome.recovered?
-        salvager.outcome
+        outcome = salvager.outcome
+        salvager.close!(head_before: recording.timeline.head_digest) if outcome.closes_file?
+        outcome
       end
 
       # `recording.memory` is file-scoped (the Loader's stated limit) and so
@@ -376,13 +379,18 @@ module Lain
       end
 
       # `outcome.notice` is nil for {SessionRecord::Salvage::Nothing} (the Null
-      # Object), so it drops out of `.compact` like every other absent notice; a
-      # Recovered outcome also leaves `recording` closed by the time this runs
-      # (see {#rebuild}'s reload), so `open_notice` correctly stops firing once
-      # recovery lands.
+      # Object), so it drops out of `.compact` like every other absent notice; any
+      # outcome that closes the file also leaves `recording` closed by the time this
+      # runs (see {#rebuild}'s reload), so `open_notice` stops firing once it lands.
       def notices(path, recording, outcome, mismatches)
         [open_notice(path, recording), outcome.notice, *mismatches].compact
       end
+
+      def writer(path) = Liveness::Writer.from_header(self.class.header(path))
+
+      def writer_live?(path) = writer(path).verdict(@probe) == :live
+
+      def writer_dead?(path) = writer(path).verdict(@probe) == :dead
 
       # The header records the process writing the file, so an open session can
       # be asked about that process rather than only "it wasn't closed". Only a
@@ -390,8 +398,7 @@ module Lain
       def open_notice(path, recording)
         return unless recording.open?
 
-        writer = Liveness::Writer.from_header(self.class.header(path))
-        return "#{File.basename(path)} is still open in process #{writer.pid}" if writer.verdict(@probe) == :live
+        return "#{File.basename(path)} is still open in process #{writer(path).pid}" if writer_live?(path)
 
         "#{File.basename(path)} was not gracefully closed; resuming from its last verified turn"
       end

@@ -3,7 +3,7 @@
 module Lain
   module CLI
     class Resume
-      # Computes and, on recovery, WRITES the salvage outcome for one OPEN file.
+      # Computes and, for any outcome that closes the file, WRITES the salvage outcome for one OPEN file.
       # Its own file, not merely its own class: `Metrics/ClassLength` measures
       # the class NODE, so a nested class here would still count toward
       # {Resume}'s line total.
@@ -46,6 +46,10 @@ module Lain
         # crash left missing, never a second `salvaged`/`turn` pair onto an
         # already-recovered head.
         #
+        # An outcome that recovered nothing writes only the anchor, at the head
+        # it already had: the loss is reported on this resume and the file no
+        # longer reads as open on the next.
+        #
         # @param head_before [String, nil] the Timeline head before recovery
         def close!(head_before:)
           journal = Journal.open(@path, fsync: true)
@@ -57,6 +61,8 @@ module Lain
         private
 
         def closing_records(head_before)
+          return [Telemetry::SessionClosed.new(head: head_before, reason: :salvaged)] unless outcome.recovered?
+
           anchor = Telemetry::SessionClosed.new(head: outcome.turn.digest, reason: :salvaged)
           return [anchor] unless outcome.newly_committed?
 
