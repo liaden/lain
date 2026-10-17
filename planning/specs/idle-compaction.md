@@ -1,6 +1,6 @@
 # Idle compaction: commit the cut while the human is away
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -843,3 +843,13 @@ Spec file: none, prose
 ## Execution log
 
 (Written by /execute-plan.)
+
+- 2026-10-17 run start. Base `main` at `3b2da419`. Grounding re-checked: only this plan and
+  `ROADMAP.md` changed since `8dc84539`. Worktrees at start: main, `tmp/worktrees/T24` and `T27`
+  (bash confinement, not this plan), `hn-2026-10-16`, the QA tree. Card branches here are named
+  `card/ic-T<id>` to stay clear of them.
+- Hook: pre-commit runs `bundle exec rake compile check` (rubocop on the whole repo plus
+  `rake pspec`, about 60s), `yard-lint --staged`, `bin/lint-gherkin-docs` on staged plan docs,
+  whitespace and EOF fixers, and `bin/lint-commit-msg` at commit-msg. Agent-side checks:
+  `bundle exec rubocop <paths>`, `bundle exec yard-lint <paths>`, specs by path. The suite cannot
+  run beside other tests (shared `TMPDIR`). No paths need user approval.
