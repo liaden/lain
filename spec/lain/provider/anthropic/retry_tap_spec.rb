@@ -8,7 +8,7 @@ RSpec.describe Lain::Provider::Anthropic::RetryTap do
   # up as a SECOND open under the same digest.
   def recording_spool(log)
     Class.new do
-      define_method(:open_frame) do |request_digest:|
+      define_method(:open_frame) do |request_digest:, **|
         log << request_digest
         Lain::Provider::Spool::Null::Frame.new
       end
@@ -21,6 +21,21 @@ RSpec.describe Lain::Provider::Anthropic::RetryTap do
   def env_for(frame, status: nil)
     request_options = Data.define(:context).new(context: { wal_frame: frame })
     { request: request_options, status: }
+  end
+
+  describe "#open_frame wire" do
+    around do |example|
+      Dir.mktmpdir("wal") { |dir| @path = File.join(dir, "s.wal") and example.run }
+    end
+
+    def wire_of(stream)
+      wal = Lain::Provider::ResponseWal.new(@path)
+      described_class.new(spool: wal, channel:).open_frame(request_digest: "d", stream:).close(complete: true)
+      wal.frames.to_a.fetch(0).wire
+    end
+
+    it("names a streamed frame anthropic-sse") { expect(wire_of(true)).to eq("anthropic-sse") }
+    it("names a sync body's frame anthropic-json") { expect(wire_of(false)).to eq("anthropic-json") }
   end
 
   it "journals an exhausted retry run at the ordinal of the attempt that actually failed" do
@@ -41,7 +56,7 @@ RSpec.describe Lain::Provider::Anthropic::RetryTap do
   # retrying notice did -- a relation, not a literal, and the Anthropic half
   # of the escalation trigger that both taps must move together.
   it "names a higher attempt number than the last retrying notice did" do
-    frame = tap.open_frame(request_digest: "d")
+    frame = tap.open_frame(request_digest: "d", stream: true)
     options = Data.define(:max).new(max: 3)
 
     tap.retry_block.call(env: env_for(frame), retry_count: options.max - 1,
@@ -67,7 +82,7 @@ RSpec.describe Lain::Provider::Anthropic::RetryTap do
   it "rotates the retried request's OWN frame, read off the env, and journals" do
     frames = []
     tap = described_class.new(spool: recording_spool(frames), channel:)
-    frame = tap.open_frame(request_digest: "d")
+    frame = tap.open_frame(request_digest: "d", stream: true)
 
     tap.retry_block.call(env: env_for(frame), retry_count: 0,
                          exception: Faraday::ConnectionFailed.new("x"), will_retry_in: 0.5)
@@ -84,8 +99,8 @@ RSpec.describe Lain::Provider::Anthropic::RetryTap do
   it "rotates only the frame on the retried env when two requests share the instance" do
     frames = []
     tap = described_class.new(spool: recording_spool(frames), channel:)
-    frame_a = tap.open_frame(request_digest: "req-a")
-    tap.open_frame(request_digest: "req-b")
+    frame_a = tap.open_frame(request_digest: "req-a", stream: true)
+    tap.open_frame(request_digest: "req-b", stream: true)
 
     tap.retry_block.call(env: env_for(frame_a), retry_count: 0,
                          exception: Faraday::ConnectionFailed.new("x"), will_retry_in: 0.1)

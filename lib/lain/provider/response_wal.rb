@@ -18,7 +18,7 @@ module Lain
     #
     # A frame is a header record, the raw bytes, then a terminator record:
     #
-    #   RS {"request_digest":..,"at":..}\n <raw bytes> RS {"bytes":N,"complete":b}\n
+    #   RS {"request_digest":..,"wire":..,"at":..}\n <raw bytes> RS {"bytes":N,"complete":b}\n
     #
     # DELIMITER framing, not length framing: {Reader} scans for RS (ASCII 0x1E,
     # RFC 7464 json-seq's separator) and uses the terminator's byte count only
@@ -91,7 +91,13 @@ module Lain
       # is the disk-durability knob on top of that.
       FSYNC_WATERMARK = 64 * 1024
 
-      Entry = Data.define(:request_digest, :bytes, :complete) do
+      # What a frame's bytes are, so a reader reassembles them with the parser
+      # that wrote them. A header with no `wire` predates the key and is the
+      # only wire there was.
+      WIRES = %w[anthropic-sse anthropic-json ollama-ndjson ollama-json].freeze
+      DEFAULT_WIRE = "anthropic-sse"
+
+      Entry = Data.define(:request_digest, :bytes, :complete, :wire) do
         def complete? = complete
         # Distinguishes a real frame from a {Reader::Corrupt} marker in a
         # tolerant enumeration, so a caller (see {SessionRecord::Salvage}) can
@@ -150,8 +156,9 @@ module Lain
       end
 
       # @return [String] a header record naming the request digest and open time.
-      def self.header_record(request_digest)
-        "#{RECORD_SEPARATOR}#{JSON.generate("request_digest" => request_digest, "at" => Time.now.utc.iso8601)}\n"
+      def self.header_record(request_digest, wire = DEFAULT_WIRE)
+        header = { "request_digest" => request_digest, "wire" => wire, "at" => Time.now.utc.iso8601 }
+        "#{RECORD_SEPARATOR}#{JSON.generate(header)}\n"
       end
 
       # @return [String] a terminator record: the byte count is a completeness
@@ -171,9 +178,11 @@ module Lain
 
       # A frame that gets the streaming slot writes its header immediately, so a
       # crash before the first byte still leaves a readable, incomplete frame.
-      def open_frame(request_digest:)
+      def open_frame(request_digest:, wire: DEFAULT_WIRE)
+        raise ArgumentError, "unknown wire #{wire.inspect}" unless WIRES.include?(wire)
+
         @monitor.synchronize do
-          header = ResponseWal.header_record(request_digest)
+          header = ResponseWal.header_record(request_digest, wire)
           stream_here?(Fiber.current) ? begin_streaming(header) : BufferedFrame.new(wal: self, header:)
         end
       end

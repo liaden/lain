@@ -124,8 +124,8 @@ module Lain
         # keys: folding the rotation into `on_abandon` would put the
         # retried-stream discard and the rotation on one seam where either could
         # displace the other.
-        def open_frame(request_digest:)
-          Spool::RotatingFrame.new(spool: @spool, request_digest:)
+        def open_frame(request_digest:, stream:)
+          Spool::RotatingFrame.new(spool: @spool, request_digest:, wire: stream ? "ollama-ndjson" : "ollama-json")
         end
 
         # The block faraday-retry calls on every retry, and the ORDER ranks the

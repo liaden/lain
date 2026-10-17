@@ -625,6 +625,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
         expect(frames.map(&:request_digest)).to eq([req.digest])
         expect(frames.fetch(0)).to be_complete
         expect(frames.fetch(0).bytes).to eq(body.b) # Entry#bytes is binread ASCII-8BIT by contract
+        expect(frames.fetch(0).wire).to eq("ollama-json")
       end
 
       it "leaves exactly one complete frame carrying the verbatim NDJSON, streaming" do
@@ -638,6 +639,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
         expect(frames.map(&:request_digest)).to eq([req.digest])
         expect(frames.fetch(0)).to be_complete
         expect(frames.fetch(0).bytes).to eq(body.b) # Entry#bytes is binread ASCII-8BIT by contract
+        expect(frames.fetch(0).wire).to eq("ollama-ndjson")
       end
 
       # The digest is the REQUEST's, not something the transport re-derived from

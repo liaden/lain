@@ -3,7 +3,7 @@
 module Lain
   class Provider
     # A spool is where a Provider hands raw response bytes for durable capture.
-    # The duck is one message -- `open_frame(request_digest:)` -> a frame handle
+    # The duck is one message -- `open_frame(request_digest:, wire:)` -> a frame handle
     # that answers `append(bytes)` and `close(complete:)`. {ResponseWal} is the
     # real implementation; this namespace holds the Null Object.
     module Spool

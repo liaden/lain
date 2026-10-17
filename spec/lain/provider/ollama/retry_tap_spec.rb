@@ -22,7 +22,7 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
   # up as a SECOND open under the same digest.
   def recording_spool(log)
     Class.new do
-      define_method(:open_frame) do |request_digest:|
+      define_method(:open_frame) do |request_digest:, **|
         log << request_digest
         Lain::Provider::Spool::Null::Frame.new
       end
@@ -107,15 +107,30 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
   describe "#open_frame" do
     it "opens one frame per round trip under the request's own digest" do
       digests = []
-      described_class.new(channel:, spool: recording_spool(digests)).open_frame(request_digest: "d")
+      described_class.new(channel:, spool: recording_spool(digests)).open_frame(request_digest: "d", stream: true)
 
       expect(digests).to eq(%w[d])
+    end
+
+    describe "wire" do
+      around do |example|
+        Dir.mktmpdir("wal") { |dir| @path = File.join(dir, "s.wal") and example.run }
+      end
+
+      def wire_of(stream)
+        wal = Lain::Provider::ResponseWal.new(@path)
+        described_class.new(channel:, spool: wal).open_frame(request_digest: "d", stream:).close(complete: true)
+        wal.frames.to_a.fetch(0).wire
+      end
+
+      it("names a streamed frame ollama-ndjson") { expect(wire_of(true)).to eq("ollama-ndjson") }
+      it("names a sync body's frame ollama-json") { expect(wire_of(false)).to eq("ollama-json") }
     end
 
     # Null Object, and the default: a provider built with no spool still opens
     # and rotates frames, they just discard. No caller writes `if spool`.
     it "opens a frame over the Null spool when no spool was given" do
-      expect { tap.open_frame(request_digest: "d").append("x").close(complete: true) }.not_to raise_error
+      expect { tap.open_frame(request_digest: "d", stream: true).append("x").close(complete: true) }.not_to raise_error
     end
   end
 
@@ -123,7 +138,7 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
     it "rotates the retried request's OWN frame, read off the env" do
       frames = []
       rotating = described_class.new(channel:, spool: recording_spool(frames))
-      frame = rotating.open_frame(request_digest: "d")
+      frame = rotating.open_frame(request_digest: "d", stream: true)
 
       rotating.retry_block.call(env: env_with(frame:), retry_count: 0,
                                 exception: Faraday::ConnectionFailed.new("x"), will_retry_in: 0.5)
@@ -139,8 +154,8 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
     it "rotates only the frame on the retried env when two round trips share the instance" do
       frames = []
       rotating = described_class.new(channel:, spool: recording_spool(frames))
-      frame_a = rotating.open_frame(request_digest: "req-a")
-      rotating.open_frame(request_digest: "req-b")
+      frame_a = rotating.open_frame(request_digest: "req-a", stream: true)
+      rotating.open_frame(request_digest: "req-b", stream: true)
 
       rotating.retry_block.call(env: env_with(frame: frame_a), retry_count: 0,
                                 exception: Faraday::ConnectionFailed.new("x"), will_retry_in: 0.5)
@@ -158,7 +173,7 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
       rotating = described_class.new(channel:, spool: recording_spool(frames))
       abandoned = []
       attempt = rotating.open_attempt { abandoned << :discarded }
-      frame = rotating.open_frame(request_digest: "d")
+      frame = rotating.open_frame(request_digest: "d", stream: true)
 
       rotating.retry_block.call(env: env_with(attempt:, frame:), retry_count: 0,
                                 exception: Faraday::ConnectionFailed.new("x"), will_retry_in: 0.5)
@@ -171,7 +186,7 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
     it "journals a retry on an env carrying a frame but no attempt" do
       frames = []
       rotating = described_class.new(channel:, spool: recording_spool(frames))
-      frame = rotating.open_frame(request_digest: "d")
+      frame = rotating.open_frame(request_digest: "d", stream: true)
 
       rotating.retry_block.call(env: env_with(frame:), retry_count: 0,
                                 exception: Faraday::ConnectionFailed.new("x"), will_retry_in: 0.5)

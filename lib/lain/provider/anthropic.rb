@@ -139,7 +139,7 @@ module Lain
       # reentrant across parallel subagents sharing one Provider.
       def dispatch(request, on_stream_started, witness)
         payload = wire_payload(request)
-        frame = @retries.open_frame(request_digest: request.digest)
+        frame = @retries.open_frame(request_digest: request.digest, stream: request.stream)
         return sync_dispatch(payload, frame, witness) unless request.stream
 
         stream_dispatch(payload, frame, witness, request, on_stream_started)

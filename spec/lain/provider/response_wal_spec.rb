@@ -53,6 +53,57 @@ RSpec.describe Lain::Provider::ResponseWal do
     end
   end
 
+  describe "naming the wire" do
+    def header_of(path)
+      Lain::Journal.parse(File.binread(path).split(described_class::RECORD_SEPARATOR).fetch(1).lines.first)
+    end
+
+    it "writes the wire into the frame header and reads it back on the entry" do
+      subject = wal
+      frame = subject.open_frame(request_digest: "d", wire: "ollama-ndjson")
+      frame.append("{}\n")
+      frame.close(complete: true)
+
+      expect(header_of(File.join(@dir, "session.wal"))["wire"]).to eq("ollama-ndjson")
+      expect(wal.frames.to_a.fetch(0).wire).to eq("ollama-ndjson")
+    end
+
+    it "keeps the wire on a header-only frame (the torn-tail entry)" do
+      wal.open_frame(request_digest: "torn", wire: "ollama-json")
+
+      expect(wal.frames.to_a.fetch(0).wire).to eq("ollama-json")
+    end
+
+    it "keeps the wire on a frame abandoned before the next header" do
+      subject = wal
+      subject.open_frame(request_digest: "gone", wire: "ollama-ndjson").append("x")
+      subject.open_frame(request_digest: "next", wire: "anthropic-json").close(complete: true)
+
+      expect(wal.frames.to_a.map(&:wire)).to eq(%w[ollama-ndjson anthropic-json])
+    end
+
+    it "refuses a wire it does not know" do
+      expect do
+        wal.open_frame(request_digest: "d", wire: "carrier-pigeon")
+      end.to raise_error(ArgumentError, /carrier-pigeon/)
+    end
+
+    it "reads a header with no wire key as anthropic-sse" do
+      header = "\x1e{\"request_digest\":\"old\",\"at\":\"2026-01-01T00:00:00Z\"}\n"
+      File.binwrite(File.join(@dir, "old.wal"), "#{header}raw\x1e{\"bytes\":3,\"complete\":true}\n")
+
+      entry = wal("old").frames.to_a.fetch(0)
+      expect(entry.wire).to eq("anthropic-sse")
+      expect(entry).to be_complete
+    end
+
+    it "reads a torn tail with no frame open as anthropic-sse" do
+      File.binwrite(File.join(@dir, "tail.wal"), "\x1egarbage")
+
+      expect(wal("tail").frames.to_a.fetch(0).wire).to eq("anthropic-sse")
+    end
+  end
+
   describe "recovering a torn tail" do
     it "reads a header-only frame (crash before any bytes) as incomplete" do
       subject = wal
@@ -307,7 +358,7 @@ RSpec.describe Lain::Provider::Spool::RotatingFrame do
 
   it "closes the attempt underway as aborted and opens a fresh frame for the same digest" do
     wal = Lain::Provider::ResponseWal.new(path)
-    frame = described_class.new(spool: wal, request_digest: "d")
+    frame = described_class.new(spool: wal, request_digest: "d", wire: "ollama-ndjson")
     frame.append("partial-")
     frame.rotate
     frame.append("whole")
@@ -322,8 +373,18 @@ RSpec.describe Lain::Provider::Spool::RotatingFrame do
     expect(entries.last).to be_complete
   end
 
+  it "keeps the wire on the frame it reopens after a rotation" do
+    wal = Lain::Provider::ResponseWal.new(path)
+    frame = described_class.new(spool: wal, request_digest: "d", wire: "ollama-ndjson")
+    frame.rotate
+    frame.close(complete: true)
+    wal.close
+
+    expect(Lain::Provider::ResponseWal.new(path).frames.to_a.map(&:wire)).to eq(%w[ollama-ndjson ollama-ndjson])
+  end
+
   it "stays free over the Null spool: rotation writes nothing anywhere" do
-    frame = described_class.new(spool: Lain::Provider::Spool::Null.new, request_digest: "d")
+    frame = described_class.new(spool: Lain::Provider::Spool::Null.new, request_digest: "d", wire: "ollama-ndjson")
     frame.append("bytes")
     frame.rotate
     frame.append("more")
@@ -370,6 +431,7 @@ RSpec.describe "spooling a provider response into a ResponseWal", :aggregate_fai
     expect(entry.request_digest).to eq(req.digest)
     expect(entry.bytes).to eq(sse)
     expect(entry).to be_complete
+    expect(entry.wire).to eq("anthropic-sse")
   end
 
   it "spools the raw HTTP response body of a non-streaming completion, before JSON parsing" do
@@ -389,6 +451,7 @@ RSpec.describe "spooling a provider response into a ResponseWal", :aggregate_fai
     expect(entry.request_digest).to eq(req.digest)
     expect(entry.bytes).to eq(body) # verbatim wire bytes, not a re-serialization
     expect(entry).to be_complete
+    expect(entry.wire).to eq("anthropic-json")
   end
 
   # The byte record must never lie: a salvage pass auto-commits complete frames,

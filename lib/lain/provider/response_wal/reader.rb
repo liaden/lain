@@ -30,7 +30,7 @@ module Lain
       # vs {ResponseWal#salvageable_frames}).
       class Reader
         # A frame whose header has been read but whose terminator has not.
-        Open = Data.define(:request_digest, :raw)
+        Open = Data.define(:request_digest, :raw, :wire)
 
         # A mis-slotted region that tolerant mode skipped. Its `reason` names why
         # the scan could not trust the bytes there; a caller partitions it from a
@@ -69,7 +69,7 @@ module Lain
 
         def begin_frame(json, raw, open)
           yield torn(open) if open
-          Open.new(request_digest: json["request_digest"], raw:)
+          Open.new(request_digest: json["request_digest"], raw:, wire: json.fetch("wire", DEFAULT_WIRE))
         end
 
         def finish_frame(json, rest, open, &emit)
@@ -77,7 +77,8 @@ module Lain
           return corrupt("bytes trail a terminator record", &emit) unless rest.empty?
 
           yield(Entry.new(request_digest: open.request_digest, bytes: open.raw,
-                          complete: json["complete"] == true && json["bytes"] == open.raw.bytesize))
+                          complete: json["complete"] == true && json["bytes"] == open.raw.bytesize,
+                          wire: open.wire))
           nil
         end
 
@@ -89,7 +90,7 @@ module Lain
         end
 
         def torn_tail(open, &emit)
-          yield(open ? torn(open) : Entry.new(request_digest: nil, bytes: "", complete: false))
+          yield(open ? torn(open) : Entry.new(request_digest: nil, bytes: "", complete: false, wire: DEFAULT_WIRE))
           nil
         end
 
@@ -104,7 +105,7 @@ module Lain
         end
 
         def torn(open)
-          Entry.new(request_digest: open.request_digest, bytes: open.raw, complete: false)
+          Entry.new(request_digest: open.request_digest, bytes: open.raw, complete: false, wire: open.wire)
         end
       end
     end

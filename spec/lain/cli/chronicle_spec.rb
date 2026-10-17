@@ -85,12 +85,25 @@ RSpec.describe Lain::CLI::Chronicle do
       end
     end
 
+    it "passes the wire through to the frame it opens" do
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        opened = described_class.for(enabled: true, paths:)
+
+        opened.spool.open_frame(request_digest: "blake3:abc", wire: "ollama-ndjson").close(complete: true)
+
+        wal_path = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.wal")).first
+        expect(Lain::Provider::ResponseWal.new(wal_path).frames.to_a.fetch(0).wire).to eq("ollama-ndjson")
+        opened.close
+      end
+    end
+
     it "spools a frame into <session-stem>.wal, beside the NDJSON" do
       Dir.mktmpdir do |dir|
         paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
         opened = described_class.for(enabled: true, paths:)
 
-        frame = opened.spool.open_frame(request_digest: "blake3:abc")
+        frame = opened.spool.open_frame(request_digest: "blake3:abc", wire: "anthropic-sse")
         frame.append("hello")
         frame.close(complete: true)
 
@@ -159,7 +172,7 @@ RSpec.describe Lain::CLI::Chronicle do
     def globbed(pattern) = Dir.glob(File.join(@state_home, "lain", "sessions", "**", pattern))
 
     def spool_frame(spool, digest: "blake3:abc")
-      frame = spool.open_frame(request_digest: digest)
+      frame = spool.open_frame(request_digest: digest, wire: "anthropic-sse")
       frame.append("raw response bytes")
       frame.close(complete: true)
     end

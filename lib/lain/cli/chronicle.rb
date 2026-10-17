@@ -123,7 +123,7 @@ module Lain
           @wal = Provider::ResponseWal.new(path)
         end
 
-        def open_frame(request_digest:) = @wal.open_frame(request_digest:)
+        def open_frame(request_digest:, wire:) = @wal.open_frame(request_digest:, wire:)
 
         def close = @wal.close
 

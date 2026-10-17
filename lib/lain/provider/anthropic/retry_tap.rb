@@ -29,8 +29,8 @@ module Lain
 
         # Opens the frame for one round trip and returns it; the Provider threads
         # it onto the request env, where {#retry_block} finds it again.
-        def open_frame(request_digest:)
-          Spool::RotatingFrame.new(spool: @spool, request_digest:)
+        def open_frame(request_digest:, stream:)
+          Spool::RotatingFrame.new(spool: @spool, request_digest:, wire: stream ? "anthropic-sse" : "anthropic-json")
         end
 
         # Rotates the retried request's frame, tells its round trip's witness

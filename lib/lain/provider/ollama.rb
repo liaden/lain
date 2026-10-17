@@ -533,7 +533,7 @@ module Lain
       # transport digest-blind is the same rule that put the rotation in
       # {RetryTap} rather than in the connection.
       def dispatch(request, witness)
-        frame = @retries.open_frame(request_digest: request.digest)
+        frame = @retries.open_frame(request_digest: request.digest, stream: request.stream)
         request.stream ? stream_body(request, frame, witness) : sync_body(request, frame, witness)
       end
 

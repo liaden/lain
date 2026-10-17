@@ -12,10 +12,11 @@ module Lain
       # check cannot catch -- a complete-marked frame that lies. Aborted frames
       # are inert history; the last COMPLETE frame per digest is the response.
       class RotatingFrame
-        def initialize(spool:, request_digest:)
+        def initialize(spool:, request_digest:, wire:)
           @spool = spool
           @request_digest = request_digest
-          @frame = spool.open_frame(request_digest:)
+          @wire = wire
+          @frame = spool.open_frame(request_digest:, wire:)
         end
 
         def append(bytes)
@@ -32,7 +33,7 @@ module Lain
         # attempt gets a fresh frame under the same digest.
         def rotate
           @frame.close(complete: false)
-          @frame = @spool.open_frame(request_digest: @request_digest)
+          @frame = @spool.open_frame(request_digest: @request_digest, wire: @wire)
           self
         end
       end
