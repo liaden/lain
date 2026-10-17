@@ -647,7 +647,8 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       expect(content.first["text"]).to include("<redacted:1>")
       expect(content.first["text"]).not_to include(api_key)
-      expect(content.last).to eq(blocks.last)
+      expect(content[1]).to eq(blocks.last)
+      expect(blocks.first["text"]).to eq(one_secret)
     end
 
     # Every spelling of "this block is text". Each of these was silently
@@ -846,6 +847,73 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       read(path, tool_use_id: "tu_2") { |q| q.dequeue.deny(surface: "spec") }
 
       expect(decisions.length).to eq(2)
+    end
+  end
+
+  describe "the trailer on a masked read" do
+    it "says what was withheld, that the file is readable, and to tell the user which file" do
+      path = write("notes.txt", one_secret)
+
+      content = read(path) { |q| q.dequeue.deny(surface: "spec") }.fetch(:result).content
+
+      expect(content).to end_with(
+        "1 region is masked as <redacted:1>. The file is inside the project and readable; " \
+        "the release was declined. Tell the user which file you need unmasked."
+      )
+    end
+
+    it "counts every withheld region" do
+      path = write(".env", dotenv)
+
+      content = read(path) { |q| q.dequeue.deny(surface: "spec") }.fetch(:result).content
+
+      expect(content).to include("3 regions are masked as <redacted:1> to <redacted:3>.")
+    end
+
+    it "says a lapsed release timed out rather than was declined" do
+      path = write("notes.txt", one_secret)
+
+      content = read(path).fetch(:result).content
+
+      expect(content).to include("the release timed out")
+      expect(content).not_to include("declined")
+    end
+
+    it "keeps saying so on a later read, which is not asked again" do
+      path = write("notes.txt", one_secret)
+      read(path)
+
+      content = read(path, tool_use_id: "tu_2").fetch(:result).content
+
+      expect(content).to include("the release timed out")
+    end
+
+    it "does not say the human declined when the directory is simply related" do
+      classifier = Lain::Sensitivity.new(home: dir, cwd: dir,
+                                         rules: Lain::Sensitivity::Rules.from({ "related" => ["~/pitchcraft"] }))
+      path = File.join(dir, "pitchcraft", "notes.md").tap do |made|
+        FileUtils.mkdir_p(File.dirname(made))
+        File.write(made, one_secret)
+      end
+      related = described_class.new(ledger:, queue:, journal:, related: classifier)
+
+      content = dispatch(effect(path), subject_stack: Lain::Middleware::Stack.new([related])).fetch(:result).content
+
+      expect(content).to include("masked as <redacted:1>")
+      expect(content).not_to include("declined")
+    end
+
+    it "adds a text block to a result that arrived as blocks" do
+      blocks = [{ "type" => "text", "text" => one_secret }]
+      path = write("notes.txt", one_secret)
+
+      content = Sync do
+        stack.call({ effect: effect(path), context: session }) do |inner|
+          inner.merge(result: Lain::Tool::Result.ok(blocks))
+        end
+      end.fetch(:result).content
+
+      expect(content.last).to include("type" => "text", "text" => include("masked as <redacted:1>"))
     end
   end
 

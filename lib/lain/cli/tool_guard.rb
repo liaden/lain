@@ -187,9 +187,10 @@ module Lain
       # measurement, and a run that never had a human in its loop has no
       # approval for it to stand in for.
       module Unreleased
-        # The one message the read guard asks of a settled answer.
+        # The messages the read guard asks of a settled answer.
         module Verdict
           def self.approved? = false
+          def self.timed_out? = false
         end
 
         # `outstanding:` is a KEYWORD, so the name is the duck and cannot take

@@ -85,6 +85,7 @@ end
 class ToolGuardSpecDecliningQueue
   module Verdict
     def self.approved? = false
+    def self.timed_out? = false
   end
 
   # `outstanding:` is accepted and discarded, but cannot become the unused-
