@@ -9,28 +9,14 @@ RSpec.describe Lain::Review::Surface::Null do
   it_behaves_like "a review surface", transcript: :no_observation_channel
 
   describe "the whole port, accepted and discarded" do
-    it "returns nil from #present" do
-      expect(surface.present(Object.new, scope: :cumulative)).to be_nil
-    end
+    it "returns nil from every message of the port, called with its real arity" do
+      answers = Lain::Review::Surface::MESSAGES.to_h do |message, shape|
+        positional, keywords = shape.partition { |kind, _| kind == :req }
+        [message, surface.public_send(message, *positional.map { Object.new },
+                                      **keywords.to_h { |_, name| [name, :note] })]
+      end
 
-    it "returns nil from #annotate" do
-      expect(surface.annotate(Object.new, "looks fine", kind: :note)).to be_nil
-    end
-
-    it "returns nil from #mark" do
-      expect(surface.mark("hunk-content-v1:deadbeef", :reviewed)).to be_nil
-    end
-
-    it "returns nil from #thread" do
-      expect(surface.thread(Object.new)).to be_nil
-    end
-
-    it "returns nil from #verdict" do
-      expect(surface.verdict).to be_nil
-    end
-
-    it "returns nil from #refuse" do
-      expect(surface.refuse("not today")).to be_nil
+      expect(answers.compact).to be_empty
     end
   end
 
