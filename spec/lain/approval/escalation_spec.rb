@@ -524,10 +524,10 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.map { |record| record["requester"] }).to all(eq("researcher"))
     end
 
-    it "leaves the requester off when the context names nobody" do
+    it "names the main agent when the context names nobody" do
       ladder(EscalationSpecSupport::Fixed.new("triage", :deny)).call(effect, nil)
 
-      expect(rulings.sole).not_to have_key("requester")
+      expect(rulings.sole).to include("requester" => "agent")
     end
 
     it "names the fail-closed bottom when nothing above it answered" do

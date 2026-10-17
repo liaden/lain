@@ -727,6 +727,20 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(rulings.first["reason"]).not_to include("attached to this session")
     end
 
+    it "names the judge as the requester on the refusal, whatever the seam's own requester is" do
+      Sync { read_through(spawned(parking).never_parking, env_file) }
+
+      expect(journal_records(journal_io, "escalation").map { |ruling| ruling["requester"] }).to eq(%w[auto_approver])
+    end
+
+    it "names the judge on a refusal from a run with no chat too" do
+      stack = described_class.detached(journal:).never_parking.call(Lain::WorkerEnv.default)
+      bash = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
+      stack.call({ effect: bash, tool: Lain::Tools::Bash.new, context: nil }) { |passed| passed }
+
+      expect(journal_records(journal_io, "escalation").map { |ruling| ruling["requester"] }).to eq(%w[auto_approver])
+    end
+
     it "releases no masked region, and asks nobody about it" do
       told = Sync { |task| task.with_timeout(5) { read_through(spawned(parking).never_parking, creds) } }
 

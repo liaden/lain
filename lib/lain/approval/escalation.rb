@@ -359,7 +359,7 @@ module Lain
         ruling
       end
 
-      def requester_of(context) = Queue.requester_for(context, nil)
+      def requester_of(context) = Queue.requester_for(context)
 
       # Where a broken RULE is reported. Under {RuleChain}'s Null default the
       # chain still refuses to promote an allow past a fault, but nobody is ever

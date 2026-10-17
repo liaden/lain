@@ -129,7 +129,7 @@ module Lain
         def guard_inputs = board.call.guard_inputs
 
         # @return [NeverParking]
-        def never_parking = NeverParking.new(guard: self)
+        def never_parking = NeverParking.new(guard: self, requester: Approval::Judge::ROLE.to_s)
       end
 
       # What {.detached} answers: a builder over the inputs a run with no chat
@@ -145,7 +145,7 @@ module Lain
         end
 
         # @return [NeverParking]
-        def never_parking = NeverParking.new(guard: self)
+        def never_parking = NeverParking.new(guard: self, requester: Approval::Judge::ROLE.to_s)
       end
 
       # A seam's builder as an approval judge spawns through it. The judge waits
@@ -159,10 +159,14 @@ module Lain
       # This is a property of the spawn site, not of the role: a docent is
       # unattended too, and its read still parks, because nothing that could
       # answer that park is waiting on the docent.
-      NeverParking = Data.define(:guard) do
+      NeverParking = Data.define(:guard, :requester) do
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @return [Middleware::Stack] a fresh one per child
-        def call(worker_env) = ToolGuard.working(chronicle, refused, worker_env)
+        def call(worker_env) = ToolGuard.working(chronicle, refused, worker_env, asking)
+
+        # The child's own role names the refusal it records: the seam's requester
+        # is whoever spawned the child, and a refusal is not that spawner's doing.
+        def asking = Asking.new(policy: refused.policy, requester:)
 
         def refused = ToolGuard.refusing(chronicle, guard.guard_inputs)
 

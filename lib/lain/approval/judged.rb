@@ -246,7 +246,7 @@ module Lain
         @asking.call(effect, context)
       end
 
-      def requester_of(context) = Queue.requester_for(context, nil)
+      def requester_of(context) = Queue.requester_for(context)
 
       # Evidence about a call must never cost the call.
       def record(ruling, effect, context, error)

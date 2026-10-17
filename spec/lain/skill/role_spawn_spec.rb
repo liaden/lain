@@ -517,6 +517,28 @@ RSpec.describe Lain::Skill::RoleSpawn do
       end
     end
 
+    # The requester names whoever the child is, so a refusal in its journal
+    # blames the right role rather than the first approval role that was built.
+    it "names each never-parking child by its own role" do
+      named = []
+      parked = Class.new do
+        define_method(:with) { |requester:| (named << requester) && self }
+        def call(worker_env) = ToolRegistry::UNGUARDED.call(worker_env)
+      end.new
+      guard = ->(worker_env) { ToolRegistry::UNGUARDED.call(worker_env) }
+      guard.define_singleton_method(:never_parking) { parked }
+      wide = Lain::Toolset.new(union.to_a + [Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
+      roles = %i[auto_approver gate_adjudicator evidence_researcher]
+
+      roles.each do |role|
+        described_class.new(provider: mock(text_response("done")), context_factory: -> { child_context },
+                            toolset: wide, parent:, slots:, tool_middleware: guard)
+                       .never_parking.call(role, :fresh, "go")
+      end
+
+      expect(named).to eq(roles.map(&:to_s))
+    end
+
     it "refuses a placed role's lease under never_parking, whichever member is read first" do
       expect { described_class::Unplaceable.new(:researcher).kept }
         .to raise_error(described_class::Refused, /researcher/)

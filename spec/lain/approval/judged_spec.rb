@@ -112,6 +112,14 @@ RSpec.describe Lain::Approval::Judged do
     expect(escalations.sole).to include("reason" => "deferred", "requester" => "researcher")
   end
 
+  it "names the main agent on the record of a deferral when the context names nobody" do
+    nameless = Data.define(:worker_env).new(worker_env: context.worker_env)
+
+    ruled(rung(spawn_answering("defer")), bash, within: nameless) { |pending| pending.approve(surface: "human_spec") }
+
+    expect(escalations.sole).to include("reason" => "deferred", "requester" => "agent")
+  end
+
   describe "what a human is shown of the judge" do
     let(:told) { [] }
 
