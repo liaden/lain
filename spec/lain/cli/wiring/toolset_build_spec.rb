@@ -966,6 +966,59 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
   end
 
+  describe "the confinement the bash tool's exec is handed through the production guard stack" do
+    let(:project_root) { File.realpath(Dir.mktmpdir("confinement-project")) }
+    let(:project) { Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag) }
+    let(:paths) do
+      Lain::Paths.new(env: { "HOME" => File.join(outside, "h"), "XDG_STATE_HOME" => File.join(outside, "s") })
+    end
+    let(:outside) { File.realpath(Dir.mktmpdir("confinement-home")) }
+    let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.default.with(cwd: project_root)) }
+    let(:resolver) { Lain::Shell::Executable::Resolver.new(root: project_root, fresh: Lain::Shell::Executable::Resolver::NeverFresh) }
+    let(:switchboard) do
+      Lain::CLI::Wiring::BoardBuild.for(
+        chronicle:, options: { approval: :auto }, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model",
+        project:, paths:, toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
+        arms: Lain::CLI::Arms::OFF.with(confine: :classes),
+        verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:), resolver:, worker_env: session.worker_env
+      ).bind_session(session)
+    end
+    let(:requests) { [] }
+    let(:exec) do
+      seen = requests
+      Class.new do
+        define_method(:takes_term?) { |_term| true }
+        define_method(:call) do |confinement:, **|
+          seen << confinement
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+      end.new
+    end
+
+    after { FileUtils.rm_rf([project_root, outside]) }
+
+    # ComposedTerm only approves under auto with class confinement, and not when HOME holds the root.
+    it "hands the exec the composed_term ruling, the stages the journal resolved and the call's id" do
+      File.write(File.join(project_root, "README.md"), "hi\n")
+      bash = build_with(options, switchboard: -> { switchboard }, root: project_root, paths:, exec:, resolver:)
+             .build(recorder, ask_human:).fetch("bash")
+
+      layers = Lain::CLI::ToolGuard.stack(chronicle, switchboard).to_a
+      result = Sync do |task|
+        task.with_timeout(10) do
+          dispatch_call("bash", { "command" => "cat README.md" }, id: "tu_prod", toolset: Lain::Toolset.new([bash]),
+                                                                  layers:, context: session)
+        end
+      end
+
+      resolved = journal.events.grep(Lain::Telemetry::ExecResolution)
+      expect(result).to be_ok
+      expect(requests).to contain_exactly(have_attributes(ruling: have_attributes(allow?: true, rule: "composed_term"),
+                                                          tool_use_id: "tu_prod"))
+      expect(requests.first.executables.map(&:to_journal)).to eq(resolved.fetch(0).stages)
+    end
+  end
+
   describe "what the build discovers" do
     it "has no role_spawn seam until the toolset has been built" do
       expect(toolset_build.role_spawn).to be_nil

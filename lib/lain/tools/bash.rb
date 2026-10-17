@@ -282,9 +282,10 @@ module Lain
         arm = arm_for(decision)
         journal_arm(decision, arm, invocation)
         options = runtime(input, invocation)
-        journal_resolution(input.command, decision, invocation, options[:cwd])
+        stages = journal_resolution(input.command, decision, invocation, options[:cwd])
+        confinement = confinement_for(stages, invocation, options[:cwd])
         capture = run_journalling_writes(input.command, options[:cwd], invocation) do
-          @exec.call(command: on_arm(arm, input.command, decision), **options)
+          @exec.call(command: on_arm(arm, input.command, decision), confinement:, **options)
         end
         self.class.render_output(capture)
       rescue Exec::Timeout => e
@@ -333,6 +334,15 @@ module Lain
         stages = resolve(command, decision, session_of(invocation).worker_env.with(cwd:))
         journal_record(Telemetry::ExecResolution.new(tool_use_id: invocation.tool_use_id,
                                                      stages: stages.map(&:to_journal)))
+        stages
+      end
+
+      # A context no ladder ruled through gets the ruling that allowed nothing.
+      def confinement_for(stages, invocation, cwd)
+        context = session_of(invocation)
+        ruling = context.respond_to?(:ruling) ? context.ruling : Confine::Request::UNRULED
+        Confine::Request.new(ruling:, executables: stages, cwd:, root: context.worker_env.checkout,
+                             tool_use_id: invocation.tool_use_id)
       end
 
       def resolve(command, decision, worker_env)

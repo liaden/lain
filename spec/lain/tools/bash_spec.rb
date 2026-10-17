@@ -1255,6 +1255,61 @@ RSpec.describe Lain::Tools::Bash do
       expect(seen).to eq(1)
     end
 
+    describe "the confinement its exec is handed" do
+      let(:requests) { [] }
+      let(:cwds) { [] }
+      let(:backend) do
+        seen = requests
+        seen_cwds = cwds
+        Class.new do
+          define_method(:takes_term?) { |_term| true }
+          define_method(:call) do |confinement:, cwd:, **|
+            seen << confinement
+            seen_cwds << cwd
+            Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+          end
+        end.new
+      end
+      let(:ruling) { Lain::Approval::Escalation::Ruling.allow(rung: "spec", because: "spec", rule: "composed_term") }
+      let(:ruled) { Lain::Middleware::WithholdAutomaticOutput::Carried.new(Lain::Session::Null.instance, barred: false) }
+
+      def call_with(context)
+        described_class.new(exec: backend, journal:, resolver:)
+                       .call({ command: "ls" }, Lain::Tool::Invocation.new(tool_use_id: "tu_c", context:, channel:))
+      end
+
+      it "carries the context's ruling, the stages it resolved and the call's id" do
+        call_with(ruled.ruled(ruling))
+
+        expect(requests).to contain_exactly(
+          have_attributes(ruling:, tool_use_id: "tu_c", cwd: cwds.first, executables: have_attributes(size: 1))
+        )
+        expect(requests.first.executables.map(&:to_journal)).to eq(resolutions.fetch(0).stages)
+      end
+
+      it "carries no root for the main agent, which has no checkout" do
+        call_with(ruled.ruled(ruling))
+
+        expect(requests.first.root).to be_nil
+      end
+
+      it "carries a leased child's checkout as the root" do
+        lease = File.realpath(Dir.mktmpdir)
+        env = Lain::WorkerEnv.new(cwd: lease, env: ENV.to_h, checkout: lease)
+        call_with(Lain::Session.new(worker_env: env))
+
+        expect(requests.first.root).to eq(lease)
+      ensure
+        FileUtils.remove_entry(lease)
+      end
+
+      it "carries an unruled request when the context does not answer ruling" do
+        call_with(Lain::Session::Null.instance)
+
+        expect(requests.first.ruling).to have_attributes(allow?: false, rule: nil)
+      end
+    end
+
     it "resolves a leased child against its own env" do
       lease = File.realpath(Dir.mktmpdir)
       planted = plant(lease, "cat")
