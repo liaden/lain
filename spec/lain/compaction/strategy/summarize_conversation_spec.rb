@@ -335,7 +335,7 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
 
       expect(outcomes).to include("reaches no mutable state" => :fails)
       expect(outcomes.values.grep(Exception)).to be_empty
-      expect(Ractor.shareable?(strategy)).to be(false)
+      expect(strategy).not_to be_deeply_frozen
     end
 
     it "leaves both of Base's questions owned by Base" do

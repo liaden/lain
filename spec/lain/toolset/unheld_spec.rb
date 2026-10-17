@@ -18,7 +18,7 @@ RSpec.describe Lain::Toolset::Unheld do
   it "is a shareable value over the name as a String" do
     expect(unheld.name).to eq("ghost")
     expect(unheld).to eq(described_class.new("ghost"))
-    expect(Ractor.shareable?(unheld)).to be(true)
+    expect(unheld).to be_deeply_frozen
   end
 
   it "is what the runner resolves a name the toolset lacks to" do

@@ -44,7 +44,7 @@ RSpec.describe Lain::Review::Partition do
     it "freezes the files it was handed, so a copy is as shareable as the original" do
       narrowed = whole.with(files: [file("a.rb")])
 
-      expect(Ractor.shareable?(narrowed)).to be(true)
+      expect(narrowed).to be_deeply_frozen
     end
   end
 
@@ -68,7 +68,7 @@ RSpec.describe Lain::Review::Partition do
 
   describe "deep immutability" do
     it "is shareable, so no reachable mutable state remains" do
-      expect(Ractor.shareable?(partition)).to be(true)
+      expect(partition).to be_deeply_frozen
     end
 
     # A label reaches a `Bounds::TooLarge` message, which is journalled -- and

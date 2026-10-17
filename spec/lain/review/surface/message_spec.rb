@@ -16,7 +16,7 @@ RSpec.describe Lain::Review::Surface::Message do
     expect(message).to be_frozen
     expect(message.speaker).to be_frozen
     expect(message.text).to be_frozen
-    expect(Ractor.shareable?(message)).to be(true)
+    expect(message).to be_deeply_frozen
   end
 
   # A Symbol speaker and an interpolated text are both what a caller has to
@@ -25,6 +25,6 @@ RSpec.describe Lain::Review::Surface::Message do
     message = described_class.new(speaker: :lain, text: "the docent could not answer #{"this".upcase}")
 
     expect(message.speaker).to eq("lain")
-    expect(Ractor.shareable?(message)).to be(true)
+    expect(message).to be_deeply_frozen
   end
 end

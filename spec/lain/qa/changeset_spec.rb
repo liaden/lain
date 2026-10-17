@@ -86,7 +86,7 @@ RSpec.describe Lain::QA::Changeset, :seam do
     base
     commit({ "order.rb" => "total\n" }, "work")
 
-    expect(Ractor.shareable?(described_class.read(root: @repo, base:))).to be(true)
+    expect(described_class.read(root: @repo, base:)).to be_deeply_frozen
   end
 
   it "refuses a base git cannot resolve, naming the command that failed" do

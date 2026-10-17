@@ -15,7 +15,7 @@ RSpec.describe Lain::Oracle::Handoff::Document do
     end
 
     it "is deeply frozen" do
-      expect(Ractor.shareable?(described_class.from_answer(fields))).to be(true)
+      expect(described_class.from_answer(fields)).to be_deeply_frozen
     end
   end
 

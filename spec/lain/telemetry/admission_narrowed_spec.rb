@@ -19,7 +19,7 @@ RSpec.describe Lain::Telemetry::AdmissionNarrowed do
   end
 
   it "is shareable across Ractors, like every other journaled value" do
-    expect(Ractor.shareable?(described_class.new(endpoint: +"e", from_width: 3, to_width: 1, max_concurrent: 1,
-                                                 active: nil, queue_limit: nil, queued: nil))).to be(true)
+    expect(described_class.new(endpoint: +"e", from_width: 3, to_width: 1, max_concurrent: 1,
+                               active: nil, queue_limit: nil, queued: nil)).to be_deeply_frozen
   end
 end

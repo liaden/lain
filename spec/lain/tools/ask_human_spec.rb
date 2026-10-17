@@ -605,7 +605,7 @@ RSpec.describe Lain::Tools::AskHuman do
     # `spec/value_object_shareability_spec.rb` walks value objects, not
     # constants, so nothing else asks this.
     it "offers actions that are deeply frozen, not merely a frozen Array" do
-      expect(Ractor.shareable?(described_class::Ceiling::ACTIONS)).to be(true)
+      expect(described_class::Ceiling::ACTIONS).to be_deeply_frozen
     end
 
     # An arrival can raise -- the seam ends in an `execve` whose argv this
@@ -1517,7 +1517,7 @@ RSpec.describe Lain::Tools::AskHuman do
 
       expect(second.digest).not_to eq(first.digest)
       expect([first, second].map { |question| question.body.fetch("asking") }).to eq([0, 1])
-      expect(Ractor.shareable?(second)).to be(true)
+      expect(second).to be_deeply_frozen
     end
 
     it "counts the askings the Store holds, not the ones this asker made" do

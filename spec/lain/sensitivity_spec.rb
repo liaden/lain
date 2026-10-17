@@ -989,7 +989,7 @@ RSpec.describe Lain::Sensitivity do
     end
 
     it "stays deeply frozen with a root" do
-      expect(Ractor.shareable?(rooted({ "denied" => [+"/vault/"], "exempt" => [+"/fixtures/.env"] }))).to be(true)
+      expect(rooted({ "denied" => [+"/vault/"], "exempt" => [+"/fixtures/.env"] })).to be_deeply_frozen
     end
   end
 
@@ -1655,8 +1655,8 @@ RSpec.describe Lain::Sensitivity do
     it "keeps the table and the classifier deeply frozen" do
       rules = related(+"~/dev/pitchcraft", +"/srv/shared")
 
-      expect(Ractor.shareable?(rules)).to be(true)
-      expect(Ractor.shareable?(described_class.new(home:, cwd:, rules:))).to be(true)
+      expect(rules).to be_deeply_frozen
+      expect(described_class.new(home:, cwd:, rules:)).to be_deeply_frozen
     end
   end
 
@@ -1665,8 +1665,8 @@ RSpec.describe Lain::Sensitivity do
     # mutable String out of `Pathname#to_s`. `Ractor.shareable?` is the
     # mechanical statement CLAUDE.md's deep-freeze rule actually makes.
     it "is deeply frozen, which is Ractor.shareable? and not be_frozen" do
-      expect(Ractor.shareable?(sensitivity)).to be(true)
-      expect(Ractor.shareable?(classify("#{home}/.ssh/id_ed25519"))).to be(true)
+      expect(sensitivity).to be_deeply_frozen
+      expect(classify("#{home}/.ssh/id_ed25519")).to be_deeply_frozen
     end
 
     # `+"..."` and the `~/` prefix are both deliberate. This file is
@@ -1678,12 +1678,12 @@ RSpec.describe Lain::Sensitivity do
       rules = Lain::Sensitivity::Rules.from({ "denied" => [+"*.secret"], "gated" => [+"*.private"],
                                               "exempt" => [+"~/.gitconfig"] })
 
-      expect(Ractor.shareable?(rules)).to be(true)
-      expect(Ractor.shareable?(described_class.new(home:, cwd:, rules:))).to be(true)
+      expect(rules).to be_deeply_frozen
+      expect(described_class.new(home:, cwd:, rules:)).to be_deeply_frozen
     end
 
     it "is deeply frozen when built with no config at all" do
-      expect(Ractor.shareable?(Lain::Sensitivity::Rules.from(nil))).to be(true)
+      expect(Lain::Sensitivity::Rules.from(nil)).to be_deeply_frozen
     end
 
     # The other half of freezing a copy: the caller keeps their String, and

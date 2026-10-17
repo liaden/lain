@@ -407,7 +407,7 @@ RSpec.describe Lain::Review::Critique do
                                                   paths: ["lib/a.rb"], role: :diff_critic, brief_key: "k",
                                                   outcome: "answered", text: "fine")
 
-      expect(Ractor.shareable?(record)).to be(true)
+      expect(record).to be_deeply_frozen
     end
 
     it "refuses an outcome outside the closed set" do

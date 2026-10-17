@@ -543,7 +543,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
 
     it "stays deeply frozen with the capability fact aboard" do
-      expect(Ractor.shareable?(waste)).to be(true)
+      expect(waste).to be_deeply_frozen
     end
   end
 
@@ -664,7 +664,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       )
 
       expect(waste.count).to eq(1)
-      expect(Ractor.shareable?(waste)).to be(true)
+      expect(waste).to be_deeply_frozen
     end
   end
 

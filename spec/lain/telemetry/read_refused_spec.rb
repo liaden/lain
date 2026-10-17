@@ -57,7 +57,7 @@ RSpec.describe Lain::Telemetry::ReadRefused do
     mutable = described_class.new(tool_use_id: +"tu_1", tool: +"read_file", path: +"/etc/passwd",
                                   reason: +"denied")
     expect(mutable).to be_deeply_frozen
-    expect(Ractor.shareable?(mutable)).to be(true)
+    expect(mutable).to be_deeply_frozen
   end
 
   it "coerces a Pathname path to a String, so the in-process field matches the journaled one" do

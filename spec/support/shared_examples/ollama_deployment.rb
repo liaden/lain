@@ -56,7 +56,7 @@ RSpec.shared_examples "an ollama deployment" do |options|
   # unfrozen String is itself unshareable, and that is exactly what an
   # interpolated `"Bearer #{key}"` without a `.freeze` produces.
   it "answers headers that are themselves deeply frozen" do
-    expect(Ractor.shareable?(deployment.headers)).to be(true)
+    expect(deployment.headers).to be_deeply_frozen
   end
 
   it "hands back the SAME headers object every call, so no request rebuilds it" do
@@ -132,6 +132,6 @@ RSpec.shared_examples "an ollama deployment" do |options|
   # headers Hash is the one that can go wrong here: rebuilt per call it is
   # unfrozen, and a deployment outlives the provider call that reads it.
   it "holds no reachable mutable state" do
-    expect(Ractor.shareable?(deployment)).to be(true)
+    expect(deployment).to be_deeply_frozen
   end
 end

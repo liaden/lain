@@ -397,7 +397,7 @@ RSpec.describe Lain::Shell::Executable::RunFiles do
   it "is deeply frozen on the Executable" do
     touch("Makefile")
 
-    expect(Ractor.shareable?(stage(%w[make]))).to be(true)
+    expect(stage(%w[make])).to be_deeply_frozen
   end
 
   it "journals each run file" do

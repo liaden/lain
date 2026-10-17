@@ -319,7 +319,7 @@ RSpec.shared_examples "a review changeset source" do |config|
     # computed from, and nothing may edit it under a session that already
     # journalled the answer.
     it "answers a shareable value, so no reachable mutable state remains under an address" do
-      expect(Ractor.shareable?(changeset_source.identity)).to be(true)
+      expect(changeset_source.identity).to be_deeply_frozen
     end
 
     it "answers the same identity when asked twice, since an address that moves is not one" do

@@ -67,7 +67,7 @@ RSpec.describe Lain::Exec::Capture do
     it "finishes into a value no later chunk can change" do
       capture = bounded.take(:stdout, "hi").finish(0)
 
-      expect(Ractor.shareable?(capture)).to be(true)
+      expect(capture).to be_deeply_frozen
     end
 
     # A timeout's report is built from what was retained and nothing else, so a

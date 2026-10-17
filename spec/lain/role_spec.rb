@@ -75,7 +75,7 @@ RSpec.describe Lain::Role do
     it "coerces the declaration to a real boolean" do
       expect(described_class.new(name: :probe, only: %i[read_file], unattended: "false").unattended).to be(true)
       expect(described_class.new(name: :probe, only: %i[read_file], unattended: nil).unattended).to be(false)
-      expect(Ractor.shareable?(described_class.new(name: :probe, only: [], unattended: Object.new))).to be(true)
+      expect(described_class.new(name: :probe, only: [], unattended: Object.new)).to be_deeply_frozen
     end
 
     # The spawn policy is the ONLY channel: a {Tools::Subagent::ChildBuilder}

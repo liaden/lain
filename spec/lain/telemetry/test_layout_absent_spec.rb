@@ -10,6 +10,6 @@ RSpec.describe Lain::Telemetry::TestLayoutAbsent do
   end
 
   it "is deeply frozen" do
-    expect(Ractor.shareable?(record)).to be(true)
+    expect(record).to be_deeply_frozen
   end
 end

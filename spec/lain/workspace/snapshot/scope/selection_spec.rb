@@ -96,8 +96,8 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::Selection do
       built = described_class.new(kept: ["/w/a"], outside: ["/x"])
 
       expect(built).to be_deeply_frozen
-      expect(Ractor.shareable?(built)).to be(true)
-      expect(Ractor.shareable?(split(%w[/w/a /x], "/w"))).to be(true)
+      expect(built).to be_deeply_frozen
+      expect(split(%w[/w/a /x], "/w")).to be_deeply_frozen
     end
 
     it "freezes the paths themselves, not only the arrays holding them" do

@@ -980,7 +980,7 @@ RSpec.describe Lain::Sensitivity::Regions do
     # is the half that now works.
     describe "Ractor usability" do
       it "is shareable" do
-        expect(Ractor.shareable?(region("sk-#{secret}"))).to be(true)
+        expect(region("sk-#{secret}")).to be_deeply_frozen
       end
 
       it "answers for its digest off the main Ractor" do

@@ -255,7 +255,7 @@ RSpec.describe Lain::Review::LazyFile do
     end
 
     it "is unshareable before anything has chunked it, so the memo is not the only reason" do
-      expect(Ractor.shareable?(lazy(chunker: exploding))).to be(false)
+      expect(lazy(chunker: exploding)).not_to be_deeply_frozen
     end
 
     # The second pin, and the one no other card owns. `session_spec.rb`'s "the
@@ -265,8 +265,8 @@ RSpec.describe Lain::Review::LazyFile do
     # here, where a diff-source author will find it, rather than discovered by a
     # red run.
     it "makes the whole marked-changeset graph unshareable, where an eager file leaves it shareable" do
-      expect(Ractor.shareable?(marked_over(changed_file))).to be(true)
-      expect(Ractor.shareable?(marked_over(lazy))).to be(false)
+      expect(marked_over(changed_file)).to be_deeply_frozen
+      expect(marked_over(lazy)).not_to be_deeply_frozen
     end
   end
 

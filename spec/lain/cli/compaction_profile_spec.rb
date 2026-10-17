@@ -14,8 +14,7 @@ RSpec.describe Lain::CLI::CompactionProfile do
   end
 
   it "is deeply frozen, so it stays shareable" do
-    expect(Ractor.shareable?(described_class.typed({ compact_strategy: +"elide", compact_fallback: +"none" })))
-      .to be(true)
+    expect(described_class.typed({ compact_strategy: +"elide", compact_fallback: +"none" })).to be_deeply_frozen
   end
 
   describe ".from_header" do

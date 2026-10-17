@@ -49,7 +49,7 @@ RSpec.describe Lain::Tool::Bounds do
     end
 
     it "is a deeply frozen value object" do
-      expect(Ractor.shareable?(bound)).to be(true)
+      expect(bound).to be_deeply_frozen
     end
 
     # Every other example hands in a frozen literal, where `#to_s` returns self
@@ -57,13 +57,13 @@ RSpec.describe Lain::Tool::Bounds do
     # the deduplication load-bearing: `Symbol#to_s` hands back a MUTABLE String,
     # which is the exact trap CLAUDE.md records breaking deep immutability once.
     it "stays shareable when its unit arrives as a Symbol" do
-      expect(Ractor.shareable?(described_class.new(limit: 1, unit: :entries))).to be(true)
+      expect(described_class.new(limit: 1, unit: :entries)).to be_deeply_frozen
     end
 
     it "stays shareable when its unit arrives interpolated" do
       width = 2
 
-      expect(Ractor.shareable?(described_class.new(limit: 1, unit: "#{width}-grams"))).to be(true)
+      expect(described_class.new(limit: 1, unit: "#{width}-grams")).to be_deeply_frozen
     end
 
     it "returns a frozen Array whether or not it capped" do
@@ -228,7 +228,7 @@ RSpec.describe Lain::Tool::Bounds do
     end
 
     it "is a deeply frozen value object" do
-      expect(Ractor.shareable?(bound)).to be(true)
+      expect(bound).to be_deeply_frozen
     end
   end
 
@@ -367,7 +367,7 @@ RSpec.describe Lain::Tool::Bounds do
     end
 
     it "is a deeply frozen value object" do
-      expect(Ractor.shareable?(bound)).to be(true)
+      expect(bound).to be_deeply_frozen
     end
   end
 
@@ -447,7 +447,7 @@ RSpec.describe Lain::Tool::Bounds do
     end
 
     it "is a deeply frozen value object" do
-      expect(Ractor.shareable?(overrun)).to be(true)
+      expect(overrun).to be_deeply_frozen
     end
 
     # A bound is not type-checked anywhere else in this file, and here it must be:
@@ -523,14 +523,13 @@ RSpec.describe Lain::Tool::Bounds do
     end
 
     it "stays shareable when its subject arrives as a Symbol" do
-      expect(Ractor.shareable?(bound.overrun(subject: :reply, content:, actions:))).to be(true)
+      expect(bound.overrun(subject: :reply, content:, actions:)).to be_deeply_frozen
     end
 
     it "stays shareable when its actions arrive interpolated" do
       limit = 32_768
 
-      expect(Ractor.shareable?(bound.overrun(subject: "your reply", content:, actions: ["trim to #{limit}"])))
-        .to be(true)
+      expect(bound.overrun(subject: "your reply", content:, actions: ["trim to #{limit}"])).to be_deeply_frozen
     end
   end
 
@@ -611,7 +610,7 @@ RSpec.describe Lain::Tool::Bounds do
     end
 
     it "is deeply frozen, and freezes what it hands back" do
-      expect(Ractor.shareable?(fill)).to be(true)
+      expect(fill).to be_deeply_frozen
       expect(fill.fit(["x" * 200]).frozen?).to be(true)
     end
   end
@@ -644,7 +643,7 @@ RSpec.describe Lain::Tool::Bounds do
     end
 
     it "is deeply frozen" do
-      expect(Ractor.shareable?(ceilings)).to be(true)
+      expect(ceilings).to be_deeply_frozen
     end
   end
 end

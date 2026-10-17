@@ -76,7 +76,7 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
     it "journals a record that stays Ractor-shareable over an unfrozen id" do
       record = described_class::AutomaticOutputWithheld.new(tool_use_id: +"tu_9", regions: 1)
 
-      expect(Ractor.shareable?(record)).to be(true)
+      expect(record).to be_deeply_frozen
     end
 
     it "counts every region the output held" do

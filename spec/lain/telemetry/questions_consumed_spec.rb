@@ -42,7 +42,7 @@ RSpec.describe Lain::Telemetry::QuestionsConsumed do
   end
 
   it "is deeply frozen, digests included" do
-    expect(Ractor.shareable?(record)).to be(true)
+    expect(record).to be_deeply_frozen
   end
 
   # The record's one producer, {Lain::Event#normalize_causal}, always hands it

@@ -260,7 +260,7 @@ RSpec.describe Lain::Review::Hunk do
     it "is shareable, but its key can only be computed on the main Ractor" do
       subject = hunk
 
-      expect(Ractor.shareable?(subject)).to be(true)
+      expect(subject).to be_deeply_frozen
       expect { Ractor.new(subject, &:content_key).value }.to raise_error(Ractor::RemoteError)
     end
   end

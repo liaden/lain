@@ -30,7 +30,7 @@ RSpec.describe Lain::Telemetry::TestLayoutRefused do
   end
 
   it "is deeply frozen" do
-    expect(Ractor.shareable?(record)).to be(true)
+    expect(record).to be_deeply_frozen
   end
 
   it "refuses a refusal that names no path" do

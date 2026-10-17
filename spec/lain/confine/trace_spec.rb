@@ -130,7 +130,7 @@ RSpec.describe Lain::Confine::Trace do
     end
 
     it "is deeply frozen" do
-      expect(Ractor.shareable?(record_of(lines))).to be(true)
+      expect(record_of(lines)).to be_deeply_frozen
     end
 
     context "when the trace passes the cap" do

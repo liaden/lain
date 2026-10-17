@@ -111,6 +111,6 @@ RSpec.describe Lain::Telemetry::ProviderWait do
     mutable = described_class.new(kind: :waited, endpoint: +"http://localhost:11434",
                                   waited_seconds: 0.25, resolution_seconds: 0.05, in_flight: 1)
 
-    expect(Ractor.shareable?(mutable)).to be(true)
+    expect(mutable).to be_deeply_frozen
   end
 end

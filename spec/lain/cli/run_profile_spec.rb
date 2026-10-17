@@ -28,8 +28,7 @@ RSpec.describe Lain::CLI::RunProfile do
     end
 
     it "is deeply frozen, so it can be shared as a value" do
-      expect(Ractor.shareable?(typed(provider: +"ollama", api_base: +"http://127.0.0.1:11434",
-                                     keep_alive: +"-1"))).to be(true)
+      expect(typed(provider: +"ollama", api_base: +"http://127.0.0.1:11434", keep_alive: +"-1")).to be_deeply_frozen
     end
   end
 

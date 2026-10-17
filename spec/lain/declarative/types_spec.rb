@@ -217,7 +217,7 @@ RSpec.describe Lain::Declarative::Types::Canonicalized do
   it "stays Ractor-shareable, the invariant settle! depends on" do
     carrier = carrier_class.new(payload: { b: 1, a: { c: 2 } })
 
-    expect(Ractor.shareable?(carrier.payload)).to be true
+    expect(carrier.payload).to be_deeply_frozen
   end
 
   it "is registered under :lain_canonical, for declaration by symbol" do

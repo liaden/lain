@@ -13,6 +13,6 @@ RSpec.describe Lain::Telemetry::FilesWritten do
   end
 
   it "is shareable across Ractors, like every other journaled value" do
-    expect(Ractor.shareable?(described_class.new(role: +"lain", paths: [+"lib/a.rb"]))).to be(true)
+    expect(described_class.new(role: +"lain", paths: [+"lib/a.rb"])).to be_deeply_frozen
   end
 end

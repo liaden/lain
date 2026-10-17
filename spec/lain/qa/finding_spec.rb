@@ -75,6 +75,6 @@ RSpec.describe Lain::QA::Finding do
   end
 
   it "is deeply frozen" do
-    expect(Ractor.shareable?(finding)).to be(true)
+    expect(finding).to be_deeply_frozen
   end
 end

@@ -524,7 +524,7 @@ RSpec.describe Lain::Project::Resolver do
     it "reports a deeply frozen, Ractor-shareable value" do
       report = resolver.call(cwd: mkdir("work", "repo"))
 
-      expect(Ractor.shareable?(report)).to be(true)
+      expect(report).to be_deeply_frozen
       expect(report.refusal.directory).to be_frozen
     end
 

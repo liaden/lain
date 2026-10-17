@@ -264,7 +264,7 @@ RSpec.describe Lain::Tools::RunSkill do
     end
 
     it "is a value object two tools may share" do
-      expect(Ractor.shareable?(described_class::Ceiling.new)).to be(true)
+      expect(described_class::Ceiling.new).to be_deeply_frozen
     end
 
     # A bound is not an exception: the refusal is an answer the loop continues

@@ -129,7 +129,7 @@ RSpec.describe Lain::Telemetry::CompactionCut do
   end
 
   it "is deeply frozen, content included" do
-    expect(Ractor.shareable?(record)).to be(true)
-    expect(Ractor.shareable?(described_class.new(**collapsing))).to be(true)
+    expect(record).to be_deeply_frozen
+    expect(described_class.new(**collapsing)).to be_deeply_frozen
   end
 end

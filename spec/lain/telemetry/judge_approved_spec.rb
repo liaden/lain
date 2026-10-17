@@ -8,6 +8,6 @@ RSpec.describe Lain::Telemetry::JudgeApproved do
   end
 
   it "is shareable across Ractors, like every other journaled value" do
-    expect(Ractor.shareable?(event)).to be(true)
+    expect(event).to be_deeply_frozen
   end
 end

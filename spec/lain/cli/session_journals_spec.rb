@@ -155,7 +155,7 @@ RSpec.describe Lain::CLI::SessionJournals do
     it "keeps a tally naming misfiled types Ractor-shareable" do
       write("20260728T090000-1.ndjson", [misfiled, misfiled("gate_decisoin_v2")])
 
-      expect(Ractor.shareable?(tolerant.tally)).to be(true)
+      expect(tolerant.tally).to be_deeply_frozen
     end
 
     it "reads a gate_decision carrying the same fields as the record it is" do

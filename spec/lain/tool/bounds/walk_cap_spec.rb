@@ -40,7 +40,7 @@ RSpec.describe Lain::Tool::Bounds::WalkCap do
   end
 
   it "is a deeply frozen value object" do
-    expect(Ractor.shareable?(cap)).to be(true)
+    expect(cap).to be_deeply_frozen
   end
 
   describe Lain::Tool::Bounds::Found do
@@ -52,7 +52,7 @@ RSpec.describe Lain::Tool::Bounds::WalkCap do
     end
 
     it "is a deeply frozen value object" do
-      expect(Ractor.shareable?(described_class.new(rows: [1, 2].freeze, capped: false))).to be(true)
+      expect(described_class.new(rows: [1, 2].freeze, capped: false)).to be_deeply_frozen
     end
   end
 end

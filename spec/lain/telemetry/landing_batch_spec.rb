@@ -14,7 +14,7 @@ RSpec.describe Lain::Telemetry::LandingBatch do
     expect(record.to_journal).to include("type" => "landing_batch", "worker_keys" => %w[w-1 w-2],
                                          "desk" => :parent, "outcome" => :landed)
     expect(record).to be_deeply_frozen
-    expect(Ractor.shareable?(record)).to be(true)
+    expect(record).to be_deeply_frozen
   end
 
   it "answers landing_batch to no other Journalable" do

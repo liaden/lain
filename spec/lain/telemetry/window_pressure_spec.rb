@@ -49,7 +49,7 @@ RSpec.describe Lain::Telemetry::WindowPressure do
 
     expect(pressure).to eq(twin)
     expect(pressure).to be_deeply_frozen
-    expect(Ractor.shareable?(pressure)).to be(true)
+    expect(pressure).to be_deeply_frozen
   end
 
   it "accepts a kind spelled as a String, as a replayed record spells it" do

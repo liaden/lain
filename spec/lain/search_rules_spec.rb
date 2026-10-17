@@ -75,7 +75,7 @@ RSpec.describe Lain::SearchRules do
     end
 
     it "is deeply frozen" do
-      expect(Ractor.shareable?(described_class.from({ "include" => ["a/**"] }))).to be(true)
+      expect(described_class.from({ "include" => ["a/**"] })).to be_deeply_frozen
     end
   end
 

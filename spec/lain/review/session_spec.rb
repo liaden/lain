@@ -1498,14 +1498,14 @@ RSpec.describe Lain::Review::Session do
       session = open_session
       session.mark(keys_for("a.rb").first, "reviewed")
 
-      expect(Ractor.shareable?(session.marked)).to be(true)
+      expect(session.marked).to be_deeply_frozen
     end
 
     it "holds for the record a note becomes" do
       session = open_session
       placed = session.annotate(anchor_on("a.rb", 2, "TWO"), "here", kind: :note, drifted: false)
 
-      expect(Ractor.shareable?(placed)).to be(true)
+      expect(placed).to be_deeply_frozen
     end
 
     it "holds for the round head and for the judgement that closes it" do
@@ -1513,8 +1513,8 @@ RSpec.describe Lain::Review::Session do
       every_key.each { |key| session.mark(key, "reviewed") }
       session.submit("approve")
 
-      expect(Ractor.shareable?(session.opened)).to be(true)
-      expect(Ractor.shareable?(session.judgement)).to be(true)
+      expect(session.opened).to be_deeply_frozen
+      expect(session.judgement).to be_deeply_frozen
     end
 
     it "holds for the null verdict, which is shared by every session that has none" do

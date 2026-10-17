@@ -107,7 +107,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
       rebuilt = described_class.new(**fields, term: Lain::Shell::Term.from_journal(fields.fetch(:term)))
 
       expect(rebuilt).to eq(event)
-      expect(Ractor.shareable?(rebuilt)).to be(true)
+      expect(rebuilt).to be_deeply_frozen
     end
   end
 
@@ -209,7 +209,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
       diverged = described_class.new(tool_use_id: +"tu_9", verdict: +"allow", arm: +"string",
                                      reason: +"understood", term: term_of([+"cat", +"a"], [+"head", +"-1"]))
 
-      expect(Ractor.shareable?(diverged)).to be(true)
+      expect(diverged).to be_deeply_frozen
       expect(diverged.term.programs.first).to equal(-"cat")
     end
 
@@ -277,7 +277,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
       mutable = described_class.new(tool_use_id: +"tu_6", verdict: :allow, arm: +"term", reason: +"understood",
                                     term: term_of([+"grep", +"-n", +"foo", +"lib"], [+"wc", +"-l"]))
 
-      expect(Ractor.shareable?(mutable)).to be(true)
+      expect(mutable).to be_deeply_frozen
       expect(mutable).to be_deeply_frozen
       expect(mutable.term.stages.first.argv).to be_frozen
       expect(mutable.term.programs.first).to be_frozen
@@ -295,7 +295,7 @@ RSpec.describe Lain::Telemetry::ShellArm do
       one = described_class.new(tool_use_id: "tu_7", verdict: :abstain, arm: :string, reason: "x")
       another = described_class.new(tool_use_id: "tu_8", verdict: :abstain, arm: :string, reason: "y")
 
-      expect(Ractor.shareable?(one)).to be(true)
+      expect(one).to be_deeply_frozen
       expect(one.term).to equal(another.term)
       expect(one.term).to equal(Lain::Shell::Verdict::NO_TERM)
     end

@@ -24,7 +24,7 @@ RSpec.describe Lain::Attachment::Reference do
     it "is deeply frozen through .new, whatever the caller handed it" do
       built = described_class.new(digest: +digest, media_type: +"image/png")
 
-      expect(Ractor.shareable?(built)).to be(true)
+      expect(built).to be_deeply_frozen
       expect(built.digest).to be_frozen
       expect(built.media_type).to be_frozen
     end
@@ -35,7 +35,7 @@ RSpec.describe Lain::Attachment::Reference do
     it "is deeply frozen through #with, and validated by it" do
       copied = reference.with(media_type: +"image/jpeg")
 
-      expect(Ractor.shareable?(copied)).to be(true)
+      expect(copied).to be_deeply_frozen
       expect(copied.media_type).to eq("image/jpeg")
       expect { reference.with(media_type: "text/plain") }.to raise_error(ArgumentError, %r{text/plain})
       expect { reference.with(digest: hex) }.to raise_error(ArgumentError, /blake3/)
@@ -80,7 +80,7 @@ RSpec.describe Lain::Attachment::Reference do
       expect(reference.block).to eq("type" => "image",
                                     "source" => { "type" => "attachment", "media_type" => "image/png",
                                                   "digest" => digest })
-      expect(Ractor.shareable?(reference.block)).to be(true)
+      expect(reference.block).to be_deeply_frozen
       expect(Lain::Canonical.dump(reference.block).bytesize).to be < 200
     end
 
@@ -89,7 +89,7 @@ RSpec.describe Lain::Attachment::Reference do
 
       expect(inline["source"]).to include("type" => "base64", "media_type" => "image/png")
       expect(inline["source"]["data"].unpack1("m0")).to eq(png)
-      expect(Ractor.shareable?(inline)).to be(true)
+      expect(inline).to be_deeply_frozen
     end
 
     # The payload is frozen but must NOT be interned: `-@` would hold a few
@@ -192,7 +192,7 @@ RSpec.describe Lain::Attachment::Reference do
       resolved = described_class.resolve([reference.block]) { |found| found.digest == digest ? png : "wrong" }
 
       expect(resolved.dig(0, "source", "data").unpack1("m0")).to eq(png)
-      expect(Ractor.shareable?(resolved)).to be(true)
+      expect(resolved).to be_deeply_frozen
     end
 
     it "leaves the structure around an address intact" do
@@ -218,7 +218,7 @@ RSpec.describe Lain::Attachment::Reference do
 
       expect(resolved.first).to include("cache" => true, Lain::Workspace::WORKSPACE_MARKER => true)
       expect(resolved.first["source"]).to include("type" => "base64")
-      expect(Ractor.shareable?(resolved)).to be(true)
+      expect(resolved).to be_deeply_frozen
     end
 
     # Counted rather than signalled by a raise: `not_to raise_error` would say the

@@ -91,6 +91,6 @@ RSpec.describe Lain::Telemetry::ChildProgress do
   end
 
   it "is deeply frozen, as every value on the record is" do
-    expect(Ractor.shareable?(described_class.new(spawn: "blake3:spawn", role: "dev", turns: 0))).to be(true)
+    expect(described_class.new(spawn: "blake3:spawn", role: "dev", turns: 0)).to be_deeply_frozen
   end
 end

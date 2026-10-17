@@ -9,8 +9,7 @@ RSpec.describe Lain::Telemetry::SearchRedacted do
   it "is a deeply frozen value carrying the call, the path and the region counts" do
     expect(event).to have_attributes(tool_use_id: "tu_2", path: "/tmp/config.yml", regions: 3, released: 1)
     expect(event).to be_deeply_frozen
-    expect(Ractor.shareable?(described_class.new(tool_use_id: +"tu_2", path: +"/tmp/x", regions: 1, released: 0)))
-      .to be(true)
+    expect(described_class.new(tool_use_id: +"tu_2", path: +"/tmp/x", regions: 1, released: 0)).to be_deeply_frozen
   end
 
   it "journals as a search_redacted record, apart from the read_redacted a resume folds into a mask" do

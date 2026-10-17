@@ -105,9 +105,9 @@ RSpec.describe Lain::Middleware::ResolveAttachments, :seam do
   # uses and a freeze proved anywhere else proves nothing about it.
   describe "the address as a value" do
     it "is deeply frozen, block and all" do
-      expect(Ractor.shareable?(reference)).to be(true)
-      expect(Ractor.shareable?(reference.block)).to be(true)
-      expect(Ractor.shareable?(reference.inline(png))).to be(true)
+      expect(reference).to be_deeply_frozen
+      expect(reference.block).to be_deeply_frozen
+      expect(reference.inline(png)).to be_deeply_frozen
     end
 
     # The store refuses a bare hex digest from both its doors on purpose, so an
@@ -134,7 +134,7 @@ RSpec.describe Lain::Middleware::ResolveAttachments, :seam do
     # mutates them, so a resolved request is as shareable as the addressed one
     # -- which is the mechanical statement of "this added no mutable state".
     it "is deeply frozen, straight out of the public construction path" do
-      expect(Ractor.shareable?(sent)).to be(true)
+      expect(sent).to be_deeply_frozen
     end
 
     # A retry frame, the stream-started signal and the journalled record all key

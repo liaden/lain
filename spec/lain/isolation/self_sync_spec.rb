@@ -483,7 +483,7 @@ RSpec.describe Lain::Isolation::SelfSync, :seam do
 
       result = synced
 
-      expect(Ractor.shareable?(result)).to be(true)
+      expect(result).to be_deeply_frozen
       expect(result.to_record)
         .to eq(sync: :conflicted, attempts: [attempt("lain", 1, "conflicted"), attempt("worker", 1, "conflicted")],
                dirty: false, path: nil, detail: "tried")

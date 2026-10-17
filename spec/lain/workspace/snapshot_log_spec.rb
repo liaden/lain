@@ -96,7 +96,7 @@ RSpec.describe Lain::Workspace::SnapshotLog do
       turn(start)
 
       expect(log.first.files.keys).to eq(["a.rb"])
-      expect(Ractor.shareable?(log.first)).to be(true)
+      expect(log.first).to be_deeply_frozen
     end
 
     # A plan step's closure reads the :snapshot body, and a replay addresses
@@ -108,7 +108,7 @@ RSpec.describe Lain::Workspace::SnapshotLog do
 
       expect(events.first.body.keys).to contain_exactly("files", "root", "snapshot_scope")
       expect(log.first.to_h.keys).to eq(%i[turn snapshot files scope])
-      expect(Ractor.shareable?(log.first)).to be(true)
+      expect(log.first).to be_deeply_frozen
     end
 
     it "tees every snapshot it records on to the observer it was given" do

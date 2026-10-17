@@ -290,7 +290,7 @@ RSpec.shared_examples "a gh executor" do
     answer = executor.pr_create(base: GhParity::BASE, head: GhParity::HEAD,
                                 title: GhParity::TITLE, body: GhParity::BODY)
 
-    expect(Ractor.shareable?(answer)).to be(true)
+    expect(answer).to be_deeply_frozen
   end
 
   # Tier 2 by construction, stated mechanically rather than by convention: a

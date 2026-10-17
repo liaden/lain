@@ -37,7 +37,7 @@ RSpec.describe Lain::WorkerEnv do
       env = described_class.new(cwd: "/srv/w1", env: {}, read_roots: [+"/state/epics/demo"])
 
       expect(env.read_roots).to eq(["/state/epics/demo"])
-      expect(Ractor.shareable?(env)).to be(true)
+      expect(env).to be_deeply_frozen
     end
   end
 
@@ -50,7 +50,7 @@ RSpec.describe Lain::WorkerEnv do
       env = described_class.new(cwd: "/srv/w1/app", env: {}, checkout: +"/srv/w1")
 
       expect(env.checkout).to eq("/srv/w1")
-      expect(Ractor.shareable?(env)).to be(true)
+      expect(env).to be_deeply_frozen
     end
 
     it "keeps its checkout when its cwd moves" do

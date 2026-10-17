@@ -36,6 +36,6 @@ RSpec.describe Lain::Approval::Root do
 
   it "offers a Null root that contains nothing at all" do
     expect(described_class::NOWHERE.contains?("/project", from: "/project")).to be(false)
-    expect(Ractor.shareable?(root)).to be(true)
+    expect(root).to be_deeply_frozen
   end
 end

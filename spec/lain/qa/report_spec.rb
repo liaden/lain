@@ -172,8 +172,8 @@ RSpec.describe Lain::QA::Report do
   end
 
   it "is deeply frozen" do
-    expect(Ractor.shareable?(described_class.new(subject: +"x", findings: [Lain::QA::Finding.from_h(wire("minor"))],
-                                                 tiers_run: [+"t1"], escalations: [+"e"], unsettled: [+"c"])))
-      .to be(true)
+    report = described_class.new(subject: +"x", findings: [Lain::QA::Finding.from_h(wire("minor"))],
+                                 tiers_run: [+"t1"], escalations: [+"e"], unsettled: [+"c"])
+    expect(report).to be_deeply_frozen
   end
 end

@@ -131,6 +131,6 @@ RSpec.describe Lain::QA::Answer do
   end
 
   it "is deeply frozen" do
-    expect(Ractor.shareable?(described_class.unverified(because: +"no block"))).to be(true)
+    expect(described_class.unverified(because: +"no block")).to be_deeply_frozen
   end
 end

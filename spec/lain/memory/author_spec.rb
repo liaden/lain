@@ -23,7 +23,7 @@ RSpec.describe Lain::Memory::Author do
   end
 
   it "is shareable" do
-    expect(Ractor.shareable?(described_class.clerk(spawn: "sha256:abc"))).to be(true)
+    expect(described_class.clerk(spawn: "sha256:abc")).to be_deeply_frozen
   end
 
   it "refuses a spawn on a chat author" do

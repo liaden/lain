@@ -326,9 +326,9 @@ RSpec.describe Lain::Tool::SpawnPolicy do
     # above is what keeps it true against an arbitrary object: an unshareable
     # one riding in raw would forfeit exactly this.
     it "is deeply frozen -- Ractor.shareable? -- carrying the new member" do
-      expect(Ractor.shareable?(described_class.new(only: %i[echo], unattended: true))).to be(true)
-      expect(Ractor.shareable?(described_class.new(prefix: :inherit, posture: :handler_union, only: []))).to be(true)
-      expect(Ractor.shareable?(described_class.new(only: [], unattended: Object.new))).to be(true)
+      expect(described_class.new(only: %i[echo], unattended: true)).to be_deeply_frozen
+      expect(described_class.new(prefix: :inherit, posture: :handler_union, only: [])).to be_deeply_frozen
+      expect(described_class.new(only: [], unattended: Object.new)).to be_deeply_frozen
     end
   end
 end

@@ -36,7 +36,7 @@ RSpec.describe Lain::Telemetry::FileWritten do
   it "is shareable across Ractors even built from mutable Strings" do
     record = described_class.from_stat(File.stat(path), path: +path, tool_use_id: +"tu_1")
 
-    expect(Ractor.shareable?(record)).to be(true)
+    expect(record).to be_deeply_frozen
   end
 
   it "writes one file_written line a reader can rebuild the identity from" do

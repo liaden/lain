@@ -145,7 +145,7 @@ RSpec.describe Lain::Shell::Exclusions do
 
   describe "the value" do
     it "is shareable across Ractors" do
-      expect(Ractor.shareable?(described_class.from({ "exclude" => ["curl"] }))).to be(true)
+      expect(described_class.from({ "exclude" => ["curl"] })).to be_deeply_frozen
     end
 
     # The patterns arrive from a TOML parse, so the caller keeps a mutable Array

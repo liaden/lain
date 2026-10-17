@@ -710,7 +710,7 @@ RSpec.describe Lain::Compaction::Derivation do
         seam = seam_of(fixtures.history(9))
 
         expect(seam).to be_a(described_class::Seam)
-        expect(Ractor.shareable?(seam)).to be(true)
+        expect(seam).to be_deeply_frozen
       end
 
       it "drops a range again whose recorded replacement was DROP" do

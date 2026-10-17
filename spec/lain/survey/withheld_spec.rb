@@ -47,7 +47,7 @@ RSpec.describe Lain::Survey::Withheld do
 
   describe "as a value" do
     it "is deeply frozen, so it crosses a Ractor and journals as it stands" do
-      expect(Ractor.shareable?(described_class.binary(+"logo.png"))).to be(true)
+      expect(described_class.binary(+"logo.png")).to be_deeply_frozen
     end
 
     it "equals another withholding of the same path for the same reason" do

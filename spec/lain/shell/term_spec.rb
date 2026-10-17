@@ -54,8 +54,8 @@ RSpec.describe Lain::Shell::Term do
 
   it "is deeply frozen, even when built from mutable Strings and Arrays" do
     built = described_class.of([+"ls", +"-la"])
-    expect(Ractor.shareable?(built)).to be(true)
-    expect(Ractor.shareable?(described_class::NONE)).to be(true)
+    expect(built).to be_deeply_frozen
+    expect(described_class::NONE).to be_deeply_frozen
   end
 
   describe described_class::Stage do
@@ -110,7 +110,7 @@ RSpec.describe Lain::Shell::Term do
       line = JSON.parse(JSON.generate(written.to_journal))
 
       expect(described_class.from_journal(line)).to eq(written)
-      expect(Ractor.shareable?(described_class.from_journal(line))).to be(true)
+      expect(described_class.from_journal(line)).to be_deeply_frozen
     end
 
     it "reads an empty journal shape back as NONE itself" do

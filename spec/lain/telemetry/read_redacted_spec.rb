@@ -40,7 +40,7 @@ RSpec.describe Lain::Telemetry::ReadRedacted do
   it "is Ractor-shareable even when built from mutable Strings" do
     mutable = described_class.new(tool_use_id: +"tu_2", path: +"/tmp/config.yml", regions: 3, released: 1)
     expect(mutable).to be_deeply_frozen
-    expect(Ractor.shareable?(mutable)).to be(true)
+    expect(mutable).to be_deeply_frozen
   end
 
   it "coerces a Pathname path to a String, so the in-process field matches the journaled one" do

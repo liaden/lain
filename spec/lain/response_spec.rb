@@ -130,7 +130,7 @@ RSpec.describe Lain::Response do
     it "stays shareable with a malformed kind" do
       response = described_class.new(content: [], stop_reason: :malformed, malformed: :prose_tool_call)
 
-      expect(Ractor.shareable?(response)).to be(true)
+      expect(response).to be_deeply_frozen
     end
 
     it "names a truncated stream and points at its journal record, keeping the partial text" do
@@ -141,7 +141,7 @@ RSpec.describe Lain::Response do
     end
 
     it "stays deeply frozen" do
-      expect(Ractor.shareable?(stopped(:malformed).failure)).to be(true)
+      expect(stopped(:malformed).failure).to be_deeply_frozen
     end
   end
 

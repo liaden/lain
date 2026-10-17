@@ -58,6 +58,6 @@ RSpec.describe Lain::Telemetry::ToolCancelled do
   end
 
   it "is deeply frozen, ids included" do
-    expect(Ractor.shareable?(record)).to be(true)
+    expect(record).to be_deeply_frozen
   end
 end

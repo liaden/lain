@@ -41,7 +41,7 @@ RSpec.describe Lain::Confine::Profile do
     end
 
     it "is deeply frozen" do
-      expect(Ractor.shareable?(profile)).to be(true)
+      expect(profile).to be_deeply_frozen
     end
 
     it "reads the main checkout's git dir from a linked worktree, which git needs to run at all" do

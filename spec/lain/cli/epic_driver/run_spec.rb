@@ -508,7 +508,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       expect(result.landed.map(&:issue_id)).to eq(["a"])
       expect(result.reported.map { |entry| [entry.issue_id, entry.reason] }).to eq([["b", described_class::UNSETTLED]])
       expect(result.stopped).to start_with("the run stopped because a session journal could not be read")
-      expect(Ractor.shareable?(result)).to be(true)
+      expect(result).to be_deeply_frozen
     end
 
     it "ends the run in words, keeping what already landed, when a later fold meets it" do
@@ -1196,7 +1196,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       run, = run_over(issues: [issue("a"), issue("c")], statuses:, reports: { "a" => anchored("sha-a") },
                       refusals: { "c" => refusal })
 
-      expect(Ractor.shareable?(run.call)).to be(true)
+      expect(run.call).to be_deeply_frozen
     end
   end
 end

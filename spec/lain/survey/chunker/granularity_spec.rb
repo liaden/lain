@@ -93,7 +93,7 @@ RSpec.describe Lain::Survey::Chunker::Granularity do
     end
 
     it "is Ractor-shareable" do
-      expect(Ractor.shareable?(described_class.new(minimum: 5))).to be(true)
+      expect(described_class.new(minimum: 5)).to be_deeply_frozen
     end
   end
 end

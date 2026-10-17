@@ -9,7 +9,7 @@ RSpec.describe Lain::Telemetry::ExecResolution do
     loose = stage.transform_values { |value| value.is_a?(String) ? value.dup : value }
     record = described_class.new(tool_use_id: +"tu_1", stages: [loose])
 
-    expect(Ractor.shareable?(record)).to be(true)
+    expect(record).to be_deeply_frozen
   end
 
   it "writes one exec_resolution line carrying each stage as journalled" do

@@ -62,7 +62,7 @@ RSpec.describe Lain::CLI::EpicDriver::QaGate do
     end
 
     it "answers a verdict nothing can mutate" do
-      expect(Ractor.shareable?(gate.call(checkpoint, graph))).to be(true)
+      expect(gate.call(checkpoint, graph)).to be_deeply_frozen
     end
   end
 

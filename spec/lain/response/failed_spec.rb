@@ -32,6 +32,6 @@ RSpec.describe Lain::Response::Failed do
   end
 
   it "carries a Failure that is deeply frozen" do
-    expect(Ractor.shareable?(described_class.new(prose_call.failure).failure)).to be(true)
+    expect(described_class.new(prose_call.failure).failure).to be_deeply_frozen
   end
 end

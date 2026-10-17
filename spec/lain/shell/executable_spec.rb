@@ -13,7 +13,7 @@ RSpec.describe Lain::Shell::Executable do
     end
 
     it "is Ractor-shareable" do
-      expect(Ractor.shareable?(executable)).to be(true)
+      expect(executable).to be_deeply_frozen
     end
   end
 
@@ -49,6 +49,6 @@ RSpec.describe Lain::Shell::Executable do
                                      chain: [+"/usr/bin/cat"], shadowed: [+"/bin/cat"], anomalies: [],
                                      klass: :system, fresh: false, run_files: [], wrappers: [wrapper])
 
-    expect(Ractor.shareable?(executable)).to be(true)
+    expect(executable).to be_deeply_frozen
   end
 end

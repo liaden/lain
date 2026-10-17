@@ -750,7 +750,7 @@ RSpec.describe Lain::Shell::Named do
     end
 
     it "is deeply frozen when opaque" do
-      expect(Ractor.shareable?(named("cat $x"))).to be(true)
+      expect(named("cat $x")).to be_deeply_frozen
     end
   end
 
@@ -767,6 +767,6 @@ RSpec.describe Lain::Shell::Named do
   end
 
   it "is deeply frozen" do
-    expect(Ractor.shareable?(named("cd x && cat 'a b' > o"))).to be(true)
+    expect(named("cd x && cat 'a b' > o")).to be_deeply_frozen
   end
 end

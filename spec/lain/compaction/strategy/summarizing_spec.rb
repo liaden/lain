@@ -264,7 +264,7 @@ RSpec.describe Lain::Compaction::Strategy::Summarizing do
 
       expect(outcomes).to include("reaches no mutable state" => :fails)
       expect(outcomes.values.grep(Exception)).to be_empty
-      expect(Ractor.shareable?(deterministic)).to be(false)
+      expect(deterministic).not_to be_deeply_frozen
     end
 
     it "leaves both of Base's questions owned by Base" do

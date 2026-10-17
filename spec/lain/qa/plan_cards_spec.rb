@@ -206,7 +206,7 @@ RSpec.describe Lain::QA::PlanCards do
     end
 
     it "is deeply frozen when built directly, not only through the reader" do
-      expect(Ractor.shareable?(card)).to be(true)
+      expect(card).to be_deeply_frozen
     end
 
     it "refuses an edit to the files it claims" do

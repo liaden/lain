@@ -409,7 +409,7 @@ RSpec.describe Lain::Survey::Walk do
     it "is deeply frozen, so it crosses a Ractor as it stands" do
       write("app.rb")
 
-      expect(Ractor.shareable?(listing("app.rb"))).to be(true)
+      expect(listing("app.rb")).to be_deeply_frozen
     end
   end
 

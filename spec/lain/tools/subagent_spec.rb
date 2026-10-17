@@ -991,7 +991,7 @@ RSpec.describe Lain::Tools::Subagent do
       bounded = Lain::Tools::Subagent::Answer.new.bounded(child, answered)
 
       expect(bounded).to be_a(Lain::Response)
-      expect(Ractor.shareable?(bounded)).to be(true)
+      expect(bounded).to be_deeply_frozen
       expect(bounded.model).to eq("child-model")
       expect(bounded.id).to eq("msg_1")
       expect(bounded.text).to include("the short version")

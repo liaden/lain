@@ -78,7 +78,7 @@ RSpec.describe Lain::Prompt::Environment do
 
     it "stays Ractor-shareable" do
       Dir.mktmpdir do |dir|
-        expect(Ractor.shareable?(current(root: File.realpath(dir), related: ["/srv/app"]))).to be(true)
+        expect(current(root: File.realpath(dir), related: ["/srv/app"])).to be_deeply_frozen
       end
     end
   end

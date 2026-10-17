@@ -519,7 +519,7 @@ RSpec.describe Lain::Provider::Ollama::Deployment do
       # The mutation that proved this was missing: drop the `.freeze` and every
       # other example stays green, because a literal key is already frozen.
       it "holds no reachable mutable state even when handed an unfrozen key" do
-        expect(Ractor.shareable?(described_class.cloud(api_key: +"sk-mutable"))).to be(true)
+        expect(described_class.cloud(api_key: +"sk-mutable")).to be_deeply_frozen
       end
 
       it "does not freeze the caller's own String, which is not ours to freeze" do

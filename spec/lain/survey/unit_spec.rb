@@ -78,7 +78,7 @@ RSpec.describe Lain::Survey::Unit do
 
   describe "as a value object" do
     it "is deeply frozen and Ractor-shareable" do
-      expect(Ractor.shareable?(unit(%w[alpha beta]))).to be(true)
+      expect(unit(%w[alpha beta])).to be_deeply_frozen
     end
 
     it "equals another unit built from the same values" do

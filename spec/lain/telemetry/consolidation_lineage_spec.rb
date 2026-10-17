@@ -34,7 +34,7 @@ RSpec.describe Lain::Telemetry::ConsolidationLineage do
 
     expect(mutable).to eq(record)
     expect(mutable).to be_deeply_frozen
-    expect(Ractor.shareable?(mutable)).to be(true)
+    expect(mutable).to be_deeply_frozen
   end
 
   it "rejects a nil spawn loudly" do
