@@ -105,7 +105,7 @@ module Lain
       def self.problem(pattern)
         return "must be a string" unless pattern.is_a?(String)
         return "must be matchable text" unless Sensitivity.readable?(pattern)
-        return "must not be blank" if pattern.strip.empty?
+        return "must not be blank" if Blankness.blank?(pattern)
         return "must be a program name, not a path" if pattern.include?("/")
         return "can never match an unquoted command" if pattern.match?(WHITESPACE)
 

@@ -48,7 +48,7 @@ module Lain
 
         def entry_problem(entry)
           return "must be a string" unless entry.is_a?(String)
-          return "must not be blank" if entry.strip.empty?
+          return "must not be blank" if Blankness.blank?(entry)
 
           "must stay inside the checkout" if relative && escapes?(entry)
         end

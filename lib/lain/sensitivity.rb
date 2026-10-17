@@ -609,7 +609,7 @@ module Lain
       def self.check!(key, pattern, path: nil)
         raise malformed(key, pattern, "must be a string", path:) unless pattern.is_a?(String)
         raise malformed(key, pattern, "must be matchable text", path:) unless Sensitivity.readable?(pattern)
-        raise malformed(key, pattern, "must not be blank", path:) if pattern.strip.empty?
+        raise malformed(key, pattern, "must not be blank", path:) if Blankness.blank?(pattern)
         raise malformed(key, pattern, "matches everything", path:) if unbounded?(key, pattern)
         raise malformed(key, pattern, "an unclosed [", path:) if unclosed_bracket?(pattern)
         raise malformed(key, pattern, LITERAL, path:) if unmatchable_home?(pattern) || unmatchable_root?(pattern)

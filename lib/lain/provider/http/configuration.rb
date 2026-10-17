@@ -30,7 +30,7 @@ module Lain
             attr_reader key
 
             define_method("#{key}=") do |value|
-              value = nil if value.is_a?(String) && value.strip.empty?
+              value = nil if value.is_a?(String) && Blankness.blank?(value)
               instance_variable_set(:"@#{key}", value)
             end
 
@@ -187,7 +187,7 @@ module Lain
         end
 
         def positive_seconds(value, knob, off_switch)
-          return nil if value.nil? || (value.is_a?(String) && value.strip.empty?)
+          return nil if value.nil? || (value.is_a?(String) && Blankness.blank?(value))
 
           seconds = value.is_a?(Numeric) ? value : Float(value, exception: false)
           raise ArgumentError, "#{knob} wants seconds or nil, got #{value.inspect} (#{off_switch})" if seconds.nil?

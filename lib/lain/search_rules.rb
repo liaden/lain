@@ -64,7 +64,7 @@ module Lain
 
     def self.glob_problem(glob)
       return "must be a string" unless glob.is_a?(String)
-      return "must not be blank" if glob.strip.empty?
+      return "must not be blank" if Blankness.blank?(glob)
       return "must be matchable text" unless Sensitivity.readable?(glob)
       return "leaves the project; include globs stay under the project root" if leaves_project?(glob)
       return "has a . or empty segment, which no listed path can match" if never_matches?(glob)
