@@ -765,6 +765,82 @@ RSpec.describe Lain::Agent do
       expect(response.failure.message).to include("max_tokens")
     end
 
+    describe "a reply cut off before the model finished" do
+      let(:cut_text) { "The reply was cut off before the model finished." }
+      let(:full_text) { "The reply filled the context window before the model finished." }
+
+      def cut_off(stop_reason, blocks)
+        Lain::Response.new(content: blocks, stop_reason:)
+      end
+
+      def sent_blocks(provider) = provider.last_request.messages.flat_map { |message| message["content"] }
+
+      it "keeps the fragment, marks the turn, and ends its content on the marker" do
+        a = agent(cut_off(:truncated, [{ "type" => "text", "text" => "partial answ" }]))
+        a.ask("hi")
+
+        expect(a.timeline.head.content).to eq([{ "type" => "text", "text" => "partial answ" },
+                                               { "type" => "text", "text" => cut_text }])
+        expect(a.timeline.head.meta).to eq({ "stop_reason" => "truncated" })
+      end
+
+      it "says the window filled when the stop was :context_full" do
+        a = agent(cut_off(:context_full, [{ "type" => "text", "text" => "partial" }]))
+        a.ask("hi")
+
+        expect(a.timeline.head.content.last).to eq({ "type" => "text", "text" => full_text })
+        expect(a.timeline.head.meta).to eq({ "stop_reason" => "context_full" })
+      end
+
+      it "tells the model on the next request, after the fragment" do
+        provider = CoreGraph.provider(cut_off(:truncated, [{ "type" => "text", "text" => "partial answ" }]),
+                                      text_response("fine"))
+        a = described_class.new(provider:, toolset:, context:)
+        a.ask("hi")
+        a.ask("again")
+
+        texts = sent_blocks(provider).filter_map { |block| block["text"] }
+        expect(texts).to eq(["hi", "partial answ", cut_text, "again"])
+      end
+
+      it "leaves a complete reply and its meta alone" do
+        a = agent(text_response("whole"))
+        a.ask("hi")
+
+        expect(a.timeline.head.content).to eq([{ "type" => "text", "text" => "whole" }])
+        expect(a.timeline.head.meta).to eq({})
+      end
+
+      [nil, ""].each do |id|
+        it "drops a cut-off tool call with id #{id.inspect}, so the next ask still reaches the provider" do
+          provider = CoreGraph.provider(cut_off(:truncated, [{ "type" => "text", "text" => "part" },
+                                                             { "type" => "tool_use", "id" => id, "name" => "echo",
+                                                               "input" => {} }]),
+                                        text_response("fine"))
+          a = described_class.new(provider:, toolset:, context:)
+          a.ask("hi")
+
+          expect(a.timeline.head.content.map { |block| block["type"] }).to eq(%w[text text])
+          expect(a.ask("again").text).to eq("fine")
+          expect(provider.call_count).to eq(2)
+        end
+      end
+
+      it "answers a tool call in a cut-off reply so the next request is well formed" do
+        provider = CoreGraph.provider(cut_off(:truncated, [{ "type" => "tool_use", "id" => "toolu_1",
+                                                             "name" => "echo", "input" => { "text" => "x" } }]),
+                                      text_response("fine"))
+        a = described_class.new(provider:, toolset:, context:)
+        a.ask("hi")
+        a.ask("again")
+
+        result = sent_blocks(provider).find { |block| block["type"] == "tool_result" }
+        expect(result).to include("tool_use_id" => "toolu_1", "is_error" => true)
+        expect(result["content"]).to include("cut off").and include("never ran")
+        expect(Lain::Context::Conversation.new(provider.last_request.messages).violations).to be_empty
+      end
+    end
+
     # The wire enums are non-exhaustive. An unrecognized value must fail loudly,
     # not fall through a `case` and quietly do nothing.
     it "fails on an unrecognized stop_reason" do

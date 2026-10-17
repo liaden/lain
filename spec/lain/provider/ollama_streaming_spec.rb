@@ -289,6 +289,26 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect(response.stop_reason).to eq(:truncated)
     end
 
+    it "commits a severed stream's fragment through an Agent, marked, and tells the model next turn" do
+      scripts = [ndjson(stream_lines.first(1)), ndjson([stream_lines[0], stream_lines.last])]
+      payloads = []
+      transport = Class.new do
+        define_method(:stream) do |payload, _headers = {}, **, &block|
+          payloads << payload
+          block.call(scripts.shift)
+        end
+      end.new
+      agent = Lain::Agent.new(provider: described_class.new(transport:), toolset: CoreGraph.toolset,
+                              context: CoreGraph.context(model: "qwen3:4b", max_tokens: 64))
+
+      agent.ask("hi")
+      agent.ask("again")
+
+      expect(agent.timeline.rewind(2).head.meta).to eq({ "stop_reason" => "truncated" })
+      expect(agent.timeline.rewind(2).head.content.last["text"]).to include("cut off")
+      expect(payloads.last.to_s).to include("Hel").and include("cut off")
+    end
+
     it "derives :tool_use from the streamed tool_call despite done_reason stop" do
       response = described_class.new(transport: stream_transport([ndjson(stream_lines)]))
                                 .complete(request(stream: true))

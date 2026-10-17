@@ -71,6 +71,11 @@ module Lain
       ERRORED = "This tool call's result never reached the conversation: the run failed with an error " \
                 "before it could be recorded. Check before assuming its effects did or did not happen."
 
+      # The reply that made the call ended before the model finished, and a
+      # failed stop never dispatches, so the tool did not run.
+      CUT_OFF = "The reply that made this call was cut off before the model finished, so the tool never ran " \
+                "and had no effects."
+
       # Composed, never re-typed, so the shared fact cannot drift between the
       # three kinds that state it. Frozen, because an interpolated literal is
       # mutable even under `frozen_string_literal` and each is read straight
@@ -79,6 +84,7 @@ module Lain
                   never_dispatched: "#{NO_RESULT} #{NEVER_DISPATCHED}".freeze,
                   awaiting_approval: "#{NO_RESULT} #{AWAITING_APPROVAL}".freeze,
                   was_running: "#{NO_RESULT} #{WAS_RUNNING}".freeze,
+                  cut_off: "#{NO_RESULT} #{CUT_OFF}".freeze,
                   errored: ERRORED }.freeze
 
       # @param id [String] the tool_use id being answered

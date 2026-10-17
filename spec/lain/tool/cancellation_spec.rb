@@ -52,9 +52,10 @@ RSpec.describe Lain::Tool::Cancellation do
   describe "the notices" do
     let(:notices) { described_class::NOTICES }
 
-    it "names five kinds, each with its own sentence" do
-      expect(notices.keys).to contain_exactly(:unknown, :never_dispatched, :awaiting_approval, :was_running, :errored)
-      expect(notices.values.uniq.size).to eq(5)
+    it "names six kinds, each with its own sentence" do
+      expect(notices.keys).to contain_exactly(:unknown, :never_dispatched, :awaiting_approval, :was_running, :errored,
+                                              :cut_off)
+      expect(notices.values.uniq.size).to eq(6)
       expect(notices.values).to all(be_frozen)
     end
 
@@ -63,6 +64,10 @@ RSpec.describe Lain::Tool::Cancellation do
 
       expect(no_result).to all(start_with("#{described_class::NO_RESULT} "))
       expect(notices.fetch(:unknown)).to end_with(described_class::EFFECTS_UNKNOWN)
+    end
+
+    it "says a call from a cut-off reply was cut off and never ran" do
+      expect(notices.fetch(:cut_off)).to match(/cut off.*never ran/m)
     end
 
     it "says a call stopped at approval waited for it and never ran" do

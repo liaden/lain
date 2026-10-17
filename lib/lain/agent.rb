@@ -42,6 +42,12 @@ module Lain
     IN_FLIGHT = "cannot rewind while a run is in flight: it would commit its turns over the rewound head"
     private_constant :IN_FLIGHT
 
+    CUT_OFF_NOTICES = {
+      truncated: "The reply was cut off before the model finished.",
+      context_full: "The reply filled the context window before the model finished."
+    }.freeze
+    private_constant :CUT_OFF_NOTICES
+
     # {#ask}'s default fold observer: an Agent with no record to keep has
     # nothing to do when it folds.
     NO_FOLD = ->(_stranded, _folded) {}
@@ -592,12 +598,34 @@ module Lain
         # Extracting only the text corrupts the very next turn. `inbox` is the
         # frozen Snapshot #step captured at turn start, so the causal_parents
         # recorded here are exactly the messages this turn's prompt contained.
-        @timeline = @timeline.commit(role: :assistant, content: response.content, causal_parents: inbox.folded)
+        @timeline = commit_reply(response, inbox)
         # Commit BEFORE the token check: a turn that busts the ceiling was still
         # paid for, so it stays in the record rather than vanishing with the
         # raise.
         account(response)
+        answer_stranded_cut(response)
       end
+    end
+
+    # A reply that ended with no finish keeps what it said, because the
+    # fragment is the answer the human saw. The marker is a block of the turn,
+    # not a note beside it, so the next request carries it and the model is
+    # told its last reply was partial.
+    def commit_reply(response, inbox)
+      cut = CUT_OFF_NOTICES[response.stop_reason]
+      content = cut ? [*pairable(response.content), { "type" => "text", "text" => cut }] : response.content
+      meta = cut ? { "stop_reason" => response.stop_reason.to_s } : {}
+      @timeline.commit(role: :assistant, content:, meta:, causal_parents: inbox.folded)
+    end
+
+    # A call severed before its id arrived can never be paired with a result,
+    # and keeping it would wedge every later ask.
+    def pairable(content)
+      content.reject { |block| block["type"] == "tool_use" && block["id"].to_s.empty? }
+    end
+
+    def answer_stranded_cut(response)
+      answer_stranded(:cut_off) if CUT_OFF_NOTICES.key?(response.stop_reason)
     end
 
     # The turn is settled into the record ahead of its usage, because the usage
