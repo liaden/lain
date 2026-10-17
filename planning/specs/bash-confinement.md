@@ -1130,7 +1130,7 @@ end
 - `Shell::Pipeline::Refusals` (`pipeline.rb:325-352`) refuses the wrapped term: the preflight must see the unwrapped term. Report if `Local` gives no seam for that.
 - The group kill (`pipeline.rb:519-525`) leaves a process alive after a timeout under bwrap.
 
-### T24: Hand the bash call's ruling and resolution to its exec          [risk: medium]
+### [x] T24: Hand the bash call's ruling and resolution to its exec          [risk: medium]
 
 **Depends on:** T6, T13, T23
 **Files:** `lib/lain/tools/bash.rb`, `spec/lain/tools/bash_spec.rb`, `spec/lain/cli/wiring/toolset_build_spec.rb`
@@ -1563,3 +1563,5 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 17:10 T26 review REQUEST-CHANGES: the REFUSED line could vanish or turn a good call into a size refusal at the output ceiling. Card amended: exec refusals only (write denials are not traced; tracing openat would bring back benign-probe noise), and the line must always be visible. Follow-up, not in this plan: wording for write refusals.
 - 17:13 T14 approved. Out-of-scope gap noted: an unleased child with a different worker cwd (Isolation::Scratch) is judged through the session's classifier factory (Classifiers#for returns self), the confinement factory's existing assumption.
 - 17:17 Landed: T14 `77eb05a6`, T26 `0595c439`. Both green.
+- 17:17 T24, T27 started from `963d53b9`.
+- 2026-10-17 Takeover: this plan's own session had been idle since 2026-10-16 17:17. By the user's ruling, the session running `planning/specs/qa-round-25-fixes.md` adopts T24, T25 and T27 to T32 and lands them on `main`, logging each step in that plan's Execution log (Run 1). T24 and T27 were ported from `tmp/worktrees/T24` and `T27` (cut at `963d53b9`) onto current `main` and re-reviewed. T24 landed `455176be`, after the main checkout's identical uncommitted copies were dropped. With the user's consent, `a0dae0db` replaced the 16:38 `tee -p` relay with a direct `strace -o /dev/fd/N`: under load the relay lost its tracer at start and the dead seccomp tracer killed the call's background process, while strace ignores SIGPIPE under `-D`.
