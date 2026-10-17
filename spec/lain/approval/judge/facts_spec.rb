@@ -120,6 +120,32 @@ RSpec.describe Lain::Approval::Judge::Facts do
     expect(lines).to include(a_string_including(File.join(forged, "cat").inspect))
   end
 
+  describe "#bar" do
+    it "names nothing for stages lain resolved to unchanged system files" do
+      expect(facts_of("cat README.md | head -5").bar).to eq([])
+    end
+
+    it "names a stage resolved to a file written this session" do
+      plant(File.join(root, "bin", "cat"))
+
+      expect(facts_of("./bin/cat README.md").bar).to eq(["./bin/cat -> #{root}/bin/cat: written this session"])
+    end
+
+    it "names nothing for an unchanged project stage" do
+      plant(File.join(root, "tools", "cat"))
+
+      expect(facts_of("./tools/cat README.md").bar).to eq([])
+    end
+
+    it "names a command lain could not resolve" do
+      expect(facts_of("ruby x.rb").bar).to eq(["ruby x.rb: not resolved"])
+    end
+
+    it "names nothing when it holds no stage" do
+      expect(described_class::NONE.bar).to eq([])
+    end
+  end
+
   it "renders nothing when it holds no stage" do
     expect(described_class::NONE.to_s).to eq("")
   end

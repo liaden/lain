@@ -20,13 +20,7 @@ module Lain
         WRITTEN = "written this session"
         UNCHANGED = "unchanged since before session"
         SWAPPABLE = %i[user project].freeze
-        ANOMALIES = {
-          empty_path_entry: "PATH has an empty entry",
-          relative_path_entry: "PATH has a relative entry",
-          project_path_entry: "PATH has an entry inside the project",
-          exported_function: "the env exports a shell function",
-          ld_preload: "LD_PRELOAD is set"
-        }.freeze
+        ANOMALIES = Shell::Executable::ANOMALIES
         private_constant :PLAIN, :NOT_RESOLVED, :WRITTEN, :UNCHANGED, :SWAPPABLE, :ANOMALIES
 
         # @param executables [Array<Shell::Executable>] one per stage of the call
@@ -46,6 +40,9 @@ module Lain
 
           "\n#{HEADER}\n#{lines.join("\n")}\n\n#{GUIDANCE}\n"
         end
+
+        # @return [Array<String>] why no machine may approve it, one reason per stage, run file or anomaly
+        def bar = Shell::Executable.bar(@executables)
 
         # @return [Array<String>] one per program, run file and anomaly, each once
         def lines

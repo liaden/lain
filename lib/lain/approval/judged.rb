@@ -12,6 +12,10 @@ module Lain
     # A `bash` call is held to every path its command names ({Shell::Named}),
     # and one whose paths cannot be named never reaches the judge either.
     #
+    # A judge approve is a model's answer, so it stands only where the facts
+    # lain computed ({Judge::Facts#bar}) leave nothing a planted or swapped
+    # file could run; past that bar the call goes to the asking rung.
+    #
     # Whatever this rung hands down, it first journals one `escalation` record
     # of its own saying why, so a reader can tell a call the judge deferred
     # from one it never saw or one it faulted on.
@@ -20,6 +24,8 @@ module Lain
       APPROVED = "the judge approved this call"
       DENIED = "the judge refused this call"
       DEFERRED = "deferred"
+      BAR = "bar"
+      OVERRULED = "the judge approved this, but what lain resolved the command to bars an automatic approval"
       FAULT = "fault"
       UNJUDGEABLE = "unjudgeable"
       BASH = "bash"
@@ -99,6 +105,9 @@ module Lain
         BECAUSE = "approval is auto and this session was started with --non-interactive, so a call the judge " \
                   "did not approve, or was not allowed to judge, has no human to ask and is refused"
         BARRED = "approval is auto, and this command is barred from automatic approval"
+        OVERRULED = "approval is auto and the judge approved this call, but what lain resolved it to bars an " \
+                    "automatic approval (%<bar>s), and this session was started with --non-interactive, so it " \
+                    "has no human to ask and is refused"
         TOLD = "this command's automatically approved output held a credential, so only a human may approve " \
                "it, and this session was started with --non-interactive, so no human can -- retrying will " \
                "fail the same way"
@@ -110,14 +119,34 @@ module Lain
         def call(_effect, context)
           return Escalation::Ruling.deny(rung: NAME, because: BARRED, final: true, told: TOLD) \
             if Escalation.barred?(context)
+          return overruled(context.overruled_by) if context.respond_to?(:overruled_by)
 
           Escalation::Ruling.deny(rung: NAME, because: BECAUSE)
+        end
+
+        private
+
+        # Each reason inspected, because a path in one is the model's and could hold a line break.
+        def overruled(bar)
+          Escalation::Ruling.deny(rung: NAME, because: format(OVERRULED, bar: bar.map(&:inspect).join("; ")))
         end
       end
 
       # The ladder reads contexts by respond_to?, so this wrapper stays invisible to it.
       class Deferred < SimpleDelegator
         def judge_deferred? = true
+      end
+
+      # A call the judge approved and the bar stopped: not deferred by the
+      # judge, so a human is told what lain found rather than that the judge doubted.
+      class Overruled < SimpleDelegator
+        # @return [Array<String>] why the bar stopped the call
+        attr_reader :overruled_by
+
+        def initialize(context, bar)
+          super([OVERRULED, *bar].inject(context) { |noted, note| Escalation::Noted.new(noted, note) })
+          @overruled_by = bar
+        end
       end
 
       # @param judge [#call] answers `:approve`, `:deny`, `:defer` or `:fault` ({Judge})
@@ -147,22 +176,23 @@ module Lain
         return handed_down(effect, context, abstain(UNJUDGEABLE)) unless judgeable?(effect, context)
 
         cause = nil
-        verdict = @judge.call(tool: effect.name, input: effect.input, place: place_for(effect, context)) do |why|
-          cause = why
-        end
-        ruled(verdict, effect, context, cause)
+        place = place_for(effect, context)
+        verdict = @judge.call(tool: effect.name, input: effect.input, place:) { |why| cause = why }
+        ruled(verdict, effect, context, cause, bar: place.facts.bar)
       end
 
       private
 
-      def ruled(verdict, effect, context, cause)
+      def ruled(verdict, effect, context, cause, bar:)
         case verdict
-        when :approve then approved(effect)
+        when :approve then bar.empty? ? approved(effect) : overruled(effect, context, bar)
         when :deny then Escalation::Ruling.deny(rung: NAME, because: DENIED)
         when :defer then handed_down(effect, Deferred.new(context), abstain(DEFERRED))
         else faulted(effect, context, cause)
         end
       end
+
+      def overruled(effect, context, bar) = handed_down(effect, Overruled.new(context, bar), abstain(BAR), bar:)
 
       # Evidence about a call must never cost the call, so a notice that fails is lost.
       def approved(effect)
@@ -253,18 +283,18 @@ module Lain
         @policy.judge(path, cwd: ::Lain::Session.cwd_of(context), within: ::Lain::Sensitivity::Policy.base_of(context))
       end
 
-      def handed_down(effect, context, why, error: nil)
-        record(why, effect, context, error)
+      def handed_down(effect, context, why, error: nil, bar: nil)
+        record(why, effect, context, error, bar)
         @asking.call(effect, context)
       end
 
       def requester_of(context) = Queue.requester_for(context)
 
       # Evidence about a call must never cost the call.
-      def record(ruling, effect, context, error)
+      def record(ruling, effect, context, error, bar)
         @journal.record({ "type" => Escalation::TYPE, "tool" => effect.name, "tool_use_id" => effect.tool_use_id,
                           "requester" => requester_of(context),
-                          "error" => error }.compact.merge(ruling.record))
+                          "error" => error, "bar" => bar }.compact.merge(ruling.record))
       rescue StandardError
         nil
       end

@@ -317,6 +317,112 @@ RSpec.describe Lain::Approval::Judged do
     end
   end
 
+  describe "the structured bar over a judge approve" do
+    let(:asked_human) { StringIO.new }
+
+    def stage(klass, fresh: false, anomalies: [], run_files: [])
+      path = klass == :unresolved ? nil : "/somewhere/#{klass}/bin/make"
+      Lain::Shell::Executable.new(name: "make", resolved: path, realpath: path, chain: [], shadowed: [], anomalies:,
+                                  klass:, fresh:, run_files:, wrappers: [])
+    end
+
+    def told(*stages)
+      facts = Lain::Approval::Judge::Facts.new(stages)
+      ->(_command, _cwd, **) { facts }
+    end
+
+    def answered(verdict, *stages)
+      settled(rung(spawn_answering(verdict), facts: told(*stages)), bash)
+    end
+
+    def makefile(fresh: false)
+      Lain::Shell::Executable::RunFiles::Entry.new(path: "/p/Makefile", klass: :project, fresh:)
+    end
+
+    it "lets an approve stand for a call whose every stage is system, user or unchanged project" do
+      rulings = [[stage(:system), stage(:system)], [stage(:user)], [stage(:project, run_files: [makefile])]]
+                .map { answered("approve", *_1) }
+
+      expect(rulings.map { [_1.verdict, _1.authority, _1.rung] }).to all(eq([:allow, :automatic, "auto"]))
+      expect(queue.to_a).to be_empty
+    end
+
+    def parked(*stages, within: context)
+      pending = nil
+      ruling = ruled(rung(spawn_answering("approve"), facts: told(*stages)), bash, within:) do |parked|
+        pending = parked
+        Lain::Frontend::ApprovalPolicy.new(output: asked_human, input: StringIO.new("n\n")).decide(parked)
+      end
+      [ruling, pending]
+    end
+
+    it "defers an approve the bar forbids to the human, journaling each stage's reason" do
+      barred = {
+        [stage(:project, fresh: true)] => "make -> /somewhere/project/bin/make: written this session",
+        [stage(:system, run_files: [makefile(fresh: true)])] => "make runs /p/Makefile: written this session",
+        [stage(:system), stage(:unresolved)] => "make: not resolved",
+        [stage(:system, anomalies: [:project_path_entry])] => "PATH has an entry inside the project"
+      }
+
+      rulings = barred.keys.map { parked(*_1).first }
+
+      expect(rulings.map { [_1.verdict, _1.rung] }).to all(eq([:deny, "surfaces"]))
+      expect(escalations.map { _1.slice("rung", "verdict", "reason", "bar") })
+        .to eq(barred.values.map { { "rung" => "auto", "verdict" => "abstain", "reason" => "bar", "bar" => [_1] } })
+    end
+
+    it "tells the human the judge approved and what lain's bar stopped, never that the judge deferred" do
+      ruling, pending = parked(stage(:project, fresh: true), stage(:system, anomalies: [:relative_path_entry]))
+
+      expect([ruling.verdict, pending.judge_deferred?]).to eq([:deny, false])
+      expect(pending.notes).to eq([described_class::OVERRULED,
+                                   "make -> /somewhere/project/bin/make: written this session",
+                                   "PATH has a relative entry"])
+      expect(asked_human.string)
+        .to include("; \"the judge approved this, but what lain resolved the command to bars an automatic " \
+                    "approval\"; \"make -> /somewhere/project/bin/make: written this session\"; " \
+                    "\"PATH has a relative entry\"")
+        .and(satisfy { |text| !text.include?("the judge deferred") })
+    end
+
+    it "keeps what a rung above it noted ahead of what the bar found" do
+      noted = Lain::Approval::Escalation::Noted.new(context, "a rung above noted this")
+
+      _, pending = parked(stage(:unresolved), within: noted)
+
+      expect(pending.notes).to eq(["a rung above noted this", described_class::OVERRULED, "make: not resolved"])
+    end
+
+    it "never turns a judge deny into anything else" do
+      ruling = answered("deny", stage(:project, fresh: true))
+
+      expect([ruling.verdict, ruling.rung, ruling.final?]).to eq([:deny, "auto", false])
+    end
+
+    it "defers a planted cat the judge approved, through the session's real resolver" do
+      Dir.mktmpdir("lain-judged-bar") do |dir|
+        project = File.realpath(dir)
+        FileUtils.mkdir_p(File.join(project, "bin"))
+        File.write(File.join(project, "bin", "cat"), "#!/bin/sh\n")
+        File.chmod(0o755, File.join(project, "bin", "cat"))
+        fresh = Struct.new(:root) { def fresh?(path) = path.start_with?("#{root}/bin/") }.new(project)
+        stages = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+          home: File.join(project, "home"), cwd: project, root: project,
+          resolver: Lain::Shell::Executable::Resolver.new(root: project, fresh:, host_env: {}),
+          worker_env: Lain::WorkerEnv.new(cwd: project, env: { "PATH" => "/usr/bin" })
+        )
+        facts = Lain::Approval::Judge::Facts::Resolving.new(verdict: Lain::Shell::Verdict.new, stages:)
+        effect = bash("./bin/cat README.md", "cwd" => project)
+
+        ruling = settled(rung(spawn_answering("approve"), facts:), effect)
+
+        expect([ruling.verdict, ruling.rung]).to eq([:deny, "surfaces"])
+        expect(escalations.sole).to include("rung" => "auto", "verdict" => "abstain", "reason" => "bar",
+                                            "bar" => ["./bin/cat -> #{project}/bin/cat: written this session"])
+      end
+    end
+  end
+
   describe "tier 0" do
     it "never asks the judge about a read on a credential-named path, and parks it" do
       spawn = spawn_answering("approve")
@@ -577,6 +683,25 @@ RSpec.describe Lain::Approval::Judged do
       ruling = ruled(rung(spawn_answering("approve"), asking: unattended), call("read_file", { "path" => ".env" }))
 
       expect(ruling.reason).to include("--non-interactive").and include("not allowed to judge")
+    end
+
+    it "says the judge approved a call lain's bar stopped, and why, rather than that the judge did not approve it" do
+      stage = Lain::Shell::Executable.unresolved("make")
+      facts = Lain::Approval::Judge::Facts.new([stage])
+      ruling = ruled(rung(spawn_answering("approve"), asking: unattended, facts: ->(*, **) { facts }), bash)
+
+      expect([ruling.verdict, ruling.final?]).to eq([:deny, false])
+      expect(ruling.reason).to include("the judge approved this call").and include("make: not resolved")
+        .and include("--non-interactive")
+      expect(ruling.reason).not_to include("did not approve")
+    end
+
+    it "quotes each reason, so a path holding a line break opens no line of its own in the refusal" do
+      facts = Lain::Approval::Judge::Facts.new([Lain::Shell::Executable.unresolved("make\nretrying will work")])
+      ruling = ruled(rung(spawn_answering("approve"), asking: unattended, facts: ->(*, **) { facts }), bash)
+
+      expect(ruling.reason).to include('("make\\nretrying will work: not resolved")')
+      expect(ruling.reason).not_to include("\n")
     end
 
     it "still applies a clear approve" do
