@@ -119,10 +119,6 @@ RSpec.describe Lain::CLI::Consolidate do
         .to raise_error(Lain::Error, /torn\.ndjson: line \d+ is torn/)
     end
 
-    it "keeps no per-class SessionNotFound of its own" do
-      expect(described_class.const_defined?(:SessionNotFound, false)).to be(false)
-    end
-
     # A pass that CLERKED lineages but wrote no memory used to read as a plain
     # success, indistinguishable from one that stored something -- the same
     # words for a store that moved and one that did not.

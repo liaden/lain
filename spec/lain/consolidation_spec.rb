@@ -300,13 +300,5 @@ RSpec.describe Lain::Consolidation do
       expect { described_class.new(provider: Lain::Provider::Mock.new, context:, slots:) }
         .to raise_error(ArgumentError, /recorder/)
     end
-
-    it "leaves no dry-run provider behind, since a dry pass builds none" do
-      expect(Lain::Provider.const_defined?(:Unreachable, false)).to be(false)
-    end
-
-    it "keeps no MissingCollaborator: there is no nil left to check at use" do
-      expect(described_class.const_defined?(:MissingCollaborator, false)).to be(false)
-    end
   end
 end

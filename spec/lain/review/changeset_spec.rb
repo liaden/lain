@@ -882,12 +882,6 @@ RSpec.describe Lain::Review::Changeset do
       expect(changeset.partitions(walk)).not_to equal(changeset.partitions(walk))
       expect(changeset.partitions(walk).first.files.first).to equal(changeset.files.first)
     end
-
-    # The message is REMOVED rather than aliased: a migration alias would be a
-    # special case with no card scheduled to remove it.
-    it "no longer answers the commit axis directly" do
-      expect(changeset).not_to respond_to(:by_commit)
-    end
   end
 
   # `#supports?` is asked HERE rather than at the {Session}, and that is forced

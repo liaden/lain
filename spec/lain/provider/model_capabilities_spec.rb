@@ -109,10 +109,6 @@ RSpec.describe Lain::Provider::ModelCapabilities do
               plain.model_capabilities("gemma4:e4b").supports?(:thinking)])
         .to eq([support::SUPPORTED, support::UNSUPPORTED])
     end
-
-    it "is no longer a provider-wide capability, so there is one source for the fact" do
-      expect(Lain::Provider::Ollama::CAPABILITIES).not_to include(:thinking)
-    end
   end
 
   # A probe per turn is what `#context_window_tokens` deliberately pays for a

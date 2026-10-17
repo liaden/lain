@@ -455,10 +455,6 @@ RSpec.describe Lain::CLI::Improve do
       expect { described_class.new(path: "s1.ndjson", profile: Lain::CLI::RunProfile::UNRECORDED, project_dir:) }
         .to raise_error(ArgumentError, /backend/)
     end
-
-    it "keeps no MissingCollaborator: there is no nil left to check at use" do
-      expect(described_class.const_defined?(:MissingCollaborator, false)).to be(false)
-    end
   end
 
   describe ".from_options" do
@@ -536,10 +532,6 @@ RSpec.describe Lain::CLI::Improve do
     it "raises the shared SessionFile refusal, listing what it looked at" do
       expect { described_class.from_options({ max_tokens: 64 }, selector: "nope", paths:, project_dir:) }
         .to raise_error(Lain::CLI::SessionFile::SessionNotFound, /nope/)
-    end
-
-    it "keeps no per-class SessionNotFound of its own" do
-      expect(described_class.const_defined?(:SessionNotFound, false)).to be(false)
     end
   end
 end

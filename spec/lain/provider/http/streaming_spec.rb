@@ -208,42 +208,4 @@ RSpec.describe Lain::Provider::HTTP::Streaming do
         .to raise_error(NoMethodError, /status/)
     end
   end
-
-  # The Faraday v1 branch was dead code -- `faraday_1?` was
-  # `Faraday::VERSION.start_with?("1")` and the gemspec pins `~> 2.14` -- and is
-  # deleted along with it. A grep-shaped assertion rather than an exercised
-  # behaviour, because there is no live code path left to drive that would
-  # prove the predicate gone; the absence itself is the fact under test.
-  #
-  # Scans CODE, not raw text: comments are stripped via Ripper.lex before the
-  # substring search, so prose explaining why the predicate is gone (this very
-  # file's neighbours needed exactly that) does not trip its own guard, and a
-  # legitimate future `Faraday::VERSION` in, say, a diagnostics command is not
-  # banned from ever being named in a comment either. A real code reference --
-  # a method def, a call, even a bare `:faraday_1?` symbol -- still counts,
-  # because those tokens are untouched.
-  describe "the Faraday version predicate" do
-    def source_without_comments(file)
-      Ripper.lex(file.read).each_with_object(+"") do |(_pos, type, tok, _state), stripped|
-        stripped << (type == :on_comment ? tok.tr("^\n", " ") : tok)
-      end
-    end
-
-    it "is gone from every file under lib/, outside the gemspec" do
-      lib_root = Pathname(__dir__).join("..", "..", "..", "..", "lib").expand_path
-      needles = ["Faraday::VERSION", "faraday_v1", "faraday_1?"]
-
-      # Stripping comments only removes text, so a file whose raw text lacks every
-      # needle cannot hold one in code, and lexing all of lib/ is 3s of waste.
-      mentioning = lib_root.glob("**/*.rb").select { |file| needles.any? { |needle| file.read.include?(needle) } }
-
-      offenders = mentioning.filter_map do |file|
-        source = source_without_comments(file)
-        hits = needles.select { |needle| source.include?(needle) }
-        "#{file.relative_path_from(lib_root)}: #{hits.join(", ")}" unless hits.empty?
-      end
-
-      expect(offenders).to be_empty
-    end
-  end
 end

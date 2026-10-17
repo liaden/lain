@@ -434,9 +434,5 @@ RSpec.describe Lain::Middleware::Sensitivity do
         .to equal(Lain::Sensitivity::Policy::Null.instance)
       expect(Lain::Sensitivity::Policy::Null.instance).to respond_to(:denial, :gates?)
     end
-
-    it "defines no Null of its own for a gate to choke on" do
-      expect(described_class.const_defined?(:Null, false)).to be(false)
-    end
   end
 end

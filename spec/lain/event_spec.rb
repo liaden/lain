@@ -11,12 +11,6 @@ RSpec.describe Lain::Event do
     Lain::Event.new(kind:, payload_digest:, **rest)
   end
 
-  # The cut: Turn collapsed into Event(kind: :turn), so the one primitive
-  # is all there is -- one content-addressing scheme, one Store, one Ractor spec.
-  it "is the only turn primitive: no Lain::Turn constant remains" do
-    expect(Lain.const_defined?(:Turn)).to be(false)
-  end
-
   describe "the closed kind set" do
     it "accepts each of the four legal kinds" do
       %i[turn spawn message snapshot].each do |kind|

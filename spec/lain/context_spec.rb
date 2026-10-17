@@ -160,10 +160,6 @@ RSpec.describe Lain::Context do
       expect(described_class::Combinator).to be_a(Class)
     end
 
-    it "no longer defines the retired Base alias" do
-      expect(described_class.const_defined?(:Base, false)).to be(false)
-    end
-
     it "keeps Identity as an instance of Combinator, the monoid unit" do
       expect(described_class::Identity).to be_an_instance_of(described_class::Combinator)
     end

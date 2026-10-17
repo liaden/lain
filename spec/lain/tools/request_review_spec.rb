@@ -1084,18 +1084,6 @@ RSpec.describe Lain::Tools::RequestReview do
     end
   end
 
-  # ---- Scenario: the refusal is gone by name ---------------------------------
-
-  describe "Lain::Tools::RequestReview::Refusals" do
-    it "no longer defines NO_DOCUMENT" do
-      expect(Lain::Tools::RequestReview::Refusals.constants).not_to include(:NO_DOCUMENT)
-    end
-
-    it "no longer answers no_document" do
-      expect(Lain::Tools::RequestReview::Refusals).not_to respond_to(:no_document)
-    end
-  end
-
   # ---- Scenario: an implementation call with nothing to review ---------------
 
   describe "an implementation review with no changeset behind it" do

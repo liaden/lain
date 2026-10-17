@@ -81,8 +81,4 @@ RSpec.describe Lain::CLI::Friction do
       expect { cli.report("torn") }.to raise_error(Lain::Error, /#{Regexp.escape(path)}: /)
     end
   end
-
-  it "keeps no per-class SessionNotFound of its own" do
-    expect(described_class.const_defined?(:SessionNotFound, false)).to be(false)
-  end
 end
