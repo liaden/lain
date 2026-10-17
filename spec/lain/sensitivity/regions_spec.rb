@@ -889,7 +889,7 @@ RSpec.describe Lain::Sensitivity::Regions do
       let(:literal) { region(%(value="a\nb")) }
 
       it "digests them differently" do
-        expect(escaped.digest).not_to eq(literal.digest)
+        expect(escaped).not_to have_same_digest_as(literal)
       end
     end
 

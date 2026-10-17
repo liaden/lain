@@ -187,7 +187,7 @@ RSpec.describe Lain::Agent::RequestOverride do
       # is the asked "hi", not R's edited text, and R leaves no residue.
       expect(second.messages.first["content"].first["text"]).to eq("hi")
       expect(second.messages.map { |m| m["role"] }).to eq(%w[user assistant user])
-      expect(second.digest).not_to eq(edited.digest)
+      expect(second).not_to have_same_digest_as(edited)
       expect(override).not_to be_queued
     end
   end

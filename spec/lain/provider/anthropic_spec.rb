@@ -154,7 +154,7 @@ RSpec.describe Lain::Provider::Anthropic do
 
       started = channel.events.grep(Lain::Telemetry::StreamStarted)
       expect(started.size).to eq(1)
-      expect(started.first.digest).to eq(req.digest)
+      expect(started.first).to have_same_digest_as(req)
       expect(signaled_before_content_block).to be(true)
     end
 
@@ -186,11 +186,11 @@ RSpec.describe Lain::Provider::Anthropic do
       expect(response.content).to eq(canned.content)
       started = channel.events.grep(Lain::Telemetry::StreamStarted)
       expect(started.size).to eq(1)
-      expect(started.first.digest).to eq(req.digest)
+      expect(started.first).to have_same_digest_as(req)
       failures = channel.events.grep(Lain::Telemetry::ObserverFailed)
       expect(failures.size).to eq(1)
       expect(failures.first.hook).to eq(:stream_started)
-      expect(failures.first.digest).to eq(req.digest)
+      expect(failures.first).to have_same_digest_as(req)
       expect(failures.first.message).to eq("boom from orchestration policy")
     end
 

@@ -55,7 +55,7 @@ RSpec.describe Lain::Epic::Submission do
 
     it "keeps content_digest as the graph's own content address, distinct from the gate digest" do
       expect(submission.content_digest).to eq(graph.digest)
-      expect(submission.digest).not_to eq(graph.digest)
+      expect(submission).not_to have_same_digest_as(graph)
     end
 
     it "journals a gate_decision carrying stage epic_plan and slug demo" do
@@ -78,14 +78,14 @@ RSpec.describe Lain::Epic::Submission do
       beta = described_class.epic_plan(graph: three_issue_graph, slug: "beta")
 
       expect(alpha.content_digest).to eq(beta.content_digest) # same content, by construction
-      expect(alpha.digest).not_to eq(beta.digest)
+      expect(alpha).not_to have_same_digest_as(beta)
     end
 
     it "differs for the same text submitted as research versus as an issue_plan" do
       research = described_class.research(text: "same words", slug: "demo")
       plan = described_class.issue_plan(text: "same words", slug: "demo", issue_id: "T1", criteria_digest: nil)
 
-      expect(research.digest).not_to eq(plan.digest)
+      expect(research).not_to have_same_digest_as(plan)
     end
 
     describe "at the Gate, where the bleed used to actually matter" do
@@ -154,7 +154,7 @@ RSpec.describe Lain::Epic::Submission do
     end
 
     it "keeps its address for the same plan, issue and criteria" do
-      expect(plan.digest).to eq(plan.digest)
+      expect(plan).to have_same_digest_as(plan)
     end
 
     it "carries the issue and the criteria digest for the gate decision" do
@@ -192,7 +192,7 @@ RSpec.describe Lain::Epic::Submission do
       one = described_class.epic_plan(graph: first, slug: "demo")
       two = described_class.epic_plan(graph: second, slug: "demo")
 
-      expect(one.digest).to eq(two.digest)
+      expect(one).to have_same_digest_as(two)
     end
   end
 
@@ -202,7 +202,7 @@ RSpec.describe Lain::Epic::Submission do
       original = described_class.research(text: "the quick brown fox", slug: "demo")
       edited = described_class.research(text: "the slow brown fox", slug: "demo")
 
-      expect(original.digest).not_to eq(edited.digest)
+      expect(original).not_to have_same_digest_as(edited)
     end
 
     it "matches Canonical.digest of the exact bytes via content_digest" do
@@ -254,7 +254,7 @@ RSpec.describe Lain::Epic::Submission do
       mine = described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40)
       theirs = described_class.implementation(slug: "demo", issue_id: "b", digest: "a" * 40)
 
-      expect(theirs.digest).not_to eq(mine.digest)
+      expect(theirs).not_to have_same_digest_as(mine)
       expect(theirs.content_digest).not_to eq(mine.content_digest)
     end
 

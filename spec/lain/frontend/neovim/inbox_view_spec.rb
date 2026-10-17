@@ -382,7 +382,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       opened = view.open(continuation, generation: view.generation)
 
       expect(opened).to be_opened
-      expect(opened.digest).to eq(questions[1].digest)
+      expect(opened).to have_same_digest_as(questions[1])
       expect(editor.digests).to eq([questions[1].digest])
     end
 
@@ -429,7 +429,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       opened = view.open(2, generation: view.generation)
 
       expect(opened).to be_opened
-      expect(opened.digest).to eq(second.digest)
+      expect(opened).to have_same_digest_as(second)
       expect(editor.digests).to eq([second.digest])
       expect(editor.documents.last.join("\n")).to include("`when`").and include("deploy now?")
     end
@@ -514,7 +514,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
       opened = view.open(2, generation: two_listed)
 
-      expect(opened.digest).to eq(drop.digest)
+      expect(opened).to have_same_digest_as(drop)
       expect(editor.digests).to eq([drop.digest])
     end
 
@@ -523,7 +523,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
       opened = view.open(1, generation: view.generation)
 
-      expect(opened.digest).to eq(drop.digest)
+      expect(opened).to have_same_digest_as(drop)
       expect(editor.digests).to eq([drop.digest])
     end
 
@@ -604,7 +604,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
       opened = view.open_next
 
-      expect(opened.digest).to eq(second.digest)
+      expect(opened).to have_same_digest_as(second)
       expect(editor.documents.last.join("\n")).to include("deploy now?")
     end
 
@@ -723,7 +723,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       only = asked(one_question("db", "which db?"))
       view.update(record(only))
 
-      expect(view.open_next.digest).to eq(only.digest)
+      expect(view.open_next).to have_same_digest_as(only)
       view.answered(only.digest)
       expect(view.open_next).not_to be_opened
     end

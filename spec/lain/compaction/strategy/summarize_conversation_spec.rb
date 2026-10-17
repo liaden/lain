@@ -273,7 +273,7 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
       parent = Lain::Compaction::Strategy::Summarizing
 
       expect(described_class::TEMPLATE).to be(parent::TEMPLATE)
-      expect(described_class.definition.digest).to eq(parent.definition.digest)
+      expect(described_class.definition).to have_same_digest_as(parent.definition)
     end
   end
 

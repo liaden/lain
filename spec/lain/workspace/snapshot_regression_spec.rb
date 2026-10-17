@@ -108,7 +108,7 @@ RSpec.describe Lain::Workspace::Snapshot do
 
       expect(third).not_to be_nil
       expect(third.body.fetch("files").fetch("a.txt")).to eq(first.body.fetch("files").fetch("a.txt"))
-      expect(third.digest).to eq(first.digest)
+      expect(third).to have_same_digest_as(first)
       expect(timeline.store.size).to eq(size_before_revert)
     end
   end
@@ -165,7 +165,7 @@ RSpec.describe Lain::Workspace::Snapshot do
       spoof = Lain::Workspace::Snapshot::Blob.new(bytes: "blob 5\0hello".b)
       real = Lain::Workspace::Snapshot::Blob.new(bytes: "hello")
 
-      expect(spoof.digest).not_to eq(real.digest)
+      expect(spoof).not_to have_same_digest_as(real)
     end
 
     it "holds mechanically: canonical dumps escape NUL, so no canonical byte-string contains the header's \\0" do

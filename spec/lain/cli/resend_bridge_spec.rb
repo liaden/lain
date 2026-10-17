@@ -72,9 +72,9 @@ RSpec.describe Lain::CLI::ResendBridge do
       # saw an ordinary Request, and the join key is the digest.
       expect(journal_types).to eq(%w[request_sent turn_usage resend_dispatched request_sent turn_usage])
       marker = journal.find { |record| record.is_a?(Lain::Telemetry::ResendDispatched) }
-      expect(marker.digest).to eq(edited.digest)
+      expect(marker).to have_same_digest_as(edited)
       dispatched = journal.reverse.find { |record| record.instance_of?(Lain::Telemetry::RequestSent) }
-      expect(dispatched.digest).to eq(edited.digest)
+      expect(dispatched).to have_same_digest_as(edited)
     end
   end
 
@@ -150,7 +150,7 @@ RSpec.describe Lain::CLI::ResendBridge do
       expect(journal_types).to include("resend_dispatched")
 
       agent.ask("again")
-      expect(provider.last_request.digest).not_to eq(edited.digest)
+      expect(provider.last_request).not_to have_same_digest_as(edited)
     end
   end
 

@@ -51,7 +51,7 @@ RSpec.describe Lain::Plan::Document do
       b = document.insert_seam(after: "s1").insert_seam(after: "s2")
 
       expect(a).to eq(b)
-      expect(a.digest).to eq(b.digest)
+      expect(a).to have_same_digest_as(b)
     end
   end
 
@@ -141,7 +141,7 @@ RSpec.describe Lain::Plan::Document do
       parsed = described_class.parse_markdown(edited.to_markdown)
 
       expect(parsed).to eq(edited)
-      expect(parsed.digest).to eq(edited.digest)
+      expect(parsed).to have_same_digest_as(edited)
     end
 
     it "ignores prose and blank lines around the plan on the way back" do

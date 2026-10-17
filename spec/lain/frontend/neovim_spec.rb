@@ -626,7 +626,7 @@ RSpec.describe Lain::Frontend::Neovim::Buffers do
       outcome = buffers.pin(2)
 
       expect(outcome).to be_pinned
-      expect(outcome.digest).to eq(timeline.to_a[1].digest)
+      expect(outcome).to have_same_digest_as(timeline.to_a[1])
       expect(session.pins).to eq([timeline.to_a[1].digest])
     end
   end

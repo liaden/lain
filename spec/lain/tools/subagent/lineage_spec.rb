@@ -124,7 +124,7 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       first = lineage.spawn(parent, prompt: "survey the aspirin trials")
       second = lineage.spawn(parent, prompt: "survey the statin trials")
 
-      expect(second.digest).not_to eq(first.digest)
+      expect(second).not_to have_same_digest_as(first)
     end
 
     # Content-derived rather than counted, so no writer's state enters it:
@@ -163,7 +163,7 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       second = lineage.spawn(parent, prompt: "go", lifecycle: "launched")
 
       expect(second.body.fetch("adoption")).not_to eq(first.body.fetch("adoption"))
-      expect(second.digest).not_to eq(first.digest)
+      expect(second).not_to have_same_digest_as(first)
     end
 
     # Deterministic is the binding constraint, and it is why the mark is a
@@ -183,7 +183,7 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       a = described_class.new(policy:, lane: "issue.demo.a").spawn(parent, prompt: "go", lifecycle: "launched")
       b = described_class.new(policy:, lane: "issue.demo.b").spawn(parent, prompt: "go", lifecycle: "launched")
 
-      expect(a.digest).not_to eq(b.digest)
+      expect(a).not_to have_same_digest_as(b)
       expect(a.body["lane"]).to eq("issue.demo.a")
     end
 
@@ -205,7 +205,7 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       first = described_class.new(policy:, lane: "issue.demo.a").spawn(parent, prompt: "go")
       retry_spawn = described_class.new(policy:, lane: "issue.demo.a").spawn(parent, prompt: "go")
 
-      expect(retry_spawn.digest).not_to eq(first.digest)
+      expect(retry_spawn).not_to have_same_digest_as(first)
     end
 
     it "leaves identical one-shots on the run's own empty lane sharing one address across writers" do
@@ -222,7 +222,7 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       retry_spawn = described_class.new(policy:, lane: "issue.demo.a").spawn(parent, prompt: "go",
                                                                                      lifecycle: "launched")
 
-      expect(retry_spawn.digest).not_to eq(first.digest)
+      expect(retry_spawn).not_to have_same_digest_as(first)
       expect(retry_spawn.body.fetch("lane")).to eq("issue.demo.a")
     end
 

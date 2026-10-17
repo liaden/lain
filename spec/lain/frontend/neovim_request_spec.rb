@@ -279,8 +279,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         expect([marker.digest, dispatched.digest]).to all(eq(resent.digest))
         # Byte-identical: the wire request's content address IS the
         # projection's recomputed digest.
-        expect(provider.last_request.digest).to eq(marker.digest)
-
+        expect(provider.last_request).to have_same_digest_as(marker)
         # lain://diff shows edited-vs-rendered, and the editor is told the
         # dispatch happened -- both through the existing render paths, and the
         # human is told UP FRONT an attempt is being made, before the outcome.

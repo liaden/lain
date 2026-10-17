@@ -88,7 +88,7 @@ RSpec.describe Lain::Bench::SpawnSeam do
       second = seam.call(journal:).toolset
 
       expect(first).not_to be(second)
-      expect(first.digest).to eq(second.digest)
+      expect(first).to have_same_digest_as(second)
     end
 
     # The card's whole subject: no bench run had ever executed with tools, so

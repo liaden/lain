@@ -100,7 +100,7 @@ RSpec.describe Lain::Frontend::Neovim::RequestBuffer do
         resent = buffer.resend(lines_for(edited))
 
         expect(resent.digest).to eq(Lain::Canonical.digest(edited))
-        expect(resent.digest).not_to eq(baseline.digest)
+        expect(resent).not_to have_same_digest_as(baseline)
       end
 
       # An UNEDITED resend must address to exactly the baseline: same bytes,

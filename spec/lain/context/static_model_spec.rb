@@ -42,7 +42,7 @@ RSpec.describe Lain::Context::StaticModel do
       static_request = as_static.render(timeline:, toolset:)
 
       expect(static_request.model).to eq("claude-opus-4-8")
-      expect(static_request.digest).to eq(string_request.digest)
+      expect(static_request).to have_same_digest_as(string_request)
       expect(static_request.cache_payload).to eq(string_request.cache_payload)
     end
   end

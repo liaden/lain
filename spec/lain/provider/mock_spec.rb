@@ -33,7 +33,7 @@ RSpec.describe Lain::Provider::Mock do
       failures = channel.drain.grep(Lain::Telemetry::ObserverFailed)
       expect(failures.map(&:hook)).to eq([:stream_started])
       expect(failures.first.message).to eq("observer boom")
-      expect(failures.first.digest).to eq(request.digest)
+      expect(failures.first).to have_same_digest_as(request)
     end
 
     it "fires the observer with the request digest on the streaming path" do

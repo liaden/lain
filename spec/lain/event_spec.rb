@@ -80,13 +80,13 @@ RSpec.describe Lain::Event do
                   render_parent: "blake3:r", causal_parents: %w[blake3:c1 blake3:c2])
       two = event(kind: :message, payload_digest: "blake3:p", from: "a", to: "b",
                   render_parent: "blake3:r", causal_parents: %w[blake3:c1 blake3:c2])
-      expect(one.digest).to eq(two.digest)
+      expect(one).to have_same_digest_as(two)
     end
 
     it "distinguishes events that differ in any envelope field" do
       base = event(kind: :message, payload_digest: "blake3:p", from: "a")
       other = event(kind: :message, payload_digest: "blake3:p", from: "z")
-      expect(base.digest).not_to eq(other.digest)
+      expect(base).not_to have_same_digest_as(other)
     end
 
     # Panel amendment: causal_parents is a SET -- insertion order must not leak
@@ -95,7 +95,7 @@ RSpec.describe Lain::Event do
     it "sorts causal_parents into the digested bytes, so insertion order does not change identity" do
       forward = event(payload_digest: "blake3:p", causal_parents: %w[blake3:a blake3:b blake3:c])
       shuffled = event(payload_digest: "blake3:p", causal_parents: %w[blake3:c blake3:a blake3:b])
-      expect(forward.digest).to eq(shuffled.digest)
+      expect(forward).to have_same_digest_as(shuffled)
     end
 
     it "exposes causal_parents already sorted and deduplicated" do

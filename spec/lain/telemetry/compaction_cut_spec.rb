@@ -86,7 +86,7 @@ RSpec.describe Lain::Telemetry::CompactionCut do
                                                                                       "text" => "told again" }])])
 
     expect(record.address).to start_with("blake3:")
-    expect(retold.digest).to eq(record.digest)
+    expect(retold).to have_same_digest_as(record)
     expect(retold.address).not_to eq(record.address)
   end
 

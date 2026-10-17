@@ -3186,7 +3186,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
         expect(editor.refusals).to contain_exactly(a_string_matching(/nobody has answered yet/))
         expect(nvim.opened.size).to eq(1)
-        expect(question_view.digest).to eq(first.digest)
+        expect(question_view).to have_same_digest_as(first)
         expect(renderings.last.join("\n")).to include("which db?").and include("deploy now?")
       end
 
@@ -3228,7 +3228,7 @@ RSpec.describe Lain::CLI::Wiring::Askers do
 
       item = askers.questions.dequeue
 
-      expect(item.digest).to eq(asker.last_question.digest)
+      expect(item).to have_same_digest_as(asker.last_question)
       expect(item.from).to eq(asker.last_question.from)
       expect(item.question.set).to eq(set)
     end

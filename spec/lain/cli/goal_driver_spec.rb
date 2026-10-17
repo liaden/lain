@@ -276,7 +276,7 @@ RSpec.describe Lain::CLI::GoalDriver do
 
       expect(session.pins.size).to eq(1)
       expect(session).not_to be_pinned(decoy.digest)
-      expect(pinned_turns.first.digest).not_to eq(decoy.digest)
+      expect(pinned_turns.first).not_to have_same_digest_as(decoy)
     end
 
     # A deferred poll is exactly when the Repl hands the human back `you>`

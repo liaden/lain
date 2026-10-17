@@ -68,7 +68,7 @@ RSpec.describe Lain::Oracle::Definition do
   describe "#digest" do
     it "is stable across two computations" do
       one = definition
-      expect(one.digest).to eq(one.digest)
+      expect(one).to have_same_digest_as(one)
     end
 
     it "covers the template" do

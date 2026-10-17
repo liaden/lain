@@ -133,7 +133,7 @@ RSpec.describe Lain::Oracle::Recorded do
     end
 
     it "gives the changed definition a different digest" do
-      expect(changed_definition.digest).not_to eq(definition.digest)
+      expect(changed_definition).not_to have_same_digest_as(definition)
     end
 
     it "misses loudly rather than matching a stale answer" do

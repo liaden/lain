@@ -94,7 +94,7 @@ RSpec.describe Lain::Event::ChainWriter do
       quiet = writer_event(described_class.new)
       watched = writer_event(described_class.new(observer: ->(_event) {}))
 
-      expect(watched.digest).to eq(quiet.digest)
+      expect(watched).to have_same_digest_as(quiet)
     end
 
     # Orchestrator ruling: a raising observer raises. Swallowing a scribe

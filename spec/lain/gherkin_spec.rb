@@ -419,7 +419,7 @@ RSpec.describe Lain::Gherkin::Criteria do
         mutated_scenario = mutate_scenario(target, clause_index, kind)
         mutated = described_class.new(scenarios: replace_at(criteria.scenarios, scenario_index, mutated_scenario))
 
-        expect(mutated.digest).not_to eq(criteria.digest)
+        expect(mutated).not_to have_same_digest_as(criteria)
       end
     end
   end

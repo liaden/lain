@@ -109,7 +109,7 @@ RSpec.describe Lain::Epic::Home do
 
         home.write_epic(graph)
 
-        expect(home.read_epic.digest).to eq(graph.digest)
+        expect(home.read_epic).to have_same_digest_as(graph)
       end
     end
 
@@ -149,7 +149,7 @@ RSpec.describe Lain::Epic::Home do
         second = graph_of(issue(id: "a"))
         home.write_epic(second)
 
-        expect(home.read_epic.digest).to eq(second.digest)
+        expect(home.read_epic).to have_same_digest_as(second)
       end
     end
 

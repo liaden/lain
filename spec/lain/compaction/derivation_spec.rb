@@ -457,7 +457,7 @@ RSpec.describe Lain::Compaction::Derivation do
 
         seam = seam_of(source)
 
-        expect(seam.digest).to eq(source.to_a[5].digest)
+        expect(seam).to have_same_digest_as(source.to_a[5])
         expect(seam.collapses).to eq([{ "span" => [source.to_a[0].digest, source.to_a[5].digest],
                                         "content" => [fixtures.text("[6 messages summarized]")] }])
       end
@@ -492,7 +492,7 @@ RSpec.describe Lain::Compaction::Derivation do
         expect(derived.map(&:content).first(2))
           .to eq([[fixtures.text("[6 messages summarized]")], [fixtures.text("[3 messages summarized]")]])
         expect(derived[1].causal_parents).to match_array(later.to_a[6..8].map(&:digest))
-        expect(seam.digest).to eq(later.to_a[8].digest)
+        expect(seam).to have_same_digest_as(later.to_a[8])
         expect(seam.spans).to eq([[later.to_a[0].digest, later.to_a[5].digest],
                                   [later.to_a[6].digest, later.to_a[8].digest]])
       end

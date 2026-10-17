@@ -195,7 +195,7 @@ RSpec.describe "Lain::Plan seam policies" do
       expect(supersession.superseded).to eq(first.digest)
       expect(supersession.superseding).to eq(reopened.digest)
       expect(store.fetch(first.digest)).to eq(first)
-      expect(first.digest).not_to eq(reopened.digest)
+      expect(first).not_to have_same_digest_as(reopened)
     end
 
     it "is discoverable from the NDJSON alone: the pointer recovers both closure digests" do

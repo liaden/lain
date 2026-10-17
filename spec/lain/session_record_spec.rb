@@ -659,7 +659,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       expect(of_type("message").first).to include("digest" => question.digest)
       expect(sink.size).to eq(1)
       expect(sink.first).to be_a(Lain::Telemetry::Message)
-      expect(sink.first.digest).to eq(question.digest)
+      expect(sink.first).to have_same_digest_as(question)
     end
 
     # Turn records are unaffected by the routing: they are record data, not

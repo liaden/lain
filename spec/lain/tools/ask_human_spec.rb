@@ -1149,7 +1149,7 @@ RSpec.describe Lain::Tools::AskHuman do
         asked = tool.ask("which file?")
         answer = tool.reply("config.rb", asked.digest)
 
-        expect(asked.digest).to eq(tool.last_question.digest)
+        expect(asked).to have_same_digest_as(tool.last_question)
         expect(answer.causal_parents).to eq([asked.digest])
       end
     end
@@ -1298,7 +1298,7 @@ RSpec.describe Lain::Tools::AskHuman do
         asked = tool.ask("which file?")
         tool.withdraw(asked)
 
-        expect(tool.last_question.digest).to eq(asked.digest)
+        expect(tool.last_question).to have_same_digest_as(asked)
       end
     end
 
@@ -1515,7 +1515,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "is a question of its own when the same text is asked twice on an unchanged chain" do
       first, second = asked_twice(tool)
 
-      expect(second.digest).not_to eq(first.digest)
+      expect(second).not_to have_same_digest_as(first)
       expect([first, second].map { |question| question.body.fetch("asking") }).to eq([0, 1])
       expect(second).to be_deeply_frozen
     end

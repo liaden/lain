@@ -121,7 +121,7 @@ RSpec.describe Lain::Epic::Issue do
       one = issue(blocks: %w[z m a])
       other = issue(blocks: %w[a z m])
 
-      expect(one.digest).to eq(other.digest)
+      expect(one).to have_same_digest_as(other)
     end
 
     it "sorts and deduplicates both edge sets" do
@@ -172,8 +172,8 @@ RSpec.describe Lain::Epic::Issue do
       one = issue(criteria: criteria_source)
       other = issue(criteria: other_criteria_source)
 
-      expect(one.digest).not_to eq(other.digest)
-      expect(one.digest).not_to eq(issue.digest)
+      expect(one).not_to have_same_digest_as(other)
+      expect(one).not_to have_same_digest_as(issue)
     end
 
     it "derives #criteria_digest from the source text" do

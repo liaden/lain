@@ -143,7 +143,7 @@ RSpec.describe Lain::Middleware::ResolveAttachments, :seam do
     it "answers the ADDRESSED request's digest and cache payload" do
       addressed = asking([reference.block])
 
-      expect(sent.digest).to eq(addressed.digest)
+      expect(sent).to have_same_digest_as(addressed)
       expect(Lain::Canonical.dump(sent.cache_payload)).not_to include(base64)
     end
 

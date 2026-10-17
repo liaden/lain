@@ -86,7 +86,7 @@ RSpec.describe Lain::Epic::Home::Journaled do
 
         described_class.new(home, journal:).write_epic(graph)
 
-        expect(home.read_epic.digest).to eq(graph.digest)
+        expect(home.read_epic).to have_same_digest_as(graph)
       end
     end
 

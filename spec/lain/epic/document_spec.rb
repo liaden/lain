@@ -44,7 +44,7 @@ RSpec.describe Lain::Epic::Document do
     it "parses an emitted graph back to the same digest" do
       parsed = parse(described_class.to_markdown(original))
 
-      expect(parsed.digest).to eq(original.digest)
+      expect(parsed).to have_same_digest_as(original)
     end
 
     it "re-emits the criteria fence byte-identically, delimiters included" do
