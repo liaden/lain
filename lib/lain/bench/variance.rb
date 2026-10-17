@@ -47,6 +47,7 @@ module Lain
       # @raise [Lain::Error] when the recordings declared different compaction
       #   arms
       # @raise [Lain::Error] when the recordings compacted on different schedules
+      # @raise [Lain::Error] when the recordings ran under different bench arms
       def initialize(recordings:, price_book: PriceBook.default, set_aside: [])
         @recordings = Array(recordings).freeze
         raise ArgumentError, "variance needs at least two recordings; one run is not an experiment" if
@@ -57,6 +58,7 @@ module Lain
         guard_pipelines!
         guard_compaction!
         guard_schedule!
+        guard_arms!
         @compare = build_compare
         @diffs = @recordings.map { |recording| recording.dry_replay.diff(recording.context) }.freeze
       end
@@ -171,6 +173,16 @@ module Lain
 
         raise ::Lain::Error, "cannot compare runs under different compaction schedules: #{mismatch.join(" vs ")}"
       end
+
+      def guard_arms!
+        names = @recordings.map { |recording| arms_label(recording.arms) }
+        mismatch = names.combination(2).find { |(one, other)| one != other }
+        return if mismatch.nil?
+
+        raise ::Lain::Error, "cannot compare runs under different bench arms: #{mismatch.join(" vs ")}"
+      end
+
+      def arms_label(arms) = arms.empty? ? "none" : arms.sort.map { |name, value| "#{name}=#{value}" }.join(",")
 
       # One candidate baseline held against the reference's: the first model
       # call whose request digest differs, the fields that changed there, and

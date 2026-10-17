@@ -79,6 +79,7 @@ module Lain
             ledger_index: Ledger::Index.from_journal(@records),
             degraded:, mode:, memory:, open: open?,
             compaction: header["compact_strategy"], schedule: header["compact_schedule"],
+            arms: header["arms"] || {},
             compaction_tally: Compare::CompactionTally.from_records(@records)
           )
         end

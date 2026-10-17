@@ -39,17 +39,18 @@ RSpec.describe Lain::Bench::Variance do
 
   # One mock-recorded run of the task, round-tripped through Session so the
   # Recording under test is exactly what the driver will hold.
-  def record(responses, degrade: nil, flips: [], under: context, compact_strategy: nil, schedule: nil)
+  def record(responses, degrade: nil, flips: [], under: context, compact_strategy: nil, schedule: nil, arms: nil)
     bytes = session_bytes(responses, degrade:, flips:, under:, compact_strategy:)
-    Lain::Bench::Session.load(with_schedule(bytes, schedule).each_line)
+    extra = { "compact_schedule" => schedule, "arms" => arms }.compact
+    Lain::Bench::Session.load(with_header(bytes, extra).each_line)
   end
 
-  def with_schedule(bytes, schedule)
-    return bytes if schedule.nil?
+  def with_header(bytes, extra)
+    return bytes if extra.empty?
 
     bytes.each_line.map do |line|
       record = JSON.parse(line)
-      record.key?("context_class") ? "#{JSON.generate(record.merge("compact_schedule" => schedule))}\n" : line
+      record.key?("context_class") ? "#{JSON.generate(record.merge(extra))}\n" : line
     end.join
   end
 
@@ -312,6 +313,30 @@ RSpec.describe Lain::Bench::Variance do
 
     it "reads a header without the key as the turn schedule" do
       expect(described_class.new(recordings: [scheduled("turn"), reference]).report).to include("2: byte-identical")
+    end
+  end
+
+  describe "bench arms" do
+    def armed(arms) = record([tool_response("tu_1", "hi"), text_response("done")], arms:)
+
+    it "raises when the recordings ran under different bench arms, naming both" do
+      expect { described_class.new(recordings: [armed({ "confine" => "reader" }), reference]) }
+        .to raise_error(Lain::Error, /different bench arms: confine=reader vs none/)
+    end
+
+    it "pools recordings that ran under the same bench arms" do
+      expect(described_class.new(recordings: [armed({ "confine" => "reader" }),
+                                              armed({ "confine" => "reader" })]).report)
+        .to include("2: byte-identical")
+    end
+
+    it "raises when the recordings differ only in an arm's value" do
+      expect { described_class.new(recordings: [armed({ "confine" => "reader" }), armed({ "confine" => "full" })]) }
+        .to raise_error(Lain::Error, /different bench arms: confine=reader vs confine=full/)
+    end
+
+    it "pools recordings that recorded no arms" do
+      expect(described_class.new(recordings: [reference, reference]).report).to include("2: byte-identical")
     end
   end
 

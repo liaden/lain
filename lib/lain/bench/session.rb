@@ -218,19 +218,22 @@ module Lain
       # `compaction_tally` is the {Compare::CompactionTally} of the journal's compaction records.
       # `schedule` is the header's `compact_schedule`, nil for a header older
       # than the field; {Variance} reads nil as the turn schedule.
+      # `arms` is the header's bench arms, `{}` when none were on; defaulted
+      # because the header omits the key for an unarmed run.
       #
       # Frozen the same way `context_class` is when present: {Loader} hands it
       # a plain `String` straight off `JSON.parse`, unfrozen until this class
       # says otherwise, and `Ractor.shareable?(recording)` demands it does.
       Recording = Data.define(:context, :context_class, :toolset, :workspace,
                               :timeline, :baseline, :ledger_index, :degraded, :mode, :memory,
-                              :open, :messages, :compaction, :schedule, :compaction_tally) do
+                              :open, :messages, :compaction, :schedule, :compaction_tally, :arms) do
         def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
-                       degraded:, mode:, memory:, open:, messages:, compaction:, schedule:, compaction_tally:)
+                       degraded:, mode:, memory:, open:, messages:, compaction:, schedule:, compaction_tally:, arms: {})
           super(context:, context_class: -context_class.to_s, toolset:, workspace:,
                 timeline:, baseline: baseline.freeze, ledger_index:, degraded:, mode:, memory:,
                 open:, messages: messages.freeze, compaction: compaction && -compaction,
-                schedule: schedule && -schedule, compaction_tally:)
+                schedule: schedule && -schedule, compaction_tally:,
+                arms: Ractor.make_shareable(arms))
         end
 
         # A recording whose baseline outnumbers the DAG's assistant turns holds

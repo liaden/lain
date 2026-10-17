@@ -115,6 +115,26 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(recording.compaction_tally).to have_attributes(summary_misses: 0, prepared: 0, cost_delta: 0)
     end
 
+    it "rebuilds the recorded arms from the header" do
+      lines = entries.map do |line|
+        record = JSON.parse(line)
+        record.key?("context_class") ? JSON.generate(record.merge("arms" => { "confine" => "reader" })) : line
+      end
+      expect(described_class.new(lines).recording.arms).to eq("confine" => "reader")
+    end
+
+    it "answers empty arms for a header whose arms is null" do
+      lines = entries.map do |line|
+        record = JSON.parse(line)
+        record.key?("context_class") ? JSON.generate(record.merge("arms" => nil)) : line
+      end
+      expect(described_class.new(lines).recording.arms).to eq({})
+    end
+
+    it "answers empty arms for a header carrying no arms key" do
+      expect(recording.arms).to eq({})
+    end
+
     it "answers nil schedule for a header carrying no compact_schedule key" do
       expect(recording.schedule).to be_nil
     end
