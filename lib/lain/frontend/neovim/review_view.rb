@@ -440,7 +440,7 @@ module Lain
         # row surveyed outside the project root reads as a traversal rather than
         # a name. Dropped for DISPLAY only, alongside the force-encode-and-scrub:
         # git answers BYTES, and a rendering is not the diff itself.
-        def displayed_path(path) = path.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?").sub(%r{\A(?:\.\./)+}, "")
+        def displayed_path(path) = Utf8.legible(path, "?").sub(%r{\A(?:\.\./)+}, "")
 
         # `path:` stays `file.path` untouched -- every gesture and
         # `47_diff.lua`'s old-side buffer resolve through THAT, not {#displayed_path}'s text.

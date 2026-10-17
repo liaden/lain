@@ -419,7 +419,7 @@ module Lain
       # refusal raises Encoding::CompatibilityError the moment git says
       # anything non-ASCII -- and the named refusal a caller rescues never
       # arrives. {Checkout#unmerged} re-tags for the same reason.
-      def said(shell) = shell.stderr.to_s.dup.force_encoding(Encoding::UTF_8).scrub.strip
+      def said(shell) = Utf8.legible(shell.stderr).strip
 
       def trunk_tip(trunk)
         WorkingBranch.new(trunk, repo_root: @repo_root, git: @git).tip

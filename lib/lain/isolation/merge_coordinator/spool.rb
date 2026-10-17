@@ -77,7 +77,7 @@ module Lain
             raise ArgumentError, "report must be a WorkerHandoff::Report, got #{report.class}" unless
               report.is_a?(WorkerHandoff::Report)
 
-            report.with(paths: report.paths.map { |path| legible(path) }, detail: legible(report.detail))
+            report.with(paths: report.paths.map { |path| Utf8.legible(path) }, detail: Utf8.legible(report.detail))
           end
 
           def legible_verification(verification)
@@ -86,7 +86,7 @@ module Lain
               raise ArgumentError, "verification must be a LandingQueue::Verification or nil, got #{verification.class}"
             end
 
-            verification.with(detail: legible(verification.detail))
+            verification.with(detail: Utf8.legible(verification.detail))
           end
 
           def batch!(batch)
@@ -96,8 +96,6 @@ module Lain
 
             batch
           end
-
-          def legible(text) = text.dup.force_encoding(Encoding::UTF_8).scrub
         end
 
         # @param home [Home] whose entries and results directories hold the files

@@ -153,7 +153,7 @@ module Lain
 
       def run(*argv) = @shell_out_factory.call(*argv, environment: Worktree::GIT_CONTEXT_SCRUB).tap(&:run_command)
 
-      def said(shell) = shell.stderr.to_s.dup.force_encoding(Encoding::UTF_8).scrub.strip
+      def said(shell) = Utf8.legible(shell.stderr).strip
 
       # The session's cwd holds nothing the snapshot carried, so it was made.
       def made(worker_env)

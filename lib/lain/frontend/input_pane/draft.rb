@@ -102,19 +102,17 @@ module Lain
           when *ERASE then erased(@text[-1].to_s, &block)
           when WORD_ERASE then erased(@text[/\S*\s*\z/], &block)
           when KILL then erased(@text, &block)
-          else added(text(token), &block) if token.match?(TEXT)
+          else added(Utf8.legible(token), &block) if token.match?(TEXT)
           end
         end
 
         def pasted(token, &block)
           return @paste << token unless token == PASTE_CLOSE
 
-          body = text(@paste).gsub(/\r\n?/, "\n").chomp
+          body = Utf8.legible(@paste).gsub(/\r\n?/, "\n").chomp
           @paste = nil
           added(body, &block)
         end
-
-        def text(bytes) = bytes.dup.force_encoding(Encoding::UTF_8).scrub
 
         # A Tab is drawn as one column, so its width on the row is known.
         def drawn(text) = text.tr("\t", " ")

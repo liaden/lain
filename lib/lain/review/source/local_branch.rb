@@ -162,23 +162,21 @@ module Lain
         # A runner's stdout encoding is its own choice: a runner may tag it UTF-8 only
         # when the bytes HAPPEN to be valid and BINARY when not, {Shell::Out} always
         # UTF-8, so without this a field's encoding depends on the runner.
-        # These fields are journalled as JSON, where a BINARY string
-        # warns today and raises in json 3.0, and invalid bytes raise now -- into
-        # NDJSON, where one bad line breaks the parse of the experiment record.
-        # Only {#diff} stays raw, because a diff carries whatever the files do.
-        def text(bytes) = bytes.to_s.dup.force_encoding(Encoding::UTF_8).scrub
-
         # Records are NUL-separated, so the leading empty split is dropped rather
         # than indexed around.
         def parse_log(output)
           output.split("\0").reject(&:empty?).map { |record| parse_record(record) }
         end
 
+        # These fields are journalled as JSON, where a BINARY string
+        # warns today and raises in json 3.0, and invalid bytes raise now -- into
+        # NDJSON, where one bad line breaks the parse of the experiment record.
+        # Only {#diff} stays raw, because a diff carries whatever the files do.
         def parse_record(record)
           header, numstat = record.split("\x1e", 2)
           sha, subject, body = header.split("\x1f", 3)
-          Commit.new(sha: text(sha).freeze, subject: text(subject).freeze,
-                     body: text(body).strip.freeze, numstat: parse_numstat(numstat.to_s))
+          Commit.new(sha: Utf8.legible(sha).freeze, subject: Utf8.legible(subject).freeze,
+                     body: Utf8.legible(body).strip.freeze, numstat: parse_numstat(numstat.to_s))
         end
 
         def parse_numstat(block)
@@ -200,7 +198,7 @@ module Lain
         # refused a whole changeset over it. One decoder, at the edge both sides
         # cross: {Wire.unquote}.
         def file_stat((added, deleted, path))
-          FileStat.new(path: text(Wire.unquote(path)).freeze,
+          FileStat.new(path: Utf8.legible(Wire.unquote(path)).freeze,
                        added: count(added), deleted: count(deleted))
         end
 
@@ -216,7 +214,7 @@ module Lain
           shell = git("rev-parse", "--verify", "--quiet", "--end-of-options", "#{ref}^{commit}")
           raise UnknownRef.unresolved(role, ref, @repo_root, shell) unless shell.exitstatus.zero?
 
-          text(shell.stdout).strip.freeze
+          Utf8.legible(shell.stdout).strip.freeze
         end
 
         # Two roots have no merge base. Diffing against the empty tree instead
@@ -224,7 +222,7 @@ module Lain
         # successful review of a changeset nobody wrote.
         def merge_base!(base, head)
           shell = git("merge-base", "--end-of-options", "#{base}^{commit}", @head_ref)
-          return text(shell.stdout).strip.freeze if shell.exitstatus.zero?
+          return Utf8.legible(shell.stdout).strip.freeze if shell.exitstatus.zero?
 
           # Only a failure pays for telling the two refusals apart.
           resolve!("base", base)

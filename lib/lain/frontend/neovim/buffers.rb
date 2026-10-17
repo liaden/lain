@@ -294,14 +294,12 @@ module Lain
           return nil if reminders == @last_reminders
 
           @last_reminders = reminders
-          reminders.empty? ? ["(no reminders)"] : reminders.flat_map { |block| legible(block).split("\n") }
+          # A reminder carries bytes off disk, and `String#split` RAISES
+          # `ArgumentError` on invalid UTF-8 -- which nothing above rescues, so
+          # it takes {Surfaces#prime}'s whole view set dark at attach rather
+          # than costing one reminder its accents.
+          reminders.empty? ? ["(no reminders)"] : reminders.flat_map { |block| Utf8.legible(block, "?").split("\n") }
         end
-
-        # A reminder carries bytes off disk, and `String#split` RAISES
-        # `ArgumentError` on invalid UTF-8 -- which nothing above rescues, so it
-        # takes {Surfaces#prime}'s whole view set dark at attach rather than
-        # costing one reminder its accents.
-        def legible(block) = block.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?")
 
         def diff_update(event)
           return nil unless event.is_a?(Telemetry::RequestSent)

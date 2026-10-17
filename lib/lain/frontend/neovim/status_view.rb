@@ -170,7 +170,7 @@ module Lain
         # Scrubbed before it is split: `String#split` raises on invalid UTF-8,
         # and this is the one place a raise has nowhere left to go.
         def unavailable(heading, error)
-          message = error.message.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?")
+          message = Utf8.legible(error.message, "?")
           [heading, "", "it failed with #{error.class}:", *message.split(NEWLINES).map { |line| "    #{line}" }]
         end
 

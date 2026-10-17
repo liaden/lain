@@ -150,7 +150,7 @@ module Lain
         end
 
         def unescape(raw)
-          raw.gsub(ESCAPE) { unescaped(Regexp.last_match) }.force_encoding(Encoding::UTF_8).scrub
+          Utf8.legible(raw.gsub(ESCAPE) { unescaped(Regexp.last_match) })
         end
 
         def unescaped(match)

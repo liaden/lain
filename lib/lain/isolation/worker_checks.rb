@@ -279,7 +279,7 @@ module Lain
         def tail(shell)
           text = (shell.stdout.b + shell.stderr.b).lines.last(TAIL).join
           text = "...#{text.byteslice(-TAIL_BYTES, TAIL_BYTES)}" if text.bytesize > TAIL_BYTES
-          text.force_encoding(Encoding::UTF_8).scrub
+          Utf8.legible(text)
         end
 
         def git!(*args)

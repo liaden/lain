@@ -84,7 +84,7 @@ module Lain
         # resolve, which sends the reader looking at the wrong thing. Scrubbed
         # because stderr arrives as bytes.
         def self.because(shell)
-          detail = shell.stderr.to_s.dup.force_encoding(Encoding::UTF_8).scrub.strip
+          detail = Utf8.legible(shell.stderr).strip
           detail.empty? ? "" : ": #{detail}"
         end
       end
@@ -135,7 +135,7 @@ module Lain
         #   scrub for the same reason.
         def self.fallback(reason:, message:)
           new(origin: "object_database", reason:,
-              message: message.to_s.dup.force_encoding(Encoding::UTF_8).scrub.freeze,
+              message: Utf8.legible(message).freeze,
               fell_back: true)
         end
 
@@ -606,7 +606,7 @@ module Lain
         # line breaks the parse of the whole experiment record. The fix, when
         # something needs it, is to carry the raw bytes BESIDE the scrubbed name
         # rather than instead of it.
-        def path_text(bytes) = -bytes.dup.force_encoding(Encoding::UTF_8).scrub
+        def path_text(bytes) = -Utf8.legible(bytes)
 
         # {Wire.unquote}, never a private copy. {LocalBranch} decodes the NUMSTAT
         # side with the same function and {Partition::ByCommit} joins the two by

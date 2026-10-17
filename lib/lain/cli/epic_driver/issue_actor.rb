@@ -404,7 +404,7 @@ module Lain
 
         # git's stderr arrives as ASCII-8BIT, so a refusal interpolating it raw
         # dies of Encoding::CompatibilityError rather than naming itself.
-        def said(shell) = shell.stderr.to_s.dup.force_encoding(Encoding::UTF_8).scrub.strip
+        def said(shell) = Utf8.legible(shell.stderr).strip
 
         def criteria_of(issue)
           return Lain::Gherkin::Criteria.parse(issue.criteria) unless issue.criteria.nil?

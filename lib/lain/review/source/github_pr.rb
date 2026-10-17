@@ -224,7 +224,7 @@ module Lain
             # Scrubbed BEFORE the match, not only on the way into the value: a
             # regexp against bytes that are invalid in the encoding they claim
             # raises, and this path exists to report a failure, not to add one.
-            stderr = shell.stderr.to_s.dup.force_encoding(Encoding::UTF_8).scrub
+            stderr = Utf8.legible(shell.stderr)
             DiffOrigin.fallback(reason: stderr.match?(TOO_LARGE) ? "too_large" : "refused",
                                 message: stderr.strip)
           end

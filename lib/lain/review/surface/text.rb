@@ -165,27 +165,8 @@ module Lain
         # reads as a traversal rather than a name. Dropped for DISPLAY only,
         # `Frontend::Neovim::ReviewView#displayed_path`'s mirror: `file.path`
         # itself stays untouched, since that is what a gesture resolves through.
-        def displayed_path(path) = legible(path).sub(%r{\A(?:\.\./)+}, "")
-
-        # git (and a commit subject) yields BYTES, not characters -- the house
-        # precedent is `Isolation::Worktree::Handback#unmerged` (`force_encoding`,
-        # never a transcode). Forced UNCONDITIONALLY, not only on paths that look
-        # suspect: two rows built from DIFFERENT valid encodings still raise
-        # `Encoding::CompatibilityError` inside `#join` the moment either carries
-        # a non-ASCII byte, so only a UNIFORM encoding is safe to join.
-        #
-        # `Encoding::BINARY` was the first cut, and a fix-round panel caught what
-        # it broke: bytes reaching a REAL `Sink::IOAdapter` come out
-        # ASCII-8BIT-tagged, and `Canonical.utf8` then raises
-        # `Canonical::UnsupportedType` on a plain UTF-8 path that dumped fine
-        # before -- while `JSON.generate` separately warns "UTF-8 string passed as
-        # BINARY", which json 3.0 turns into a raise.
-        #
-        # `force_encoding(UTF_8)` is a RE-TAG like the BINARY cut, but `#scrub`
-        # then replaces exactly the byte sequences that are not valid UTF-8, so
-        # the result is always validly UTF-8 and legible content is untouched.
-        # Lossy `?` is right HERE: this is a rendering surface, not the diff bytes.
-        def legible(string) = string.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?")
+        # Lossy `?` is right here: this is a rendering surface, not the diff bytes.
+        def displayed_path(path) = Utf8.legible(path, "?").sub(%r{\A(?:\.\./)+}, "")
 
         # `Surface.candidate_name`'s idiom for the identical reason: a raw
         # `#inspect` on a generic double prints a memory address that names

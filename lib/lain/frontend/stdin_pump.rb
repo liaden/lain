@@ -496,7 +496,7 @@ module Lain
           def initialize(lines:, partial:, cut: 0) = super
 
           def self.from(bytes)
-            text, cut = uncut(bytes.b.force_encoding(Encoding::UTF_8).scrub)
+            text, cut = uncut(Utf8.legible(bytes))
             *lines, partial = pieces(text)
             new(lines: lines.select { |line| said?(line) }.freeze, partial: (said?(partial.to_s) ? partial : "").freeze,
                 cut:)

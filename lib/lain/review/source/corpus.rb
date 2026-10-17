@@ -178,7 +178,7 @@ module Lain
           # can do better -- a path that must survive JSON and a path that must
           # open a file are two requirements over the same bytes -- and the new
           # side of such a name is a buffer `47_diff.lua` refuses to write.
-          def path = -named.dup.force_encoding(Encoding::UTF_8).scrub
+          def path = -Utf8.legible(named)
 
           # Raw bytes, never decoded: an anchor's evidence is compared byte for
           # byte against the line the file now holds, and substituting U+FFFD for

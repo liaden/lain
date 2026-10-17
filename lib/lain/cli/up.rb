@@ -531,12 +531,10 @@ module Lain
 
         # Scrubbed, de-framed and capped, in that order: everything after the
         # encoding pass is line and byte arithmetic on bytes a child was free to
-        # make invalid. `force_encoding` then `scrub`, NOT `encode` -- a String
-        # already tagged UTF-8 is its own target encoding, so `encode` returns
-        # it unchanged and the invalid bytes sail through. Scrubbed again after
-        # the byte cap, which can land mid-character.
+        # make invalid. Scrubbed again after the byte cap, which can land
+        # mid-character.
         def legible(text)
-          text.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?")
+          Utf8.legible(text, "?")
               .each_line.lazy.filter_map { |line| deframed(line) }.first(MAX_LINES).join.strip
               .byteslice(0, MAX_BYTES).scrub("?")
         end
@@ -736,7 +734,7 @@ module Lain
         # whitespace-only ones. A tmux that padded with spaces would leave the
         # screenful back, which is cosmetic rather than wrong.
         def legible(text)
-          text.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?").strip.gsub(/\n{3,}/, "\n\n")
+          Utf8.legible(text, "?").strip.gsub(/\n{3,}/, "\n\n")
               .each_line.first(MAX_LINES).join.byteslice(0, MAX_BYTES).scrub("?")
         end
       end

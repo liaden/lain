@@ -6,19 +6,14 @@ module Lain
       # `Partition::Undetailed`, root-qualified: a constant named inside a
       # `Data.define` block resolves against the ENCLOSING module and a bare
       # `Undetailed` would be looked for at `Lain::Review`.
+      #
+      # The label is made legible here, once: it reaches a `Bounds::TooLarge`
+      # message that is journalled as NDJSON, and `Canonical.dump` raises on a
+      # String that is not validly UTF-8. Lossy `?` is right: a label is display
+      # text, never evidence.
       def initialize(label:, files:, detail: Partition::Undetailed)
-        super(label: -legible(label), files: files.freeze, detail:)
+        super(label: -Utf8.legible(label, "?"), files: files.freeze, detail:)
       end
-
-      private
-
-      # `Parser#path_text`'s force-encode-and-scrub, and its reason one level
-      # up: a label reaches a `Bounds::TooLarge` message, that message is
-      # journalled as NDJSON, and `Canonical.dump` raises on a String that is
-      # not validly UTF-8. Done ONCE here rather than at each of the three
-      # renderers that also have to make it legible. Lossy `?` is right: a label
-      # is display text, never evidence.
-      def legible(label) = label.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?")
     end
 
     # One group of a changeset's files, as some {Partition::Strategy} cut it --

@@ -79,7 +79,7 @@ module Lain
         end
 
         # The streams arrive as raw bytes; one invalid byte would make the detail unprintable.
-        def tail(bytes) = bytes.dup.force_encoding(Encoding::UTF_8).scrub.lines.last(TAIL).join
+        def tail(bytes) = Utf8.legible(bytes).lines.last(TAIL).join
 
         def verification(candidate, outcome, detail = "")
           LandingQueue::Verification.new(outcome:, tip: candidate.sha, detail:)
