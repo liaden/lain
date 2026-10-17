@@ -42,25 +42,15 @@ RSpec.describe Lain::Context::Compact do
     expect(seen).to eq(messages[0..-2])
   end
 
-  it "is pure: identical input yields identical output (the summarizer must be too)" do
-    compact = described_class.new(threshold: 10, keep_last: 1, summarizer:)
-    expect(compact.call(messages)).to eq(compact.call(messages))
-  end
-
   # #requires is an enforcement contract, not a comparison label. Compact
   # summarizes entirely client-side via the injected summarizer, so it needs
   # nothing from the provider -- and declaring :server_compaction would make
   # Capability::Policy wrongly raise (:strict) or journal a false degradation
   # (:degrade) on exactly the providers lacking native compaction, which is
   # when you reach for client-side Compact.
-  it "requires nothing from the provider -- it is a client-side summarizer" do
-    compact = described_class.new(threshold: 10, keep_last: 1, summarizer:)
-    expect(compact.requires).to eq([])
-  end
-
-  it "composes with other combinators via >>" do
-    composed = described_class.new(threshold: 10, keep_last: 1, summarizer:) >> Lain::Context::Identity
-    expect(composed.call(messages).size).to eq(2)
+  it_behaves_like "a Context combinator" do
+    let(:combinator) { described_class.new(threshold: 10, keep_last: 1, summarizer:) }
+    let(:sample_messages) { messages }
   end
 
   # What this combinator renders has to be a conversation the Messages API

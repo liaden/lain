@@ -45,18 +45,16 @@ RSpec.describe Lain::Context::Recall do
   end
 
   # Scenario: recall is pure and explainable
-  it "is pure: identical snapshot and messages render byte-identical output, and each line carries its hit's why" do
+  it_behaves_like "a Context combinator" do
+    let(:combinator) { described_class.new(index:, k: 3) }
+    let(:sample_messages) { [message("user", text("what is the aspirin dosing?"))] }
+  end
+
+  it "carries each hit's why on its rendered line" do
     base = [message("user", text("what is the aspirin dosing?"))]
-    combinator = described_class.new(index:, k: 3)
-
-    before = Marshal.load(Marshal.dump(base))
-    first = combinator.call(base)
-    second = combinator.call(base)
-    expect(first).to eq(second)
-    expect(base).to eq(before) # the input arrays/hashes are never mutated
-
     hit = index.search("what is the aspirin dosing?").first
-    expect(first.last["content"].last["text"]).to include(hit.why)
+
+    expect(described_class.new(index:, k: 3).call(base).last["content"].last["text"]).to include(hit.why)
   end
 
   # Scenario: nothing to recall, nothing injected
@@ -106,21 +104,11 @@ RSpec.describe Lain::Context::Recall do
     expect(described_class.new(index:, k: 3).call(messages)).to eq(messages)
   end
 
-  it "declares no required capabilities" do
-    expect(described_class.new(index:, k: 3).requires).to eq([])
-  end
-
   # A non-positive k is a construction-time mistake, not a render-time one:
   # refusing it here beats a late ArgumentError from `hits.first(-1)`.
   it "refuses a non-positive k at construction" do
     expect { described_class.new(index:, k: -1) }.to raise_error(ArgumentError, /k must be positive/)
     expect { described_class.new(index:, k: 0) }.to raise_error(ArgumentError, /k must be positive/)
-  end
-
-  it "composes with other combinators via >>" do
-    base = [message("user", text("what is the aspirin dosing?"))]
-    composed = described_class.new(index:, k: 3) >> Lain::Context::Identity
-    expect(composed.call(base).last["content"].last["text"]).to include("aspirin-dosage")
   end
 
   # Scenario: the whole point of block-granular prefix_digests -- a pipeline

@@ -66,26 +66,11 @@ RSpec.describe Lain::Context::DedupeToolCalls do
       ]
       expect(described_class.new.call(messages)).to eq(messages)
     end
-
-    it "does not mutate the input message list -- a pure projection" do
-      before = Lain::Canonical.dump(duplicated_messages)
-      described_class.new.call(duplicated_messages)
-      expect(Lain::Canonical.dump(duplicated_messages)).to eq(before)
-    end
   end
 
-  it "is pure: identical input yields identical output" do
-    combinator = described_class.new
-    expect(combinator.call(duplicated_messages)).to eq(combinator.call(duplicated_messages))
-  end
-
-  it "declares no required capabilities -- deduping is purely client-side" do
-    expect(described_class.new.requires).to eq([])
-  end
-
-  it "composes with other combinators via >>" do
-    composed = described_class.new >> Lain::Context::Identity
-    expect(composed.call(duplicated_messages).size).to eq(2)
+  it_behaves_like "a Context combinator" do
+    let(:combinator) { described_class.new }
+    let(:sample_messages) { duplicated_messages }
   end
 
   # The two phases the class is factored into: an analysis of the whole list,

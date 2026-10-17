@@ -40,22 +40,8 @@ RSpec.describe Lain::Context::Reminder do
     expect(injected[0..-2]).to eq(messages[0..-2])
   end
 
-  it "declares no required capabilities -- it is plain text injection" do
-    expect(described_class.new(workspace:).requires).to eq([])
-  end
-
-  it "is pure: identical input yields identical output, leaving the input unmutated" do
-    messages = [message("user", text("hello"))]
-    before = Marshal.load(Marshal.dump(messages))
-    combinator = described_class.new(workspace:)
-    expect(combinator.call(messages)).to eq(combinator.call(messages))
-    expect(messages).to eq(before)
-  end
-
-  it "composes with other combinators via >>" do
-    messages = [message("user", text("hello"))]
-    composed = described_class.new(workspace:) >> Lain::Context::Identity
-    expect(composed.call(messages).last["content"].map { |b| b["text"] })
-      .to eq(%w[hello] + ["<workspace>todo: finish M1</workspace>"])
+  it_behaves_like "a Context combinator" do
+    let(:combinator) { described_class.new(workspace:) }
+    let(:sample_messages) { [message("user", text("hello"))] }
   end
 end

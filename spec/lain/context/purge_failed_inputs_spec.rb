@@ -60,24 +60,9 @@ RSpec.describe Lain::Context::PurgeFailedInputs do
     expect { described_class.new(turns: -1) }.to raise_error(ArgumentError, /turns/)
   end
 
-  it "does not mutate the input message list -- a pure projection" do
-    before = Lain::Canonical.dump(messages)
-    described_class.new(turns: 2).call(messages)
-    expect(Lain::Canonical.dump(messages)).to eq(before)
-  end
-
-  it "is pure: identical input yields identical output" do
-    combinator = described_class.new(turns: 2)
-    expect(combinator.call(messages)).to eq(combinator.call(messages))
-  end
-
-  it "declares no required capabilities -- purging is purely client-side" do
-    expect(described_class.new(turns: 2).requires).to eq([])
-  end
-
-  it "composes with other combinators via >>" do
-    composed = described_class.new(turns: 2) >> Lain::Context::Identity
-    expect(composed.call(messages)).to eq(described_class.new(turns: 2).call(messages))
+  it_behaves_like "a Context combinator" do
+    let(:combinator) { described_class.new(turns: 2) }
+    let(:sample_messages) { messages }
   end
 
   # An analysis of the whole list, then a map over the AGED SLICE against it.

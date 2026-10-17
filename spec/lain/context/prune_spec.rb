@@ -47,18 +47,9 @@ RSpec.describe Lain::Context::Prune do
     expect { described_class.new }.to raise_error(ArgumentError, /keep_last: or a predicate/)
   end
 
-  it "declares no required capabilities -- pruning is purely client-side" do
-    expect(described_class.new(keep_last: 1).requires).to eq([])
-  end
-
-  it "is pure: identical input yields identical output" do
-    combinator = described_class.new(keep_last: 2)
-    expect(combinator.call(messages)).to eq(combinator.call(messages))
-  end
-
-  it "composes with other combinators via >>" do
-    composed = described_class.new(keep_last: 2) >> Lain::Context::Identity
-    expect(composed.call(messages).size).to eq(2)
+  it_behaves_like "a Context combinator" do
+    let(:combinator) { described_class.new(keep_last: 2) }
+    let(:sample_messages) { messages }
   end
 
   describe "protected_patterns: (identity, not value equality, must gate survivorship)" do

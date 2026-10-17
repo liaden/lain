@@ -49,20 +49,10 @@ RSpec.describe Lain::Context::CacheBreakpoints do
     expect(marked_with_tail.first).to eq(marked_base.first)
   end
 
-  it "declares that it requires prompt_caching from the Provider" do
-    expect(described_class.new.requires).to eq([:prompt_caching])
-  end
-
-  it "is pure: identical input yields identical output" do
-    messages = [message("user", text("hello"))]
-    combinator = described_class.new
-    expect(combinator.call(messages)).to eq(combinator.call(messages))
-  end
-
-  it "composes with other combinators via >>" do
-    messages = [message("user", text("hello"))]
-    composed = described_class.new >> Lain::Context::Identity
-    expect(composed.call(messages).last["content"].last["cache"]).to be(true)
+  it_behaves_like "a Context combinator" do
+    let(:combinator) { described_class.new }
+    let(:sample_messages) { [message("user", text("hello"))] }
+    let(:required) { [:prompt_caching] }
   end
 
   # Anthropic rejects a request carrying more than 4 cache_control
