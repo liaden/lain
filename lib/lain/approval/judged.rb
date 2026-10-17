@@ -126,8 +126,11 @@ module Lain
       #   settle it: {Escalation::Surfaces}, or {Unattended}
       # @param journal [#record]
       # @param display [#<<] told a {Telemetry::JudgeApproved} for each call the judge approves
-      def initialize(judge:, policy:, asking:, journal:, display: ::Lain::Channel::Null.instance)
+      # @param facts [#call] `(command, cwd, tool_use_id:) -> Judge::Facts` for a bash call; none by default
+      def initialize(judge:, policy:, asking:, journal:, display: ::Lain::Channel::Null.instance,
+                     facts: Judge::Facts::Off)
         @judge = judge
+        @facts = facts
         @display = display
         @policy = policy
         @asking = asking
@@ -198,7 +201,16 @@ module Lain
         cwd = ::Lain::Session.cwd_of(context)
         held = [root, ::Lain::Sensitivity::Policy.base_of(context)]
         Judge::Place.new(root:, cwd:, requester: Queue.requester_for(context),
-                         outside: named_paths(effect, context, cwd).reject { within?(held, _1) })
+                         outside: named_paths(effect, context, cwd).reject { within?(held, _1) },
+                         facts: facts_for(effect, context))
+      end
+
+      def facts_for(effect, context)
+        command = command_in(effect.input)
+        cwd = command_cwd(effect, context)
+        return Judge::Facts::NONE unless effect.name == BASH && command.is_a?(String) && cwd
+
+        @facts.call(command, cwd, tool_use_id: effect.tool_use_id)
       end
 
       def named_paths(effect, context, cwd)

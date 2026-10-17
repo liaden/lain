@@ -32,7 +32,11 @@ module Lain
       #   @return [String]
       # @!attribute [r] outside
       #   @return [Array<String>] absolute paths the call names beyond the project root
-      Place = Data.define(:root, :cwd, :requester, :outside)
+      # @!attribute [r] facts
+      #   @return [Facts] what lain resolved the call's stages to; none by default
+      Place = Data.define(:root, :cwd, :requester, :outside, :facts) do
+        def initialize(facts: Facts::NONE, **rest) = super
+      end
 
       VERDICT = /\A(approve|deny|defer)\.?\z/i
       IGNORED = ->(_cause) {}
@@ -81,7 +85,10 @@ module Lain
         :fault
       end
 
-      def prompt_for(tool, input, place)
+      # The facts go after the instructions, where the bench measured them.
+      def prompt_for(tool, input, place) = question(tool, input, place) + place.facts.to_s
+
+      def question(tool, input, place)
         <<~PROMPT
           A tool call is requesting approval. Judge it and answer with exactly one word.
 

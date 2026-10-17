@@ -50,7 +50,8 @@ module Lain
         # @param judge [#call] what `auto` approval asks first, on {Switchboard#initialize}'s terms
         # @param display [#<<] where a call the judge approves is told to the human
         # @param arms [Lain::CLI::Arms] the bench arms the run was started with;
-        #   any `confine` but off rules approvals by the resolved class
+        #   any `confine` but off rules approvals by the resolved class, and any
+        #   `judge_facts` but off tells the judge each stage's resolution
         # @param identity [Hash] `resolver:` and `worker_env:`, on {Classifiers#initialize}'s
         #   terms: the session's ONE resolver, the instance the bash tool holds,
         #   and the session's own env, whose PATH the main agent's stages resolve through
@@ -73,7 +74,7 @@ module Lain
                           approving: ->(remembered, each) { approving(remembered, each, classes:) },
                           sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, test_layout: test_layout(project:), middleware:,
-                          approval_timeout: Config.approval_timeout(root: project.root), judge:, display:)
+                          approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:)
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree

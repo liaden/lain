@@ -1166,6 +1166,97 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  # Built by BoardBuild.for, because the arm reaches the judge only through
+  # that wiring, and read off the prompt the judge's child is handed.
+  describe "the facts the judge is told, over the production entry" do
+    let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+    let(:prompts) { [] }
+    let(:spawn) do
+      Struct.new(:prompts) do
+        def never_parking = self
+        def call(_role, _mode, prompt) = prompts.push(prompt).then { Lain::Tool::Result.ok("deny") }
+      end.new(prompts)
+    end
+
+    def in_project
+      Dir.mktmpdir("lain-switchboard-judge") do |dir|
+        base = File.realpath(dir)
+        root = File.join(base, "repo")
+        FileUtils.mkdir_p(File.join(root, ".lain"))
+        File.write(File.join(root, "README.md"), "# A project\n")
+        yield root, File.join(base, "home")
+      end
+    end
+
+    def planted_cat(dir)
+      FileUtils.mkdir_p(dir)
+      File.write(File.join(dir, "cat"), "#!/bin/sh\nexec /usr/bin/cat \"$@\"\n")
+      File.chmod(0o755, File.join(dir, "cat"))
+      dir
+    end
+
+    # Under `--confine classes` a planted cat is left to the judge, which is what lets it be asked.
+    def board_in(root, home, judge_facts:, resolver: nil)
+      project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+      fresh = Struct.new(:root) { def fresh?(path) = path.start_with?("#{root}/") }.new(root)
+      resolver ||= Lain::Shell::Executable::Resolver.new(root:, fresh:)
+      Lain::CLI::Wiring::BoardBuild.for(
+        chronicle:, options: { approval: "auto" }, model: "m", toolset: base, project:,
+        paths: Lain::Paths.new(env: { "HOME" => home }), judge: Lain::Approval::Judge.new(role_spawn: spawn),
+        verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:),
+        arms: Lain::CLI::Arms.from(confine: "classes", judge_facts:),
+        resolver:,
+        worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "#{planted_cat(File.join(root, "bin"))}:/usr/bin" })
+      )
+    end
+
+    def cat_readme(root) = gated_call.class.new("bash", { "command" => "cat README.md", "cwd" => root }, "tu_1")
+
+    it "tells the judge what each stage resolved to under --judge-facts facts" do
+      in_project do |root, home|
+        board_in(root, home, judge_facts: "facts").policy_switch.call(cat_readme(root), nil)
+
+        expect(prompts.sole.lines.map(&:chomp))
+          .to include("facts (computed by lain, not by the model):",
+                      "cat -> #{root}/bin/cat [project; written this session; shadows /usr/bin/cat]")
+      end
+    end
+
+    it "resolves a leased worker's stages through its own PATH" do
+      in_project do |root, home|
+        checkout = File.join(File.dirname(root), "lease")
+        File.write(File.join(FileUtils.mkdir_p(checkout).first, "x"), "x\n")
+        leased = Lain::WorkerEnv.new(cwd: checkout, checkout:,
+                                     env: { "PATH" => "#{planted_cat(File.join(checkout, "bin"))}:/usr/bin" })
+        board = board_in(root, home, judge_facts: "facts")
+
+        board.policy_for(leased).call(gated_call.class.new("bash", { "command" => "cat x", "cwd" => checkout }, "tu_2"),
+                                      nil)
+
+        expect(prompts.sole).to include("cat -> #{checkout}/bin/cat [project")
+      end
+    end
+
+    it "journals why a stage could not be resolved, against the call" do
+      raising = Struct.new(:error) { def for(_env) = ->(_term) { raise error } }.new(RuntimeError.new("boom"))
+      in_project do |root, home|
+        board_in(root, home, judge_facts: "facts", resolver: raising).policy_switch.call(cat_readme(root), nil)
+
+        expect(prompts.sole).to include('"cat README.md" -> not resolved [unresolved]')
+        expect(journal_records(journal_io, "escalation_fault"))
+          .to include(a_hash_including("rule" => "judge facts", "tool_use_id" => "tu_1", "message" => "boom"))
+      end
+    end
+
+    it "tells the judge no facts under --judge-facts off" do
+      in_project do |root, home|
+        board_in(root, home, judge_facts: "off").policy_switch.call(cat_readme(root), nil)
+
+        expect(prompts.sole).not_to include("facts")
+      end
+    end
+  end
+
   # A mode is scope × approval, driven through the production entry and the
   # command a human types, so the flip under test is the flip a chat makes.
   describe "a mode is scope × approval, over the production entry" do

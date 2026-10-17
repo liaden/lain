@@ -104,6 +104,7 @@ module Lain
       #   REQUIRED here, as `test_layout:` is: defaulted, a real chat's `auto`
       #   would quietly hand every call to a human
       # @param display [#<<] told each call the judge approves; the run's display channel
+      # @param arms [Arms] the bench arms; `judge_facts` decides whether the judge is told the facts
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [String] :approval the session starts at this approval
@@ -114,9 +115,9 @@ module Lain
                    sensitivity: Sensitivity::Policy::Null.instance,
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
-                   approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance)
+                   approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
-            verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:,
+            verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:, arms:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -214,18 +215,19 @@ module Lain
       #   anyone else. {DEFERRING} by default, so a board built with no model
       #   behind it parks under `auto` exactly as under `ask`
       # @param display [#<<] as on {.for}
+      # @param arms [Arms] as on {.for}; every arm off by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
                      verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
                      attended: true, approval: :ask, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                      approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
-                     display: Channel::Null.instance)
+                     display: Channel::Null.instance, arms: Arms::OFF)
         @attended = attended
         @display = display
         @journal = journal
         @spike = spike
-        hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:)
+        hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
         @approvals = Approval::Queue.new(journal:, timeout: approval_timeout, home: sensitivity.home) if @attended
@@ -391,7 +393,8 @@ module Lain
       # judge and the policy among them are why: every judged rung, the leased
       # workers' included, is built over these two, so `auto` judges alike
       # wherever a call is asked.
-      def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:)
+      def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:)
+        @judge_facts = arms.judge_facts != :off
         @rules = rules.to_a.freeze
         @approving = approving
         @classifiers = classifiers
@@ -424,7 +427,7 @@ module Lain
       def ladders(classifiers)
         triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict, policy: @sensitivity)
         rules = @approving.call(@rules, classifiers)
-        { ask: build_ladder(triage:, rules:), auto: judged_ladder(triage:, rules:),
+        { ask: build_ladder(triage:, rules:), auto: judged_ladder(triage:, rules:, classifiers:),
           bypass: bypass_ladder(triage:, rules:) }.freeze
       end
 
@@ -441,7 +444,7 @@ module Lain
         rules = @approving.call(@rules.map { |rule| DeniesOnly.new(rule) }, classifiers)
         asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Unattended.new
         { ask: confined_ladder("plan ask", triage:, rules:, asking:, otherwise: asking, root:),
-          auto: confined_ladder("plan auto", triage:, rules:, asking:, otherwise: judged, root:),
+          auto: confined_ladder("plan auto", triage:, rules:, asking:, otherwise: judged(classifiers), root:),
           bypass: confined_ladder("plan bypass", triage:, rules:, asking:, root:,
                                                  otherwise: Approval::Escalation::Bypass.new) }.freeze
       end
@@ -504,14 +507,25 @@ module Lain
       # unattended session keeps both rungs here, unlike its `ask`, because a
       # judge can still approve what they leave open; only what the judge does
       # not settle is refused.
-      def judged_ladder(triage:, rules:)
-        Approval::Escalation.new([triage, Approval::Escalation::Rules.new(rules:, tools: @toolset, faults:), judged],
-                                 journal: @journal, label: "auto")
+      def judged_ladder(triage:, rules:, classifiers:)
+        Approval::Escalation.new(
+          [triage, Approval::Escalation::Rules.new(rules:, tools: @toolset, faults:), judged(classifiers)],
+          journal: @journal, label: "auto"
+        )
       end
 
-      def judged
+      def judged(classifiers)
         asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Approval::Judged::Unattended.new
-        Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display)
+        Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display,
+                             facts: facts_over(classifiers))
+      end
+
+      # Over the ladder's own factory, so a leased worker's stages resolve
+      # through its PATH and checkout as its rules rung's do.
+      def facts_over(classifiers)
+        return Approval::Judge::Facts::Off unless @judge_facts
+
+        Approval::Judge::Facts::Resolving.new(verdict: @verdict, stages: classifiers, faults:)
       end
 
       # `bypass` approval's ladder, built for attended and unattended sessions

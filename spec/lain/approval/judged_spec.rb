@@ -276,6 +276,47 @@ RSpec.describe Lain::Approval::Judged do
     end
   end
 
+  describe "the facts the judge is told" do
+    let(:asked) { [] }
+    let(:facts) do
+      stage = Lain::Shell::Executable.new(name: "make", resolved: "/usr/bin/make", realpath: "/usr/bin/make",
+                                          chain: ["/usr/bin/make"], shadowed: [], anomalies: [], klass: :system,
+                                          fresh: false, run_files: [], wrappers: [])
+      told = Lain::Approval::Judge::Facts.new([stage])
+      ->(command, cwd, tool_use_id:) { asked.push([command, cwd, tool_use_id]) && told }
+    end
+
+    def prompt_under(effect, **rest)
+      spawn = spawn_answering("approve")
+      ruled(rung(spawn, **rest), effect)
+      spawn.calls.sole[:prompt]
+    end
+
+    it "asks for a bash call's facts at the directory it runs in, and tells the judge them" do
+      prompt = prompt_under(bash("make test", "cwd" => "lib"), facts:)
+
+      expect(asked).to eq([["make test", File.join(root, "lib"), "tu_bash"]])
+      expect(prompt.lines.map(&:chomp)).to include("facts (computed by lain, not by the model):",
+                                                   "make -> /usr/bin/make [system]")
+    end
+
+    it "asks none for a call that runs no command" do
+      prompt = prompt_under(call("read_file", { "path" => File.join(root, "README.md") }), facts:)
+
+      expect([asked, prompt]).to match([[], satisfy { |text| !text.include?("facts (computed") }])
+    end
+
+    it "asks none for a call that is not bash, though its input names a command" do
+      prompt = prompt_under(call("run", { "command" => "make test" }), facts:)
+
+      expect([asked, prompt]).to match([[], satisfy { |text| !text.include?("facts (computed") }])
+    end
+
+    it "tells the judge no facts by default" do
+      expect(prompt_under(bash)).not_to include("facts (computed")
+    end
+  end
+
   describe "tier 0" do
     it "never asks the judge about a read on a credential-named path, and parks it" do
       spawn = spawn_answering("approve")
