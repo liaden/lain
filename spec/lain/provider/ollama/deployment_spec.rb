@@ -24,10 +24,6 @@ RSpec.describe Lain::Provider::Ollama::Deployment do
   # `Ractor.shareable?` answer false.
   let(:key) { +"sk-ollama-not-a-real-key" }
 
-  # Unset, not merely absent: a developer with the variable exported would
-  # otherwise measure their own machine's width instead of the default.
-  around { |example| with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => nil, &example) }
-
   describe "the loopback arm" do
     subject(:deployment) { described_class.local }
 
@@ -380,66 +376,39 @@ RSpec.describe Lain::Provider::Ollama::Deployment do
       # A smaller plan answers its first concurrency 429 with its own limit,
       # and the endpoint narrows to it from then on.
       it "defaults to three, the probed paid plan's limit" do
-        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => nil) do
-          expect(described_class.cloud(api_key: key).admission_width).to eq(3)
-        end
+        expect(described_class.cloud(api_key: key).admission_width).to eq(3)
       end
 
-      it "is set by LAIN_OLLAMA_CLOUD_CONCURRENCY, the way every other width in lain is set" do
-        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "2") do
-          expect(described_class.cloud(api_key: key).admission_width).to eq(2)
+      it "takes a declared width" do
+        expect(described_class.cloud(api_key: key, admission_width: 2).admission_width).to eq(2)
+        expect(described_class.cloud(api_key: key, admission_width: "2").admission_width).to eq(2)
+      end
+
+      it "does not read the environment, whose width is Admission's to apply" do
+        with_env("LAIN_PROVIDER_CONCURRENCY" => "1") do
+          expect(described_class.cloud(api_key: key).admission_width).to eq(3)
         end
       end
 
       # Loud on a typo, per the house rule: a misspelt width that silently meant
       # 1 would look exactly like admission working.
-      it "refuses a width that is not a number, naming the variable" do
-        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "three") do
-          expect { described_class.cloud(api_key: key) }
-            .to raise_error(Lain::Error, /LAIN_OLLAMA_CLOUD_CONCURRENCY/)
+      ["three", "0", "0x10", "3.7"].each do |bad|
+        # `0` unbounds admission via LAIN_PROVIDER_CONCURRENCY; here it would mean
+        # "no concurrent models at all". Bare `Integer("0x10")` answers 16, so the
+        # explicit base needs its own example.
+        it "refuses #{bad.inspect} rather than reading it as a number" do
+          expect { described_class.cloud(api_key: key, admission_width: bad) }
+            .to raise_error(Lain::Error, /admission width #{Regexp.escape(bad.inspect)}/)
         end
       end
 
-      # `0` unbounds admission process-wide via LAIN_PROVIDER_CONCURRENCY; here
-      # it would mean "no concurrent models at all", which is not a thing to ask
-      # a quota-metered plan for.
-      it "refuses a width below one" do
-        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "0") do
-          expect { described_class.cloud(api_key: key) }
-            .to raise_error(Lain::Error, /LAIN_OLLAMA_CLOUD_CONCURRENCY/)
-        end
+      # The same Unicode blank the key path refuses.
+      it "treats a non-breaking space width as unset, the same as the key path does" do
+        expect(described_class.cloud(api_key: key, admission_width: "\u00A0").admission_width).to eq(3)
       end
 
-      # Bare `Integer("0x10")` reads a hex literal and answers 16. Without this
-      # example the explicit base could be dropped and every other one stays
-      # green.
-      it "refuses a hex literal rather than reading it as sixteen" do
-        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "0x10") do
-          expect { described_class.cloud(api_key: key) }
-            .to raise_error(Lain::Error, /LAIN_OLLAMA_CLOUD_CONCURRENCY/)
-        end
-      end
-
-      it "refuses a decimal rather than truncating it" do
-        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "3.7") do
-          expect { described_class.cloud(api_key: key) }
-            .to raise_error(Lain::Error, /LAIN_OLLAMA_CLOUD_CONCURRENCY/)
-        end
-      end
-
-      # The same Unicode blank the key path refuses: `String#strip` would keep
-      # it, leaving `Integer()` to raise a message naming neither the variable
-      # nor a remedy.
-      it "treats a non-breaking space variable as unset, the same as the key path does" do
-        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "\u00A0") do
-          expect(described_class.cloud(api_key: key).admission_width).to eq(3)
-        end
-      end
-
-      it "ignores an empty variable the same as an unset one" do
-        with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "") do
-          expect(described_class.cloud(api_key: key).admission_width).to eq(3)
-        end
+      it "treats an empty width as unset" do
+        expect(described_class.cloud(api_key: key, admission_width: "").admission_width).to eq(3)
       end
     end
 

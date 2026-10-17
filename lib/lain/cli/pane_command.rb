@@ -29,16 +29,12 @@ module Lain
       # `EnvDefaults` call declares cannot live here. A name that needs a
       # different rule needs a list of its own; the desktop consent was one,
       # and went with the surface that read it.
-      PANE_ENV = %w[
-        LAIN_API_BASE LAIN_KEEP_ALIVE LAIN_MAX_TOKENS LAIN_MODEL LAIN_NUM_BATCH LAIN_NUM_CTX
-        LAIN_PROVIDER LAIN_SEED
-        LAIN_SUMMARIZER_MAX_TOKENS LAIN_SUMMARIZER_MODEL LAIN_SUMMARIZER_PROVIDER
-        LAIN_TEMPERATURE
-      ].freeze
+      PANE_ENV = EnvDefaults::READ
 
       # Variables lain needs that are not flag defaults, so PANE_ENV cannot hold
-      # them: OpenSSL's library path, the shared temp directory, the cloud cap.
-      RUNTIME_ENV = %w[LAIN_OLLAMA_CLOUD_CONCURRENCY LD_LIBRARY_PATH TMPDIR].freeze
+      # them: OpenSSL's library path, the shared temp directory, the
+      # provider concurrency width.
+      RUNTIME_ENV = %w[LAIN_PROVIDER_CONCURRENCY LD_LIBRARY_PATH TMPDIR].freeze
 
       # Names lain sets on ITSELF that a pane would be poisoned by.
       # {ChatLaunch::PREFLIGHT_ENV} turns a `lain chat` into a construction

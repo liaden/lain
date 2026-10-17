@@ -133,14 +133,14 @@ RSpec.describe Lain::CLI::PaneCommand do
   end
 
   # The same stale-server story for variables lain needs but does not own: the
-  # OpenSSL library path, the shared temp directory, and the cloud concurrency
-  # cap. None is a flag default, so none can live in PANE_ENV.
+  # OpenSSL library path, the shared temp directory, and the provider
+  # concurrency width. None is a flag default, so none can live in PANE_ENV.
   describe ".runtime_exports" do
     it "exports each runtime variable the launching shell set, escaped and in a stable order" do
-      env = { "TMPDIR" => "/home/me/my tmp", "LD_LIBRARY_PATH" => "/opt/lib", "LAIN_OLLAMA_CLOUD_CONCURRENCY" => "2" }
+      env = { "TMPDIR" => "/home/me/my tmp", "LD_LIBRARY_PATH" => "/opt/lib", "LAIN_PROVIDER_CONCURRENCY" => "2" }
 
       expect(described_class.runtime_exports(env))
-        .to eq("export LAIN_OLLAMA_CLOUD_CONCURRENCY=2; export LD_LIBRARY_PATH=/opt/lib; " \
+        .to eq("export LAIN_PROVIDER_CONCURRENCY=2; export LD_LIBRARY_PATH=/opt/lib; " \
                'export TMPDIR=/home/me/my\ tmp; ')
     end
 

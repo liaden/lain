@@ -179,14 +179,6 @@ module Lain
         # and may fail with the 429.
         DEFAULT_ADMISSION_WIDTH = 3
 
-        # Env, not a flag: the plan's width cannot be inferred from the API, and
-        # every other admission width in lain is already set this way
-        # (`Provider::Admission::ENV_KEY`). A per-endpoint key rather than that
-        # process-wide one because raising the shared number to 3 for the cloud
-        # arm would also raise the LOOPBACK arm off 1 and re-open the
-        # one-slot-server starvation admission was built for.
-        CONCURRENCY_ENV_KEY = "LAIN_OLLAMA_CLOUD_CONCURRENCY"
-
         # What every printer, walker and destructuring door hands out in place
         # of the key. Visible rather than silent, so a reader of a rendered
         # deployment knows a value was withheld instead of reading a blank.
@@ -202,7 +194,7 @@ module Lain
           #
           # @param api_key [String] the subscription key
           # @param admission_width [Integer, String, nil] concurrent round trips
-          #   this plan permits, or nil to read {CONCURRENCY_ENV_KEY}
+          #   this plan permits, or nil for {DEFAULT_ADMISSION_WIDTH}
           # @return [Deployment] the hosted arm
           # @raise [MissingAPIKey] on any key a header cannot carry
           def cloud(api_key:, admission_width: nil)
@@ -231,15 +223,14 @@ module Lain
           # may only be supplied for a String.
           #
           # @param declared [Integer, String, nil] an explicit width, or nil to
-          #   read {CONCURRENCY_ENV_KEY}
+          #   take {DEFAULT_ADMISSION_WIDTH}
           # @return [Integer] a width of at least 1
           # @raise [Lain::Error] on a non-integer, a hex or decimal literal, or
           #   anything less than 1
           def width(declared)
-            raw = declared || ENV.fetch(CONCURRENCY_ENV_KEY, nil)
-            return DEFAULT_ADMISSION_WIDTH if raw.nil? || trim(raw).empty?
+            return DEFAULT_ADMISSION_WIDTH if declared.nil? || trim(declared).empty?
 
-            positive(raw)
+            positive(declared)
           end
 
           # "is not set" is a claim about the environment, false for three of
@@ -262,7 +253,7 @@ module Lain
 
             parsed
           rescue ArgumentError, TypeError
-            raise Error, "#{CONCURRENCY_ENV_KEY}=#{raw.inspect} is not an integer >= 1 " \
+            raise Error, "admission width #{raw.inspect} is not an integer >= 1 " \
                          "(it is the number of models your plan lets you run at once)"
           end
 

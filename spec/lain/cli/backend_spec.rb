@@ -2209,7 +2209,7 @@ RSpec.describe Lain::CLI::Backend do
 
     # `seed` and the two runner knobs are ollama's, and the Anthropic encoder
     # forwards every `extra` key it does not recognise straight onto the wire --
-    # so an `.envrc` exporting LAIN_SEED or LAIN_NUM_BATCH put a field on every
+    # so an `.envrc` exporting LAIN_NUM_BATCH put a field on every
     # hosted request that the API does not define.
     it "keeps seed and both runner knobs off an Anthropic chat's wire body, and temperature on it" do
       request = backend_for(max_tokens: 1024, provider: "anthropic", model: nil, temperature: 0.2, seed: 7,
@@ -2302,7 +2302,7 @@ RSpec.describe Lain::CLI::Backend do
 
     # {#api_base}'s rule: a value the environment supplied has to refuse
     # wherever it was set, not only on the arm that would have sent it, or a
-    # stray LAIN_KEEP_ALIVE is a refusal that appears on a provider switch.
+    # stray --keep-alive is a refusal that appears on a provider switch.
     it "refuses at construction whatever --provider says" do
       expect { backend_for(provider: "anthropic", keep_alive: "nope") }
         .to raise_error(Lain::CLI::Backend::InvalidKeepAlive)
@@ -2313,12 +2313,12 @@ RSpec.describe Lain::CLI::Backend do
     end
 
     # The same claim from argv: the exe's flag band resolves the flag to nil
-    # when neither `--keep-alive` nor LAIN_KEEP_ALIVE says anything, and the
+    # when `--keep-alive` says nothing, and the
     # launch's profile carries that absence all the way to the payload.
     it "sends none for a flagless chat through the exe's profile band" do
       load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
       options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse([])
-      profile = with_env("LAIN_PROVIDER" => "ollama", "LAIN_KEEP_ALIVE" => nil) do
+      profile = with_env("LAIN_PROVIDER" => "ollama") do
         LainCLI::ModelFlags.profile(options)
       end
       request = Lain::CLI::ChatLaunch.new(options, profile:).backend
@@ -2329,7 +2329,7 @@ RSpec.describe Lain::CLI::Backend do
 
     # Residency is the local runner's question, and {Provider::AnthropicEncoding}
     # forwards any `extra` key it does not know straight onto a wire that
-    # defines none -- so a LAIN_KEEP_ALIVE left exported in an `.envrc` must not
+    # defines none -- so a keep_alive carried over from an ollama run must not
     # follow a hosted chat.
     it "keeps keep_alive off an Anthropic chat's extra and wire body" do
       request = backend_for(max_tokens: 1024, provider: "anthropic", model: nil, temperature: 0.2,

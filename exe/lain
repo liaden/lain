@@ -405,7 +405,7 @@ class LainCLI < Thor
     # that runner stays loaded: one question per method.
     #
     # @param thor [Class] the Thor class the flags accumulate onto
-    # @param max_tokens [Integer] this command's ceiling when LAIN_MAX_TOKENS is unset
+    # @param max_tokens [Integer] this command's default ceiling
     # @param ceiling [String, nil] why this command's ceiling is the one it is
     # @param recorded [String, nil] where an untyped profile flag's default comes
     #   from before the environment, for a command that reads one
@@ -449,21 +449,18 @@ class LainCLI < Thor
         api_base: Lain::CLI::EnvDefaults.string("LAIN_API_BASE"),
         model: Lain::CLI::EnvDefaults.string("LAIN_MODEL"),
         num_ctx: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_CTX"),
-        num_batch: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH"),
-        keep_alive: Lain::CLI::EnvDefaults.string("LAIN_KEEP_ALIVE")
+        num_batch: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH")
       )
     end
 
     def self.sampling(thor, max_tokens, ceiling)
-      thor.method_option :max_tokens, type: :numeric,
-                                      default: Lain::CLI::EnvDefaults.numeric("LAIN_MAX_TOKENS", max_tokens),
+      thor.method_option :max_tokens, type: :numeric, default: max_tokens,
                                       desc: "max_tokens per model turn#{"; #{ceiling}" if ceiling} " \
-                                            "[$LAIN_MAX_TOKENS, else #{max_tokens}]"
-      thor.method_option :temperature, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_TEMPERATURE"),
-                                       desc: "Sampler temperature, threaded into Request#extra (ollama honors it) " \
-                                             "[$LAIN_TEMPERATURE]"
-      thor.method_option :seed, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_SEED"),
-                                desc: "Sampler seed, threaded into Request#extra (ollama honors it) [$LAIN_SEED]"
+                                            "[default #{max_tokens}]"
+      thor.method_option :temperature, type: :numeric,
+                                       desc: "Sampler temperature, threaded into Request#extra (ollama honors it)"
+      thor.method_option :seed, type: :numeric,
+                                desc: "Sampler seed, threaded into Request#extra (ollama honors it)"
     end
 
     # Both are profile flags, so neither has a Thor `default:` ({endpoint}
@@ -510,8 +507,7 @@ class LainCLI < Thor
                                             "it. The pin OUTLIVES this process -- the model stays resident after " \
                                             "lain exits until `ollama stop` releases it -- and a resumed or " \
                                             "forked chat does not inherit it. A local-SERVER knob: it is sent on " \
-                                            "ollama-cloud too, where its effect is unmeasured " \
-                                            "#{help("$LAIN_KEEP_ALIVE", nil)}"
+                                            "ollama-cloud too, where its effect is unmeasured"
     end
 
     # A flag's defaults, in the order they answer.
@@ -1011,40 +1007,28 @@ class LainCLI < Thor
     # --summarizer-model carries no Thor default on purpose: like --model it
     # resolves to the SELECTED provider's own default, which is not knowable
     # until --summarizer-provider is parsed.
-    # Split on {ModelFlags}' own rule -- WHICH endpoint summarizes, then how big
-    # a summary it may write -- because adding the env defaults pushed the single
-    # method past MethodLength, and the answer to that is an extraction.
+    # Split on {ModelFlags}' own rule: WHICH endpoint summarizes, then how big
+    # a summary it may write.
     def self.summarizer(thor)
       summarizer_endpoint(thor)
       summarizer_budget(thor)
     end
 
-    # Its own method only because the two-argument call does not fit inline
-    # beside the `desc:` without pushing the declaration past MethodLength.
-    def self.summarizer_provider_default
-      Lain::CLI::EnvDefaults.string("LAIN_SUMMARIZER_PROVIDER", Backend::DEFAULT_SUMMARIZER_PROVIDER)
-    end
-
     def self.summarizer_endpoint(thor)
-      thor.method_option :summarizer_provider, type: :string, default: summarizer_provider_default,
+      thor.method_option :summarizer_provider, type: :string, default: Backend::DEFAULT_SUMMARIZER_PROVIDER,
                                                desc: "Provider for the compaction summarizer, chosen separately " \
-                                                     "from --provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")} " \
-                                                     "[$LAIN_SUMMARIZER_PROVIDER]"
+                                                     "from --provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
       thor.method_option :summarizer_model, type: :string,
-                                            default: Lain::CLI::EnvDefaults.string("LAIN_SUMMARIZER_MODEL"),
                                             desc: "Model id for the compaction summarizer; defaults to the " \
                                                   "chat's --model when both tiers name one provider, else to " \
-                                                  "the summarizer provider's own default [$LAIN_SUMMARIZER_MODEL]"
+                                                  "the summarizer provider's own default"
     end
 
     def self.summarizer_budget(thor)
       thor.method_option :summarizer_max_tokens, type: :numeric,
-                                                 default: Lain::CLI::EnvDefaults.numeric(
-                                                   "LAIN_SUMMARIZER_MAX_TOKENS", Lain::Oracle::Model::DEFAULT_MAX_TOKENS
-                                                 ),
+                                                 default: Lain::Oracle::Model::DEFAULT_MAX_TOKENS,
                                                  desc: "max_tokens per summary; a truncated summary REPLACES the " \
-                                                       "result it compressed, so this is sized for a paragraph " \
-                                                       "[$LAIN_SUMMARIZER_MAX_TOKENS]"
+                                                       "result it compressed, so this is sized for a paragraph"
     end
   end
 

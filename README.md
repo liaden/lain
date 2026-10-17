@@ -638,15 +638,17 @@ There is nothing to fall back to, so lain says so and stops rather than guessing
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `Provider::AnthropicRaw`, `Provider::Anthropic` | Required for the Claude path. Refused before construction if unset. |
 | `OLLAMA_API_KEY` | `Provider::Ollama` on its cloud deployment | Required for `--provider ollama-cloud`. Create one at [ollama.com/settings/keys](https://ollama.com/settings/keys). Refused before construction if unset, and the refusal names the variable without quoting its value. Four guards (`#inspect`, `#pretty_print`, and both `#instance_variables`) keep the key out of a rendered deployment or configuration; they do **not** cover a header Hash once it has left the object, which is documented where that Hash is built. |
-| `LAIN_OLLAMA_CLOUD_CONCURRENCY` | the cloud deployment's admission gate | How many cloud requests may be in flight. Defaults to **3**; a typo raises rather than degrading. A concurrency 429 from the server narrows the width to the plan's limit for the rest of the process (see [Providers](#providers)), and a cloud launch prints the width at startup. |
+| `LAIN_PROVIDER_CONCURRENCY` | the admission gate, every provider | How many requests may be in flight to one endpoint; `0` removes the limit. Unset, a local ollama runs 1 at a time and ollama cloud runs **3**; a typo raises rather than degrading. A concurrency 429 from the server narrows the width to the plan's limit for the rest of the process (see [Providers](#providers)), and a cloud launch prints the width at startup. |
+| `LAIN_PROVIDER`, `LAIN_MODEL`, `LAIN_API_BASE`, `LAIN_NUM_CTX`, `LAIN_NUM_BATCH` | `lain chat` and the other commands taking the run-profile flags | Defaults for `--provider`, `--model`, `--api-base`, `--num-ctx` and `--num-batch`, so a project can pin them in a direnv `.envrc`. A typed flag wins, a malformed number refuses by name, and an empty variable counts as unset. |
 | `LAIN_STREAM_STALL_TIMEOUT` | the provider's stall watch | Seconds of silence on an open stream before lain reports `stalled_stream` and stops. Defaults to **30**, except on `--provider ollama` and `ollama-cloud`, which default to 5 seconds under their request timeout: **295** for a local ollama (request timeout 300) and **115** for ollama cloud (120). Ollama sends a tool call's arguments whole, after a silence that grows with their size, so a long `epic_write` needs the room. A set variable wins on every provider, and `0` turns the check off. A stalled ask names this variable in the message that ends it. |
+| `LAIN_CONNECT_TIMEOUT` | the provider's connect watch | Seconds to wait for a connection before giving up; defaults to **5**, and `0` folds connect time back into the request timeout. |
 | `LAIN_STREAM_DEBUG` | the SSE accumulator | Dumps raw stream frames while debugging a provider. |
 | `LAIN_INTEGRATION`, `LAIN_OLLAMA`, `LAIN_OLLAMA_CLOUD`, `LAIN_SPIKE` | the test suite | Opt in to the specs that cost money, need a local Ollama, spend Ollama Cloud quota, or run a spike. |
 
 The library does **not** read `OLLAMA_API_BASE`. The Ollama base is a constructor argument or the
 `--api-base` flag; the env var is a convenience for the specs only. `OLLAMA_API_KEY` is the
 exception — the cloud deployment reads it, because a key is not something a flag should carry.
-Everything else is a CLI flag, documented in [`docs/commands.md`](docs/commands.md).
+Everything else, sampling and summarizer settings included, is a CLI flag, documented in [`docs/commands.md`](docs/commands.md).
 
 ## Architecture
 
@@ -847,12 +849,12 @@ exe/lain bench arms --provider ollama-cloud FIXTURE
 With `OLLAMA_API_KEY` unset the arm refuses before it constructs anything, and the refusal names
 the variable, the flag that asked for it, and where a key comes from. `--api-base` still moves the
 arm, but the cloud deployment **requires https** — it will not send a bearer token in plaintext.
-Concurrency starts at 3 requests at once; `LAIN_OLLAMA_CLOUD_CONCURRENCY` sets another width.
+Concurrency starts at 3 requests at once; `LAIN_PROVIDER_CONCURRENCY` sets another width.
 When the server answers a request with a concurrency 429 that carries `x-ratelimit-max-concurrent`,
 the gate narrows to that number and the narrowing is journaled. It only lowers, never raises. A plan
 with no server queue can fail the requests already in flight past its limit before the narrowing
 lands; later requests run at the narrowed width. A cloud launch prints the width in force and the
-variable that changes it, and names `LAIN_PROVIDER_CONCURRENCY` when that variable set the width.
+variable that changes it.
 
 > **The cloud arm is not a reproducible bench arm.** Measured against a live subscription on
 > 2026-08-24: `temperature 0`, a fixed seed and warm runs returned **three distinct completions

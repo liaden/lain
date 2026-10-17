@@ -8,11 +8,11 @@ module Lain
     #
     # == Two places a reader sits
     #
-    # Most flags read here in their `default:` slot. Thor uses a `default:` only
-    # when the flag is absent, so `default: EnvDefaults.numeric("LAIN_MAX_TOKENS",
-    # 4_096)` already means "explicit flag beats env beats built-in default".
+    # Thor uses a `default:` only when the flag is absent, so an env-backed
+    # `default:` would already mean "explicit flag beats env beats built-in
+    # default".
     #
-    # The five run-profile flags cannot sit there. A `default:` makes a typed
+    # The run-profile flags cannot sit there. A `default:` makes a typed
     # `--provider anthropic` and silence the same parse, and a resumed or forked
     # chat has to know which fields were typed before its recorded profile
     # answers the rest. Those flags declare no default, and `exe/lain`'s
@@ -32,11 +32,22 @@ module Lain
     #
     # == Garbage fails loudly
     #
-    # A typo'd `LAIN_MAX_TOKENS=lots` refuses by name rather than falling back
+    # A typo'd `LAIN_NUM_CTX=lots` refuses by name rather than falling back
     # to the built-in default: a silent answer to a malformed question is the
     # one outcome nobody can debug. An UNSET variable is not garbage -- it is
     # absence, and takes the default.
     module EnvDefaults
+      # Every name this module is read for, sorted; the one list the pane
+      # preamble forwards.
+      READ = %w[LAIN_API_BASE LAIN_MODEL LAIN_NUM_BATCH LAIN_NUM_CTX LAIN_PROVIDER].freeze
+
+      # Names that were env defaults and are flags only now; moving one into
+      # {READ} and back into an `exe/lain` call is the whole restore.
+      RETIRED = %w[
+        LAIN_KEEP_ALIVE LAIN_MAX_TOKENS LAIN_SEED LAIN_SUMMARIZER_MAX_TOKENS
+        LAIN_SUMMARIZER_MODEL LAIN_SUMMARIZER_PROVIDER LAIN_TEMPERATURE
+      ].freeze
+
       module_function
 
       # @param name [String] the variable, `LAIN_`-prefixed by convention
@@ -58,8 +69,8 @@ module Lain
         number(raw) or raise Error, "#{name}=#{raw.inspect} is not a number -- unset it, or give it one"
       end
 
-      # Integer when it reads as one, Float otherwise, so `LAIN_MAX_TOKENS` and
-      # `LAIN_TEMPERATURE` share one reader. nil is the refusal signal, which
+      # Integer when it reads as one, Float otherwise, so `LAIN_NUM_CTX` and a
+      # fractional name share one reader. nil is the refusal signal, which
       # keeps the raise at the one call site above.
       def number(raw)
         Integer(raw, exception: false) || Float(raw, exception: false)

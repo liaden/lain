@@ -38,41 +38,53 @@ RSpec.describe Lain::CLI::EnvDefaults do
 
   describe ".numeric" do
     it "reads an integer" do
-      with_env("LAIN_MAX_TOKENS" => "8192") do
-        expect(described_class.numeric("LAIN_MAX_TOKENS", 4_096)).to eq(8_192)
+      with_env("LAIN_NUM_CTX" => "8192") do
+        expect(described_class.numeric("LAIN_NUM_CTX", 4_096)).to eq(8_192)
       end
     end
 
-    # Temperature and max_tokens share one reader, so the Float arm is not
-    # decoration: `LAIN_TEMPERATURE=0.7` read as an Integer is 0, which is a
-    # legal temperature and a silently wrong one.
-    it "reads a float, because temperature rides this same reader" do
-      with_env("LAIN_TEMPERATURE" => "0.7") do
-        expect(described_class.numeric("LAIN_TEMPERATURE")).to eq(0.7)
+    # One reader serves whole and fractional values, so the Float arm is not
+    # decoration: `0.7` read as an Integer is 0, which is
+    # silently wrong.
+    it "reads a float, because a fractional value rides this same reader" do
+      with_env("LAIN_NUM_BATCH" => "0.7") do
+        expect(described_class.numeric("LAIN_NUM_BATCH")).to eq(0.7)
       end
     end
 
     it "answers the fallback when unset" do
-      with_env("LAIN_MAX_TOKENS" => nil) do
-        expect(described_class.numeric("LAIN_MAX_TOKENS", 4_096)).to eq(4_096)
+      with_env("LAIN_NUM_CTX" => nil) do
+        expect(described_class.numeric("LAIN_NUM_CTX", 4_096)).to eq(4_096)
       end
     end
 
     # THE COUNTER-EXAMPLE THIS OBJECT EXISTS FOR. Falling back on garbage is the
     # tempting implementation and the wrong one: the human set the variable
     # deliberately, and a session that quietly ran at 4096 tokens because
-    # `LAIN_MAX_TOKENS=lots` did not parse is the failure nobody can see.
+    # `LAIN_NUM_CTX=lots` did not parse is the failure nobody can see.
     it "refuses garbage by name rather than falling back to the default" do
-      with_env("LAIN_MAX_TOKENS" => "lots") do
-        expect { described_class.numeric("LAIN_MAX_TOKENS", 4_096) }
-          .to raise_error(Lain::Error, /LAIN_MAX_TOKENS="lots" is not a number/)
+      with_env("LAIN_NUM_CTX" => "lots") do
+        expect { described_class.numeric("LAIN_NUM_CTX", 4_096) }
+          .to raise_error(Lain::Error, /LAIN_NUM_CTX="lots" is not a number/)
       end
     end
 
     it "refuses a number with trailing junk rather than reading the numeric prefix" do
-      with_env("LAIN_MAX_TOKENS" => "8192tokens") do
-        expect { described_class.numeric("LAIN_MAX_TOKENS") }.to raise_error(Lain::Error, /not a number/)
+      with_env("LAIN_NUM_CTX" => "8192tokens") do
+        expect { described_class.numeric("LAIN_NUM_CTX") }.to raise_error(Lain::Error, /not a number/)
       end
+    end
+  end
+
+  describe "the name tables" do
+    it "keeps every read name apart from every retired one" do
+      expect(described_class::READ & described_class::RETIRED).to be_empty
+    end
+
+    it "is deeply frozen and sorted" do
+      expect(Ractor.shareable?(described_class::READ)).to be(true)
+      expect(Ractor.shareable?(described_class::RETIRED)).to be(true)
+      expect(described_class::READ).to eq(described_class::READ.sort)
     end
   end
 end

@@ -445,7 +445,7 @@ module Lain
       #
       # Refused at CONSTRUCTION for {#api_base}'s two reasons: a mistake should
       # arrive as a named refusal rather than the server's parse error mid-turn,
-      # and a stray `LAIN_KEEP_ALIVE` must refuse whatever `--provider` says.
+      # and a bad `--keep-alive` must refuse whatever `--provider` says.
       #
       # @return [Integer, String, nil] nil when nobody asked for a residency,
       #   which leaves ollama's own five-minute timer alone

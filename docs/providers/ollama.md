@@ -115,7 +115,7 @@ and ROCm-vs-Vulkan sweeps below, so those two remain 0.32.12 figures:
   is what a turn carrying a large `tool_result` pays, so it is the number the harness feels
   either way.
 - **`keep_alive` is residency, and it is the one knob whose wire TYPE matters.** Ollama unloads a
-  model five minutes after its last request. `--keep-alive` (`$LAIN_KEEP_ALIVE`) overrides that:
+  model five minutes after its last request. `--keep-alive` overrides that:
   `-1` pins it resident, `0` releases it the moment the turn is answered, `5m` or `90s` is a
   duration. What pinning buys is a reload avoided, and a reload costs twice — **16–20 s** to load a
   30B model on this box, and it discards the prefix cache on the way, worth about as much again

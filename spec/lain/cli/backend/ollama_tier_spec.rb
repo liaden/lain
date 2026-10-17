@@ -80,11 +80,11 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
       expect(provider.send(:queue_for_capacity?)).to be(false)
     end
 
-    # The default cloud width, read by the hosted Deployment from its own env key. Pinned
+    # The default cloud width, owned by the hosted Deployment. Pinned
     # here because the CLI is the caller that must NOT quietly pass a width of
     # its own and reopen the metered-plan starvation the default exists for.
     it "leaves the cloud plan's width to the deployment's own default" do
-      provider = with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => nil) do
+      provider = with_env(Lain::Provider::Admission::ENV_KEY => nil) do
         with_key do
           cloud.provider(channel: Lain::Channel::Null.instance, queue: true,
                          journal: Lain::Channel::Null.instance)
@@ -99,7 +99,7 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
     # threads here would be testing that file's subject through this one.
     it "pins the cloud endpoint's gate at the plan's width" do
       Lain::Provider::Admission.reset!
-      provider = with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => nil, Lain::Provider::Admission::ENV_KEY => nil) do
+      provider = with_env(Lain::Provider::Admission::ENV_KEY => nil) do
         with_key do
           cloud.provider(channel: Lain::Channel::Null.instance, queue: true,
                          journal: Lain::Channel::Null.instance)
@@ -441,7 +441,6 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
   end
 
   describe "#startup_notices" do
-    let(:env_key) { Lain::Provider::Ollama::Deployment::CONCURRENCY_ENV_KEY }
     let(:provider_key) { Lain::Provider::Admission::ENV_KEY }
 
     around do |example|
@@ -451,7 +450,7 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
     end
 
     def notices_with(vars)
-      with_env({ env_key => nil, provider_key => nil, "OLLAMA_API_KEY" => "sk-ollama-test" }.merge(vars)) do
+      with_env({ provider_key => nil, "OLLAMA_API_KEY" => "sk-ollama-test" }.merge(vars)) do
         cloud.startup_notices
       end
     end
@@ -459,17 +458,13 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
     it "says the default width, names the variable, and says it narrows on a refusal" do
       expect(notices_with({})).to contain_exactly(
         a_string_matching(/up to 3 cloud requests at once/)
-          .and(include(env_key))
+          .and(include(provider_key))
           .and(include("narrows on a concurrency refusal"))
       )
     end
 
-    it "reports the width the cloud variable sets" do
-      expect(notices_with(env_key => "2").first).to include("up to 2 cloud requests at once")
-    end
-
     it "reports the width the provider-wide variable forces, and names that variable" do
-      notice = notices_with(provider_key => "1", env_key => "2").first
+      notice = notices_with(provider_key => "1").first
       expect(notice).to include("up to 1 cloud requests at once").and include(provider_key)
     end
 

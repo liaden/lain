@@ -159,13 +159,9 @@ RSpec.describe "lain chat's flag surface" do
     end
 
     it "defaults a chat to 16384, which the backend's context carries to the request" do
-      expect(max_tokens_under("LAIN_MAX_TOKENS" => nil)).to eq(16_384)
+      expect(max_tokens_under({})).to eq(16_384)
       expect(parse[:max_tokens]).to eq(16_384)
       expect(Lain::CLI::Backend.new(parse("--provider", "ollama"), root: Dir.pwd).context.max_tokens).to eq(16_384)
-    end
-
-    it "lets LAIN_MAX_TOKENS win over the default" do
-      expect(max_tokens_under("LAIN_MAX_TOKENS" => "2048")).to eq(2_048)
     end
 
     it "leaves bench record on its own default" do

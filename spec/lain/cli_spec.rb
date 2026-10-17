@@ -188,7 +188,6 @@ RSpec.describe LainCLI do
       expect(Lain::CLI::RunProfile::FIELDS).to include(:keep_alive)
       expect(Lain::CLI::RunProfile::HEADER_FIELDS).not_to include(:keep_alive)
       expect(description).not_to include("resumed or forked chat defaults to")
-      expect(description).to include("$LAIN_KEEP_ALIVE")
     end
 
     it "still scopes the --api-base description to ollama" do
@@ -952,8 +951,7 @@ RSpec.describe LainCLI do
     # num_batch is the one exception, defaulting in regardless of a flag.
     it "sends only the num_batch default from a flagless ollama `bench arms`" do
       backend = bench_backend(%w[arms suite/tasks.yml --provider ollama], :arms_report,
-                              "LAIN_NUM_BATCH" => nil, "LAIN_NUM_CTX" => nil, "LAIN_SEED" => nil,
-                              "LAIN_TEMPERATURE" => nil)
+                              "LAIN_NUM_BATCH" => nil, "LAIN_NUM_CTX" => nil)
 
       expect(encoded_options(backend)).to eq(num_predict: 4096, num_batch: 2048)
     end
@@ -1120,15 +1118,24 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
 
   it "falls back to the built-in default when the environment says nothing" do
     expect(profile_under({ "LAIN_PROVIDER" => nil }, []).provider).to eq("anthropic")
-    expect(options_under({ "LAIN_MAX_TOKENS" => nil }, [])["max_tokens"]).to eq(16_384)
+    expect(options_under({}, [])["max_tokens"]).to eq(16_384)
   end
 
   it "reads the numeric band as numbers, not strings" do
-    options = options_under({ "LAIN_MAX_TOKENS" => "8192", "LAIN_TEMPERATURE" => "0.7" }, [])
+    options = options_under({}, %w[--max-tokens 8192 --temperature 0.7])
 
     expect(options["max_tokens"]).to eq(8_192)
     expect(options["temperature"]).to eq(0.7)
     expect(profile_under({ "LAIN_NUM_BATCH" => "2048" }, []).num_batch).to eq(2_048)
+  end
+
+  it "ignores a retired variable, so only a flag can set what it once set" do
+    env = Lain::CLI::EnvDefaults::RETIRED.to_h { |name| [name, "7"] }
+    options = options_under(env, [])
+
+    expect(options["max_tokens"]).to eq(16_384)
+    expect(options["temperature"]).to be_nil
+    expect(profile_under(env, []).keep_alive).to be_nil
   end
 
   # Thor validates an `enum:` BEFORE it dispatches, so this list is a scope

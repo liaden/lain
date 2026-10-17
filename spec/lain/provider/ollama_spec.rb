@@ -978,7 +978,7 @@ RSpec.describe Lain::Provider::Ollama do
       end
 
       def cloud_provider
-        with_env(Lain::Provider::Admission::ENV_KEY => nil, "LAIN_OLLAMA_CLOUD_CONCURRENCY" => nil) do
+        with_env(Lain::Provider::Admission::ENV_KEY => nil) do
           described_class.cloud(api_key: "sk-test", api_base: base, journal:)
         end
       end

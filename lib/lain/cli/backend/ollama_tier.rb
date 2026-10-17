@@ -224,17 +224,8 @@ module Lain
             return "ollama-cloud runs with no limit on cloud requests; #{ADMISSION_ENV_KEY}=0 set that."
           end
 
-          "ollama-cloud runs up to #{width} cloud requests at once; set #{width_variable} to change it. " \
+          "ollama-cloud runs up to #{width} cloud requests at once; set #{ADMISSION_ENV_KEY} to change it. " \
             "It narrows on a concurrency refusal from the server."
-        end
-
-        def width_variable
-          if ENV.fetch(ADMISSION_ENV_KEY,
-                       "").empty?
-            Provider::Ollama::Deployment::CONCURRENCY_ENV_KEY
-          else
-            ADMISSION_ENV_KEY
-          end
         end
 
         def flag = self.class.flag_for(chat: @chat)

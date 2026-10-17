@@ -595,7 +595,7 @@ RSpec.describe Lain::Provider::Admission do
       end
 
       # THE SHAPE THAT WILL ACTUALLY ARRIVE. Open decision 3 configures the
-      # cloud width from `LAIN_OLLAMA_CLOUD_CONCURRENCY`, and `ENV.fetch`
+      # cloud width from the environment, and `ENV.fetch`
       # answers a String. Unchecked it reaches `width.positive?` and dies as
       # `undefined method 'positive?' for an instance of String` -- naming
       # neither the endpoint nor the fix, from inside a gate the caller never

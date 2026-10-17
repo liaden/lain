@@ -262,10 +262,8 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
       expect([admission.width, journal.events.grep(Lain::Telemetry::AdmissionNarrowed)]).to eq([1, []])
     end
 
-    it "keeps an explicit LAIN_OLLAMA_CLOUD_CONCURRENCY as the ceiling" do
-      declared = with_env("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "2") do
-        Lain::Provider::Ollama::Deployment.cloud(api_key: "k").admission_width
-      end
+    it "keeps an explicit declared width as the ceiling" do
+      declared = Lain::Provider::Ollama::Deployment.cloud(api_key: "k", admission_width: 2).admission_width
       admission = gate(declared)
 
       fire_refusal(concurrency_refusal(3), through: admission)
