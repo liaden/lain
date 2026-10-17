@@ -1181,13 +1181,20 @@ RSpec.describe Lain::Approval::ComposedTerm do
   describe "ruled by the resolved class" do
     # By default the lineage starts in the future, so no file reads as fresh.
     def classed_rule(root, home, path:, classes: true, since: Time.now + 3600)
+      described_class.new(sensitivity: classifiers(root, home, path:, since:), classes:)
+    end
+
+    def classifiers(root, home, path:, since: Time.now + 3600)
       fresh = Lain::Shell::Executable::Fresh.for_lineage([], clock: -> { since })
       resolver = Lain::Shell::Executable::Resolver.new(root:, fresh:)
-      factory = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+      Lain::CLI::Wiring::BoardBuild::Classifiers.new(
         home:, cwd: root, root:, confinement: Lain::Approval::Root.new(root), resolver:,
         worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => path })
       )
-      described_class.new(sensitivity: factory, classes:)
+    end
+
+    def planted_head(home)
+      File.dirname(on_disk(File.join(home, "ubin"), "head", "#!/bin/sh\nexec /usr/bin/head \"$@\"\n", mode: 0o755))
     end
 
     def planted_cat(dir)
@@ -1208,13 +1215,38 @@ RSpec.describe Lain::Approval::ComposedTerm do
       end
     end
 
-    it "allows an unchanged user wrapper" do
+    it "leaves an unchanged user shim that shadows a system binary to the judge" do
       in_tree do |root, home|
         with_readme(root)
-        bin = planted_cat(File.join(home, ".local", "bin"))
+        factory = classifiers(root, home, path: "#{planted_head(home)}:/usr/bin")
+        call = call_of("head -1 README.md", cwd: root)
 
-        expect(classed_rule(root, home, path: "#{bin}:/usr/bin").decide(call_of("cat README.md", cwd: root)))
-          .to be_allow
+        expect(described_class.new(sensitivity: factory, classes: true).decide(call)).to be_nil
+        expect(factory.executables(call.term, root).map(&:to_journal))
+          .to contain_exactly(include("klass" => "user", "shadowed" => ["/usr/bin/head"]))
+      end
+    end
+
+    it "allows a system binary that shadows a user one" do
+      in_tree do |root, home|
+        with_readme(root)
+        shim = planted_head(home)
+        factory = classifiers(root, home, path: "/usr/bin:#{shim}")
+        call = call_of("head -1 README.md", cwd: root)
+
+        expect(factory.executables(call.term, root).map(&:to_journal))
+          .to contain_exactly(include("klass" => "system", "shadowed" => [File.join(shim, "head")]))
+        expect(described_class.new(sensitivity: factory, classes: true).decide(call)).to be_allow
+      end
+    end
+
+    it "allows an unchanged user binary that shadows nothing" do
+      in_tree do |root, home|
+        with_readme(root)
+        bin = File.dirname(on_disk(File.join(home, "ubin"), "rev", "#!/bin/sh\nexec /usr/bin/rev \"$@\"\n",
+                                   mode: 0o755))
+
+        expect(classed_rule(root, home, path: bin).decide(call_of("rev README.md", cwd: root))).to be_allow
       end
     end
 

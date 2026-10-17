@@ -38,8 +38,8 @@ module Lain
     #     exemption -- `ls` prints the names `list_files` withholds.
     # 12. THE CLASS PREDICATE, when the rule is built with `classes:`: every
     #     stage's program, every wrapper around it and every file it runs
-    #     resolves to a system file, or a user file unchanged this lineage, with
-    #     no PATH or env anomaly.
+    #     resolves to a system file, or a user file unchanged this lineage and
+    #     shadowing nothing on PATH, with no PATH or env anomaly.
     #
     # {#approvable?} holds predicates 1 to 11 on one line and every predicate is
     # total over a term on its own, so another is one more `&&` plus one more
@@ -219,11 +219,12 @@ module Lain
     # A PROGRAM NAME IS NOT AN IDENTITY. `PATH` is inherited and uncontrolled,
     # so a bare `cat` runs whatever `execvp` finds first. Under `classes:` the
     # resolved class decides: a system file, or a user file unchanged this
-    # lineage, may run with nobody asked; a project file, a fresh user file, an
-    # unresolved stage or a PATH anomaly abstains. The stage class alone never
-    # approves an interpreter or build tool: what it runs is classed too, and a
-    # run file that cannot be told abstains. Without `classes:` the name is
-    # still all this rule reads.
+    # lineage and shadowing nothing on PATH, may run with nobody asked; a
+    # project file, a fresh or shadowing user file, an unresolved stage or a
+    # PATH anomaly abstains. The stage class alone never approves an
+    # interpreter or build tool: what it runs is classed too, and a run file
+    # that cannot be told abstains. Without `classes:` the name is still all
+    # this rule reads.
     class ComposedTerm < Rule
       # Named rather than sniffed, on {Escalation::Triage::COMMAND_TOOLS}'
       # precedent -- a different rule from that list, not a copy of it. A
@@ -677,7 +678,7 @@ module Lain
       end
 
       def trusted?(stage)
-        trusted_class?(stage.klass, stage.fresh) && stage.anomalies.empty? &&
+        trusted_class?(stage.klass, stage.fresh) && stage.anomalies.empty? && !user_shadowing?(stage) &&
           stage.wrappers.all? { |wrapper| trusted?(wrapper) } &&
           stage.run_files.all? { |file| trusted_class?(file.klass, file.fresh) }
       end
@@ -685,6 +686,10 @@ module Lain
       # A user file is one this process could have swapped, so it is trusted
       # only while nothing in this lineage has changed it.
       def trusted_class?(klass, fresh) = klass == :system || (klass == :user && !fresh)
+
+      # A shim planted in an earlier session is no longer fresh, so standing in
+      # front of another program of the same name is what gives it away.
+      def user_shadowing?(stage) = stage.klass == :user && stage.shadowed.any?
     end
   end
 end
