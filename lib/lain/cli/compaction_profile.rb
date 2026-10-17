@@ -2,7 +2,7 @@
 
 module Lain
   module CLI
-    CompactionProfile = Data.define(:strategy, :keep, :bytes, :cap, :fallback)
+    CompactionProfile = Data.define(:strategy, :keep, :bytes, :cap, :fallback, :schedule)
 
     # Which compaction arm a run takes: the strategy that collapses a span and
     # the four knobs that decide when and how far. A field is nil until someone
@@ -13,7 +13,9 @@ module Lain
     # {Backend} owns what an unset field means.
     class CompactionProfile
       FLAGS = { strategy: :compact_strategy, keep: :compact_keep, bytes: :compact_bytes,
-                cap: :compact_cap, fallback: :compact_fallback }.freeze
+                cap: :compact_cap, fallback: :compact_fallback, schedule: :compact_schedule }.freeze
+      SCHEDULES = %w[idle turn].freeze
+      DEFAULT_SCHEDULE = "turn"
 
       class << self
         # Read by literal key, so `chat_flags_spec`'s scan of what the CLI reads
@@ -23,13 +25,18 @@ module Lain
         # @return [CompactionProfile] nil for each flag not typed
         def typed(options)
           new(strategy: options[:compact_strategy], keep: options[:compact_keep], bytes: options[:compact_bytes],
-              cap: options[:compact_cap], fallback: options[:compact_fallback])
+              cap: options[:compact_cap], fallback: options[:compact_fallback],
+              schedule: options[:compact_schedule])
         end
 
+        # A header without the key predates the field, and that run scheduled on the turn.
+        #
         # @param record [Hash{String=>Object}] a session header record
-        # @return [CompactionProfile] nil for each key the header lacks
+        # @return [CompactionProfile] nil for each key the header lacks; schedule "turn" for a
+        #   non-empty header without the key, and every field nil for an empty one
         def from_header(record)
-          new(**FLAGS.to_h { |field, flag| [field, record[flag.to_s]] })
+          recorded = new(**FLAGS.to_h { |field, flag| [field, record[flag.to_s]] })
+          record.empty? || recorded.schedule ? recorded : recorded.with(schedule: "turn")
         end
       end
 
@@ -46,11 +53,15 @@ module Lain
       # @return [Hash{String=>Object}] the set fields, keyed as the header records them
       def to_header = to_options.transform_keys(&:to_s)
 
-      def initialize(strategy:, keep:, bytes:, cap:, fallback:)
-        super(strategy: strategy&.dup&.freeze, keep:, bytes:, cap:, fallback: fallback&.dup&.freeze)
+      # @return [String] the schedule that runs: typed, else recorded, else {DEFAULT_SCHEDULE}
+      def schedule_or_default = schedule || DEFAULT_SCHEDULE
+
+      def initialize(strategy:, keep:, bytes:, cap:, fallback:, schedule:)
+        super(strategy: strategy&.dup&.freeze, keep:, bytes:, cap:, fallback: fallback&.dup&.freeze,
+              schedule: schedule&.dup&.freeze)
       end
 
-      UNSET = new(strategy: nil, keep: nil, bytes: nil, cap: nil, fallback: nil)
+      UNSET = new(strategy: nil, keep: nil, bytes: nil, cap: nil, fallback: nil, schedule: nil)
     end
   end
 end

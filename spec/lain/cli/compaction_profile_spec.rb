@@ -8,13 +8,18 @@ RSpec.describe Lain::CLI::CompactionProfile do
       expect(typed).to have_attributes(keep: 8, strategy: "elide", bytes: nil, cap: nil, fallback: nil)
     end
 
+    it "reads the schedule flag" do
+      expect(described_class.typed({ compact_schedule: "turn" })).to have_attributes(schedule: "turn")
+    end
+
     it "is entirely unset for the options a chat with no compaction flag parses to" do
       expect(described_class.typed({ compact: true })).to eq(described_class::UNSET)
     end
   end
 
   it "is deeply frozen, so it stays shareable" do
-    expect(described_class.typed({ compact_strategy: +"elide", compact_fallback: +"none" })).to be_deeply_frozen
+    expect(described_class.typed({ compact_strategy: +"elide", compact_fallback: +"none",
+                                   compact_schedule: +"idle" })).to be_deeply_frozen
   end
 
   describe ".from_header" do
@@ -25,8 +30,16 @@ RSpec.describe Lain::CLI::CompactionProfile do
       expect(recorded).to have_attributes(strategy: "elide", keep: 4, fallback: "none", bytes: nil, cap: nil)
     end
 
-    it "is unset for a header that recorded no compaction arm" do
-      expect(described_class.from_header({ "provider" => "ollama" })).to eq(described_class::UNSET)
+    it "reads a recorded schedule" do
+      expect(described_class.from_header({ "compact_schedule" => "idle" })).to have_attributes(schedule: "idle")
+    end
+
+    it "reads a header older than the schedule field as having run on the turn" do
+      expect(described_class.from_header({ "provider" => "ollama" })).to have_attributes(schedule: "turn")
+    end
+
+    it "is unset for no header at all" do
+      expect(described_class.from_header({})).to eq(described_class::UNSET)
     end
   end
 
@@ -51,6 +64,20 @@ RSpec.describe Lain::CLI::CompactionProfile do
 
     it "is empty when nothing is set" do
       expect(described_class::UNSET.to_header).to eq({})
+    end
+  end
+
+  describe "#schedule_or_default" do
+    it "is the typed schedule, else the recorded one, else the default" do
+      recorded = described_class.from_header({ "compact_schedule" => "idle" })
+
+      expect(described_class.typed({ compact_schedule: "turn" }).over(recorded).schedule_or_default).to eq("turn")
+      expect(described_class::UNSET.over(recorded).schedule_or_default).to eq("idle")
+      expect(described_class::UNSET.schedule_or_default).to eq(described_class::DEFAULT_SCHEDULE)
+    end
+
+    it "defaults to a member of SCHEDULES" do
+      expect(described_class::SCHEDULES).to include(described_class::DEFAULT_SCHEDULE)
     end
   end
 

@@ -927,6 +927,7 @@ class LainCLI < Thor
     def self.declare(thor)
       history(thor)
       fallback(thor)
+      schedule(thor)
       strategy(thor)
       pipeline(thor)
       summarizer(thor)
@@ -956,6 +957,17 @@ class LainCLI < Thor
                                                   "the history before the current ask with one state document " \
                                                   "and answers the ask; none lets the refusal stand " \
                                                   "(default #{Backend::DEFAULT_COMPACT_FALLBACK}; #{INHERITED})"
+    end
+
+    # NO `default:`, for the strategy flag's reason below: an unset schedule
+    # must reach {Lain::CLI::CompactionProfile} as nil so a resume inherits it.
+    def self.schedule(thor)
+      profile = Lain::CLI::CompactionProfile
+      thor.method_option :compact_schedule, type: :string,
+                                            desc: "When a compaction runs (#{profile::SCHEDULES.join(", ")}): " \
+                                                  "idle prepares the cut while the human is away, turn " \
+                                                  "compacts at the next ask " \
+                                                  "(default #{profile::DEFAULT_SCHEDULE}; #{INHERITED})"
     end
 
     # HOW a compacted span collapses, its own method for the same reason

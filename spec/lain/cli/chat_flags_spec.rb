@@ -301,6 +301,18 @@ RSpec.describe "lain chat's flag surface" do
     end
   end
 
+  describe "--compact-schedule" do
+    it "parses to nil when unset, so a resume can inherit the recorded schedule" do
+      expect(parse.key?(:compact_schedule)).to be(false)
+    end
+
+    it "carries a typed name through and names every schedule in its help" do
+      expect(parse("--compact-schedule", "idle")[:compact_schedule]).to eq("idle")
+      expect(LainCLI.commands.fetch("chat").options.fetch(:compact_schedule).description)
+        .to include(*Lain::CLI::CompactionProfile::SCHEDULES)
+    end
+  end
+
   describe "--compact-strategy" do
     # TWO DIFFERENT CLAIMS, and the example this replaces conflated them into
     # one that asserted a broken shape.

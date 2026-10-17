@@ -557,6 +557,17 @@ RSpec.describe LainCLI do
     end
   end
 
+  describe "chat --compact-schedule" do
+    it "reaches the launch as a typed schedule" do
+      launch = instance_double(Lain::CLI::ChatLaunch, call: nil, exit_status: 0)
+      allow(Lain::CLI::ChatLaunch).to receive(:new).and_return(launch)
+
+      described_class.start(%w[chat --compact-schedule turn], debug: true)
+
+      expect(Lain::CLI::ChatLaunch).to have_received(:new).with(hash_including("compact_schedule" => "turn"), any_args)
+    end
+  end
+
   describe "chat --approval" do
     # The default lives on the launch option, not in Mode.new, so a chat starts
     # in auto while every Mode built directly keeps ask.

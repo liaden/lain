@@ -992,6 +992,20 @@ RSpec.describe Lain::CLI::Resume do
       expect(resume.call(compaction: typed).notices).to be_empty
     end
 
+    it "says a typed schedule disagrees with the recorded one" do
+      write_closed("20260101T000000-2.ndjson", chain("hi", "yo"), provider: "ollama",
+                                                                  compaction: { "compact_schedule" => "turn" })
+
+      expect(resume.call(compaction: typed(compact_schedule: "idle")).notices.join)
+        .to include("recorded with --compact-schedule turn; continuing with idle")
+    end
+
+    it "treats a header with no schedule as the turn: silent untyped, a notice when idle is typed" do
+      expect(resume.call(compaction: typed).notices).to be_empty
+      expect(resume.call(compaction: typed(compact_schedule: "idle")).notices.join)
+        .to include("recorded with --compact-schedule turn")
+    end
+
     it "answers an empty header for a session file that is gone" do
       expect(resume.recorded_header("/nope/none.ndjson")).to eq({})
     end

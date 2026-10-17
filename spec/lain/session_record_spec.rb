@@ -140,6 +140,12 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("session").first).to include("compact_fallback" => "handoff", "compact_strategy" => "elide")
   end
 
+  it "writes a compact_schedule into that same section" do
+    described_class.new(journal:, context:, toolset:, workspace:, compaction: { "compact_schedule" => "idle" })
+
+    expect(of_type("session").first).to include("compact_schedule" => "idle")
+  end
+
   it "writes no compact_strategy key when the run recorded no strategy" do
     described_class.new(journal:, context:, toolset:, workspace:, compaction: { "compact_fallback" => "handoff" })
 

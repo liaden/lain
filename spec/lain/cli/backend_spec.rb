@@ -1664,7 +1664,42 @@ RSpec.describe Lain::CLI::Backend do
 
       it "records the arm in the session header's compaction section" do
         expect(compacting_backend(compact_fallback: "none").compaction_header)
-          .to eq("compact_fallback" => "none")
+          .to eq("compact_fallback" => "none", "compact_schedule" => "turn")
+      end
+
+      describe "--compact-schedule" do
+        it "runs the default schedule when nothing was typed, and the header says so" do
+          backend = compacting_backend
+
+          expect(backend.compaction_schedule).to eq(Lain::CLI::CompactionProfile::DEFAULT_SCHEDULE)
+          expect(backend.compaction_header).to include("compact_schedule" => backend.compaction_schedule)
+        end
+
+        it "runs a typed schedule and records it" do
+          backend = compacting_backend(compact_schedule: "idle")
+
+          expect(backend.compaction_schedule).to eq("idle")
+          expect(backend.compaction_header).to include("compact_schedule" => "idle")
+        end
+
+        it "refuses an unknown name, naming idle and turn" do
+          expect { compacting_backend(compact_schedule: "nightly").refuse_compaction_flags! }
+            .to raise_error(Lain::CLI::Backend::UnknownSchedule, /--compact-schedule "nightly".*idle, turn/m)
+        end
+
+        it "answers turn and records no schedule under --no-compact, typed or not" do
+          [{}, { compact_schedule: "idle" }].each do |typed|
+            backend = compacting_backend(compact: false, **typed)
+
+            expect(backend.compaction_schedule).to eq("turn")
+            expect(backend.compaction_header).not_to have_key("compact_schedule")
+          end
+        end
+
+        it "still refuses keep and strategy under --no-compact exactly as before" do
+          expect(compacting_backend(compact: false, compact_keep: 0, compact_schedule: "idle")
+            .refuse_compaction_flags!).to be_nil
+        end
       end
 
       # An unset flag and a default are different things: a header naming the
@@ -1672,7 +1707,7 @@ RSpec.describe Lain::CLI::Backend do
       it "records no compaction key for a flag nobody typed, while still using the shipped default" do
         backend = compacting_backend
 
-        expect(backend.compaction_header).to eq({})
+        expect(backend.compaction_header).to eq("compact_schedule" => "turn")
         expect(backend.compaction).to eq(Lain::CLI::CompactionProfile::UNSET)
         expect(backend.pipeline_source(cache_profile: profile, journal:).instance_variable_get(:@derived).keep_last)
           .to eq(described_class::DEFAULT_KEEP_LAST)
@@ -1685,7 +1720,7 @@ RSpec.describe Lain::CLI::Backend do
       # "summarizing" rather than collapsing into it.
       it "also records a named --compact-strategy and the knobs typed, verbatim" do
         expect(compacting_backend(compact_strategy: "elide", compact_keep: 4).compaction_header)
-          .to eq("compact_strategy" => "elide", "compact_keep" => 4)
+          .to eq("compact_strategy" => "elide", "compact_keep" => 4, "compact_schedule" => "turn")
       end
 
       it "takes the arm from a compaction profile handed in, over what the options say" do
@@ -1696,7 +1731,8 @@ RSpec.describe Lain::CLI::Backend do
         expect(fallback_of(backend)).to be(Lain::Compaction::Source::Fallback::None)
         expect(backend.pipeline_source(cache_profile: profile,
                                        journal:).instance_variable_get(:@derived).keep_last).to eq(4)
-        expect(backend.compaction_header).to eq("compact_keep" => 4, "compact_fallback" => "none")
+        expect(backend.compaction_header).to eq("compact_keep" => 4, "compact_fallback" => "none",
+                                                "compact_schedule" => "turn")
       end
 
       # Built on FIRST USE. A chat that never hands off must not open a second

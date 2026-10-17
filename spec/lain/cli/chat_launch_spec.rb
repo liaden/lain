@@ -179,7 +179,8 @@ RSpec.describe Lain::CLI::ChatLaunch do
       "--compact-keep 0" => [{ compact_keep: 0 }, /--compact-keep 0/],
       "--compact-keep -1" => [{ compact_keep: -1 }, /--compact-keep -1/],
       "--compact-strategy elide+summarizing" => [{ compact_strategy: "elide+summarizing" },
-                                                 /--compact-strategy "elide\+summarizing"/]
+                                                 /--compact-strategy "elide\+summarizing"/],
+      "--compact-schedule nightly" => [{ compact_schedule: "nightly" }, /--compact-schedule "nightly".*idle, turn/]
     }.each do |flag, (options, message)|
       it "refuses #{flag} by name before any journal is opened" do
         chronicle_factory = spy("chronicle_factory")
@@ -798,6 +799,29 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
       .to have_attributes(strategy: "elide-tools+summarize-conversation", keep: 4)
     expect(launch.call({ compact_keep: 8 }).compaction).to have_attributes(keep: 8,
                                                                            strategy: recorded["compact_strategy"])
+  end
+
+  describe "the compaction schedule" do
+    def schedule_for(typed, recorded)
+      point = Lain::CLI::ForkPoint::Point.new(path: "/sessions/parent.ndjson", digest: "blake3:abc123")
+      resolver = instance_double(Lain::CLI::Resume, fork_point: point, recorded_header: recorded)
+      described_class.new({ fork: "@abc123", journal: false, max_tokens: 16, provider: "ollama", **typed },
+                          resume_factory: -> { resolver }).backend.compaction_schedule
+    end
+
+    it "is the default for a fresh chat" do
+      expect(described_class.new({ journal: false, max_tokens: 16, provider: "ollama" }).backend.compaction_schedule)
+        .to eq(Lain::CLI::CompactionProfile::DEFAULT_SCHEDULE)
+    end
+
+    it "inherits the recorded schedule, and a typed flag wins" do
+      expect(schedule_for({}, { "compact_schedule" => "idle" })).to eq("idle")
+      expect(schedule_for({ compact_schedule: "turn" }, { "compact_schedule" => "idle" })).to eq("turn")
+    end
+
+    it "treats a recording older than the field as the turn" do
+      expect(schedule_for({}, { "provider" => "ollama" })).to eq("turn")
+    end
   end
 
   it "hands the resolver the compaction flags the human typed, to be compared with the recording" do

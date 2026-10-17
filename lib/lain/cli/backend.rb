@@ -114,6 +114,10 @@ module Lain
       # should have been kept.
       class UnknownFallback < Error; end
 
+      # A `--compact-schedule` outside {CompactionProfile::SCHEDULES}, refused
+      # before the journal opens.
+      class UnknownSchedule < Error; end
+
       # A `--compact-keep` that {Compaction.validate_keep_last} refuses, said in
       # the flag's name: its own ArgumentError names no flag.
       class InvalidKeep < Error; end
@@ -166,12 +170,13 @@ module Lain
       # @param compaction [CompactionProfile] the compaction arm, each field nil
       #   until said. Left out, it is read off `options`; a resumed chat hands in
       #   what it typed laid over the recording, and {#compaction_header} then
-      #   records only what is set.
+      #   records what is set, plus the schedule that runs.
       # @param middleware [Config::Middleware] what the user's and the
       #   project's config.rb registered, read once by {ChatLaunch}; empty for
       #   every command without a chat, so a bench arm never changes with the
       #   home directory
       # @param paths [Paths] where the epic home resolves its state directory
+      # @param environment [Prompt::Environment] rendered into the system prompt; none renders nothing
       # @option options [String] :provider name of the chat tier's provider
       # @option options [String] :model model id for the chat tier
       # @option options [String] :api_base base URL override, ollama only
@@ -187,10 +192,10 @@ module Lain
       # @option options [Integer] :compact_cap hard ceiling a compaction must reach
       # @option options [Integer] :compact_keep turns held back from collapsing
       # @option options [String] :compact_fallback what happens when no cut can make room
+      # @option options [String] :compact_schedule when a compaction runs, idle or turn
       # @option options [String] :summarizer_provider provider for the summarizer tier
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
-      # @param environment [Prompt::Environment] rendered into the system prompt; none renders nothing
       def initialize(options, root:, profile: RunProfile.from_options(options),
                      compaction: CompactionProfile.typed(options), middleware: Config::Middleware.empty,
                      paths: Paths.new, environment: Prompt::Environment.none)
@@ -582,13 +587,19 @@ module Lain
         return unless compaction?
 
         refuse_keep! if @compaction.keep
+        refuse_schedule!
         refuse_strategy_spelling! if @compaction.strategy
       end
 
+      # @return [String] "turn" under --no-compact, else the profile's schedule_or_default
+      def compaction_schedule = compaction? ? @compaction.schedule_or_default : CompactionProfile::DEFAULT_SCHEDULE
+
       # The compaction section of the session header: the arm this run was handed, said
       # or inherited, so a resume can render under it and a bench can group runs by it. Only a
-      # set field is written -- an unset flag is not "the default", it is the
-      # absence a later resume must be able to tell from a choice; and an unset
+      # set field is written, except the schedule that runs, which is always
+      # written so a journal without the key dates from before the field and
+      # ran on the turn. Any other unset flag is not "the default", it is the
+      # absence a later resume must be able to tell from a choice; an unset
       # `compact_strategy` in particular is the run's own eager tool-result
       # tier, the comparability axis's CONTROL arm, which a reader normalizes
       # from the absence.
@@ -599,7 +610,10 @@ module Lain
       # just to check a string this one already checks for real.
       #
       # @return [Hash{String=>Object}]
-      def compaction_header = @compaction.to_header
+      def compaction_header
+        header = @compaction.to_header.except("compact_schedule")
+        compaction? ? header.merge("compact_schedule" => compaction_schedule) : header
+      end
 
       # The run's ONE {Skill::Library} -- the project's skills and the prompt
       # slots they render through, read once. Owned HERE because {#context}
@@ -644,6 +658,13 @@ module Lain
         Compaction.validate_keep_last(@compaction.keep)
       rescue ArgumentError, TypeError
         raise InvalidKeep, "--compact-keep #{@compaction.keep.inspect} must be a positive integer"
+      end
+
+      def refuse_schedule!
+        return if CompactionProfile::SCHEDULES.include?(@compaction.schedule_or_default)
+
+        raise UnknownSchedule, "--compact-schedule #{@compaction.schedule.inspect} is not one of " \
+                               "#{CompactionProfile::SCHEDULES.join(", ")}"
       end
 
       # A tier that only satisfies the resolver's duck: the spelling is judged
