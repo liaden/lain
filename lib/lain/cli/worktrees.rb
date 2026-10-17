@@ -72,7 +72,8 @@ module Lain
 
       def reaper(repo, journal)
         @gc_factory.call(repo_root: repo, root: IsolationBackend.worktree_root(repo, paths: @paths),
-                         retain_days: @config.call(root: @root).isolation.retain_days, journal:)
+                         retain_days: @config.call(root: @root).isolation.retain_days, journal:,
+                         trunk: Isolation::Checkout.new(repo).trunk)
       end
 
       def journaled(repo)

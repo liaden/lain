@@ -58,6 +58,17 @@ module Lain
         Shell::Out.ok?(shell) ? shell.stdout.strip : ""
       end
 
+      # The branch landed work is judged against. A repo that never had a
+      # `main` is not one lain should silently reap nothing from, so the
+      # remote's HEAD and the configured default come first, then the two
+      # conventional names; with none of them present the answer is
+      # {WorkingBranch::TRUNK}, which matches nothing and so reaps nothing.
+      # @return [String]
+      def trunk
+        candidates = [remote_head, configured_default, WorkingBranch::TRUNK, "master"].reject(&:empty?)
+        candidates.find { |name| !target("refs/heads/#{name}").empty? } || WorkingBranch::TRUNK
+      end
+
       # Every shape of "git is half way through something", which is not the
       # same question as {#merging?} and was measured not to be: a conflicted
       # rebase, a cherry-pick, a revert and a bisect all answer `false` there,
@@ -128,6 +139,16 @@ module Lain
       def unresolved(paths) = paths.select { |path| read(path).match?(CONFLICTED) }
 
       private
+
+      def remote_head
+        shell = run("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+        Shell::Out.ok?(shell) ? shell.stdout.strip.delete_prefix("refs/remotes/origin/") : ""
+      end
+
+      def configured_default
+        shell = run("config", "--get", "init.defaultBranch")
+        Shell::Out.ok?(shell) ? shell.stdout.strip : ""
+      end
 
       def failure(args, shell)
         "git #{args.first} failed in #{@dir} (exit #{shell.exitstatus}): #{shell.stderr.strip}"

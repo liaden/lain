@@ -112,6 +112,26 @@ RSpec.describe Lain::Isolation::Gc, :seam do
       expect(summary(record_for(records, "refs/lain/worker/w1"))).to eq([:reaped, :anchor, "folded into feat"])
     end
 
+    it "reaps a worktree landed on master when the probed trunk is passed" do
+      run_git(@repo_root, "branch", "-M", "master")
+      dir = landed_lease("w1", base: branch("master"))
+      trunk = Lain::Isolation::Checkout.new(@repo_root).trunk
+      records = described_class.new(repo_root: @repo_root, root: @root, retain_days: 7, clock: -> { now },
+                                    journal: [], trunk:).call
+
+      expect(summary(record_for(records, dir))).to eq([:reaped, :worktree, "landed on master"])
+    end
+
+    it "calls nothing landed when no trunk branch exists" do
+      run_git(@repo_root, "branch", "-M", "feature")
+      dir = landed_lease("w1", base: branch("feature"))
+      trunk = Lain::Isolation::Checkout.new(@repo_root).trunk
+      records = described_class.new(repo_root: @repo_root, root: @root, retain_days: 7, clock: -> { now },
+                                    journal: [], trunk:).call
+
+      expect(record_for(records, dir).reason).not_to include("landed on")
+    end
+
     it "calls work reachable from main landed" do
       dir = landed_lease("w1")
 

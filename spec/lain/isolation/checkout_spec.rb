@@ -31,6 +31,37 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
     end
   end
 
+  describe "#trunk" do
+    def rename_to(name) = run_git("branch", "-M", name)
+
+    it "names the branch origin/HEAD points at" do
+      rename_to("develop")
+      run_git("update-ref", "refs/remotes/origin/develop", "HEAD")
+      run_git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+
+      expect(checkout.trunk).to eq("develop")
+    end
+
+    it "names init.defaultBranch when that branch exists" do
+      rename_to("trunk")
+      run_git("config", "init.defaultBranch", "trunk")
+
+      expect(checkout.trunk).to eq("trunk")
+    end
+
+    it "finds a repo whose only trunk is master" do
+      rename_to("master")
+
+      expect(checkout.trunk).to eq("master")
+    end
+
+    it "falls back to main when nothing names a trunk" do
+      rename_to("feature")
+
+      expect(checkout.trunk).to eq(Lain::Isolation::WorkingBranch::TRUNK)
+    end
+  end
+
   describe "#update_ref" do
     it "writes a ref only over the value it expects, and stamps its reflog" do
       head = run_git("rev-parse", "HEAD")

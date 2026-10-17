@@ -123,6 +123,19 @@ RSpec.describe Lain::CLI::Worktrees do
       .to raise_error(Lain::Error, /lain worktrees gc stops its repository search at \$HOME/)
   end
 
+  it "hands the reaper the trunk it found, not an assumed main", :seam do
+    Dir.mktmpdir("lain-worktrees-trunk") do |dir|
+      repo = File.realpath(dir)
+      FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", repo)
+      SeedRepo.git(repo, "branch", "-M", "master")
+      seen = {}
+
+      worktrees(gc_factory: reaper([], seen), root: repo).gc
+
+      expect(seen).to include(trunk: "master")
+    end
+  end
+
   # The reaper and the chat backend must agree on where a repository's
   # worktrees live, or the reaper would sweep an empty directory forever.
   it "reaps under the very root a chat leases its workers from", :seam do
