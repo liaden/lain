@@ -132,6 +132,28 @@ RSpec.describe Lain::Config::Builder do
         .to raise_error(Lain::Config::Refusal, /config\.rb:2: /)
     end
 
+    it "refuses an unknown gate policy at the gate's own line" do
+      expect { build("epics do\n  gate :research, :hands_off\n  gate :epic_plan, :bogus\nend\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:3: /)
+    end
+
+    it "names the line that opened an unclosed block" do
+      expect { build("epics do\n  a\n  b\n  c\n  d\n  e\n") }
+        .to raise_error(Lain::Config::Refusal) { |error| expect(error.message).to start_with("#{path}:1: ") }
+    end
+
+    {
+      "an unterminated string" => ["\nshell exclude: \"curl\n\nsearch\n", 2],
+      "an unclosed call after a clean line" => ["a = foo(1,\nb = 2\n", 1],
+      "an unclosed paren followed by a stray bracket" => ["x = (1\ny = 2\nz = ]\n", 1],
+      "an unclosed paren beside an unrelated error" => ["x = (1\ny = 2\nz = = 3\n", 1]
+    }.each do |label, (source, line)|
+      it "names the line that opened #{label}" do
+        expect { build(source) }
+          .to raise_error(Lain::Config::Refusal) { |error| expect(error.message).to start_with("#{path}:#{line}: ") }
+      end
+    end
+
     it "translates Ruby's own argument error into a refusal at the user's line" do
       expect { build("\nisolation 3\n") }.to raise_error(Lain::Config::Refusal, /config\.rb:2: /)
     end

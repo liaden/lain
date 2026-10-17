@@ -72,7 +72,7 @@ module Lain
       rescue Refusal
         raise
       rescue ScriptError, StandardError => e
-        raise translated(DslCatalog.refusal_message(e, path), path)
+        raise translated(DslCatalog.refusal_message(e, path, source), path)
       end
 
       def self.translated(message, path)
@@ -212,6 +212,7 @@ module Lain
 
         gates = calls.each_with_object({}) do |call, seen|
           stage, policy = gate_pair(call)
+          Epics::Gates.from(shaped({ stage => policy }), path: located_at(call.line))
           if seen.key?(stage)
             refuse("declares gate #{stage.inspect} twice", line: call.line, table: Epics::Gates::TABLE,
                                                            key: stage.to_s)

@@ -72,7 +72,7 @@ module Lain
       evaluator.build(source, path)
     # NoMethodError is a NameError, so naming it too would only shadow it.
     rescue ScriptError, ArgumentError, NameError => e
-      raise Error, refusal_message(e, path)
+      raise Error, refusal_message(e, path, source)
     end
     private_class_method :read
 
@@ -84,13 +84,57 @@ module Lain
     # arguments stamped.
     # @param error [Exception] what the evaluated file raised
     # @param path [String] the file evaluated
+    # @param source [String, nil] its text, to find where a syntax error began
     # @return [String] the message, led by `path:line` where one is known
-    def self.refusal_message(error, path)
-      return error.message if error.message.start_with?("#{path}:")
+    def self.refusal_message(error, path, source = nil)
+      return syntax_headline(error, path, source) if error.message.start_with?("#{path}:")
 
       frame = Array(error.backtrace).find { |line| line.start_with?("#{path}:") }
       frame ? "#{frame[/\A#{Regexp.escape(path)}:\d+/]}: #{error.message}" : "#{path}: #{error.message}"
     end
+
+    # Ruby reports an unbalanced block, string or bracket where the file ENDED,
+    # and Prism flags a closer-less string or bracket at EOF only. The line to
+    # fix is the earliest of Prism's error lines and the lines of openers the
+    # token stream never closed.
+    def self.syntax_headline(error, path, source)
+      return error.message unless error.is_a?(SyntaxError) && source
+
+      lexed = Prism.lex(source)
+      lines = lexed.errors.map { |e| e.location.start_line } + unclosed_lines(lexed)
+      lines.empty? ? error.message : error.message.sub(/\A#{Regexp.escape(path)}:\d+/, "#{path}:#{lines.min}")
+    end
+    private_class_method :syntax_headline
+
+    # Keyword blocks need no help here: Prism names their opener itself. A
+    # closer pairs only with its own kind of opener, so a stray `]` cannot
+    # hide an unclosed `(`.
+    def self.unclosed_lines(lexed)
+      lexed.value.each_with_object([]) do |(token, _), stack|
+        type = token.type.to_s
+        stack << [family(type), token.location.start_line] if opener?(type)
+        stack.pop if closer?(type) && stack.last&.first == family(type)
+      end.map(&:last)
+    end
+    private_class_method :unclosed_lines
+
+    def self.opener?(type)
+      type.end_with?("_LEFT", "_BEGIN", "_LEFT_ARRAY", "_PARENTHESES") || type.start_with?("PERCENT_")
+    end
+
+    # `end` and a heredoc terminator are `_END` too, and close nothing in this stack.
+    def self.closer?(type) = type.end_with?("_RIGHT", "_END") && !type.start_with?("KEYWORD_", "HEREDOC_")
+
+    def self.family(type)
+      case type
+      when /\APARENTHESIS_/ then :paren
+      when /\ABRACKET_/ then :bracket
+      when /\A(BRACE_|LAMBDA_BEGIN)/ then :brace
+      when /\AEMBEXPR_/ then :embexpr
+      else :quote
+      end
+    end
+    private_class_method :opener?, :closer?, :family
 
     # Frozen at both levels: a session-fixed SNAPSHOT, not a mutable registry
     # something can register into after load.

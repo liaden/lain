@@ -241,6 +241,18 @@ RSpec.describe Lain::DslCatalog do
         end
       end
 
+      it "headlines an unclosed block at the line that opened it, not the end of the file" do
+        Dir.mktmpdir("lain-dsl-catalog-unclosed") do |root|
+          path = File.join(root, ".lain", "summarizers.rb")
+          FileUtils.mkdir_p(File.dirname(path))
+          File.write(path, "summarizer \"x\" do\n  a\n  b\n  c\n  d\n  e\n")
+          trust_project(root)
+
+          expect { Lain::Summarizer::Catalog.load(root:) }
+            .to raise_error(Lain::Error, /\A#{Regexp.escape(path)}:1: /)
+        end
+      end
+
       it "names path:line from a real bad-keyword raise inside a Services DSL file" do
         Dir.mktmpdir("lain-dsl-catalog-services") do |root|
           path = File.join(root, ".lain", "services.rb")
