@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
-# Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/tokens.rb, verbatim
-# apart from RubyLLM:: -> Lain::Provider::HTTP::. Not in the porting brief's
+# Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/tokens.rb. Changed:
+# RubyLLM:: -> Lain::Provider::HTTP::, and the `reasoning` spelling of thinking
+# (the kwarg and the three alias readers) is deleted, since every builder here
+# speaks `thinking`. Not in the porting brief's
 # file list, but Message#initialize and StreamAccumulator#to_message both
 # build one -- see docs/porting-providers.md.
 
@@ -14,18 +16,18 @@ module Lain
       class Tokens
         attr_reader :input, :output, :cached, :cache_creation, :thinking
 
-        def initialize(input: nil, output: nil, cached: nil, cache_creation: nil, thinking: nil, reasoning: nil)
+        def initialize(input: nil, output: nil, cached: nil, cache_creation: nil, thinking: nil)
           @input = input
           @output = output
           @cached = cached
           @cache_creation = cache_creation
-          @thinking = thinking || reasoning
+          @thinking = thinking
         end
 
-        def self.build(input: nil, output: nil, cached: nil, cache_creation: nil, thinking: nil, reasoning: nil)
-          return nil if [input, output, cached, cache_creation, thinking, reasoning].all?(&:nil?)
+        def self.build(input: nil, output: nil, cached: nil, cache_creation: nil, thinking: nil)
+          return nil if [input, output, cached, cache_creation, thinking].all?(&:nil?)
 
-          new(input:, output:, cached:, cache_creation:, thinking:, reasoning:)
+          new(input:, output:, cached:, cache_creation:, thinking:)
         end
 
         def to_h
@@ -36,18 +38,6 @@ module Lain
             cache_creation_tokens: cache_creation,
             thinking_tokens: thinking
           }.compact
-        end
-
-        def reasoning
-          thinking
-        end
-
-        def cache_read
-          cached
-        end
-
-        def cache_write
-          cache_creation
         end
       end
     end

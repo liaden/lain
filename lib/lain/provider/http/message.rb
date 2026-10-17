@@ -10,6 +10,10 @@
 # `#normalize_content`'s Hash branch dropped the second `Content.new` argument
 # now that Content is text-only; upstream passed the whole Hash through as an
 # attachments list.
+#
+# `#tool_results`, `#cache_read_tokens`, `#cache_write_tokens` and
+# `#reasoning_tokens` are deleted: aliases of other readers that nothing here
+# called.
 
 module Lain
   class Provider
@@ -41,7 +45,7 @@ module Lain
         def initialize(options = {})
           @role = options.fetch(:role).to_sym
           @tool_calls = options[:tool_calls]
-          @content = normalize_content(options.fetch(:content), role: @role, tool_calls: @tool_calls)
+          @content = normalize_content(options.fetch(:content), role: @role)
           @model_id = options[:model_id]
           @tool_call_id = options[:tool_call_id]
           @tokens = options[:tokens] || build_tokens(options)
@@ -56,15 +60,11 @@ module Lain
         end
 
         def tool_call?
-          !tool_calls.nil? && !tool_calls.empty?
+          tool_calls.present?
         end
 
         def tool_result?
-          !tool_call_id.nil? && !tool_call_id.empty?
-        end
-
-        def tool_results
-          content if tool_result?
+          tool_call_id.present?
         end
 
         def input_tokens
@@ -83,19 +83,7 @@ module Lain
           tokens&.cache_creation
         end
 
-        def cache_read_tokens
-          tokens&.cache_read
-        end
-
-        def cache_write_tokens
-          tokens&.cache_write
-        end
-
         def thinking_tokens
-          tokens&.thinking
-        end
-
-        def reasoning_tokens
           tokens&.thinking
         end
 
@@ -123,7 +111,6 @@ module Lain
         # @option options [Integer, nil] :cached_tokens tokens served from cache
         # @option options [Integer, nil] :cache_creation_tokens tokens written to cache
         # @option options [Integer, nil] :thinking_tokens extended-thinking tokens
-        # @option options [Integer, nil] :reasoning_tokens reasoning tokens
         # @return [Tokens, nil] nil when every count is absent
         def build_tokens(options)
           Tokens.build(
@@ -131,13 +118,12 @@ module Lain
             output: options[:output_tokens],
             cached: options[:cached_tokens],
             cache_creation: options[:cache_creation_tokens],
-            thinking: options[:thinking_tokens],
-            reasoning: options[:reasoning_tokens]
+            thinking: options[:thinking_tokens]
           )
         end
 
-        def normalize_content(content, role:, tool_calls:)
-          return "" if role == :assistant && content.nil? && tool_calls && !tool_calls.empty?
+        def normalize_content(content, role:)
+          return "" if role == :assistant && content.nil? && tool_call?
 
           case content
           when String then Content.new(content)
