@@ -94,6 +94,7 @@ class SurveyCommandEditor
   def review_surface = @surface
   def review_view = @view
   def bind_changeset_review(review) = @bound = review
+  def held_review_notes = 0
 end
 
 RSpec.describe Lain::CLI::Command::Survey do
@@ -543,8 +544,8 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect { outbox.submit(executor: instance_double(Lain::Forge::Gh)) }.to raise_error(
         Lain::Review::Submit::Outbox::Nowhere,
         "this review was opened on #{label}, which has no pull request to post a review " \
-        "to -- the annotations and the verdict are on the journal either way. Run `/review <pull-request>` " \
-        "against the pull request itself to post one."
+        "to -- the verdict and the handed-back annotations are on the journal either way. " \
+        "Run `/review <pull-request>` against the pull request itself to post one."
       )
     end
 

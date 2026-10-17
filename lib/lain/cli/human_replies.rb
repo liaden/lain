@@ -181,7 +181,7 @@ module Lain
       # Where a changeset is drawn, and the rendering its gestures resolve
       # through -- threaded into {Tools::RequestReview} as thunks, because the
       # tool is built before this is bound.
-      delegate :review_surface, :review_view, to: :review_editor
+      delegate :review_surface, :review_view, :held_review_notes, to: :review_editor
 
       # Hold a review open for the editor's `done` gesture to settle -- see
       # {Reviews#bind}, which is where the keying rule lives.

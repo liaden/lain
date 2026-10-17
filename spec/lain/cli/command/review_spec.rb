@@ -75,7 +75,12 @@ class ReviewCommandEditor
     @surface = surface || Lain::Review::Surface::Text.new(sink:)
   end
 
-  attr_reader :bound, :inlet
+  attr_reader :bound, :inlet, :asked
+  attr_writer :held_notes
+
+  def held_review_notes
+    (@asked = @asked.to_i + 1) && (@held_notes || 0)
+  end
 
   def review_surface = @surface
   def review_view = @view
@@ -625,6 +630,54 @@ RSpec.describe Lain::CLI::Command::Review do
       command.call("feature", env)
 
       expect(outbox.target).to eq("branch feature")
+    end
+  end
+
+  # Notes live in the editor until `:LainNoteDone`, so the command asks the
+  # editor rather than the journal, and asks only when a round is already open.
+  describe "an open round whose editor still holds notes" do
+    def journaled = record.string.lines.size
+
+    it "refuses with the verdict's own remedy and journals nothing" do
+      attached
+      command.call("feature", env)
+      held = editor.bound
+      before = journaled
+      editor.held_notes = 3
+
+      expect { command.call("feature", env) }
+        .to raise_error(Lain::Error, "3 notes not handed back -- :LainNoteDone first")
+      expect(journaled).to eq(before)
+      expect(editor.bound).to equal(held)
+    end
+
+    it "says note in the singular for 1" do
+      attached
+      command.call("feature", env)
+      editor.held_notes = 1
+
+      expect { command.call("feature", env) }
+        .to raise_error(Lain::Error, "1 note not handed back -- :LainNoteDone first")
+    end
+
+    it "opens the 2nd round once the editor holds none" do
+      attached
+      command.call("feature", env)
+      editor.held_notes = 0
+
+      expect(command.call("feature", env)).to include("branch feature")
+    end
+
+    it "does not ask the editor when no round is open" do
+      attached
+
+      command.call("feature", env)
+
+      expect(editor.asked).to be_nil
+    end
+
+    it "refuses in a chat with no editor attached, before it could ask about notes" do
+      expect { command.call("feature", env) }.to raise_error(Lain::Error, a_string_including("editor"))
     end
   end
 
@@ -1207,6 +1260,21 @@ RSpec.describe Lain::CLI::Command::Review do
   describe "the sidebar a real nvim draws", :nvim, :seam do
     around { |example| headless_editor("lain-review-cmd") { example.run } }
 
+    def place_held_note(index)
+      inspector.exec_lua(<<~LUA, ["held-note-#{index}.txt"])
+        local buf = vim.api.nvim_create_buf(true, false)
+        vim.api.nvim_buf_set_name(buf, ...)
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "one", "two", "three" })
+        vim.bo[buf].modified = false
+        vim.b[buf].lain_review_side = "new"
+        vim.b[buf].lain_review_revision = "abc"
+        vim.b[buf].lain_review_path = "a.rb"
+        vim.api.nvim_set_current_buf(buf)
+        vim.api.nvim_win_set_cursor(0, { 2, 0 })
+        vim.cmd("LainNote note fix this")
+      LUA
+    end
+
     def sidebar_lines
       inspector.exec_lua(<<~LUA, [])
         local buf = vim.fn.bufnr("lain://review")
@@ -1225,6 +1293,33 @@ RSpec.describe Lain::CLI::Command::Review do
         command.call("feature", env)
 
         wait_until(reason: "lain://review carried the changeset") { sidebar_lines.grep(/README/).any? }
+      end
+    end
+
+    it "answers 2 asks sent at once with the right count each, and the session stays live" do
+      frontend = Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket)
+
+      frontend.run do
+        3.times { |n| place_held_note(n) }
+
+        counts = Array.new(2) { Thread.new { frontend.held_review_notes } }.map(&:value)
+
+        expect(counts).to eq([3, 3])
+        expect(frontend.held_review_notes).to eq(3)
+      end
+    end
+
+    it "refuses a 2nd /review while the editor holds placed notes" do
+      frontend = Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket)
+
+      frontend.run do
+        replies.bind_editor(frontend.command_inbox)
+        replies.bind_review_editor(frontend)
+        command.call("feature", env)
+        2.times { |n| place_held_note(n) }
+
+        expect { command.call("feature", env) }
+          .to raise_error(Lain::Error, "2 notes not handed back -- :LainNoteDone first")
       end
     end
   end

@@ -418,31 +418,33 @@ end
 
 -- Reads the same three stores `settled` gathers from, but never raises and
 -- never moves an entry: a verdict gate has to answer while a buffer is unsaved.
--- The path goes last, the unbounded field.
-function review_notes.first_blocker()
+function review_notes.held()
   local found = {}
   for _, note in ipairs(review_notes.harvested) do
-    if note.wire.kind == "blocker" then
-      found[#found + 1] = { seq = note.seq, path = note.wire.path, line = note.wire.line }
-    end
+    found[#found + 1] = { seq = note.seq, kind = note.wire.kind, path = note.wire.path, line = note.wire.line }
   end
   for buf, live in pairs(review_notes.by_buf) do
     for _, note in ipairs(live) do
-      if note.kind == "blocker" then
-        local position = vim.api.nvim_buf_is_valid(buf)
-          and vim.api.nvim_buf_get_extmark_by_id(buf, review_notes.namespace(), note.id, {})
-          or {}
-        found[#found + 1] = { seq = note.seq, path = note.path, line = (position[1] or note.row) + 1 }
-      end
+      local position = vim.api.nvim_buf_is_valid(buf)
+        and vim.api.nvim_buf_get_extmark_by_id(buf, review_notes.namespace(), note.id, {})
+        or {}
+      found[#found + 1] = { seq = note.seq, kind = note.kind, path = note.path, line = (position[1] or note.row) + 1 }
     end
   end
   for _, placement in pairs(review_notes.reserved) do
-    if placement.kind == "blocker" then
-      found[#found + 1] = { seq = placement.seq, path = placement.path, line = placement.row + 1 }
-    end
+    found[#found + 1] = { seq = placement.seq, kind = placement.kind, path = placement.path, line = placement.row + 1 }
   end
   table.sort(found, function(x, y) return x.seq < y.seq end)
-  return found[1] and (found[1].path .. ":" .. found[1].line) or nil
+  return found
+end
+
+function review_notes.first_blocker()
+  for _, note in ipairs(review_notes.held()) do
+    if note.kind == "blocker" then
+      return note.path .. ":" .. note.line
+    end
+  end
+  return nil
 end
 
 -- A PLACE IN LINE, TAKEN BEFORE THERE IS A NOTE TO PUT IN IT.
@@ -599,6 +601,10 @@ end
 -- Drafted counts too: a pane's reservation is a note its human has not finished.
 function _G.__lain.review_notes_blocker()
   return review_notes.first_blocker()
+end
+
+function _G.__lain.review_notes_unhanded()
+  return #review_notes.held()
 end
 
 function _G.__lain.review_notes_held(buf)

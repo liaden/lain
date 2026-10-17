@@ -254,6 +254,7 @@ module Lain
         def opened(parsed, env, policy:)
           surface = env.replies.review_surface or raise Error, NO_EDITOR
           refuse_over_survey!
+          refuse_over_held_notes!(env)
           Lain::Review::Surface.check!(surface)
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
           resolved = resolved_target(parsed)
@@ -323,6 +324,16 @@ module Lain
           return unless @outbox.held_source == Survey.source_name && @outbox.held_verdict.empty?
 
           raise Error, format(SURVEY_OPEN, target: @outbox.target)
+        end
+
+        # Notes the editor still holds are not on the journal, and a new round
+        # would leave them with no review to be handed back to. Asked only over
+        # an open round: a first review has nothing to strand.
+        def refuse_over_held_notes!(env)
+          return unless @outbox.open?
+
+          held = env.replies.held_review_notes
+          raise Error, "#{held} #{"note".pluralize(held)} not handed back -- :LainNoteDone first" if held.positive?
         end
 
         # Everything that must be complete before a human can touch the sidebar:

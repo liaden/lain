@@ -192,6 +192,15 @@ end, {
 -- argument takes the same path for the same reason: `""` is a verdict lain does
 -- not have, and lain says so, naming the ones it does.
 --
+-- Scheduled because a request issued inside the handler of a notify nests: two
+-- asks outstanding answer out of order and nvim drops the channel. It lives here
+-- and not beside the notes in 48 because annotate_spec forbids vim.schedule there.
+function _G.__lain.review_notes_ask(token)
+  vim.schedule(function()
+    pcall(vim.rpcrequest, chan, "lain_command", "review_notes_counted", token, _G.__lain.review_notes_unhanded())
+  end)
+end
+
 -- ANSWERED, unlike every other gesture in this module: the request's return leg
 -- IS lain's verdict on the write, and a refusal arrives as the request's ERROR.
 -- `pcall` is what turns that ERROR -- which may be a raw table that crossed
@@ -212,9 +221,13 @@ end, {
 -- under a separate option. A `blocking = true` after a refusal is a REGRESSION,
 -- not a known cost.
 define("LainReviewVerdict", function(opts)
-  local blocker = _G.__lain.review_notes_blocker()
-  if blocker ~= nil then
-    _G.__lain.review_refused("blocker not handed back -- :LainNoteDone first: " .. blocker)
+  local unhanded = _G.__lain.review_notes_unhanded()
+  if unhanded > 0 then
+    local blocker = _G.__lain.review_notes_blocker()
+    -- The path goes last: it is the unbounded field.
+    local noun = unhanded == 1 and "note" or "notes"
+    _G.__lain.review_refused(unhanded .. " " .. noun .. " not handed back -- :LainNoteDone first" ..
+      (blocker and (": " .. blocker) or ""))
     return
   end
   local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_verdict", { opts.args })

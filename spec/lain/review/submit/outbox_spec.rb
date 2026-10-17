@@ -379,8 +379,8 @@ RSpec.describe Lain::Review::Submit::Outbox do
       expect { outbox.submit(executor:) }.to raise_error(
         described_class::Nowhere,
         "this review was opened on branch feature/widget, which has no pull request to post a review " \
-        "to -- the annotations and the verdict are on the journal either way. Run `/review <pull-request>` " \
-        "against the pull request itself to post one."
+        "to -- the verdict and the handed-back annotations are on the journal either way. " \
+        "Run `/review <pull-request>` against the pull request itself to post one."
       )
     end
   end

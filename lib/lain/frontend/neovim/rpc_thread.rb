@@ -175,6 +175,10 @@ module Lain
 
           review_refusal: Rail.new(lua: "review_refused", params: "message", blocking: false),
 
+          # A question the editor answers on the wire: the token comes back with
+          # the count, so a late answer to an earlier ask is never read as this one's.
+          review_notes_ask: Rail.new(lua: "review_notes_ask", params: "token", blocking: false),
+
           # No buffer NAME argument, the one difference from {view}: that entry
           # point serves five buffers and has to be told which, while the sidebar
           # is a singleton in the review's own tabpage. The stamp is REQUIRED
@@ -479,6 +483,9 @@ module Lain
         end
 
         def review_refused(message) = post(:review_refusal, message, refusal: UNREPORTED)
+
+        # Raises rather than answering a refusal, so a caller can tell a closed queue from a full one.
+        def ask_review_notes(token) = post(:review_notes_ask, token)
 
         # The changeset review's three. Each answers a refusal rather than
         # raising for the reason above AND one of its own: {Review::Surface} is
@@ -896,7 +903,8 @@ module Lain
             "resend" => ->(args) { listener.resend(args[1] || []) },
             "compose" => ->(args) { listener.compose_written(args[1] || [], args[2]) },
             "compose_abandon" => ->(args) { listener.compose_abandoned(args[1]) },
-            "question_abandon" => ->(args) { listener.question_abandoned(args[1]) }
+            "question_abandon" => ->(args) { listener.question_abandoned(args[1]) },
+            "review_notes_counted" => ->(args) { listener.review_notes_counted(args[1], args[2]) }
           }.freeze
         end
 
@@ -991,6 +999,14 @@ module Lain
             raise NotImplementedError, "#{self.class} must implement #compose_abandoned"
           end
 
+          # The editor's answer to an ask for how many review notes it holds.
+          #
+          # @param token [String] the ask this answers
+          # @param count [Integer]
+          def review_notes_counted(token, count)
+            raise NotImplementedError, "#{self.class} must implement #review_notes_counted"
+          end
+
           # The human wrote lain://question, and this answers whether the
           # document parsed. It runs before the ack and inside nvim's own `:w`,
           # so it must not block AND must not raise -- a raise here would kill
@@ -1064,6 +1080,7 @@ module Lain
             def compose_abandoned(_generation) = nil
             def question_written(_lines, _digest) = UNANSWERABLE
             def question_abandoned(_digest) = nil
+            def review_notes_counted(_token, _count) = nil
             def review_annotated(_note) = UNREVIEWABLE
             def review_verdict_given(_verdict) = UNREVIEWABLE
             def review_close_given = UNREVIEWABLE
@@ -1137,7 +1154,7 @@ module Lain
         # never nvim.
         def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_question, :question_settled,
                        :open_review, :review_refused, :set_review, :review_focus, :review_settled, :open_changeset,
-                       :set_thread, :set_approval, :set_epic_doc
+                       :set_thread, :set_approval, :set_epic_doc, :ask_review_notes
 
         # Stop the loop, wake it out of its select, join, and close the fds this
         # thread owns. Idempotent enough for a defensive double call.

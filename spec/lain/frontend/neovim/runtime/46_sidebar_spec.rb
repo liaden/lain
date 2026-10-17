@@ -588,7 +588,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       def place_note(kind)
         inspector.exec_lua(<<~LUA, ["LainNote #{kind} fix this"])
           local buf = vim.api.nvim_create_buf(true, false)
-          vim.api.nvim_buf_set_name(buf, "blocked-note.txt")
+          vim.api.nvim_buf_set_name(buf, "blocked-note-" .. buf .. ".txt")
           vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "one", "two", "three" })
           vim.bo[buf].modified = false
           vim.b[buf].lain_review_side = "new"
@@ -649,13 +649,31 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
         end
       end
 
-      it "sends approve past a drawn note that is not a blocker" do
+      it "refuses approve while a note that is not a blocker is held, counting every held note" do
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          frontend.bind_changeset_review(review)
+          3.times { place_note("note") }
+
+          expect(run("LainReviewVerdict approve")).to include("ok" => true)
+          expect(refusal_shown).to include("3 notes not handed back -- :LainNoteDone first")
+          expect(review.verdicts).to be_empty
+        end
+      end
+
+      it "says 1 note, singular, and sends approve once it is handed back" do
         frontend = described_class.new(channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(review)
           place_note("note")
 
+          run("LainReviewVerdict approve")
+          expect(refusal_shown).to include("1 note not handed back -- :LainNoteDone first")
+          expect(review.verdicts).to be_empty
+
+          run("LainNoteDone")
           expect(run("LainReviewVerdict approve")).to include("ok" => true)
           expect(review.verdicts).to eq(["approve"])
         end

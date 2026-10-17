@@ -55,7 +55,8 @@ module Lain
         NOTHING_TO_CLOSE = "no review round is open in this chat, so there is nothing to close"
 
         NOT_A_PULL_REQUEST = "this review was opened on %<label>s, which has no pull request to post a " \
-                             "review to -- the annotations and the verdict are on the journal either way. " \
+                             "review to -- the verdict and the handed-back annotations are on the journal " \
+                             "either way. " \
                              "Run `/review <pull-request>` against the pull request itself to post one."
 
         SENT_ALREADY = "this review was already posted to pull request %<number>s -- GitHub creates a new " \

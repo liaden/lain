@@ -231,6 +231,11 @@ module Lain
       # @return [ReviewView]
       def review_view = @review_view ||= ReviewView.new(changesets: ChangesetDiff.new(rpc: @rpc))
 
+      # How many review notes the editor holds that were never handed back; see {HeldNotes}.
+      #
+      # @return [Integer]
+      def held_review_notes = held_notes.count
+
       # The object whose answer is what a `review_annotate` or `review_verdict`
       # `:w` succeeds or fails with. Bound after construction because the session
       # that owns a changeset is built by whoever opened the review, often
@@ -290,8 +295,10 @@ module Lain
         #   held reference would be {NoReviewWrites} for the life of the session
         #   and every note would be refused; resolving per call is the only
         #   shape that sees a review opened mid-run.
-        def initialize(channel:, compose:, resend:, question:, review:)
+        # @param held_notes [#call] returns the {HeldNotes} awaiting the editor's count
+        def initialize(channel:, compose:, resend:, question:, review:, held_notes:)
           super()
+          @held_notes = held_notes
           @channel = channel
           @compose = compose
           @resend = resend
@@ -322,12 +329,16 @@ module Lain
         def review_annotated(note) = @review.call.wrote_annotation(note)
         def review_verdict_given(verdict) = @review.call.wrote_verdict(verdict)
         def review_close_given = @review.call.wrote_close
+        def review_notes_counted(token, count) = @held_notes.call.answered(token, count)
       end
       private_constant :FrontendListener
 
+      def held_notes = @held_notes ||= HeldNotes.new(rpc: @rpc)
+
       def build_rpc(socket_path:, version:, protocol:, render_capacity:)
         listener = FrontendListener.new(channel: @channel, compose: method(:compose), resend: method(:post_resend),
-                                        question: method(:question_view), review: method(:changeset_review))
+                                        question: method(:question_view), review: method(:changeset_review),
+                                        held_notes: method(:held_notes))
         RpcThread.new(socket_path:, version:, protocol:, render_capacity:, listener:)
       end
 
