@@ -141,25 +141,20 @@ module Lain
 
         lines = File.readlines(path)
         lines.each_with_index
-             .filter_map { |line, index| record_in(path, line, index + 1, torn: index == lines.size - 1) }
+             .filter_map { |line, index| record_in(path, line, index + 1, last: index == lines.size - 1) }
              .select { |record| record["type"].to_s == "improvement" }
       end
 
-      def record_in(path, line, number, torn:) = Journal.parse(line) || skipped(path, line, number, torn:)
+      def record_in(path, line, number, last:) = Journal.parse(line) || skipped(path, line, number, last:)
 
       # nil for a blank line, for somebody else's record and for the torn
       # tail -- all three skipped, {Bench::Session::Lineages.refuse_torn}'s
       # shape. A blank line is the commonest accidental hand-edit to a file
       # whose own refusal invites the operator to repair a line in it, and no
-      # note was lost to one. A valid-JSON NON-OBJECT is another writer's
-      # record: {Journal.parse} answers nil for it exactly as it does for
-      # damage, so only re-parsing tells the two apart.
-      def skipped(path, line, number, torn:)
-        return nil if line.strip.empty? || (torn && !line.end_with?("\n"))
+      # note was lost to one.
+      def skipped(path, line, number, last:)
+        return nil unless Journal::Line.classify(line, last:) == :damage
 
-        JSON.parse(line)
-        nil
-      rescue JSON::ParserError
         raise UnreadableRecord, damaged_line_message(path, number)
       end
 

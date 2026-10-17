@@ -89,11 +89,11 @@ module Lain
         # @param path [String] the journal the line was read from
         # @param line [Integer] its line number
         # @param text [String] the raw line
-        def self.of(path:, line:, text:)
+        # @param tail [Boolean] whether it is the unterminated last line
+        def self.of(path:, line:, text:, tail:)
           text = text.to_s.scrub
           type = sniff(text)
-          new(path: -path, line:, type: type && -type, within: text.scan(RECORD).flatten.map(&:-@).freeze,
-              tail: !text.end_with?("\n"))
+          new(path: -path, line:, type: type && -type, within: text.scan(RECORD).flatten.map(&:-@).freeze, tail:)
         end
 
         # @param text [String] one raw journal line
@@ -310,7 +310,10 @@ module Lain
 
       def torn(path, acc, text)
         acc[:unreadable] += 1
-        torn = Torn.of(path:, line: acc[:lines], text:)
+        # Only the last line can arrive unterminated (see {#lines_of}), so every
+        # line is asked as the last: the newline test alone decides the tail.
+        tail = Journal::Line.classify(text, last: true) == :tail
+        torn = Torn.of(path:, line: acc[:lines], text:, tail:)
         torn.tail ? acc[:tails] << torn : @damage.call(torn)
       end
 

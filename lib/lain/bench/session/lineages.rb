@@ -95,19 +95,16 @@ module Lain
         def self.whole_records(entries)
           lines = entries.to_a
           lines.each_with_index.filter_map do |entry, index|
-            Journal.parse(entry) || refuse_torn(entry, index, last: lines.size - 1)
+            Journal.parse(entry) || refuse_torn(entry, index, last: index == lines.size - 1)
           end
         end
         private_class_method :whole_records
 
-        # nil for somebody else's record and for the torn tail -- both skipped,
-        # as every Journal reader skips them.
+        # nil for blank lines, somebody else's record and the torn tail -- all
+        # skipped, as every Journal reader skips them.
         def self.refuse_torn(entry, index, last:)
-          return nil if index == last || !entry.is_a?(String) || entry.strip.empty?
+          return nil unless Journal::Line.classify(entry, last:) == :damage
 
-          JSON.parse(entry)
-          nil
-        rescue JSON::ParserError
           raise Corrupt, "line #{index + 1} is torn: #{entry.strip[0, 60].inspect} does not parse, " \
                          "and whole records follow it"
         end
