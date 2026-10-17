@@ -240,6 +240,24 @@ RSpec.describe Lain::Skill::RoleSpawn do
     expect(seen.map(&:kind)).to eq(%i[spawn turn turn message])
   end
 
+  describe "identical one-shot twins across calls" do
+    def twin_addresses(count)
+      seen = []
+      spawn = seam(provider: mock(*Array.new(count) { text_response("done") }), observer: seen.method(:push),
+                   twins: Lain::Tools::Subagent::Lineage::Twins.new)
+      count.times { spawn.call(:dev, :fresh, "go") }
+      seen.select { |event| event.kind == :spawn }.map(&:digest)
+    end
+
+    it "gives 2 identical calls 2 distinct addresses, though each call builds its own subagent" do
+      expect(twin_addresses(2).uniq.size).to eq(2)
+    end
+
+    it "gives a replay over the same store, under a registry of its own, the same addresses" do
+      expect(twin_addresses(2)).to eq(twin_addresses(2))
+    end
+  end
+
   # ---- An unknown role fails loudly, before any spawn ------------------------
 
   it "raises Role::Catalog::Unknown for an unknown role, spending no tokens" do

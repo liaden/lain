@@ -809,7 +809,8 @@ module Lain
           # come back through. The refusal its asker gives says exactly that.
           @seam = Lain::Tools::Subagent::Seam.new(provider:, context_factory:, parent: Lain::Timeline.empty,
                                                   tool_middleware:, attachments:,
-                                                  askers: Lain::Tools::Subagent::NoAskers)
+                                                  askers: Lain::Tools::Subagent::NoAskers,
+                                                  twins: Lain::Tools::Subagent::Lineage::Twins.new)
           @slots = slots
         end
 

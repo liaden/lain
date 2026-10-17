@@ -270,10 +270,8 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(fleet.digests).to eq([])
     end
 
-    # The same work from one head is one spawn, so twins share one entry, and
-    # the first of them to end -- here by failing -- retires it, exactly as the
-    # first to answer does.
-    it "retires identical twins' one shared entry when one of them fails" do
+    # Twins take addresses of their own, so one failing retires only itself.
+    it "retires only the identical twin that fails, leaving the other running" do
       store = Lain::Store.new
       head = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
       lineage = Lain::Tools::Subagent::Lineage.new(
@@ -286,7 +284,7 @@ RSpec.describe Lain::StatusFeed::Fleet do
       fleet.completed(lineage.ended(head, twins.first, Lain::Timeline.empty(store:),
                                     lifecycle: Lain::StatusFeed::SpawnLifecycle::FAILED, error: "Lain::Error"))
 
-      expect(fleet.digests).to eq([])
+      expect(fleet.digests).to eq([twins.last.digest])
     end
 
     it "leaves a member alone when the completion names some other spawn" do

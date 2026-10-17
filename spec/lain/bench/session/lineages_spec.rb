@@ -78,9 +78,8 @@ RSpec.describe Lain::Bench::Session::Lineages do
     end
   end
 
-  # The same work from one head IS one spawn -- the ruling the spawn's address
-  # rests on -- so its twin completion is one lineage rather than a duplicate.
-  it "reads identical twins from one head as one lineage" do
+  # Twins from one head take addresses of their own, so each completion is its own lineage.
+  it "reads identical twins from one head as two lineages" do
     same = { "prompt" => "same" }
     session = RecordedSpawnSession.new(
       parent_responses: [tool_response(["tu_1", "subagent", same], ["tu_2", "subagent", same]),
@@ -88,7 +87,7 @@ RSpec.describe Lain::Bench::Session::Lineages do
       child_responses: [text_response("same answer"), text_response("same answer")]
     ).run
 
-    expect(lineages_of(session).count).to eq(1)
+    expect(lineages_of(session).map { |lineage| lineage.spawn.digest }.uniq.size).to eq(2)
   end
 
   # A child that failed leaves a completion so the fleet can retire it, but it

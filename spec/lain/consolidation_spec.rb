@@ -111,6 +111,17 @@ RSpec.describe Lain::Consolidation do
       expect(scaffold.render).not_to include("orchestrated")
     end
 
+    it "reports 3 runs for 3 identical one-shots spawned from one head" do
+      twins = RecordedSpawnSession.new(
+        parent_responses: [tool_response(*%w[a b c].map { |id| ["tu_#{id}", "subagent", { "prompt" => "same" }] }),
+                           text_response("orchestrated")],
+        child_responses: [text_response("one"), text_response("two"), text_response("three")]
+      ).run
+      found = Lain::Bench::Session::Lineages.of(Lain::Bench::Session.load(twins.lines)).to_a
+
+      expect(found.map { |lineage| lineage.spawn.digest }.uniq.size).to eq(3)
+    end
+
     it "clerks nothing for a session that spawned nothing" do
       quiet = RecordedSpawnSession.new(parent_responses: [text_response("no spawn")], child_responses: []).run
 

@@ -34,12 +34,7 @@ module Lain
     # reported in a {Telemetry::ChildProgress}. A spawn whose `spawned_from`
     # matches no reported head is a root: the run's own chain is nobody's child.
     #
-    # TWO THINGS THE ADDRESS RULING COSTS THIS FOLD, both known. Identical
-    # twins share one `:spawn` digest and so one row, but each dispatch counts
-    # its own turns, so the shared row's count is whichever twin reported last
-    # rather than either child's whole work -- and a twin's head can evict the
-    # other's from the parent index, rooting anything spawned from it. And the
-    # parent edge is resolved ONCE, at `launched`: a grandchild whose `:spawn`
+    # THE PARENT EDGE is resolved ONCE, at `launched`: a grandchild whose `:spawn`
     # somehow reached this fold before its parent's first progress record would
     # sit at the root for good. Production orders those the other way -- a turn
     # is promoted before the tool round that spawns from it runs -- but nothing
@@ -106,9 +101,7 @@ module Lain
       # one found to be a member, because `Event#normalize_causal` uniqs and
       # SORTS: "the first cited parent" is not recoverable from the list, and
       # matching once would make the retirement turn on which digest sorted
-      # lower. A record citing no member ends nothing. Identical twins share
-      # one member, so whichever of them ends first -- answering or failing --
-      # retires it.
+      # lower. A record citing no member ends nothing.
       #
       # @param record [#causal_parents] an arriving `:message`, in either shape
       #   the feed's `:message` arm dispatches: a raw {Event} or the

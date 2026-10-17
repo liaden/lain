@@ -19,11 +19,12 @@ module Lain
         # SUBSTITUTE for it -- or @log's mailbox fold silently stops.
         # `lane` names the spawn lane an actor is launched in; empty for the
         # run's own. See {#spawn}.
-        def initialize(policy:, log: Log::Null, observer: Event::ChainWriter::Null.new, lane: "")
+        def initialize(policy:, log: Log::Null, observer: Event::ChainWriter::Null.new, lane: "", twins: Twins::Null)
           @policy = policy
           @log = log
           @lane = lane
           @adoptions = Hash.new(0)
+          @twins = twins.scoped
           @chain_writer = Event::ChainWriter.new(observer: lambda { |event|
             @log << event
             observer.call(event)
@@ -42,10 +43,10 @@ module Lain
         # one. `task` is the DIGEST of the prompt, not its text: the prompt is
         # already the child's first turn, and the record should not grow by it.
         # Content-derived, so identity survives a resumed run and a role spawn's
-        # per-call writer. Identical twins keep sharing one address because the
-        # same work from one head IS the same spawn -- a ruling, not a
-        # dependency: the session record dedupes a child's turns on their own
-        # digests, which never cite the spawn.
+        # per-call writer. Identical one-shots from one head share it only for
+        # the 1st: the session's {Twins} count of them gives the k-th an adoption
+        # ordinal k, so the 1st keeps the address a lone spawn takes and a
+        # replay by a new writer, over the same Store, resolves the same digests.
         #
         # `lifecycle`, `adoption` and `unattended` are written CONDITIONALLY.
         # `unattended` is in the record because without it a recorded spawn no
@@ -65,13 +66,18 @@ module Lain
         # is what their spawns then differ by. The run's own lane writes none.
         # A one-shot in a named lane is adopted too, with no lifecycle mark: a
         # retry of the same work from the same head is a new attempt the fleet
-        # has not retired. The run's own lane keeps the twin ruling above.
+        # has not retired.
         def spawn(parent, prompt:, lifecycle: nil)
           head = parent.head_digest
           body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
                    "only" => @policy.only, "spawned_from" => head, "task" => Canonical.digest(prompt) }
           body["unattended"] = true if @policy.unattended
-          body.merge!(adopted(head, lifecycle, body, parent.store)) if adoptable?(lifecycle)
+          if adoptable?(lifecycle)
+            body.merge!(adopted(head, lifecycle, body, parent.store))
+          else
+            twin = twin_ordinal(body)
+            body["adoption"] = twin if twin > 1
+          end
           put(parent, kind: :spawn, from: correlation_of(parent), to: nil,
                       causal_parents: [head].compact, body:)
         end
@@ -160,9 +166,10 @@ module Lain
         # per-head sequence is what makes an identical second run replay the
         # same numbers in the same order.
         #
-        # Scoped to THIS writer: a second writer over the same head starts at 1
-        # again. {#adopted} is what keeps it from colliding, by skipping every
-        # ordinal the shared Store already holds a record for, so a relaunch
+        # Scoped to THIS writer, and used by actors and lanes only: a second
+        # writer over the same head starts at 1 again. {#adopted} is what keeps
+        # it from colliding, by skipping every ordinal the shared Store already
+        # holds a record for, so a relaunch
         # or a resumed run over that Store takes the next free address and its
         # digest depends on what the Store holds. Two writers over DIFFERENT
         # Stores still count independently.
@@ -188,6 +195,10 @@ module Lain
         end
 
         def adoptable?(lifecycle) = !lifecycle.nil? || !@lane.empty?
+
+        # Counted from the session's own spawns, never from the Store, which a
+        # replay already fills.
+        def twin_ordinal(body) = @twins.next(body)
 
         def marks_for(head, lifecycle)
           marks = { "adoption" => next_adoption(head), "lifecycle" => lifecycle }.compact

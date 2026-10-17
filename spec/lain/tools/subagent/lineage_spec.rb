@@ -136,14 +136,35 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       expect(spawn_from_another_run(prompt: "survey the aspirin trials").digest).to eq(first_run.digest)
     end
 
-    # Accepted rather than fixed: the same work from one head is the same
-    # spawn. Nothing else rests on it -- the session record dedupes a child's
-    # turns on their own digests, which never cite the spawn.
-    it "leaves two one-shots of identical work from one head sharing one address" do
-      expect(lineage.spawn(parent, prompt: "same").digest).to eq(lineage.spawn(parent, prompt: "same").digest)
+    it "gives the 2nd and 3rd identical one-shots from one head addresses of their own" do
+      digests = Array.new(3) { lineage.spawn(parent, prompt: "same").digest }
+
+      expect(digests.uniq.size).to eq(3)
     end
 
-    it "gives a one-shot no adoption identity -- nothing adopts one" do
+    it "keeps the 1st identical one-shot at the address a lone spawn takes" do
+      first = lineage.spawn(parent, prompt: "same")
+
+      expect(first.digest).to eq(spawn_from_another_run(prompt: "same").digest)
+      expect(first.body).not_to have_key("adoption")
+    end
+
+    it "gives the same twins the same addresses in another run over a fresh store" do
+      run = ->(head) { Array.new(3) { described_class.new(policy:).spawn(head, prompt: "same").digest } }
+      other = Lain::Timeline.empty(store: Lain::Store.new)
+                            .commit(role: :user, content: text("hi")).commit(role: :assistant, content: text("yo"))
+
+      expect(run.call(other)).to eq(run.call(parent))
+    end
+
+    it "re-derives a twin's digest when rebuilt from its own recorded body" do
+      lineage.spawn(parent, prompt: "same")
+      twin = lineage.spawn(parent, prompt: "same")
+
+      expect(rebuilt_from_its_recorded_body(twin).digest).to eq(twin.digest)
+    end
+
+    it "gives a lone one-shot no adoption identity" do
       expect(lineage.spawn(parent, prompt: "go").body).not_to have_key("adoption")
     end
 
@@ -208,10 +229,14 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       expect(retry_spawn).not_to have_same_digest_as(first)
     end
 
-    it "leaves identical one-shots on the run's own empty lane sharing one address across writers" do
-      first = described_class.new(policy:).spawn(parent, prompt: "go")
+    # A replay or resumed run builds a new writer over the old Store, and must
+    # resolve the digests the first run recorded rather than take fresh ones.
+    it "gives the same twins the same digests when a new writer replays them over the same store" do
+      first_run = described_class.new(policy:)
+      replay = described_class.new(policy:)
 
-      expect(described_class.new(policy:).spawn(parent, prompt: "go").digest).to eq(first.digest)
+      expect(Array.new(2) { replay.spawn(parent, prompt: "go").digest })
+        .to eq(Array.new(2) { first_run.spawn(parent, prompt: "go").digest })
     end
 
     # A relaunch builds a second writer over the same head and the same shared
@@ -269,6 +294,26 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       end
 
       expect(spawns.map { |spawn| spawn.body.fetch("adoption") }).to contain_exactly(1, 2)
+      expect(spawns.map(&:digest).uniq.size).to eq(2)
+    end
+  end
+
+  describe "two concurrent identical one-shots through one writer" do
+    it "hands each fiber its own address, deterministically" do
+      spawns = Sync do |task|
+        [task.async { lineage.spawn(parent, prompt: "go") },
+         task.async { lineage.spawn(parent, prompt: "go") }].map(&:wait)
+      end
+
+      expect(spawns.map(&:digest).uniq.size).to eq(2)
+    end
+
+    it "does so across writers sharing one registry" do
+      twins = described_class::Twins.new
+      spawns = Sync do |task|
+        Array.new(2) { task.async { described_class.new(policy:, twins:).spawn(parent, prompt: "go") } }.map(&:wait)
+      end
+
       expect(spawns.map(&:digest).uniq.size).to eq(2)
     end
   end

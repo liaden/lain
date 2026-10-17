@@ -401,7 +401,9 @@ module Lain
       # it as a {Telemetry::Message} and routes it through the tee to
       # {StatusFeed}'s fleet field; the seam's journal is the same session file,
       # so writing the event there too would record every transition twice.
-      def lineage = @lineage ||= Lineage.new(policy:, log: @log, observer:, lane: isolation.lane.name)
+      def lineage
+        @lineage ||= Lineage.new(policy:, log: @log, observer:, lane: isolation.lane.name, twins: @seam.twins)
+      end
 
       # Mode fails loudly here: a mistyped mode must not silently fall through
       # to one-shot.
@@ -1217,7 +1219,8 @@ module Lain
       # nowhere new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :display_channel,
-                         :supervisor, :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware) do
+                         :supervisor, :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware,
+                         :twins) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -1274,6 +1277,10 @@ module Lain
         # itself at construction and its Null is a module, so both are shareable
         # already.
         #
+        # `twins` is the session's count of identical one-shot spawns, and rides
+        # the seam because a role spawn builds a Subagent, and so a {Lineage},
+        # per call. Its Null makes each writer count alone.
+        #
         # `middleware` is the configured registrations, and rides the seam for
         # the reason `attachments` does: a grandchild inherits the seam verbatim,
         # so the whole subtree is configured alike. It holds recipes, not
@@ -1284,7 +1291,7 @@ module Lain
                        askers: NoAskers, isolation: NO_ISOLATION,
                        escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED,
                        attachments: Middleware::ResolveAttachments::Unwired,
-                       middleware: NO_MIDDLEWARE)
+                       middleware: NO_MIDDLEWARE, twins: Lineage::Twins::Null)
           Seam.refuse_unbuildable(tool_middleware)
 
           super

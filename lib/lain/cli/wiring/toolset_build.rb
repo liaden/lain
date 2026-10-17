@@ -349,6 +349,7 @@ module Lain
                                           journal:, telemetry: chronicle.instrumentation.journal,
                                           display_channel: display,
                                           attachments: @attachments, middleware:,
+                                          twins: Lain::Tools::Subagent::Lineage::Twins.new,
                                           supervisor:, observer: chronicle.observer, askers:,
                                           scope: CLI::ToolGuard::BoardScope.new(board: switchboard),
                                           isolation: Lain::Isolation::Leases.new(backend: isolation,
