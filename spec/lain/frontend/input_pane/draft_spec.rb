@@ -16,4 +16,29 @@ RSpec.describe Lain::Frontend::InputPane::Draft do
 
     expect([draft.rows(10), draft.rows(9)]).to eq([1, 2])
   end
+
+  describe "#empty?" do
+    it "is true for a fresh draft and false once text is typed" do
+      before = draft.empty?
+      typed("a")
+
+      expect([before, draft.empty?]).to eq([true, false])
+    end
+
+    it "is false while a paste is open and while a cut-off key is held" do
+      typed("\e[200~abc")
+      pasting = draft.empty?
+      held = described_class.new(keys: described_class::Keys.for("\e[Z"), seen: true)
+      held.take("\e[") { nil }
+
+      expect([pasting, held.empty?]).to eq([false, false])
+    end
+
+    it "is true again after a discard of an open paste" do
+      typed("\e[200~abc")
+      draft.discard { nil }
+
+      expect(draft.empty?).to be(true)
+    end
+  end
 end

@@ -148,11 +148,13 @@ module Lain
       # at the keyboard: they are tmux or a `kill` closing THIS pane, and
       # forwarded they ended the chat the pane was only typing into. With NO
       # chat, every signal is the human interrupting the only thing in front of
-      # them, which is this pane.
+      # them, which is this pane. A Ctrl-C over a draft only clears it, as a
+      # cooked terminal did; the next one, over nothing, is the interrupt.
       def signal(name)
         return quit if name == :sigterm || @client.nil?
 
-        @draft.discard { |kind, value| drafted(@client, kind, value) } if name == :sigint
+        return @draft.discard { |kind, value| drafted(@client, kind, value) } if name == :sigint && !@draft.empty?
+
         emit(@client, { "v" => "signal", "name" => name.to_s })
       end
 

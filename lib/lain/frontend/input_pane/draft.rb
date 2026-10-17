@@ -47,6 +47,8 @@ module Lain
 
         def seen? = @seen
 
+        def empty? = @text.empty? && @paste.nil? && @held.empty?
+
         # A line end inside the draft goes on as a paste, which no prompt takes for Enter.
         #
         # @return [String] what a read starting from this draft is handed
@@ -74,7 +76,11 @@ module Lain
         #
         # @yieldparam kind [Symbol] `:echo`, with what takes the draft off the row
         # @yieldparam value [String]
-        def discard(&block) = erased(@text, &block)
+        def discard(&block)
+          @paste = nil
+          @held = "".b
+          erased(@text, &block)
+        end
 
         private
 

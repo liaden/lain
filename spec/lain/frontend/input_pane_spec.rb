@@ -1068,24 +1068,60 @@ RSpec.describe Lain::Frontend::InputPane do
       saved.each { |name, handler| Signal.trap(name, handler) }
     end
 
-    it "discards the idle draft on Ctrl-C, as a cooked terminal did" do
-      pty = PTY.open
-      keyed = described_class.new(path:, tty:, input: pty.last, commands:, layers:, tick: 0.01, geometry:)
+    def unpublished_pane
+      @pty = PTY.open
+      keyed = described_class.new(path:, tty:, input: @pty.last, commands:, layers:, tick: 0.01, geometry:)
       @running = Thread.new { keyed.run }
       server.timeout = 5
-      chat = server.accept.tap { |client| client.timeout = 5 }
-      publish(chat, { "generation" => 3 })
-      say(chat, { "v" => "unpublished" })
-      pty.first.write("abc")
-      settles { screen.string.end_with?("abc") || nil }
+      server.accept.tap { |client| client.timeout = 5 }.tap do |chat|
+        publish(chat, { "generation" => 3 })
+        say(chat, { "v" => "unpublished" })
+      end
+    end
+
+    # The frames up to the line sent after the Ctrl-C, so a signal frame sent for it shows.
+    def kinds_through_line(chat)
+      [].tap do |kinds|
+        Enumerator.produce { JSON.parse(chat.gets.to_s)["v"] }.find { |kind| kinds << kind and kind == "line" }
+      end
+    end
+
+    it "discards the idle draft on Ctrl-C and sends the chat no signal frame" do
+      chat = unpublished_pane
+      @pty.first.write("qq")
+      settles { screen.string.end_with?("qq") || nil }
 
       deliver("INT")
-      next_frame(chat, of: "signal")
-      pty.first.write("d\r")
+      settles { screen.string.end_with?("qq") ? nil : true }
+      @pty.first.write("d\r")
 
-      expect(next_frame(chat, of: "line")["text"]).to eq("d")
+      expect(kinds_through_line(chat)).not_to include("signal")
     ensure
-      pty&.each(&:close)
+      @pty&.each(&:close)
+    end
+
+    it "discards a draft held mid paste on Ctrl-C and sends the chat no signal frame" do
+      chat = unpublished_pane
+      @pty.first.write("\e[200~qq")
+      settles { screen.string.end_with?("qq") || nil }
+
+      deliver("INT")
+      @pty.first.write("d\r")
+
+      expect(kinds_through_line(chat)).not_to include("signal")
+    ensure
+      @pty&.each(&:close)
+    end
+
+    it "interrupts on a Ctrl-C over an empty draft" do
+      chat = unpublished_pane
+      settles { screen.string.include?("you> ") || nil }
+
+      deliver("INT")
+
+      expect(next_frame(chat, of: "signal")).to eq({ "v" => "signal", "name" => "sigint" })
+    ensure
+      @pty&.each(&:close)
     end
 
     it "goes to the chat rather than interrupting the pane" do
