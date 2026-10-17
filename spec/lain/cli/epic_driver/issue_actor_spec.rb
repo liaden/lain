@@ -447,9 +447,14 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       described_class::Earlier.new(slug: "demo", repo_root: repo, asker:, journal:, **)
     end
 
-    def owned_branch(id)
-      git(repo, "branch", "lain/issue/demo/#{id}", "main")
-      git(repo, "update-ref", "refs/lain/owned/heads/lain/issue/demo/#{id}", git(repo, "rev-parse", "main"))
+    def owned_branch(id, landed: false)
+      tip = landed ? git(repo, "rev-parse", "main") : unlanded_commit(id)
+      git(repo, "branch", "lain/issue/demo/#{id}", tip)
+      git(repo, "update-ref", "refs/lain/owned/heads/lain/issue/demo/#{id}", tip)
+    end
+
+    def unlanded_commit(id)
+      git(repo, "commit-tree", git(repo, "rev-parse", "main^{tree}"), "-p", "main", "-m", "#{id}'s work")
     end
 
     def standing?(id)
@@ -615,6 +620,26 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       expect(asker.asked.first).to match(/delete removes all \d+ of these earlier branches/)
     end
 
+    it "offers only the branches that have not landed on the epic" do
+      owned_branch("a", landed: true)
+      owned_branch("b")
+      asker = IssueActorSpecAsker.new("keep")
+
+      Sync { earlier(asker).call(resumed: false) }
+
+      expect(asker.asked.first).to include("lain/issue/demo/b").and(satisfy { |text| !text.include?("demo/a") })
+      expect(asker.asked.first).to include("delete removes all 1 of these")
+    end
+
+    it "asks nothing when every earlier branch has landed" do
+      owned_branch("a", landed: true)
+      asker = IssueActorSpecAsker.new("delete")
+
+      Sync { earlier(asker).call(resumed: false) }
+
+      expect([asker.asked, standing?("a")]).to eq([[], true])
+    end
+
     it "deletes none of the branches when any one of them cannot be deleted" do
       %w[a b].each { |id| owned_branch(id) }
       held = File.join(@root, "held-b")
@@ -638,8 +663,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
         end
         Lain::Shell::Out.new(*args, **options)
       end
-      main = git(repo, "rev-parse", "main")
-      a_anchor = Lain::Isolation::Worktree::Handback::Naming.new("lain/issue/demo/a #{main}").ref
+      a_tip = git(repo, "rev-parse", "lain/issue/demo/a")
+      a_anchor = Lain::Isolation::Worktree::Handback::Naming.new("lain/issue/demo/a #{a_tip}").ref
 
       expect { Sync { earlier(IssueActorSpecAsker.new("delete"), shell_out_factory: moving).call(resumed: false) } }
         .to raise_error(Lain::Isolation::WorkingBranch::Refused) { |error|

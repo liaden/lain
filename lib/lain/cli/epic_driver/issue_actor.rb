@@ -44,7 +44,8 @@ module Lain
         # answer cannot take back: a chat resumed mid-epic is never asked, a
         # session with nobody to ask keeps, and only `delete` deletes -- in any
         # case, with trailing punctuation, the way a gate reads its reply.
-        # Only a branch lain's marker licenses is offered at all.
+        # Only a branch lain's marker licenses is offered at all, and not one
+        # already an ancestor of the epic's branch: it has landed.
         #
         # ALL OR NOTHING, AS FAR AS GIT ALLOWS. Every branch is judged before
         # any is deleted, so a held or unowned one refuses the lot. A branch a
@@ -111,8 +112,11 @@ module Lain
           private
 
           def branches
+            git = Lain::Isolation::Checkout.new(@repo_root, shell_out_factory: @shell_out_factory)
+            epic = Lain::Isolation::WorkingBranch.epic_name(@slug)
             Lain::Isolation::WorkingBranch.owned_under(IssueActor.branch_prefix(@slug),
                                                        repo_root: @repo_root, shell_out_factory: @shell_out_factory)
+                                          .reject { |branch| git.ancestor?(branch.tip, epic) }
           end
 
           # @return [Array<Array(Isolation::WorkingBranch, String)>] each branch
