@@ -195,6 +195,8 @@ module Lain
         # @param resolver [#for] the run's ONE {Lain::Shell::Executable::Resolver}, handed to
         #   {BaseTools} so every bash tool, a child's included, names its stages by it
         # @param arms [Lain::CLI::Arms] the bench arms the run was started with
+        # @param fence [String] the lain-fence binary, read once for the probe and the launcher alike
+        # @param probe [Lain::Confine::Probe] what the box offers; runs nothing until `--confine reader` asks
         # @option options [String] :exec the transport the `exec:` default
         #   resolves, with `:exec_image` the only other keys this class reads.
         #   `--auto-approve` is not among them: it seeds the mode's layer on
@@ -206,13 +208,15 @@ module Lain
                        handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
                        middleware: Lain::Config::Middleware.empty, display: Lain::Channel::Null.instance,
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:),
-                       arms: Lain::CLI::Arms::OFF, resolver: Lain::Shell::Executable::Resolver::NULL)
+                       arms: Lain::CLI::Arms::OFF, resolver: Lain::Shell::Executable::Resolver::NULL,
+                       fence: Lain::Confine::Bwrap.fence_binary,
+                       probe: Lain::Confine::Probe.new(fence:, journal:))
           @arms = arms
           @library = library
           @backend = backend
           @attachments = attachments
           @root = root
-          bash_inputs(exec:, verdict:, resolver:)
+          bash_inputs(exec:, verdict:, resolver:, fence:, probe:)
           @epic = epic
           @in_chat = { chronicle:, root:, paths:, config: }.freeze
           @askers = askers
@@ -283,11 +287,17 @@ module Lain
                                     announces_as: ISSUE_ORCHESTRATOR.to_s)
         end
 
+        # Starts the sandbox's mask classification, when there is a sandbox. Separate from {#build}
+        # because it reads the board's policy, which {Wiring} builds after the toolset.
+        def prime_masks = @masks&.prime
+
         private
 
         attr_reader :backend, :library, :seam, :epic, :askers
 
-        def bash_inputs(exec:, verdict:, resolver:)
+        def bash_inputs(exec:, verdict:, resolver:, fence:, probe:)
+          @fence = fence
+          @probe = probe
           @exec = exec
           @verdict = verdict
           @resolver = resolver
@@ -300,9 +310,49 @@ module Lain
         # what it was given -- the member IS the object handed to this
         # constructor, so a second ivar would be a second thing to keep in step.
         def capability_floor(recorder)
-          Lain::Toolset.new(BaseTools.build(recorder, exec: @exec, verdict: @verdict, journal: seam.journal,
+          Lain::Toolset.new(BaseTools.build(recorder, exec: bash_exec, verdict: @verdict, journal: seam.journal,
                                                       resolver: @resolver,
                                                       search: Lain::Config.search(root: @root)))
+        end
+
+        def bash_exec = @arms.confine == :reader ? confined(@exec) : @exec
+
+        def confined(exec)
+          case exec
+          when Lain::Exec::Local then sandboxed(exec)
+          when Lain::Exec::Docker then unsandboxed(exec, "unavailable under the docker backend")
+          else exec
+          end
+        end
+
+        # A container is not a sandbox, and a box without the layers cannot make one; either way the
+        # run says so, because the session header still records the reader arm.
+        def unsandboxed(exec, because)
+          seam.journal << Lain::Telemetry::CapabilityDegraded.new(capability: :sandbox, requirer: self.class.name,
+                                                                  provider: because)
+          exec
+        end
+
+        def sandboxed(inner)
+          lacking = %i[bwrap landlock].reject { @probe.supports?(_1) }
+          return unsandboxed(inner, "the box lacks #{lacking.join(" and ")}") if lacking.any?
+
+          Lain::Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: seam.journal)
+        end
+
+        # The probe finds both programs on PATH, so the launcher runs the ones it found.
+        def launcher
+          Lain::Confine::Bwrap.new(fence: @fence, bwrap: on_path("bwrap"), strace: on_path("strace"))
+        end
+
+        def on_path(program)
+          ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).map { File.join(_1, program) }
+             .find { File.file?(_1) && File.executable?(_1) }
+        end
+
+        def profiles
+          @masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
+          Lain::Confine::Profiles.new(masks: @masks, probe: @probe, home: @in_chat.fetch(:paths).home, root: @root)
         end
 
         # The session model's own capabilities, memoized because the probe is a

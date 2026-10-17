@@ -349,6 +349,7 @@ module Lain
         # guarantee -- see #switchboard for what can refuse here and why a
         # refusal must land ahead of the header.
         switchboard(backend, toolset)
+        @toolset_build.prime_masks
         chronicle.start(context: backend.context, toolset:, profile: backend.run_profile,
                         compaction: backend.compaction_header, arms: arms.to_header, **resume_start(resumed))
         @switchboard.journal_launch

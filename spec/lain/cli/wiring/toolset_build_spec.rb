@@ -966,6 +966,169 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
   end
 
+  describe "the sandbox the bash tool's exec is built into" do
+    let(:fence) { "/srv/lain-fence" }
+    let(:bare_box) { ->(_argv) { ["", false] } }
+    let(:full_box) { ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] } }
+    let(:runner) { full_box }
+    let(:probe) do
+      Lain::Confine::Probe.new(fence:, journal:, runner:, ptrace_scope: -> { "0" })
+    end
+    let(:reader) { Lain::CLI::Arms::OFF.with(confine: :reader) }
+
+    def bash_exec(toolset) = toolset.fetch("bash").instance_variable_get(:@exec)
+
+    def degraded = journal.events.grep(Lain::Telemetry::CapabilityDegraded)
+
+    def built(arms, **over)
+      build_with(options, arms:, probe:, fence:, **over).build(recorder, ask_human:)
+    end
+
+    it "wraps Exec::Local in the sandbox when the probe offers every layer" do
+      exec = bash_exec(built(reader))
+
+      expect(exec).to be_a(Lain::Exec::Sandboxed)
+      expect(exec.instance_variable_get(:@inner)).to be_a(Lain::Exec::Local)
+      expect(exec.instance_variable_get(:@launcher)).to be_a(Lain::Confine::Bwrap)
+      expect(degraded).to be_empty
+    end
+
+    it "hands the launcher the fence the probe tried, and the programs the probe found on PATH" do
+      launcher = bash_exec(built(reader)).instance_variable_get(:@launcher)
+      on_path = ->(name) { ENV.fetch("PATH").split(":").map { File.join(_1, name) }.find { File.executable?(_1) } }
+
+      expect(launcher.instance_variable_get(:@fence)).to eq(fence)
+      expect(launcher.instance_variable_get(:@bwrap)).to eq(on_path.call("bwrap"))
+      expect(launcher.instance_variable_get(:@strace)).to eq(on_path.call("strace"))
+    end
+
+    it "reads the mask list through the board's sensitivity, and the profiles from the state's home" do
+      board = switchboard
+      profiles = bash_exec(built(reader, switchboard: -> { board })).instance_variable_get(:@profiles)
+      masks = profiles.instance_variable_get(:@masks)
+
+      expect(masks.instance_variable_get(:@policy).call).to be(board.sensitivity)
+      expect(masks.instance_variable_get(:@root)).to eq(root)
+      expect(profiles.instance_variable_get(:@home)).to eq(Lain::Paths.new.home)
+    end
+
+    # The board does not exist while the toolset is built, and a classification started before it does
+    # would hand the session's first bash call the NoMethodError. The Wiring primes once it does.
+    it "starts no classification and asks nothing of the board while the toolset is built" do
+      asked = Queue.new
+      profiles = bash_exec(built(reader, switchboard: -> { asked << :asked and nil })).instance_variable_get(:@profiles)
+      sleep 0.3
+
+      expect(asked).to be_empty
+      expect(profiles.instance_variable_get(:@masks).instance_variable_get(:@priming)).to be_nil
+    end
+
+    it "primes the mask list it built when told to" do
+      build = build_with(options, arms: reader, probe:, fence:)
+      masks = bash_exec(build.build(recorder,
+                                    ask_human:)).instance_variable_get(:@profiles).instance_variable_get(:@masks)
+
+      build.prime_masks
+
+      expect(masks.instance_variable_get(:@priming)).to be_a(Thread)
+    end
+
+    it "runs Exec::Docker unwrapped and journals that the sandbox is unavailable under it" do
+      chosen = Lain::Exec::Docker.new(image: "img:1", project: "/srv/project")
+
+      exec = bash_exec(built(reader, exec: chosen))
+
+      expect(exec).to be(chosen)
+      expect(degraded.map(&:to_h)).to contain_exactly(
+        a_hash_including(capability: :sandbox, provider: "unavailable under the docker backend")
+      )
+    end
+
+    context "when the box offers neither bwrap nor Landlock" do
+      let(:runner) { bare_box }
+
+      it "falls back to Exec::Local and journals both layers and the sandbox as degraded" do
+        exec = bash_exec(built(reader))
+
+        expect(exec).to be_a(Lain::Exec::Local)
+        expect(degraded.map(&:capability)).to include(:bwrap, :landlock, :sandbox)
+      end
+
+      it "names the fence path it looked for" do
+        built(reader)
+
+        expect(degraded.find { _1.capability == :landlock }.provider).to include(fence)
+      end
+    end
+
+    context "when bwrap works and Landlock does not" do
+      let(:runner) { ->(argv) { argv.include?("--status") ? ["", false] : ["", true] } }
+
+      it "falls back to Exec::Local and says the sandbox is unavailable" do
+        expect(bash_exec(built(reader))).to be_a(Lain::Exec::Local)
+        expect(degraded.map(&:capability)).to contain_exactly(:landlock, :sandbox)
+      end
+    end
+
+    context "when Landlock works and bwrap does not" do
+      let(:runner) { ->(argv) { argv.first == "bwrap" ? ["", false] : full_box.call(argv) } }
+
+      it "falls back to Exec::Local and says the sandbox is unavailable" do
+        expect(bash_exec(built(reader))).to be_a(Lain::Exec::Local)
+        expect(degraded.map(&:capability)).to contain_exactly(:bwrap, :sandbox)
+      end
+    end
+
+    %i[off classes].each do |arm|
+      it "builds no sandbox under --confine #{arm}" do
+        exec = bash_exec(built(Lain::CLI::Arms::OFF.with(confine: arm)))
+
+        expect(exec).to be_a(Lain::Exec::Local)
+        expect(journal.events).to be_empty
+      end
+    end
+  end
+
+  describe "a reader run built by the real Wiring, on this box's real probe", :seam do
+    let(:base) { File.realpath(Dir.mktmpdir("sandbox-seam")) }
+    let(:project_root) { File.join(base, "repo") }
+    let(:io) { StringIO.new }
+    let(:recording) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "seam.ndjson") }
+    let(:wiring) do
+      project = Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag)
+      Lain::CLI::Wiring.new(options: { grace: 5, approval: "auto", confine: "reader" }, chronicle: recording,
+                            status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
+                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(base, "s"),
+                                                          "HOME" => File.join(base, "h") }),
+                            project:)
+    end
+
+    before do
+      FileUtils.mkdir_p([project_root, File.join(base, "s"), File.join(base, "h")])
+      File.write(File.join(project_root, "README.md"), "one\ntwo\n")
+    end
+
+    after { FileUtils.rm_rf(base) }
+
+    it "runs an approved bash call under the reader profile and journals it" do
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)
+      board = wiring.instance_variable_get(:@switchboard)
+      layers = Lain::CLI::ToolGuard.stack(recording, board).to_a
+
+      result = Sync do |task|
+        task.with_timeout(20) do
+          dispatch_call("bash", { "command" => "cat README.md | wc -l" }, id: "tu_seam", toolset: board.toolset,
+                                                                          layers:, context: session)
+        end
+      end
+
+      sandbox = io.string.lines.map { JSON.parse(_1) }.find { _1["type"] == "sandbox" }
+      expect(result.content).to include("2")
+      expect(sandbox).to include("tool_use_id" => "tu_seam", "profile" => "reader")
+    end
+  end
+
   describe "the confinement the bash tool's exec is handed through the production guard stack" do
     let(:project_root) { File.realpath(Dir.mktmpdir("confinement-project")) }
     let(:project) { Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag) }

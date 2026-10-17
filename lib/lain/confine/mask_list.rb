@@ -31,7 +31,8 @@ module Lain
       end
 
       # Starts the first classification off the caller's thread, so a slow one
-      # does not land on the first command. {#masks} joins it.
+      # does not land on the first command. {#masks} joins it. Call it only once
+      # the policy can be built: a failure there comes back from {#masks}.
       #
       # @return [self]
       def prime

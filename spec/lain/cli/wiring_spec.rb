@@ -440,6 +440,31 @@ RSpec.describe Lain::CLI::Wiring do
       expect(seen).to match([armed.arms, armed.arms]).and(satisfy { |pair| pair.first.equal?(pair.last) })
     end
 
+    # The mask list classifies against the board's policy, so a prime started before the board
+    # exists would hand the first bash call a NoMethodError.
+    it "primes the sandbox's mask list only once the board exists" do
+      Dir.mktmpdir("lain-wiring-prime") do |dir|
+        root = File.realpath(dir)
+        env = { "XDG_STATE_HOME" => File.join(root, "s"), "HOME" => File.join(root, "h") }
+        reader = described_class.new(options: { grace: 5, approval: "auto", confine: "reader" }, chronicle:,
+                                     status_feed:, paths: Lain::Paths.new(env:), project: throwaway_project(root))
+        board_existed = []
+        allow(Lain::Confine::MaskList).to receive(:new).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs).tap do |list|
+            allow(list).to receive(:prime) do
+              board_existed << !reader.instance_variable_get(:@switchboard).nil?
+              list
+            end
+          end
+        end
+        recorder, session = reader.run_state(nil)
+
+        reader.wire_agent(channel:, recorder:, session:, backend:)
+
+        expect(board_existed).to eq([true])
+      end
+    end
+
     # A root apart from HOME, since a root holding HOME confines nothing and
     # the rule would abstain for that reason instead.
     describe "under --confine classes" do
