@@ -103,6 +103,18 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(described_class.new(lines).recording.schedule).to eq("idle")
     end
 
+    it "builds the compaction tally from the records it holds" do
+      extra = [{ "type" => "compaction_decision", "summary_misses" => 3 },
+               { "type" => "compaction_prepared" }, { "type" => "compaction_applied" },
+               { "type" => "compaction_prepared" }].map { |r| "#{JSON.generate(r)}\n" }
+      tally = described_class.new(entries.to_a + extra).recording.compaction_tally
+      expect(tally).to have_attributes(summary_misses: 3, prepared: 2, applied: 1, unapplied: 1)
+    end
+
+    it "tallies zeros for a journal with no compaction records" do
+      expect(recording.compaction_tally).to have_attributes(summary_misses: 0, prepared: 0, cost_delta: 0)
+    end
+
     it "answers nil schedule for a header carrying no compact_schedule key" do
       expect(recording.schedule).to be_nil
     end

@@ -248,7 +248,8 @@ RSpec.describe Lain::Bench::Session do
       expect(recording.schedule).to eq("idle")
       expect(recording).to be_frozen
       expect(recording.timeline).to be_frozen
-      %i[context context_class toolset workspace baseline ledger_index degraded mode open messages compaction schedule]
+      %i[context context_class toolset workspace baseline ledger_index degraded mode open messages compaction schedule
+         compaction_tally]
         .each do |member|
         expect(recording.public_send(member)).to be_deeply_frozen
       end

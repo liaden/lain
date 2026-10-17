@@ -63,6 +63,9 @@ module Lain
     NO_PROMPT_CACHE = "not measured — every run records prompt_caching degraded, so there was no cache to hit"
     private_constant :NO_PROMPT_CACHE
 
+    NO_COMPACTION_COST = "not priced — a run has no compaction figures to sum"
+    private_constant :NO_COMPACTION_COST
+
     # One run's measured outcome, in the vocabulary Compare aggregates. Built
     # either directly from measured metrics or, more usually, from a recorded
     # Timeline via {.from_timeline}, which prices it through the {Ledger}.
@@ -70,7 +73,7 @@ module Lain
     # `price` is {Priced} or {Unpriced}, never a bare number, so a run the book
     # cannot price is still a run: the refusal travels with it to the report
     # instead of unwinding the whole comparison from its constructor.
-    Run = Data.define(:name, :usage, :price, :score, :degraded, :mode) do
+    Run = Data.define(:name, :usage, :price, :score, :degraded, :mode, :compaction) do
       # @param name [String] this run's label in the comparison table (the arm
       #   it came from)
       # @param timeline [Lain::Timeline] the recorded run
@@ -79,14 +82,16 @@ module Lain
       #   knows which journal priced this run.
       # @param grade [#score, nil] a grader's verdict, if the run was graded
       # @param degraded [Capability::DegradedSet] what this run silently lost
+      # @param compaction [CompactionTally] what the run's journal says about compaction; the default
+      #   is for a caller with no journal, as {Arm::Run#to_compare} has none
       # @param mode [nil, Compare::Mode, Lain::Mode, String] the mode trajectory this run
       #   walked, however the caller holds it. nil -- the default, and what a
       #   session that never switched answers -- means NOT RECORDED, which is
       #   not a point on the axis (see {Compare::Mode}).
       def self.from_timeline(name:, timeline:, ledger:, grade: nil,
-                             degraded: Capability::DegradedSet.new([]), mode: nil)
+                             degraded: Capability::DegradedSet.new([]), mode: nil, compaction: CompactionTally::NONE)
         new(name:, usage: ledger.usage(timeline), price: price_of(ledger, timeline),
-            score: grade&.score, degraded:, mode:)
+            score: grade&.score, degraded:, mode:, compaction:)
       end
 
       # The Ledger keeps raising on a model its book has no row for; this is the
@@ -98,8 +103,8 @@ module Lain
       end
       private_class_method :price_of
 
-      def initialize(name:, usage:, price:, degraded:, score: nil, mode: nil)
-        super(name: -name.to_s, usage:, price:, score:, degraded:, mode: Mode.coerce(mode))
+      def initialize(name:, usage:, price:, degraded:, score: nil, mode: nil, compaction: CompactionTally::NONE)
+        super(name: -name.to_s, usage:, price:, score:, degraded:, mode: Mode.coerce(mode), compaction:)
       end
 
       # @return [BigDecimal]
@@ -110,6 +115,9 @@ module Lain
       def cache_hit_ratio = usage.cache_hit_ratio
       def cache_write_tokens = usage.cache_creation_input_tokens
       def graded? = !score.nil?
+      def summary_misses = compaction.summary_misses
+      def prepared_unapplied = compaction.unapplied
+      def compaction_cost_delta = compaction.cost_delta
     end
 
     # The shape of one metric across the runs. Numeric-type-preserving on
@@ -158,7 +166,12 @@ module Lain
       cost: { label: "cost (USD)", reader: :cost, fmt: ->(v) { format("%.6f", v) } },
       score: { label: "grader score", reader: :score, fmt: ->(v) { format("%.2f", v) } },
       cache_write_tokens: { label: "cache write tokens", reader: :cache_write_tokens,
-                            fmt: ->(v) { format("%.1f", v) } }
+                            fmt: ->(v) { format("%.1f", v) } },
+      summary_misses: { label: "summary misses", reader: :summary_misses, fmt: ->(v) { format("%.1f", v) } },
+      prepared_unapplied: { label: "prepared unapplied", reader: :prepared_unapplied,
+                            fmt: ->(v) { format("%.1f", v) } },
+      compaction_cost_delta: { label: "compaction cost delta", reader: :compaction_cost_delta,
+                               fmt: ->(v) { format("%.6f", v) } }
     }.freeze
 
     # A comparison is a DISTRIBUTION, and one sample is not one. Declared over
@@ -252,12 +265,17 @@ module Lain
     # cache ratio goes on the degraded set, which the guard has already made
     # equal across the runs, so one run's answer is every run's.
     def withheld
-      @withheld ||= { cost: unpriced_reason, cache_hit_ratio: no_prompt_cache_reason }.compact
+      @withheld ||= { cost: unpriced_reason, cache_hit_ratio: no_prompt_cache_reason,
+                      compaction_cost_delta: unquoted_compaction_reason }.compact
     end
 
     def unpriced_reason
       unpriced = @runs.map(&:price).select(&:refuses?)
       Unpriced.describe(unpriced) unless unpriced.empty?
+    end
+
+    def unquoted_compaction_reason
+      NO_COMPACTION_COST if @runs.any? { |run| run.compaction_cost_delta.nil? }
     end
 
     def no_prompt_cache_reason = (NO_PROMPT_CACHE if degraded.include?(:prompt_caching))

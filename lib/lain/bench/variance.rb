@@ -128,7 +128,8 @@ module Lain
           Compare::Run.from_timeline(
             name:, timeline: recording.timeline,
             ledger: Ledger.new(index: recording.ledger_index, price_book: @price_book),
-            degraded: recording.degraded, mode: recording.mode
+            degraded: recording.degraded, mode: recording.mode,
+            compaction: recording.compaction_tally
           )
         end)
       end

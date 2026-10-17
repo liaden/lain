@@ -14,16 +14,25 @@ RSpec.describe Lain::Compare do
                     cache_creation_input_tokens: cache_write)
   end
 
-  def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]), mode: nil)
+  def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]), mode: nil,
+          compaction: Lain::Compare::CompactionTally::NONE)
     Lain::Compare::Run.new(name:, usage:, price: Lain::Compare::Priced.new(amount: BigDecimal(cost.to_s)), score:,
-                           degraded:, mode:)
+                           degraded:, mode:, compaction:)
+  end
+
+  # A run with no journal withholds the compaction cost column; a fully priced report needs this.
+  def quoted_tally
+    Lain::Compare::CompactionTally.new(summary_misses: 0, prepared: 0, applied: 0, cost_delta: BigDecimal(0))
   end
 
   let(:runs) do
     [
-      run("a", usage: usage(input: 900, output: 100, cache_read: 400), cost: "0.0030", score: 1.0),
-      run("b", usage: usage(input: 1000, output: 150, cache_read: 500), cost: "0.0040", score: 0.5),
-      run("c", usage: usage(input: 1100, output: 200, cache_read: 300), cost: "0.0035", score: 1.0)
+      run("a", usage: usage(input: 900, output: 100, cache_read: 400), cost: "0.0030", score: 1.0,
+               compaction: quoted_tally),
+      run("b", usage: usage(input: 1000, output: 150, cache_read: 500), cost: "0.0040", score: 0.5,
+               compaction: quoted_tally),
+      run("c", usage: usage(input: 1100, output: 200, cache_read: 300), cost: "0.0035", score: 1.0,
+               compaction: quoted_tally)
     ]
   end
 
@@ -155,7 +164,52 @@ RSpec.describe Lain::Compare do
     # "includes the label" assertion above while silently reordering columns. This
     # example is the one that would actually catch that regression.
     it "places cache-write immediately after grader score, keeping the existing four in place" do
-      expect(described_class::METRICS.keys).to eq(%i[total_tokens cache_hit_ratio cost score cache_write_tokens])
+      expect(described_class::METRICS.keys.first(5))
+        .to eq(%i[total_tokens cache_hit_ratio cost score cache_write_tokens])
+    end
+
+    it "ends with the 3 compaction metrics, in order" do
+      expect(described_class::METRICS.keys.last(3))
+        .to eq(%i[summary_misses prepared_unapplied compaction_cost_delta])
+    end
+
+    describe "the compaction columns" do
+      def tallied(name, tally)
+        described_class::Run.new(name:, usage: usage(input: 10, output: 1),
+                                 price: described_class::Priced.new(amount: BigDecimal("0.001")),
+                                 degraded: Lain::Capability::DegradedSet.new([]), compaction: tally)
+      end
+
+      def tally(misses: 0, prepared: 0, applied: 0, cost_delta: BigDecimal(0))
+        described_class::CompactionTally.new(summary_misses: misses, prepared:, applied:, cost_delta:)
+      end
+
+      it "shows the counts and the cost delta for tallied runs" do
+        pair = [tallied("a", tally(misses: 4, prepared: 2, applied: 1, cost_delta: BigDecimal("0.25"))),
+                tallied("b", tally(misses: 2))]
+        text = described_class.new(pair).report
+        expect(text).to include("summary misses", "prepared unapplied", "compaction cost delta")
+        expect(text.lines.find { |l| l.start_with?("a ") }).to match(/4\.0\s+1\.0\s+0\.250000/)
+      end
+
+      it "withholds only the cost delta when a run's compaction was unpriced" do
+        pair = [tallied("a", tally(cost_delta: nil)), tallied("b", tally)]
+        text = described_class.new(pair).report
+        expect(text).to include("compaction cost delta: not priced")
+        expect(text).to include("summary misses", "prepared unapplied")
+      end
+
+      it "reads a run built without a tally as 0, 0 and a withheld cost" do
+        plain = Array.new(2) do |i|
+          described_class::Run.new(name: "r#{i}", usage: usage(input: 10, output: 1),
+                                   price: described_class::Priced.new(amount: BigDecimal("0.001")),
+                                   degraded: Lain::Capability::DegradedSet.new([]))
+        end
+        comparison = described_class.new(plain)
+        expect(comparison.distribution(:summary_misses).values).to eq([0, 0])
+        expect(comparison.distribution(:prepared_unapplied).values).to eq([0, 0])
+        expect(comparison.report).to include("compaction cost delta: not priced")
+      end
     end
 
     it "states how many runs and which capabilities degraded" do

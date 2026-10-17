@@ -116,6 +116,21 @@ RSpec.describe Lain::Bench::Variance do
     end
   end
 
+  describe "recordings carrying compaction records" do
+    def with_records(bytes, *records)
+      Lain::Bench::Session.load((bytes.each_line.to_a + records.map { |r| "#{JSON.generate(r)}\n" }).each)
+    end
+
+    it "reports the recordings' summary misses and unapplied cuts in Compare's table" do
+      bytes = session_bytes([text_response("done")])
+      busy = with_records(bytes, { "type" => "compaction_decision", "summary_misses" => 7 },
+                          { "type" => "compaction_prepared" })
+      report = described_class.new(recordings: [busy, with_records(bytes)]).report
+      expect(report.lines.find { |l| l.start_with?("summary misses") }).to match(/summary misses\s+2\s+3\.5\s+/)
+      expect(report.lines.find { |l| l.start_with?("prepared unapplied") }).to match(/\s0\.5\s/)
+    end
+  end
+
   # A local model has usage and no price. The price book refuses to guess, and
   # that refusal must not take the whole experiment down with it -- determinism
   # and divergence included, neither of which ever needs a dollar figure.
@@ -133,7 +148,10 @@ RSpec.describe Lain::Bench::Variance do
 
     it "reads the cost row as not priced, with the ledger's reason, never 0.000000" do
       expect(report).to include(%(cost (USD): not priced — no price for model "qwen3:4b"))
-      expect(report).not_to include("0.000000")
+      # The compaction cost delta is the last column and legitimately reads 0.000000 here.
+      other_columns = report.lines.reject { |line| line.start_with?("compaction cost delta") }
+                            .map { |line| line.sub(/\s+0\.000000\s*\z/, "") }
+      expect(other_columns.join).not_to include("0.000000")
     end
 
     it "is reported by `lain bench variance` rather than refused" do

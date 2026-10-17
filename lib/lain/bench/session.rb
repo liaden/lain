@@ -215,6 +215,7 @@ module Lain
       # an unset flag ran the eager tool-result tier, and {Variance} is where
       # that absence is normalized to the named control arm, not here, because
       # this member is what the header actually recorded, nothing folded in.
+      # `compaction_tally` is the {Compare::CompactionTally} of the journal's compaction records.
       # `schedule` is the header's `compact_schedule`, nil for a header older
       # than the field; {Variance} reads nil as the turn schedule.
       #
@@ -223,13 +224,13 @@ module Lain
       # says otherwise, and `Ractor.shareable?(recording)` demands it does.
       Recording = Data.define(:context, :context_class, :toolset, :workspace,
                               :timeline, :baseline, :ledger_index, :degraded, :mode, :memory,
-                              :open, :messages, :compaction, :schedule) do
+                              :open, :messages, :compaction, :schedule, :compaction_tally) do
         def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
-                       degraded:, mode:, memory:, open:, messages:, compaction:, schedule:)
+                       degraded:, mode:, memory:, open:, messages:, compaction:, schedule:, compaction_tally:)
           super(context:, context_class: -context_class.to_s, toolset:, workspace:,
                 timeline:, baseline: baseline.freeze, ledger_index:, degraded:, mode:, memory:,
                 open:, messages: messages.freeze, compaction: compaction && -compaction,
-                schedule: schedule && -schedule)
+                schedule: schedule && -schedule, compaction_tally:)
         end
 
         # A recording whose baseline outnumbers the DAG's assistant turns holds
