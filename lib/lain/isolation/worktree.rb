@@ -201,7 +201,7 @@ module Lain
 
       def add(path, commit)
         shell = @registry.add(path, commit, reason: @process_table.current.reason)
-        raise Refused.from_git("add", path, shell) unless shell.exitstatus.zero?
+        raise Refused.from_git("add", path, shell) unless Shell::Out.ok?(shell)
       end
 
       # Deregister then reclaim, serialized against acquire so a concurrent

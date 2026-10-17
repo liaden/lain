@@ -171,7 +171,7 @@ module Lain
 
           def view
             shell = gh("pr", "view", @ref, "--json", FIELDS.join(","))
-            raise UnknownRef.unresolved("pull request", @ref, @cwd, shell) unless shell.exitstatus.zero?
+            raise UnknownRef.unresolved("pull request", @ref, @cwd, shell) unless Shell::Out.ok?(shell)
 
             JSON.parse(shell.stdout)
           rescue JSON::ParserError => e
@@ -212,7 +212,7 @@ module Lain
           # request that changed no files, which is a review of an empty
           # changeset reported as a success.
           def refused?(shell)
-            !shell.exitstatus.zero? || (shell.stdout.empty? && !shell.stderr.to_s.strip.empty?)
+            !Shell::Out.ok?(shell) || (shell.stdout.empty? && !shell.stderr.to_s.strip.empty?)
           end
 
           # stderr only, because that is where gh writes its errors and stdout
@@ -352,13 +352,13 @@ module Lain
         def fetch!
           shell = git("fetch", "--no-tags", "--quiet", @remote,
                       "refs/pull/#{number}/head", "refs/heads/#{@base_name}")
-          return if shell.exitstatus.zero?
+          return if Shell::Out.ok?(shell)
 
           raise UnknownRef, "fetching pull request #{number} from #{@remote.inspect} into " \
                             "#{@repo_root} failed#{UnknownRef.because(shell)}"
         end
 
-        def object?(sha) = git("cat-file", "-e", "#{sha}^{commit}").exitstatus.zero?
+        def object?(sha) = Shell::Out.ok?(git("cat-file", "-e", "#{sha}^{commit}"))
 
         def from_object_database(origin)
           @diff_origin = origin

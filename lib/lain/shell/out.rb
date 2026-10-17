@@ -132,6 +132,13 @@ module Lain
         def finish = @io.close
       end
 
+      # A module function so the `run_command` fakes that only answer
+      # `exitstatus` keep working. Not `.zero?`: a signalled child has a nil status.
+      #
+      # @param out [#exitstatus]
+      # @return [Boolean]
+      def self.ok?(out) = out.exitstatus.eql?(0)
+
       # @return [String] everything the child wrote to stdout
       attr_reader :stdout
 

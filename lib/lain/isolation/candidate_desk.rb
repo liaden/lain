@@ -66,7 +66,7 @@ module Lain
       # @return [Candidate] the scratch worktree standing on the candidate
       def candidate
         anchored = @git.update_ref(candidate_ref, tip, reason: REASON)
-        raise Error, "lain could not write #{candidate_ref}: #{anchored.stderr.strip}" unless anchored.exitstatus.zero?
+        raise Error, "lain could not write #{candidate_ref}: #{anchored.stderr.strip}" unless Shell::Out.ok?(anchored)
 
         @checkout.at(tip)
       end
@@ -111,7 +111,7 @@ module Lain
         return worker if commit.nil? || commit == worker.sha
 
         moved = @git.update_ref(worker.ref, commit, worker.sha, reason: "lain landing queue: re-synced")
-        moved.exitstatus.zero? ? worker.with(sha: commit) : worker
+        Shell::Out.ok?(moved) ? worker.with(sha: commit) : worker
       end
 
       # @param verification [LandingQueue::Verification] the verifier's verdict on the candidate
@@ -155,7 +155,7 @@ module Lain
       def joined(worker, tree)
         made = @git.run("commit-tree", tree, "-p", tip, "-p", worker.sha, "-m", "Merge #{worker.ref} into #{branch}")
         return outcome(:failed, worker, detail: "git commit-tree failed: #{made.stderr.strip}") unless
-          made.exitstatus.zero?
+          Shell::Out.ok?(made)
 
         advanced(worker, made.stdout.strip, fast_forward: false)
       end
@@ -245,7 +245,7 @@ module Lain
 
         def swapped(from, to)
           shell = @git.update_ref(@base.ref, to, from, reason: "lain landing: candidate")
-          return Move.new(outcome: :moved, detail: "") if shell.exitstatus.zero?
+          return Move.new(outcome: :moved, detail: "") if Shell::Out.ok?(shell)
 
           unmoved(from) || Move.new(outcome: :refused, detail: "git update-ref refused: #{shell.stderr.strip}")
         end

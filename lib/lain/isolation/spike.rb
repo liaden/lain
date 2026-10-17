@@ -87,7 +87,7 @@ module Lain
       def attached(lease)
         origin = lease.origin
         shell = run("git", "-C", origin.path, "switch", "--quiet", origin.branch)
-        return lease if shell.exitstatus.zero?
+        return lease if Shell::Out.ok?(shell)
 
         raise Refused, "the spike at #{origin.path} could not be put on #{origin.branch}: #{said(shell)}"
       end
@@ -122,7 +122,7 @@ module Lain
       # Read before the release, which may remove the checkout.
       def head_of(checkout)
         shell = run("git", "-C", checkout, "rev-parse", "--verify", "HEAD^{commit}")
-        shell.exitstatus.zero? ? shell.stdout.strip : ""
+        Shell::Out.ok?(shell) ? shell.stdout.strip : ""
       end
 
       # Forward only, and only from the commit it was cut at.
@@ -134,7 +134,7 @@ module Lain
         format(MOVED, **words)
       end
 
-      def git_ok?(*) = run("git", "-C", @repo_root, *).exitstatus.zero?
+      def git_ok?(*) = Shell::Out.ok?(run("git", "-C", @repo_root, *))
 
       # A release removes a clean checkout, so one still on disk holds work.
       def retained(checkout) = File.directory?(checkout) ? format(RETAINED, path: checkout) : ""
@@ -148,7 +148,7 @@ module Lain
         shell = Shell::Out.new("git", "-C", @repo_root, "update-ref", "--stdin",
                                input: lines, environment: Worktree::GIT_CONTEXT_SCRUB)
         shell.run_command
-        shell.exitstatus.zero? ? "" : format(UNDELETED, branch: origin.branch, reason: said(shell))
+        Shell::Out.ok?(shell) ? "" : format(UNDELETED, branch: origin.branch, reason: said(shell))
       end
 
       def run(*argv) = @shell_out_factory.call(*argv, environment: Worktree::GIT_CONTEXT_SCRUB).tap(&:run_command)
@@ -177,7 +177,7 @@ module Lain
       def git(env, *args)
         shell = @shell_out_factory.call("git", "-C", @repo_root, *args, environment: env)
         shell.run_command
-        return shell.stdout.strip if shell.exitstatus.zero?
+        return shell.stdout.strip if Shell::Out.ok?(shell)
 
         raise Refused, "plan scope could not commit #{@repo_root}'s tracked state (git #{args.first}): #{said(shell)}"
       end

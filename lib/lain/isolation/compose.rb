@@ -102,25 +102,25 @@ module Lain
         # pre-existing stack. So it raises the real cause loudly instead.
         def occupied?
           shell = compose("ps", "-q")
-          raise Refused.from_compose("ps", @project, shell) unless shell.exitstatus.zero?
+          raise Refused.from_compose("ps", @project, shell) unless Shell::Out.ok?(shell)
 
           !shell.stdout.to_s.strip.empty?
         end
 
         def up
           shell = compose("up", "-d")
-          raise Refused.from_compose("up", @project, shell) unless shell.exitstatus.zero?
+          raise Refused.from_compose("up", @project, shell) unless Shell::Out.ok?(shell)
         end
 
         def down
           shell = compose("down", "-v")
-          raise Refused.from_compose("down", @project, shell) unless shell.exitstatus.zero?
+          raise Refused.from_compose("down", @project, shell) unless Shell::Out.ok?(shell)
         end
 
         # The default port-discovery {Services::Compose#discover} rides.
         def published_port(service, container_port)
           shell = compose("port", service, container_port.to_s)
-          raise Refused.from_compose("port", @project, shell) unless shell.exitstatus.zero?
+          raise Refused.from_compose("port", @project, shell) unless Shell::Out.ok?(shell)
 
           parse_port(service, container_port, shell.stdout.to_s)
         end

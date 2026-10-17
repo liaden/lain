@@ -63,7 +63,7 @@ module Lain
         end
 
         def added!(shell, sha)
-          return if shell.exitstatus.zero?
+          return if Shell::Out.ok?(shell)
 
           raise Lain::Error, "git could not check out #{sha} to test it: #{shell.stderr.strip}"
         end

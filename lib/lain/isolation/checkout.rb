@@ -34,7 +34,7 @@ module Lain
       # @return [String] the ref HEAD points at, or "" on a detached HEAD
       def symbolic_head
         shell = run("symbolic-ref", "--quiet", "HEAD")
-        ok?(shell) ? shell.stdout.strip : ""
+        Shell::Out.ok?(shell) ? shell.stdout.strip : ""
       end
 
       # Every shape of "git is half way through something", which is not the
@@ -60,7 +60,7 @@ module Lain
       # MERGE_HEAD is git's own record that a merge is under way. Asked of git
       # rather than stat'ed on disk, because a LINKED worktree keeps it
       # somewhere `.git/MERGE_HEAD` is not.
-      def merging? = ok?(run("rev-parse", "--verify", "--quiet", "MERGE_HEAD"))
+      def merging? = Shell::Out.ok?(run("rev-parse", "--verify", "--quiet", "MERGE_HEAD"))
 
       # Whether `commit` is reachable from `of`. `of` defaults to HEAD because
       # that is the common question, but it is a PARAMETER: pinning it meant
@@ -68,14 +68,14 @@ module Lain
       # the invocation, and five such spellings had accumulated around this one.
       # @param commit [String] the possible ancestor
       # @param of [String] what it would be an ancestor of
-      def ancestor?(commit, of = "HEAD") = ok?(run("merge-base", "--is-ancestor", commit, of))
+      def ancestor?(commit, of = "HEAD") = Shell::Out.ok?(run("merge-base", "--is-ancestor", commit, of))
 
       # What `ref` points at, or "" when it points at nothing. "No ref yet" and
       # "a ref on some other commit" both mean the same write is still owed,
       # and no commit is ever "", so no caller writes a nil guard.
       def target(ref)
         shell = run("rev-parse", "--verify", "--quiet", ref)
-        ok?(shell) ? shell.stdout.strip : ""
+        Shell::Out.ok?(shell) ? shell.stdout.strip : ""
       end
 
       # Git's own compare-and-swap: with `held`, `update-ref` refuses unless
@@ -116,8 +116,6 @@ module Lain
       rescue SystemCallError
         ""
       end
-
-      def ok?(shell) = shell.exitstatus.zero?
     end
   end
 end

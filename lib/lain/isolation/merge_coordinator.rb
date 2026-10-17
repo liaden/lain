@@ -20,7 +20,7 @@ module Lain
         listed = Checkout.new(File.expand_path(repo_root), shell_out_factory:)
                          .run("worktree", "list", "--porcelain", "-z")
         raise Error, "#{repo_root} is in no git repository, so it has no main worktree" unless
-          listed.exitstatus.zero?
+          Shell::Out.ok?(listed)
 
         main = listed.stdout.split("\0\0").first.to_s.split("\0")
         raise Error, "#{repo_root} is in a bare repository, which has no main worktree to verify in" if
@@ -45,7 +45,7 @@ module Lain
 
         def self.common_dir(root, shell_out_factory)
           shell = Checkout.new(root, shell_out_factory:).run("rev-parse", "--path-format=absolute", "--git-common-dir")
-          unless shell.exitstatus.zero?
+          unless Shell::Out.ok?(shell)
             raise Error,
                   "#{root} is in no git repository, so it has no merge coordinator home"
           end

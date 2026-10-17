@@ -137,7 +137,7 @@ module Lain
       # @return [WindowState]
       def window_state(target:)
         reply = run("list-panes", "-t", target, "-F", PANE_DEATH_FORMAT)
-        return WindowState.new(target:, status: nil) unless reply.exitstatus&.zero?
+        return WindowState.new(target:, status: nil) unless Shell::Out.ok?(reply)
 
         _pane_dead, status = reply.stdout.lines.first.to_s.strip.split(":", 2)
         WindowState.new(target:, status: Integer(status.to_s, exception: false))
@@ -196,7 +196,7 @@ module Lain
       # @param names [Array<String>] variable names to look for
       # @return [Array<String>] those the server's global environment lacks
       def missing_from_global_environment(names)
-        names.reject { |name| run("show-environment", "-g", name).exitstatus&.zero? }
+        names.reject { |name| Shell::Out.ok?(run("show-environment", "-g", name)) }
       end
 
       private
@@ -235,7 +235,7 @@ module Lain
         reply = run(*args, ";", "set-window-option", "-t", target, "remain-on-exit", "failed")
         raise TmuxUnavailable, "tmux new-window failed: #{reply.stderr.strip}" if refused_open?(reply)
 
-        reply.exitstatus&.zero? ? nil : "no_pane_hold"
+        Shell::Out.ok?(reply) ? nil : "no_pane_hold"
       end
 
       # An ordinary window has no half that can fail on its own: #act is loud,
@@ -245,7 +245,7 @@ module Lain
         nil
       end
 
-      def refused_open?(reply) = !reply.exitstatus&.zero? && reply.stdout.strip.empty?
+      def refused_open?(reply) = !Shell::Out.ok?(reply) && reply.stdout.strip.empty?
 
       # nil (no degrade), or the reason #popup falls back to a window.
       # Unsupported tmux is checked first: an old server has no
@@ -275,7 +275,7 @@ module Lain
       # of silently doing nothing.
       def act(*args)
         shell_out = run(*args)
-        raise TmuxUnavailable, "tmux #{args.first} failed: #{shell_out.stderr.strip}" unless shell_out.exitstatus.zero?
+        raise TmuxUnavailable, "tmux #{args.first} failed: #{shell_out.stderr.strip}" unless Shell::Out.ok?(shell_out)
 
         shell_out
       end

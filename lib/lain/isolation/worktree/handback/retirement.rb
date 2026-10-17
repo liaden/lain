@@ -101,7 +101,7 @@ module Lain
             def head_of(lease)
               head = Checkout.new(lease.worker_env.cwd, shell_out_factory: @shell_out_factory).head
               raise SelfSync::Failed, "git rev-parse HEAD failed in #{lease.worker_env.cwd}" unless
-                head.exitstatus.zero?
+                Shell::Out.ok?(head)
 
               head.stdout.strip
             end
@@ -113,7 +113,7 @@ module Lain
             def within?(ancestor, commit) = ancestor == commit || @parent.ancestor?(ancestor, commit)
 
             def written(named, commit, shell)
-              return anchored(named, commit) if shell.exitstatus.zero?
+              return anchored(named, commit) if Shell::Out.ok?(shell)
 
               Outcome.git_failed(named.key, "update-ref #{named.ref}", shell)
             end
@@ -136,7 +136,7 @@ module Lain
               return "kept on #{ref}" if @parent.target(ref) == head
 
               written = @parent.update_ref(ref, head, "", reason: KEPT)
-              return "kept on #{ref}" if written.exitstatus.zero?
+              return "kept on #{ref}" if Shell::Out.ok?(written)
 
               "not kept on a ref of its own (#{written.stderr.strip}); a release still keeps unreached commits"
             end

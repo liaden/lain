@@ -331,7 +331,7 @@ module Lain
           def reason = @reason ||= @process_table.current.reason
 
           def refused!(shell, what)
-            return if shell.exitstatus.zero?
+            return if Shell::Out.ok?(shell)
 
             raise Lain::Error, "lain #{what}, so nothing was merged: #{shell.stderr.to_s.strip}"
           end
@@ -374,13 +374,13 @@ module Lain
           # larger repository runs git from its own directory, and a file name
           # is never a glob.
           def unchanged?(red, tip, changed)
-            changed.empty? || @git.run("diff", "--quiet", red, tip, "--",
-                                       *changed.map { |path| ":(top,literal)#{path}" }).exitstatus.zero?
+            changed.empty? || Shell::Out.ok?(@git.run("diff", "--quiet", red, tip, "--",
+                                                      *changed.map { |path| ":(top,literal)#{path}" }))
           end
 
           def git!(*args)
             shell = @git.run(*args)
-            return shell.stdout if shell.exitstatus.zero?
+            return shell.stdout if Shell::Out.ok?(shell)
 
             raise Lain::Error, "git #{args.first} could not say whether the retired work goes past its red commit: " \
                                "#{shell.stderr.strip}"
@@ -1502,7 +1502,7 @@ module Lain
         end
 
         def committed!(shell)
-          return if shell.exitstatus.zero?
+          return if Shell::Out.ok?(shell)
 
           raise Error, "git refused the failing tests' commit: #{shell.stderr.strip}"
         end

@@ -259,7 +259,7 @@ module Lain
             spawn(*argv, environment: Worktree::GIT_CONTEXT_SCRUB.merge("TMPDIR" => scratch))
           end
           sweep(untracked)
-          Failure.new(argv:, status: shell.exitstatus, output: tail(shell)) unless shell.exitstatus.zero?
+          Failure.new(argv:, status: shell.exitstatus, output: tail(shell)) unless Shell::Out.ok?(shell)
         end
 
         private
@@ -284,7 +284,7 @@ module Lain
 
         def git!(*args)
           shell = spawn("git", "-C", @dir, *args, environment: Worktree::GIT_CONTEXT_SCRUB)
-          return shell.stdout if shell.exitstatus.zero?
+          return shell.stdout if Shell::Out.ok?(shell)
 
           raise Error, "git #{args.first} failed in #{@dir} (exit #{shell.exitstatus}): #{shell.stderr.strip}"
         end

@@ -159,7 +159,7 @@ module Lain
                                       environment: Isolation::Worktree::GIT_CONTEXT_SCRUB,
                                       timeout: GIT_TIMEOUT)
       shell.run_command
-      shell.stdout if shell.exitstatus&.zero?
+      shell.stdout if Shell::Out.ok?(shell)
     rescue Shell::Out::Timeout, SystemCallError
       nil
     end

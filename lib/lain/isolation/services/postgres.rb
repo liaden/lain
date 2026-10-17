@@ -51,7 +51,7 @@ module Lain
 
         def create(context, key)
           created = context.run(*createdb_command(key))
-          return if created.exitstatus.zero?
+          return if Shell::Out.ok?(created)
 
           raise DbIndex::Refused, "createdb #{database_name(key).inspect} failed (exit #{created.exitstatus}) -- " \
                                   "likely a name collision with an existing database; refusing to reuse a shared " \
@@ -60,7 +60,7 @@ module Lain
 
         def drop(context, key)
           dropped = context.run(*dropdb_command(key))
-          return if dropped.exitstatus.zero?
+          return if Shell::Out.ok?(dropped)
 
           raise DbIndex::Refused, "dropdb #{database_name(key).inspect} failed (exit #{dropped.exitstatus}): " \
                                   "#{dropped.stderr.strip}"

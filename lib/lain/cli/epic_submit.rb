@@ -241,7 +241,7 @@ module Lain
 
         def commit?(digest)
           digest.match?(/\A\h{40,64}\z/) &&
-            Lain::Isolation::Checkout.new(@root).run("cat-file", "-e", "#{digest}^{commit}").exitstatus.zero?
+            Shell::Out.ok?(Lain::Isolation::Checkout.new(@root).run("cat-file", "-e", "#{digest}^{commit}"))
         end
 
         def digest!(stage)

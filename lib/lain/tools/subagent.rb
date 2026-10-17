@@ -1053,7 +1053,7 @@ module Lain
         def committed?(repo)
           shell = Shell::Out.new("git", "-C", repo, "rev-parse", "--verify", "--quiet", "HEAD^{commit}",
                                  environment: Isolation::Worktree::GIT_CONTEXT_SCRUB)
-          shell.run_command.exitstatus.zero?
+          Shell::Out.ok?(shell.run_command)
         end
       end
 

@@ -141,7 +141,7 @@ module Lain
         # @return [Boolean] whether the ref was deleted
         def delete(ref, held) # rubocop:disable Naming/PredicateMethod
           scoped!(ref)
-          @git.run("update-ref", "-d", ref, held).exitstatus.zero?
+          Shell::Out.ok?(@git.run("update-ref", "-d", ref, held))
         end
 
         # Created against "must not exist"; a ref already on `commit` is the
@@ -149,7 +149,7 @@ module Lain
         # @raise [Unanchored] when `ref` does not end up holding `commit`
         def anchor(ref, commit, reason:)
           scoped!(ref)
-          return if @git.update_ref(ref, commit, "", reason:).exitstatus.zero? || @git.target(ref) == commit
+          return if Shell::Out.ok?(@git.update_ref(ref, commit, "", reason:)) || @git.target(ref) == commit
 
           raise Unanchored, "#{ref} could not be written"
         end
@@ -230,7 +230,7 @@ module Lain
         def step(env, *args)
           shell = @shell_out_factory.call("git", "-C", @dir, *args, environment: env)
           shell.run_command
-          unless shell.exitstatus.zero?
+          unless Shell::Out.ok?(shell)
             raise Unanchored, "git #{args.first} failed in #{@dir}: #{Records.flat(shell.stderr)}"
           end
 
@@ -322,7 +322,7 @@ module Lain
         def moved?(entry)
           shell = Checkout.new(entry.path, shell_out_factory: @shell_out_factory)
                           .run("reflog", "show", "--format=%H", "HEAD")
-          shell.exitstatus.zero? && shell.stdout.split("\n").any? { |commit| commit != entry.head }
+          Shell::Out.ok?(shell) && shell.stdout.split("\n").any? { |commit| commit != entry.head }
         end
 
         def unmoved(entry, age)
@@ -373,7 +373,7 @@ module Lain
           return CHANGED unless @registry.claim(entry)
 
           shell = @registry.remove(path)
-          shell.exitstatus.zero? ? "" : "git would not remove it: #{Records.flat(shell.stderr)}"
+          Shell::Out.ok?(shell) ? "" : "git would not remove it: #{Records.flat(shell.stderr)}"
         end
 
         # git still records the HEAD of a checkout whose directory is gone, and

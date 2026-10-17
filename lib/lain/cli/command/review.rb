@@ -287,7 +287,7 @@ module Lain
           shell = @shell_out_factory.call("git", "-C", @root, "rev-parse", "--verify", "--quiet", "--end-of-options",
                                           CLOSE_REF, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
           shell.run_command
-          CLOSE_BRANCH_HINT if shell.exitstatus.zero?
+          CLOSE_BRANCH_HINT if Shell::Out.ok?(shell)
         end
 
         def closing_for(env, surface)

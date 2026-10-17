@@ -63,7 +63,7 @@ module Lain
       # merge into, so nothing across processes to keep out of it.
       def self.located(root, shell_out_factory)
         shell = Checkout.new(root, shell_out_factory:).run("rev-parse", "--path-format=absolute", "--git-common-dir")
-        shell.exitstatus.zero? ? File.join(shell.stdout.strip, NAME) : nil
+        Shell::Out.ok?(shell) ? File.join(shell.stdout.strip, NAME) : nil
       end
       private_class_method :located
 

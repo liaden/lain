@@ -28,7 +28,7 @@ module Lain
           return "" if reached?(commit)
 
           ref = Handback::Naming.new("#{File.basename(entry.path)} #{commit}").ref
-          return ref if @repo.update_ref(ref, commit, "", reason:).exitstatus.zero? || @repo.target(ref) == commit
+          return ref if Shell::Out.ok?(@repo.update_ref(ref, commit, "", reason:)) || @repo.target(ref) == commit
 
           raise Unwritten, "#{ref} could not be written for #{entry.path}"
         end
@@ -40,7 +40,7 @@ module Lain
         def reached?(commit)
           found = @repo.run("for-each-ref", "--count=1", "--format=%(refname)", "--contains", commit,
                             "refs/heads/", "refs/lain/")
-          found.exitstatus.zero? && !found.stdout.strip.empty?
+          Shell::Out.ok?(found) && !found.stdout.strip.empty?
         end
       end
     end

@@ -47,7 +47,7 @@ module Lain
 
       def self.git!(git, *args)
         shell = git.run(*args)
-        return shell.stdout if shell.exitstatus.zero?
+        return shell.stdout if Shell::Out.ok?(shell)
 
         raise Error, "QA could not read the changeset: `git #{args.join(" ")}` failed #{shell.stderr.to_s.strip}".strip
       end

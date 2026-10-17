@@ -60,7 +60,7 @@ module Lain
 
         def judged(candidate, shell)
           shell.run_command
-          return verification(candidate, :passed) if shell.exitstatus&.zero?
+          return verification(candidate, :passed) if Shell::Out.ok?(shell)
 
           verification(candidate, :failed, "#{exit_of(shell)}#{tails(shell)}")
         rescue Shell::Out::Timeout => e

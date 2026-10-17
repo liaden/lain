@@ -328,7 +328,7 @@ module Lain
       def invoke(argv, input: nil, on_refusal: method(:refusal))
         shell = @shell_out_factory.call("gh", *argv, cwd: @cwd, timeout: @timeout, **stdin(input))
         shell.run_command
-        shell.exitstatus.zero? ? yield(shell) : on_refusal.call(argv, shell)
+        Shell::Out.ok?(shell) ? yield(shell) : on_refusal.call(argv, shell)
       rescue Shell::Out::Timeout => e
         failure(argv, "timeout", e.message)
       end

@@ -139,7 +139,7 @@ module Lain
 
       def toplevel(checkout)
         shell = checkout.run("rev-parse", "--show-toplevel")
-        raise Error, "#{@cwd} is in no git checkout, so there is nothing to land" unless shell.exitstatus.zero?
+        raise Error, "#{@cwd} is in no git checkout, so there is nothing to land" unless Shell::Out.ok?(shell)
 
         shell.stdout.strip
       end
@@ -158,7 +158,7 @@ module Lain
 
       def write!(checkout, anchor, sha, held)
         write = checkout.update_ref(anchor, sha, held, reason: "lain land enqueue")
-        raise Error, "could not anchor #{sha} at #{anchor}: #{write.stderr.strip}" unless write.exitstatus.zero?
+        raise Error, "could not anchor #{sha} at #{anchor}: #{write.stderr.strip}" unless Shell::Out.ok?(write)
       end
 
       def drainer(root, branch, home)

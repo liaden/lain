@@ -96,7 +96,7 @@ module Lain
 
             # check-ignore answers in its exit status: 0 is ignored, 1 is not.
             def ignored?(key)
-              attempt("check-ignore", answers: [0, 1]) { git("check-ignore", "-q", "--", key) }.exitstatus.zero?
+              Shell::Out.ok?(attempt("check-ignore", answers: [0, 1]) { git("check-ignore", "-q", "--", key) })
             end
 
             private

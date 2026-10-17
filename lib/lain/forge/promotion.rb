@@ -118,7 +118,7 @@ module Lain
         # and git's rules drifting apart, at the cost of one subprocess.
         def nameable!(ref)
           shell = run("check-ref-format", ref)
-          raise Denied.new(MALFORMED_REF, "git refuses #{ref} as a refname") unless ok?(shell)
+          raise Denied.new(MALFORMED_REF, "git refuses #{ref} as a refname") unless Shell::Out.ok?(shell)
         end
 
         # The commit's FULL object name, and a refusal unless that is what the
@@ -126,7 +126,7 @@ module Lain
         # `sha_of(ref)` to `params["sha"]`, and the remote answers full names only.
         def anchored!(sha)
           shell = run("rev-parse", "--verify", "--quiet", "#{sha}^{commit}")
-          raise Denied.new(UNKNOWN_COMMIT, "#{sha} names no commit in #{@repo_root}") unless ok?(shell)
+          raise Denied.new(UNKNOWN_COMMIT, "#{sha} names no commit in #{@repo_root}") unless Shell::Out.ok?(shell)
 
           resolved = shell.stdout.strip
           return if resolved == sha
@@ -138,19 +138,19 @@ module Lain
         # question a promotion or a delete has.
         def heads
           shell = run("ls-remote", "--heads", @remote)
-          raise Denied.new(REMOTE_UNREACHABLE, failure("ls-remote", shell)) unless ok?(shell)
+          raise Denied.new(REMOTE_UNREACHABLE, failure("ls-remote", shell)) unless Shell::Out.ok?(shell)
 
           shell.stdout.lines.filter_map { |line| LISTED.match(line) }.to_h { |line| [line[2], line[1]] }
         end
 
         def push!(refspec)
           shell = run("push", @remote, refspec)
-          raise Denied.new(PUSH_FAILED, failure("push", shell)) unless ok?(shell)
+          raise Denied.new(PUSH_FAILED, failure("push", shell)) unless Shell::Out.ok?(shell)
         end
 
         def delete!(ref)
           shell = run("push", @remote, "--delete", ref)
-          raise Denied.new(DELETE_FAILED, failure("push --delete", shell)) unless ok?(shell)
+          raise Denied.new(DELETE_FAILED, failure("push --delete", shell)) unless Shell::Out.ok?(shell)
         end
 
         private
@@ -165,8 +165,6 @@ module Lain
           shell.run_command
           shell
         end
-
-        def ok?(shell) = shell.exitstatus.zero?
 
         def failure(operation, shell) = "git #{operation} failed (exit #{shell.exitstatus}): #{shell.stderr.strip}"
       end

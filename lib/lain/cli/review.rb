@@ -251,8 +251,8 @@ module Lain
         # form would call a coincidence a branch and refuse a perfectly
         # ordinary pull request.
         def branch?(target)
-          git("rev-parse", "--verify", "--quiet", "--end-of-options",
-              "refs/heads/#{target}").exitstatus.zero?
+          Shell::Out.ok?(git("rev-parse", "--verify", "--quiet", "--end-of-options",
+                             "refs/heads/#{target}"))
         end
 
         # {Source::LocalBranch#git}'s shape, and its scrub: an ambient GIT_DIR

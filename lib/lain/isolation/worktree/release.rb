@@ -73,13 +73,13 @@ module Lain
         # a real leak, so it is raised rather than swallowed.
         def remove(path)
           @registry.unlock(path)
-          return if @registry.remove(path).exitstatus.zero?
+          return if Shell::Out.ok?(@registry.remove(path))
 
           @registry.prune
           return unless File.exist?(path)
 
           shell = @registry.remove(path)
-          raise Refused.from_git("remove", path, shell) unless shell.exitstatus.zero?
+          raise Refused.from_git("remove", path, shell) unless Shell::Out.ok?(shell)
         end
       end
     end

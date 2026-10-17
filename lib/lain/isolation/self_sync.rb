@@ -370,7 +370,9 @@ module Lain
           return if held == commit
 
           written = @checkout.update_ref(ref, commit, held, reason: ANCHORED)
-          raise Failed, "#{ref} could not be anchored at #{commit}: #{written.stderr.strip}" unless ok?(written)
+          return if Shell::Out.ok?(written)
+
+          raise Failed, "#{ref} could not be anchored at #{commit}: #{written.stderr.strip}"
         end
 
         # The abort sits in an `ensure`, so a cancel landing mid-rebase still
@@ -381,7 +383,7 @@ module Lain
         def rebase(strategy, tip)
           landed = false
           shell = git(*strategy.rebase(tip))
-          landed = ok?(shell)
+          landed = Shell::Out.ok?(shell)
           landed ? [] : conflicts_in(shell, tip)
         ensure
           abandon unless landed
@@ -442,7 +444,7 @@ module Lain
 
         def run!(*args)
           shell = git(*args)
-          return shell.stdout.strip if ok?(shell)
+          return shell.stdout.strip if Shell::Out.ok?(shell)
 
           raise Failed, "git #{args.first} failed in #{dir} (exit #{shell.exitstatus}): #{shell.stderr.strip}"
         end
@@ -452,8 +454,6 @@ module Lain
           shell.run_command
           shell
         end
-
-        def ok?(shell) = shell.exitstatus.zero?
       end
     end
   end

@@ -146,7 +146,7 @@ module Lain
         def reason(path)
           shell = @shell_out_factory.call("git", "-C", @root, "check-ignore", "-v", "--", path)
           shell.run_command
-          return "" unless shell.exitstatus.zero?
+          return "" unless Shell::Out.ok?(shell)
 
           rule(shell.stdout)
         rescue SystemCallError

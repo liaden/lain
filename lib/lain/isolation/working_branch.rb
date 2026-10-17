@@ -164,7 +164,7 @@ module Lain
       def tip
         shell = @git.run("rev-parse", "--verify", "--quiet", "#{ref}^{commit}")
         sha = shell.stdout.strip
-        return sha if shell.exitstatus.zero? && FULL_SHA.match?(sha)
+        return sha if Shell::Out.ok?(shell) && FULL_SHA.match?(sha)
 
         raise Refused, "#{ref} names no commit in #{@repo_root} to cut a worker from"
       end
@@ -296,7 +296,7 @@ module Lain
 
       def anchored(held)
         anchor = anchor_for(held)
-        return anchor if @git.update_ref(anchor, held, "", reason: DISCARDED).exitstatus.zero?
+        return anchor if Shell::Out.ok?(@git.update_ref(anchor, held, "", reason: DISCARDED))
         return anchor if @git.target(anchor) == held
 
         raise Refused, "#{anchor} could not be written to keep #{ref}'s tip #{held}, so the branch was not deleted"
@@ -312,7 +312,7 @@ module Lain
 
       def unmarked!(marked)
         gone = @git.run("update-ref", "-d", owned_ref, marked)
-        return if gone.exitstatus.zero?
+        return if Shell::Out.ok?(gone)
 
         raise Refused, "#{owned_ref} changed while lain was deleting #{ref}, so the branch was not deleted: " \
                        "#{said(gone)}"
@@ -320,7 +320,7 @@ module Lain
 
       def deleted!(held, marked)
         gone = transacted("verify #{owned_ref}", "delete #{ref} #{held}")
-        return if gone.exitstatus.zero?
+        return if Shell::Out.ok?(gone)
         raise Refused, "another run reclaimed #{ref} while lain was deleting it, so it stays, marked" if owned?
 
         raise Refused, "#{ref} could not be deleted at #{held}, where its tip was anchored, so it stays where it " \
@@ -338,7 +338,7 @@ module Lain
 
       def restored?(marked)
         standing = @git.target(ref)
-        !standing.empty? && transacted("verify #{ref} #{standing}", "create #{owned_ref} #{marked}").exitstatus.zero?
+        !standing.empty? && Shell::Out.ok?(transacted("verify #{ref} #{standing}", "create #{owned_ref} #{marked}"))
       end
 
       # git applies every line or none. Not through {Checkout}, which feeds its
@@ -365,17 +365,17 @@ module Lain
       # first leaves no marker naming nothing.
       def remark
         held = @git.target(ref)
-        return if !held.empty? && transacted("verify #{ref} #{held}", "create #{owned_ref} #{held}").exitstatus.zero?
+        return if !held.empty? && Shell::Out.ok?(transacted("verify #{ref} #{held}", "create #{owned_ref} #{held}"))
         return if owned?
 
         raise Refused, "#{ref} was a delete lain left unfinished, and another run deleted it while this one " \
                        "reclaimed it: run /implement-epic again to cut the issue afresh"
       end
 
-      def resolves?(candidate) = @git.run("rev-parse", "--verify", "--quiet", candidate).exitstatus.zero?
+      def resolves?(candidate) = Shell::Out.ok?(@git.run("rev-parse", "--verify", "--quiet", candidate))
 
       def refuse_unholdable
-        return if @git.run("check-ref-format", ref).exitstatus.zero?
+        return if Shell::Out.ok?(@git.run("check-ref-format", ref))
 
         raise Refused, "#{name.inspect} cannot be held in a branch name (#{ref} is not a legal refname)"
       end
@@ -408,7 +408,7 @@ module Lain
       def create(from)
         base = FULL_SHA.match?(from) ? from : trunk_tip(from)
         made = @git.update_ref(ref, base, "", reason: CREATED)
-        return mark(base) if made.exitstatus.zero?
+        return mark(base) if Shell::Out.ok?(made)
         return if exists?
 
         raise Refused, "#{ref} could not be created at #{from}, and lain never force-moves a " \
@@ -432,7 +432,7 @@ module Lain
       # branch a human deleted is exactly what should be overwritten.
       def mark(base)
         marked = @git.update_ref(owned_ref, base, reason: CREATED)
-        raise Refused, "#{owned_ref} could not be written: #{said(marked)}" unless marked.exitstatus.zero?
+        raise Refused, "#{owned_ref} could not be written: #{said(marked)}" unless Shell::Out.ok?(marked)
       end
     end
   end

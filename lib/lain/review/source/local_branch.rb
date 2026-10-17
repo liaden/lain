@@ -112,7 +112,7 @@ module Lain
         #   one must not raise on its way to a buffer
         def file_at(revision, path)
           shell = git("show", "--end-of-options", "#{revision}:#{path}")
-          shell.exitstatus.zero? ? shell.stdout.b.freeze : nil
+          Shell::Out.ok?(shell) ? shell.stdout.b.freeze : nil
         end
 
         # The port's fifth message, answered by the source that never asks
@@ -212,7 +212,7 @@ module Lain
         # unknown option.
         def resolve!(role, ref)
           shell = git("rev-parse", "--verify", "--quiet", "--end-of-options", "#{ref}^{commit}")
-          raise UnknownRef.unresolved(role, ref, @repo_root, shell) unless shell.exitstatus.zero?
+          raise UnknownRef.unresolved(role, ref, @repo_root, shell) unless Shell::Out.ok?(shell)
 
           Utf8.legible(shell.stdout).strip.freeze
         end
@@ -222,7 +222,7 @@ module Lain
         # successful review of a changeset nobody wrote.
         def merge_base!(base, head)
           shell = git("merge-base", "--end-of-options", "#{base}^{commit}", @head_ref)
-          return Utf8.legible(shell.stdout).strip.freeze if shell.exitstatus.zero?
+          return Utf8.legible(shell.stdout).strip.freeze if Shell::Out.ok?(shell)
 
           # Only a failure pays for telling the two refusals apart.
           resolve!("base", base)
@@ -286,7 +286,7 @@ module Lain
           def clean?(path)
             shell = @git.call("--no-optional-locks", "status", "--porcelain", "--untracked-files=all",
                               "--ignored=matching", "--", ":(top,literal)#{path}", env: PATHSPEC_MODES)
-            shell.exitstatus.zero? && shell.stdout.empty?
+            Shell::Out.ok?(shell) && shell.stdout.empty?
           end
         end
       end

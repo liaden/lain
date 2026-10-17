@@ -246,7 +246,7 @@ module Lain
         def git(*argv)
           shell = @shell_out_factory.call("git", *argv, environment: GIT_CONTEXT_SCRUB, timeout: GIT_TIMEOUT)
           shell.run_command
-          shell.exitstatus&.zero? ? shell.stdout : ""
+          Shell::Out.ok?(shell) ? shell.stdout : ""
         rescue Shell::Out::Timeout, SystemCallError
           ""
         end

@@ -377,7 +377,7 @@ module Lain
 
         def carried
           shell = @git.run("rev-list", @base.ref, "--not", "refs/heads/#{Isolation::WorkingBranch::TRUNK}")
-          shell.exitstatus.zero? ? shell.stdout.split.map { |sha| [sha, nil] } : []
+          Shell::Out.ok?(shell) ? shell.stdout.split.map { |sha| [sha, nil] } : []
         end
       end
 
@@ -432,7 +432,7 @@ module Lain
           shell = @shell_out_factory.call("git", "-C", @repo_root, *args,
                                           environment: Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(env))
           shell.run_command
-          return shell if shell.exitstatus.zero?
+          return shell if Shell::Out.ok?(shell)
 
           raise MisplacedTests, "the layout check could not run: git #{args.first} failed " \
                                 "(exit #{shell.exitstatus}): #{shell.stderr.strip}"

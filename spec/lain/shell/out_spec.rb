@@ -5,6 +5,24 @@
 # refuses to die. A double would be asserting this file's own beliefs about
 # `Process.spawn`, which is the thing under test.
 RSpec.describe Lain::Shell::Out do
+  describe ".ok?" do
+    it "is true for exit status 0" do
+      expect(described_class.ok?(Struct.new(:exitstatus).new(0))).to be(true)
+    end
+
+    it "is false for a non-zero exit status" do
+      expect(described_class.ok?(Struct.new(:exitstatus).new(3))).to be(false)
+    end
+
+    it "is false, not a NoMethodError, when a signal killed the child" do
+      expect(described_class.ok?(Struct.new(:exitstatus).new(nil))).to be(false)
+    end
+
+    it "reads a real run" do
+      expect(described_class.ok?(described_class.new("true").run_command)).to be(true)
+    end
+  end
+
   describe "the three values a caller reads back" do
     it "captures stdout, stderr and the exit status of a real command" do
       shell = described_class.new("sh", "-c", "printf out; printf err >&2; exit 3").run_command

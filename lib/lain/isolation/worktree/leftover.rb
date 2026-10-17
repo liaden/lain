@@ -72,7 +72,7 @@ module Lain
         def drop(entry)
           @registry.anchorage.keep(entry, reason: DROPPED)
           shell = @registry.remove(entry.path)
-          raise Refused.from_git("remove", entry.path, shell) unless shell.exitstatus.zero?
+          raise Refused.from_git("remove", entry.path, shell) unless Shell::Out.ok?(shell)
         rescue Anchorage::Unwritten => e
           raise Refused, "worktree path #{entry.path} still holds a commit that could not be anchored: #{e.message}"
         end
@@ -82,7 +82,7 @@ module Lain
         def detach(entry)
           @registry.anchorage.keep(entry, reason: DETACHED)
           shell = @registry.detach(entry.path, entry.head, reason: DETACHED)
-          return if shell.exitstatus.zero?
+          return if Shell::Out.ok?(shell)
 
           raise Refused, "worktree path #{entry.path} could not be detached from #{entry.branch}: #{shell.stderr.strip}"
         rescue Anchorage::Unwritten => e
@@ -93,7 +93,7 @@ module Lain
           aside = File.join(@root, RETAINED, "#{File.basename(path)}-#{SecureRandom.hex(4)}")
           FileUtils.mkdir_p(File.dirname(aside))
           moved = @registry.move(path, aside)
-          raise Refused.from_git("move", path, moved) unless moved.exitstatus.zero?
+          raise Refused.from_git("move", path, moved) unless Shell::Out.ok?(moved)
 
           @registry.lock(aside, retention.reason)
         end

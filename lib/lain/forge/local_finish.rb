@@ -103,14 +103,14 @@ module Lain
       def committed(tree, at, about)
         made = @checkout.run("commit-tree", tree, "-p", at, "-p", about["sha"],
                              "-m", "Merge #{about["head"]} into #{about["base"]}")
-        raise Error, "git commit-tree failed: #{made.stderr.strip}" unless made.exitstatus.zero?
+        raise Error, "git commit-tree failed: #{made.stderr.strip}" unless Shell::Out.ok?(made)
 
         made.stdout.strip
       end
 
       def forwarded(commit, about)
         moved = @checkout.run("merge", "--ff-only", "--quiet", commit)
-        return succeeded(about, commit) if moved.exitstatus.zero?
+        return succeeded(about, commit) if Shell::Out.ok?(moved)
 
         refused(about, NOT_FAST_FORWARD, "#{about["base"]} could not fast-forward to the merge: #{moved.stderr.strip}")
       end

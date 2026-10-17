@@ -393,7 +393,7 @@ module Lain
 
         def switched!(git, branch)
           shell = git.run("switch", "-q", branch.name)
-          return branch.tap(&:still_owned!) if shell.exitstatus.zero?
+          return branch.tap(&:still_owned!) if Shell::Out.ok?(shell)
 
           raise Error, "#{branch.name} could not be checked out in the issue's lease: #{said(shell)}"
         end

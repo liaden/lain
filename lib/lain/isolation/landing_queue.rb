@@ -271,7 +271,7 @@ module Lain
         # first writes a tree first, so the tree is what tells them apart.
         def written(shell)
           fields = shell.stdout.split("\0")
-          return probed(:clean, tree: fields.first) if shell.exitstatus.zero?
+          return probed(:clean, tree: fields.first) if Shell::Out.ok?(shell)
           return probed(:conflicted, paths: conflicted(fields)) if WorkingBranch::FULL_SHA.match?(fields.first.to_s)
 
           probed(:failed, detail: "git merge-tree failed (exit #{shell.exitstatus}): #{shell.stderr.strip}")
@@ -351,7 +351,7 @@ module Lain
           return worker if commit.nil? || commit == worker.sha
 
           moved = @parent.update_ref(worker.ref, commit, worker.sha, reason: "lain landing queue: re-synced")
-          moved.exitstatus.zero? ? worker.with(sha: commit) : worker
+          Shell::Out.ok?(moved) ? worker.with(sha: commit) : worker
         end
 
         # Every merge already landed in the parent, so the outcomes stand as

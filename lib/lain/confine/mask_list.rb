@@ -69,7 +69,7 @@ module Lain
         shell = @shell_out.call("git", "-C", @root, "ls-files", "-z", "-co", "--", ".", *EXCLUDES,
                                 environment: Isolation::Worktree::GIT_CONTEXT_SCRUB, timeout: TIMEOUT)
         shell.run_command
-        shell.exitstatus&.zero? ? shell.stdout.split("\0").uniq : []
+        Shell::Out.ok?(shell) ? shell.stdout.split("\0").uniq : []
       rescue Shell::Out::Timeout, SystemCallError
         []
       end

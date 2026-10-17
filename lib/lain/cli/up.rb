@@ -277,7 +277,7 @@ module Lain
         # error anywhere.
         def act(*args)
           shell_out = run(*args)
-          return shell_out if shell_out.exitstatus.zero?
+          return shell_out if Shell::Out.ok?(shell_out)
 
           raise TmuxUnavailable, "tmux #{args.first} failed: #{shell_out.stderr.strip}"
         end
@@ -433,7 +433,7 @@ module Lain
         # ordinary answer here rather than a failure -- hence {Tmux#run}.
         def option(name)
           answer = @tmux.run("show-options", "-v", "-t", @session, name)
-          answer.exitstatus&.zero? ? answer.stdout.strip : ""
+          Shell::Out.ok?(answer) ? answer.stdout.strip : ""
         end
 
         def live = @tmux.run("list-panes", "-t", @window, "-F", PANE_ID).stdout.split
@@ -509,7 +509,7 @@ module Lain
                                            cwd: @cwd, timeout: TIMEOUT,
                                            environment: { ChatLaunch::PREFLIGHT_ENV => "1" })
           answer.run_command
-          return [] if answer.exitstatus&.zero?
+          return [] if Shell::Out.ok?(answer)
           # No status at all is a SIGNALLED child: neither a refusal nor an
           # acceptance, so it degrades rather than guessing.
           return [unchecked("`lain chat` was killed before it could answer")] if answer.exitstatus.nil?
@@ -663,7 +663,7 @@ module Lain
         #   it is dead
         def probe
           answer = @tmux.run("display-message", "-p", "-t", @target, FORMAT)
-          return vanished unless answer.exitstatus&.zero?
+          return vanished unless Shell::Out.ok?(answer)
 
           dead, status = answer.stdout.strip.split(" ", 2)
           dead == "1" ? status.to_s : :alive
@@ -685,7 +685,7 @@ module Lain
         # @return [String, :unanswerable]
         def vanished
           listed = @tmux.run("list-panes", "-a", "-F", PANE_ID)
-          return :unanswerable unless listed.exitstatus&.zero?
+          return :unanswerable unless Shell::Out.ok?(listed)
 
           listed.stdout.split.include?(@target) ? :unanswerable : ""
         end
@@ -755,7 +755,7 @@ module Lain
         # @param binary [String] a command name, resolved against PATH
         # @return [Boolean]
         def present?(binary)
-          @shell_out_factory.call(binary, "--version").tap(&:run_command).exitstatus.zero?
+          Shell::Out.ok?(@shell_out_factory.call(binary, "--version").tap(&:run_command))
         rescue Errno::ENOENT
           false
         end
@@ -1017,7 +1017,7 @@ module Lain
         tmux = Tmux.new(socket:, shell_out_factory:)
         answer = tmux.run("display-message", "-p", "-t", pane_id, SESSION_NAME)
         session = answer.stdout.strip
-        unless answer.exitstatus&.zero? && !session.empty?
+        unless Shell::Out.ok?(answer) && !session.empty?
           return "pane #{pane_id} is not in a tmux session; input pane not adopted"
         end
 
@@ -1141,7 +1141,7 @@ module Lain
 
       # The one query that TOLERATES a nonzero exit: "no such session" is the
       # expected, non-error answer that drives #call into #create_session.
-      def session_exists? = @tmux.run("has-session", "-t", @session).exitstatus.zero?
+      def session_exists? = Shell::Out.ok?(@tmux.run("has-session", "-t", @session))
 
       # `@chat_args` is the exe's `-- ARGS` capture: chat's own flags to
       # validate, never Up's. The recipe only escapes each one for the shell

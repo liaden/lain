@@ -83,7 +83,7 @@ module Lain
           return false unless File.directory?(path)
 
           shell = run("git", "-C", path, "status", "--porcelain", "--untracked-files=all")
-          !shell.exitstatus.zero? || !shell.stdout.empty?
+          !Shell::Out.ok?(shell) || !shell.stdout.empty?
         rescue StandardError
           true
         end
@@ -136,7 +136,7 @@ module Lain
         # @return [String] the branch a rebase in that checkout will rewrite, or "" for none
         def rebasing(path)
           shell = run("git", "-C", path, "rev-parse", "--absolute-git-dir")
-          return "" unless shell.exitstatus.zero?
+          return "" unless Shell::Out.ok?(shell)
 
           REBASES.map { |kind| File.join(shell.stdout.strip, kind, "head-name") }
                  .select { |name| File.file?(name) }.map { |name| File.read(name).strip }.first.to_s

@@ -85,7 +85,7 @@ module Lain
       end
 
       def refused!(shell, what)
-        return if shell.exitstatus.zero?
+        return if Shell::Out.ok?(shell)
 
         raise Error, "lain could not #{what} at #{@path} to verify in: #{shell.stderr.to_s.strip}"
       end

@@ -275,7 +275,7 @@ module Lain
 
           def unclean(ref, key)
             status = @parent.run("status", "--porcelain", TRACKED_ONLY)
-            return Outcome.git_failed(key, "status", status, ref:) unless ok?(status)
+            return Outcome.git_failed(key, "status", status, ref:) unless Shell::Out.ok?(status)
 
             declined(ref, key, "#{DIRTY} #{in_the_way}") unless status.stdout.strip.empty?
           end
@@ -286,7 +286,7 @@ module Lain
           # and the re-tag for {Checkout#unmerged}'s reasons.
           def in_the_way
             listed = @parent.run("diff", "--name-only", "-z", "HEAD")
-            return "(the dirty files could not be listed: #{listed.stderr.strip})" unless ok?(listed)
+            return "(the dirty files could not be listed: #{listed.stderr.strip})" unless Shell::Out.ok?(listed)
 
             paths = listed.stdout.split("\0").map { |path| path.force_encoding(FILESYSTEM) }
             named = "in #{paths.first(NAMED).join(", ")}"
@@ -295,7 +295,7 @@ module Lain
 
           def attempt(ref, key)
             shell = @parent.run(*@strategy.merge(ref))
-            ok?(shell) ? landed(ref, key) : conflict(ref, key, shell)
+            Shell::Out.ok?(shell) ? landed(ref, key) : conflict(ref, key, shell)
           end
 
           def off_branch
@@ -344,8 +344,6 @@ module Lain
           def declined(ref, key, detail) = outcome(:declined, key, ref:, detail:)
 
           def outcome(kind, key, **) = Outcome.new(kind:, worker_key: key, **)
-
-          def ok?(shell) = shell.exitstatus.zero?
         end
 
         # @param repo_root [String] the parent checkout the work comes back to --
@@ -476,7 +474,7 @@ module Lain
         # `ensure`, and this is where its idempotence lives.
         def pin(worktree, key, ref)
           head = worktree.head
-          return failed(key, "rev-parse HEAD", head) unless ok?(head)
+          return failed(key, "rev-parse HEAD", head) unless Shell::Out.ok?(head)
 
           commit = head.stdout.strip
           return outcome(:nothing_to_do, key) if @parent.ancestor?(commit)
@@ -485,7 +483,7 @@ module Lain
           return outcome(:nothing_to_do, key, ref:, sha: commit, detail: ANCHOR_ONLY) if held == commit
 
           write = @parent.update_ref(ref, commit, held, reason: ANCHORED)
-          return failed(key, "update-ref #{ref}", write) unless ok?(write)
+          return failed(key, "update-ref #{ref}", write) unless Shell::Out.ok?(write)
 
           outcome(:declined, key, ref:, sha: commit, detail: ANCHOR_ONLY)
         end
@@ -519,12 +517,12 @@ module Lain
 
         def finish(ref, key, paths)
           staged = @parent.run("add", "--", *paths)
-          return failed(key, "add", staged, ref:, parent_state: :merging) unless ok?(staged)
+          return failed(key, "add", staged, ref:, parent_state: :merging) unless Shell::Out.ok?(staged)
 
           # `commit --no-edit` rather than `merge --continue`: it concludes the
           # same merge with the same MERGE_MSG and never opens an editor.
           committed = @parent.run("commit", "--no-edit")
-          return failed(key, "commit", committed, ref:, parent_state: :merging) unless ok?(committed)
+          return failed(key, "commit", committed, ref:, parent_state: :merging) unless Shell::Out.ok?(committed)
 
           concluded(ref, key)
         end
@@ -574,8 +572,6 @@ module Lain
 
         # The record's SHA names what landed in the parent, and an anchor landed nothing.
         def landed(outcome) = outcome.anchor_only? ? nil : outcome.sha
-
-        def ok?(shell) = shell.exitstatus.zero?
       end
     end
   end
