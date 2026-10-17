@@ -142,11 +142,13 @@ module Lain
       def initialize(project_dir: ProjectDir.new, sleeper: ->(seconds) { sleep(seconds) },
                      interval: INTERVAL, patience: PATIENCE, notice: Silent)
         @dir = project_dir.container(KIND)
-        @sleeper = sleeper
-        @interval = interval
-        @told_after = [(patience / interval.to_f).ceil, 1].max
         @notice = notice
         @unreadable = Set.new
+        @locks = [File::LOCK_SH, File::LOCK_EX].to_h do |mode|
+          lock = FileLock.new(File.join(@dir, LOCK), mode:, sleeper:, interval:, patience:,
+                                                     label: "this project's memory store (#{path})")
+          [mode, lock]
+        end
       end
 
       # @return [String] the append-only file, whether or not it exists yet
@@ -308,50 +310,11 @@ module Lain
         end
       end
 
-      # POLLED, NOT BLOCKED, for {Isolation::ParentLock}'s reason: a blocking
-      # flock stalls the whole thread, reactor and all, for as long as another
-      # chat in the same project holds it, where a non-blocking try with a sleep
-      # between tries yields to the scheduler instead. A waiter that outlasts
-      # its patience is told who it is waiting on, once -- a holder that hangs
-      # rather than exits must not wedge another chat in silence.
+      # A waiter that outlasts its patience is told who it is waiting on, once:
+      # a holder that hangs rather than exits must not wedge another chat in silence.
       def locked(mode, &block)
         FileUtils.mkdir_p(@dir)
-        File.open(lock_path, File::RDWR | File::CREAT, 0o600) do |file|
-          waited(file, mode)
-          claimed(file, mode, &block)
-        end
-      end
-
-      def lock_path = File.join(@dir, LOCK)
-
-      def waited(file, mode)
-        tries = 0
-        until file.flock(mode | File::LOCK_NB)
-          @notice.call(waiting_on) if (tries += 1) == @told_after
-          @sleeper.call(@interval)
-        end
-      end
-
-      # Only a WRITER names itself: a shared reader excludes nobody it would
-      # have to explain itself to, and truncating here would erase the name a
-      # writer left.
-      def claimed(file, mode, &block)
-        mode == File::LOCK_EX ? named(file, &block) : yield
-      end
-
-      def named(file)
-        file.truncate(0)
-        file.write("pid=#{Process.pid} command=#{[$PROGRAM_NAME, *ARGV].join(" ")}\n")
-        file.flush
-        yield
-      ensure
-        file.truncate(0)
-      end
-
-      def waiting_on
-        holder = File.read(lock_path).strip
-        "waiting on #{holder.empty? ? "a holder that has not named itself yet" : holder} for this project's " \
-          "memory store (#{path})"
+        @locks.fetch(mode).hold(notice: @notice, &block)
       end
     end
   end
