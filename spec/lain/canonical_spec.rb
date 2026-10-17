@@ -122,4 +122,24 @@ RSpec.describe Lain::Canonical do
         .to eq(described_class.normalize(input))
     end
   end
+
+  # The literals are pinned, not recomputed, so the spec fails if the bytes ever change.
+  describe "golden vectors" do
+    [
+      [1, "1", "blake3:d63bd9a826af91c1fea371965a64e11ee20f13e46b5f52c59901136605b3a487"],
+      [1.0, "1.0", "blake3:ecf87622ea5c78b2b1f44016ea95d14feb3bd825f7544e7201862f3d12b4cd1b"],
+      [2.5e20, "2.5e+20", "blake3:98f0b69b697b98defe196c811de0625b5e9fb1adc05c1a1ae2f0c9ea9090b45e"],
+      ["café ☃ 😀", '"café ☃ 😀"', "blake3:a7855fe49808fdb487e34a0fb3502e07a1c252096dd1990998381027339cbdfb"],
+      [{ "b" => 1, "a" => [2, { "z" => nil, "y" => true }] }, '{"a":[2,{"y":true,"z":null}],"b":1}',
+       "blake3:edfed95bf0f26de85abfb5a48cb27f23e187ad2bf25b310b0b7cbd17dd52ef31"],
+      [[1, "a", nil, false], '[1,"a",null,false]',
+       "blake3:105c1911bd835737f725eb52a52c35f414b8f121b888c253026da9685335403a"],
+      [nil, "null", "blake3:03f88b99c3d8073bba8948d6e762aac443b265f606cc05abd4d172f03a4def6a"],
+      [true, "true", "blake3:acc8a7699a2bf4cbd05f69678eac4fc236572041c28dfd0ab558e5fcf2ab6540"]
+    ].each do |value, bytes, vector|
+      it "dumps #{value.inspect} as #{bytes} and addresses it at the pinned digest" do
+        expect([described_class.dump(value), described_class.digest(value)]).to eq([bytes, vector])
+      end
+    end
+  end
 end

@@ -372,4 +372,27 @@ RSpec.describe Lain::Event do
       expect(store.fetch(ev.payload_digest)).to eq(described_class.new(kind: :turn, body: ev.body))
     end
   end
+
+  # The literals are pinned, not recomputed, so the spec fails if Ruby's content
+  # addresses ever change; ext/lain/src/event.rs holds the same vectors for the Rust side.
+  describe "golden digest vectors" do
+    it "addresses a correlated envelope over its sorted, deduped causal parents" do
+      event = described_class.turn(role: "user", content: [{ "type" => "text", "text" => "hi" }],
+                                   correlation: "blake3:root",
+                                   causal_parents: %w[blake3:b blake3:a blake3:b])
+
+      expect(event.digest).to eq("blake3:fdaced8133acf9fe2b2fdb273d6481d7953ab07eee71932530daec533f373789")
+    end
+
+    {
+      turn: "blake3:e4aaae9a99ade23399d3fc9ed7548adfee4b8a0626a19d9329ce760a124ea348",
+      spawn: "blake3:53099e0c0250e0a695e7cefb45c687a18fb23fd8ebf0527b3f4dc19b72d4d2bb",
+      message: "blake3:157ae5cb2225f6fcdeacff2c7e8631cbcd6d061cee502c299659b3d18379ceb1",
+      snapshot: "blake3:6f938f31cb054b9fa64be1b5939c852c2173d2edd073b353834e08b351be177d"
+    }.each do |kind, vector|
+      it "addresses a #{kind} payload of {x: 1} at its pinned digest" do
+        expect(described_class::Payload.new(kind:, body: { "x" => 1 }).digest).to eq(vector)
+      end
+    end
+  end
 end
