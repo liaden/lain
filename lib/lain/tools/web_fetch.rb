@@ -170,7 +170,20 @@ module Lain
                    "::ffff:0:0:0/96" => "IPv4-translated",
                    "64:ff9b::/96" => "NAT64",
                    "fec0::/10" => "site-local",
-                   "2002::/16" => "6to4" }.freeze
+                   "2002::/16" => "6to4",
+                   # Reserved for examples, relays and tunnels, never a public
+                   # host: three RFC 5737 documentation blocks, the deprecated
+                   # 6to4 relay anycast, the v6 documentation prefix, Teredo
+                   # (which embeds a v4 address), the v6 discard prefix, and the
+                   # whole v6 multicast block.
+                   "192.0.2.0/24" => "documentation",
+                   "198.51.100.0/24" => "documentation",
+                   "203.0.113.0/24" => "documentation",
+                   "192.88.99.0/24" => "6to4 relay",
+                   "2001:db8::/32" => "documentation",
+                   "ff00::/8" => "multicast",
+                   "2001::/32" => "Teredo",
+                   "100::/64" => "discard" }.freeze
 
         # Parsed once, each carrying the exact clause its refusal uses. An entry
         # with no prefix length is a single address, and calling ::1 a "range"

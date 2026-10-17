@@ -941,6 +941,19 @@ RSpec.describe Lain::Tools::WebFetch do
       expect(contacted).to be_empty
     end
 
+    it "refuses the documentation, relay, Teredo and discard ranges, naming each" do
+      expected = { "http://192.0.2.1/" => "192.0.2.0/24", "http://198.51.100.1/" => "198.51.100.0/24",
+                   "http://203.0.113.1/" => "203.0.113.0/24", "http://192.88.99.1/" => "192.88.99.0/24",
+                   "http://[2001:db8::1]/" => "2001:db8::/32", "http://[ff02::1]/" => "ff00::/8",
+                   "http://[2001::1]/" => "2001::/32", "http://[100::1]/" => "100::/64" }
+
+      results = expected.keys.map { |url| tool.call({ url: }, nil) }
+
+      expect(results).to all(be_error)
+      expect(results.map(&:content).zip(expected.values)).to all(satisfy { |text, cidr| text.include?(cidr) })
+      expect(contacted).to be_empty
+    end
+
     it "refuses a redirect into a blocked range, because the guard re-runs on every hop" do
       hops = []
       connection = WebFetchStubConnection.new do |url|
