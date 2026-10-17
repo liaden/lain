@@ -109,6 +109,21 @@ RSpec.describe Lain::Exec::Core do
         expect(client.params.fetch("env")).to eq(captured)
       end
     end
+
+    it "withholds a secret the process holds by an explicit nil, the same map the local backend decides" do
+      with_env("GITHUB_TOKEN" => "ghp_x") do
+        captured = nil
+        pipeline = lambda do |_term, env:, capture:, **|
+          captured = env
+          capture.finish(0)
+        end
+        Lain::Exec::Local.new(pipeline:).call(command: "true", cwd: "/tmp", env: ENV.to_h, timeout: 5)
+        run(env: ENV.to_h)
+
+        expect(client.params.fetch("env")).to include("GITHUB_TOKEN" => nil)
+        expect(client.params.fetch("env")).to eq(captured)
+      end
+    end
   end
 
   describe "a deadline the daemon enforced" do

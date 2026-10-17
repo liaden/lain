@@ -804,12 +804,12 @@ module Lain
       *%w[Downloads Documents Desktop Pictures]
         .map { |dir| Rule.homed(dir, level: :gated, reason: :out_of_scope) },
       # The process filesystem, and these two files only. MEASURED, not
-      # reasoned about: a child spawned the way this codebase spawns one
-      # inherits the session's `ANTHROPIC_API_KEY`, because {Exec.child_env}
-      # scrubs `FRAMEWORK_ENV` -- bundler and rspec variables -- and nothing
-      # else. A canary key set on the session was read straight back out of the
-      # child's own `/proc/self/environ`. So this is a live credential read
-      # rather than a theoretical one, and `credential` is its true reason.
+      # reasoned about: a canary key set on the session was read straight back
+      # out of a child's own `/proc/self/environ`. {Exec::ChildEnv} now
+      # withholds a secret-shaped name the session merely inherited, but a key
+      # lent on purpose still lands there, and so does every secret of any
+      # other same-user process this one can see. So this is a live credential
+      # read rather than a theoretical one, and `credential` is its true reason.
       #
       # `cmdline` is here on its own measurement: it is mode 444 and owned by
       # the reader, so a same-user process invoked with `--api-key=...` hands

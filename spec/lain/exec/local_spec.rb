@@ -229,15 +229,45 @@ RSpec.describe Lain::Exec::Local do
 
       expect(capture.stdout).to include("[on loan]")
     end
+  end
 
-    # WorkerEnv's posture is unchanged for everything else: the env map is an
-    # additive override, not confinement, and only the framework family is taken
-    # away from the child.
-    it "still leaks a non-framework host var the caller's env omits" do
-      with_env("LAIN_HOST_ONLY" => "leaked") do
-        capture = run(%(sh -c 'echo "[$LAIN_HOST_ONLY]"'), env: { "PATH" => ENV.fetch("PATH") })
+  describe "what of the process environment reaches the child" do
+    it "withholds every secret the process holds, under the session's default environment" do
+      secrets = { "OLLAMA_API_KEY" => "sk-ollama", "SSH_AUTH_SOCK" => "/run/agent.sock", "GITHUB_TOKEN" => "ghp_x" }
 
-        expect(capture.stdout).to include("[leaked]")
+      env = with_env(secrets) { run("env", env: Lain::WorkerEnv.default.env).stdout }
+
+      expect(env.lines.map { _1.split("=").first }).not_to include(*secrets.keys)
+    end
+
+    it "keeps the toolchain, each with its value" do
+      toolchain = { "LANG" => "C.UTF-8", "TERM" => "xterm-256color", "TMPDIR" => ENV.fetch("TMPDIR", "/tmp"),
+                    "GEM_HOME" => "/tmp/lain-gems", "MISE_SHELL" => "bash", "CARGO_HOME" => "/tmp/lain-cargo" }
+
+      env = with_env(toolchain) { run("env", env: Lain::WorkerEnv.default.env).stdout }
+
+      expect(env.lines).to include(*toolchain.map { |name, value| "#{name}=#{value}\n" })
+      expect(env.lines).to include("PATH=#{ENV.fetch("PATH")}\n", "HOME=#{Dir.home}\n")
+    end
+
+    it "keeps the isolated git config the specs run under" do
+      env = run("env", env: Lain::WorkerEnv.default.env).stdout
+
+      expect(env.lines).to include("GIT_CONFIG_GLOBAL=#{ENV.fetch("GIT_CONFIG_GLOBAL")}\n",
+                                   "GIT_CONFIG_NOSYSTEM=#{ENV.fetch("GIT_CONFIG_NOSYSTEM")}\n")
+    end
+
+    it "delivers a secret-shaped name the caller lent on purpose" do
+      capture = run(%(sh -c 'echo "[$LAIN_LENT_TOKEN]"'), env: ENV.to_h.merge("LAIN_LENT_TOKEN" => "lent"))
+
+      expect(capture.stdout).to include("[lent]")
+    end
+
+    it "withholds a host var it does not keep, though the caller's env omits it" do
+      with_env("EDITOR" => "leaked") do
+        capture = run(%(sh -c 'echo "[$EDITOR]"'), env: { "PATH" => ENV.fetch("PATH") })
+
+        expect(capture.stdout).to include("[]")
       end
     end
   end

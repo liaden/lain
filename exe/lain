@@ -32,7 +32,15 @@ if File.exist?(lain_gemfile)
 end
 require "thor"
 
-require "lain"
+# A refusal lain makes while it boots, such as a secret named in LAIN_ENV_PASS,
+# is the human's to fix, so it reads as one line rather than a backtrace.
+begin
+  require "lain"
+rescue StandardError => e
+  raise unless defined?(Lain::Error) && e.is_a?(Lain::Error)
+
+  abort "lain: #{e.message}"
+end
 
 # The executable. Deliberately thin: parse flags, wire the real collaborators
 # together, hand off to Frontend::TTY. Nothing here is unit-tested the way

@@ -49,9 +49,9 @@ module Lain
   #
   # A BACKEND IS NOT A SANDBOX. Crossing a process, a socket or a container
   # boundary adds no confinement of its own -- the child runs on our uid, and
-  # {WorkerEnv}'s posture carries over verbatim: the env map is an ADDITIVE
-  # override with one removal lever, an explicit nil value. Real safety is the
-  # tool's `#requires_approval?` plus Middleware::Gate.
+  # the env map stays an ADDITIVE override with one removal lever, an explicit
+  # nil value, which {ChildEnv} writes for every inherited name it withholds.
+  # Real safety is the tool's `#requires_approval?` plus Middleware::Gate.
   module Exec
     # The command outlived its deadline and was killed. One type wrapping
     # {Shell::Pipeline::Timeout} and the daemon's server-side kill, so a caller
@@ -90,22 +90,18 @@ module Lain
     FUNCTION_ENV = /\ABASH_FUNC_/
 
     # Every spawn mechanism here INHERITS this process's environment and applies
-    # `env` per key onto it, so the scrub has to name every framework var
-    # actually present to inherit -- hence the union of the live ENV with the
-    # caller's own keys; a var the caller merely OMITS still reaches the command.
+    # `env` per key onto it, so what the child must not see has to be named
+    # with an explicit nil -- a var the caller merely OMITS still reaches the
+    # command. {ChildEnv} decides which.
     #
-    # The converse, and not obvious: the CALLER's keys are scrubbed too, so a
-    # {WorkerEnv} carrying `"BUNDLE_GEMFILE" => "/other/project/Gemfile"` reaches
-    # the child unset rather than redirected. A child cannot be pointed at
-    # another project's bundle through this hash; per-subject dependency
-    # isolation belongs to an out-of-process boundary, not to an env override.
+    # The CALLER's keys are scrubbed too, so a {WorkerEnv} carrying
+    # `"BUNDLE_GEMFILE" => "/other/project/Gemfile"` reaches the child unset
+    # rather than redirected. A child cannot be pointed at another project's
+    # bundle through this hash; per-subject dependency isolation belongs to an
+    # out-of-process boundary, not to an env override.
     #
     # @param env [Hash] the caller's overrides ({WorkerEnv#env})
-    # @return [Hash] those overrides plus an explicit nil for each framework or
-    #   shell var
-    def self.child_env(env)
-      polluted = (ENV.keys + env.keys).grep(Regexp.union(FRAMEWORK_ENV, SHELL_ENV, LOADER_ENV, FUNCTION_ENV)).uniq
-      env.merge(polluted.to_h { |key| [key, nil] })
-    end
+    # @return [Hash] {ChildEnv#call}'s answer for the live process
+    def self.child_env(env) = ChildEnv::DEFAULT.call(env)
   end
 end

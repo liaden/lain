@@ -275,6 +275,18 @@ RSpec.describe Lain::Isolation::WorkerChecks, :seam do
     end
   end
 
+  describe "a check's environment" do
+    let(:check) { runner("rspec", 'echo "key=[$LAIN_SPEC_CHECKS_TOKEN]"; exit 1') }
+
+    it "withholds a secret the host holds from the failure the model is handed" do
+      break_foo
+
+      result = with_env("LAIN_SPEC_CHECKS_TOKEN" => "sk-host") { run_checks(Lain::Isolation::SelfSync::Unaskable) }
+
+      expect(result.detail).to include("key=[]")
+    end
+  end
+
   describe "a long failure" do
     let(:retries) { 0 }
 

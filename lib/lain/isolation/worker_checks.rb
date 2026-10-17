@@ -258,7 +258,7 @@ module Lain
         # @return [Failure, nil] nil when the command passed
         def run(argv)
           shell = Dir.mktmpdir("lain-checks-", @dir) do |scratch|
-            spawn(*argv, environment: Worktree::GIT_CONTEXT_SCRUB.merge("TMPDIR" => scratch))
+            spawn(*argv, environment: Exec.child_env(Worktree::GIT_CONTEXT_SCRUB.merge("TMPDIR" => scratch)))
           end
           sweep(untracked)
           Failure.new(argv:, status: shell.exitstatus, output: tail(shell)) unless Shell::Out.ok?(shell)

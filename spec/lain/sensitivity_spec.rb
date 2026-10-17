@@ -437,11 +437,11 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
-  # A live credential read, MEASURED rather than reasoned about: a child spawned
-  # the way this codebase spawns one -- `Exec.child_env` over `WorkerEnv#env` --
-  # inherits `ANTHROPIC_API_KEY`, because that scrub names only bundler and rspec
-  # variables. A canary key set on the session was read straight back out of the
-  # child's own `/proc/self/environ`. And `/proc/PID/cmdline` is mode 444 and
+  # A live credential read, MEASURED rather than reasoned about: a canary key
+  # set on the session was read straight back out of a child's own
+  # `/proc/self/environ`. `Exec::ChildEnv` now withholds an inherited
+  # secret-shaped name, but a key lent on purpose still lands there, as does
+  # every secret of another same-user process. And `/proc/PID/cmdline` is mode 444 and
   # owned by the reader, so a same-user process invoked with `--api-key=...`
   # hands its argv to anything that opens it -- verified on this box.
   #

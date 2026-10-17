@@ -564,6 +564,43 @@ RSpec.describe Lain::Exec::Docker do
       expect(flag_values("--env")).to eq(["LAIN_LENT"])
     end
 
+    it "crosses no secret-shaped name the process holds, even in lain's own namespace" do
+      with_env("LAIN_SPEC_SNEAKY_TOKEN" => "sk-host") do
+        run(env: ENV.to_h.merge("LAIN_LENT" => "on loan"))
+      end
+
+      expect(flag_values("--env")).not_to include("LAIN_SPEC_SNEAKY_TOKEN")
+      expect(inner.env.keys).not_to include("LAIN_SPEC_SNEAKY_TOKEN")
+    end
+
+    it "crosses what the shared child environment keeps, filtered to the names a container shares" do
+      host = { "LANG" => "en_GB.UTF-8", "LAIN_SPEC_HOST" => "h", "LAIN_SPEC_HOST_TOKEN" => "t" }
+
+      with_env(host) { run(env: host.merge("LAIN_LENT" => "on loan", "PATH" => "/lent/bin")) }
+
+      expect(inner.env).to eq("LANG" => "en_GB.UTF-8", "LAIN_SPEC_HOST" => "h", "LAIN_LENT" => "on loan")
+    end
+
+    # The client is a host process talking to a daemon the operator chose; a
+    # remote or rootless daemon is named only by these.
+    it "leaves the client its daemon connection, which never crosses into the container" do
+      connection = { "DOCKER_HOST" => "ssh://box", "DOCKER_CONTEXT" => "remote", "DOCKER_CONFIG" => "/home/u/.docker",
+                     "CONTAINER_HOST" => "unix:///run/user/1000/podman.sock" }
+      envs = []
+      pipeline = lambda do |term, env:, capture:, **|
+        envs << [term, env]
+        capture.finish(0)
+      end
+      backend = described_class.new(image: "img:1", project:, exec: Lain::Exec::Local.new(pipeline:), user: "1:1")
+
+      with_env(connection) { backend.call(command: "echo hi", cwd: project, env: ENV.to_h, timeout: 30) }
+
+      term, env = envs.last
+      expect(env.slice(*connection.keys).values).not_to include(nil)
+      crossing = term.stages.first.argv.each_cons(2).filter_map { |flag, name| name if flag == "--env" }
+      expect(crossing).not_to include(*connection.keys)
+    end
+
     it "crosses a variable in lain's own namespace, which is how a session lends one" do
       run(env: { "LAIN_LENT" => "on loan" })
 

@@ -72,6 +72,23 @@ RSpec.describe Lain::Grader::TestHarness do
         expect(described_class.new(dir, adapter: probe).run(env).passed).to eq(["unset"])
       end
     end
+
+    it "withholds a secret the host process holds from the child, through the production runner" do
+      Dir.mktmpdir do |dir|
+        probe = Lain::Grader::TestHarness::Adapter::Command.new(
+          out_argv: lambda { |out|
+            ["sh", "-c", "printf 'PASS %s\\n' \"${GITHUB_TOKEN:-unset}\" > #{Shellwords.escape(out)}"]
+          },
+          passed: /\APASS (.+)/, failed: /\AFAIL (.+)/
+        )
+
+        passed = with_env("GITHUB_TOKEN" => "ghp_host") do
+          described_class.new(dir, adapter: probe).run(worker_env_for(dir, worker_env_class)).passed
+        end
+
+        expect(passed).to eq(["unset"])
+      end
+    end
   end
 
   describe "detection is loud, injection wins" do
