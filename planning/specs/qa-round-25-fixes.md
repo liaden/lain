@@ -774,8 +774,12 @@ never says the base is loopback.
 
 ```gherkin
 Scenario: a loopback cloud base says why its width is 1
-  Given --provider ollama-cloud with base https://127.0.0.1:9443 and LAIN_PROVIDER_CONCURRENCY=3
+  Given --provider ollama-cloud with base https://127.0.0.1:9443, a declared width of 3, and LAIN_PROVIDER_CONCURRENCY unset
   Then the notice says the base is a loopback address held to 1 request, not 3
+
+Scenario: an operator width on a loopback base is the operator's
+  Given the same base and LAIN_PROVIDER_CONCURRENCY=2
+  Then the notice is the plain "up to 2 cloud requests at once" line
 
 Scenario: plural
   Then a width of 1 reads "up to 1 cloud request at once"
@@ -2139,7 +2143,7 @@ Scenario: no scenario expects the old behaviour or awaits a ruling made here
   And method.md and README.md no longer warn against Ctrl-C over a draft (b25-8)
   And failure-injection's note under counts_absent (find it by text: it is not under §1b) says a severed reply is committed, marked, and the model told
   And ollama-cloud-arm §6b counts provider_retry records in the journal, not at the stub
-  And ollama-cloud-arm's width notes say a loopback base is held to 1 (T10)
+  And ollama-cloud-arm's width notes say a loopback base with LAIN_PROVIDER_CONCURRENCY unset is held to 1 (T10)
   And prompt-slots-and-roles §5c says a project's system.md never reaches an approval role
   And secret-boundary drops the g25-1 hedge on the password: ${DB_PASS} row and adds a bash-output masking check
   And bench-arms keeps its launch-repo git status and parent sentinel check and names l25-1 as fixed
@@ -2161,6 +2165,62 @@ Spec file: none (docs).
   `secret-boundary.md`, idle compaction T8's `session-and-window.md`): it waits until those are committed. On
   2026-10-17 this held for every file above, so the close-out notes must be committed before this card starts.
 
+### T63: Keep a traced call's background process alive under load          [risk: high]
+
+**Depends on:** none (added in Run 1, user ruling: fix the flake now)
+**Files:** `spec/lain/exec/sandboxed_spec.rb`, `lib/lain/confine/bwrap.rb`, `spec/lain/confine/bwrap_spec.rb` (widened in Run 1 by user rulings)
+**Reuse:** none
+**Shared-file wiring:** none
+**Reachable from:** `Exec::Sandboxed` over `Confine::Bwrap` (production wiring is the confinement plan's open T25; specs only today)
+
+The example "keeps a background process the traced call left running at full speed, and holds no file in TMPDIR"
+sleeps 1s, then reads the `count` file its background loop writes. Under 12-worker load the loop, started through
+strace, has not written it yet: 1 in 20 rounds on base. Measured in T3's flake check.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the example waits for the loop's first write
+  Given the background loop the traced call leaves running
+  When the example reads its count
+  Then it first waits, under a deadline, until the count file exists, and still checks the loop keeps running
+
+Scenario: the flake is gone under load
+  Then 20 rounds of `LAIN_SLOW=1 parallel_rspec -n 12 spec/lain/exec spec/lain/middleware` show 0 failures of that example
+```
+Spec file: `spec/lain/exec/sandboxed_spec.rb`
+
+**Stop and report if:**
+- The example still fails under load with the wait in place: the cause is not the fixed sleep.
+
+### T64: Serialize `git worktree add` on one repository          [risk: medium]
+
+**Depends on:** none (added in Run 1, user ruling: fix the race now)
+**Files:** `lib/lain/isolation/worktree.rb`, `lib/lain/isolation/spike.rb`, `spec/lain/isolation/worktree_spec.rb`, `spec/lain/seams/research_lease_spec.rb`
+**Reuse:** `Isolation::Worktree`'s existing `@monitor`
+**Shared-file wiring:** none
+**Reachable from:** `Tools::Subagent::Kept#spiked` to `Isolation::Spike#acquire` to `Isolation::Worktree#acquire`
+
+`Spike#acquire` builds a new `Worktree` per call, so the per-instance monitor does not stop 2 researchers running
+`git worktree add` on one repository at once, and one can read the other's half-written `commondir` ("fatal: failed
+to read .git/worktrees/<id>/commondir"). Seen once in T5's landing hook.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: concurrent adds on one repository are serialized
+  Given 2 Worktree instances over the same repository
+  When both acquire a worktree at the same time
+  Then each add runs alone, both succeed, and each gets its own worktree and branch
+
+Scenario: adds on different repositories do not wait on each other
+  Then a lock held for one repository does not block an add on another
+```
+Spec file: `spec/lain/isolation/worktree_spec.rb`, `spec/lain/seams/research_lease_spec.rb`
+
+**Stop and report if:**
+- Another process (not another thread or fiber) can add worktrees to the same repository in a real run: an in-process lock would not be enough.
+
 ## Integration checks
 
 After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` and
@@ -2170,7 +2230,7 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - `bundle exec rubocop`; `bin/zeitwerk-census --check`; `bin/comment-census --check-tickets`; `bin/spec-census --check`
   (run the censuses at the base SHA first, so a pre-existing overage is not blamed on a card).
 - `pre-commit run --all-files`.
-- Re-run fork j's reproduction: `bundle exec ruby -Ilib ~/tmp/lain-qa-2026-10-16-j/records/salvage_ollama.rb` prints
+- Re-run fork j's reproduction, with `wire: "ollama-ndjson"` added to its frame header (a frame written before T4 names no wire and reads as anthropic-sse, which now salvages as unreadable rather than as an empty recovery): `bundle exec ruby -Ilib ~/tmp/lain-qa-2026-10-16-j/records/salvage_ollama.rb` prints
   `recovered=true` with non-empty content.
 - **Manual pass the user owes (round 26):** re-drive each closed finding by id. In particular:
   - l25-1: `bench arms --isolation worktree` from a scratch repo with a `.rb` in its parent; the parent file and the
@@ -2201,3 +2261,208 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   no dashes, no trailers). Agent checks on their own paths: `bundle exec rspec <files>`,
   `bundle exec rubocop <files>`, `bundle exec yard-lint <files>`. The suite cannot run beside other tests (`TMPDIR`
   is shared); each worktree gets `TMPDIR=$HOME/tmp/lain/r25-T<id>`. No path needs user approval.
+- T1, T2, T4, T16, T20, T23 started (cut at `5d4b26fb`).
+- T10, T11, T13, T14 started (cut at `5d4b26fb`).
+- T13 approved (low review, APPROVE); waiting for a quiet window.
+- T11 review APPROVE-WITH-FIXES (substantive: a guess from the first probe after /model was pinned for the session); fix round sent to its implementer.
+- T10 review APPROVE-WITH-FIXES (mechanical: the loopback notice fired for any operator width). Card corrected: an env width on loopback is honoured (`Admission.build` reads the env first), so "held to 1" holds only with the env unset; T60's note follows. Fix sent to its implementer.
+- T10 fix round done (mechanical, no second review): approved.
+- T11 second review REQUEST-CHANGES (a never-probed switched model returns nil once the probe budget is spent; 2 guards unpinned). Asked the user; ruled: fix, then a third review.
+- T4 review APPROVE-WITH-FIXES (mechanical: provider-level wire and rotate-path specs); fix sent.
+- T23 review APPROVE-WITH-FIXES (mechanical: docstring, a private-field reach, an unpinned guard); fix sent. The `exec_resolution` record does exist (`Telemetry::ExecResolution`).
+- T14 stopped on its own stop condition: 2 handoff examples (source_spec 3049, 3084) passed only through `holds_newest?` with turns droppable. Ruled in the main session from the plan's "the comment wins": rewrite their history so nothing is droppable, keep their assertions, drop `holds_newest?` from `stuck?`.
+- T1, T2, T16, T20 handed back; in review.
+- T4 fix round done (mechanical, no second review): approved. It also touched `spec/lain/provider/ollama_streaming_spec.rb` (a T9 file; T9 comes later).
+- T16 review APPROVE-WITH-FIXES (substantive: `Draft#empty?` missed a buffered paste and held bytes); fix sent, second review to follow.
+- T23 fix round done (mechanical): approved.
+- T11 fix round 2 done; third review running.
+- T11 third review APPROVE.
+- T20 review APPROVE.
+- T13 landed `aaeb6af2`. T10 landed `3715a9fd`. T4 landed `1a3eeb47`. T23 landed `d40681f3`. T11 landed `a183d1bf`. T20 landed `dacec6f0`. Each hook green (rubocop plus pspec); worktrees and branches removed.
+- T1 review APPROVE-WITH-FIXES (mechanical: the refusal overclaims for bash reads, ARCHITECTURE.md:560, stale comments, a policy built twice). Scope widened to ARCHITECTURE.md. `planning/qa/scenarios/bench-arms.md:50` quotes the old refusal: left for T60.
+- T2 review REQUEST-CHANGES (blocker: the docker client lost DOCKER_HOST/CONTAINER_HOST; also WorkerChecks spawns outside ChildEnv and leaks a key). Scope widened to `isolation/worker_checks.rb`, `exe/lain`, `sensitivity_spec.rb`. Fix round sent; second review follows.
+- T5, T21, T22, T25, T29, T36 started (cut at `dacec6f0`).
+- T1 fix round done (mechanical): approved. T60 note: bench-arms.md:50 needs the new refusal sentence (text in T1 hand-back, saved at `~/tmp/lain/r25/.handback-T1.md` after landing).
+- T21 review APPROVE-WITH-FIXES (substantive: the parking note named a system binary when the cause was a project PATH entry); fix sent, second review follows.
+- T22 review APPROVE-WITH-FIXES (nits); fixes done, approved.
+- T29 review APPROVE (high: 10 mutants killed, a real hostile project). Follow-up for round 26: `Slots#digests`/`#fills` journal the unsealed system render, so SlotFills shows a fill the judge never saw.
+- T2 fix round done; second review running. Ruled in the main session: SSH_AUTH_SOCK stays refused (an ssh:// DOCKER_HOST is unsupported under `--exec docker`); round 26 follow-up. `spec/lain/tools/bash_spec.rb` has a leak example that now reads wrong; it is the confinement session's file.
+- T21 fix round done; second review running.
+- T21 second review APPROVE.
+- T25 stopped: needs 1 line in `cli/tool_guard.rb` (a Null `denied_call` on `Unreleased`). Ruled in scope; T25 lands after T1 and is applied to tool_guard.rb as a patch.
+- T5 handed back; it may edit `response_wal_spec.rb` to drop the default wire (scope change). Integration check amended: fork j's script needs a wire on its frame. A pre-T4 ollama frame now salvages as unreadable, not as an empty recovery. Seen once in T5's wide run under load: an fd-count example in `agent_spec.rb` red, then green alone and on re-run.
+- T2 second review APPROVE.
+- T25 done with the tool_guard line; in review.
+- T36 review APPROVE-WITH-FIXES (substantive: a re-submit over a standing approval still advanced past a denied stage; a double boundary check); fix sent, second review follows.
+- T16 fix round done; second review running. T14 done under option (a); in review, with a possible gap: after a compaction retry's own advance is refused, `droppable?` still reads true and handoff may not fire.
+- T1 landed `2ec05d40`. T2 landed `af007927`. T22 landed `3c352928`. T29 landed `f781eb83`. T21 landed `a2e0cfb2`. Each hook green; worktrees and branches removed.
+- Landing lock from here on: every agent runs `~/tmp/lain/r25/wait-lock.sh` before a test; the main session holds `~/tmp/lain/r25/LANDING` while it lands.
+- T3, T12, T44, T34, T28, T30 started (cut at `a2e0cfb2`).
+- T25 review APPROVE-WITH-FIXES (substantive: the lookup resolved only the spelling, so a 2nd link to a denied file still passed); fix sent, second review follows.
+- T36 fix round done; second review running.
+- T16 second review APPROVE.
+- T16 landed `760b8bab`.
+- T17 started (cut at `760b8bab`).
+- T36 second review APPROVE; 1 noted regression applied before landing (an implementation re-submit over a parked research revision must not refuse).
+- T14 review REQUEST-CHANGES (blocker: a refused render that itself advanced left `droppable?` stale, so the turn ended OverWindow instead of handing off). Fix round sent; second review follows.
+- T36 note applied: approved.
+- T36 landed `21704db5`.
+- T25 fix round done; second review running.
+- T5 review APPROVE-WITH-FIXES. Ruled in the main session, from data, reversing the Compatibility row for the WAL header: all 1782 complete frames in this box's real WALs are ollama NDJSON with no wire key, so a headerless frame defaulting to anthropic-sse would make every real crashed ollama session unrecoverable. `ResponseWal::Reader` infers a missing wire from the body's first bytes (`{` ollama-ndjson; `event:`/`data:` anthropic-sse; anything else unreadable, saying no wire was recorded). Scope widened to the T4 file `provider/response_wal/reader.rb`. Fix round sent; second review follows.
+- T30, T44 handed back; in review.
+- T36 landed `21704db5`.
+- T28 review APPROVE-WITH-FIXES (mechanical: a now-false comment, a real-gate seam case); fix sent. T12 in review.
+- T14 fix round done; second review running.
+- T3 handed back; in review. T44 review APPROVE-WITH-FIXES (nits); the policy.rb edit was needed (only the refusing layer knows the home).
+- T30 review APPROVE-WITH-FIXES (comment nits); fix sent. Note for confinement: `find -fprint/-fls` output files are invisible to `Shell::Named` (existed before this plan).
+- T28 fix round done (mechanical): approved. T17 handed back; in review.
+- T44 and T30 nits done: approved. T12 review APPROVE-WITH-FIXES (small); fix sent.
+- T28 landed `6b9dd9a4`. T44 landed `78382b35`. T30 landed `c5458c64`.
+- T14 second review APPROVE-WITH-FIXES (a docstring line). T25 second review APPROVE (nit: skip realpath when nothing is held).
+- T15, T19, T32, T37 started (cut at `c5458c64`).
+- T14, T25 nits done: approved. T17 review APPROVE-WITH-FIXES (mechanical; follow-up for round 26: the pane's header-row bookkeeping is a collaborator waiting to be named, at 300 lines). T34 in review.
+- T25 landed `4fe8063a` (tool_guard.rb applied as a patch over T1, cleanly). T14 landed `6a3e6527`.
+- T12 fixes done: approved.
+- T17 fixes done: approved.
+- T12 landed `606647f8`.
+- T17 landed `805ec904`.
+- T12 landed `606647f8`. T17 landed `805ec904`.
+- T3 review APPROVE-WITH-FIXES (mechanical: a value lent through ChildEnv came back raw; floor and name checks unpinned). Ruled: a masked SSH_AUTH_SOCK path is accepted. Round 26 follow-up: a bash mask writes no telemetry record, unlike ReadRedacted.
+- T18, T31, T33, T35 started (cut at `805ec904`).
+- T32 handed back; in review.
+- T32 review APPROVE-WITH-FIXES (substantive: an old --no-compact recording holding compact_keep 0 would refuse to resume); fix sent, second review follows.
+- T34 review APPROVE-WITH-FIXES (mechanical); done, approved.
+- T34 landed `a1d46bd6`.
+- T34 landed `a1d46bd6`.
+- T32, T5 fix rounds done; second reviews running. T31, T33, T15 handed back; in review.
+- T32 second review APPROVE. T31 review APPROVE.
+- T32 landed `5577d8fe`.
+- T31 landed `caf35027`.
+- T32 landed `5577d8fe`. T31 landed `caf35027`.
+- T3 fix round done (mechanical): approved.
+- T15 stopped on its own condition: in production a handoff cut reaches only the durable journal, never the tee that feeds StatusFeed and RunClock. Asked the user; ruled: route compaction cuts to the tee through a second, null-by-default Session sink. Scope widened to `session.rb`, `cli/chronicle.rb`; second review follows.
+- T37: verdict refusal and outbox text done (scope widened to `outbox_spec.rb`, `survey_spec.rb`). Scenario 3 (`/review` with held notes) needs Ruby to ask nvim; asked the user; ruled: add an nvim request. Scope widened to the nvim RPC path and Command::Review.
+- T33, T5: mechanical fixes sent. T35, T18, T19 handed back; in review.
+- T33 fixes done: approved.
+- T3 landing hook red: `sandboxed_spec.rb` "keeps a background process the traced call left running at full speed, and holds no file in TMPDIR" (worker seed 2833). Green alone and with the seed; base suite green once. Returned to the T3 implementer to reproduce against base.
+- T18 review APPROVE. T19, T35 reviews APPROVE-WITH-FIXES (mechanical); fixes sent.
+- T33 landed `639129ea`.
+- T18 landed `50b15a8b`.
+- T38, T39, T40, T41, T42 started (cut at `50b15a8b`).
+- T33 landed, T18 landed (see above). T5 second-review fixes done (mechanical): approved.
+- T19 fixes done: approved.
+- T19 landed `8273a631`.
+- T19 landed `8273a631`.
+- T5 landing hook red: `research_lease_spec.rb` "gives 2 researchers spawned at once their own worktree and branch" (git worktree add race: commondir read). Green alone and its file 16/0.
+- T37 Scenario 3 done (new review_notes_ask rail plus HeldNotes); in high review. T40 in review.
+- Base suite at `8273a631` (without T5) green: 24735 examples. T5 returned to its implementer to compare. T40 review APPROVE.
+- T40 landed `464b83c4`.
+- T40 landed `464b83c4`. T39 in review. T42: 2 specs outside its list encode the reversed twin-address ruling; ruled in scope.
+- T39 review APPROVE.
+- T39 landed `dde08a0f`.
+- T39 landed `dde08a0f`. T41 in review. T15 fix round done; second review running.
+- T43, T45, T46 started (cut at `dde08a0f`).
+- T41 review APPROVE-WITH-FIXES (substantive: stop condition hit; an unclosed string or bracket names the EOF or a later line). Ruled: name the opener via Prism, else say "near" and state the limit. Second review follows. T38 in review. T43, T45, T46 started.
+- T41 fix round done; second review running. T42 review APPROVE-WITH-FIXES (substantive: a replay over the same Store gave twins new digests). Ruled: the ordinal counts the run's own identical spawns from that head, so a replay resolves the same digests. Second review follows.
+- T38 review APPROVE-WITH-FIXES (substantive: rename parsing; minitest errors refused as "did not load"). Ruled: files under the test layout count as tests, anything else is stray. Second review follows.
+- T41 second review APPROVE; closers to be paired by kind before landing. T45 in review.
+- T45 review APPROVE (scan widened before landing). T46, T43 in review. Round 26 follow-up: `Forge::LocalLanding` and `epic_finish` still assume main.
+- T41 approved. T42 fix round done; second review running.
+- T41 landed `50ad17d8`.
+- T3 flake check: `sandboxed_spec.rb` failed 1 of 20 rounds on base (3 of 20 with T3), a fixed 1s sleep. T5 flake check: `research_lease_spec.rb` passed 10 of 10 both ways; the likely cause is a real race (Spike builds a Worktree per call, so concurrent `git worktree add` on one repo). Asked the user; ruled: fix both now. Added T63 and T64. T3 lands after T63, T5 after T64.
+- T15, T38, T43 approved. T63, T64 started (cut at `50ad17d8`).
+- T15 landed `da77177c`.
+- T38 landed `cbf4e8a5`.
+- T43 landed `5dc773f3`.
+- T48, T49, T62 started (cut at `5dc773f3`).
+- T15 landed, T38 landed, T43 landed (see above). T46 second review APPROVE; trailer shapes to be fully anchored before landing (fail-open on a file named like a trailer).
+- T46 trailer anchoring done: approved. T49 in review.
+- T46 landed `10d982a4`.
+- T46 landed `10d982a4`. T37 second review APPROVE-WITH-FIXES (2 Lua nits). T42 fix round 2 done; third review running.
+- T49 review APPROVE. Round 26 note: 3fff::/20 (newer IPv6 documentation) is not in NonRoutable.
+- T49 landed `51de51ad`.
+- T49 landed `51de51ad`. T37 nits done: approved. T62 in review.
+- T37 landed `65518eeb`.
+- T37 landed `65518eeb`. T42 third review APPROVE-WITH-FIXES (1 stale comment). T48 in review.
+- T62 review APPROVE.
+- T62 landed `cf643668`.
+- T62 landed `cf643668`. T42 approved.
+- T42 landed `4e0eacf4`.
+- T42 landed `4e0eacf4`. Note for the confinement session: T42 edited `lib/lain/cli/wiring/toolset_build.rb` (one line wiring `Lineage::Twins` into `spawn_seam`), a file its open cards also edit; T23 has landed, before its T31.
+- T35 fixes done: approved. T45 approved.
+- T35 landed `e5621842`.
+- T45 landed `fc362551`.
+- T35 landed `e5621842` (first attempt refused on a 73-char subject after a green suite; my message lint now gates the window). T45 landed `fc362551`. T64 handed back; in review.
+- T64 review REQUEST-CHANGES: its stop condition fired (2 lain processes on one repo is an ordinary run, so an in-process lock leaves the race open). Ruled, under the user's fix-it-now: add a flock under the git common dir inside the Monitor, key on realpath, lock every .git/worktrees mutator. Second review follows.
+- T48 review REQUEST-CHANGES (blocker: the reference rule unmasked real secrets the base masked, e.g. `${X:-secret}` and `$secretword`). Fix sent; second review follows. Round 26: defaults in ENV.fetch, `||`, docker-compose and Actions already leaked on base.
+- T64 second review APPROVE.
+- T64 landed `2800b538`.
+- T5 landed `887e6dbd`.
+- T6, T7, T8 started (cut at `887e6dbd`).
+- T64 landed `2800b538`. T5 landed `887e6dbd` (second attempt, after T64).
+- T48 fix round done; second review running. T6, T7 handed back; in review.
+- T6 review APPROVE-WITH-FIXES. Ruled: close only on a :dead writer (an :unknown writer may be live; the Liveness rule is that a resume does not claim the file). Round 26: 2 concurrent resumes can both append session_closed (Journal.open takes no lock).
+- T7 review APPROVE. T60 note: subagent provider retries now journal into the parent run journal.
+- T7 landed `dfff3c77`.
+- T7 landed `dfff3c77`. T8: 3 specs outside its list read the removed `window_cut` or list failing events; ruled in scope.
+- T6 fixes done: approved.
+- T6 landed `05dd4b7f`.
+- T6 landed `05dd4b7f`. T8 in review.
+- T8 review APPROVE. Round 26 note: Anthropic beta model_context_window_exceeded still normalizes to unknown, not context_full.
+- T8 landing hook red on a real failure: the generated docs/agent-state-machine.md lacked the new transition. Returned to the implementer to regenerate it.
+- T8 landed `a87467c6`.
+- T9 started (cut at `a87467c6`).
+- T8 landed `a87467c6` (second attempt, with the regenerated diagram).
+- T63 stopped on its own condition: under load the background loop sometimes never writes at all, which points to a race in Exec::Sandboxed teardown, not a slow write. Asked the user; ruled: investigate the race now. Scope widened to lib/lain/exec/sandboxed.rb; it stops if the fix needs a file the confinement plan is editing. T3 keeps waiting.
+- T9 review REQUEST-CHANGES (a second mint for a call that never ran; an id-less cut tool_use crashes). Fix sent; second review follows.
+- T9 final fix done (id-less cut-off calls dropped): approved.
+- T9 landed `863378ac`.
+- T9 landed `863378ac`.
+- T63 found the root cause: the `tee -p` relay in `confine/bwrap.rb` races strace -DD under load; a dead tracer under --seccomp-bpf kills the call's background process (plain strace reproduces it 13 of 20 under load). Asked the user; ruled: fix bwrap.rb now. Scope widened to `confine/bwrap.rb` and `exec/sandboxed.rb` (confinement plan files).
+- T63 fix done (strace writes -o /dev/fd/N in both branches; tee relay removed); in high review.
+- T63 high review APPROVE-WITH-FIXES (mechanical). Asked the user whether to reverse the confinement plan's 16:38 tee-relay ruling (its T23); ruled: accept the direct `-o /dev/fd/N` (the relay loses its tracer at start under load; strace ignores SIGPIPE under -D, so a closed reader gives EPIPE, not a block). Card amended: risk high, files widened. The confinement session should be told.
+- T63 fixes done: approved.
+- T63 landed `a0dae0db`.
+- T3 landed `32e55a63`.
+- T24, T47 started (cut at `32e55a63`).
+- T63 landed `a0dae0db`. T3 landed `32e55a63` (second attempt, after T63).
+- T24 handed back; in review (possible misattribution: gate adjudicator children named auto_approver).
+- T24 review APPROVE-WITH-FIXES (substantive: gate adjudicator and evidence researcher children journaled as auto_approver). Ruled: the requester is the spawned child's own role; Judged falls back to "agent" too (1 line in judged.rb, a confinement plan file). Second review follows.
+- T24 fix round done; second review running.
+- T24 second review APPROVE.
+- T24 landed `27fd1305`.
+- T61 started (cut at `27fd1305`).
+- T24 landed `27fd1305`. T61 started (cut at `27fd1305`).
+- User ruling: pull the unfinished bash-confinement cards into this run so BC can finish (its own session idle since 2026-10-16 17:17; the only live peer, lain-79, confirmed it does not own that plan and has edited nothing). Order: bcT24 and bcT27 ported from their old worktrees (cut at `963d53b9`) onto `27fd1305`, each re-reviewed; then bcT25, bcT28, bcT29, bcT30, bcT31, bcT32 by that plan's graph. When bcT32 lands, bash-confinement.md reads done and T50 to T60 open. Worktrees `r25-bc<id>`, branches `card/r25-bc<id>`. bcT27's port conflicted in `approval/judge.rb` (main moved); its implementer resolves it.
+- bcT24 re-review APPROVE-WITH-FIXES (mechanical: pin Request#cwd); fix sent. T61 handed back; in review.
+- bcT24 spec fix done: approved. The main checkout's uncommitted T24 copies (identical to the old card/T24 worktree, which keeps them) were dropped for the port. T61 review APPROVE (nits).
+- bcT24 landed `455176be`.
+- bcT24 landed `455176be`. T61 landing hook red on a real failure (child_worktree_approval_spec reads rulings.last; the new abandoned record comes last); returned to its implementer.
+- bcT27 re-verified on `27fd1305`; in high review. Main-session sign-off: auto_approver.md stays unchanged (sealed roles make the static template reach every arm, so the facts stay in the per-call prompt and the off arm gains nothing).
+- bcT25 started (cut at `455176be`).
+- T61 fix done (the abandoned record is genuine; the seam spec reads the rules-rung record, not the last). Retrying the landing.
+- T61 landed `4d2812b0`.
+- T61 landed `4d2812b0` (second attempt). Its message says "on the surfaces rung"; the code records the deny on whichever rung was consulted (a message-only inaccuracy, left as is). T47 review APPROVE-WITH-FIXES (drop the only `try` in lib).
+- T26, T27 started (cut at `4d2812b0`).
+- T47 fixes done: approved.
+- T47 landed `b95963ea`.
+- T47 landed `b95963ea`.
+- T48 second review handed to a fresh reviewer (the first stalled on a background command for over 2 hours).
+- bcT25 handed back (production toolset builds Exec::Sandboxed under --confine reader); in high review.
+- bcT27 high review APPROVE-WITH-FIXES. Ruled: when the Verdict abstains only because a stage is a wrapper or runner, still render per-stage facts (the card's Interfaces print wrappers; today the judge sees only "not resolved" for them). Second review follows.
+- T48 second review APPROVE-WITH-FIXES (mechanical: tighten ENV and Rails forms, pin 3 rows). Ruled: `$UPPER_NAME` stays a reference; a low-entropy all-caps `$` value is an accepted miss, pinned.
+- T48 fix round 2 done: approved.
+- T48 landed `e6a80ec2`.
+- T48 landed `e6a80ec2`.
+- bcT25 high review REQUEST-CHANGES (blocker: MaskList#prime races a nil switchboard, failing the first bash call; 7 of 10 mutants survive; probe and launcher resolve bwrap differently). Fix sent; second review follows.
+- bcT25 fix sent. T27 review APPROVE.
+- T27 landed `59db7707`.
+- T27 landed `59db7707`.
+- User asked to start unstarted cards early. Released T54, T57, T59 from BC under Open decision 1: their files overlap no confinement card still to land (bcT25 toolset_build.rb; bcT27-29 judge.rb, judged.rb, switchboard.rb, board_build.rb, shell/executable.rb; bcT30 wiring.rb; bcT31 arms.rb). T50-T53, T55, T56, T58 still wait. T54, T57, T59 started (cut at `59db7707`).
+- Correction: T57 reuses the sandboxed exec bcT25 builds, so it waits for bcT25; its worktree was removed. Only T54 and T59 started.
+- bcT25 fix round done; item 1 (the prime race) widened to confine/mask_list.rb to keep the prime off the switchboard. Second review after that.
+- bcT27 fix round: items 2-6 done; item 1 stopped with evidence that runner commands never reach the judge (Judged#judgeable? rules them unjudgeable). My earlier ruling withdrawn; ruled option (c): keep the gate, delete the unreachable wrapper/runner rendering, write down why. Round 26 / follow-up: judging wrappers needs a change to Named's opacity.
+- T59: the notice needs 1 line in cli/wiring.rb (bcT30 edits it later, so T59 lands first); ruled in scope with a wiring spec.
+- bcT25: classification needs the policy, so a prime at toolset build cannot remove the first-call stall. Picked (b): Wiring starts the prime once the board exists (no polling thread). Scope widened to cli/wiring.rb (call site only).
+- bcT27 option (c) done; second review running. T59 wiring done; in review.
+- User rulings: commit the uncommitted planning edits (done: `e3c2cb0d` round 25 QA notes; `e54978ba` the confinement plan's log with the takeover recorded); leave `references/repos/smolagents` alone. T60 and bcT32 are no longer blocked on uncommitted notes. T59 review APPROVE-WITH-FIXES (notice wording); fix sent.
