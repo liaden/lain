@@ -470,6 +470,7 @@ module Lain
       # Both derive here, once, so the surfaces cannot drift.
       class Announcement < String
         WIDTH = 96
+        ELLIPSIS = "..."
 
         def initialize(set)
           @set = a_set!(set)
@@ -520,7 +521,7 @@ module Lain
         # empty nor `[[:space:]]`, and would render as an invisible inbox row.
         def headline(body)
           line = body.each_line.lazy.map(&:strip).find { |text| !Blankness.blank?(text) }.to_s
-          line.truncate(WIDTH)
+          line.truncate(WIDTH, omission: ELLIPSIS)
         end
       end
 
