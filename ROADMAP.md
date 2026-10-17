@@ -2049,6 +2049,13 @@ XDG path relative, which put machine state back inside the user's repository)
    task. Research before planning: DNS and control-plane reach under confinement, a five-arm
    compaction sweep scored on the cache, provenance labels against the approval judge, and a spike
    on a local logprob judge.
+61. **Planned (2026-10-17)**: `planning/specs/qa-round-25-fixes.md`, the QA round-25 discharge
+   (`planning/qa-findings-round25-2026-10-16.md`): bench arms held to their lease, a child environment chosen by
+   allowlist with `bash` output always masked, crashed ollama sessions reassembled by the wire that wrote them, a
+   parked call's reason on every approval surface, user binaries trusted only when they shadow nothing, compaction
+   that hands off only when nothing is droppable, Ctrl-C that discards a draft without ending the cockpit, epic stage
+   boundaries on every route, and the round's LOW to LOW-MED items with a fix in reach. 62 cards, panel-reviewed;
+   T50 to T60 wait for item 59.
 
 ## Map of the documents
 
