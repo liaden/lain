@@ -186,6 +186,9 @@ module Lain
             @book = source.lookup.book
             @charged = 0
             @vouched = {}
+            @switched = {}
+            @asked = {}
+            @turn = 0
           end
 
           # @return [Integer]
@@ -201,6 +204,7 @@ module Lain
           #
           # @return [self]
           def reresolve
+            @turn += 1
             return self unless asking_can_help?
 
             lookup = @source.lookup
@@ -237,7 +241,29 @@ module Lain
 
           private
 
-          def book_for(model) = @vouched.fetch(model.to_s, @book)
+          def book_for(model) = @vouched.fetch(model.to_s) { own?(model) ? @book : switched_book(model.to_s) }
+
+          def own?(model)
+            own = @source.model
+            own.nil? || [own, "#{own}:latest"].include?(model.to_s)
+          end
+
+          # A model chosen with `/model` has its own runner and its own window,
+          # so it is probed under its own name rather than read from the launch
+          # model's book. `/api/ps` lists only resident runners and the first
+          # probe lands before the new model has served anything, so a guess is
+          # not kept: it is re-asked once per turn, within {REASK_LIMIT}.
+          def switched_book(model)
+            held = @switched[model]
+            return held if held && (held.resolve(model).authoritative? || !ask_again?(model))
+
+            @asked[model] = @turn
+            lookup = @source.lookup(model:)
+            @charged += 1 if lookup.costly?
+            @switched[model] = lookup.book
+          end
+
+          def ask_again?(model) = @asked[model] != @turn && @charged < REASK_LIMIT
 
           # Two independent reasons not to ask, and they answer different
           # questions: {#settled?} is "a better answer is not possible",
@@ -284,9 +310,10 @@ module Lain
         # {#book}, with what the probe behind it cost -- which is what {Live}
         # spends its re-asking budget on.
         #
+        # @param model [String] the model to probe for; the run's own by default
         # @return [Lookup]
-        def lookup
-          model = @backend.model
+        def lookup(model: nil)
+          model ||= @backend.model
           provider = @backend.provider
           shipped = @backend.cloud? ? ContextWindow.cloud : ContextWindow.default
           started = @clock.call

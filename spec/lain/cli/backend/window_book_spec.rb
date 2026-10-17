@@ -554,6 +554,92 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
       end
     end
 
+    describe "a model chosen with /model" do
+      def switching_live
+        provider = instance_double(Lain::Provider::Ollama)
+        allow(provider).to receive(:window_probe) { |model| probe.resident(model == "qwen3:4b" ? 21_432 : 32_768) }
+        backend = instance_double(Lain::CLI::Backend, model: "qwen3-coder:30b", num_ctx: nil, provider:, cloud?: false)
+        [described_class.new(source: Lain::CLI::Backend::WindowBook.new(backend:)), provider]
+      end
+
+      it "reads the window its own probe served, not a guess" do
+        live, = switching_live
+
+        resolution = live.resolve("qwen3:4b")
+
+        expect([resolution.window_tokens, resolution.provenance]).to eq([21_432, Lain::ContextWindow::PROBED])
+      end
+
+      it "leaves the launch model its own served window" do
+        live, = switching_live
+
+        live.resolve("qwen3:4b")
+
+        expect(live.window_tokens("qwen3-coder:30b")).to eq(32_768)
+      end
+
+      it "asks again next turn when the first probe found nothing resident, then keeps the served window" do
+        provider = instance_double(Lain::Provider::Ollama)
+        allow(provider).to receive(:window_probe).with("qwen3-coder:30b").and_return(probe.resident(32_768))
+        allow(provider).to receive(:window_probe).with("qwen3:4b")
+                                                 .and_return(probe::NONE_RESIDENT, probe.resident(21_432))
+        backend = instance_double(Lain::CLI::Backend, model: "qwen3-coder:30b", num_ctx: nil, provider:, cloud?: false)
+        live = described_class.new(source: Lain::CLI::Backend::WindowBook.new(backend:))
+
+        live.reresolve.resolve("qwen3:4b")
+        live.reresolve
+        resolution = live.resolve("qwen3:4b")
+        live.reresolve.resolve("qwen3:4b")
+
+        expect([resolution.window_tokens, resolution.provenance]).to eq([21_432, Lain::ContextWindow::PROBED])
+        expect(provider).to have_received(:window_probe).with("qwen3:4b").twice
+      end
+
+      describe "over a timed lookup" do
+        def costly_live(launch:, switched:)
+          provider = instance_double(Lain::Provider::Ollama)
+          allow(provider).to receive(:window_probe).with("qwen3-coder:30b").and_return(launch)
+          allow(provider).to receive(:window_probe).with("qwen3:4b").and_return(switched)
+          backend = instance_double(Lain::CLI::Backend, model: "qwen3-coder:30b", num_ctx: nil, provider:,
+                                                        cloud?: false)
+          book = Lain::CLI::Backend::WindowBook.new(backend:, clock: clock_costing(0.25))
+          [described_class.new(source: book), provider]
+        end
+
+        it "still gives a model switched to after the budget is spent a book" do
+          live, = costly_live(launch: probe::NONE_RESIDENT, switched: probe.resident(21_432))
+          described_class::REASK_LIMIT.times { live.reresolve }
+
+          expect(live.window_tokens("qwen3:4b")).to eq(21_432)
+        end
+
+        it "probes a model once however many times a turn reads it" do
+          live, provider = costly_live(launch: probe.resident(32_768), switched: probe::NONE_RESIDENT)
+
+          live.reresolve
+          3.times { live.resolve("qwen3:4b") }
+
+          expect(provider).to have_received(:window_probe).with("qwen3:4b").once
+        end
+
+        it "stops re-asking a costly guess after REASK_LIMIT probes" do
+          live, provider = costly_live(launch: probe.resident(32_768), switched: probe::NONE_RESIDENT)
+
+          10.times { live.reresolve.resolve("qwen3:4b") }
+
+          expect(provider).to have_received(:window_probe).with("qwen3:4b").exactly(described_class::REASK_LIMIT).times
+        end
+      end
+
+      it "probes each model once however often it is read" do
+        live, provider = switching_live
+
+        3.times { live.reresolve.resolve("qwen3:4b") }
+
+        expect(provider).to have_received(:window_probe).with("qwen3:4b").once
+      end
+    end
+
     it "measures occupancy through whichever answer it currently holds" do
       live = described_class.new(source: source(guessed(16_384), probed(32_768)))
 
