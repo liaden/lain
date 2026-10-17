@@ -2,13 +2,12 @@
 
 module Lain
   # Whether a compaction is warranted, where it cuts, what collapses the span,
-  # and how the collapse is recorded. Ten members, in the order a turn meets
+  # and how the collapse is recorded. Nine members, in the order a turn meets
   # them: {Need} detects (the signal bank), {Cold} tracks cache warmth,
   # {Scheduler} decides when to spend one, {Head} and {Boundary} locate the cut,
   # {SummarySnapshot} freezes the eager tier for the turn, {Strategy} collapses
   # a span, {Derivation} writes the collapse into the Store, {Source} is the
-  # live per-turn seam the Agent asks, and {Prepared} belongs to the older
-  # design below.
+  # live per-turn seam the Agent asks.
   #
   # TWO COMPACTION DESIGNS SHIP AND ONLY ONE IS ON THE CHAT PATH. The shipped one
   # is the DERIVED chain: {Source} builds a {Source::Derived}, which materializes
@@ -16,8 +15,7 @@ module Lain
   # `Derivation.projected` as the rendered messages. {Context::Compact} -- the
   # render-time projection most of this module's doc comments were written
   # against -- is a BENCH ARM, reached only from offline constructors and
-  # deliberately not retired. {Prepared} was built to pair with it and has no
-  # caller at all.
+  # deliberately not retired.
   #
   # So read {Head}'s and {Boundary}'s references to {Context::Compact} as the
   # arm, not as the caller: theirs is `Source#decide`.

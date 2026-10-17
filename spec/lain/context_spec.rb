@@ -465,7 +465,7 @@ RSpec.describe Lain::Context do
     end
 
     # The rule #pipeline_for applies, as its own function -- because three other
-    # objects apply it too. Compaction::Scheduler, Compaction::Prepared and
+    # objects apply it too. Compaction::Scheduler and
     # Plan::LinearRewrite each compose a stage ahead of an injected base, and
     # each held its own copy of this expression with a comment telling the next
     # reader to keep it in sync by hand.

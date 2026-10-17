@@ -430,12 +430,6 @@ verbatim beside collapsed stretches (the opening one included), and the handoff 
 too. The turn is shown in its place among the earlier summaries, oldest first, so a directive a
 later stretch overrode never reads as the newest word.
 
-`Compaction::Prepared` (`lib/lain/compaction/prepared.rb`) is the third policy, separate from
-both: what happens across repeated **idle ticks**. Idle time is a series of ticks, so a naive
-compact-on-idle would re-run and re-pay the summarizer once per tick at an unchanged head. The
-result is computed once per head digest and held; only a new head invalidates it. The
-long-idle gate is the caller's job and is deliberately unenforced here.
-
 **The wiring is where this gets subtle.** `CLI::CompactionMount`
 (`lib/lain/cli/compaction_mount.rb`) plugs 3 things into one `Agent.new`, and the third is the
 reason it is an object rather than 3 keywords: `Compaction::Source#context_for` is handed the
@@ -1921,8 +1915,7 @@ and is the one a grep for `include` misses). That is **53** classes, each with a
 `journal_type` string: 34 inside `lib/lain/telemetry/` and **19 defined elsewhere** — `Approval::GateDecision`,
 `Approval::Gate::Adjudicator::GateEvidence`, `Epic::IssueTransition`, `Epic::StageTransition`,
 `Compaction::Source::CompactionDecision`, `Compaction::Source::DerivationRefused`,
-`Compaction::Cold::CacheColdConfirmed`, `Compaction::Prepared::CompactionPrepared`,
-`Supervisor::DrainTimedOut`, `Supervisor::Restart::Restarted`,
+`Compaction::Cold::CacheColdConfirmed`, `Supervisor::DrainTimedOut`, `Supervisor::Restart::Restarted`,
 `Supervisor::Restart::WorkspaceBlob`, `Middleware::RefuseUnpermitted::Refused`,
 `Tools::Subagent::Stagger::{Dispatched,Released}`, `Arm::DualLedger::LedgerTransition`,
 `CLI::FleetWindows::WindowsCapped`, `Improvement`, and the two
@@ -1936,6 +1929,7 @@ and is the one a grep for `include` misses). That is **53** classes, each with a
 > found deliberately: incrementing a number known to be wrong by 21 would signal "verified" where
 > the truth is "inherited", and a full correction is a documentation audit rather than a line in
 > whichever card happens to add the next record type. Trust the recipe, not the digits.
+> Re-run on 2026-10-17, after `Compaction::Prepared` was deleted, it answers **114 / 66 / 48**.
 
 *Records written as plain Hashes, with no `Journalable` class behind them* — at least ten more:
 `session` / `turn` / `rewound` (`session_record.rb:27-29`, and `bench/session.rb:67-68` writes the

@@ -289,10 +289,7 @@ module Lain
         end
 
         # A combinator that discards whatever `#render` projected and
-        # substitutes the derived chain. {Compaction::Prepared}'s own `Replay`
-        # is the shape and not the object: that one is `private_constant` and
-        # computes its compaction from a `compact:` collaborator, which is the
-        # wrong collaborator for a derived chain.
+        # substitutes the derived chain.
         #
         # `Ractor.make_shareable` on the messages and not merely `freeze` on
         # self. {Scheduler::COMPOSE} makes a PROC shareable, and that does not
