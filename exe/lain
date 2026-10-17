@@ -115,7 +115,8 @@ class LainCLI < Thor
     def adopt_input_pane
       return unless ENV["TMUX_PANE"]
 
-      reason = Lain::CLI::Up.adopt_input(ENV.fetch("TMUX_PANE"))
+      waiting_on = options[:socket] ? nil : derived_input_socket
+      reason = Lain::CLI::Up.adopt_input(ENV.fetch("TMUX_PANE"), chat_socket: waiting_on)
       warn("lain input: #{reason}") if reason
     rescue Lain::CLI::Up::Error => e
       warn("lain input: #{e.message}")

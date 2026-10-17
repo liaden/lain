@@ -703,7 +703,7 @@ module Lain
           died = status.empty? ? "died" : "exited #{status}"
           "the #{@noun} pane #{died} moments after `lain up` started it, #{@consequence}. " \
             "Session '#{@session}' survives with the dead pane in it: another `lain up` attaches to " \
-            "it as it stands, `tmux kill-session -t #{@session}` clears it for a fresh start. " \
+            "it as it stands, `#{@tmux.argv("kill-session", "-t", @session).join(" ")}` clears it for a fresh start. " \
             "What the #{@noun} pane held:\n\n#{held}"
         end
 
@@ -1012,8 +1012,12 @@ module Lain
       # @param pane_id [String]
       # @param socket [String, nil] tmux's `-L`; nil lets tmux follow $TMUX
       # @param shell_out_factory [#call] `Shell::Out.new`, or a double
+      # @param chat_socket [String, nil] the input socket this pane waits on; when
+      #   no chat listens there the slot is left alone
       # @return [String, nil] why nothing was adopted, or nil
-      def self.adopt_input(pane_id, socket: nil, shell_out_factory: Shell::Out.public_method(:new))
+      def self.adopt_input(pane_id, socket: nil, chat_socket: nil, shell_out_factory: Shell::Out.public_method(:new))
+        return "no chat is listening on #{chat_socket}; input pane not adopted" unless listening?(chat_socket)
+
         tmux = Tmux.new(socket:, shell_out_factory:)
         answer = tmux.run("display-message", "-p", "-t", pane_id, SESSION_NAME)
         session = answer.stdout.strip
@@ -1023,6 +1027,16 @@ module Lain
 
         Panes.new(tmux:, session:, window: "#{session}:#{CHAT_WINDOW}").adopt_input(pane_id)
       end
+
+      def self.listening?(path)
+        return true unless path
+
+        UNIXSocket.new(path).close
+        true
+      rescue SystemCallError, ArgumentError
+        false
+      end
+      private_class_method :listening?
 
       # The cockpit switch is `nvim:`: nil is off, "" derives the plugin's
       # deterministic socket, a non-empty String is that path used verbatim.

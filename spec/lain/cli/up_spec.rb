@@ -601,6 +601,7 @@ RSpec.describe Lain::CLI::Up do
         let(:up) do
           described_class.new(session:, socket:, state_path:, chat_command: "sleep 30", chat_preflight: no_preflight)
         end
+        let(:chat_socket) { File.join(Dir.mktmpdir("lain-adopt"), "chat.sock") }
 
         def new_pane(target = "#{session}:chat")
           tmux("split-window", "-d", "-P", "-F", "\#{pane_id}", "-t", target, "sleep 30")
@@ -612,6 +613,8 @@ RSpec.describe Lain::CLI::Up do
           write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
           up.call
         end
+
+        after { FileUtils.rm_rf(File.dirname(chat_socket)) }
 
         it "records the new pane in its own session and aims the floor hook at it" do
           tmux("kill-pane", "-t", session_option(described_class::Panes::INPUT))
@@ -644,6 +647,30 @@ RSpec.describe Lain::CLI::Up do
           adopt(new_pane)
 
           expect(tmux("show-options", "-v", "-t", "chat", described_class::Panes::INPUT)).to eq("")
+        end
+
+        it "does not adopt, and names the socket it would wait on, when nothing listens" do
+          reason = described_class.adopt_input("%1", chat_socket:)
+
+          expect(reason).to include(chat_socket).and include("not adopted")
+        end
+
+        it "does not adopt when the socket path is too long to connect to" do
+          long = File.join(File.dirname(chat_socket), "#{"a" * 200}.sock")
+
+          expect(described_class.adopt_input("%1", chat_socket: long)).to include("not adopted")
+        end
+
+        it "goes on to adopt when a chat is listening" do
+          server = UNIXServer.new(chat_socket)
+          tmux("kill-pane", "-t", session_option(described_class::Panes::INPUT))
+          pane = new_pane
+
+          reason = described_class.adopt_input(pane, socket:, chat_socket:)
+
+          expect([reason, session_option(described_class::Panes::INPUT)]).to eq([nil, pane])
+        ensure
+          server&.close
         end
       end
 
@@ -1458,7 +1485,7 @@ RSpec.describe Lain::CLI::Up do
     # and the input pane is the ACTIVE one, so a probe that still named the
     # window would read the wrong screen.
     def answer(args, dead:, captured:, probe_exit:, session_exists:, raises:, listed:, input_dead:)
-      verb = args[1]
+      verb = args[1] == "-L" ? args[3] : args[1]
       raise Errno::EACCES, "tmux" if verb == raises
 
       case verb
@@ -1520,6 +1547,12 @@ RSpec.describe Lain::CLI::Up do
 
       expect(error.message).to include("Session 'lain' survives")
         .and include("another `lain up` attaches").and include("tmux kill-session -t lain")
+    end
+
+    it "names the tmux socket in the remedy when lain up was given one" do
+      error = corpse_error(socket: "qa")
+
+      expect(error.message).to include("`tmux -L qa kill-session -t lain`")
     end
 
     it "refuses to attach, quoting what the pane held and the status it died of" do
