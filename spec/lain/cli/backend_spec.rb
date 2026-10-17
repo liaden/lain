@@ -1234,7 +1234,7 @@ RSpec.describe Lain::CLI::Backend do
     # as it does the cuts a committed compaction holds, and the count its plan
     # step signal latches on.
     let(:session) do
-      instance_double(Lain::Session, plan_step_completed?: false, pinned?: false, plan_step_completions: 0,
+      instance_double(Lain::Session, pinned?: false, plan_step_completions: 0,
                                      compaction_cuts: [], record_compaction_cut: nil)
     end
     let(:profile) { Lain::CacheProfile::ANTHROPIC }

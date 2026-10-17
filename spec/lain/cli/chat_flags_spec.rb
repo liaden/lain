@@ -500,7 +500,7 @@ RSpec.describe "lain chat's flag surface" do
   describe "a turn taken through the executable's own parsed options" do
     let(:journal) { RecordingChannel.new }
     let(:session) do
-      instance_double(Lain::Session, plan_step_completed?: false, pinned?: false, plan_step_completions: 0,
+      instance_double(Lain::Session, pinned?: false, plan_step_completions: 0,
                                      compaction_cuts: [], record_compaction_cut: nil)
     end
 

@@ -151,7 +151,7 @@ RSpec.describe Lain::Compaction::Source do
   # examples using it are about. A cut that sticks is a real Session's, and
   # the group that holds one builds one (see {#recording_session}).
   def session_pinning(*digests, plan_step_completed: false)
-    instance_double(Lain::Session, plan_step_completed?: plan_step_completed, compaction_cuts: [],
+    instance_double(Lain::Session, compaction_cuts: [],
                                    plan_step_completions: plan_step_completed ? 1 : 0).tap do |double|
       allow(double).to receive(:pinned?) { |digest| digests.include?(digest) }
       allow(double).to receive(:record_compaction_cut).and_return(double)

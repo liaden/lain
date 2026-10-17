@@ -861,12 +861,6 @@ RSpec.describe Lain::Session do
 
       expect(session.plan_step_completions).to eq(1)
     end
-
-    it "is the count the level agrees with on the write that raised it" do
-      session.write_todos([todo("a", "completed")])
-
-      expect([session.plan_step_completed?, session.plan_step_completions]).to eq([true, 1])
-    end
   end
 
   # Policy state, not a derived head: the Timeline stays the lossless record,

@@ -5,12 +5,13 @@ module Lain
     class Source
       # A completed plan step, PENDING until a compaction commits.
       #
-      # {Session#plan_step_completed?} is a level that stays up until the model
-      # writes its list again. Read every render, it asked for a compaction on
-      # every turn in between -- a stream of cache breaks for one finished step.
-      # Consumed on the first render instead, it was thrown away on the render
-      # right after the completing `todo_write`, which is the next iteration of
-      # the same tool loop, warm, and so a render the scheduler defers.
+      # The signal was once a level on the Session that stayed up until the
+      # model wrote its list again. Read every render, it asked for a compaction
+      # on every turn in between -- a stream of cache breaks for one finished
+      # step. Consumed on the first render instead, it was thrown away on the
+      # render right after the completing `todo_write`, which is the next
+      # iteration of the same tool loop, warm, and so a render the scheduler
+      # defers.
       #
       # So a step is pending from the write that completes it until a compaction
       # commits, whatever that render's cache: timing defers keep it pending,

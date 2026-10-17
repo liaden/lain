@@ -452,33 +452,24 @@ module Lain
     # @return [self]
     def write_todos(todos)
       list = todos.to_a
-      @plan_step_completed = completed_count(list) > completed_count(@todo_items)
-      @plan_step_completions += 1 if @plan_step_completed
+      @plan_step_completions += 1 if completed_count(list) > completed_count(@todo_items)
       @todo_items = list
       @todo_reminder = list.empty? ? nil : render_todos(list).freeze
       @journal << Telemetry::TodoSnapshot.from(list)
       self
     end
 
-    # Whether the MOST RECENT {#write_todos} raised the count of `"completed"`
-    # items -- {Compaction::Need::PlanStepCompletion}'s signal.
+    # How many {#write_todos} calls have raised the count of `"completed"`
+    # items, ever: {Compaction::Need::PlanStepCompletion}'s signal. Monotone, so
+    # a consumer can say how far it has consumed with one Integer -- a
+    # compaction records this count on the cut it commits, and a step is
+    # pending while this exceeds the latest such record.
     #
     # Count-based rather than content-keyed on purpose: content is not a stable
     # identity for a todo, so diffing "which content is now completed that was
     # not" masks a real transition whenever two items share wording. A rising
     # COUNT is immune to duplicates and to reordering, and it fires whether the
     # step flipped to completed or arrived already-done.
-    #
-    # @return [Boolean]
-    def plan_step_completed?
-      @plan_step_completed
-    end
-
-    # How many {#write_todos} calls have raised the completed count, ever: the
-    # count {#plan_step_completed?} is the level of. Monotone, so a consumer
-    # can say how far it has consumed with one Integer -- a compaction records
-    # this count on the cut it commits, and a step is pending while this
-    # exceeds the latest such record.
     #
     # @return [Integer]
     attr_reader :plan_step_completions
@@ -755,7 +746,6 @@ module Lain
     def start_todos
       @todo_reminder = nil
       @todo_items = []
-      @plan_step_completed = false
     end
 
     def hold_cut(cut)
@@ -1112,9 +1102,6 @@ module Lain
 
       # @return [false]
       def pinned?(_digest) = false
-
-      # @return [false]
-      def plan_step_completed? = false
 
       # @return [Integer]
       def plan_step_completions = 0

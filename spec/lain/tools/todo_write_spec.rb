@@ -174,34 +174,32 @@ RSpec.describe Lain::Tools::TodoWrite do
   describe "the plan-step-completion signal" do
     let(:session) { Lain::Session.new }
 
-    it "is false before any todo_write lands" do
-      expect(session.plan_step_completed?).to be(false)
+    def write(todos) = tool.call({ todos: }, invocation_with(session))
+
+    it "has counted nothing before any todo_write lands" do
+      expect(session.plan_step_completions).to eq(0)
     end
 
-    it "stays false while nothing transitions to completed" do
-      tool.call({ todos: [{ content: "a", status: "pending" }] }, invocation_with(session))
-      tool.call({ todos: [{ content: "a", status: "in_progress" }] }, invocation_with(session))
+    it "counts nothing while nothing transitions to completed" do
+      write([{ content: "a", status: "pending" }])
+      write([{ content: "a", status: "in_progress" }])
 
-      expect(session.plan_step_completed?).to be(false)
+      expect(session.plan_step_completions).to eq(0)
     end
 
-    it "raises when a subsequent write flips one item to completed" do
-      tool.call({ todos: [{ content: "a", status: "in_progress" }, { content: "b", status: "pending" }] },
-                invocation_with(session))
+    it "counts a subsequent write that flips one item to completed" do
+      write([{ content: "a", status: "in_progress" }, { content: "b", status: "pending" }])
 
-      tool.call({ todos: [{ content: "a", status: "completed" }, { content: "b", status: "pending" }] },
-                invocation_with(session))
-
-      expect(session.plan_step_completed?).to be(true)
+      expect { write([{ content: "a", status: "completed" }, { content: "b", status: "pending" }]) }
+        .to change(session, :plan_step_completions).by(1)
     end
 
-    it "does not re-raise on a later write that merely repeats the same completed item" do
-      tool.call({ todos: [{ content: "a", status: "in_progress" }] }, invocation_with(session))
-      tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
-      tool.call({ todos: [{ content: "a", status: "completed" }, { content: "b", status: "pending" }] },
-                invocation_with(session))
+    it "does not count a later write that merely repeats the same completed item" do
+      write([{ content: "a", status: "in_progress" }])
+      write([{ content: "a", status: "completed" }])
 
-      expect(session.plan_step_completed?).to be(false)
+      expect { write([{ content: "a", status: "completed" }, { content: "b", status: "pending" }]) }
+        .not_to change(session, :plan_step_completions)
     end
 
     # Content-keyed matching masks a transition when two todos share wording:
@@ -210,48 +208,41 @@ RSpec.describe Lain::Tools::TodoWrite do
     # -- a false negative the reviewer reproduced. The signal is COUNT-based
     # instead: it fires when the number of completed items goes up, which is
     # robust to duplicate content and to reordering.
-    it "fires on a duplicate-content transition that a content-keyed diff would mask" do
-      tool.call({ todos: [{ content: "dup", status: "in_progress" }, { content: "dup", status: "completed" }] },
-                invocation_with(session))
+    it "counts a duplicate-content transition that a content-keyed diff would mask" do
+      write([{ content: "dup", status: "in_progress" }, { content: "dup", status: "completed" }])
 
-      tool.call({ todos: [{ content: "dup", status: "completed" }, { content: "dup", status: "completed" }] },
-                invocation_with(session))
-
-      expect(session.plan_step_completed?).to be(true)
+      expect { write([{ content: "dup", status: "completed" }, { content: "dup", status: "completed" }]) }
+        .to change(session, :plan_step_completions).by(1)
     end
 
     # Any increase in completed-count is a compaction-worthy plan-step signal
     # -- decided explicitly rather than left as an open question: a step
     # closing (whether newly completed or born already-done) is the seam
     # `cache-aware-compaction.md` names, so both fire.
-    it "fires on the very first write when it already contains a completed item (count 0 -> 1)" do
-      tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
-
-      expect(session.plan_step_completed?).to be(true)
+    it "counts the very first write when it already contains a completed item (count 0 -> 1)" do
+      expect { write([{ content: "a", status: "completed" }]) }
+        .to change(session, :plan_step_completions).from(0).to(1)
     end
 
-    it "fires when a later write adds a brand-new item that is already completed (count increases)" do
-      tool.call({ todos: [{ content: "a", status: "in_progress" }] }, invocation_with(session))
+    it "counts a later write that adds a brand-new item already completed (count increases)" do
+      write([{ content: "a", status: "in_progress" }])
 
-      tool.call({ todos: [{ content: "a", status: "in_progress" }, { content: "b", status: "completed" }] },
-                invocation_with(session))
-
-      expect(session.plan_step_completed?).to be(true)
+      expect { write([{ content: "a", status: "in_progress" }, { content: "b", status: "completed" }]) }
+        .to change(session, :plan_step_completions).by(1)
     end
 
-    it "does not re-raise on an idempotent re-write of an already-completed list (count unchanged)" do
-      tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
-      tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
+    it "does not count an idempotent re-write of an already-completed list (count unchanged)" do
+      write([{ content: "a", status: "completed" }])
 
-      expect(session.plan_step_completed?).to be(false)
+      expect { write([{ content: "a", status: "completed" }]) }.not_to change(session, :plan_step_completions)
     end
 
     it "feeds Compaction::Need, raising its need flag" do
-      tool.call({ todos: [{ content: "a", status: "in_progress" }] }, invocation_with(session))
-      tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
+      write([{ content: "a", status: "in_progress" }])
+      write([{ content: "a", status: "completed" }])
 
       need = Lain::Compaction::Need.new(byte_threshold: 1_000_000)
-      result = need.check(window_tokens: 1_000_000, plan_step_completed: session.plan_step_completed?)
+      result = need.check(window_tokens: 1_000_000, plan_step_completed: session.plan_step_completions.positive?)
 
       expect(result.needed?).to be(true)
       expect(result.signals).to include(:plan_step_completion)
@@ -261,7 +252,7 @@ RSpec.describe Lain::Tools::TodoWrite do
       invocation = invocation_with(Lain::Session::Null.instance)
 
       expect { tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation) }.not_to raise_error
-      expect(Lain::Session::Null.instance.plan_step_completed?).to be(false)
+      expect(Lain::Session::Null.instance.plan_step_completions).to eq(0)
     end
   end
 
