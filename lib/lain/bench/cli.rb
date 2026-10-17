@@ -44,6 +44,10 @@ module Lain
       # environment and cuts nothing.
       CONTAINING_BACKENDS = %w[worktree].freeze
 
+      WORKTREE_REACH = "--isolation worktree holds the paths the tools name inside each arm's worktree; a shell " \
+                       "command's reads, and an opaque command's writes, stay open until the sandbox applies to " \
+                       "bench arms"
+
       # What `--memory` may name. `empty` is the default and the comparable
       # one: a run that started from whatever the operator's project happened
       # to remember is not comparable with the same run a week later, so a
@@ -469,8 +473,8 @@ module Lain
       # It is UNREPRESENTABLE rather than merely documented, which is the
       # standard this project already holds its secret boundary to: an
       # unisolated arm leases through {Arm::NoIsolation} and runs in the
-      # operator's own checkout, and the floor carries `bash` behind
-      # {Effect::Handler::Live} with no gate in front of it.
+      # operator's own checkout, and the floor's `bash` runs there behind a
+      # gate that approves it, because no human is attached to ask.
       #
       # @param tools [#call] the capability factory the run would be built with
       # @param isolation [String, nil] the `--isolation` name; nil is UNSET
@@ -490,8 +494,10 @@ module Lain
 
         raise Refusal, "this run's tools can write (#{Harness::WRITERS.join(", ")}) and " \
                        "#{uncontained(isolation)} where they write, so they would act in the working tree " \
-                       "this command was run from#{"; add #{flag}" unless flag.nil?}"
+                       "this command was run from#{remedy(flag)}"
       end
+
+      def remedy(flag) = flag.nil? ? "" : "; add #{flag}. #{WORKTREE_REACH}"
 
       # Unset, or an ADVERTISED backend that contains nothing. A name outside
       # the advertised set is deliberately NOT this guard's business:

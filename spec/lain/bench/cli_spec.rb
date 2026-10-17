@@ -614,6 +614,19 @@ RSpec.describe Lain::Bench::CLI do
       expect(untouched?).to be(true)
     end
 
+    # The fix it names confines what the tools name and not what a shell hides,
+    # so the refusal says both rather than promising a containment it lacks.
+    it "for a writing toolset with nothing isolating it, saying what a worktree does and does not confine" do
+      refused = Dir.mktmpdir do |dir|
+        cli.arms_report(fixture_path: File.join(dir, "tasks.yml"), backend:, journal:, isolation: "none")
+      rescue described_class::Refusal => e
+        e
+      end
+
+      expect(refused.message).to include("--isolation worktree", "paths the tools name", "a shell command's reads",
+                                         "an opaque command's writes")
+    end
+
     it "for an unknown isolation name, without resolving any backend" do
       expect(refusal("tasks: []\n", isolation: "docker2"))
         .to be_a(Lain::CLI::IsolationBackend::Unknown).and(have_attributes(message: /docker2/))

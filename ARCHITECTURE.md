@@ -557,7 +557,9 @@ and a policy's answer is a Boolean, which is approvable by construction.
 **One builder assembles every agent's tool stack.** `CLI::ToolGuard` (`lib/lain/cli/tool_guard.rb`)
 builds it for a chat's agent (`.stack`), for each of that chat's children (`ToolGuard::Spawned`, the
 builder the spawn seam carries, reading the parent's board when the child is built), and for a run
-with no chat (`.detached`, whose gate approves deliberately: nobody is at a surface to answer). The
+with no chat (`.detached`, whose gate approves deliberately: nobody is at a surface to answer; a child
+leased a checkout, a bench arm under `--isolation worktree`, is held to it instead, and a call its path
+policy gates outside the lease is refused, saying no human is attached). The
 layers, in order: the members a user's `config.rb` registered (see below), `ConfineToScope`,
 `RefuseSecretWrites`, `RedactSecretReads`, `WithholdSecretPaths`, `GuardTestLayout`,
 `WithholdAutomaticOutput`, then `Sensitivity`, then `Gate`. `Middleware::Gate.closes!` refuses any stack

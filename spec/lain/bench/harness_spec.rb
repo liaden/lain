@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "tmpdir"
 
 # How a bench agent is WIRED. Its own file because it is what BOTH
@@ -179,6 +180,60 @@ RSpec.describe Lain::Bench::Harness do
       path = File.join(@dir, "notes.txt").tap { |file| File.write(file, "ordinary\n") }
 
       expect(read(path).fetch(:result).content).to include("ordinary")
+    end
+  end
+
+  # An arm leased a worktree runs with no human attached, so its gate cannot
+  # park: what the lease holds runs unasked and what it does not is refused.
+  describe "an arm leased a worktree", :seam do
+    around do |example|
+      Dir.mktmpdir do |made|
+        @tmp = File.realpath(made)
+        @lease = File.join(@tmp, "wt").tap { FileUtils.mkdir_p(File.join(_1, "lib")) }
+        example.run
+      end
+    end
+
+    def leased = Lain::WorkerEnv.new(cwd: @lease, env: {}, checkout: @lease)
+
+    def acted(tool, input)
+      stack = described_class::INSTRUMENTATION.call(journal:, recorder:, worker_env: leased).tool_middleware
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: tool.name, input:)
+      stack.call({ effect:, tool:, context: Lain::Session.new(worker_env: leased) }) do |inner|
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: inner.fetch(:context))
+        inner.merge(result: tool.call(inner.fetch(:effect).input, invocation))
+      end.fetch(:result)
+    end
+
+    def written(path) = acted(Lain::Tools::WriteFile.new, { "path" => path, "content" => "x = 1\n" })
+
+    it "refuses a write outside the worktree in the lease's words" do
+      outside = File.join(@tmp, "outside.rb")
+
+      expect(written(outside)).to have_attributes(is_error: true, content: start_with("write_file refused")
+                                                                           .and(include(@lease, "leased")))
+      expect(File.exist?(outside)).to be(false)
+    end
+
+    it "refuses a bash cd out of the worktree, naming the lease" do
+      refused = acted(Lain::Tools::Bash.new, { "command" => "cd #{@tmp} && touch x" })
+
+      expect(refused).to have_attributes(is_error: true, content: start_with("bash refused").and(include(@lease)))
+      expect(File.exist?(File.join(@tmp, "x"))).to be(false)
+    end
+
+    it "refuses a read outside the worktree, saying no human is attached" do
+      refused = acted(Lain::Tools::ReadFile.new, { "path" => "/etc/hosts" })
+
+      expect(refused).to have_attributes(is_error: true, content: include(@lease, "no human"))
+    end
+
+    it "runs a write inside the worktree and a bash ls with no approval asked" do
+      inside = File.join(@lease, "lib", "x.rb")
+
+      expect(written(inside)).to have_attributes(is_error: false)
+      expect(acted(Lain::Tools::Bash.new, { "command" => "ls" })).to have_attributes(is_error: false)
+      expect(File.read(inside)).to eq("x = 1\n")
     end
   end
 end

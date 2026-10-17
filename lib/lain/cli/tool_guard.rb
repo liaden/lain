@@ -133,11 +133,16 @@ module Lain
       end
 
       # What {.detached} answers: a builder over the inputs a run with no chat
-      # built for itself, once.
+      # built for itself, once. A child whose lease cut a checkout is held
+      # inside it ({.leased}).
       Detached = Data.define(:chronicle, :guard_inputs) do
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @return [Middleware::Stack] a fresh one per child, over the one board
-        def call(worker_env) = ToolGuard.working(chronicle, guard_inputs, worker_env)
+        def call(worker_env)
+          return ToolGuard.working(chronicle, guard_inputs, worker_env) unless worker_env.checkout
+
+          ToolGuard.leased(chronicle, guard_inputs, worker_env)
+        end
 
         # @return [NeverParking]
         def never_parking = NeverParking.new(guard: self)
@@ -206,6 +211,43 @@ module Lain
         def call(_effect, _context) = Approval::Escalation::Ruling.deny(rung: NAME, because: BECAUSE)
       end
 
+      # The gate policy of a leased run with no chat: what only a tool's tier
+      # gates runs, as {Middleware::Gate::ApproveAll} would run it, and what
+      # the lease's path policy gates is refused. The gate cannot say which
+      # axis gated a call, so this asks the path policy the same question.
+      # Final, because no human is attached to lift it.
+      class LeasedPolicy
+        RUNG = "lease"
+        ALLOW = Middleware::Gate::ApproveAll.new.freeze
+        LEASED_READ = "this run is leased to %<lease>s and no human is attached to approve a call outside it; " \
+                      "work inside %<lease>s"
+
+        # @param sensitivity [#gates?] the path policy the run's gate asks
+        # @param lease [String] the checkout the run was leased
+        def initialize(sensitivity:, lease:)
+          @sensitivity = sensitivity
+          @lease = lease
+          freeze
+        end
+
+        def call(effect, context) = rule(effect, context).allow?
+
+        # @return [Approval::Escalation::Ruling]
+        def rule(effect, context)
+          return ALLOW.rule(effect, context) unless outside?(effect, context)
+
+          because = format(LEASED_READ, lease: @lease)
+          Approval::Escalation::Ruling.deny(rung: RUNG, because:, final: true)
+        end
+
+        private
+
+        def outside?(effect, context)
+          @sensitivity.gates?(effect, cwd: ::Lain::Session.cwd_of(context),
+                                      within: ::Lain::Sensitivity::Policy.base_of(context))
+        end
+      end
+
       # What a judge's child is told when its gate refuses, on {Switchboard#denial}'s
       # rule: say that nobody said no and that retrying cannot help. What to do
       # instead is to report the gap, never to work around it: a judge settling
@@ -246,10 +288,15 @@ module Lain
       # @return [Middleware::Stack]
       def child_stack(chronicle, board, worker_env, requester:)
         inputs = board.guard_inputs
-        held = worker_env.checkout ? [held_in(worker_env, home: inputs.sensitivity.home)] : []
         working(chronicle, inputs, worker_env, Asking.new(policy: inputs.policy_for.call(worker_env), requester:),
-                requester:, held:)
+                requester:, held: held_for(worker_env, home: inputs.sensitivity.home))
       end
+
+      # @param worker_env [WorkerEnv] the child's
+      # @param home [String, nil] what a `~` in a command names
+      # @return [Array<Middleware::ConfineToScope>] the hold on its checkout,
+      #   or none for an environment whose lease cut no checkout
+      def held_for(worker_env, home:) = worker_env.checkout ? [held_in(worker_env, home:)] : []
 
       # Read once, as the child is built: the checkout is the lease's, and a
       # lease never moves.
@@ -273,6 +320,18 @@ module Lain
       def working(chronicle, inputs, worker_env, policy = inputs.policy, requester: nil, held: [])
         layered(chronicle, confined(inputs, worker_env), inputs.test_layout.roots_for(worker_env), policy,
                 requester:, held:)
+      end
+
+      # A child of a run with no chat, leased a checkout: held inside it as a
+      # chat's leased child is, and its gate refuses what that hold leaves to
+      # a human, because nobody is attached to answer ({LeasedPolicy}).
+      #
+      # @return [Middleware::Stack]
+      def leased(chronicle, inputs, worker_env)
+        held = confined(inputs, worker_env)
+        policy = LeasedPolicy.new(sensitivity: held.sensitivity, lease: worker_env.checkout)
+        layered(chronicle, held, inputs.test_layout.roots_for(worker_env), policy,
+                held: held_for(worker_env, home: inputs.sensitivity.home))
       end
 
       def confined(inputs, worker_env)
@@ -324,14 +383,17 @@ module Lain
       # fail-closed default: a run with no chat has no surface for a question
       # to reach, so the roles it spawns unattended would park or refuse
       # forever -- and none of them holds a gated tool, which
-      # `subagent_gate_spec` audits from the spawn sites.
+      # `subagent_gate_spec` audits from the spawn sites. A child leased a
+      # checkout is the exception, held to it by {LeasedPolicy}: a bench arm
+      # holds the writing tools.
       #
       # Its path policy is the Null confined to `roots`, and the gate reads the
       # same one: a listing filtered through a policy the gate never consults
       # would hide a path the child can still read by name. The read guard
       # needs no path policy to mask a credential region, which is the half
-      # this run can enforce. It reads no `tests` table either: its children
-      # write nothing a layout holds.
+      # this run can enforce. It reads no `tests` table either: with no chat
+      # no project config is read, so a leased child's writes are held by its
+      # lease rather than by a layout.
       #
       # @param journal [#<<] where a refusal or a mask is recorded
       # @param roots [Array<String>] absolute; the run's own trees, in scope

@@ -1079,6 +1079,15 @@ RSpec.describe Lain::CLI::ToolGuard do
         .to eq(guards(ToolGuardSpecBoard.new).map(&:class))
     end
 
+    it "holds a leased run inside its checkout, behind the chat's own scope guard" do
+      Dir.mktmpdir do |dir|
+        leased = Lain::WorkerEnv.new(cwd: dir, env: {}, checkout: dir)
+
+        expect(described_class.detached(journal:).call(leased).to_a.map(&:class).first(2))
+          .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::ConfineToScope])
+      end
+    end
+
     # A run with no chat has no surface for a question to reach, so its gate
     # APPROVES, deliberately against the gate's own fail-closed default: the
     # roles such a run spawns hold no gated tool, and a gate that parked would
@@ -1124,6 +1133,51 @@ RSpec.describe Lain::CLI::ToolGuard do
         expect(content).to include("<redacted:1>").and include("harmless line")
         expect(content).not_to include(secret)
       end
+    end
+  end
+
+  describe ".held_for" do
+    it "holds a leased environment inside its checkout" do
+      Dir.mktmpdir do |dir|
+        leased = Lain::WorkerEnv.new(cwd: dir, env: {}, checkout: dir)
+
+        expect(described_class.held_for(leased, home: nil))
+          .to contain_exactly(an_instance_of(Lain::Middleware::ConfineToScope))
+      end
+    end
+
+    it "holds an environment with no lease nowhere" do
+      expect(described_class.held_for(Lain::WorkerEnv.default, home: nil)).to eq([])
+    end
+  end
+
+  # A leased run has no human to ask, so what the lease's path policy gates is
+  # refused in words, and what only the tool's tier gates runs.
+  describe "LeasedPolicy" do
+    subject(:policy) do
+      confined = Lain::Sensitivity::Policy::Null.instance.confined(roots: ["/work/wt"])
+      described_class::LeasedPolicy.new(sensitivity: confined, lease: "/work/wt")
+    end
+
+    let(:context) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/work/wt", env: {}, checkout: "/work/wt")) }
+
+    it "refuses a read outside the lease, naming it and saying no human is attached" do
+      ruling = policy.rule(read_call("/etc/hosts"), context)
+
+      expect(ruling).to have_attributes(deny?: true, final?: true)
+      expect(ruling.told).to include("/work/wt", "no human")
+      expect(ruling.told).not_to include(Lain::CLI::ToolGuard::Unasked::BECAUSE)
+    end
+
+    it "approves a call only its tool's tier gated" do
+      bash = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
+
+      expect(policy.rule(bash, context)).to have_attributes(allow?: true)
+      expect(policy.call(bash, context)).to be(true)
+    end
+
+    it "approves a read inside the lease" do
+      expect(policy.call(read_call("/work/wt/lib/x.rb"), context)).to be(true)
     end
   end
 
