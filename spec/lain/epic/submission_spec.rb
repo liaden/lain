@@ -228,6 +228,12 @@ RSpec.describe Lain::Epic::Submission do
       expect(submission.gate_question).to include("epic_plan", "demo", "3")
     end
 
+    it "counts a single-issue graph in the singular" do
+      graph = Lain::Epic::Graph.new(issues: [issue("a")])
+
+      expect(described_class.epic_plan(graph:, slug: "demo").fact).to eq("1 issue")
+    end
+
     it "names the stage, the slug, and the byte size for research prose" do
       text = "hello world"
       submission = described_class.research(text:, slug: "demo")
@@ -303,7 +309,7 @@ RSpec.describe Lain::Epic::Submission do
       end
 
       it "says nothing ran when no run was given" do
-        expect(asked(nil).gate_question).to include("tests: not run")
+        expect(asked(nil).gate_question).to include("tests: not run (no test run was recorded for this submission)")
       end
 
       it "says why when the suite could not run" do

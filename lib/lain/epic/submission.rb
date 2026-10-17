@@ -222,8 +222,11 @@ module Lain
 
       def self.epic_plan(graph:, slug:)
         Contracts::GraphArtifact.check!(graph:)
-        new(stage: "epic_plan", slug:, content_digest: graph.digest, fact: "#{graph.issues.size} issues")
+        new(stage: "epic_plan", slug:, content_digest: graph.digest, fact: issue_count(graph.issues.size))
       end
+
+      def self.issue_count(size) = size == 1 ? "1 issue" : "#{size} issues"
+      private_class_method :issue_count
 
       # `criteria_digest` is REQUIRED and may be nil: an issue with no criteria
       # says so, where a forgotten keyword would gate a plan as if it had none.
@@ -253,7 +256,7 @@ module Lain
       end
 
       def self.tests_said(tests)
-        return "not run" if tests.nil?
+        return "not run (no test run was recorded for this submission)" if tests.nil?
         return "not run (#{tests.why})" unless tests.ran
 
         [count(tests.passed, "passed"), (count(tests.failed, "failed") if tests.failed.positive?),
