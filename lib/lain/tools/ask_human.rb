@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/string/filters"
+
 module Lain
   module Tools
     # Puts a question to the human and returns their answer -- the human as a
@@ -468,7 +470,6 @@ module Lain
       # Both derive here, once, so the surfaces cannot drift.
       class Announcement < String
         WIDTH = 96
-        ELLIPSIS = "..."
 
         def initialize(set)
           @set = a_set!(set)
@@ -519,7 +520,7 @@ module Lain
         # empty nor `[[:space:]]`, and would render as an invisible inbox row.
         def headline(body)
           line = body.each_line.lazy.map(&:strip).find { |text| !Blankness.blank?(text) }.to_s
-          line.length <= WIDTH ? line : "#{line[0, WIDTH - ELLIPSIS.length]}#{ELLIPSIS}"
+          line.truncate(WIDTH)
         end
       end
 
