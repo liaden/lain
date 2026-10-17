@@ -6,6 +6,8 @@ module Lain
       # The in-process folds a chat registers on its session's journal, so
       # each sees every record the chat writes, durable or teed.
       class Observers
+        DEGRADED_NOTICE = "write records could not be read, so every user or project binary counts as changed this " \
+                          "session and goes to the judge or to you; resume from an intact session to restore it"
         # @param chronicle [#observe, #durable_journal] registers each observer on every journal the chat
         #   writes, and takes the reason a lineage could not be read
         # @param paths [Paths] resolves the sessions directory a resume chains through
@@ -35,6 +37,13 @@ module Lain
         # @param fresh [Shell::Executable::Fresh]
         def initialize(fresh:)
           @fresh = fresh
+        end
+
+        # What the human should be told about the lineage, said once at startup.
+        #
+        # @return [Array<String>]
+        def notices
+          @fresh.degraded? ? [DEGRADED_NOTICE] : []
         end
 
         # @param chronicle [#observe]

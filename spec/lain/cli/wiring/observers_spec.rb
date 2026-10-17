@@ -48,4 +48,32 @@ RSpec.describe Lain::CLI::Wiring::Observers do
     expect(journal_records(io))
       .to contain_exactly(include("type" => "journal_error", "observer" => Lain::Shell::Executable::Fresh.name))
   end
+
+  describe "#notices" do
+    it "says once that write records could not be read when a resumed line is torn" do
+      name = "torn.ndjson"
+      lineage(name)
+      File.write(File.join(paths.sessions_dir, name), %({"type":"file_written"\n), mode: "a")
+      observers = described_class.register(chronicle:, paths:, resumed: resumed(name))
+
+      expect(observers.notices)
+        .to contain_exactly(match(/could not be read.*changed this session.*resume from an intact session/))
+    end
+
+    it "says the same when the resumed chain cannot be walked" do
+      observers = described_class.register(chronicle:, paths:, resumed: resumed("missing.ndjson"))
+
+      expect(observers.notices).to contain_exactly(/write records could not be read/)
+    end
+
+    it "says nothing for a clean lineage" do
+      observers = described_class.register(chronicle:, paths:, resumed: lineage("first.ndjson"))
+
+      expect(observers.notices).to be_empty
+    end
+
+    it "says nothing for a fresh chat" do
+      expect(described_class.register(chronicle:, paths:, resumed: nil).notices).to be_empty
+    end
+  end
 end

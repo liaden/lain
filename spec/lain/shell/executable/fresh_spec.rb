@@ -149,6 +149,27 @@ RSpec.describe Lain::Shell::Executable::Fresh do
       expect(described_class.for_lineage([path]).fresh?(plant("bin/cat"))).to be(true)
     end
 
+    it "reports itself degraded when a write record in the lineage is torn" do
+      path = session_file("s1.ndjson", start: after_every_file)
+      File.write(path, %({"ts":"#{after_every_file}","type":"file_written"\n), mode: "a")
+
+      expect(described_class.for_lineage([path]).degraded?).to be(true)
+    end
+
+    it "reports itself degraded once a live record it cannot fold arrives" do
+      fresh = lineage_from(after_every_file)
+
+      expect { fresh << { "type" => "file_written", "path" => nil } }.to raise_error(TypeError)
+      expect(fresh.degraded?).to be(true)
+    end
+
+    it "does not report a clean lineage degraded, and still answers by the rules" do
+      fresh = lineage_from(after_every_file)
+
+      expect(fresh.degraded?).to be(false)
+      expect(fresh.fresh?(plant("bin/cat"))).to be(false)
+    end
+
     it "answers a path fresh when it cannot stat it" do
       stat = Lain::Shell::Executable::Stat.new
       allow(stat).to receive(:lstat).and_raise(Errno::EACCES)

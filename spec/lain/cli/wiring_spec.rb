@@ -2897,6 +2897,50 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    describe "the write-record notice" do
+      def quiet_tty(dir)
+        lambda do |channel:, alternate_screen: true, **|
+          Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"),
+                                  alternate_screen:)
+        end
+      end
+
+      def resumed_from(file)
+        Lain::CLI::Resume::Result.new(
+          file:, timeline: Lain::Timeline.new(head_digest: nil, store: Lain::Store.new), session: Lain::Session.new,
+          open: false, notices: [], recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty)
+        )
+      end
+
+      def said_resuming(file, state)
+        said = []
+        Dir.mktmpdir do |dir|
+          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, conductor_opener:,
+                                       paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state }),
+                                       tty_factory: quiet_tty(dir), stdin: StringIO.new("quit\n"))
+          wiring.run(backend:, resumed: resumed_from(file), nvim: nil) { |line| said << line }
+          wiring.conductor.close(reason: :exit)
+        end
+        said
+      end
+
+      it "is said at startup when the resumed lineage's write records cannot be read" do
+        Dir.mktmpdir do |state|
+          expect(said_resuming("missing.ndjson", state).grep(/write records could not be read/).size).to eq(1)
+        end
+      end
+
+      it "is not said for a lineage that reads cleanly" do
+        Dir.mktmpdir do |state|
+          sessions = Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state }).sessions_dir
+          header = JSON.generate("ts" => "2099-01-01T00:00:00.000000Z", "type" => "session")
+          File.write(File.join(sessions, "ok.ndjson"), "#{header}\n")
+
+          expect(said_resuming("ok.ndjson", state).grep(/write records/)).to be_empty
+        end
+      end
+    end
+
     # The alternate screen wipes whatever was printed before it opened, so a
     # notice said only at launch is gone before the human sees the chat.
     describe "resume notices on the chat screen" do

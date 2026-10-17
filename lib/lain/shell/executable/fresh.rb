@@ -102,6 +102,11 @@ module Lain
           raise
         end
 
+        # A degrade partway through a session is not announced again; the journal's own error record has it.
+        #
+        # @return [Boolean] whether it lost the write-record rule and answers every path fresh
+        def degraded? = @degraded
+
         # @param path [String] absolute
         # @return [Boolean]
         def fresh?(path)
