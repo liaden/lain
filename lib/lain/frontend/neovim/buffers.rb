@@ -216,7 +216,7 @@ module Lain
           @questions = questions
           @session = session
           @last_reminders = nil
-          @last_payload = nil
+          @last_lines = []
         end
 
         # Delegated because {Buffers} is the one façade the frontend holds; the
@@ -304,8 +304,9 @@ module Lain
         def diff_update(event)
           return nil unless event.is_a?(Telemetry::RequestSent)
 
-          lines = unified_diff(payload_lines(@last_payload), payload_lines(event.payload))
-          @last_payload = event.payload
+          new_lines = payload_lines(event.payload)
+          lines = unified_diff(@last_lines, new_lines)
+          @last_lines = new_lines
           lines
         end
 
