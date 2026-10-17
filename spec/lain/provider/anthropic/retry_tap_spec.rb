@@ -2,7 +2,8 @@
 
 RSpec.describe Lain::Provider::Anthropic::RetryTap do
   let(:channel) { RecordingChannel.new }
-  let(:tap) { described_class.new(spool: Lain::Provider::Spool::Null.new, channel:) }
+  let(:journal) { RecordingChannel.new }
+  let(:tap) { described_class.new(spool: Lain::Provider::Spool::Null.new, channel:, journal:) }
 
   # A recording spool: every open_frame records its digest, so a rotation shows
   # up as a SECOND open under the same digest.
@@ -108,5 +109,20 @@ RSpec.describe Lain::Provider::Anthropic::RetryTap do
     # req-a rotated (opened twice); req-b's frame never touched, even though it
     # opened last -- the old instance-state bug would have rotated req-b.
     expect(frames).to eq(%w[req-a req-b req-a])
+  end
+
+  it "puts a retry in the session record as well as on the display" do
+    tap.retry_block.call(env: { status: 429 }, retry_count: 0, will_retry_in: 0.1,
+                         exception: Lain::Provider::HTTP::RateLimitError.new(nil, "x"))
+
+    expect(journal.events.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)).to eq([1])
+    expect(channel.events.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)).to eq([1])
+  end
+
+  it "puts the exhausted run in the session record too" do
+    options = Data.define(:max).new(max: 3)
+    tap.exhausted_block.call(env: { status: 503 }, exception: Faraday::ConnectionFailed.new("x"), options:)
+
+    expect(journal.events.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)).to eq([4])
   end
 end

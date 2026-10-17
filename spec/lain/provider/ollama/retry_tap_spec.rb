@@ -391,4 +391,20 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
       end
     end
   end
+
+  describe "the session record" do
+    it "holds the retry and the display holds the same event" do
+      fire_retry(env_for(tap.open_attempt, status: 500), retry_count: 0)
+
+      expect(journal.events.grep(Lain::Telemetry::ProviderRetry)).to eq(channel.events.grep(Lain::Telemetry::ProviderRetry))
+      expect(journal.events.grep(Lain::Telemetry::ProviderRetry).size).to eq(1)
+    end
+
+    it "holds the exhausted run too" do
+      options = Data.define(:max).new(max: 3)
+      tap.exhausted_block.call(env: { status: 503 }, exception: Faraday::ConnectionFailed.new("x"), options:)
+
+      expect(journal.events.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)).to eq([4])
+    end
+  end
 end

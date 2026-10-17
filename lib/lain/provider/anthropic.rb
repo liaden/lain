@@ -72,7 +72,7 @@ module Lain
         @queue = queue
         @journal = journal
         @channel = channel
-        @retries = RetryTap.new(spool:, channel:)
+        @retries = RetryTap.new(spool:, channel:, journal:)
         @http_middleware = http_middleware
         @config = config || build_config(api_key:, api_base:)
         @transport = transport || Transport.new(@config, sink:)

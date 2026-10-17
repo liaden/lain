@@ -105,7 +105,7 @@ module Lain
         # @param journal [#<<] the session's record, where a narrowing lands
         # @param spool [#open_frame] where each round trip's raw bytes are teed
         def initialize(channel:, journal: Channel::Null::INSTANCE, spool: Spool::Null.new)
-          @channel = channel
+          @narration = RetryNarration.new(channel:, journal:)
           @journal = journal
           @spool = spool
         end
@@ -163,21 +163,17 @@ module Lain
             attempt&.abandon
             frame_on(env)&.rotate
             attempt&.attempted(exception)
-            @channel.push(Telemetry::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
-                                                       status: env[:status], reason: exception.class.name))
+            @narration.retried(retry_count:, will_retry_in:, status: env[:status], exception:)
             narrow_on(attempt, exception)
             then_call&.call(env:, retry_count:, exception:, will_retry_in:, **rest)
           end
         end
 
         # `options.max` is the RETRY count, not the ordinal of the attempt
-        # that just failed -- an original try plus `max` retries is `max + 1`
-        # attempts. Measured: a counting TCP listener saw 4 real attempts
-        # rendered as "1, 2, 3, 3" because this pushed the retry count unchanged.
+        # that just failed; {RetryNarration#exhausted} adds the original try.
         def exhausted_block
           lambda do |env:, exception:, options:|
-            @channel.push(Telemetry::ProviderRetry.new(attempt: options.max + 1, will_retry_in: nil,
-                                                       status: env[:status], reason: exception.class.name))
+            @narration.exhausted(max: options.max, status: env[:status], exception:)
           end
         end
 

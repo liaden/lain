@@ -22,9 +22,12 @@ module Lain
       # threaded onto the request's Faraday context at open instead, and
       # {#retry_block} reaches ITS request's frame off the retried env.
       class RetryTap
-        def initialize(spool:, channel:)
+        # @param spool [#open_frame] where each round trip's raw bytes are teed
+        # @param channel [#<<] the live stream retries are narrated on
+        # @param journal [#<<] the session's record, where each retry also lands
+        def initialize(spool:, channel:, journal: Channel::Null::INSTANCE)
           @spool = spool
-          @channel = channel
+          @narration = RetryNarration.new(channel:, journal:)
         end
 
         # Opens the frame for one round trip and returns it; the Provider threads
@@ -40,19 +43,15 @@ module Lain
           lambda do |env:, retry_count:, exception:, will_retry_in:, **|
             frame_on(env)&.rotate
             witness_on(env)&.attempted(exception)
-            @channel.push(Telemetry::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
-                                                       status: env[:status], reason: exception.class.name))
+            @narration.retried(retry_count:, will_retry_in:, status: env[:status], exception:)
           end
         end
 
         # `options.max` is the RETRY count, not the ordinal of the attempt
-        # that just failed -- see the Ollama tap for the reproduction.
-        # Both taps must move together or the two providers disagree about
-        # what "attempt" means.
+        # that just failed; {RetryNarration#exhausted} adds the original try.
         def exhausted_block
           lambda do |env:, exception:, options:|
-            @channel.push(Telemetry::ProviderRetry.new(attempt: options.max + 1, will_retry_in: nil,
-                                                       status: env[:status], reason: exception.class.name))
+            @narration.exhausted(max: options.max, status: env[:status], exception:)
           end
         end
 
