@@ -720,6 +720,10 @@ module Lain
         # puzzle nobody should have to solve.
         GESTURE = "type a reply -- ticking boxes is the nvim buffer"
 
+        # The same line for a chat with no editor, where naming a buffer
+        # would point at something that does not exist.
+        TYPED_GESTURE = "type a reply"
+
         # Which columns this surface paints, and the whole of what it adds to a
         # shared row. A table rather than a branch per column, so a row drawn
         # here and one drawn in the editor can differ by escape codes and by
@@ -763,7 +767,7 @@ module Lain
         def document(question)
           return unless question.is_a?(Tools::AskHuman::Announcement)
 
-          @output.puts(@fit.call(document_for(question).join("\n")))
+          @output.puts(@fit.call(document_for(question, gesture: TYPED_GESTURE).join("\n")))
           @output.flush
         end
 
@@ -850,10 +854,10 @@ module Lain
         #
         # A bare String on this seam has no document, which is a documented
         # case rather than an oversight.
-        def document_for(question)
+        def document_for(question, gesture: GESTURE)
           return [] unless question.respond_to?(:document)
 
-          ["", question.document.chomp, "", @pastel.dim(GESTURE)]
+          ["", question.document.chomp, "", @pastel.dim(gesture)]
         end
 
         # A typed reply answers the WHOLE set in prose, and the caller resolves

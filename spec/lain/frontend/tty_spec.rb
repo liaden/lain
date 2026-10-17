@@ -864,7 +864,8 @@ RSpec.describe Lain::Frontend::TTY do
       arrival, *document = output.string.lines
       expect(arrival).to include("researcher", "-- answer below, or /inbox")
       expect(arrival).not_to include("lain://inbox")
-      expect(document.join).to include("| a | b |").and include(described_class::Inbox::GESTURE)
+      expect(document.join).to include("| a | b |").and include("type a reply")
+      expect(document.join).not_to match(/nvim/i)
     end
 
     # A handback's document is the whole oversized reply, which the drain shows
@@ -1085,6 +1086,15 @@ RSpec.describe Lain::Frontend::TTY do
     let(:drain_tty) do
       described_class.new(channel:, output:, input:, pastel: Pastel.new(enabled: false),
                           wall_clock: -> { Time.at(1_000) })
+    end
+
+    it "keeps the nvim buffer in the drain listing's gesture" do
+      row = Struct.new(:question, :from, :asked_at).new(announced("db", body: "which one?"), "orchestrator",
+                                                        Time.at(880))
+
+      drain_tty.drain_inbox([row], reader: ->(_prompt) { "" }) { |_answer| nil }
+
+      expect(output.string).to include(described_class::Inbox::GESTURE)
     end
 
     # What the human types at the drain's prompt, a line per read.
