@@ -520,7 +520,7 @@ module Lain
       def wrapped(text, raw: @notes.drawn?)
         return text unless @output.tty?
 
-        Wrap.call(text, width: ::TTY::Screen.width, eol: raw ? "\r\n" : "\n")
+        Wrap.call(text, width:, eol: raw ? "\r\n" : "\n")
       end
 
       # How a finished turn ENDS: the already-styled body, the rule beneath it,
@@ -537,7 +537,16 @@ module Lain
       end
 
       def rule
-        @theme.paint(:rule, "-" * ::TTY::Screen.width)
+        @theme.paint(:rule, "-" * width)
+      end
+
+      # The width of the stream being written. `TTY::Screen` measures stderr,
+      # so `lain 2>log` wrapped the transcript at 80 columns; it stays as the
+      # fallback for a stream with no window of its own.
+      def width
+        @output.winsize.last
+      rescue NoMethodError, SystemCallError
+        ::TTY::Screen.width
       end
 
       def enter_alternate_screen
