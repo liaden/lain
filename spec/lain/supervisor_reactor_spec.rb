@@ -77,8 +77,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
   # stay registered, alive, and settleable.
   describe "the wedge" do
     it "the actor survives its parent ask being stopped mid-turn" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         actor_entered = Async::Queue.new
         actor_release = Async::Queue.new
         tool = actor_tool(
@@ -121,8 +120,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     # Registration now happens inside the adopted task, so the ghost window
     # is gone: registered, drained, farewelled.
     it "killing the adopter between launch and registration no longer orphans the actor" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         journal = Lain::Channel.new
         tool = actor_tool(provider: mock(text_response("ready")), journal:, supervisor:)
         gate = Async::Queue.new
@@ -147,8 +145,6 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
         supervisor.stop
         expect(launched).to be_stopped
         expect(farewells(journal.drain).size).to eq(1)   # ...with its farewell journaled
-      ensure
-        supervisor&.stop
       end
     end
   end
@@ -165,8 +161,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
   it "twinned actors take distinct addresses -- both enumerate and object routing works" do
     journal = Lain::Channel.new
     twin_a = twin_b = nil
-    Sync do |task|
-      supervisor = described_class.new.run(task)
+    supervised do |supervisor|
       tool = actor_tool(provider: mock(text_response("one"), text_response("two")), journal:, supervisor:)
       twin_a = supervisor.adopt(role: "twin-a") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
       twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
@@ -178,8 +173,6 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
       twin_a.stop                                   # routing is by OBJECT -- stops only twin-a
       expect(supervisor.map(&:state)).to eq(%i[stopped running])
       twin_b.tell("still routable")                 # twin-b still tellable...
-
-      supervisor.stop
     end
   end
 
@@ -211,8 +204,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     journal = Lain::Channel.new
     twin_a = twin_b = nil
     both_live = after_one_farewell = nil
-    Sync do |task|
-      supervisor = described_class.new.run(task)
+    supervised do |supervisor|
       tool = actor_tool(provider: mock(text_response("one"), text_response("two")), journal:, supervisor:)
       twin_a = supervisor.adopt(role: "twin-a") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
       twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
@@ -220,7 +212,6 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
       both_live = journal.drain
       twin_a.stop
       after_one_farewell = journal.drain
-      supervisor.stop
     end
 
     expect(twin_a.address).not_to eq(twin_b.address)
@@ -240,14 +231,12 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
   it ":spawn lands the fleet entry, a settle passes through inertly, and the stop RETIRES it" do
     journal = Lain::Channel.new
     actor = nil
-    Sync do |task|
-      supervisor = described_class.new.run(task)
+    supervised do |supervisor|
       actor = supervisor.adopt(role: "hud") do
         actor_tool(provider: mock(text_response("ready")), journal:).launch_actor("go", worker_env: Lain::WorkerEnv.default)
       end
       actor.settle
       actor.stop
-      supervisor.stop
     end
 
     records = journal.drain.grep(Lain::Telemetry::Message)
@@ -296,8 +285,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
   it "retire awaits an actor mid-turn, and retires it once that turn settles" do
     entered = Async::Queue.new
     release = Async::Queue.new
-    Sync do |task|
-      supervisor = described_class.new.run(task)
+    supervised do |supervisor, task|
       actor = supervisor.adopt(role: "issue") do
         actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("done")]))
           .launch_actor("go", worker_env: Lain::WorkerEnv.default)
@@ -311,15 +299,13 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
 
       expect(actor).to be_stopped
       expect(actor.settle).to eq(actor)
-      supervisor.stop
     end
   end
 
   it "a retired actor's one farewell takes it out of the fleet, and #stop writes no second" do
     journal = Lain::Channel.new
     actor = nil
-    Sync do |task|
-      supervisor = described_class.new.run(task)
+    supervised do |supervisor|
       actor = supervisor.adopt(role: "issue") do
         actor_tool(provider: mock(text_response("ready")), journal:).launch_actor("go", worker_env: Lain::WorkerEnv.default)
       end
@@ -328,7 +314,6 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
       report = supervisor.retire(row_of(supervisor, actor))
       expect([report.kind, report.ref, report.sha]).to eq([:declined, nil, nil])
       expect(report.detail).to include("no retirement is wired")
-      supervisor.stop
     end
 
     records = journal.drain.grep(Lain::Telemetry::Message)
@@ -411,8 +396,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     # absorbed by Registration#settle (still loud for direct Actor#settle
     # callers, which re-raise the captured failure on every call).
     it "an actor failing DURING the drain no longer kills the coordinator -- the session closes :exit" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         entered = Async::Queue.new
         release = Async::Queue.new
         tool = actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("never")]),
@@ -526,8 +510,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
   it "stop with an actor mid-turn farewells it, cancels cleanly, and the Sync returns (no orphans)" do
     journal = Lain::Channel.new
     actor = nil
-    Sync do |task|
-      supervisor = described_class.new.run(task)
+    supervised do |supervisor|
       entered = Async::Queue.new
       release = Async::Queue.new
       tool = actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("late")]),

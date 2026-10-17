@@ -67,8 +67,7 @@ RSpec.describe Lain::Supervisor do
 
   describe "owning the reactor" do
     it "keeps an adopted actor alive past the launching task, and ends it under #stop" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         tool = actor_tool(text_response("actor ready"))
 
         actor = nil
@@ -127,8 +126,7 @@ RSpec.describe Lain::Supervisor do
     it "registers inside the adopted task: a cancelled adopter cannot orphan a live actor" do
       journal = Lain::Channel.new
       launched = nil
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         gate = Async::Queue.new
         adopter = task.async do
           supervisor.adopt(role: "ghost-no-more") do
@@ -145,8 +143,6 @@ RSpec.describe Lain::Supervisor do
         expect(supervisor.map(&:role)).to eq(["ghost-no-more"])
         supervisor.stop
         expect(launched).to be_stopped
-      ensure
-        supervisor&.stop
       end
 
       farewell = journal.drain.grep(Lain::Telemetry::Message).find { |m| m.payload["lifecycle"] == "stopped" }
@@ -158,8 +154,7 @@ RSpec.describe Lain::Supervisor do
 
   describe "the registry" do
     it "enumerates adoptions with role, state, address, and head digest" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor|
         tool = actor_tool(text_response("one"), text_response("two"))
         researcher = supervisor.adopt(role: "researcher") { tool.launch_actor("first", worker_env: Lain::WorkerEnv.default) }
         scout = supervisor.adopt(role: "scout") { tool.launch_actor("second", worker_env: Lain::WorkerEnv.default) }
@@ -171,13 +166,11 @@ RSpec.describe Lain::Supervisor do
         expect(supervisor.map(&:head_digest))
           .to eq([researcher.timeline.head_digest, scout.timeline.head_digest])
         expect(supervisor.map(&:head_digest)).to all(be_a(String))
-        supervisor.stop
       end
     end
 
     it "derives state from the actor's own predicates: stopped and failed read as such" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor|
         healthy = supervisor.adopt(role: "healthy") { actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         # Zero scripted responses: the Mock provider raises on the child's first call.
         doomed = supervisor.adopt(role: "doomed") { actor_tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
@@ -186,7 +179,6 @@ RSpec.describe Lain::Supervisor do
         healthy.stop
 
         expect(supervisor.map(&:state)).to eq(%i[stopped failed])
-        supervisor.stop
       end
     end
 
@@ -194,28 +186,23 @@ RSpec.describe Lain::Supervisor do
     # (stopped, or failed its turn) is already quiescent -- re-raising its
     # captured failure would tear down the very drain closing the session.
     it "settles live registrations and skips dead ones without re-raising" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor|
         live = supervisor.adopt(role: "live") { actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         dead = supervisor.adopt(role: "dead") { actor_tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         expect { dead.settle }.to raise_error(Lain::Error)
 
         expect { supervisor.each(&:settle) }.not_to raise_error
         expect(live).not_to be_dead
-        supervisor.stop
       end
     end
 
     it "#live answers only the rows currently running -- the predicate /stop and /undo both read" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor|
         supervisor.adopt(role: "researcher") { actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         doomed = supervisor.adopt(role: "doomed") { actor_tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         expect { doomed.settle }.to raise_error(Lain::Error)
 
         expect(supervisor.live.map(&:role)).to eq(["researcher"])
-      ensure
-        supervisor&.stop
       end
     end
 
@@ -226,8 +213,7 @@ RSpec.describe Lain::Supervisor do
     # mid-drain failure; it stays loud for direct callers, because
     # Actor#settle re-raises the captured failure on every call.
     it "absorbs a failure landing DURING a settle: the drain survives, direct settle stays loud" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         entered = Async::Queue.new
         release = Async::Queue.new
         actor = supervisor.adopt(role: "flaky") { parking_tool(entered:, release:).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
@@ -239,8 +225,6 @@ RSpec.describe Lain::Supervisor do
         expect { drain.wait }.not_to raise_error
         expect(supervisor.map(&:state)).to eq([:failed])
         expect { actor.settle }.to raise_error(Lain::Error, /injected/)
-      ensure
-        supervisor&.stop
       end
     end
   end
@@ -296,8 +280,7 @@ RSpec.describe Lain::Supervisor do
   describe "actor lifecycle journaling" do
     def journaled_lifecycle(journal)
       tool = actor_tool(text_response("ready"), journal:)
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor|
         actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
         actor.settle
         actor.tell("nudge")
@@ -598,8 +581,7 @@ RSpec.describe Lain::Supervisor do
     # worker's exit never tears down state a still-running sibling shares.
     it "defaults to the Null backend -- the child runs under the process WorkerEnv, release is a no-op" do
       seen = []
-      Sync do |task|
-        supervisor = described_class.new.run(task) # no isolation wired
+      supervised do |supervisor| # no isolation wired
         tool = probing_actor_tool(seen)
 
         supervisor.adopt(role: "worker") { |worker_env| tool.launch_actor("go", worker_env:) }.settle
@@ -631,8 +613,7 @@ RSpec.describe Lain::Supervisor do
     end
 
     it "lists the task as live under its role, and stops it through the row" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         journal = []
 
         supervisor.track(parked(task, journal), role: "diff_docent")
@@ -641,8 +622,6 @@ RSpec.describe Lain::Supervisor do
         supervisor.live.each { |row| row.actor.stop }
         expect(journal).to eq([:completed])
         expect(supervisor.live).to be_empty
-      ensure
-        supervisor.stop
       end
     end
 
@@ -652,8 +631,7 @@ RSpec.describe Lain::Supervisor do
     end
 
     it "drops the row from live once the task ends by itself" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         finished = task.async(transient: true) { :done }
 
         supervisor.track(finished, role: "diff_docent")
@@ -661,14 +639,11 @@ RSpec.describe Lain::Supervisor do
         rows_gone(task, supervisor)
 
         expect(supervisor.to_a).to be_empty
-      ensure
-        supervisor.stop
       end
     end
 
     it "drops the row when the task is stopped, and when it fails" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         stopped = parked(task)
         failed = task.async(transient: true) { raise Lain::Error, "boom" }
         supervisor.track(stopped, role: "diff_docent")
@@ -678,14 +653,11 @@ RSpec.describe Lain::Supervisor do
         rows_gone(task, supervisor)
 
         expect(supervisor.to_a).to be_empty
-      ensure
-        supervisor.stop
       end
     end
 
     it "drops the row of a failing task that yields before it raises" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         failed = task.async(transient: true) do |child|
           2.times { child.yield }
           raise Lain::Error, "boom"
@@ -695,8 +667,6 @@ RSpec.describe Lain::Supervisor do
         rows_gone(task, supervisor)
 
         expect(supervisor.to_a).to be_empty
-      ensure
-        supervisor.stop
       end
     end
 
@@ -708,8 +678,7 @@ RSpec.describe Lain::Supervisor do
     end
 
     it "stops a running one-shot at #stop, so its ensure runs before stop returns" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         journal = []
         supervisor.track(parked(task, journal), role: "diff_docent")
 
@@ -720,8 +689,7 @@ RSpec.describe Lain::Supervisor do
     end
 
     it "does not wait on a one-shot when draining" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         supervisor.track(parked(task), role: "diff_docent")
 
         started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -730,19 +698,14 @@ RSpec.describe Lain::Supervisor do
 
         expect(elapsed).to be < 5
         expect(drains.map(&:class)).to eq([Lain::Supervisor::Drain])
-      ensure
-        supervisor.stop
       end
     end
 
     it "answers the task, so a caller may chain" do
-      Sync do |task|
-        supervisor = described_class.new.run(task)
+      supervised do |supervisor, task|
         one_shot = parked(task)
 
         expect(supervisor.track(one_shot, role: "diff_docent")).to be(one_shot)
-      ensure
-        supervisor.stop
       end
     end
 

@@ -478,14 +478,10 @@ RSpec.describe Lain::Supervisor::Restart do
     allow(loader).to receive(:recording)
       .and_raise(Lain::Store::MissingObject, "no object \"blake3:deadbeef\" in store")
 
-    Sync do |task|
-      supervisor = Lain::Supervisor.new.run(task)
-
+    supervised do |supervisor|
       expect { restart_over([], supervisor:) }.to raise_error(Lain::Bench::Session::Corrupt) do |error|
         expect(error.message).to include("researcher", "no object \"blake3:deadbeef\" in store")
       end
-
-      supervisor.stop
     end
   end
 
