@@ -61,10 +61,31 @@ it should *run* (a cache-timing policy).
 - **CAC-4 — Soft-defer + hard-cap policy.** Defer while warm and below the cap; force on cap /
   approaching-window even while warm. **Acceptance:** a needed compaction with a warm cache below the
   cap does not run; crossing the cap runs it and the journal notes "forced-warm, message-tier only."
-- **CAC-5 — Prepare-once-apply-on-resume.** On idle-cold, compute the summary once, hold it keyed on
-  the head digest; reuse on repeated idle ticks; apply on the next real turn; recompute if the head
-  advanced. **Acceptance:** two idle ticks with no new turns produce exactly one summarization call;
-  the held compaction applies on resume; a new turn between ticks invalidates and recomputes.
+- **CAC-5 — Prepare-once-apply-on-resume.** On idle-cold, commit the cut once, while the human is
+  away, so the next line renders through it with no summarizer wait.
+  - **The key.** The held thing is a recorded `compaction_cut`, and `HeldCut` keys it on chain
+    containment: a cut holds while its `cut.head` still stands on the current chain, so a prompt typed
+    after the cut does not invalidate it (`held_cut.rb`). The summarizer's answers are memoized by the
+    content address of the range they summarize (`strategy/summarizing.rb`), so a repeated tick over
+    the same range makes no second call. 1 judgement per head: a judged head is latched and the idle
+    gate declines it again. When the provider's context window is only guessed (provenance
+    `:guessed`), the window-approach signal is withdrawn, so an idle chat prepares only past the byte
+    threshold and says nothing about it.
+  - **The cold reading.** Idle time is the gate: past the provider's cache TTL, or at least 120
+    seconds when the provider reports none. `Cold#cold?` is not required, because it is confirmed only
+    by the NEXT response's zero cache read, which an idle chat does not have. An idle prepare treats a
+    pending mark as **presumed cold** and journals which it was (`cache_state` is `cold` or
+    `presumed_cold`).
+  - **The 2 records.** `compaction_prepared` (`head_digest`, `cut_digest`, `idle_seconds`,
+    `cache_state`) when the cut is committed, and `compaction_applied` (`cut_digest`, `head_digest`)
+    on the later render that sends that cut. A prepared cut that no render sends has no
+    `compaction_applied`; a reader counts the difference.
+  - **The schedule arm.** `--compact-schedule` is `idle` or `turn`, recorded in the session header as
+    `compact_schedule` whenever compaction is on. A header without the key predates it and ran on the
+    turn, and `Bench::Variance` refuses to pool recordings under different schedules.
+  - **Acceptance:** an idle chat past the gate commits the cut once and journals
+    `compaction_prepared`; ticks over the same head make no second summarizer call; the next line
+    renders through the cut and journals `compaction_applied`; a head that moved is judged afresh.
 - **CAC-6 — Journaling.** Every compaction records trigger, cache-state (warm/cold/forced), tokens
   before/after, and cost saved vs. spent (via the M2 `Ledger`/`PriceBook`). **Acceptance:** the event
   carries all fields; `Compare` can attribute cost deltas to the policy.

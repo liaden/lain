@@ -65,6 +65,7 @@ tiers work.
 | `--compact-cap` | `1048576` | Claimed bytes that force a compaction even while the prompt cache is warm. Measured as `--compact-bytes` is, so turns the strategy would leave standing never trip it. |
 | `--compact-keep` | `20` | Trailing messages a compaction leaves verbatim. About the last 10 exchanges. |
 | `--compact-strategy` | **none** | `summarizing`, `elide`, `summarize-conversation`, `elide-tools`, or a `+`-joined composition of them. Which policy collapses a span — see [Collapse strategies](#collapse-strategies). Unset is not a synonym for any of them. |
+| `--compact-schedule` | `idle` | When a compaction runs. `idle` commits the cut while you are away (a fresh chat ticks every 5 seconds, and a prepare runs once the chat has sat idle past the provider's cache TTL, or at least 120 seconds where there is none), so your next line pays no summarizer wait. `turn` compacts at the next ask. Recorded in the session header as `compact_schedule`; a bad name is refused before the journal opens, and `--resume` inherits the recorded one. Bench runs under different schedules do not pool. |
 | `--summarizer-provider` | `ollama` | `anthropic`, `ollama`, or `ollama-cloud`. The summarizer is a **tier**, chosen independently of `--provider`. |
 | `--summarizer-model` | the summarizer provider's own | Never inherits the chat's `--model`. |
 | `--summarizer-max-tokens` | `1024` | Ceiling per summary. A truncated summary *replaces* the result it compressed, so this is sized for a paragraph, not a turn. |

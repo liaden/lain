@@ -430,6 +430,20 @@ verbatim beside collapsed stretches (the opening one included), and the handoff 
 too. The turn is shown in its place among the earlier summaries, oldest first, so a directive a
 later stretch overrode never reads as the newest word.
 
+**An idle chat can compact before the next line.** With `--compact-schedule idle` (the default), a
+fresh chat ticks every 5 seconds (`Repl::IdleCompaction`) and calls `Agent#prepare_idle`, which
+runs `Compaction::Source#prepare` under the dispatch lock and declines when that lock is already
+held, so a prepare never races a reply. `Source::IdleGate` decides whether the chat has waited long
+enough: past the provider's cache TTL, or at least 120 seconds where there is none, with 1
+judgement per head. Idle past the gate is read as cold even though no response confirmed it, so
+the cut journals `cache_state: presumed_cold`; a confirmed one journals `cold`. The cut it commits
+is an ordinary `compaction_cut`; the private `Preparation` inside `Compaction::Source` (`source.rb`) adds the 2 records around it,
+`compaction_prepared` when the cut lands and `compaction_applied` on the render that sends it. The
+cut consumes the last-turn usage reading by value, so the render that follows does not re-fire the
+summarizer on a reading the cut just made stale. `--compact-schedule turn` keeps the older shape,
+where the cut waits for the next ask. When the provider's context window is only guessed (provenance `:guessed`), the window-approach signal is withdrawn, so an idle chat prepares only past `--compact-bytes` and says nothing about it. The schedule is a bench arm: it is recorded in the header and
+`Bench::Variance` refuses to pool different ones.
+
 **The wiring is where this gets subtle.** `CLI::CompactionMount`
 (`lib/lain/cli/compaction_mount.rb`) plugs 3 things into one `Agent.new`, and the third is the
 reason it is an object rather than 3 keywords: `Compaction::Source#context_for` is handed the
@@ -1914,7 +1928,8 @@ NDJSON records, so any single number needs its criterion stated.
 and is the one a grep for `include` misses). That is **53** classes, each with a distinct
 `journal_type` string: 34 inside `lib/lain/telemetry/` and **19 defined elsewhere** — `Approval::GateDecision`,
 `Approval::Gate::Adjudicator::GateEvidence`, `Epic::IssueTransition`, `Epic::StageTransition`,
-`Compaction::Source::CompactionDecision`, `Compaction::Source::DerivationRefused`,
+`Compaction::Source::CompactionDecision`, `Compaction::Source::CompactionPrepared`,
+`Compaction::Source::CompactionApplied`, `Compaction::Source::DerivationRefused`,
 `Compaction::Cold::CacheColdConfirmed`, `Supervisor::DrainTimedOut`, `Supervisor::Restart::Restarted`,
 `Supervisor::Restart::WorkspaceBlob`, `Middleware::RefuseUnpermitted::Refused`,
 `Tools::Subagent::Stagger::{Dispatched,Released}`, `Arm::DualLedger::LedgerTransition`,
@@ -1930,6 +1945,7 @@ and is the one a grep for `include` misses). That is **53** classes, each with a
 > the truth is "inherited", and a full correction is a documentation audit rather than a line in
 > whichever card happens to add the next record type. Trust the recipe, not the digits.
 > Re-run on 2026-10-17, after `Compaction::Prepared` was deleted, it answers **114 / 66 / 48**.
+> `CompactionPrepared` and `CompactionApplied` add 2 to the total and to the third figure (re-run on 2026-10-17 after this plan's records: **116 / 66 / 50**, total / in `lib/lain/telemetry/` / elsewhere).
 
 *Records written as plain Hashes, with no `Journalable` class behind them* — at least ten more:
 `session` / `turn` / `rewound` (`session_record.rb:27-29`, and `bench/session.rb:67-68` writes the
