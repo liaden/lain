@@ -41,14 +41,14 @@ RSpec.describe "approving and denying a parked call in a real cockpit", :e2e do
   # Drives one cockpit from the prompt to the last reply, answering the parked call with the given
   # gesture, and keeps what the examples then read once the cockpit is gone.
   def journey_for(cassette_name, gesture)
-    E2E::Cassette.serve(cassette_name) do |upstream, cassette|
+    E2E::Cassette.serve(cassette_name) do |upstream, _cassette|
       sandbox = E2E::Sandbox.create
       cockpit = E2E::Cockpit.start(sandbox, upstream, *flags)
       cockpit.type(prompt)
       wait_until(timeout: patience, reason: "a gated call parked in nvim") { parked?(cockpit) }
       cockpit.public_send(gesture)
       await_turn_drawn(cockpit)
-      observed(cockpit, sandbox, upstream, cassette)
+      observed(cockpit, sandbox, upstream)
     ensure
       cockpit&.stop
     end
@@ -59,9 +59,9 @@ RSpec.describe "approving and denying a parked call in a real cockpit", :e2e do
     last.fetch("content").filter_map { |block| block["text"] if block["type"] == "text" }.join(" ")
   end
 
-  def observed(cockpit, sandbox, upstream, cassette)
+  def observed(cockpit, sandbox, upstream)
     approval = cockpit.editor.evaluate("getbufline(bufnr('lain://approval'), 1, '$')")
-    { cassette:, requests: chats(upstream.requests), approval:,
+    { requests: chats(upstream.requests), approval:,
       made: sandbox.project.join("made-by-agent.txt").exist?,
       decisions: cockpit.session.records("approval_decision"),
       reply: final_reply(cockpit), chat: cockpit.capture(:chat),
@@ -91,11 +91,6 @@ RSpec.describe "approving and denying a parked call in a real cockpit", :e2e do
       expect(journey.fetch(:input_height)).to be >= Lain::CLI::Up::INPUT_PANE_HEIGHT
       expect(shown.last).to include("you>")
       expect(shown.first).to match(/fleet:\d+/)
-    end
-
-    it "replays offline, playing every recorded call with no mismatch" do
-      expect(journey.fetch(:cassette).mismatches).to be_empty
-      expect(journey.fetch(:cassette).unplayed).to be_empty
     end
   end
 

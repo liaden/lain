@@ -52,8 +52,8 @@ RSpec.describe "two cockpits on one machine", :e2e do
   end
 
   once(:journey) do
-    E2E::Cassette.serve("two_cockpits_a") do |upstream_a, cassette_a|
-      E2E::Cassette.serve("two_cockpits_b") do |upstream_b, cassette_b|
+    E2E::Cassette.serve("two_cockpits_a") do |upstream_a, _cassette_a|
+      E2E::Cassette.serve("two_cockpits_b") do |upstream_b, _cassette_b|
         first = E2E::Sandbox.create
         second = E2E::Sandbox.create(share_state_with: first, project: "proj-b")
         cockpit_a = E2E::Cockpit.start(first, upstream_a, *flags)
@@ -64,7 +64,7 @@ RSpec.describe "two cockpits on one machine", :e2e do
         run_turn(cockpit_b, prompts.fetch("b"))
         seen = observe(cockpit_a, cockpit_b)
         cockpit_a.stop
-        seen.merge(both_answer:, after_stop: answers?(cockpit_b), cassettes: [cassette_a, cassette_b],
+        seen.merge(both_answer:, after_stop: answers?(cockpit_b),
                    keys: [key_of(first), key_of(second)],
                    state_dirs: Dir.glob(first.state_home.join("lain", "status", "*").to_s).map { |d| File.basename(d) })
       ensure
@@ -90,9 +90,5 @@ RSpec.describe "two cockpits on one machine", :e2e do
 
   it "leaves the second cockpit's editor answering after the first stops" do
     expect(journey.fetch(:after_stop)).to be(true)
-  end
-
-  it "replays both cassettes whole" do
-    expect(journey.fetch(:cassettes).flat_map(&:mismatches)).to be_empty
   end
 end

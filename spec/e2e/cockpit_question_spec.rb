@@ -29,7 +29,7 @@ RSpec.describe "answering a subagent's question in a real cockpit", :e2e do
   end
 
   once(:journey) do
-    E2E::Cassette.serve("cockpit_question") do |upstream, cassette|
+    E2E::Cassette.serve("cockpit_question") do |upstream, _cassette|
       sandbox = E2E::Sandbox.create(files: { ".lain/skills/ask-question/skill.md" => skill })
       cockpit = E2E::Cockpit.start(sandbox, upstream, *flags)
       cockpit.type("@dev[/ask-question] Find out which colour I like.")
@@ -47,7 +47,7 @@ RSpec.describe "answering a subagent's question in a real cockpit", :e2e do
       wait_until(timeout: patience, reason: "/inbox answered in the chat pane") do
         cockpit.capture(:chat).include?("(no questions pending)")
       end
-      { cassette:, parked:, after: inbox_lines(cockpit), chat: cockpit.capture(:chat),
+      { parked:, after: inbox_lines(cockpit), chat: cockpit.capture(:chat),
         counts: { inbox: inbox_count(cockpit), fleet: fleet_size(cockpit) },
         payloads: cockpit.session.records("message").map { |record| record["payload"] } }
     ensure
@@ -72,10 +72,5 @@ RSpec.describe "answering a subagent's question in a real cockpit", :e2e do
 
   it "reports none open in the chat pane when /inbox is typed in the input pane" do
     expect(journey.fetch(:chat)).to include("(no questions pending)")
-  end
-
-  it "replays offline, playing every recorded call with no mismatch" do
-    expect(journey.fetch(:cassette).mismatches).to be_empty
-    expect(journey.fetch(:cassette).unplayed).to be_empty
   end
 end

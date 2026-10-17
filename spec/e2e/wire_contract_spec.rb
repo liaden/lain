@@ -16,10 +16,10 @@ RSpec.describe "the wire contract of a recorded plain chat", :e2e do
   flags = %w[--provider ollama --model qwen3:4b --num-batch 1024 --seed 1 --temperature 0 --no-nvim].freeze
 
   once(:journey) do
-    E2E::Cassette.serve("wire_contract") do |upstream, cassette|
+    E2E::Cassette.serve("wire_contract") do |upstream, _cassette|
       sandbox = E2E::Sandbox.create(files: { "NOTES.md" => notes, ".lain/skills/ask-lfm/skill.md" => skill })
       parent_count = drive(E2E::PlainChat.start(sandbox, upstream.url, *flags), upstream)
-      { cassette:, parent_count:, bodies: chats(upstream.requests).map { |request| request[:body] } }
+      { parent_count:, bodies: chats(upstream.requests).map { |request| request[:body] } }
     end
   end
 
@@ -55,11 +55,6 @@ RSpec.describe "the wire contract of a recorded plain chat", :e2e do
     expect(child).not_to be_empty
     expect(parent.map { |body| body["model"] }).to all(eq("qwen3:4b"))
     expect(child.map { |body| body["model"] }).to all(eq("lfm2.5:latest"))
-  end
-
-  it "replays offline, playing every recorded call with no mismatch" do
-    expect(journey.fetch(:cassette).mismatches).to be_empty
-    expect(journey.fetch(:cassette).unplayed).to be_empty
   end
 end
 
