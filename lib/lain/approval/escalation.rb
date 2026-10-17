@@ -412,7 +412,9 @@ module Lain
         # here tallies the fault stream to tell an abstention from a
         # suppression.
         def call(effect, _context)
-          ruling(RuleChain.new(@rules, faults: recorder(effect)).decide(subject(effect)))
+          call = subject(effect)
+          chain = RuleChain.new(@rules, faults: recorder(effect))
+          ruling(chain.decide(call)) { Ruling.abstain(rung: NAME, because: NO_OPINION, note: chain.why_not(call)) }
         rescue Rule::Call::Undeclared, Tool::InvalidInput, Toolset::UnknownTool => e
           # Structural, expected, and not a bug: a tool with no declaration, an
           # input the tool itself will refuse, a name this session does not hold.
@@ -443,7 +445,7 @@ module Lain
           faulted = answer.is_a?(RuleChain::Poisoned)
           return refusal(answer, faulted) if answer&.deny?
           return Ruling.fault(rung: NAME, because: broke(answer.fault)) if faulted
-          return Ruling.abstain(rung: NAME, because: NO_OPINION) if answer.nil?
+          return yield if answer.nil?
 
           Ruling.allow(rung: NAME, because: attributed(answer), rule: decided(answer).rule)
         end

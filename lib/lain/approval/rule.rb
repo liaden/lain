@@ -175,6 +175,7 @@ module Lain
           # A Call built around something that is not a validated {Tool::Input}.
           raise Error, not_validated_message(input) unless input.is_a?(Tool::Input)
 
+          @memo = {}
           super
         end
 
@@ -242,6 +243,11 @@ module Lain
         # construction ever changes.
         def term? = !term.equal?(Shell::Verdict::NO_TERM)
 
+        # The one mutable thing in a frozen Data: a rule that both decides and
+        # explains must not pay twice for the same filesystem reads, and a Data
+        # has nowhere else to keep the answer. It is no member, so equality is untouched.
+        def memo(key) = @memo.fetch(key) { @memo[key] = yield }
+
         private
 
         # One parse per ask, because a {Data} instance is frozen and has
@@ -276,6 +282,10 @@ module Lain
       def decide(_call)
         raise NotImplemented, "#{self.class} must define #decide"
       end
+
+      # @param _call [Call] a call this rule abstained on
+      # @return [String, nil] why, for the human only; nil when it has nothing to add
+      def why_not(_call) = nil
 
       protected
 

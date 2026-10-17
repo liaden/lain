@@ -504,8 +504,19 @@ module Lain
         term = call.term
         return nil unless approvable?(term, call.input.cwd)
 
-        names = vouched_names(term, call.input.cwd)
+        names = vouched_names(call)
         names && allow(call, because: format(APPROVED, programs: names.join(", ")))
+      end
+
+      # @param call [Rule::Call]
+      # @return [String, nil] which binary stopped the class predicate, once every
+      #   other predicate held; nil where this rule would have decided or never judges
+      def why_not(call)
+        return nil unless @classes && judged?(call) && call.term? && approvable?(call.term, call.input.cwd)
+
+        stages = executables(call)
+        suspect = stages.flat_map(&:programs).find { !trusted?(_1) } if stages
+        suspect && describe_binary(suspect)
       end
 
       private
@@ -668,13 +679,31 @@ module Lain
       # One resolution answers both the predicate and the reason, so the reason
       # names the file that was judged. A raise abstains, as the other
       # predicates' rescues do.
-      def vouched_names(term, cwd)
-        return programs(term) unless @classes
+      def vouched_names(call)
+        return programs(call.term) unless @classes
 
-        stages = @sensitivity.executables(term, cwd)
+        stages = executables(call)
         stages.map { |stage| "#{stage.name} at #{stage.resolved} (#{stage.klass})" } if stages.all? { trusted?(_1) }
       rescue StandardError
         nil
+      end
+
+      def executables(call)
+        call.memo(self) { @sensitivity.executables(call.term, call.input.cwd) }
+      end
+
+      def describe_binary(binary)
+        return "#{binary.name} did not resolve to a file" if binary.klass == :unresolved
+
+        ["#{binary.name} resolved to #{binary.resolved} (#{binary.klass})",
+         ("shadowing #{binary.shadowed.join(", ")}" if binary.shadowed.any?),
+         ("written this session" if binary.fresh),
+         *unexplained_anomalies(binary).map { "with a #{_1.to_s.tr("_", " ")}" }].compact.join(", ")
+      end
+
+      # A project binary already says it is on a project PATH entry.
+      def unexplained_anomalies(binary)
+        binary.klass == :project ? binary.anomalies - [:project_path_entry] : binary.anomalies
       end
 
       def trusted?(stage)

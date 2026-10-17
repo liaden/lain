@@ -23,6 +23,16 @@ module EscalationSpecSupport
     def judges?(_outstanding) = false
   end
 
+  # A rule with no opinion that says why, and one with neither.
+  class Explaining < Lain::Approval::Rule
+    def decide(_call) = nil
+    def why_not(_call) = "cat resolved to /repo/bin/cat (project)"
+  end
+
+  class Mute < Lain::Approval::Rule
+    def decide(_call) = nil
+  end
+
   # A rung with one fixed answer, named at construction so a spec can read the
   # attribution back out of the journal.
   class Fixed
@@ -770,6 +780,20 @@ RSpec.describe Lain::Approval::Escalation do
 
   # The MEASURED table: Rule::Call.for is not total, and a rescue list is
   # not a substitute for a total classifier.
+  describe "the rules rung, over a rule that says why it abstained" do
+    it "abstains with the note" do
+      ruling = rules_rung(EscalationSpecSupport::Explaining.new).call(effect, nil)
+
+      expect(ruling).to be_abstain
+      expect(ruling.note).to eq("cat resolved to /repo/bin/cat (project)")
+    end
+
+    it "leaves a rule with nothing to say without a note" do
+      expect(rules_rung(EscalationSpecSupport::Mute.new).call(effect, nil).note)
+        .to be_nil
+    end
+  end
+
   describe "the rules rung, over inputs Rule::Call.for cannot vouch for" do
     def judged(input)
       built = ladder(rules_rung(EscalationSpecSupport::Reader.new))

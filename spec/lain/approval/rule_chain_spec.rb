@@ -28,6 +28,18 @@ module RuleChainSpecSupport
     end
   end
 
+  # Abstains, and says why for the human.
+  class Explaining < Lain::Approval::Rule
+    def decide(_call) = nil
+    def why_not(_call) = "spec says why"
+  end
+
+  # Abstains, and raises when asked why.
+  class BrokenExplainer < Lain::Approval::Rule
+    def decide(_call) = nil
+    def why_not(_call) = raise("broken")
+  end
+
   # Denies anything.
   class Denier < Lain::Approval::Rule
     def decide(call) = deny(call, because: "spec denies everything")
@@ -128,6 +140,30 @@ RSpec.describe Lain::Approval::RuleChain do
   let(:recorder) { RuleChainSpecSupport::Recorder.new }
 
   def chain(*rules) = described_class.new(rules, faults: recorder)
+
+  describe "why nothing decided" do
+    it "answers the first note a rule gives" do
+      expect(chain(RuleChainSpecSupport::Silent.new, RuleChainSpecSupport::Explaining.new).why_not(gated_call))
+        .to eq("spec says why")
+    end
+
+    it "answers nothing when no rule has a note" do
+      expect(chain(RuleChainSpecSupport::Silent.new).why_not(gated_call)).to be_nil
+    end
+
+    it "skips a rule that raises while explaining" do
+      expect(chain(RuleChainSpecSupport::BrokenExplainer.new, RuleChainSpecSupport::Explaining.new).why_not(gated_call))
+        .to eq("spec says why")
+    end
+  end
+
+  describe "a rule that raises while explaining" do
+    it "is reported to the faults sink, and the park goes on" do
+      chain(RuleChainSpecSupport::BrokenExplainer.new).why_not(gated_call)
+
+      expect(recorder.faults.map(&:rule)).to eq(["broken_explainer"])
+    end
+  end
 
   describe "the lookup chain" do
     it "consults the next rule when the first has nothing to say about the call" do

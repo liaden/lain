@@ -168,7 +168,21 @@ module Lain
         Poisoned.new(decision: decision&.allow? ? nil : decision, fault: faulted)
       end
 
+      # @param call [Rule::Call] a call {#decide} answered nothing on
+      # @return [String, nil] the first note a rule has for the human. A rule
+      #   that raises while explaining has none: the call is already parking.
+      def why_not(call)
+        @consulted.lazy.filter_map { |rule, name| explanation(rule, name, call) }.first
+      end
+
       private
+
+      def explanation(rule, name, call)
+        rule.why_not(call)
+      rescue StandardError => e
+        report(Fault.for(rule: name, call:, error: e))
+        nil
+      end
 
       # A rule may hand back another chain's {Poisoned} -- what a rule OWNING
       # an inner chain does, and the case a plain type check would turn into a

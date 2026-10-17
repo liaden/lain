@@ -3,6 +3,23 @@
 require "fileutils"
 require "tmpdir"
 
+module ComposedTermSpecSupport
+  # Counts the resolutions a rule asks of the factory it is built over.
+  class CountingFactory < SimpleDelegator
+    attr_reader :resolutions
+
+    def initialize(factory)
+      super
+      @resolutions = 0
+    end
+
+    def executables(...)
+      @resolutions += 1
+      super
+    end
+  end
+end
+
 # The one rule in `lib/` that can APPROVE, so most of this file is a question
 # about what it REFUSES. Each refusal names a command MEASURED to reach
 # `Shell::Verdict#allow`, and {#expect_allowed_by_the_verdict} re-measures it
@@ -1268,6 +1285,99 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
         expect(classed_rule(root, home, path: "#{bin}:/usr/bin").decide(call_of("cat README.md", cwd: root)))
           .to be_nil
+      end
+    end
+
+    describe "why a call it leaves to the judge was left" do
+      def note_for(rule, command, root) = rule.why_not(call_of(command, cwd: root))
+
+      it "names a project binary and the system one it shadows" do
+        in_tree do |root, home|
+          with_readme(root)
+          bin = planted_cat(File.join(root, "bin"))
+          rule = classed_rule(root, home, path: "#{bin}:/usr/bin")
+
+          expect(note_for(rule, "cat README.md", root))
+            .to eq("cat resolved to #{bin}/cat (project), shadowing /usr/bin/cat")
+        end
+      end
+
+      it "says a user file written this session is fresh" do
+        in_tree do |root, home|
+          with_readme(root)
+          bin = planted_cat(File.join(home, ".local", "bin"))
+          rule = classed_rule(root, home, path: "#{bin}:/usr/bin", since: Time.now - 60)
+
+          expect(note_for(rule, "cat README.md", root)).to include("cat resolved to #{bin}/cat (user)")
+            .and include("written this session")
+        end
+      end
+
+      it "gives no note when a predicate other than the class one refuses" do
+        in_tree do |root, home|
+          with_readme(root)
+          bin = File.dirname(on_disk(File.join(root, "bin"), "grep", "#!/bin/sh\nexec /usr/bin/grep \"$@\"\n",
+                                     mode: 0o755))
+          rule = classed_rule(root, home, path: "#{bin}:/usr/bin")
+
+          expect(note_for(rule, "grep -f README.md README.md", root)).to be_nil
+        end
+      end
+
+      it "states the PATH anomaly when that, not the file, stopped the stage" do
+        in_tree do |root, home|
+          with_readme(root)
+          bin = planted_cat(File.join(root, "bin"))
+          rule = classed_rule(root, home, path: "#{bin}:/usr/bin")
+
+          expect(note_for(rule, "head README.md && cat README.md", root))
+            .to eq("head resolved to /usr/bin/head (system), with a project path entry")
+        end
+      end
+
+      it "says a program that resolved to no file did not" do
+        in_tree do |root, home|
+          with_readme(root)
+
+          expect(note_for(classed_rule(root, home, path: home), "cat README.md", root))
+            .to eq("cat did not resolve to a file")
+        end
+      end
+
+      it "gives no note for a call the rule allows" do
+        in_tree do |root, home|
+          with_readme(root)
+
+          rule = classed_rule(root, home, path: "/usr/bin")
+          expect(rule.decide(call_of("cat README.md", cwd: root))).to be_allow
+          expect(note_for(rule, "cat README.md", root)).to be_nil
+        end
+      end
+
+      it "gives no note when the rule is not ruled by class" do
+        in_tree do |root, home|
+          with_readme(root)
+          bin = planted_cat(File.join(root, "bin"))
+
+          expect(note_for(classed_rule(root, home, path: "#{bin}:/usr/bin", classes: false), "cat README.md", root))
+            .to be_nil
+        end
+      end
+
+      it "resolves the stages once for a call it decides and then explains" do
+        in_tree do |root, home|
+          with_readme(root)
+          bin = planted_cat(File.join(root, "bin"))
+          factory = classifiers(root, home, path: "#{bin}:/usr/bin")
+          counted = ComposedTermSpecSupport::CountingFactory.new(factory)
+          rule = described_class.new(sensitivity: counted, classes: true)
+          call = call_of("cat README.md", cwd: root)
+
+          rule.decide(call)
+          rule.why_not(call)
+
+          expect(counted.resolutions).to eq(1)
+        end
       end
     end
 
