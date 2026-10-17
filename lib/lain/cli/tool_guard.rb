@@ -194,6 +194,7 @@ module Lain
 
         # Nobody was asked, so nobody denied anything.
         def self.denied(**) = nil
+        def self.denied_call(**) = nil
       end
 
       # The whole ladder a judge's child's gate asks: one rung, refusing.

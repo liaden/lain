@@ -323,6 +323,7 @@ module Lain
         # claim has failed -- escalate, don't patch.
         @parked = []
         @denials = {}
+        @calls = {}
         # Built here, not as a constant: {Escalation::Surfaces} names this
         # class's surfaces in its own body, so a constant here is a load cycle.
         @machine_surfaces = [*Escalation::Surfaces::AUTOMATIC, ::Lain::Frontend::ApprovalPolicy::FAULT_SURFACE].freeze
@@ -430,14 +431,29 @@ module Lain
       private_class_method :field
 
       # The reason a human gave when they denied this requester a call on
-      # `path` or a directory above it, "" when they gave none.
+      # `path`, on where it lands, or on a directory above either; "" when
+      # they gave none.
       #
       # @param requester [String] as {.requester_for} names it
       # @param path [String] absolute and resolved, see {.resolved}
       # @return [String, nil] nil when no such denial was given
       def denied(requester:, path:)
-        @denials.fetch(requester, {}).find { |denied, _| path == denied || path.start_with?(below(denied)) }&.last
+        held = @denials.fetch(requester, {})
+        return if held.empty?
+
+        [path, *landings(path)].lazy.filter_map { |asked| held.find { |denied, _| at_or_below?(asked, denied) } }
+                               .first&.last
       end
+
+      # The reason a human gave when they denied this requester this exact
+      # call, run from the same directory; "" when they gave none.
+      #
+      # @param requester [String] as {.requester_for} names it
+      # @param tool [String] as the call named it
+      # @param input [Object] the call's input, compared whole
+      # @param cwd [String] absolute; the session's directory for the call
+      # @return [String, nil] nil when no such denial was given
+      def denied_call(requester:, tool:, input:, cwd:) = @calls.fetch(requester, {})[[tool, input, cwd]]
 
       # Async::Queue is buffered, so a pending enqueued before any surface
       # watched is delivered, never missed. Already-decided arrivals -- an
@@ -487,18 +503,34 @@ module Lain
       end
 
       # Straight-line with no yield, as every @parked mutation is, so it can
-      # sit in {#settle}'s `ensure` without opening a gap between fibers. A
-      # declined release is a no about a file's regions, not about its path.
+      # sit in {#settle}'s `ensure` without opening a gap between fibers; a
+      # realpath is a plain syscall, not a scheduler hook. A declined release
+      # is a no about a file's regions, not about its path.
       def remember(pending)
         return unless human_denial?(pending) && pending.outstanding.none?
 
-        denied_paths(pending).each { (@denials[pending.requester] ||= {})[_1] = pending.reason.to_s }
+        reason = pending.reason.to_s
+        denied_paths(pending).each { (@denials[pending.requester] ||= {})[_1] = reason }
+        (@calls[pending.requester] ||= {})[[pending.tool, pending.input, pending.cwd]] = reason
       end
 
+      # A command's file word that is a link to a directory names a file to
+      # the human, so the tree it lands on is not held against later calls.
       def denied_paths(pending)
-        return named_files(pending) if pending.tool == BASH
+        if pending.tool == BASH
+          named_files(pending).flat_map { |path| [path, *landings(path).reject { File.directory?(_1) }] }
+        else
+          lexical = pending.path && Queue.resolved(pending.path, pending.cwd, home: @home)
+          lexical ? [lexical, *landings(lexical)] : []
+        end
+      end
 
-        [pending.path && Queue.resolved(pending.path, pending.cwd, home: @home)].compact
+      # A link to nothing keeps only its own name: its target could be
+      # created anywhere later, and a guess at it would refuse the wrong file.
+      def landings(path)
+        Landing.of(path, cwd: File::SEPARATOR, home: @home) - [path]
+      rescue ::Lain::Error, SystemCallError, ArgumentError, EncodingError
+        []
       end
 
       # The directory a command runs in, anything above it, a `cd` target and

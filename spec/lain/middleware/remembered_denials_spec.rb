@@ -6,7 +6,7 @@ RSpec.describe Lain::Middleware::RememberedDenials do
   let(:policy) do
     Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project)).confined(roots: [project])
   end
-  let(:queue) { instance_double(Lain::Approval::Queue, denied: nil) }
+  let(:queue) { instance_double(Lain::Approval::Queue, denied: nil, denied_call: nil) }
   let(:denial) { "approval denied for tool %<name>s" }
   let(:layer) { described_class.new(queue:, sensitivity: policy, denial:) }
 
@@ -159,6 +159,12 @@ RSpec.describe Lain::Middleware::RememberedDenials do
       expect(through(reads).last).to eq([reads])
     end
 
+    it "is refused when a protected name it spells bare was denied, since only a written path is refused outright" do
+      remembering("agent", "#{project}/.netrc")
+
+      expect(through(runs("head .netrc")).first).to have_attributes(is_error: true)
+    end
+
     it "passes when the denied path it names is ordinary" do
       remembering("agent", "#{project}/lib/a.rb")
 
@@ -175,6 +181,97 @@ RSpec.describe Lain::Middleware::RememberedDenials do
       remembering("agent", "#{project}/.env")
 
       expect(through(runs('cat "$PWD/.env"')).first).to have_attributes(is_error: false)
+    end
+  end
+
+  describe "an exact repeat of a call a human denied" do
+    def runs(command) = call("bash", { "command" => command })
+
+    def remembering_call(requester, command, reason = "not now")
+      allow(queue).to receive(:denied_call)
+        .with(requester:, tool: "bash", input: { "command" => command }, cwd: project).and_return(reason)
+    end
+
+    before { remembering_call("agent", "make deploy") }
+
+    it "is refused in the gate's own words with the human's reason, never reaching downstream" do
+      result, reached = through(runs("make deploy"))
+
+      expect([result, reached]).to match([have_attributes(is_error: true,
+                                                          content: 'approval denied for tool "bash": not now'), []])
+    end
+
+    it "journals the refusal as a human's deny of the call" do
+      journal = []
+
+      through(runs("make deploy"), via: described_class.new(queue:, sensitivity: policy, denial:, journal:))
+
+      expect(journal).to contain_exactly(a_hash_including("rung" => "remembered", "verdict" => "deny",
+                                                          "reason" => "a human denied this call earlier"))
+    end
+
+    it "passes a repeat the session now refuses outright on to that refusal" do
+      reads = call("read_file", { "path" => "#{home}/.ssh/id_ed25519" })
+      allow(queue).to receive(:denied_call)
+        .with(requester: "agent", tool: "read_file", input: reads.input, cwd: project).and_return("not now")
+
+      expect(through(reads).last).to eq([reads])
+    end
+
+    it "passes a different call" do
+      expect(through(runs("make test")).last).to eq([runs("make test")])
+    end
+
+    it "passes the same call for another requester" do
+      for_child = described_class.new(queue:, sensitivity: policy, denial:, requester: "researcher")
+
+      expect(through(runs("make deploy"), via: for_child).last).to eq([runs("make deploy")])
+    end
+  end
+
+  describe "over a real queue, a deny through a link" do
+    around do |example|
+      Dir.mktmpdir("remembered-link") do |dir|
+        @dir = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:project) { @dir }
+    let(:queue) { Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new)) }
+
+    def denied_by_human(effect)
+      Sync do |task|
+        run = task.async { queue.adjudicate(effect, in_project) }
+        queue.dequeue.deny(surface: "spec", reason: "keep out")
+        run.wait
+      end
+    end
+
+    it "refuses a read of the file the link lands on, naming the earlier deny" do
+      File.write(File.join(@dir, ".env.local"), "K=v\n")
+      File.symlink(".env.local", File.join(@dir, "cfglink"))
+      denied_by_human(call("bash", { "command" => "cat cfglink" }))
+
+      expect(through(call("read_file", { "path" => ".env.local" })).first)
+        .to have_attributes(is_error: true, content: 'approval denied for tool "read_file": keep out')
+    end
+
+    it "refuses a read and a command through a link to a file whose own name was denied" do
+      File.write(File.join(@dir, ".env.local"), "K=v\n")
+      File.symlink(".env.local", File.join(@dir, "cfglink"))
+      denied_by_human(call("read_file", { "path" => ".env.local" }))
+
+      expect([through(call("read_file", { "path" => "cfglink" })).first,
+              through(call("bash", { "command" => "cat cfglink" })).first]).to all(have_attributes(is_error: true))
+    end
+
+    it "refuses a command through a 2nd link to the file a denied link landed on" do
+      File.write(File.join(@dir, ".env.local"), "K=v\n")
+      %w[cfglink cfglink2].each { File.symlink(".env.local", File.join(@dir, _1)) }
+      denied_by_human(call("bash", { "command" => "cat cfglink" }))
+
+      expect(through(call("bash", { "command" => "head cfglink2" })).first).to have_attributes(is_error: true)
     end
   end
 

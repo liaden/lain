@@ -680,6 +680,93 @@ RSpec.describe Lain::Approval::Queue do
       end
     end
 
+    describe "a denied call through a link" do
+      def runs(command) = tool_call("bash", { "command" => command })
+
+      around do |example|
+        Dir.mktmpdir("queue-link") do |dir|
+          @dir = File.realpath(dir)
+          example.run
+        end
+      end
+
+      def linked(name, target)
+        File.symlink(target, File.join(@dir, name))
+      end
+
+      it "is remembered by the file the link lands on as well as by its own name" do
+        File.write(File.join(@dir, ".env.local"), "K=v\n")
+        linked("cfglink", ".env.local")
+
+        denied_by_human(runs("cat cfglink"), in_dir(@dir))
+
+        expect(%W[#{@dir}/cfglink #{@dir}/.env.local].map { queue.denied(requester: "agent", path: _1) })
+          .to all(eq("not your business"))
+      end
+
+      it "is remembered by the file a path tool's link lands on" do
+        File.write(File.join(@dir, ".env.local"), "K=v\n")
+        linked("cfglink", ".env.local")
+
+        denied_by_human(tool_call("read_file", { "path" => "cfglink" }), in_dir(@dir))
+
+        expect(queue.denied(requester: "agent", path: "#{@dir}/.env.local")).to eq("not your business")
+      end
+
+      it "answers for a link asked about whose target was denied" do
+        File.write(File.join(@dir, ".env.local"), "K=v\n")
+        linked("cfglink", ".env.local")
+
+        denied_by_human(tool_call("read_file", { "path" => ".env.local" }), in_dir(@dir))
+
+        expect(queue.denied(requester: "agent", path: "#{@dir}/cfglink")).to eq("not your business")
+      end
+
+      it "is remembered by its lexical path only when the link dangles" do
+        linked("cfglink", "missing.env")
+
+        denied_by_human(runs("cat cfglink"), in_dir(@dir))
+
+        expect(%W[#{@dir}/cfglink #{@dir}/missing.env].to_h { [_1, queue.denied(requester: "agent", path: _1)] })
+          .to eq("#{@dir}/cfglink" => "not your business", "#{@dir}/missing.env" => nil)
+      end
+
+      it "does not remember the directory a command's link lands on" do
+        Dir.mkdir(File.join(@dir, "tree"))
+        linked("treelink", "tree")
+
+        denied_by_human(runs("cat treelink"), in_dir(@dir))
+
+        expect(queue.denied(requester: "agent", path: "#{@dir}/tree/a.rb")).to be_nil
+      end
+    end
+
+    describe "the exact call a human denied" do
+      def runs(command) = tool_call("bash", { "command" => command })
+
+      def repeat_of(command, requester: "agent", cwd: "/srv/p")
+        queue.denied_call(requester:, tool: "bash", input: { "command" => command }, cwd:)
+      end
+
+      before { denied_by_human(runs("make deploy"), in_dir("/srv/p")) }
+
+      it "answers the human's reason for the same call from the same requester in the same directory" do
+        expect(repeat_of("make deploy")).to eq("not your business")
+      end
+
+      it "answers nothing for a different call, another requester, or another directory" do
+        expect([repeat_of("make test"), repeat_of("make deploy", requester: "researcher"),
+                repeat_of("make deploy", cwd: "/srv/q")]).to all(be_nil)
+      end
+    end
+
+    it "remembers no call a machine decided" do
+      settled(tool_call) { |pending| pending.deny(surface: Lain::Approval::SecretSurface::SURFACE) }
+
+      expect(queue.denied_call(requester: "agent", tool: "dangerous", input: { "text" => "boom" },
+                               cwd: Lain::Session.cwd_of(nil))).to be_nil
+    end
+
     it "remembers nothing for a path that cannot be resolved" do
       denied_by_human(lists("/home/\0x"))
 
