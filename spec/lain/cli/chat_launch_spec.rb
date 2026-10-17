@@ -178,6 +178,11 @@ RSpec.describe Lain::CLI::ChatLaunch do
     {
       "--compact-keep 0" => [{ compact_keep: 0 }, /--compact-keep 0/],
       "--compact-keep -1" => [{ compact_keep: -1 }, /--compact-keep -1/],
+      "--compact-keep 1.5" => [{ compact_keep: 1.5 }, /--compact-keep 1\.5/],
+      "--compact-bytes 0" => [{ compact_bytes: 0 }, /--compact-bytes must be positive, got 0/],
+      "--compact-bytes -1" => [{ compact_bytes: -1 }, /--compact-bytes must be positive, got -1/],
+      "--compact-cap 0" => [{ compact_cap: 0 }, /--compact-cap must be positive, got 0/],
+      "--no-compact --compact-bytes 0" => [{ compact: false, compact_bytes: 0 }, /--compact-bytes/],
       "--compact-strategy elide+summarizing" => [{ compact_strategy: "elide+summarizing" },
                                                  /--compact-strategy "elide\+summarizing"/],
       "--compact-schedule nightly" => [{ compact_schedule: "nightly" }, /--compact-schedule "nightly".*idle, turn/]
@@ -799,6 +804,15 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
       .to have_attributes(strategy: "elide-tools+summarize-conversation", keep: 4)
     expect(launch.call({ compact_keep: 8 }).compaction).to have_attributes(keep: 8,
                                                                            strategy: recorded["compact_strategy"])
+  end
+
+  it "resumes a --no-compact recording that holds a keep nobody typed this run" do
+    point = Lain::CLI::ForkPoint::Point.new(path: "/sessions/parent.ndjson", digest: "blake3:abc123")
+    resolver = instance_double(Lain::CLI::Resume, fork_point: point, recorded_header: { "compact_keep" => 0 })
+    instance = described_class.new({ fork: "@abc123", journal: false, max_tokens: 16, provider: "ollama",
+                                     compact: false }, resume_factory: -> { resolver })
+
+    expect { instance.backend.refuse_compaction_flags! }.not_to raise_error
   end
 
   describe "the compaction schedule" do

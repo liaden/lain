@@ -578,15 +578,19 @@ module Lain
         name
       end
 
-      # Refuses `--compact-keep` and `--compact-strategy` by name while nothing
-      # is on disk; both otherwise surface only when the first compaction builds.
+      # Refuses the compaction flags by name while nothing is on disk; they
+      # otherwise surface only when the first compaction builds. Under
+      # `--no-compact` only the numeric flags TYPED this run are judged: a
+      # recording from before they were checked may hold `compact_keep: 0`,
+      # which the operator did not type and cannot be made to answer for.
       #
       # @raise [InvalidKeep]
+      # @raise [InvalidCeiling]
       # @raise [CompactionStrategy::Unknown]
       def refuse_compaction_flags!
+        refuse_counts!(compaction? ? @compaction : CompactionProfile.typed(@options))
         return unless compaction?
 
-        refuse_keep! if @compaction.keep
         refuse_schedule!
         refuse_strategy_spelling! if @compaction.strategy
       end
@@ -654,10 +658,20 @@ module Lain
         @epic_home ||= ::Lain::Epic::Home.container(config: Config.load(root: @root), paths: @paths, root: @root)
       end
 
-      def refuse_keep!
-        Compaction.validate_keep_last(@compaction.keep)
+      def refuse_counts!(arm)
+        refuse_keep!(arm.keep) if arm.keep
+        refuse_count!("--compact-bytes", arm.bytes)
+        refuse_count!("--compact-cap", arm.cap)
+      end
+
+      def refuse_keep!(keep)
+        Compaction.validate_keep_last(keep)
       rescue ArgumentError, TypeError
-        raise InvalidKeep, "--compact-keep #{@compaction.keep.inspect} must be a positive integer"
+        raise InvalidKeep, "--compact-keep #{keep.inspect} must be a positive integer"
+      end
+
+      def refuse_count!(flag, value)
+        Ceiling.new(flag:, value:).tokens unless value.nil?
       end
 
       def refuse_schedule!

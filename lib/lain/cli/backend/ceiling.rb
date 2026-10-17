@@ -27,6 +27,7 @@ module Lain
           raise InvalidCeiling, "#{flag} is not set; every model turn needs a token ceiling" if value.nil?
 
           Integer(value).tap do |ceiling|
+            raise InvalidCeiling, "#{flag} must be a whole number, got #{value}" if value.is_a?(Float) && value % 1 != 0
             raise InvalidCeiling, "#{flag} must be positive, got #{ceiling}" unless ceiling.positive?
           end
         end

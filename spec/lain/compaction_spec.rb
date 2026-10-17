@@ -25,6 +25,15 @@ RSpec.describe Lain::Compaction do
         .to raise_error(ArgumentError, "keep_last must be positive, got -1")
     end
 
+    it "refuses a fractional value rather than truncating it" do
+      expect { described_class.validate_keep_last(1.5) }
+        .to raise_error(ArgumentError, "keep_last must be a whole number, got 1.5")
+    end
+
+    it "accepts a whole Float" do
+      expect(described_class.validate_keep_last(2.0)).to eq(2)
+    end
+
     it "refuses a String it cannot read, rather than comparing it" do
       expect { described_class.validate_keep_last("several") }.to raise_error(ArgumentError, /invalid value/)
     end

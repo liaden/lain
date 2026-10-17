@@ -50,7 +50,7 @@ module Lain
     #
     # @param keep_last [Object] whatever the caller was configured with
     # @return [Integer] the coerced, positive value
-    # @raise [ArgumentError] on zero, on a negative, and on a String `Integer()`
+    # @raise [ArgumentError] on zero, on a negative, on a fractional Float, and on a String `Integer()`
     #   cannot read (`"several"`)
     # @raise [TypeError] on a value `Integer()` will not convert at all -- `nil`,
     #   an Array, a boolean. Deliberately not caught and re-raised as an
@@ -58,6 +58,10 @@ module Lain
     #   type, which is more than a uniform error class would say.
     def self.validate_keep_last(keep_last)
       integer = Integer(keep_last)
+      if keep_last.is_a?(Float) && keep_last % 1 != 0
+        raise ArgumentError,
+              "keep_last must be a whole number, got #{keep_last}"
+      end
       raise ArgumentError, "keep_last must be positive, got #{integer}" unless integer.positive?
 
       integer

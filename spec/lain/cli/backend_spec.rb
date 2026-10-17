@@ -655,6 +655,8 @@ RSpec.describe Lain::CLI::Backend do
       end
 
       it "refuses a negative the same way" do
+        expect { ollama_backend(num_ctx: 1.5) }
+          .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--num-ctx must be a whole number, got 1\.5/)
         expect { ollama_backend(num_ctx: -1) }
           .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--num-ctx must be positive/)
       end
@@ -1009,6 +1011,16 @@ RSpec.describe Lain::CLI::Backend do
     it "refuses an explicit nil ceiling the same way an absent key is refused" do
       expect { backend_for(provider: "ollama", max_tokens: nil).context }
         .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--max-tokens/)
+    end
+
+    it "refuses a fractional --summarizer-max-tokens the same way" do
+      expect { backend_for(provider: "ollama", summarizer_max_tokens: 1.5).summarizer_max_tokens }
+        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--summarizer-max-tokens must be a whole number/)
+    end
+
+    it "refuses a fractional ceiling instead of truncating it" do
+      expect { backend_for(provider: "ollama", max_tokens: 1.5).context }
+        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--max-tokens must be a whole number, got 1\.5/)
     end
 
     # The two ceiling flags are two different mistakes to make, and one Ceiling
@@ -1639,6 +1651,31 @@ RSpec.describe Lain::CLI::Backend do
             .to raise_error(Lain::CLI::Backend::InvalidKeep, /--compact-keep -1/)
         end
 
+        it "refuses a fractional --compact-keep" do
+          expect { compacting_backend(compact_keep: 1.5).refuse_compaction_flags! }
+            .to raise_error(Lain::CLI::Backend::InvalidKeep, /--compact-keep 1\.5/)
+        end
+
+        bad_counts = [0, -1, 1.5]
+        { compact_bytes: "--compact-bytes", compact_cap: "--compact-cap" }.each do |key, flag|
+          it "refuses a zero, negative or fractional #{flag} by name" do
+            bad_counts.each do |bad|
+              expect { compacting_backend(key => bad).refuse_compaction_flags! }
+                .to raise_error(Lain::CLI::Backend::InvalidCeiling, /#{flag}/)
+            end
+          end
+
+          it "refuses #{flag} even under --no-compact" do
+            expect { compacting_backend(compact: false, key => 0).refuse_compaction_flags! }
+              .to raise_error(Lain::CLI::Backend::InvalidCeiling, /#{flag}/)
+          end
+        end
+
+        it "refuses a typed --compact-keep even under --no-compact" do
+          expect { compacting_backend(compact: false, compact_keep: 0).refuse_compaction_flags! }
+            .to raise_error(Lain::CLI::Backend::InvalidKeep, /--compact-keep 0/)
+        end
+
         it "refuses an overlapping --compact-strategy" do
           expect { compacting_backend(compact_strategy: "elide+summarizing").refuse_compaction_flags! }
             .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /--compact-strategy/)
@@ -1658,7 +1695,8 @@ RSpec.describe Lain::CLI::Backend do
         it "accepts a valid keep and strategy, and ignores both under --no-compact" do
           expect(compacting_backend(compact_keep: 3, compact_strategy: "elide").refuse_compaction_flags!)
             .to be_a(Lain::Compaction::Strategy::Base)
-          expect(compacting_backend(compact: false, compact_keep: 0).refuse_compaction_flags!).to be_nil
+          expect(compacting_backend(compact: false, compact_strategy: "elide+summarizing").refuse_compaction_flags!)
+            .to be_nil
         end
       end
 
@@ -1696,9 +1734,8 @@ RSpec.describe Lain::CLI::Backend do
           end
         end
 
-        it "still refuses keep and strategy under --no-compact exactly as before" do
-          expect(compacting_backend(compact: false, compact_keep: 0, compact_schedule: "idle")
-            .refuse_compaction_flags!).to be_nil
+        it "still ignores a typed schedule under --no-compact" do
+          expect(compacting_backend(compact: false, compact_schedule: "idle").refuse_compaction_flags!).to be_nil
         end
       end
 
