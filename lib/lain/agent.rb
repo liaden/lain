@@ -292,6 +292,29 @@ module Lain
     # must hold the lock itself ({CLI::ResendBridge} does, with `try_enter`).
     def dispatching? = @dispatch_lock.mon_locked?
 
+    # Lets the run's compaction source commit a cut while the human is away,
+    # so the next line renders through it instead of waiting on a summarizer.
+    #
+    # Taken under the dispatch lock because it writes the Store a run writes:
+    # {#rewind} and every command asking {#dispatching?} refuse meanwhile, and
+    # a line typed mid-prepare waits for it rather than racing the cut. Busy is
+    # a decline, never a wait, since the next idle tick asks again. The lock is
+    # reentrant, so its own holder counts as busy too.
+    #
+    # @return [Boolean] whether a cut was committed; false when busy, not
+    #   quiescent, past the token budget, or declined by the source
+    # @raise [StandardError] whatever the source's prepare raises, with the
+    #   lock released; the idle tick that called owns it
+    def prepare_idle
+      return false if @dispatch_lock.mon_owned? || !@dispatch_lock.try_enter
+
+      begin
+        preparable? && @instrumentation.pipeline_source.prepare(**render_inputs)
+      ensure
+        @dispatch_lock.exit
+      end
+    end
+
     # Is a model call or a tool running RIGHT NOW? Narrower than
     # {#dispatching?}: a run whose final reply has committed still holds the
     # lock while it tears down, and a line the human types then answers that
@@ -703,19 +726,33 @@ module Lain
     #
     # The Context is asked for per turn rather than read from `@context` because
     # a strategy that must re-decide every turn (compaction) has nowhere else to
-    # stand; {PipelineSource}'s Null default answers `@context`. `usage` is
-    # Accounting's LAST-turn reading, never its cumulative `#usage`: cumulative
-    # input tokens only ever grow, so a window detector fed them latches on and
-    # never clears.
+    # stand; {PipelineSource}'s Null default answers `@context`.
     #
     # The inbox lays its fold over the Context the source chose, after it
     # chose, so compaction never sees a note.
     def render_request(inbox)
-      turn_context = inbox.over(@instrumentation.pipeline_source.context_for(
-                                  base: @context, timeline: @timeline,
-                                  usage: accounting.last_turn_usage(on: @timeline), session: @session
-                                ))
+      turn_context = inbox.over(@instrumentation.pipeline_source.context_for(**render_inputs))
       turn_context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
+    end
+
+    # What the pipeline source decides on, shared by a render and an idle
+    # prepare so a cut committed at idle stands on the chain the next render reads.
+    # `usage` is Accounting's LAST-turn reading, never its cumulative `#usage`:
+    # cumulative input tokens only ever grow, so a window detector fed them
+    # latches on and never clears.
+    def render_inputs
+      { base: @context, timeline: @timeline, usage: accounting.last_turn_usage(on: @timeline), session: @session }
+    end
+
+    def preparable? = QUIESCENT.include?(state) && !budget_spent?
+
+    # {Budget} answers a ceiling only by raising, and an idle tick past it is a
+    # decline rather than a failure.
+    def budget_spent?
+      @budget.check_tokens!(accounting.usage)
+      false
+    rescue Budget::Exceeded
+      true
     end
 
     # Every tool_result for one assistant turn goes back in ONE user message.

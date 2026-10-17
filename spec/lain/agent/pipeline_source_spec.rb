@@ -22,6 +22,11 @@ RSpec.describe Lain::Agent::PipelineSource::Null do
     expect(described_class.droppable?).to be(false)
   end
 
+  # Compaction is off, so an idle tick has no cut to commit.
+  it "never prepares" do
+    expect(described_class.prepare(base:, timeline:, usage: 1_000, session:)).to be(false)
+  end
+
   it "answers the base before any turn has reported usage" do
     expect(context_for(usage: nil)).to be(base)
   end

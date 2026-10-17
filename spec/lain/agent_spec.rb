@@ -84,6 +84,38 @@ module A1PipelineSources
     end
   end
 
+  # The idle-prepare half of the duck, recording what each prepare was handed
+  # and, through `log`, when it ran relative to a render. A `gate` queue holds
+  # the prepare open until the example pushes it a value, so a line can be typed
+  # into a prepare still in flight.
+  class Preparing
+    attr_reader :prepares, :renders, :log
+
+    def initialize(answer: true, gate: nil, during: -> {})
+      @answer = answer
+      @gate = gate
+      @during = during
+      @prepares = []
+      @renders = []
+      @log = []
+    end
+
+    def context_for(base:, **rest)
+      @log << :render
+      @renders << rest.merge(base:)
+      base
+    end
+
+    def prepare(**args)
+      @log << :prepare_started
+      @prepares << args
+      @during.call
+      @gate&.pop
+      @log << :prepare_returned
+      @answer
+    end
+  end
+
   # A DIFFERENT pipeline per call -- the shape that tells "consulted every
   # turn" apart from "consulted once and cached".
   class Widening
@@ -1721,6 +1753,169 @@ RSpec.describe Lain::Agent do
 
       expect(recorder.calls).to be_empty
       expect(texts(provider.last_request)).to include("edited")
+    end
+  end
+
+  # An idle prepare commits a compaction cut while the human is away, so it
+  # takes the dispatch lock a run takes: it writes the Store a run writes, and
+  # a line typed meanwhile must render through the cut rather than race it.
+  describe "#prepare_idle" do
+    def preparing_agent(source, responses = [text_response], **overrides)
+      described_class.new(provider: CoreGraph.provider(*responses), toolset:, context:, pipeline_source: source,
+                          **overrides)
+    end
+
+    it "never prepares through the default source" do
+      expect(agent(text_response).prepare_idle).to be(false)
+    end
+
+    it "answers what the source's prepare answered" do
+      expect(preparing_agent(A1PipelineSources::Preparing.new(answer: true)).prepare_idle).to be(true)
+      expect(preparing_agent(A1PipelineSources::Preparing.new(answer: false)).prepare_idle).to be(false)
+    end
+
+    it "hands the source exactly what the next render hands it" do
+      source = A1PipelineSources::Preparing.new
+      a = preparing_agent(source, [text_response("first"), text_response("again")])
+      a.ask("hi")
+      a.rewind(1)
+
+      a.prepare_idle
+      a.run
+
+      expect(source.prepares.last.keys).to contain_exactly(:base, :timeline, :usage, :session)
+      expect(source.prepares.last).to eq(source.renders.last)
+    end
+
+    it "hands the source the last turn's usage, not the cumulative sum" do
+      usage = Lain::Usage.new(input_tokens: 40, output_tokens: 5, cache_read_input_tokens: 2)
+      reply = Lain::Response.new(content: [{ "type" => "text", "text" => "ok" }], stop_reason: :end_turn, usage:)
+      source = A1PipelineSources::Preparing.new
+      a = preparing_agent(source, [reply, reply])
+      a.ask("one")
+      a.ask("two")
+
+      a.prepare_idle
+
+      expect(source.prepares.last[:usage]).to eq(42)
+    end
+
+    # A Monitor is reentrant, so the holder's own fiber would otherwise pass
+    # the busy check and prepare in the middle of its own run.
+    it "declines without asking the source when called from inside the lock's own holder" do
+      source = A1PipelineSources::Preparing.new
+      a = preparing_agent(source)
+
+      expect(a.dispatch_lock.synchronize { a.prepare_idle }).to be(false)
+      expect(source.prepares).to be_empty
+    end
+
+    it "declines at once, without asking the source, while another caller holds the dispatch lock" do
+      source = A1PipelineSources::Preparing.new
+      a = preparing_agent(source)
+      held = Queue.new
+      release = Queue.new
+      worker = Thread.new { a.dispatch_lock.synchronize { held.push(:holding) && release.pop } }
+      held.pop
+
+      expect(a.prepare_idle).to be(false)
+      expect(source.prepares).to be_empty
+
+      release.push(:go)
+      worker.join
+    end
+
+    # The torn turn: the lock is free but the machine is parked mid-run, and
+    # the next ask is what reopens it.
+    it "declines without asking the source when the agent is not quiescent" do
+      exploding = Class.new(Lain::Provider) do
+        def capabilities = []
+        def cache_profile = Lain::CacheProfile::NO_CACHING
+        def encode(request) = request.cache_payload
+        def complete(*, **) = raise(Lain::Error, "connection reset by peer")
+      end.new
+      source = A1PipelineSources::Preparing.new
+      a = described_class.new(provider: exploding, toolset:, context:, pipeline_source: source)
+      expect { a.ask("hi") }.to raise_error(Lain::Error)
+      expect(described_class::QUIESCENT).not_to include(a.state)
+
+      expect(a.prepare_idle).to be(false)
+      expect(source.prepares).to be_empty
+    end
+
+    it "declines without asking the source once the token budget is spent" do
+      earlier = CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => "earlier" }])
+      accounting = Lain::Agent::Accounting.new
+      accounting.observe(Lain::Response.new(content: [], stop_reason: :end_turn,
+                                            usage: Lain::Usage.new(input_tokens: 100, output_tokens: 100)),
+                         digest: earlier.head_digest)
+      source = A1PipelineSources::Preparing.new
+      a = described_class.new(toolset:, context:, accounting:, pipeline_source: source,
+                              provider: CoreGraph.provider(text_response),
+                              budget: Lain::Agent::Budget.new(max_total_tokens: 50))
+      expect(described_class::QUIESCENT).to include(a.state)
+
+      expect(a.prepare_idle).to be(false)
+      expect(source.prepares).to be_empty
+    end
+
+    it "prepares under a budget that is not yet spent" do
+      source = A1PipelineSources::Preparing.new
+      a = preparing_agent(source, budget: Lain::Agent::Budget.new(max_total_tokens: 50))
+
+      expect(a.prepare_idle).to be(true)
+    end
+
+    describe "while a prepare is in flight" do
+      it "reports the agent dispatching, to it and to every command that asks InFlight" do
+        readings = []
+        a = nil
+        source = A1PipelineSources::Preparing.new(during: lambda {
+          readings << a.dispatching? << Lain::CLI::Command::InFlight.dispatching?(Struct.new(:agent).new(a))
+        })
+        a = preparing_agent(source)
+
+        a.prepare_idle
+
+        expect(readings).to eq([true, true])
+        expect(a.dispatching?).to be(false)
+      end
+
+      it "refuses a rewind from another fiber as it would mid-run" do
+        gate = Async::Queue.new
+        a = preparing_agent(A1PipelineSources::Preparing.new(gate:))
+        a.ask("hi")
+
+        Sync do
+          preparing = Async { a.prepare_idle }
+
+          expect { a.rewind }.to raise_error(described_class::InFlight)
+
+          gate.push(:go)
+          preparing.wait
+        end
+      end
+
+      it "holds a line typed meanwhile until the prepare returns, then renders it" do
+        gate = Async::Queue.new
+        source = A1PipelineSources::Preparing.new(gate:)
+        provider = CoreGraph.provider(text_response("answered"))
+        a = described_class.new(provider:, toolset:, context:, pipeline_source: source)
+
+        Sync do
+          preparing = Async { a.prepare_idle }
+          asking = Async { a.ask("back") }
+
+          expect(source.log).to eq([:prepare_started])
+          expect(provider.call_count).to eq(0)
+
+          gate.push(:go)
+          expect(preparing.wait).to be(true)
+          expect(asking.wait.text).to eq("answered")
+        end
+
+        expect(source.log).to eq(%i[prepare_started prepare_returned render])
+      end
     end
   end
 

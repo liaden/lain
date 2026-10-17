@@ -11,7 +11,7 @@ module Lain
     # construction. `turn_middleware` cannot serve either -- it wraps the turn
     # two frames above `#render_request` and never sees the Context.
     #
-    # The duck is one message:
+    # The duck's core is one message:
     #
     #   context_for(base:, timeline:, usage:, session:) -> Context
     #
@@ -20,6 +20,9 @@ module Lain
     # session. `session:` is here because the Agent is the only place it and the
     # base Context both exist: Wiring hands the two to `Agent.new` separately, so
     # a source constructed anywhere else cannot reach the Session.
+    #
+    # A compacting source answers a second, `prepare`, with the same keywords,
+    # committing a cut while the human is away and answering whether it did.
     #
     # An implementation answers `base` itself when it decides to change nothing,
     # and `base.with_pipeline(...)` when it does -- never a mutated Context,
@@ -46,6 +49,9 @@ module Lain
         def handoff(**) = NO_ROOM
 
         def handed_off? = NO_ROOM
+
+        # Nor any cut to commit while the human is away.
+        def prepare(**) = NO_ROOM
       end
     end
   end
