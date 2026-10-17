@@ -317,3 +317,88 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
     end
   end
 end
+
+module ToolCancellationGateSeam
+  class Danger < Lain::Tool
+    def name = "danger"
+    def description = "Needs approval."
+    def input_schema = { type: :object, properties: {} }
+    def requires_approval? = true
+    def perform(_input, _context) = Lain::Tool::Result.ok("ran")
+  end
+
+  class Slow < Lain::Tool
+    def initialize(entered)
+      super()
+      @entered = entered
+    end
+
+    def name = "slow"
+    def description = "Parks inside the tool."
+    def input_schema = { type: :object, properties: {} }
+
+    def perform(_input, _context)
+      @entered.resolve(true)
+      Async::Variable.new.wait
+    end
+  end
+
+  # Announces entry, then parks like a human who has not answered, or allows.
+  class Policy
+    def initialize(entered, park:)
+      (@entered = entered
+       @park = park)
+    end
+
+    def rule(_effect, _context)
+      @entered.resolve(true)
+      Async::Variable.new.wait if @park
+      Lain::Approval::Escalation::Ruling.allow(rung: "test", because: "test")
+    end
+  end
+end
+
+RSpec.describe "a run stopped on either side of the approval gate", :seam do
+  let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
+  let(:entered) { Async::Variable.new }
+  let(:journal) { [] }
+
+  def runner_over(toolset, policy)
+    Lain::Agent::ToolRunner.new(
+      handler: Lain::Effect::Handler::Live.new, toolset:,
+      middleware: Lain::Middleware::Stack.new.use(Lain::Middleware::Gate.new(policy:))
+    )
+  end
+
+  def stopped_run(tool, policy)
+    toolset = Lain::Toolset.new([tool])
+    agent = Lain::Agent.new(
+      provider: Lain::Provider::Mock.new(responses: [tool_response(["tu_1", tool.name, {}]), text_response]),
+      toolset:, context:, journal:, tool_runner: runner_over(toolset, policy)
+    )
+    Sync do |task|
+      run = task.async { agent.ask("hi") }
+      entered.wait
+      run.stop
+      run.wait
+    end
+    agent.timeline.to_a.last.content.first
+  end
+
+  it "lists a call parked at approval under never_ran, with the waiting notice" do
+    block = stopped_run(ToolCancellationGateSeam::Danger.new, ToolCancellationGateSeam::Policy.new(entered, park: true))
+
+    expect(block["content"]).to eq(Lain::Tool::Cancellation::NOTICES.fetch(:awaiting_approval))
+    expect(journal.grep(Lain::Telemetry::ToolCancelled).first)
+      .to have_attributes(never_ran: %w[tu_1], running: [])
+  end
+
+  it "lists an approved call cancelled inside the tool under running" do
+    policy = ToolCancellationGateSeam::Policy.new(Async::Variable.new, park: false)
+    block = stopped_run(ToolCancellationGateSeam::Slow.new(entered), policy)
+
+    expect(block["content"]).to eq(Lain::Tool::Cancellation::NOTICES.fetch(:was_running))
+    expect(journal.grep(Lain::Telemetry::ToolCancelled).first)
+      .to have_attributes(running: %w[tu_1], never_ran: [])
+  end
+end

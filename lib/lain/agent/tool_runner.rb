@@ -68,8 +68,14 @@ module Lain
           @uses = uses.to_a.freeze
           @blocks = {}
           @dispatched = {}
+          @awaiting = {}
         end
 
+        # The call reached the gate. A stop from here until {#dispatching}
+        # lands while it is queued or parked for approval.
+        def awaiting(tool_use) = @awaiting[tool_use] = true
+
+        # The call passed the gate and is about to reach the interpreter.
         def dispatching(tool_use) = @dispatched[tool_use] = true
 
         def answered(tool_use, block) = @blocks[tool_use] = block
@@ -85,14 +91,16 @@ module Lain
         #   a cancellation at all.
         def cancelled? = unanswered.any?
 
-        # The three id lists {Telemetry::ToolCancelled} carries, from ONE walk.
+        # The id lists {Telemetry::ToolCancelled} carries, from ONE walk.
         # Answered together because they are one partition of one list, and
         # asking separately walked it four times on the path that is already
         # unwinding.
         def partition
           missing = unanswered
+          running, never_ran = missing.partition { |tool_use| @dispatched.key?(tool_use) }
           { cancelled: missing.map(&:id),
-            running: missing.select { |tool_use| @dispatched.key?(tool_use) }.map(&:id),
+            running: running.map(&:id),
+            never_ran: never_ran.map(&:id),
             completed: (@uses - missing).map(&:id) }
         end
 
@@ -111,7 +119,11 @@ module Lain
         # a load cannot: whether {#dispatching} was ever marked for the call.
         def cancellation(tool_use) = Tool::Cancellation.block(tool_use.id, notice(tool_use))
 
-        def notice(tool_use) = @dispatched.key?(tool_use) ? :was_running : :never_dispatched
+        def notice(tool_use)
+          return :was_running if @dispatched.key?(tool_use)
+
+          @awaiting.key?(tool_use) ? :awaiting_approval : :never_dispatched
+        end
       end
 
       # Which capability set {#answered_questions} harvests from. Readable
@@ -385,13 +397,16 @@ module Lain
       # states them. `to_h` hands the plain hash straight back, so delivery, the
       # commit and the observer see what they always did.
       #
-      # The dispatch is MARKED before the effect is built and the answer recorded
-      # the instant it exists, so an interrupt landing anywhere in between finds
-      # the call marked-but-unanswered -- exactly the state {Answers#notice}
-      # reads to tell "was running" from "never dispatched".
+      # The call is marked as awaiting before the effect is built and as
+      # dispatching only when the stack's last layer, past the gate, is reached;
+      # the answer is recorded the instant it exists. An interrupt landing
+      # anywhere in between finds the call marked-but-unanswered -- exactly the
+      # state {Answers#notice} reads to tell "was running" from "waiting for
+      # approval" from "never dispatched".
       def answer(tool_use, context, answers)
-        answers.dispatching(tool_use)
-        block = Tool::ResultBlock.of(dispatch(tool_use, context), tool_use_id: tool_use.id, tool: tool_use.name)
+        answers.awaiting(tool_use)
+        block = Tool::ResultBlock.of(dispatch(tool_use, context, answers), tool_use_id: tool_use.id,
+                                                                           tool: tool_use.name)
         answers.answered(tool_use, block.to_h)
       end
 
@@ -404,7 +419,7 @@ module Lain
       # This is also the one place the stack meets its interpreter -- the
       # innermost app writes the handler's answer to `:result`, which the
       # layers on the way out can observe.
-      def dispatch(tool_use, context)
+      def dispatch(tool_use, context, answers)
         effect = Effect::ToolCall.new(
           tool_use_id: tool_use.id,
           name: tool_use.name,
@@ -414,6 +429,7 @@ module Lain
           input: tool_use.input
         )
         @middleware.call({ effect:, context:, tool: resolved(effect.name) }) do |env|
+          answers.dispatching(tool_use)
           env.merge(result: interpreted(effect.name, env))
         end.result
       end

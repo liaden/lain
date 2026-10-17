@@ -15,6 +15,7 @@ module Lain
         attribute :head
         attribute :cancelled
         attribute :running, default: -> { [] }
+        attribute :never_ran, default: -> { [] }
         attribute :completed, default: -> { [] }
         validates :head, presence: { message: "must name the assistant turn whose calls were cancelled, got nil" }
         validates :cancelled, presence: { message: "must name at least one cancelled call" }
@@ -31,17 +32,18 @@ module Lain
     # blocks a reader wants to look at, and onto the {RunInterrupted} record
     # the closer writes moments later for the same tear.
     #
-    # The three id lists partition the turn's calls, and the partition IS the
-    # record's content: `completed` kept the tool's own output, `running` were
-    # dispatched and had not returned, `cancelled` is every call with no output
-    # (`running` is its subset). The split is the one thing a load-side repair
+    # The id lists partition the turn's calls, and the partition IS the
+    # record's content: `completed` kept the tool's own output, `running` passed
+    # the gate and had not returned, `never_ran` were stopped before the gate
+    # let them through, `cancelled` is every call with no output (`running` and
+    # `never_ran` split it). The split is the one thing a load-side repair
     # can never reconstruct -- from a journal alone, "the tool never ran" and
     # "the tool ran and its effects are on disk" are indistinguishable, and only
     # the process present at the tear knows which.
     #
     # A turn whose tools all returned emits NOTHING: the presence of a record is
     # itself the signal.
-    ToolCancelled = Data.define(:head, :cancelled, :running, :completed) do
+    ToolCancelled = Data.define(:head, :cancelled, :running, :never_ran, :completed) do
       include Journalable
 
       # `settle!` rebuilds each id list as a frozen Array of frozen Strings,

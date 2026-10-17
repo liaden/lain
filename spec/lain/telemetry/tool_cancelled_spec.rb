@@ -23,6 +23,13 @@ RSpec.describe Lain::Telemetry::ToolCancelled do
                                          "cancelled" => %w[tu_2 tu_3])
   end
 
+  it "reports the calls that never ran apart from the running ones" do
+    stopped = described_class.new(head: "blake3:aaa", cancelled: %w[tu_2 tu_3], running: %w[tu_2], never_ran: %w[tu_3])
+
+    expect(stopped.never_ran).to eq(%w[tu_3])
+    expect(stopped.never_ran & stopped.running).to be_empty
+  end
+
   # `running` is the subset a load-side repair can never reconstruct: from a
   # journal alone, "the tool never ran" and "the tool ran and its effects are on
   # disk" are indistinguishable.
@@ -36,6 +43,7 @@ RSpec.describe Lain::Telemetry::ToolCancelled do
   # every record that omitted them -- which a bare `default: []` would be.
   it "defaults the two optional lists, for a turn torn before anything was dispatched" do
     bare = described_class.new(head: "blake3:aaa", cancelled: %w[tu_1])
+    expect(bare.never_ran).to eq([])
     twin = described_class.new(head: "blake3:aaa", cancelled: %w[tu_1])
 
     expect(bare.running).to eq([])

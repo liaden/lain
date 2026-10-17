@@ -337,12 +337,45 @@ RSpec.describe Lain::Agent::ToolRunner do
       expect(blocks[2]["content"]).to eq(Lain::Tool::Cancellation::NOTICES.fetch(:never_dispatched))
     end
 
+    # Driven through a real middleware stack: the call is stopped inside the
+    # stack, before the layer that would pass it on, as a parked approval is.
+    it "says a call stopped before it passed the gate waited for approval and never ran" do
+      parked = Class.new(Lain::Middleware::Base) do
+        def call(_env) = raise(Interrupt)
+      end.new
+      runner = described_class.new(handler: echoing_handler, middleware: Lain::Middleware::Stack.new.use(parked))
+      single = described_class::Answers.for(tool_response(["tu_1", "echo", {}]))
+
+      expect do
+        runner.run(tool_response(["tu_1", "echo", {}]), context: nil, answers: single)
+      end.to raise_error(Interrupt)
+
+      expect(single.partition).to include(cancelled: %w[tu_1], running: [], never_ran: %w[tu_1])
+      expect(runner.cancelled_delivery(single).fetch(:content).first["content"])
+        .to eq(Lain::Tool::Cancellation::NOTICES.fetch(:awaiting_approval))
+    end
+
+    it "keeps a call stopped after it passed the gate as running" do
+      stopping = Lain::Effect::Handler::Mock.new { |_effect, _context| raise Interrupt }
+      runner = described_class.new(handler: stopping)
+      single = described_class::Answers.for(tool_response(["tu_1", "echo", {}]))
+
+      expect do
+        runner.run(tool_response(["tu_1", "echo", {}]), context: nil, answers: single)
+      end.to raise_error(Interrupt)
+
+      expect(single.partition).to include(cancelled: %w[tu_1], running: %w[tu_1], never_ran: [])
+      expect(runner.cancelled_delivery(single).fetch(:content).first["content"])
+        .to eq(Lain::Tool::Cancellation::NOTICES.fetch(:was_running))
+    end
+
     it "reports which calls were cancelled, which were running, and which completed" do
       answers.dispatching(answers.uses.first)
       answers.answered(answers.uses.first, finished)
       answers.dispatching(answers.uses[1])
 
-      expect(answers.partition).to eq(cancelled: %w[tu_2 tu_3], running: %w[tu_2], completed: %w[tu_1])
+      expect(answers.partition).to eq(cancelled: %w[tu_2 tu_3], running: %w[tu_2], never_ran: %w[tu_3],
+                                      completed: %w[tu_1])
       expect(answers).to be_cancelled
     end
 

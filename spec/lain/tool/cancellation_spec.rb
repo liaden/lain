@@ -52,17 +52,21 @@ RSpec.describe Lain::Tool::Cancellation do
   describe "the notices" do
     let(:notices) { described_class::NOTICES }
 
-    it "names four kinds, each with its own sentence" do
-      expect(notices.keys).to contain_exactly(:unknown, :never_dispatched, :was_running, :errored)
-      expect(notices.values.uniq.size).to eq(4)
+    it "names five kinds, each with its own sentence" do
+      expect(notices.keys).to contain_exactly(:unknown, :never_dispatched, :awaiting_approval, :was_running, :errored)
+      expect(notices.values.uniq.size).to eq(5)
       expect(notices.values).to all(be_frozen)
     end
 
     it "lets the three no-result kinds share the fact verbatim and differ only after it" do
-      no_result = notices.values_at(:unknown, :never_dispatched, :was_running)
+      no_result = notices.values_at(:unknown, :never_dispatched, :awaiting_approval, :was_running)
 
       expect(no_result).to all(start_with("#{described_class::NO_RESULT} "))
       expect(notices.fetch(:unknown)).to end_with(described_class::EFFECTS_UNKNOWN)
+    end
+
+    it "says a call stopped at approval waited for it and never ran" do
+      expect(notices.fetch(:awaiting_approval)).to match(/waiting for approval.*never ran/m)
     end
 
     # A result that existed but could not be recorded is neither "cancelled"

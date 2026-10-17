@@ -53,12 +53,14 @@ module Lain
       EFFECTS_UNKNOWN = "Whether the tool ran is not known from this conversation -- check before " \
                         "assuming its effects did or did not happen."
 
-      # A tear knows more: whether the call was ever dispatched.
-      # "May be" and not "were" for a running call, because the dispatch is
-      # marked BEFORE the effect is built, so it over-claims in the safe
+      # A tear knows more: whether the call passed the gate.
+      # "May be" and not "were" for a running call, because the mark is set
+      # just BEFORE the interpreter runs, so it over-claims in the safe
       # direction.
       NEVER_DISPATCHED = "The run was interrupted before this call was dispatched, so the tool did not run " \
                          "and had no effects."
+      AWAITING_APPROVAL = "The run was stopped while this call was waiting for approval, so it never ran " \
+                          "and had no effects."
       WAS_RUNNING = "The run was interrupted while this call was running, so its effects may be partly " \
                     "applied -- check before assuming they happened."
 
@@ -75,6 +77,7 @@ module Lain
       # into a deeply-frozen record.
       NOTICES = { unknown: "#{NO_RESULT} #{EFFECTS_UNKNOWN}".freeze,
                   never_dispatched: "#{NO_RESULT} #{NEVER_DISPATCHED}".freeze,
+                  awaiting_approval: "#{NO_RESULT} #{AWAITING_APPROVAL}".freeze,
                   was_running: "#{NO_RESULT} #{WAS_RUNNING}".freeze,
                   errored: ERRORED }.freeze
 
