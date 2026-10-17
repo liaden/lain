@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/object/deep_dup"
+
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/providers/anthropic/chat.rb.
 # Changed: RubyLLM:: -> Lain::Provider::HTTP::. `build_system_content`'s
 # module-qualified `Media.format_content` (not vendored -- leak site 7) is
@@ -89,7 +91,7 @@ module Lain
             end
 
             def build_output_config(schema)
-              normalized = Utils.deep_dup(schema[:schema])
+              normalized = schema[:schema].deep_dup
               normalized.delete(:strict)
               normalized.delete("strict")
               { format: { type: "json_schema", schema: normalized } }

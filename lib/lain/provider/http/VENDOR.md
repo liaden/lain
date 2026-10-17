@@ -30,7 +30,7 @@ correctness oracle rather than the primary path once the fork lands.
 
 Taken: `provider.rb`, `connection.rb`, `configuration.rb`,
 `stream_accumulator.rb`, `error.rb`, `error_middleware.rb`, `chunk.rb`,
-`tool_call.rb`, `utils.rb`, `message.rb`, `content.rb`,
+`tool_call.rb`, `message.rb`, `content.rb`,
 `providers/anthropic.rb`, `providers/anthropic/{chat,streaming,tools}.rb`.
 
 Also taken, not in the original file list but required transitively for the
@@ -65,7 +65,6 @@ http/
   logging/sink_logger.rb             # NEW: Sink-backed Logger duck (leak sites 1/2)
   connection.rb
   connection/middleware_stack.rb     # split out: Metrics/ClassLength
-  utils.rb
   tokens.rb                          # not in the original file list; required transitively
   thinking.rb                        # not in the original file list; required transitively
   tool_call.rb

@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/hash/deep_merge"
+
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/provider.rb.
-# Changed: RubyLLM:: -> Lain::Provider::HTTP::.
+# Changed: RubyLLM:: -> Lain::Provider::HTTP::; `Utils.deep_merge` -> ActiveSupport's
+# `Hash#deep_merge`, the same recursion, so `utils.rb` is not vendored.
 #
 # Leak site 5 (provider.rb:193 -- Configuration.register_provider_options):
 # KEPT. This is what lets a future provider (openai, gemini, ...) register
@@ -93,8 +96,8 @@ module Lain
         # engine) or return a completed {Message}.
         def complete(messages, tools:, temperature:, model:, params: {}, headers: {}, schema: nil, thinking: nil,
                      tool_prefs: nil, &block)
-          payload = Utils.deep_merge(render_payload_for(messages, tools:, temperature:, model:, stream: !block.nil?,
-                                                                  schema:, thinking:, tool_prefs:), params)
+          payload = render_payload_for(messages, tools:, temperature:, model:, stream: !block.nil?,
+                                                 schema:, thinking:, tool_prefs:).deep_merge(params)
 
           block ? stream_response(@connection, payload, headers, &block) : sync_response(@connection, payload, headers)
         end
