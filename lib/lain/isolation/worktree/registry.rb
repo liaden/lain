@@ -28,6 +28,7 @@ module Lain
           @repo_root = repo_root
           @shell_out_factory = shell_out_factory
           @git = Checkout.new(repo_root, shell_out_factory:)
+          @repo_lock = RepoLock.for(repo_root)
         end
 
         # @return [String] the repository every command below runs against
@@ -42,7 +43,9 @@ module Lain
         end
 
         def add(path, commit, reason:)
-          @git.run("worktree", "add", "--lock", "--reason", reason, "--detach", path, commit)
+          @repo_lock.synchronize do
+            @git.run("worktree", "add", "--lock", "--reason", reason, "--detach", path, commit)
+          end
         end
 
         # git refuses to lock a tree that is already locked, so a caller
@@ -53,7 +56,7 @@ module Lain
         # nothing to do.
         def unlock(path) = @git.run("worktree", "unlock", path)
 
-        def move(from, to) = @git.run("worktree", "move", from, to)
+        def move(from, to) = @repo_lock.synchronize { @git.run("worktree", "move", from, to) }
 
         # Rewrites HEAD alone, never the index or a file, so a tree holding
         # uncommitted work or an index git cannot read detaches all the same.
@@ -70,9 +73,9 @@ module Lain
         # Refuses a locked tree, which is what makes a lock that appears after
         # a {#claim} stop the removal. It also drops the registration of an
         # unlocked checkout whose directory is already gone, and only that one.
-        def remove(path) = @git.run("worktree", "remove", "--force", path)
+        def remove(path) = @repo_lock.synchronize { @git.run("worktree", "remove", "--force", path) }
 
-        def prune = @git.run("worktree", "prune")
+        def prune = @repo_lock.synchronize { @git.run("worktree", "prune") }
 
         # @return [Anchorage] over this repository
         def anchorage = Anchorage.new(repo_root: @repo_root, shell_out_factory: @shell_out_factory)

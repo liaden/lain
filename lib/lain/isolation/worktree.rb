@@ -47,6 +47,12 @@ module Lain
     # the acquire refuses LOUDLY. A foreign directory git does not know is left
     # alone, so `git worktree add` refuses rather than overwriting it.
     #
+    # SERIALIZED per repository. Adds, removes, moves and prunes of one
+    # repository's worktrees run one at a time across threads, fibers and
+    # processes ({RepoLock}), because {Spike} builds a backend per call and a
+    # second lain process may share the repository; git can otherwise read a
+    # worktree entry another command is still writing.
+    #
     # SERIALIZED per backend. clear-then-add is not atomic: two concurrent
     # acquires of one worker_id would target one path. A {Monitor} serializes
     # clear+add+register, and a path already held by a lease of this backend is
@@ -131,6 +137,7 @@ module Lain
         @leftover = Leftover.new(registry: @registry, root: @root, process_table:, clock:)
         @release = Release.new(registry: @registry, clock:)
         @monitor = Monitor.new
+        @repo_lock = RepoLock.for(repo_root)
         @leased = Set.new
         @retained = Set.new
       end
@@ -192,8 +199,10 @@ module Lain
 
         base = @base.tip
         FileUtils.mkdir_p(@root)
-        @leftover.clear(path)
-        add(path, base)
+        @repo_lock.synchronize do
+          @leftover.clear(path)
+          add(path, base)
+        end
         @leased << path
         @retained.delete(path)
         base

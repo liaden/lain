@@ -452,6 +452,91 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
     end
   end
 
+  describe "concurrent acquires on one repository from separate backends" do
+    # Stalls every `worktree add` so that a second add, if it is let in, starts
+    # while the first is still running.
+    let(:adds) { Struct.new(:running, :peak).new(0, 0) }
+    let(:stalling_factory) do
+      tally = adds
+      lock = Mutex.new
+      lambda do |*argv, **opts|
+        shell = Lain::Shell::Out.new(*argv, **opts)
+        return shell unless argv.include?("add")
+
+        shell.define_singleton_method(:run_command) do |*args, **kw|
+          lock.synchronize { tally.peak = [tally.peak, tally.running += 1].max }
+          sleep 0.3
+          super(*args, **kw)
+        ensure
+          lock.synchronize { tally.running -= 1 }
+        end
+        shell
+      end
+    end
+
+    def backend_over(repo, root, factory = nil)
+      options = factory ? { shell_out_factory: factory } : {}
+      described_class.new(repo_root: repo, root:, base: Lain::Isolation::WorkingBranch.checked_out(repo_root: repo),
+                          **options)
+    end
+
+    def acquire_together(*backends)
+      backends.each_with_index.map { |b, i| Thread.new { b.acquire("w#{i}") } }.map(&:value)
+    end
+
+    it "runs each add alone, and gives each lease its own checkout" do
+      leases = acquire_together(backend_over(@repo_root, @root, stalling_factory),
+                                backend_over(@repo_root, @root, stalling_factory))
+
+      expect(adds.peak).to eq(1)
+      expect(leases.map { _1.origin.path }.uniq.size).to eq(2)
+    ensure
+      leases&.each(&:release)
+    end
+
+    it "lets an add on another repository run while one is held" do
+      Dir.mktmpdir("lain-repo2") do |other|
+        other = File.realpath(other)
+        init_repo(other)
+        leases = acquire_together(backend_over(@repo_root, @root, stalling_factory),
+                                  backend_over(other, @root, stalling_factory))
+
+        expect(adds.peak).to eq(2)
+      ensure
+        leases&.each(&:release)
+      end
+    end
+  end
+
+  describe "concurrent acquires on one repository from separate processes" do
+    it "runs each add alone" do
+      log = File.join(@root, "adds.log")
+      factory = lambda do |*argv, **opts|
+        shell = Lain::Shell::Out.new(*argv, **opts)
+        return shell unless argv.include?("add")
+
+        shell.define_singleton_method(:run_command) do |*args, **kw|
+          File.open(log, "a") { _1.puts "in" }
+          sleep 0.3
+          super(*args, **kw)
+        ensure
+          File.open(log, "a") { _1.puts "out" }
+        end
+        shell
+      end
+      pids = Array.new(2) do |i|
+        fork do
+          backend = described_class.new(repo_root: @repo_root, root: @root, base:, shell_out_factory: factory)
+          backend.acquire("proc#{i}")
+          exit!(0)
+        end
+      end
+      pids.each { Process.wait(_1) }
+
+      expect(File.readlines(log, chomp: true)).to eq(%w[in out in out])
+    end
+  end
+
   describe Lain::Isolation::Worktree::Refused do
     let(:shell) { Struct.new(:exitstatus, :stderr).new(1, "boom") }
 
