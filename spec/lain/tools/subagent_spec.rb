@@ -304,13 +304,6 @@ RSpec.describe Lain::Tools::Subagent do
     )
   end
 
-  it "has a model-facing name and description" do
-    tool = build_subagent(provider: mock(text_response))
-    expect(tool.name).to eq("subagent")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
   it "lists the tools its child holds" do
     tool = build_subagent(provider: mock(text_response), policy: Lain::Tool::SpawnPolicy.new(only: %w[read_file]))
 

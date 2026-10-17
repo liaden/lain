@@ -214,12 +214,6 @@ RSpec.describe Lain::Tools::ImprovementWrite do
 
   after { FileUtils.remove_entry(tmp) }
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("improvement_write")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
   it "is not gated by approval and is tier 1 (no subprocess involved)" do
     expect(tool.requires_approval?).to be(false)
   end

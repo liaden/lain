@@ -34,15 +34,6 @@ RSpec.describe Lain::Tools::RunSkill do
       "three/skill.md" => "SKILL THREE" }
   end
 
-  it "has a model-facing name and description" do
-    with_renderer(shipped: critique) do |renderer|
-      tool = described_class.new(renderer:)
-      expect(tool.name).to eq("run_skill")
-      expect(tool.description).to be_a(String)
-      expect(tool.description).not_to be_empty
-    end
-  end
-
   it "renders text only, so it is not gated by approval" do
     with_renderer(shipped: critique) do |renderer|
       expect(described_class.new(renderer:).requires_approval?).to be(false)

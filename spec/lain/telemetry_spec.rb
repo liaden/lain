@@ -102,10 +102,10 @@ RSpec.describe Lain::Telemetry do
 
   describe "#journal_type" do
     # The discriminator is pinned by recorded journals, so String#underscore
-    # (the ActiveSupport form) MUST produce the exact string the hand-rolled
-    # gsub did for every event -- a future name where they diverge fails here,
-    # not silently in a replayed journal.
-    it "derives each type via underscore, byte-identical to the old gsub" do
+    # (the ActiveSupport form) MUST produce the exact string recorded journals
+    # carry for every event -- a future name that underscores differently fails
+    # here, not silently in a replayed journal.
+    it "derives each type via underscore" do
       require "active_support/core_ext/string/inflections"
       {
         "ToolOutput" => "tool_output", "Dropped" => "dropped",
@@ -115,8 +115,7 @@ RSpec.describe Lain::Telemetry do
         "CapabilityDegraded" => "capability_degraded", "WriteRefused" => "write_refused",
         "StreamStarted" => "stream_started", "ObserverFailed" => "observer_failed"
       }.each do |name, expected|
-        hand_rolled = name.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
-        expect(name.underscore).to eq(expected).and eq(hand_rolled)
+        expect(name.underscore).to eq(expected)
       end
     end
 

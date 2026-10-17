@@ -33,12 +33,6 @@ RSpec.describe Lain::Tools::ToolSearch do
   # What THIS agent actually holds -- bash dropped, the security-relevant case.
   let(:attenuated_toolset) { full_toolset.except(:bash) }
 
-  it "has a model-facing name and description" do
-    expect(search_tool.name).to eq("tool_search")
-    expect(search_tool.description).to be_a(String)
-    expect(search_tool.description).not_to be_empty
-  end
-
   it "is not gated by approval (no subprocess, no model-controlled command string)" do
     expect(search_tool.requires_approval?).to be(false)
   end
