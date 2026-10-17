@@ -124,29 +124,8 @@ RSpec.describe Lain::Tools::FileSymbols do
     expect(result.content).not_to include("missing")
   end
 
-  it "reports a missing file as an error Result rather than raising" do
-    missing = File.join(tmpdir, "nope.rb")
-
-    result = tool.call(path: missing, language: "ruby")
-
-    expect(result).to have_attributes(is_error: true, content: "no such file: #{missing}")
-  end
-
-  it "reports a directory as an error Result rather than raising" do
-    result = tool.call(path: tmpdir, language: "ruby")
-
-    expect(result).to have_attributes(is_error: true, content: "is a directory, not a file: #{tmpdir}")
-  end
-
-  it "reports an unreadable file as an error Result rather than raising" do
-    path = write("secret.rb", "class A; end")
-    File.chmod(0o000, path)
-
-    result = tool.call(path:, language: "ruby")
-
-    expect(result).to have_attributes(is_error: true, content: "file is not readable: #{path}")
-  ensure
-    File.chmod(0o600, path) if path && File.exist?(path)
+  it_behaves_like "a tool answering a bad file target", :file do
+    def call_with(path) = tool.call(path:, language: "ruby")
   end
 
   it "returns an ok result for a file with no symbols" do

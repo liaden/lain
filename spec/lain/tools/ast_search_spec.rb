@@ -108,12 +108,8 @@ RSpec.describe Lain::Tools::AstSearch do
     expect(result).to have_attributes(is_error: true, content: /cobol/)
   end
 
-  it "reports a missing path as an error Result rather than raising" do
-    missing = File.join(tmpdir, "nope")
-
-    result = tool.call(pattern: "$A", language: "ruby", path: missing)
-
-    expect(result).to have_attributes(is_error: true, content: /no such file or directory/)
+  it_behaves_like "a tool answering a bad file target", :either do
+    def call_with(path) = tool.call(pattern: "$A", language: "ruby", path:)
   end
 
   it "requires exactly one of pattern or query" do

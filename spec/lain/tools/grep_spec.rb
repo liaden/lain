@@ -258,12 +258,8 @@ RSpec.describe Lain::Tools::Grep do
     expect(result.content.encoding).to eq(Encoding::UTF_8)
   end
 
-  it "reports a missing path as an error Result rather than raising" do
-    missing = File.join(tmpdir, "nope")
-
-    result = tool.call(pattern: "needle", path: missing)
-
-    expect(result).to have_attributes(is_error: true, content: /no such file or directory/)
+  it_behaves_like "a tool answering a bad file target", :either do
+    def call_with(path) = tool.call(pattern: "needle", path:)
   end
 
   it "reports an invalid regex pattern as an error Result rather than raising" do

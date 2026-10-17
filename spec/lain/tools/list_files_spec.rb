@@ -82,12 +82,6 @@ RSpec.describe Lain::Tools::ListFiles do
     expect(result.content.encoding).to eq(Encoding::UTF_8)
   end
 
-  it "reports a missing directory as an error Result rather than raising" do
-    missing = File.join(tmpdir, "nope")
-    result = tool.call(path: missing)
-    expect(result).to have_attributes(is_error: true, content: "no such directory: #{missing}")
-  end
-
   it "says an empty directory is empty, not silently returning blank content" do
     result = tool.call(path: tmpdir)
 
@@ -108,20 +102,8 @@ RSpec.describe Lain::Tools::ListFiles do
     expect(missing_result.content).not_to match(/empty/i)
   end
 
-  it "reports a file (not a directory) as an error Result rather than raising" do
-    path = touch("a_file.txt")
-    result = tool.call(path:)
-    expect(result).to have_attributes(is_error: true, content: "not a directory: #{path}")
-  end
-
-  it "reports an unreadable directory as an error Result rather than raising" do
-    sub = File.join(tmpdir, "locked")
-    FileUtils.mkdir_p(sub)
-    File.chmod(0o000, sub)
-    result = tool.call(path: sub)
-    expect(result).to have_attributes(is_error: true, content: "directory is not readable: #{sub}")
-  ensure
-    File.chmod(0o700, sub) if sub && File.exist?(sub)
+  it_behaves_like "a tool answering a bad file target", :directory do
+    def call_with(path) = tool.call(path:)
   end
 
   it "describes an empty directory as a possible, non-error outcome" do

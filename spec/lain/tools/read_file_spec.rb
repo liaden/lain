@@ -25,25 +25,8 @@ RSpec.describe Lain::Tools::ReadFile do
     expect(tool.call(path:)).to eq(Lain::Tool::Result.ok("hello\nworld\n"))
   end
 
-  it "reports a missing file as an error Result rather than raising" do
-    missing = File.join(tmpdir, "nope.txt")
-    result = tool.call(path: missing)
-    expect(result).to have_attributes(is_error: true)
-    expect(result.content).to include("no such file")
-  end
-
-  it "reports a directory as an error Result rather than raising" do
-    result = tool.call(path: tmpdir)
-    expect(result).to have_attributes(is_error: true, content: /is a directory/)
-  end
-
-  it "reports an unreadable file as an error Result rather than raising" do
-    path = write("secret.txt", "shh")
-    File.chmod(0o000, path)
-    result = tool.call(path:)
-    expect(result).to have_attributes(is_error: true, content: /not readable/)
-  ensure
-    File.chmod(0o600, path) if path && File.exist?(path)
+  it_behaves_like "a tool answering a bad file target", :file do
+    def call_with(path) = tool.call(path:)
   end
 
   it "does not care about the invocation it is handed" do
