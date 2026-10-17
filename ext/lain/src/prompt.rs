@@ -127,7 +127,6 @@ pub enum StyleToken {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Format {
     elements: Vec<Element>,
-    source: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -643,15 +642,7 @@ impl Format {
         // `values`, not `format`: the top level is not a group, so it must not
         // spend one of the MAX_DEPTH levels a format is allowed to nest.
         let elements = parser.values(None)?;
-        Ok(Format {
-            elements,
-            source: source.to_string(),
-        })
-    }
-
-    /// The source this format was compiled from.
-    pub fn source(&self) -> &str {
-        &self.source
+        Ok(Format { elements })
     }
 
     /// Every variable the format references, in first-appearance order, without
@@ -1161,11 +1152,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_source_is_retained() {
-        assert_eq!(Format::parse("$a b").expect("parses").source(), "$a b");
-    }
-
     // -- variables ---------------------------------------------------------
 
     #[test]
@@ -1324,7 +1310,7 @@ mod tests {
     fn a_config_carries_a_compiled_format_and_its_settings() {
         let config = Config::parse("format = \"$model \"\n[settings]\nmax_width = 40\n")
             .expect("valid config");
-        assert_eq!(config.format.source(), "$model ");
+        assert_eq!(config.format, Format::parse("$model ").expect("parses"));
         assert_eq!(config.settings.get("max_width"), Some(&Setting::Int(40)));
     }
 
@@ -1446,9 +1432,7 @@ mod tests {
 
 #[cfg(not(test))]
 pub mod ffi {
-    use super::{
-        Config, ConfigError, Format, ParseError, Setting, StyleError, Vars, display_width,
-    };
+    use super::{Config, ConfigError, Format, Setting, StyleError, Vars, display_width};
     use crate::ffi::{frozen_str, lookup_error};
     // The one string-boundary policy, shared with `fuzzy`, `astgrep` and
     // `treesitter`. `compile`, `from_toml`, `width`, and every key and value of
@@ -1502,13 +1486,6 @@ pub mod ffi {
             obj
         }
 
-        /// `Lain::Ext::Prompt.compile(source)` -- parse once, render many times.
-        fn compile(ruby: &Ruby, source: Value) -> Result<Obj<Self>, Error> {
-            let source = read_text(ruby, source, || "format source".to_string())?;
-            let format = Format::parse(&source).map_err(|err| parse_error(ruby, &err))?;
-            Ok(Prompt::wrap(ruby, format, BTreeMap::new()))
-        }
-
         /// `Lain::Ext::Prompt.from_toml(source)` -- the same object, compiled from
         /// a config document. The SOURCE is passed, never a path: Ruby reads the
         /// file, so no I/O crosses the boundary.
@@ -1524,10 +1501,6 @@ pub mod ffi {
             Ok(display_width(&read_text(ruby, text, || {
                 "text".to_string()
             })?))
-        }
-
-        fn source(ruby: &Ruby, rb_self: &Prompt) -> Value {
-            frozen_str(ruby, rb_self.format.source())
         }
 
         fn variables(ruby: &Ruby, rb_self: &Prompt) -> Result<RArray, Error> {
@@ -1616,14 +1589,6 @@ pub mod ffi {
 
     // Each pure error type's `Display` IS the Ruby-visible message; there is no
     // second, hand-built wording here to drift away from the Rust tests.
-    fn parse_error(ruby: &Ruby, err: &ParseError) -> Error {
-        lookup_error(
-            ruby,
-            &["Lain", "Ext", "Prompt", "ParseError"],
-            err.to_string(),
-        )
-    }
-
     fn style_error(ruby: &Ruby, err: &StyleError) -> Error {
         lookup_error(
             ruby,
@@ -1640,18 +1605,15 @@ pub mod ffi {
         )
     }
 
-    /// Register `Lain::Ext::Prompt` and its three named errors. Called from
+    /// Register `Lain::Ext::Prompt` and its two named errors. Called from
     /// `lib.rs`'s `init`; the class definition lives here so the whole formatter
     /// -- grammar, vocabulary, and binding -- stays in one file.
     pub fn define(ruby: &Ruby, ext: RModule, lain_error: ExceptionClass) -> Result<(), Error> {
         let prompt = ext.define_class("Prompt", ruby.class_object())?;
-        prompt.define_error("ParseError", lain_error)?;
         prompt.define_error("StyleError", lain_error)?;
         prompt.define_error("ConfigError", lain_error)?;
-        prompt.define_singleton_method("compile", function!(Prompt::compile, 1))?;
         prompt.define_singleton_method("from_toml", function!(Prompt::from_toml, 1))?;
         prompt.define_singleton_method("width", function!(Prompt::width, 1))?;
-        prompt.define_method("source", method!(Prompt::source, 0))?;
         prompt.define_method("variables", method!(Prompt::variables, 0))?;
         prompt.define_method("settings", method!(Prompt::settings, 0))?;
         prompt.define_method("render", method!(Prompt::render, -1))?;

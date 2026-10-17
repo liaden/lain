@@ -23,13 +23,6 @@ RSpec.describe Lain::Ext::Fuzzy do
       expect(described_class.new(paths)).to be_deeply_frozen
     end
 
-    it "keeps the candidates, frozen and in insertion order" do
-      fuzzy = described_class.new(paths)
-      expect(fuzzy.candidates).to eq(paths)
-      expect(fuzzy.candidates).to be_frozen
-      expect(fuzzy.size).to eq(2)
-    end
-
     it "accepts an empty candidate set" do
       expect(described_class.new([]).match("anything")).to eq([])
     end

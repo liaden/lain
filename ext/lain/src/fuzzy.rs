@@ -374,29 +374,6 @@ pub mod ffi {
             Ok(obj)
         }
 
-        /// The candidates, frozen, in the order they were given. Rebuilt per call
-        /// rather than cached, exactly as `Prompt#settings` is, so the handle
-        /// never holds a Ruby reference -- which is what keeps it shareable.
-        ///
-        /// So this is **O(n) Ruby String allocations every call**: 100k
-        /// candidates means 100k Strings. It is for inspection and for rebuilding
-        /// a set, not for the per-keystroke path -- `#match` already returns the
-        /// candidate text on each hit, so a completion loop never needs to call
-        /// this.
-        fn candidates(ruby: &Ruby, rb_self: &Fuzzy) -> Result<RArray, Error> {
-            let items = rb_self.inner.items();
-            let out = ruby.ary_new_capa(items.len());
-            items
-                .iter()
-                .try_for_each(|item| out.push(frozen_str(ruby, item)))?;
-            out.freeze();
-            Ok(out)
-        }
-
-        fn size(rb_self: &Fuzzy) -> usize {
-            rb_self.inner.items().len()
-        }
-
         /// `#match(query, limit: nil)` -> the whole ranked result, one crossing.
         ///
         /// `limit` is optional because `nil` has an honest meaning here -- every
@@ -502,8 +479,6 @@ pub mod ffi {
         fuzzy.define_error("CandidateTooLong", lain_error)?;
         fuzzy.define_error("QueryTooLong", lain_error)?;
         fuzzy.define_singleton_method("new", function!(Fuzzy::new, 1))?;
-        fuzzy.define_method("candidates", method!(Fuzzy::candidates, 0))?;
-        fuzzy.define_method("size", method!(Fuzzy::size, 0))?;
         fuzzy.define_method("match", method!(Fuzzy::match_query, -1))?;
         Ok(())
     }

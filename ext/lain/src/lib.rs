@@ -360,41 +360,6 @@ mod ffi {
     use std::io::Write;
     use std::sync::{Arc, Mutex};
 
-    /// Shareability canary for the M4 Timeline port.
-    ///
-    /// The whole port hinges on a magnus `TypedData` object being
-    /// `Ractor.shareable?` once frozen -- `Turn` must stay shareable (there is a
-    /// spec). `frozen_shareable` sets `RUBY_TYPED_FROZEN_SHAREABLE`, but that is
-    /// a *promise* to Ruby, honoured only if the wrapped state is genuinely
-    /// immutable and holds no reachable mutable Ruby object. This wraps a single
-    /// immutable `u64` and nothing else, so it isolates the mechanism from any
-    /// one port's own state. The Timeline port has since landed and `turn_spec`
-    /// now asserts `Ractor.shareable?(turn)` on the real thing -- but this canary
-    /// is deliberately RETAINED (not stale) as the isolated control: if a magnus
-    /// upgrade breaks `frozen_shareable`, `share_probe_spec` fails here, telling
-    /// you it is the flag itself and not `Turn`'s state, and it stands the same
-    /// guard for the future `frozen_shareable` ports (Workspace Timeline,
-    /// structural memory) before they exist to test it.
-    #[derive(TypedData)]
-    #[magnus(class = "Lain::Ext::ShareProbe", free_immediately, frozen_shareable)]
-    struct ShareProbe {
-        value: u64,
-    }
-
-    impl DataTypeFunctions for ShareProbe {}
-
-    impl ShareProbe {
-        fn new(ruby: &Ruby, value: u64) -> magnus::typed_data::Obj<Self> {
-            let obj = ruby.obj_wrap(Self { value });
-            obj.freeze();
-            obj
-        }
-
-        fn value(&self) -> u64 {
-            self.value
-        }
-    }
-
     /// A cloneable `MakeWriter` handle over one shared, dup'd file. Cloning is
     /// an `Arc` bump (never another `dup`, so no fd leak per event), and the
     /// mutex serializes writes so concurrent Rust spans cannot interleave a
@@ -1905,10 +1870,6 @@ mod ffi {
         ext.define_singleton_method("blake3_hex", function!(ffi_blake3_hex, 1))?;
         ext.define_singleton_method("canonical_dump", function!(canonical_dump, 1))?;
         ext.define_singleton_method("canonical_digest", function!(canonical_digest, 1))?;
-
-        let share_probe = ext.define_class("ShareProbe", ruby.class_object())?;
-        share_probe.define_singleton_method("new", function!(ShareProbe::new, 1))?;
-        share_probe.define_method("value", method!(ShareProbe::value, 0))?;
 
         // Subclass Lain::Error, which `lib/lain.rb` requires before this
         // extension loads (see `lain/error`, then `lain/lain`). No fallback to

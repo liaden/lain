@@ -7,6 +7,9 @@ RSpec.describe Lain::Frontend::Completion::Sources do
   # yields. The source depends on that message, never on the type.
   def command(name) = double(name:)
 
+  # An empty query matches everything, in the order the matcher was given.
+  def offered(matcher) = matcher.match("").map { |match| match["candidate"] }
+
   describe "#sigil?" do
     it "recognizes the two sigils that name a completion source" do
       sources = described_class.new
@@ -32,7 +35,7 @@ RSpec.describe Lain::Frontend::Completion::Sources do
     it "offers a skill alongside the commands" do
       sources = described_class.new(commands: [command("help")], skills: %i[summarize])
 
-      candidates = sources.for(described_class::COMMAND).candidates
+      candidates = offered(sources.for(described_class::COMMAND))
 
       expect(candidates).to include("help").and include("summarize")
     end
@@ -54,7 +57,7 @@ RSpec.describe Lain::Frontend::Completion::Sources do
         File.write(File.join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
         File.write(File.join(dir, "README.md"), "")
 
-        expect(described_class.new(root: dir).for(described_class::PATH).candidates).to eq(["README.md"])
+        expect(offered(described_class.new(root: dir).for(described_class::PATH))).to eq(["README.md"])
       end
     end
 
@@ -63,7 +66,7 @@ RSpec.describe Lain::Frontend::Completion::Sources do
         FileUtils.mkdir_p(File.join(dir, "lib"))
         File.write(File.join(dir, "lib", "a.rb"), "")
 
-        expect(described_class.new(root: dir).for(described_class::PATH).candidates).to eq(["lib/a.rb"])
+        expect(offered(described_class.new(root: dir).for(described_class::PATH))).to eq(["lib/a.rb"])
       end
     end
 
@@ -86,7 +89,7 @@ RSpec.describe Lain::Frontend::Completion::Sources do
         File.write(File.join(dir, "target", "debug", "junk"), "")
         File.write(File.join(dir, "keep.rb"), "")
 
-        expect(described_class.new(root: dir).for(described_class::PATH).candidates).to eq(["keep.rb"])
+        expect(offered(described_class.new(root: dir).for(described_class::PATH))).to eq(["keep.rb"])
       end
     end
 
@@ -96,7 +99,7 @@ RSpec.describe Lain::Frontend::Completion::Sources do
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, "ev\e[2Jil.rb"), "")
 
-        expect(described_class.new(root: dir).for(described_class::PATH).candidates).to eq(["ev[2Jil.rb"])
+        expect(offered(described_class.new(root: dir).for(described_class::PATH))).to eq(["ev[2Jil.rb"])
       end
     end
 
@@ -104,7 +107,7 @@ RSpec.describe Lain::Frontend::Completion::Sources do
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, "two\nlines.rb"), "")
 
-        expect(described_class.new(root: dir).for(described_class::PATH).candidates).to eq(["twolines.rb"])
+        expect(offered(described_class.new(root: dir).for(described_class::PATH))).to eq(["twolines.rb"])
       end
     end
 
@@ -115,20 +118,20 @@ RSpec.describe Lain::Frontend::Completion::Sources do
         File.write(File.join(dir, "\x01\x02"), "")
         File.write(File.join(dir, "alpha.rb"), "")
 
-        expect(described_class.new(root: dir).for(described_class::PATH).candidates).to eq(["alpha.rb"])
+        expect(offered(described_class.new(root: dir).for(described_class::PATH))).to eq(["alpha.rb"])
       end
     end
 
     it "drops a command whose whole name is control bytes" do
       sources = described_class.new(commands: [command("\x01"), command("status")])
 
-      expect(sources.for(described_class::COMMAND).candidates).to eq(["status"])
+      expect(offered(sources.for(described_class::COMMAND))).to eq(["status"])
     end
 
     it "strips control bytes out of a command name too" do
       sources = described_class.new(commands: [command("st\e[2Jatus")])
 
-      expect(sources.for(described_class::COMMAND).candidates).to eq(["st[2Jatus"])
+      expect(offered(sources.for(described_class::COMMAND))).to eq(["st[2Jatus"])
     end
 
     it "hands back the same matcher rather than rebuilding it" do

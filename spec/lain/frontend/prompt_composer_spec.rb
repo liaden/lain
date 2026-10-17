@@ -334,8 +334,9 @@ RSpec.describe Lain::Frontend::PromptComposer do
       end
 
       it "ignores the escapes the formatter itself emits" do
-        expect(described_class.columns(Lain::Ext::Prompt.compile("[lain](bold green)").render({}, color: true)))
-          .to eq(4)
+        styled = Lain::Ext::Prompt.from_toml(%(format = "[lain](bold green)"\n)).render({}, color: true)
+
+        expect(described_class.columns(styled)).to eq(4)
       end
 
       it "answers zero for nothing at all" do
