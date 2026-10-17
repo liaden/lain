@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "securerandom"
 
 module Lain
   module Attachment
@@ -146,10 +145,7 @@ module Lain
       # means.
       def write(blob)
         path = path_for(blob.digest)
-        FileUtils.mkdir_p(File.dirname(path))
-        partial = "#{path}.#{Process.pid}-#{SecureRandom.hex(8)}.partial"
-        File.binwrite(partial, blob.bytes)
-        File.rename(partial, path)
+        AtomicFile.write(path, blob.bytes)
       end
     end
   end

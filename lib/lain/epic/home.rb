@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "tempfile"
 
 module Lain
   module Epic
@@ -226,7 +225,7 @@ module Lain
         private
 
         # The grammar guards the NAME; this guards the composed PATH. Neither
-        # `mkdir_p` nor `Tempfile.create` refuses to follow a symlink, so a name
+        # `mkdir_p` nor the atomic write refuses to follow a symlink, so a name
         # beyond reproach still lands wherever a link between the container and
         # the file points -- every segment below the container must therefore be
         # an ordinary entry, a symlink to a directory INSIDE the home included
@@ -259,18 +258,7 @@ module Lain
           raise EscapesHome, "#{step} is a symlink, so #{path} would resolve outside the epic home"
         end
 
-        # `Tempfile.create` opens 0600 -- correctly, since it cannot know who
-        # should read the file it is about to become -- but what lands here is a
-        # document a human opens and a team may review, so the mode is restored
-        # to what an ordinary `File.write` under this umask would produce.
-        def replace(content)
-          Tempfile.create(File.basename(path), File.dirname(path)) do |tmp|
-            tmp.write(content)
-            tmp.close
-            File.chmod(0o666 & ~File.umask, tmp.path)
-            File.rename(tmp.path, path)
-          end
-        end
+        def replace(content) = AtomicFile.write(path, content)
       end
 
       # {resolve} claims to be the only door, so the other two are shut: both

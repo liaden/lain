@@ -68,7 +68,7 @@ RSpec.describe Lain::StatusFeed::Publication do
     publication.call("first") { { "n" => 1 } }
     good = File.read(path)
 
-    allow(File).to receive(:write).and_raise(Errno::ENOSPC)
+    allow(File).to receive(:binwrite).and_raise(Errno::ENOSPC)
 
     expect { publication.call("second") { { "n" => 2 } } }.to raise_error(described_class::Unpublishable)
     expect(File.read(path)).to eq(good)
@@ -79,10 +79,10 @@ RSpec.describe Lain::StatusFeed::Publication do
   # the rest of the run.
   it "does not remember a token whose write failed, so the next attempt still publishes" do
     publication = described_class.new(path)
-    allow(File).to receive(:write).and_raise(Errno::ENOSPC)
+    allow(File).to receive(:binwrite).and_raise(Errno::ENOSPC)
     expect { publication.call("t") { { "n" => 1 } } }.to raise_error(described_class::Unpublishable)
 
-    allow(File).to receive(:write).and_call_original
+    allow(File).to receive(:binwrite).and_call_original
 
     expect(publication.call("t") { { "n" => 1 } }).to be true
     expect(published).to eq({ "n" => 1 })

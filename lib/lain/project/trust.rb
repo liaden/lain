@@ -83,14 +83,7 @@ module Lain
         # @return [String] the mark that now exists
         def grant(digest)
           target = path_for(digest)
-          FileUtils.mkdir_p(File.dirname(target))
-          tmp = "#{target}.tmp-#{Process.pid}-#{object_id}"
-          begin
-            File.write(tmp, mark_for(digest))
-            File.rename(tmp, target)
-          ensure
-            FileUtils.rm_f(tmp)
-          end
+          AtomicFile.write(target, mark_for(digest))
           target
         end
 

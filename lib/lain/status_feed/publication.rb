@@ -74,10 +74,7 @@ module Lain
       # names a path the operator never typed, with no mention of lain. That
       # reads as a crash; it is a misconfiguration, and it has a lever.
       def write(struct)
-        FileUtils.mkdir_p(File.dirname(@path))
-        tmp = "#{@path}.tmp-#{Process.pid}-#{object_id}"
-        File.write(tmp, JSON.generate(struct))
-        File.rename(tmp, @path)
+        AtomicFile.write(@path, JSON.generate(struct))
       rescue SystemCallError => e
         raise Unpublishable.new(@path, e)
       end
