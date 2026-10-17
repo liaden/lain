@@ -85,8 +85,8 @@ cd "$REPO" && lain chat --provider ollama --model qwen3-coder:30b < /dev/null; e
 ```
 
 Expected: refused naming `.lain/config.rb:2`, with `has no verb :modle; known verbs: model, tool,
-turn, repl, http`. Repeat with `turn SomeClass`, where `SomeClass` is defined in the same file and has neither `#call` nor
-`#settle`, and with `http { }` (a block): each is refused at its own line. A class defined in the user file is not
+turn, repl, http`. Repeat with `turn SomeClass`, where `SomeClass` is defined in the same file and is not callable. The refusal reads `has no instance #call` and
+names an anonymous module (round 25, j25-3); "neither #call nor #settle" is not what prints. Also try `http { }` (a block): each is refused at its own line. A class defined in the user file is not
 visible to a project file, so naming one from there refuses as `uninitialized constant`, for the wrong reason. Remove the project file before step 4.
 
 ## 4. a tool middleware in a live cockpit runs outermost

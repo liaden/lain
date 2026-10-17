@@ -85,7 +85,8 @@ session-killer worth stopping the round for.
 - **The wedge needs the right grammar.** `Skill::Invocation` parses `/skill` as *inline* and
   `@role[/skill]` as a *fresh-context spawn*, and **only the second reproduces it.** Type literally
   `@researcher[/critique] <path>`. An inline `/execute-plan` does not exercise this.
-  Expect the arrival note, a `human>` prompt, an answer taken, and a return to `you>` — **in a
+  The spawn may finish without asking a question (round 25), so the `command>`/`human>` steps below are not
+  guaranteed: record that it asked nothing rather than filing the missing prompt. If it asks, expect the arrival note, a `human>` prompt, an answer taken, and a return to `you>` — **in a
   `--no-nvim` chat**. In a cockpit (since 2026-09-14) the arrival note is one line,
   `? <asker> <question>  -- answer in lain://inbox, or /inbox`, the chat reads `command>` rather than
   `human>`, and the answer goes in through `lain://inbox` (`:LainReply`) or `/inbox`; prose typed at

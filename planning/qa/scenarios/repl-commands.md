@@ -7,7 +7,8 @@
 `/implement-epic`). Fourteen plus eleven is the whole registry, twenty-five commands (round 20 found this line
 saying twenty-three: `/qa` and `/stop` were added), pinned as a literal roster in
 `spec/lain/cli/command/surface_spec.rb` ("registers the whole shipped command set"). Count `/help`'s
-rows against 25 rather than trusting this number. `/implement-epic` is driven end
+rows against 25 rather than trusting this number (round 25: `/help` lists 25; re-derive the count from the registry each
+round). `/implement-epic` is driven end
 to end by `epic-tier.md` §10; here it only has to appear in `/help` and refuse by name outside an
 epic.
 
@@ -265,6 +266,9 @@ claim nothing, 42 decisions deferred, and only `/unpin` unblocked it. A run that
 alone still has nothing to claim; its decision then names the strategy and `elide-tools+summarize-conversation`
 (`rails-blog.md` section 1).
 
+On qwen3-coder the model calls `ask_human` after each answer (round 25), which makes every turn a tool round, so this
+check reads `nothing_droppable` instead of a compaction. Tell it not to ask, or record the check as model-blocked.
+
 Success messages carry a 19-character digest prefix and the inverse command:
 `pinned <digest>... -- compaction keeps this turn (/unpin to release it)`. **Then verify the effect,
 not the message.** Pin a turn, drive enough volume to force a compaction (or set the threshold low),
@@ -464,6 +468,9 @@ you> /btw again                    "already inside an ephemeral /btw session -- 
 you> /keep                         -> "kept: <file> -- now a durable chained fork (lain sessions lists it)"
 ```
 
+With no attached client (no tmux to open a popup in), `/btw` prints a runnable `lain chat --btw --fork ...` command
+instead (round 25). It works when run by hand.
+
 and the two `/keep` refusals, each of which needs setting up:
 
 - **actors still running**: `wait for the turn to settle: actors still running (<roles>) -- promotion …`.
@@ -655,6 +662,8 @@ the model cannot finish, typing `/goal off` **in the input pane** during iterati
 - **PASS:** no iteration 2 starts, the chat pane prints the `goal off` reply, and `goal_iteration` minus
   `goal_iteration_dropped` is **1**.
 - **Catches A-1 returning:** iterations 2 to 5 run and `goal off` prints only after the cap.
+- **This model ends the prime-list goal in iteration 1** (round 25), so the cockpit A-1 check cannot discriminate on
+  it: a goal that finishes at once looks like a pass. Use a stand-in model that cannot finish.
 - `/stop` typed in the pane mid-ask stops the ask before it would have finished: `run_interrupted` with
   `reason: stopped` is journaled while the model is still generating. An ordinary line typed mid-ask
   (`hello`) is NOT dispatched then: it becomes the next prompt, **once** (not lost, not doubled).

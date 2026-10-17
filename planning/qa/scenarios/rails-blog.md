@@ -180,6 +180,9 @@ claims both kinds, so it is never told to widen.
 
 Do this **early in the act, not last** — it is the point of the scenario.
 
+A cheap way to get medium results across many turns (round 25): ask the model to read the HTML error pages under
+`public/` (5 to 9 KB each), one per turn.
+
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
   puts "#{r["ts"]} win=#{r["window_tokens"]} used=#{r["used_tokens"].inspect} prov=#{r["provenance"].inspect} sig=#{r["signals"].inspect}" \
@@ -242,7 +245,9 @@ driven — this is integration check 7 of the discharging chunk)*:
 - **One `compaction_cut` record per advance**, carrying the cut digest, the span endpoints and the
   replacement's summary text; every later `context_derived` names the same cut and span, and the
   replacement's bytes are identical across renders once its summary has landed.
-  `plan_step_completion` fires on ONE decision per rising `todo_write`, not on every render after it.
+  `plan_step_completion` does NOT fire on ONE decision per rising `todo_write`: a completed step stays pending
+  until a compaction commits (`source/plan_steps.rb`), so it fires on every decision until then (seen on 2 to 3
+  consecutive decisions in round 25).
 - **`/rewind` below the cut retreats it.** The next request carries no replacement for the abandoned
   range and the next `context_derived` names no cut (or an earlier recorded one still on the chain).
 - **`--resume` renders the recorded replacement without re-summarizing, under the arm the session
@@ -260,8 +265,11 @@ driven — this is integration check 7 of the discharging chunk)*:
   `recorded with --compact-keep 4; continuing with 8 (the current flags win)`.
 - **A reply that fills the window is cut, not shifted.** Every ollama request sends `shift: false` beside
   `truncate: false`, so a reply that reaches the context window stops there (`done_reason` length) instead of
-  ollama silently shifting the context and going on. Launch with `--num-ctx 1024` and ask for a count to 2000: the
-  reply ends short of `--max-tokens` and the line reads `the reply filled the context window; raise LAIN_NUM_CTX or
+  ollama silently shifting the context and going on. `--num-ctx 1024` cannot drive this: the system prompt plus tools
+  are about 6,540 tokens, so the prompt is refused first. Launch with `--num-ctx 8192`, no tools, and ask for every
+  integer from 1 to 3000 separated by commas. **Close that chat after its one reply and announce it:** it reloads the
+  shared runner for every other chat (`method.md`, round 25). Expect 2 error lines, the first a false "model hit
+  max_tokens" (round 25, c25-4). The reply ends short of `--max-tokens` and the line reads `the reply filled the context window; raise LAIN_NUM_CTX or
   start a shorter chat`, not `raise --max-tokens`. A cut at `--max-tokens` with room left in the window still
   reads the `--max-tokens` line.
 - **An over-window prompt is refused, not truncated.** Lain now asks ollama not to truncate, so a
@@ -313,6 +321,11 @@ driven — this is integration check 7 of the discharging chunk)*:
   `"kind": "handoff"`. **Catches RB-3 returning:** an ask refused with `Compaction runs by itself` and no
   `compaction_cut` after it. When the re-render could not shrink, the tail reads `Nothing older can be
   compacted yet` and must not advise compaction.
+
+  **After any earlier cut, a handoff can fire with plenty droppable** (round 25, c25-1): once any cut exists, every
+  over-window refusal goes to a handoff, even with tens of KB droppable. Read `nothing_droppable` on the
+  `compaction_decision` before each handoff; a handoff behind `nothing_droppable: false` is that finding, not the
+  documented fallback.
 
   **The handoff document keeps its state across generations** (round 20's RB-1: the summarizer was fed the
   previous document cut to ~200 characters, so generation 3 read "No progress made"). Drive 3 handoffs in
@@ -381,8 +394,9 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["t
 ```
 
 `rails new` alone should produce a result orders of magnitude past anything bowling generates. Note
-which tools produced the top ten, and whether any of them disclosed a cap. Today only `grep`,
-`ast_search`, `web_fetch` and `ast_dump` bound at all, and only by cap-and-disclose.
+which tools produced the top ten, and whether any of them disclosed a cap. Since round 25 `grep`,
+`ast_search`, `web_fetch` and `ast_dump` bound by cap-and-disclose, and `bash` output and `read_file` refuse over
+16,384 bytes and say how to narrow. Expect a refusal, not a 100 KB result, from either of those two.
 
 **Round 8: this premise was NOT reached, even in the scenario built to reach it.** Under
 `--minimal`, the largest single tool result across the whole session was **4,713 bytes**

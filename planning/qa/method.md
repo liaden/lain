@@ -1473,3 +1473,77 @@ fallback rather than redesigning mid-run.
   were still alive 2 days later. Leave the operator's own (runtime `/run/user/1000`).
 - **2 scenarios per fork is the ceiling.** Forks `a` and `b` hit the 200-turn limit; a fork waiting on a live epic
   run spends about 1 turn per gated call.
+
+## Round 23 (2026-10-09): what 11 forks, 4 at a time, taught the process
+
+- **A gate loop reads the whole parked row, never `getbufline(...)[0]`.** The first line is a fold summary cut at the
+  window width. Fork `d` approved 2 secret releases because the cut fell before the word "sensitive". Join every line of
+  the item, or read `b:lain_approval_calls`. Round 22's gatekeeper also needs the deadline suffix
+  (`  5:00 left, denies at HH:MM:SS`) stripped; fork `g`'s updated one is at
+  `~/tmp/lain-qa-2026-10-09-g/records/gatekeeper.rb`.
+- **A gatekeeper never `eval`s a parked call's text**, which is model-authored. Parse the `inspect` form, and strip the
+  hash arrow ` => ` before testing for `<` or `>`, or every call reads as a redirect.
+- **Stop a scripted wait at `[y/N]` and answer it explicitly.** A settle helper that returns on `[y/N]` still lets the
+  next scripted prompt land there as a deny (F-5 is unfixed). Check the wait's exit code before every send.
+- **Send 1 model ask per Bash call.** A `for` loop of asks overruns the 120 s limit, moves to the background and keeps
+  typing into the chat; killing it needs the parent zsh pid too.
+- **A new tmux window's zsh drops `$QA/shim` from `PATH`** (the profile's mise hook resets it after `cd`). Launch by
+  `$QA/shim/lain`. `source env.sh | grep -v …` sources in a subshell under zsh and exports nothing; source it bare.
+- **tmux reads the operator's `~/.config/tmux/tmux.conf` even with `XDG_CONFIG_HOME` redirected.** A check that needs
+  `extended-keys` or `mouse` unset at start needs a server started with `-f /dev/null`.
+- **`resize-window` sets `window-size manual`**, which silently voids a later attach-size check. Unset it.
+- **The status file is per project, not per session.** 2 chats in one project overwrite one `state.json`.
+  `bundle exec ruby -Ilib -e 'require "lain"; puts Lain::StatusFeed::Reading.at(ARGV[0]).hud(now: Time.now)' <state.json>`
+  renders the HUD from any state file with no cockpit, which is the cheap instrument for a HUD claim.
+- **Never call `nv.sh` after a `:w` in `lain://question` without a `timeout`.** A refusal there raises a hit-enter
+  modal and every RPC hangs until Enter reaches the pane (j-9).
+- **The secret oracle's model swaps the shared runner on every call.** 5 reads cost 3 swaps and about 4 minutes, and
+  the runner log shows `-b 1024` for qwen3:4b, which is ollama's default and not a lain request. Budget it as a burst
+  and tell the other forks its window.
+- **`greenfield-epic` costs about 150 cloud completions**, not 40. Run it on its own quota day, or say the spend.
+- **`jrecs.rb` needs `ruby -rjson`**; without it every record is skipped and the journal reads empty.
+
+## Round 24 (2026-10-15): what 9 forks under judge-first approval taught the process
+
+- **Never let a walk of `/` run.** `glob` or a recursive `list_files` with path `/` grows without bound (c24-4) and took
+  a box-wide OOM kill with 4 forks and the model server on the box. Deny any walk of `/` or above `$QA` until it is
+  fixed, and cap every chat's memory.
+- **Cap the chat command, never the tmux server.** tmux 3.7 moves each pane into its own `tmux-spawn-*.scope` with
+  `memory.max` unlimited, so a `systemd-run` scope around the server caps nothing. Wrap the chat itself:
+  `env XDG_RUNTIME_DIR=/run/user/1000 systemd-run --user --scope -q -p MemoryMax=3G -p MemorySwapMax=0 env
+  XDG_RUNTIME_DIR=$QA/xdg/runtime $QA/shim/lain chat …`, or cap a cockpit pane's scope after launch with
+  `systemctl --user set-property <scope> MemoryMax=3G`. Then read that process's own cgroup `memory.max` to confirm.
+- **Under the default `auto`, budget every gated call as an `ask`.** The judge deferred about 9 in 10 of the calls it
+  saw and added 0.5 to 28 s each. Record its verdicts and latencies from the journal's `escalation` records: no
+  screen shows them (a24-8).
+- **An allow-list gate cannot see a child's directory.** An approval row names no working directory (g23-2), so a
+  `cd <project> && …` from a worktree child reads as ordinary and escapes the worktree (ENV-1). Until both are fixed,
+  refuse a child's `cd` into the project checkout.
+- **A deny changes every later gated read in that directory.** A `bash` deny with a `cwd` is remembered as a deny of
+  the whole directory (DENY-1). Deny a `bash` call only at the end of an act, or in its own session.
+- **A fixture directory named `secrets`, `auth-…` or `token-…` makes every child listing ask** (c24-3). Name sandbox
+  project directories plainly.
+- **A fork driving `greenfield-epic` uses its 200 turns before the scenario ends.** Give it the scenario alone and a
+  turn budget per section.
+
+## Round 25 (2026-10-16): what 12 forks taught the process
+
+- **A `--num-ctx` probe on the shared server thrashes every fork for as long as its chat lives.** Round 25 saw 16
+  runner starts in 5 minutes, and 2 other forks' chats pinned at `8192 guessed`. Run it alone, close the chat after
+  one reply, and announce it.
+- **`nv.sh buf` returns 20 lines unless given a count.** Read a view whole before calling it frozen.
+- **Helpers that source `env.sh` re-export `LAIN_NUM_BATCH` and `LAIN_QA_JOURNAL`**, which silently undoes a per-call
+  override.
+- **A gatekeeper must not approve `read_file` by path alone.** A diff critic's `read_file config.env` would have
+  released a secret. A gatekeeper that shells out from Ruby must set `ENV["QA"]` itself, or it reads no parked calls.
+- **`drive.sh` refuses while a call is parked**, so `/stop` at `command>` goes in by raw `send-keys`.
+- **The harness refuses a foreground `sleep`.** Wait with `timeout N bash -c 'until ...'`.
+- **A `lain up` from `$QA` needs `--provider ollama`**: direnv unloads `.envrc`'s `LAIN_PROVIDER`.
+- **Under a redirected `HOME`, `~` in a heredoc expands to the real home before `source` and the sandbox home after.**
+  Use `$QA` paths.
+- **Run podman checks under the sandbox runtime dir.** A bare `docker` under `/run/user/1000` starts a `catatonit`
+  pause process.
+- **In zsh, `T="tmux -L ..."; $T` fails with `command not found`.** Use a function.
+- **A box-wide OOM can come from outside the round.** `journalctl -k` names the process that invoked the killer. Read
+  it before attributing a 500 burst.
+- **Do NOT press Ctrl-C in an input pane holding a draft while an ask runs** (b25-8): it ends the cockpit.

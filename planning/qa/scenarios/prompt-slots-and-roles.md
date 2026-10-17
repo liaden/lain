@@ -114,10 +114,10 @@ lain chat --root "$(pwd)" --provider ollama --model qwen3-coder:30b < /dev/null
 Must refuse:
 
 ```
-unknown role slot file ".../.lain/slots/role/chef.md"; known roles: auto_approver, court_clerk, dev, diff_critic, diff_docent, gate_adjudicator, harness_improver, issue_orchestrator, merge_resolver, meta_harness, meta_summarizer, qa, researcher, reviewer_code, reviewer_dba, reviewer_security, reviewer_sre, test_engineer
+unknown role slot file ".../.lain/slots/role/chef.md"; known roles: auto_approver, court_clerk, dev, diff_critic, diff_docent, evidence_researcher, gate_adjudicator, harness_improver, issue_orchestrator, merge_resolver, meta_harness, meta_summarizer, qa, researcher, reviewer_code, reviewer_dba, reviewer_security, reviewer_sre, test_engineer
 ```
 
-naming **all 18** shipped roles (`qa` is the 18th; round 22 counted 18, not 17), alphabetically, not a truncated sample. *Driven 2026-09-14*, exit
+naming **all 19** shipped roles (`evidence_researcher` sits between `diff_docent` and `gate_adjudicator`; round 22 counted 18, round 25 counts 19), alphabetically, not a truncated sample. *Driven 2026-09-14*, exit
 1 — but with the names then spelled with **hyphens**, which is the thing to correct on the next
 drive.
 
@@ -187,7 +187,7 @@ related:` in `.lain/config.rb`) and read the first request's system text in the 
    `pwd`, `git rev-parse --is-inside-work-tree`, `date +%F`). A field that is absent, or a home
    directory that is not yours, is the finding.
 2. **A researcher child sees the same block, with its own working directory.** Spawn one and read its first
-   request: its system text holds the environment block, and the persona is the `researcher` role prompt (a
+   request (a child's request is in no journal, so capture it through a forwarding proxy, round 25): its system text holds the environment block, and the persona is the `researcher` role prompt (a
    researcher that opens with the generic prompt is the finding). In a child the block's working-directory line
    reads `Working directory: stated after your role instructions`, byte for byte the same for every child, and
    the role instructions end with `Working directory: <the child's lease or worktree>`. A child whose system text
@@ -197,8 +197,8 @@ related:` in `.lain/config.rb`) and read the first request's system text in the 
 3. **Byte-stable within a session.** Two requests in one session carry byte-identical system text, or
    the prompt cache breaks. The date is read once at launch, so a session that crosses midnight keeps
    its launch date.
-4. **A project override still lands.** A `.lain/slots/system.md` replaces the shipped slot whole,
-   environment block included, and is journaled once (§1).
+4. **A project override still lands.** A `.lain/slots/system.md` is appended after the frame and the environment
+   block, not in place of them (`slots.rb`: "an override AUGMENTS it", as §1 says), and is journaled once (§1).
 5. **The system text explains a `<mailbox>` block.** The shipped slot says a `<mailbox>` block holds messages
    delivered between turns, one per line as `<from> | <text>`, and that `human` is the person at the keyboard,
    `lain` is the harness, and any other sender is an agent. Read it in the main agent's first request and in a
@@ -222,8 +222,10 @@ role slot file ".../.lain/slots/role/auto_approver.md" is refused: auto_approver
 ```
 
 Repeat with `gate_adjudicator.md` and `evidence_researcher.md`. Control: `.lain/slots/role/researcher.md` (an
-ordinary role) still overrides, and a project `.lain/slots/system.md` still reaches every role, the three
-approval roles included. Delete the fixture and confirm the next launch is clean. A launch that accepts the file,
+ordinary role) still overrides. Whether a project `.lain/slots/system.md` reaches every role, the three approval
+roles included, is now an open question awaiting a ruling (round 25, d25-1): it reaches the judge's system prompt
+verbatim, and the reason for refusing `auto_approver.md` applies equally. Record what you see; do not file it as a
+new finding. Delete the fixture and confirm the next launch is clean. A launch that accepts the file,
 or a judge whose first request carries the project's text, is the finding.
 
 ## 6 — the 4096-token cache floor *(the one paid step — 2 completions, real Anthropic quota)*
@@ -231,16 +233,16 @@ or a judge whose first request carries the project's text, is the finding.
 The free two-thirds of this section first:
 
 ```bash
-wc -c lib/lain/prompt/templates/system.md.erb    # 364 bytes shipped, no override
+wc -c lib/lain/prompt/templates/system.md.erb    # 573 bytes shipped, no override
 $QA/drive.sh '/ruby Lain::CacheProfile::ANTHROPIC.min_prefix_tokens' 8 30 >/dev/null; $QA/peek.sh 8
 ```
 
-364 bytes is ~91 tokens at the ~4-bytes-per-token estimate this project uses elsewhere
+573 bytes is ~143 tokens at the ~4-bytes-per-token estimate this project uses elsewhere
 (`Lain::ProxyBytes::BYTES_PER_TOKEN`), but the template is only half of what is cached.
 **Anthropic's cached prefix is the tools block plus the system prompt**, so the free half must
-count the tools block too: 22,726 bytes of tool schemas over 23 tools in round 23 (19,619 in round 22; the figure moves with the toolset, so re-measure each round rather than quoting it), which is about
-5,700 tokens and so ABOVE the 4096-token floor `CacheProfile::ANTHROPIC.min_prefix_tokens` reports.
-364 bytes of template alone does not show the request is under the floor. Measure the tools
+count the tools block too: 23,272 bytes of tool schemas over 23 tools in round 25 (22,726 in round 23, 19,619 in round 22; the figure moves with the toolset, so re-measure each round rather than quoting it), which is about
+5,800 tokens and so ABOVE the 4096-token floor `CacheProfile::ANTHROPIC.min_prefix_tokens` reports.
+573 bytes of template alone does not show the request is under the floor. Measure the tools
 block (the request's `tools` serialised, from the journal's request record) beside the template
 before predicting a zero, and treat a non-zero `cache_creation_input_tokens` as possible.
 

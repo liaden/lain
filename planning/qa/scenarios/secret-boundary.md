@@ -104,12 +104,12 @@ lives. Check each class has a representative and that each behaves differently:
 | `.env`, `.env.local`, `server.pem` | `gated` | `credential` | reaches a human, liftable |
 | `config/master.key`, `.pgpass`, `id_rsa` (bare, anywhere) | `gated` | `credential` | **widened 2026-09-14**, sized for the case where nobody is asked (round 17's F91 released these through an auto-approved `cat`). *Driven 2026-09-14* through `Sensitivity#classify`: all `gated credential`, with `id_ed25519.pub` still `ordinary` |
 | `_netrc`, `netrc`, `.netrc.bak`, `.netrc.old` | `denied` | `protected` | **variants of a denied name stay denied** (round 20's H-1). A bare `.netrc` was denied while `_netrc` was ordinary |
-| `.pgpass.bak`, `pgpass`, `.pgpass2`, `.authinfo`, `.msmtprc`, `.fetchmailrc`, `.htpasswd`, `.vault_pass`, `.vault-password`, `passwords.txt` | `gated` | `credential` | the same class, by name |
+| `.pgpass.bak`, `pgpass`, `.pgpass2`, `.authinfo`, `.msmtprc`, `.fetchmailrc`, `.htpasswd`, `.vault_pass`, `.vault-password`, `passwords.txt` | `gated` | `credential`, except `.vault_pass`, `.vault-password` and `passwords.txt`, which report `named` (round 25) | the same class, by name |
 | `~/Downloads/x` | `gated` | `out_of_scope` | a different reason, and it must say so |
-| `password.txt`, `secrets/prod`, `credentials/x` (a name, or a directory, below the root that names a secret) | `gated` | `credential` | **new after round 22 (S-1).** A secret word in a file name or a directory below the root: `pass`, `passwd`, `passcode`, `token`, `private` or `auth` as its own word (a separator or a lower-to-upper step starts one, so `dbToken.txt` gates), and `secret`, `password`, `credential` or `apikey` as the end of a name too (**round 23 G-2, fixed**). So `vault-pass.txt`, `pass.txt`, `api_keys.txt`, `mysecrets.txt` and `1password.txt` all gate, and `AUTHORS` and `tokenizer.json` stay ordinary. A bare `pass` gates by the user's ruling. Source and `.md` files are excepted by extension, including camelCase-language ones (`auth.py`, `docs/secrets.md`, `Auth.vue`, `Token.kt`, `Secret.cs`); data files are not. Two known edges, not defects to file: `dbPasswordFile.txt` is ordinary (`Password` neither ends the name nor stands alone) and `libsecret` gates. It gates for `read_file`, the listing, `grep` and `bash` alike, in the root, in a checkout and in a checkout subdirectory. **The survey route** differs: the file is listed but its corpus text is 1 placeholder, a note journals that placeholder as evidence (projected line 1), it stays masked for the whole survey and has no release route (read it in chat through the gate), and a symlink like `.env -> password.txt` is masked the same way; `survey.md` §4 drives it. **A changeset's hunks** are projected too, whole per side (`changeset-review.md` section 4b), but a name-gated file is region-masked there, not masked whole. Shape-gated `.env` and `*.pem` mask only detected regions, and one with no detected region still enters raw (known follow-up) `.env` and `*.pem` keep region masking; a name-gated file is masked whole |
+| `password.txt`, `secrets/prod`, `credentials/x` (a name, or a directory, below the root that names a secret) | `gated` | `named` (round 25: the name-gated rows, the word rule included, report `named`, not `credential`) | **new after round 22 (S-1).** A secret word in a file name or a directory below the root: `pass`, `passwd`, `passcode`, `token`, `private` or `auth` as its own word (a separator or a lower-to-upper step starts one, so `dbToken.txt` gates), and `secret`, `password`, `credential` or `apikey` as the end of a name too (**round 23 G-2, fixed**). So `vault-pass.txt`, `pass.txt`, `api_keys.txt`, `mysecrets.txt` and `1password.txt` all gate, and `AUTHORS` and `tokenizer.json` stay ordinary. A bare `pass` gates by the user's ruling. Source and `.md` files are excepted by extension, including camelCase-language ones (`auth.py`, `docs/secrets.md`, `Auth.vue`, `Token.kt`, `Secret.cs`); data files are not. Two known edges, not defects to file: `dbPasswordFile.txt` is ordinary (`Password` neither ends the name nor stands alone) and `libsecret` gates. It gates for `read_file`, the listing, `grep` and `bash` alike, in the root, in a checkout and in a checkout subdirectory. **The survey route** differs: the file is listed but its corpus text is 1 placeholder, a note journals that placeholder as evidence (projected line 1), it stays masked for the whole survey and has no release route (read it in chat through the gate), and a symlink like `.env -> password.txt` is masked the same way; `survey.md` §4 drives it. **A changeset's hunks** are projected too, whole per side (`changeset-review.md` section 4b), but a name-gated file is region-masked there, not masked whole. Shape-gated `.env` and `*.pem` mask only detected regions, and one with no detected region still enters raw (known follow-up) `.env` and `*.pem` keep region masking; a name-gated file is masked whole |
 | `lib.rb` | `ordinary` | — | the control |
 
-**Round 23 G-2: drive the narrowed-name repros.** Classify `vault-pass.txt`, `pass.txt`, `api_keys.txt`, `mysecrets.txt`, `dbToken.txt` (each `gated credential`) and `AUTHORS`, `compass.yml`, `tokenizer.json`, `auth.py` (each `ordinary`), then `cat vault-pass.txt` through a real chat in `/mode auto`: it must not be auto-approved. `vault-pass.txt` was round 21's own H-1 repro, so ordinary there is the old defect back.
+**Round 23 G-2: drive the narrowed-name repros.** Classify `vault-pass.txt`, `pass.txt`, `api_keys.txt`, `mysecrets.txt`, `dbToken.txt` (each `gated`, reason `named` since round 25) and `AUTHORS`, `compass.yml`, `tokenizer.json`, `auth.py` (each `ordinary`), then `cat vault-pass.txt` through a real chat in `/mode auto`: it must not be auto-approved. `vault-pass.txt` was round 21's own H-1 repro, so ordinary there is the old defect back.
 
 Drive each as a `read_file` and read the journal, not the screen:
 
@@ -547,7 +547,7 @@ sensitivity related: %w[/abs/path/to/sibling]      # or home-anchored: ~/dev/sib
 
    ```ruby
    sensitivity related: %w[/]            # must name a specific tree, not the filesystem root, ...
-   sensitivity related: %w[~]            # the home directory is refused too, and so is any ancestor of it
+   sensitivity related: %w[~]            # is a directory, home-anchored ... or absolute: the shape sentence, not a home-directory sentence (round 25)
    sensitivity related: %w[dev/sibling]  # is a directory, home-anchored ("~/dev/app") or absolute ("/srv/app")
    sensitivity related: %w[/abs/file.txt]  # an existing file: takes directories, and this is not one
    sensitivity related: %w[/abs/a/../b]  # is not a clean directory path: no empty, `.` or `..` segment
@@ -575,7 +575,8 @@ in the fixture and read each with `read_file`:
 | `mysql -u root -phunter2xyz` | the value after `-p` is masked |
 | `Authorization: Bearer abcdef0123456789abcd` | the token is masked |
 | a bare `ghp_` token on its own line | masked |
-| `mkdir -p build`, `gcc -pthread main.c`, `https://example.com/path`, `password_policy: strict`, `password: ${DB_PASS}` | **nothing masked**: these are the controls, and a masked row here is a false positive |
+| `mkdir -p build`, `gcc -pthread main.c`, `https://example.com/path`, `password_policy: strict` | **nothing masked**: these are the controls, and a masked row here is a false positive |
+| `password: ${DB_PASS}` | masked as of round 25 (g25-1). It is no longer a control: move it out of the controls, or cite g25-1 against the code if you hold that a variable reference is not a secret |
 
 `mysql --help -pager` and `confirm_password: required` mask as well; those two are accepted false positives,
 not findings. Each masked read journals `read_redacted` with `regions` of 1 or more, and the §4 item 3 grep
@@ -999,7 +1000,7 @@ human is prompted for reads the oracle then decides. In round 17 that left a liv
 `… agent asks: approve read_file(…)? [y/N]` drawn for 40 s after the oracle had already released the
 region, and a human's `n` typed there became a **chat prompt** (F106). Since 2026-09-14: in a cockpit
 no `[y/N]` is drawn at all (`cockpit-surfaces.md` §5); in a `--no-nvim` chat the prompt line is ended
-`-- decided by secret_oracle: <verdict>` when the oracle decides first *(prediction, not yet driven)*.
+`-- decided by secret_oracle: approved` when the oracle decides first (driven in round 25).
 And the oracle is on `qwen3:4b`, a different model from the chat's, so it is sent **none** of the
 chat's `num_batch`/`num_ctx`/`temperature` — it still evicts the resident model on one GPU (~40 s in
 round 17), which is residency, not the re-key the chunk fixed.

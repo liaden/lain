@@ -55,6 +55,9 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
   next unless r["type"]=="request"; puts r.to_json[/<workspace.{0,600}/m]}' "$JOURNAL" | tail -1
 ```
 
+The journal holds no `request` records (round 25), so this reduction prints nothing. Capture the request on the wire
+instead (a forwarding proxy in front of ollama) and run the same match over that body.
+
 Expected: **one id and one description per item**, and **no bodies**. A manifest that carries bodies
 turns every turn into a full memory dump and is a cost defect that nothing else here would catch.
 
@@ -116,8 +119,10 @@ resolve:
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
-  puts "#{r["turn_digest"]}\t#{r["type"]}" if %w[turn_usage memory_root].include?(r["type"])}' "$JOURNAL"
+  puts "#{r["turn_digest"] || r["digest"]}\t#{r["type"]}" if %w[turn_usage memory_root].include?(r["type"])}' "$JOURNAL"
 ```
+
+(`turn_usage` carries `digest`, not `turn_digest`, so the reduction reads either; round 25.)
 
 Two properties, and the second is the one a casual read misses:
 

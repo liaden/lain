@@ -5,7 +5,7 @@ orchestrator-worker, dual-ledger, adaptive-router), the grader, the token ledger
 column and the attribution header**: whether the report says what produced it, and whether it
 refuses to quote a price it cannot stand behind.
 
-**Cost:** ~5 minutes, no interaction. **Precondition: the chat is closed.** A second model on one
+**Cost:** about 7 to 15 minutes, no interaction. **Precondition: the chat is closed.** A second model on one
 GPU evicts the first, which is a measured 84.0s against 7.5s.
 
 **Needs:** `bench.md` up, model resident at the context the run will use (else pay a reload).
@@ -40,7 +40,9 @@ consequences worth driving here, because this is where the old split bit hardest
   records nothing to read back, so for `bench arms` it is effectively typed → environment →
   built-in.
 
-`--isolation` unset is not `none`, and `--journal` without `--isolation` refuses.
+`--isolation` unset is not `none`, and `--journal` without `--isolation` refuses. The refusal now reads
+`--journal records this run's grades AND the isolation leases it takes, and nothing leases without --isolation: drop --journal, or add --isolation worktree to record both...`.
+The tool-floor sentence below is what a bare run with neither flag gets (round 25).
 
 **Round 17 could not run this scenario at all, and two corrections came out of trying.** Both
 refusals below are pre-spend, and both were *driven 2026-09-14* against the built binary:
@@ -152,8 +154,7 @@ Arm driver — 4 arms over 8 tasks
   isolation: worktree
 ```
 
-*(Prediction, not yet driven: the header shape above was measured with three arms and no isolation;
-the arm count and the `worktree` word are what the current roster and the required flag imply.)*
+*(Driven in round 25: the header above, with 4 arms and `worktree`, is what a live run printed.)*
 
 Check all four lines:
 
@@ -227,6 +228,9 @@ omission is now *visible* for the first time; it is recorded, not fixed.
 
 ## Also confirm
 
+- **Nothing was written outside the worktrees** (round 25, l25-1: an arm wrote outside its worktree, because the
+  run uses an approve-all gate). Run the scenario from a repo with a sentinel file in a parent directory. After the
+  run, `git status` in the scratch repo is clean and nothing outside the worktrees changed, the sentinel included.
 - The **dual-ledger arm settles on its ledger rather than its grader**, and its terminal state
   distinguishes a dried-up ledger from a ceiling.
 - **No `StalledStreamError`.** This arm runs concurrent actors against a single-slot ollama, which

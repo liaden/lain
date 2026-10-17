@@ -94,7 +94,7 @@ with `git ls-files --cached --others --exclude-standard` before trusting a count
 
 | target | files | lines | |
 |---|---:|---:|---|
-| `lib` | ~780 | ~164,000 | **over both** — 742/161,963 (r11), 748 (r14), 749 / 152,909 (r15), **778 / 163,904 (r17)**; RE-COUNT, never copy |
+| `lib` | ~983 | ~201,000 | **over both** — 742/161,963 (r11), 748 (r14), 749 / 152,909 (r15), 778 / 163,904 (r17), **983 / 201,112 (2026-10-16)**; RE-COUNT, never copy |
 | `lib/lain/frontend` | 56 | 14,199 | fits (r17) |
 | `lib/lain/review` | 39 | 8,520 | fits (r17) |
 | `lib/lain/survey` | 9 | 1,274 | fits (r17) |
@@ -254,7 +254,7 @@ A chat holds one outbox and one set of gesture rails. The guard asks about the *
 `open?`:
 
 ```
-you> /review <a local branch>
+you> /review <a local branch>      -- in a repo whose default branch is `master`: add `--base master`, or it refuses `base ref "main" does not resolve` (round 25)
 you> /survey ./lib/lain/survey     -- must REFUSE, naming the branch already open
 you> /review-submit                -- over the survey, once one is open
 ```
@@ -353,7 +353,8 @@ $QA/nv.sh expr "string(get(b:,'lain_thread_anchors','<unset>'))"   # <unset> => 
    private key and line 8 is code. Open a thread on raw line **4** (inside the key): it anchors on the
    projected line holding `<redacted:1>`. Open one on raw line **8**: it anchors on projected line **3**
    (the six key lines collapse to 1) and its answer discusses the code on line 8, never `no hunk`. On a
-   git changeset the anchor line is the raw line, unchanged. **Catches G-2 returning:** a thread on any
+   git changeset the anchor line is the raw line, unchanged. The `annotation_placed` record journals the raw
+   line (4 and 8), not the projected line (round 25). **Catches G-2 returning:** a thread on any
    line below the key that the docent cannot find, or that answers about the wrong line.
 
 **F31 is FIXED as of round 11** — the first re-drive since it was filed. The second `:w` refuses in

@@ -146,7 +146,8 @@ Checks:
    is a note, not a held prompt. A line typed at a parked `[y/N]`, `human>` or `command>` is never a note. `greenfield-epic.md` §3.6 and
    §3.7 drive these.
 9. **The pane is an ordinary command.** Kill it (`tmux -L "$QA_SOCK" kill-pane -t <input>`) and the chat stays
-   alive; `lain input --name lain` in a new pane reconnects to the same socket and is redrawn
+   alive; `lain input --name <session>` in a new pane, started in the project directory (from anywhere else it
+   waits on a socket no chat listens on, round 25, b25-3), reconnects to the same socket and is redrawn
    with the current prompt and HUD, not left blank until something changes. The socket is
    `$XDG_RUNTIME_DIR/lain/input-<project-hash>-<session>.sock` (`lain up` passes the tmux session
    name, so two cockpits on one project do not collide) and it carries **no pid**, because both
@@ -235,8 +236,12 @@ Checks:
     for 20 seconds or more, with no prompt parked. Type `abc` at the input row. The characters stay on the input
     row, and a header redraw (spawn a child so the row count changes) leaves `abc` where it was and redraws
     the header above it. Then each of these:
-    - **Ctrl-C discards the draft.** The input row is empty and nothing is sent. A second Ctrl-C with nothing typed
-      is the ordinary interrupt (`--grace`, the countdown above).
+    - **Ctrl-C discards the draft.** **FAILS as written until ruled on (round 25, b25-8).** The code disagrees with
+      this bullet: Ctrl-C over a draft clears it AND forwards SIGINT to the chat, which opens the close countdown
+      mid-ask and ends the cockpit when the ask finishes. Do not leave the countdown running (answer it with `c`),
+      and do not press Ctrl-C over a draft while an ask runs unless this is the check being driven. The intended
+      result: the input row is empty and nothing is sent, and a second Ctrl-C with nothing typed is the ordinary
+      interrupt (`--grace`, the countdown above).
     - **Tab goes into the draft** as a tab character; it does not trigger completion or move focus.
     - **Ctrl-Z then `fg`** (suspend the `lain input` process, then resume it) leaves the pane working: the header
       and the draft redraw, and a line typed after the resume reaches the chat.
@@ -845,7 +850,7 @@ and `b:lain_approval_calls` held `bash({"command" => "ls -la"})`. Then, at that 
 | typed | pane | journal |
 |---|---|---|
 | `yes please` | `HH:MM:SS held as your next prompt: yes please`, then a second line `that does not answer the approval: /approve answers it` (with a question parked it reads `that does not answer the question: /inbox lists it, and :LainReply answers it`) | **no** `approval_decision`; after the line settled, `yes please` was committed as the next user turn |
-| `/approve` | `agent asks: approve bash({"command" => "ls -la"})? [y/N]` — `/approve` owns the terminal for its line | — |
+| `/approve` | `agent asks: approve bash({"command" => "ls -la"})? [y/N]` — `/approve` owns the terminal for its line; the `[y/N]` is drawn in the input pane (round 25) | — |
 | `y` (at that prompt) | the dispatching line continues | `approval_decision surface=tty verdict=approve`, then `escalation rung=surfaces … (tty)` |
 
 **What wrong looks like:** a `[y/N]` drawn in the cockpit chat pane without `/approve`; an
@@ -971,7 +976,8 @@ the displayed figure is `5:00`.) Park `echo hello` and read each surface:
    denied after ...` line after its rows in the one rendering that drops the call, and the model's tool
    result is an error carrying the same sentence: `approval denied for tool "bash": denied after 0:30 with no
    answer` (**round 23 B23-2, fixed**; the bare `approval denied for tool "bash"` is a human's `n`, so a lapse that
-   reads that way has lost its sentence). **Wrong looks like:** the lapse said twice, said
+   reads that way has lost its sentence). In a `--no-nvim` chat the timeout line `-- denied after 0:30 with no
+   answer` names no call (round 25, b25-5), so with 2 parked calls it cannot say which lapsed. **Wrong looks like:** the lapse said twice, said
    on one surface only, or the old wording `decided by timeout: denied`.
 3. **A deny can carry a reason, and the model reads it.** Park another call and answer with a reason:
    at a plain `[y/N]`, `n stay inside the project` (also `no, ...`, `n: ...`); at nvim, `:LainDeny stay
@@ -1309,11 +1315,12 @@ snapshot in scrollback, not a live widget, so a value that does not tick is not 
 
 What is worth checking:
 
-- At `you>` between turns: `<model> ctx N% idle Ns`.
+- At `you>` between turns the HUD reads `❄ fleet:N inbox:N ctx:N% run:<tokens>`, plus `ASK`, `model:Ns`,
+  `tool:x` and `approve:N` when they apply. It carries no model name and no `idle Ns`: a bullet or sample below that
+  says `<model> ctx N% idle Ns` is stale (round 25).
 - At the prompt of a parked `ask_human` — `human>` in a `--no-nvim` chat, `command>` in a cockpit
-  (§5b): **the `idle` segment must be absent entirely** (a dispatch is in flight, so the segment has
-  nothing to say and elides). Driven 2026-09-14 in a cockpit: `qwen3-coder:30b ctx 17%` above
-  `command>`, no `idle`.
+  (§5b): the HUD must show no in-flight slot that has ended, and no `idle` (it no longer exists). Driven
+  2026-09-14 in a cockpit: `qwen3-coder:30b ctx 17%` above `command>` (the old shape).
 - **No prompt is drawn mid-dispatch after a question was answered elsewhere.** Round 17's F101 drew
   `<model> ctx 80% idle 0s` / `human>` on every later ask after an nvim answer; a surface now retires
   a question settled on another one. In a cockpit there is no `human>` to draw; in a `--no-nvim`

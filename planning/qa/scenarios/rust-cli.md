@@ -67,6 +67,9 @@ Then tell the model the build is broken and let it fix it. What to watch:
   `[call_… stdout]` lines appear in the chat pane, that is a finding.
 - **Does a second gated `bash` in the same turn still get an approval prompt?** `cargo build` then
   `cargo test` in one turn is the exact two-gated-calls shape that wedges.
+- **Does each `bash` call journal an `exec_resolution`?** On this model nearly every call is on the string arm
+  (`cd <dir> && ...`), so expect 1 unresolved stage with `klass: "unresolved"` (round 25, a25-3), not a resolved
+  path.
 
 ## Long-running-command behaviour
 

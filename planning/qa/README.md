@@ -30,7 +30,7 @@ Pick by the question being asked, not by coverage. Each states its own cost and 
 | [`cockpit-surfaces.md`](scenarios/cockpit-surfaces.md) | Do the nvim/tmux surfaces tell the truth — review flow, **notes on a survey of a dummy app the round writes itself**, buffer staleness, the approval and question surfaces — nvim-first in a cockpit since 2026-09-14, with the chat pane announcing and a guarded inline prompt only in `--no-nvim` — the live timeline, how a refusal is *delivered*? **Four of round 4's seven defects were here, and every fix landed somewhere other than where the symptom was.** | cheap, piggybacks |
 | [`failure-injection.md`](scenarios/failure-injection.md) | Is the record **unforgeable**, does every failure path refuse by name, and do the **tool bounds, the windowed-read contract and the summarizer's ceilings** hold? The deterministic half needs no model at all. The standalone regression gate. | minutes |
 | [`bowling-ruby.md`](scenarios/bowling-ruby.md) | Does the **authoring loop** produce something worth having — plan, execute, critique, graded against driver-owned oracles? | 1–3 sessions |
-| [`bench-arms.md`](scenarios/bench-arms.md) | Does the arm driver produce numbers that are not artifacts, **say what produced them, and refuse a price it cannot stand behind**? | ~5 min |
+| [`bench-arms.md`](scenarios/bench-arms.md) | Does the arm driver produce numbers that are not artifacts, **say what produced them, and refuse a price it cannot stand behind**? | about 7 to 15 min |
 | [`rails-blog.md`](scenarios/rails-blog.md) | **Context economics at scale** — the composed compaction strategy firing for real, unbounded tool output, the gate under volume, and what a broken cache cost in dollars. The only scenario that reaches any of these. | expensive |
 
 **The six added 2026-08-23**, each covering a tier the core seven never reach. All are driveable
@@ -156,11 +156,14 @@ that chunk `draft` and unlanded, was corrected on 2026-09-14.)
 |---|---|---|
 | [`config-middleware.md`](scenarios/config-middleware.md) | Does an untrusted `~/.config/lain/config.rb` refuse a real launch **before a session record exists**, does `lain trust --user` bind exact bytes, does a configured tool member run outermost in a live cockpit and again, on its own instance, in a spawned child, and does an `http` entry see a real streamed Ollama request as a Hash? Steps 1 to 3 need no model; steps 4 to 6 need a live local model. | cheap to minutes |
 
+Bash confinement (`--confine`, the sandboxed exec) has no scenario yet. Round 25's probe table is in
+`../qa-findings-round25-2026-10-16.md`, for plan card T32.
+
 **Added 2026-10-08**: the journey from the first real trial on the cloud arm:
 
 | Scenario | The question it answers | Cost |
 |---|---|---|
-| [`greenfield-epic.md`](scenarios/greenfield-epic.md) | Can a person start in an empty directory (`lain up <dir> --create` on `--provider ollama-cloud`), interview, research and reach an approved research gate through `epic_write` and `epic_submit` **without the process freezing on a search above the project, the HUD guessing its window, a researcher losing its work at the ceiling, or an approval auto-denying unseen**? Each section names the failure it was written for. | quota, about 40 completions |
+| [`greenfield-epic.md`](scenarios/greenfield-epic.md) | Can a person start in an empty directory (`lain up <dir> --create` on `--provider ollama-cloud`), interview, research and reach an approved research gate through `epic_write` and `epic_submit` **without the process freezing on a search above the project, the HUD guessing its window, a researcher losing its work at the ceiling, or an approval auto-denying unseen**? Each section names the failure it was written for. | quota, about 150 completions (round 23 spent 147; §6.3 alone spends a 60-iteration ceiling) |
 
 ## Automated by `spec/e2e`
 
@@ -314,6 +317,25 @@ Written per round. **Rounds 2 through 12 have been deleted** -- every finding in
 discharged, and git history is the archive: `git log --diff-filter=D --stat -- planning/` names the
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
+
+- [`../qa-findings-round25-2026-10-16.md`](../qa-findings-round25-2026-10-16.md): round 25, a full round over all 21
+  scenarios in 12 forks, weighted to the round-24 fix batch and the bash confinement plan (T1 to T23, T26, T33 and
+  T34 landed; T25 not). Round 24 is almost entirely fixed, both HIGHs included. **Two new HIGH:** `bench arms
+  --isolation worktree` runs under an approve-all gate and an arm wrote outside its worktree (l25-1), and resuming a
+  crashed ollama session commits an empty turn and reports it recovered (j25-1). The new `--confine`,
+  `--judge-facts` and `--tripwire` arms change nothing yet (a25-1).
+
+- [`../qa-findings-round24-2026-10-15.md`](../qa-findings-round24-2026-10-15.md): round 24, 18 of 21 scenarios in
+  9 forks, weighted to the 4 batches since round 23. `bench-arms` ruled out by the user; `memory-and-dogfood` and
+  `ollama-cloud-arm` dropped as unchanged. Most of round 23 is fixed, G-1 included. **Two new HIGH:** a walk of `/`
+  never ends and took a box-wide OOM kill (c24-4), and every leased child is told the human checkout is its working
+  directory, so an epic worker wrote there (ENV-1). The new deny memory and judge read `bash` by its `cwd` (DENY-1).
+
+- [`../qa-findings-round23-2026-10-09.md`](../qa-findings-round23-2026-10-09.md): round 23, a full
+  round over all 20 scenarios in 11 forks, at most 4 at once. `bench-arms`' live runs were dropped by the user.
+  Round 22's HIGHs F-6 and D-4 are fixed, as are T-1, U-1 and A-9. **One new HIGH:** `grep` returns secrets raw that
+  `read_file` masks, and an unattended docent read a token right after its release was denied (G-1). The S-1 fix
+  narrowed the name rule (G-2), the HUD's in-flight slot is stale 3 ways, and round 22's card T22 never landed.
 
 - [`../qa-findings-round22-2026-10-06.md`](../qa-findings-round22-2026-10-06.md): round 22, a full
   round over all 18 scenarios in 9 forks, at most 4 at once, wound down by the user before the live `bench-arms`
@@ -535,7 +557,8 @@ first exercised the section rather than what the section asks for:
   pass on one as a pass on the other.
   **§2 was finally reached on 2026-08-27 (round 14), and WITHOUT Rails** — largest single tool result
   **120,045 bytes**, 25x round 8's, admitted rather than refused because it sits just under `bash`'s
-  131,072 ceiling, which is the volume the section wanted. The way in was the section's own second
+  131,072 ceiling, which is the volume the section wanted. (Stale since round 25: `bash` output now refuses over
+  16,384 bytes, so a result that size no longer gets in.) The way in was the section's own second
   clause: "a non-minimal app, **or a directive that reads large generated files back**". A generated
   tree satisfied the premise on a box with no Rails installed. The bounding half was confirmed
   separately — `grep` over ~2,400 matches returns `... capped at 200 matches`. **This does not
@@ -606,9 +629,9 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   checks is whether the binary `execvp` finds is the program the allowlist vouched for. `PATH` is
   inherited and uncontrolled, so a shim in a user-writable directory runs. The four rungs that
   would close it (resolve-and-record, resolve-and-constrain, verify-identity, control `PATH`) are
-  costed in `../specs/chunk-shell-term-approval.md` and built by nothing. **A round that finds a
-  shim running has found documented scope**, so the gap is stated here rather than left for a
-  driver to re-derive as a finding.
+  costed in `../specs/chunk-shell-term-approval.md`. **Stale since 2026-10-16:** `exec_resolution` now journals
+  each stage's resolved path and class. What remains uncovered is the string arm, where nearly every call this
+  model makes lands (round 25, a25-3), and anything inside a container (e25-2).
 - **Cost and latency.** Nothing records wall-clock or tokens per act, so "the plumbing works" and
   "the plumbing is usable" are not separated. One wiring mistake once cost 84.0s against 7.5s and
   nothing here would catch the same class again.
@@ -647,12 +670,9 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
 Still uncovered as of 2026-08-23, and **not** addressed by the six scenarios added that day, so that
 a full directory does not read as completeness:
 
-- **Program identity on the term arm.** `shell-term-approval.md` covers arm *selection*; nothing
-  covers *which binary ran*. `PATH` is inherited and uncontrolled, `execvp` honours its order, and
-  `cat /tmp/evil/cat f` is a measured `allow` with the written word as argv0. No surface records the
-  resolved path, so no scenario can ask the question — the chunk's Open decisions carry the
-  four-rung ladder that would make it askable, and rung 1 (resolve and journal the absolute path) is
-  the cheap one.
+- **Program identity on the term arm.** `shell-term-approval.md` covers arm *selection*. Since 2026-10-16
+  `exec_resolution` journals each stage's resolved path and class, so the question is askable on the term arm.
+  What remains uncovered is the string arm (round 25, a25-3) and anything inside a container (e25-2).
 
 - **`Toolset::Disclosure`, both arms.** `Upfront` vs `Deferred` (+ the `tool_search` tool) is a
   headline context-strategy axis and `Bench::DisclosureSweep` exists to compare them — but **there is

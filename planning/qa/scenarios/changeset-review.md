@@ -260,9 +260,15 @@ The three checks a survey structurally cannot make:
 2. **`:LainNote` on the OLD side anchors to `(side, revision, path, line)` with `side` naming the
    old revision.** Place one on the OLD side and one on the NEW side of the same file at the same
    line number, and confirm the two notes are distinct and come back distinct. Round 7's §4b
-   findings (F30–F39) are all on the note rail and **none of them were driven against two sides**.
+   findings (F30–F39) are all on the note rail and **none of them were driven against two sides**. Notes come
+   back only through `:LainNoteDone` (round 25). When the head is the checked-out branch, NEW is the working file
+   itself, so a note on NEW anchors in the file you can edit.
 3. **`x` marks a hunk, and a changeset has real hunks.** `cockpit-surfaces.md` §4's `x` refusal
    ("nothing on that row") is the sibling failure; here the positive case is reachable.
+4. **A verdict with held notes does not drop them.** Place a note, do not run `:LainNoteDone`, then settle the
+   review with `:LainReviewVerdict approve`. The held note must survive the verdict or the verdict must refuse
+   naming it. Round 25's h25-10: the verdict settles and drops the notes, while `/review-submit` says they are
+   journaled. That mismatch is the finding.
 
 Then the verdict, both policies:
 

@@ -141,7 +141,8 @@ Three things to drive:
    completion carries `lifecycle: failed`, `error: Lain::Tools::Subagent::MalformedAnswer`, and no
    `result` key; the parent's tool call comes back `malformed response from model: a tool call
    written as prose, not an answer (see its malformed_response journal record)`, not delivered as though it were the child's findings.
-   **Live on ollama 0.34.4 with qwen3-coder this child is unreachable** (round 22): ollama's parser
+   No stand-in endpoint is needed: `MalformedAnswer` happened live 7 times in round 25.
+   **Live on ollama 0.34.4 with qwen3-coder this child was unreachable** (round 22; round 25 reached it): ollama's parser
    answers 500 or cuts the stream before lain sees a prose envelope. The decoder now also strips
    tool-call markup from a reply, so a stripped one is the other thing to look for. Drive this item
    with a stand-in endpoint that emits the envelope, and say so.
@@ -322,7 +323,11 @@ What to check, in order:
    nothing parks, and under `bypass` it is still refused), and `<project>/notes.txt` does not exist. A
    `write_file notes.txt` inside the worktree still runs and lands there. A path the command's words do not
    reveal, such as `cd $D && ls`, is left to the approval ladder and is not refused here. A read of a project
-   file by a path tool still parks as `outside_project`, as before.
+   file by a path tool does NOT park as `outside_project`: that is false by design (round 25), because a worker
+   reads the project, its related directories and its own tree (`cli/tool_guard.rb:270-281`).
+   **The only chat paths to a `dev` child are `@dev/skill` and `@dev[/skill]`.** `@dev/qa` inherits the parent's
+   whole conversation (`skill/invocation.rb:29`) and the `qa` scaffold overrides step lists, so name the form you
+   typed and expect the child's steps to drift from the ones you planned.
 7. **A worker is told its worktree.** The worker's first request ends its role instructions with
    `Working directory: <its worktree>`, and does not name the human's checkout as its working directory.
 
@@ -420,9 +425,9 @@ The one surface that renders a single spawn's lineage. Round 17 drove it over on
 live actor has no chat path, see the top of this file).
 
 ```bash
-lain watch                        # no selector -- EmptySelector
-lain watch ''                     # same
-lain watch zzzz                   # a prefix matching nothing
+lain watch                        # a bare `lain watch` is Thor's usage error (round 25), not EmptySelector
+lain watch ''                     # the EmptySelector refusal
+lain watch zzzz                   # a prefix matching nothing; with no --session, or against a live session, waits with `yet (still watching)`
 lain watch <spawn-digest-prefix>  # from §2 or §3
 lain watch <prefix> --session <path>
 ```
@@ -432,7 +437,8 @@ lain watch <prefix> --session <path>
 session: `lain watch bfc36418ae69 --session <file>` rendered
 `[blake3:bfc36418ae69 spawn] fresh/schema spawned from blake3:ff9ca1f05f4a` and its completion, the
 same as the full digest. **A no-match names the file it searched**: `lain watch zzzz --session
-<file>` → `no spawn matched selector "zzzz" in <file's basename>`, exit 1.
+<file>` → `no spawn matched selector "zzzz" in <file's basename>`, exit 1. The `in <file>` refusal comes only
+from a closed session (round 25).
 
 **A finished child is told apart from a killed one.** `lain watch` renders an answered one-shot's
 completion as `(done)` and a stopped one as `(stopped)`, though both journal `lifecycle: stopped`;

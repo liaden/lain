@@ -155,9 +155,10 @@ made the rule explicit and typed:
   Timeline, and only while that prompt is still the head. Anything else — a mid-stream sever, a
   stall, a `/stop`, a ceiling — leaves it stranded.
 
-`counts_absent` above is a *post*-wire failure by construction, so drive the fold from it: sever
-after the terminal frame, read the refusal, then ask something else and confirm one turn carries
-both texts. Then `/rewind 1` before a third ask and confirm the earlier prompt is left out.
+`counts_absent` gives no refusal and no fold: an unterminated stream commits its fragment as a complete answer
+(round 25, d25-2, which needs a ruling), so there is nothing here to fold. Drive the fold from another failure
+after the request was sent: sever after the request, read the refusal, then ask something else and confirm one turn
+carries both texts. Then `/rewind 1` before a third ask and confirm the earlier prompt is left out.
 
 **Every stopped ask says why.** `run_interrupted` carries a `reason` from the closed set
 `interrupted`, `grace_expired`, `stopped`, `ceiling`, `over_window`, `transport`,
@@ -384,7 +385,7 @@ INT, TERM and QUIT and HUP took Ruby's default. HUP is now routed exactly as TER
 recipe: start `lain chat` with a subagent spawn parked on a hanging provider (`inject_e.rb`'s hang mode, or
 a blackhole endpoint for the child), then `kill -HUP <pid>` in one run and `kill -TERM <pid>` in another.
 **PASS, identically for both:** the journal holds the spawn's completion (or an `ending_not_recorded`) and
-then `session_closed`, and the spawn's lease is released (`git worktree list --porcelain` shows no `locked` entry for its checkout).
+then `session_closed`, and the spawn's lease is released (the journal holds an `isolation_lease kind: kept` record for it: a researcher child now gets a `Scratch` lease that is `kept`, not a worktree, so there is no `locked` worktree to look for).
 **Catches E-3 returning:** the HUP run with a `:spawn` record and no completion, or a lease still held
 after the process is gone.
 
@@ -632,7 +633,8 @@ $QA/drive.sh '/ruby [session.read?(File.expand_path("mid.rb")), session.partiall
 $QA/peek.sh 6
 ```
 
-`[false, true]` after step 2; `[true, false]` after step 4. Read `session.read?` only after a
+`[false, true]` after step 2 (it also lags: right after step 2 it read `[false, false]`, so read it after the next
+tool round, round 25); `[true, false]` after step 4. Read `session.read?` only after a
 **later tool round**: right after the ask whose only tool round read the file whole it answered
 `[false, false]`, and after the next tool round `[true, false]` (round 22's C-5). The edit itself is
 permitted either way, so the instrument lags and the behaviour is right.

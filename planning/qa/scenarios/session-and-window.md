@@ -221,7 +221,7 @@ env -u LAIN_NUM_BATCH lain chat --provider ollama ... --prompt hi
 ```
 
 Round 20 confirmed this on the wire from four forks (`num_predict` 4096, `num_batch` 2048,
-`truncate=false`). Every request also carries a top-level `shift=false` since round 24, so a reply that fills
+`truncate=false`). Round 25 reads `num_predict` 16384 on the wire now, not 4096. Every request also carries a top-level `shift=false` since round 24, so a reply that fills
 the window is cut instead of shifted.
 
 `max_tokens` is never the source of a silent zero here: a non-positive `--max_tokens` /
@@ -543,6 +543,14 @@ Verified 2026-09-14: the first exits **1**, no backtrace, ending
 `cannot compare runs under different context pipelines: prune vs unset`; the second **reports**,
 because an unset flag and `default` render the same stages. A table for the first pair is the
 regression; a refusal for the second is too.
+
+### 9c: the bench arm flags
+
+Three more flags select bench arms: `--confine off|classes|reader`, `--judge-facts off|facts|request` and
+`--tripwire off|observe`. An unknown value refuses at launch, exit 1, with no session file and no tmux session. A
+typed `off` writes no key; any other value writes `"arms":{...}` into the header. Until plan card T25 lands the arms
+change nothing, nothing reads `arms` back (`bench variance` ignores it and `--resume` drops it), so a header that
+records an arm is not evidence that the arm ran (round 25, a25-1 and a25-2).
 
 ### What §9 cannot reach
 

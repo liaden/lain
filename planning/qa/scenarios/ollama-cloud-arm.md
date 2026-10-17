@@ -146,7 +146,7 @@ gone, so:
 §3's 128,000-token published window was confirmed by round 17.
 
 **And the wire, since the same round-20 forks read it:** the captured request body carries
-`options={"num_predict"=>4096,"num_batch"=>2048}` `truncate=false` and `shift=false` (a `--max-tokens 40` chat stopped at 40 on
+`options={"num_predict"=>16384,"num_batch"=>2048}` `truncate=false` and `shift=false` (a `--max-tokens 40` chat stopped at 40 on
 ollama.com), and `--max-tokens 0` refuses at construction. A body without `num_predict` is the round-19 defect
 (no generation cap on the ollama wire) back.
 
@@ -218,6 +218,8 @@ Two ways to force it, and say which you used:
 - **A stub endpoint.** An https server (the arm refuses a plaintext base) that answers the first requests with
   429, the header `x-ratelimit-max-concurrent: 1`, `retry-after: 1`, and a body saying too many concurrent
   requests, then 200. Trust its certificate with `SSL_CERT_FILE`, pass `--api-base https://127.0.0.1:<port>`.
+  **A stub on `127.0.0.1` is classed local, so its width is already 1** (round 25, j25-5): items 1, 3 and 4 cannot
+  be shown with a loopback stub. Say so, or bind the stub to a non-loopback address.
   No such stub is checked in. Copy the response shape from `spec/lain/provider/ollama/retry_tap_spec.rb` (the webmock example near line 355): status 429, body `{"error":"too many concurrent requests"}`, headers `x-ratelimit-max-concurrent: 1` (the spec's refusal helper also sends `x-ratelimit-active`, `x-ratelimit-queue-limit` and `x-ratelimit-queued`), then a 200 with `{}`. The same file's `slow down` and `context length exceeded` bodies, with no concurrency header, are the other-reason 429s of item 5.
 
 Read the journal:
@@ -231,7 +233,8 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
 1. **One `admission_narrowed` record** with `from_width: 3`, `to_width: 1` and the header values as sent
    (`nil` where a header was absent), written once per refusal that moved the width.
 2. **The retried request is sent once by faraday-retry**, not twice: the stub's request count for that call
-   is the original plus 1 retry, with a `provider_retry` record per retry.
+   is the original plus 1 retry. The `provider_retry` record per retry that this reduction prints never appears:
+   it is Journalable and never journaled (round 25, j25-6), so count retries at the stub.
 3. **Narrowing never widens.** A later 429 reporting `max-concurrent: 3` leaves the width at 1 and writes no
    second record.
 4. **An explicit setting is the ceiling.** With `LAIN_OLLAMA_CLOUD_CONCURRENCY=2` and a server reporting
@@ -240,7 +243,8 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
    context-length body) leaves the width alone and raises as before.
 6. **`LAIN_PROVIDER_CONCURRENCY=0` ignores it**: a concurrency 429 raises nothing new and admission stays
    unbounded.
-7. **After the retries are spent** (5) the request fails with the 429 named, as it did before.
+7. **After the retries are spent** (5) the request fails with an error that names the server's message (for example `too many concurrent requests`),
+   not "429".
    *Wrong looks like:* a width that stays 3 after a refusal that named 1, a narrowing record on every retry,
    or a width that grows back.
 

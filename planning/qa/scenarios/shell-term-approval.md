@@ -165,29 +165,32 @@ T7's dedicated `Telemetry::ShellArm` record (§8, driven in full at `shell-terms
 arm *directly* on every gated call, at every approval level. Two independent accounts of one
 call, which is what makes §11's cross-check worth doing.
 
+**`exit 3` is retired as the arm oracle (round 25).** Shell builtins abstain since `159a5ea0`, so `exit 3` takes the
+string arm and exits with status 3 on a healthy tree. Read the arm off the `shell_arm` record (§8, `shell-terms.md`
+§6), not off the exit status. The table and the paragraphs below describe the old term-arm behaviour and are kept for
+the history; where they say 127 is the pass, 3 is the pass now.
+
 ```
 you> run: exit 3
 ```
 
-**Measured, both arms, on this box:**
+**Measured, both arms, before `159a5ea0`:**
 
 | arm | what `Tools::Bash.render_output` produces |
 |---|---|
 | term (`Shell::Pipeline`) | `exit status: 127` and `lain: exit: command not found` on stderr |
 | string (`sh -c`) | `exit status: 3`, both streams empty |
 
-`Shell::Verdict.new.call("exit 3")` is an **allow** carrying `[["exit", "3"]]`, so a healthy tree
-answers **127**. **A `3` here means the term arm was not taken** — which is either a wiring
-regression or a verdict that stopped allowing, and §2 tells you which.
+`Shell::Verdict.new.call("exit 3")` was an **allow** carrying `[["exit", "3"]]`, so a healthy tree answered **127**.
+It abstains now (see above), so a `3` is the healthy answer and says nothing about the term arm.
 
 **What wrong looks like:** this is the one section whose *pass* is the surprising answer. `127` and
 `command not found` read like a broken sandbox and are the correct result; a driver who "fixes" it
 by concluding the tree is misconfigured has thrown away the instrument the rest of the scenario
 uses. `pipeline.rb:58-65` states the divergence as deliberate and says there is a spec for it.
 
-Keep `exit 3` as the arm probe for every later section. Do **not** substitute `cd /tmp` or
-`umask` — both also allow, but whether a binary for them exists on disk is a property of *this
-box*, and the point of an oracle is that it does not depend on one.
+Do not keep `exit 3` as the arm probe for later sections (round 25: it abstains now). Use the `shell_arm` record.
+`cd /tmp` and `umask` are builtins too and abstain for the same reason, so they are no substitute.
 
 ## 1 — The parse boundary: what `Shell::Parse` accepts, and what it refuses to have parsed
 
@@ -261,9 +264,10 @@ $QA/drive.sh '/ruby Lain::Shell::Verdict.new.call("cat README.md | head -20").re
 | `echo "hello world"` | abstain | `node kinds this layer cannot read literally: "string"` |
 | `cat ~/.ssh/id_rsa` | abstain | `words a shell would expand: "~/.ssh/id_rsa"` |
 | `cat *.pem` | abstain | `words a shell would expand: "*.pem"` |
-| `echo a && echo b` | abstain | `combinators no argv can express: "&&"; the stages are joined by something other than pipes: stages=2 pipes=0 separators=1` |
-| `ls; rm -rf /tmp/x` | abstain | same shape, over `";"` |
-| a two-line command (newline between) | abstain | `the stages are joined by something other than pipes: stages=2 pipes=0 separators=0` |
+| `echo a && echo b` | **allow** (round 25) | a 2-pipeline term, run in order, each only if the one before succeeded |
+| `ls; rm -rf /tmp/x` | abstain | `joined by something other than pipes and &&: stages=2 joins=0 ...` |
+| a two-line command (newline between) | abstain | the same: `joined by something other than pipes and &&: stages=2 joins=0 ...` |
+| `exit 3` | abstain (since `159a5ea0`) | `shell builtins, which only a shell can run` |
 | `rm x $` | abstain | `bytes nothing accounted for, at offsets: "5"` |
 | `""` | abstain | `there is no command to run` |
 | `echo` + 5000 bytes | abstain | `nothing was parsed: "too_long"` |
@@ -273,8 +277,8 @@ Every abstention reason is prefixed `not fully understood -- `, and every allow'
 
 **The newline row is the one to drive deliberately.** tree-sitter-bash lexes a newline as
 whitespace, so there is **no separator node for it** — the abstention comes from *counting*
-(`stages == pipes + 1`), not from reading. Type a real two-line command at `you>` and confirm the
-`separators=0` in the reason. If that arithmetic ever stops firing, `Open3.pipeline` is handed
+(the stage count against the joins), not from reading. Type a real two-line command at `you>` and confirm the
+`joins=0` in the reason (it read `separators=0` before round 25). If that arithmetic ever stops firing, `Open3.pipeline` is handed
 `[["echo","hi"],["rm","-rf","/tmp/x"]]` and runs `echo hi | rm -rf /tmp/x`. That is the highest-value
 single check in this document.
 
@@ -284,7 +288,7 @@ single check in this document.
 $QA/drive.sh '/ruby Lain::Shell::Verdict::PROGRAM_RUNNERS.include?("git")' 6 30 >/dev/null; $QA/peek.sh 6
 ```
 
-Must be `true`; `PROGRAM_RUNNERS` has **92** entries as measured. `git` sits in the option-directed
+Must be `true`; `PROGRAM_RUNNERS` has **95** entries as measured in round 25 (it was 92). `git` sits in the option-directed
 family for a reason recorded on the constant: `-c core.fsmonitor=id`, `-c include.path=…` and
 `-c alias.x=!sh` all execute, and `git status --short` is structurally indistinguishable from
 `ls -la`.
@@ -360,7 +364,7 @@ you> run: echo "hello world"
 | typed | verdict | expected arm | how you know |
 |---|---|---|---|
 | `cat README.md \| head -2` | allow | term | output is `hello` / `world`, exit status 0 — but this row alone does **not** discriminate; both arms produce it |
-| `exit 3` | allow | term | `exit status: 127`, `lain: exit: command not found` |
+| `exit 3` | **abstain** since `159a5ea0` (shell builtins, which only a shell can run) | string | `exit status: 3`; confirm with the `shell_arm` record, not the status (round 25) |
 | `echo "hello world"` | abstain | string | `exit status: 0`, stdout `hello world` — the quotes are consumed by `sh`, which is the tell that a shell saw it |
 
 **The middle row is the assertion; the outer two are controls.** `method.md`'s list of three ways a
@@ -432,7 +436,9 @@ tr.call(Lain::Effect::ToolCall.new(name: "bash", input: { "command" => C, "cwd" 
 (The triage rung needs no `confinement:`; that keyword confines `ComposedTerm` at the rules rung, and
 `shell-terms.md` §4 is where omitting it silently abstains everything. Round 20 found that `root:` is not
 the confinement's keyword either: it anchors the `Sensitivity` rules, and `confinement:` takes the
-`Approval::Root`.) Measured 2026-08-27 with a
+`Approval::Root`.) **The constructed rung above has no `policy:`** (round 25), so `cat ~/.ssh/id_qa` abstains there
+while production denies it; pass the session's policy if the row you want is the production one. Measured
+2026-08-27 with a
 real `Sensitivity` anchored on a scratch `HOME` holding `.ssh/id_qa` and `.netrc`:
 
 | command | rung verdict | the note in the reason |
@@ -697,8 +703,10 @@ When an **automatically approved** call's result carries a region, `Middleware::
    **count** only, never bytes.
 
 Drive it: put an `API_KEY=` line in a file under `$T`, get `cat` of it auto-approved (it will be,
-if the file is ordinary and the predicate above passes — use a file the model itself writes so
-the pre-check sees it empty), then read three things. The model's `tool_result` must be the
+if the file is ordinary and the predicate above passes), then read three things. A file the model itself writes
+cannot reach this scan: the content check reads the file at approval, so it sees the line. Use a time-of-check
+race instead (round 25): a bounded writer that flips the file between a clean line and an `API_KEY=` line, with a
+`trap` on the line after the spawn, so the file is clean at approval and holds the key when the command reads it. The model's `tool_result` must be the
 refusal and not the bytes. The **retry** must reach a human: the same command typed again
 abstains at the rules rung and parks, where before it would have been
 auto-approved a second time. **Which reason the rules rung gives depends on the level** (round 22): under
@@ -889,12 +897,10 @@ the round should run under the launch default.
 - **Whether any of it is safe.** `Shell::Verdict`'s own terminal constant says it: *"an allow claims
   the command is literal and fully understood, never that it is safe"*. Everything here is a check
   on a decision procedure, not on an outcome.
-- **Program identity.** `PATH` is inherited and uncontrolled (`WorkerEnv` "merges onto the ENV it
-  already inherited and never clears ENV first"), and `execvp` honours its order — a shim directory
-  prepended to `PATH` is run by both arms. `cat /tmp/evil/cat f` is a measured **allow**. Nothing in
-  the parse layer can see this and no section above tests it; the chunk's own Open decisions carry
-  the four-rung ladder that would (resolve and record → resolve and constrain → verify a digest →
-  control `PATH`), and rung 1 is the cheap one.
+- **Program identity.** Stale since the confinement plan's T8 and T13: `exec_resolution` now records each
+  stage's resolved path and class (round 25). The parse layer still cannot see a shim (`PATH` is inherited and
+  `execvp` honours its order), but the record can. What no section here tests is the string arm, where nearly
+  every call this model makes lands (a25-3), and the class the rule trusts (e25-1).
 - **Aliases and shell functions.** Measured and **not a gap**: non-interactive shells have
   `expand_aliases` off, and an alias defined and used within one parse unit is not expanded
   regardless. All three spellings were driven with `alias cat='echo PWNED'` in play and each printed

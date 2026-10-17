@@ -45,6 +45,8 @@ RUBY
 lain trust --yes                                                                 # config.rb runs only once trusted
 ```
 
+On a box whose default branch is `master`, run `git branch -m main` before §12b (round 25).
+
 (Round 17's corrections: the `cat >` above failed with no `.lain/` to write into, and §10's red step
 failed "Author identity unknown" under the sandbox's redirected `XDG_CONFIG_HOME`, which hides the
 operator's git identity — `qa-sandbox.sh` now seeds one, and a subject repository should set its own.)
@@ -358,7 +360,8 @@ itself, and with none the tools still exist). Ask for each in turn, and read the
 
 One epic, one stage, re-run under each gate policy (`gate :research, <policy>` in the `epics` block, then `lain trust --yes`). Read the journaled `gate_decision`
 after each and check **both** `answered_by` (who decided) and `policy` (how) — they are independent
-axes and a surface that collapses them cannot tell a human's approval from a 4B model's.
+axes and a surface that collapses them cannot tell a human's approval from a 4B model's. The submit options are
+under `lain epic help submit`; `lain help epic submit` prints the command list instead (round 25).
 
 ```bash
 peek(){ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
@@ -477,7 +480,7 @@ partition an approval? Drive the case the old rule got wrong:
 
 ```bash
 printf 'epics do\n  gate :research, :interactive\nend\n' > .lain/config.rb && lain trust --yes
-lain epic submit research          # then DENY it at the gate
+lain epic submit research          # then DENY it at the gate (a resubmit with the same bytes answers `already approved`: change research.md first, round 25)
 lain epic queue                    # nothing parked -- the stage is drained
 lain epic submit epic_plan         # MUST refuse: drained, but never approved
 ```
@@ -485,6 +488,10 @@ lain epic submit epic_plan         # MUST refuse: drained, but never approved
 The refusal names both conditions, and names the stages under each: still-parked stages and
 never-approved stages are listed apart, because the remedies differ (answer them, versus submit
 and approve again). Then re-submit `research`, approve it, and confirm `epic_plan` opens.
+
+**Add a check: a later-stage approval cannot step over an earlier denial.** With `research` denied, park an
+`epic_plan` gate (from another route), then `lain epic approve <the epic_plan digest>`. It must refuse, naming the
+denied earlier stage. Round 25's h25-1: today it advances the epic over the denial, which is the finding.
 
 **And a denied resubmission withdraws a standing approval.** Approve `research`, submit it again,
 deny it, and `epic_plan` must close again — approval is the *newest terminal decision* on the
@@ -699,7 +706,8 @@ What to watch for:
   and a path a known writer (`tee`, `cp`, `mv`, `sed -i`) writes are refused when they land outside its
   worktree, naming the worktree, before any approval is asked. Drive it: have a worker `write_file` an
   absolute path in the human's checkout and run `cd <checkout> && ls`; both are refused, even under `bypass`,
-  and the file does not exist. A script or build tool the rules do not know, and a command whose paths cannot be
+  and the file does not exist. The ENV-1 probe can be driven through the issue's plan text (round 25): write the
+  `cd <checkout> && ls` step into the plan the worker is given, since this model never types it unprompted. A script or build tool the rules do not know, and a command whose paths cannot be
   named (an expansion such as `$D`), are left to the approval ladder, so this is a guard on named writes and not
   a sandbox. Nothing reaches `epic/<slug>` before that issue's implementation gate;
 - **each worker is told its own place.** The first request of an issue's orchestrator, test engineer and dev
@@ -869,7 +877,9 @@ and that moving the `epic/<slug>` tip and finishing again is treated as a **new*
 
 The trial's project had no remote and no forge, so the only finish, a pull request, was unreachable.
 `--local` merges `epic/<slug>` into `main` in this repository and pushes nothing. It needs no GitHub repo, so
-drive it on the throwaway project of §0 once every issue has landed (the §12 `land` loop):
+drive it on the throwaway project of §0 once every issue has landed (the §12 `land` loop). `done` comes from the
+journal, so the merge needs every issue really landed: a hand-edited `[x]` does not override a journaled
+`in_flight` (round 25). On a box whose default branch is `master`, run `git branch -m main` first:
 
 ```bash
 git remote -v                         # prints nothing: there is no remote

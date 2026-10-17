@@ -25,7 +25,7 @@ HUD's in-flight segment, the stall limit on a long tool call, the transcript's e
 files-written line, notes typed mid-run, `lain://epic` and `lain epic show`, and the cockpit's nvim,
 tmux and transcript behavior under a real user config.
 
-**Cost:** spends real cloud quota. Budget about 150 completions for the whole journey (round 23 counted about 147: §6.3 alone is about 60 researcher completions), most of them
+**Cost:** spends real cloud quota. Budget about 150 completions for the whole journey (round 23 counted about 147; round 25 spent about 75 cloud completions, 60 of them §6.3's researcher), most of them
 the `/research-epic` interview and its two researchers. Sections 1, 2 and 7 cost nothing or one
 completion each and can be run alone. Run it on the free plan only if you want to see the width
 narrow (§6.6); the default width is 3 and a free plan allows 1.
@@ -96,7 +96,7 @@ Checks:
    prints the value. *Wrong looks like:* a chat pane that dies with status 127 or a bare "key
    missing" and no hint.
 5. **The cockpit has what it needs at start.** In the nvim pane `:echo exists(':LainStart')` is
-   `2` and the buffer is `lain-cockpit://start`. `tmux -L "$QA_SOCK" show-options -t lain mouse` is `on`, and
+   `2` and the cockpit's windows are `lain://journal`, `timeline`, `inbox` and `request`; `lain-cockpit://start` is loaded but not shown. `tmux -L "$QA_SOCK" show-options -t lain mouse` is `on`, and
    `tmux -L "$QA_SOCK" show-options -s extended-keys` is `on` (or `always`). A fresh server reads
    `extended-keys` off, so the first launch prints a one-time notice that lain turned it on
    server-wide; that notice is expected, not a finding.
@@ -131,7 +131,7 @@ Checks:
    (`in_flight` in `state.json` reads `{"kind":"tool","tools":["grep"]}`, never `"tools":[]`), including a parked call
    (`tool:bash` while the approval waits). And a run that is interrupted clears the slot: after `/stop` mid model call,
    after Ctrl-C then `s`, after `s` at a parked `ask_human`, and after a transport failure (point `--api-base` at a
-   closed port) `state.json`'s `in_flight` is null and the idle `you>` carries neither `model:Ns` nor `tool:`.
+   closed port, with `--provider ollama`: the cloud arm refuses a non-https base at launch, by name) `state.json`'s `in_flight` is null and the idle `you>` carries neither `model:Ns` nor `tool:`.
    *Wrong looks like:* a HUD that reads the same for a 30 second model call as for idle. A redraw
    faster than once a second is a finding too (a redraw per tool call or token would flood the pane).
 4. **Observation, not a check: `fleet:N`.** The trial read `fleet:0` after two subagents ran. Counting
@@ -279,8 +279,7 @@ Checks:
 
 1. **The chat stays alive during the search** (run it over `slow/`, which lasts long enough to watch). The HUD shows `tool:grep` and the chat pane keeps
    repainting; typing at the input pane echoes. The journal keeps growing or at least the
-   `ps`-visible process stays responsive: `kill -0` and a `/status` typed at the prompt answer
-   inside 2 seconds.
+   `ps`-visible process stays responsive: `kill -0` answers inside 2 seconds, and a `/status` typed at the prompt is held at once as the next prompt (it is not answered mid-search).
    *Wrong looks like:* the trial. The whole process stopped answering for 105 seconds on a 40
    GB tree and for more than 2 minutes on the 171 GB one, and ignored SIGTERM.
 2. **Ignored files are not walked.** Run this one over `sibling/`. The result lists no path under `sibling/target/`. The 30,000
@@ -299,7 +298,7 @@ Checks:
    `lain trust`, restart: `notes/a.md` is found. Delete `scratch` and
    `frugirl/.lain/config.rb` before §6.
 5. **A search can be stopped.** Start the grep over `$QA/parent/slow` and, while `tool:grep` shows,
-   send SIGTERM to the chat process (`kill -TERM <pid>`; this is the primary action). **One SIGTERM opens the documented 60 second grace**, not an
+   send SIGTERM to the chat process (`kill -TERM <pid>`; this is the primary action). On a warm cache the walk lasts 1 to 12 s, so a SIGTERM inside it needs a larger tree. Watch for the `turn` record carrying the `grep` `tool_use`, not the string `"name":"grep"`, which also matches the tool list in `request_sent`. **One SIGTERM opens the documented 60 second grace**, not an
    instant exit (`closing in 60s`, with `[c] cancel [w] wait longer [r] respond then exit [s] stop this ask` in the input pane); send a second
    SIGTERM, or take `s`, to see the stop. The chat then closes within about 1 second, `pgrep -af 'git .*ls-files'` is empty a few seconds later, and no
    `[git] <defunct>` is left under the chat's pid. Pressing `/stop` mid-search is a second,
@@ -320,7 +319,7 @@ In the chat, ask for a researcher on the sibling repo (the plain `/skill` form r
 > Spawn a researcher on `<$QA/parent/sibling>` to find every function in `src/`, read at least 40
 > of the files one by one, and report the names.
 
-Keep `--windows` on (`lain up ... --socket "$QA_SOCK" --windows`) for this section.
+Keep `--windows` on (`lain up ... --socket "$QA_SOCK" -- --windows`) for this section. It is a chat flag; before `--`, `lain up` answers `Unknown switches`.
 
 Checks:
 
@@ -364,7 +363,7 @@ Checks:
 9. **A related directory is in a child's scope as a tree (2026-10-09 trial fixes).** With `sensitivity related: %w[<$QA>/parent/sibling]` set (§4.8),
    ask a researcher to `list_files` and then `glob` `**/*.rs` on `<$QA>/parent/sibling` itself. Neither parks as
    `outside_project`; the trial's researchers were parked on the related root and could read only single files.
-   A path beside it, `<$QA>/parent/slow`, still parks.
+   A path beside it, `<$QA>/parent/slow`, still parks under `ask`. Under `auto` the listing goes to the judge, which denied it with no human surface (round 25, k25-1). State which approval level the step runs at.
 
 10. **Frugirl round 4 checks (default `auto`, relaunched without `--approval`).** Record the judge's latency
     per call and any approve that was wrong, and count the human prompts for the whole journey against
@@ -428,7 +427,7 @@ Checks:
 6. **`epic_submit` reaches the gate in-process.** The model calls `epic_submit` with
    `stage: research`. With the default (interactive) policy a question arrives at `lain://inbox`.
    Approve it (an approval cannot carry a reason: any reply but the bare words is recorded `unrecognised` and denies, and the
-   question says so). The tool result reads `approved <digest> by policy interactive`, the
+   question says so). The tool result reads `research completed, epic_plan started` (re-submitting an approved artifact reads `already approved ... nothing was decided again`), the
    session file holds the stage record, and `lain epic queue` from a spare shell shows nothing
    pending afterwards. The chat was never blocked: the HUD and a sibling prompt kept updating
    while the gate waited.
@@ -461,7 +460,7 @@ Checks:
     lines (30 KB or more). The run finishes: no `stalled stream` error, `research.md` exists under the epic home, and
     the turn that carried the call is in the journal. A cloud deployment's stall limit is 115s and a local
     ollama's 295s, 5 under each request timeout. **Force a stall to read the message:** launch with
-    `LAIN_STREAM_STALL_TIMEOUT=3` and repeat. The ask ends with `stalled stream: no bytes for N.Ns, past the 3s
+    `LAIN_STREAM_STALL_TIMEOUT=3` set by `tmux set-environment -g` before `lain up` (exported in the shell it does not reach the chat pane, round 25 k25-3) and repeat. The ask ends with `stalled stream: no bytes for N.Ns, past the 3s
     stream_stall_timeout, with the connection still open` and a second line `set LAIN_STREAM_STALL_TIMEOUT to wait longer
     (in seconds; 0 turns the stall check off)`. Unset it again.
     *Wrong looks like:* the trial, 3 of 3 runs ending `stalled_stream` at the document write with nothing on disk, or a
