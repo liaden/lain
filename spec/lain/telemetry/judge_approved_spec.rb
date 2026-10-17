@@ -6,8 +6,4 @@ RSpec.describe Lain::Telemetry::JudgeApproved do
   it "journals under its own type with the call" do
     expect(event.to_journal).to include("type" => "judge_approved", "call" => "bash({})")
   end
-
-  it "is shareable across Ractors, like every other journaled value" do
-    expect(event).to be_deeply_frozen
-  end
 end

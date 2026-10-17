@@ -10,10 +10,9 @@ RSpec.describe Lain::Telemetry::MemoryRoot do
     expect(event.root).to eq("blake3:root")
   end
 
-  it "is a frozen value object with structural equality" do
+  it "has structural equality" do
     twin = described_class.new(turn_digest: "blake3:turn", root: "blake3:root")
     expect(event).to eq(twin)
-    expect(event).to be_deeply_frozen
     expect(event.hash).to eq(twin.hash)
   end
 

@@ -8,8 +8,4 @@ RSpec.describe Lain::Telemetry::TestLayoutAbsent do
   it "journals as test_layout_absent" do
     expect(record.to_journal["type"]).to eq("test_layout_absent")
   end
-
-  it "is deeply frozen" do
-    expect(record).to be_deeply_frozen
-  end
 end

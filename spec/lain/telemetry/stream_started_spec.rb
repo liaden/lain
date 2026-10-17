@@ -10,10 +10,9 @@ RSpec.describe Lain::Telemetry::StreamStarted do
     expect(event.digest).to eq("blake3:req")
   end
 
-  it "is a frozen value object with structural equality" do
+  it "has structural equality" do
     twin = described_class.new(digest: "blake3:req")
     expect(event).to eq(twin)
-    expect(event).to be_deeply_frozen
     expect(event.hash).to eq(twin.hash)
   end
 

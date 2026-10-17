@@ -10,10 +10,9 @@ RSpec.describe Lain::Telemetry::WriteRefused do
     expect(event.pattern).to eq("aws access key id")
   end
 
-  it "is a frozen value object with structural equality" do
+  it "has structural equality" do
     twin = described_class.new(tool_use_id: "tu_1", pattern: "aws access key id")
     expect(event).to eq(twin)
-    expect(event).to be_deeply_frozen
     expect(event.hash).to eq(twin.hash)
   end
 

@@ -18,8 +18,4 @@ RSpec.describe Lain::Telemetry::ResendDispatched do
     expect { described_class.new(digest: nil) }
       .to raise_error(ArgumentError, /must name the resent request it dispatched, got nil/)
   end
-
-  it "is deeply frozen and Ractor-shareable" do
-    expect(event).to be_deeply_frozen
-  end
 end

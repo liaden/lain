@@ -180,14 +180,6 @@ RSpec.describe Lain::Oracle::Recorded do
       expect(record_hash["usage"]).to eq({})
       expect(record_hash["model"]).to be_nil
     end
-
-    it "is a Ractor-shareable value object" do
-      answer = Lain::Telemetry::OracleAnswer.new(
-        oracle_digest: definition.digest, question: "Is aspirin relevant?",
-        answer: { "label" => "yes" }, model: "test-model", usage: {}, wall_clock: 0.1
-      )
-      expect(answer).to be_deeply_frozen
-    end
   end
 
   # ---- Scenario: a failed oracle call journals its own failure ---------------

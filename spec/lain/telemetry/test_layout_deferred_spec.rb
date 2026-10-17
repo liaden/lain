@@ -10,8 +10,4 @@ RSpec.describe Lain::Telemetry::TestLayoutDeferred do
   it "journals as test_layout_deferred" do
     expect(record.to_journal["type"]).to eq("test_layout_deferred")
   end
-
-  it "is deeply frozen" do
-    expect(record).to be_deeply_frozen
-  end
 end

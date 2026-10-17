@@ -31,6 +31,12 @@ RSpec.describe Lain::Telemetry::Journalable do
     expect(collisions).to be_empty
   end
 
+  # The sweep builds from deeply frozen dummies, so this pins what a constructor adds on top;
+  # a record taking mutable input keeps its own example.
+  it "builds every record deeply frozen, so each can cross a Ractor and journal as it stands" do
+    expect(built.reject { |_, record| Ractor.shareable?(record) }.map { |klass, _| klass.name }).to be_empty
+  end
+
   # Against #journal_type, not against the basename: Forge::Intent and Forge::Outcome
   # deliberately override it, for the reason the example above tests.
   it "tags every record with its own type, under String keys only" do

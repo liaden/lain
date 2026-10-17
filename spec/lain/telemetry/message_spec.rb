@@ -31,9 +31,4 @@ RSpec.describe Lain::Telemetry::Message do
     expect(record.to).to be_nil
     expect(record.journal_type).to eq("message")
   end
-
-  it "is a frozen, Ractor-shareable value" do
-    record = described_class.from_event(event)
-    expect(record).to be_deeply_frozen
-  end
 end

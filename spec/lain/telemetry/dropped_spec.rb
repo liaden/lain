@@ -10,10 +10,6 @@ RSpec.describe Lain::Telemetry::Dropped do
     expect { described_class.new(count: -1) }.to raise_error(ArgumentError)
   end
 
-  it "is a frozen value object" do
-    expect(described_class.new(count: 1)).to be_deeply_frozen
-  end
-
   it "journals as a dropped marker" do
     expect(described_class.new(count: 5).to_journal).to eq("type" => "dropped", "count" => 5)
   end

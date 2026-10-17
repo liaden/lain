@@ -89,8 +89,4 @@ RSpec.describe Lain::Telemetry::ChildProgress do
 
     expect(journal).to include({ "type" => "child_progress", "spawn" => "blake3:spawn", "turns" => 1 })
   end
-
-  it "is deeply frozen, as every value on the record is" do
-    expect(described_class.new(spawn: "blake3:spawn", role: "dev", turns: 0)).to be_deeply_frozen
-  end
 end

@@ -43,8 +43,4 @@ RSpec.describe Lain::Epic::ReviewOpened do
   it "reads a wire generation as the integer it keys on" do
     expect(opened(generation: "3").generation).to eq(3)
   end
-
-  it "is a deeply frozen, shareable value" do
-    expect(opened).to be_deeply_frozen
-  end
 end
