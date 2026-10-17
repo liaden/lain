@@ -243,6 +243,63 @@ RSpec.describe Lain::Survey::Chunker::Code do
       end
     RUBY
 
+    # The disclosed cost, pinned so it cannot change in silence. A content key
+    # is position-independent, so at the identity granularity an insertion above
+    # costs the unit it landed in and nothing else. Coalescing merges by
+    # POSITION, so one inserted line re-draws which units merge and the loss
+    # spreads.
+    #
+    # The subject is a small class of distinct methods because the `&` this
+    # helper compares key sets with collapses duplicate keys, so a file holding
+    # several units with identical bodies would read as a larger loss for
+    # reasons that have nothing to do with the insertion.
+    let(:command_source) do
+      <<~RUBY
+        # frozen_string_literal: true
+
+        module Lain
+          module Command
+            class Goal
+              def initialize(driver:)
+                @driver = driver
+                freeze
+              end
+
+              def name = "goal"
+
+              def usage = "/goal <objective> | off"
+
+              def call(args, env)
+                objective = args.strip
+                return report if objective.empty?
+                return turn_off if objective.casecmp?("off")
+
+                @driver.start(objective, session: env.agent.session)
+                confirm(objective)
+              end
+
+              def confirm(objective)
+                return "unavailable" unless @driver.active?
+
+                "goal set: \#{objective}"
+              end
+
+              def turn_off
+                return "no standing goal" unless @driver.active?
+
+                @driver.stop
+                "goal off"
+              end
+
+              def report
+                @driver.active? ? "goal: \#{@driver.goal}" : "no standing goal"
+              end
+            end
+          end
+        end
+      RUBY
+    end
+
     it "moves one key when one method of a file of ordinary methods is edited" do
       before = described_class.new.call(path: "wide.rb", source: wide_methods)
       after = described_class.new.call(path: "wide.rb", source: wide_methods.sub("third = 3", "third = 33"))
@@ -253,20 +310,6 @@ RSpec.describe Lain::Survey::Chunker::Code do
       expect(moved).to eq(1)
     end
 
-    # The disclosed cost, pinned so it cannot change in silence. A content key
-    # is position-independent, so at the identity granularity an insertion above
-    # costs the unit it landed in and nothing else. Coalescing merges by
-    # POSITION, so one inserted line re-draws which units merge and the loss
-    # spreads. Measured on this repository: `cli/command/goal.rb` loses 2 of 6
-    # where the identity loses 1 of 11; `finding.rb` 2 of 14 against 1 of 32;
-    # `session.rb` 1 of 21 against 1 of 29.
-    #
-    # `cli/command/goal.rb` is the subject because a file has to be small,
-    # real, and free of duplicate units for the figure to mean anything: the
-    # `&` this helper compares key sets with collapses duplicate keys, so a
-    # file holding several commands with identical one-line bodies (`def
-    # initialize = freeze`) would read as a larger loss for reasons that have
-    # nothing to do with the insertion.
     def keys_lost(chunker, path, source)
       before = chunker.call(path:, source:)
       after = chunker.call(path:, source: "# a new line\n#{source}")
@@ -274,18 +317,16 @@ RSpec.describe Lain::Survey::Chunker::Code do
     end
 
     it "costs exactly one key to insert a line at the top, before coalescing" do
-      source = File.read(self.class.repo_file("lib/lain/cli/command/goal.rb"), encoding: Encoding::UTF_8)
       identity = described_class.new(granularity: Lain::Survey::Chunker::Granularity.new(minimum: 1))
 
-      expect(keys_lost(identity, "goal.rb", source)).to eq(1)
+      expect(keys_lost(identity, "goal.rb", command_source)).to eq(1)
     end
 
     it "costs more than that once units are merged, because merging is positional" do
-      source = File.read(self.class.repo_file("lib/lain/cli/command/goal.rb"), encoding: Encoding::UTF_8)
       identity = described_class.new(granularity: Lain::Survey::Chunker::Granularity.new(minimum: 1))
 
-      expect(keys_lost(described_class.new, "goal.rb", source))
-        .to be > keys_lost(identity, "goal.rb", source)
+      expect(keys_lost(described_class.new, "goal.rb", command_source))
+        .to be > keys_lost(identity, "goal.rb", command_source)
     end
 
     it "can lose every key in a small file to a one-line insertion at the top" do
