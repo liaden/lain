@@ -2057,6 +2057,13 @@ XDG path relative, which put machine state back inside the user's repository)
    boundaries on every route, and the round's LOW to LOW-MED items with a fix in reach. 62 cards, panel-reviewed;
    T50 to T60 wait for item 59.
 
+62. **Planned (2026-10-17)**: `planning/specs/idle-compaction.md`, CAC-5 made usable on the chat path: the cut is
+   committed while the human is away (cold or presumed cold past the TTL, a 2-minute floor for a provider with no
+   TTL, judged once per head) so the next line renders through the held cut with no summarizer wait;
+   `Compaction::Prepared` deleted, since a hold keyed on the exact head can never match after the prompt lands;
+   `--compact-schedule idle|turn` as a bench arm with `idle` the default, recorded in the header and guarded by
+   `bench variance`; 2 records, `compaction_prepared` and `compaction_applied`, and 3 Compare columns. 10 cards, panel-reviewed.
+
 ## Map of the documents
 
 - **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
