@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "json"
-require "event_stream_parser"
-
 module Lain
   module SessionRecord
     # Recovers a paid-for-but-uncommitted response from the response WAL when a
@@ -43,28 +40,19 @@ module Lain
     # prompt -- that old answer would commit onto a head no longer holding the
     # question.
     #
-    # == Reassembly reuses the accumulator, not the transport
+    # == Reassembly, and an answer it cannot find
     #
-    # A complete frame holds the EXACT bytes {Provider::Anthropic::Transport}
-    # teed off the wire -- raw SSE lines, verbatim.
-    # `EventStreamParser::Parser` is the very parser class the live streaming
-    # path drives; it is pure text, so feeding it one recorded blob in a single
-    # `#feed` call is indistinguishable to it from many small chunks off a wire.
-    # The events go straight into {Provider::Anthropic::StreamAssembler}, the
-    # SAME block-preserving accumulator a live call uses, so a recovered
-    # {Response} is exactly what the original call would have produced -- not a
-    # second, parallel parser.
-    #
-    # A frame the Reader marks complete cannot hold an in-band SSE error event:
-    # {Provider::HTTP::Streaming::ErrorHandling} raises on one, which unwinds
-    # {Provider::Anthropic::Transport#stream} before it ever reaches
-    # `frame.close(complete: true)`. So there is no error-event branch to
-    # reproduce here.
+    # The frame is rebuilt by {Provider::Reassembly}, with the decoder of the
+    # provider whose wire the frame header names, so a recovered {Response} is
+    # what the original call would have produced. A complete frame that
+    # reassembles to no content, or cannot be decoded at all, is {Unreadable},
+    # never a recovery: an empty assistant turn committed as "recovered" hides
+    # the loss it reports.
     #
     # == What this class does not do
     #
     # It never touches a file and never opens a socket: {#call} is a pure
-    # function of the three ducks it is handed, and a {Recovered} commits onto
+    # function of the four ducks it is handed, and a {Recovered} commits onto
     # the Timeline it was GIVEN, handing the caller a NEW one. Writing that back
     # to disk is {CLI::Resume}'s job.
     class Salvage
@@ -114,6 +102,27 @@ module Lain
         end
       end
 
+      # A complete frame that yielded no answer: it reassembled to no content,
+      # or could not be reassembled at all. Committing it would land an empty
+      # assistant turn and call it recovered, and raising would stop the
+      # resume that asked, so nothing is committed and the notice names the
+      # frame and the `reason` for a reader to inspect.
+      Unreadable = Data.define(:request_digest, :wire, :bytes, :reason, :corruption) do
+        def recovered? = false
+
+        def notice
+          base = "request #{request_digest}: the response log held no answer (#{frame}: #{reason}); " \
+                 "not recovered -- re-ask if you still need it"
+          corruption ? "#{base}; #{corruption}" : base
+        end
+
+        private
+
+        def frame
+          wire.nil? ? "a complete frame of #{bytes} bytes" : "a complete #{wire} frame of #{bytes} bytes"
+        end
+      end
+
       # A frame that never finished -- or never arrived at all (`bytes` is 0
       # when nothing matching the digest reached the WAL before the crash).
       # Surfaced as provenance only; a caller must not commit it.
@@ -133,24 +142,28 @@ module Lain
       #   write order. Pass the TOLERANT duck ({Provider::ResponseWal#salvageable_frames}):
       #   a corrupt region elsewhere must surface as a {Provider::ResponseWal::Reader::Corrupt}
       #   marker to be reported, never a raise that aborts recovery of a clean
-      #   frame beyond it. Real frames answer #request_digest/#bytes/#complete?;
+      #   frame beyond it. Real frames answer #request_digest/#bytes/#complete?/#wire;
       #   a Corrupt marker answers #corrupt?.
       # @param timeline [Lain::Timeline] the loaded session's current head; a
       #   {Recovered} commits onto this without mutating it (Timeline is
       #   already immutable, stated here for the reader)
-      def initialize(entries:, frames:, timeline:)
+      # @param reassembly [#call] rebuilds a frame's {Response} given the
+      #   frame and the request's ceiling; {Provider::Reassembly}
+      def initialize(entries:, frames:, timeline:, reassembly: Provider::Reassembly)
         @records = entries.filter_map { |entry| Journal.parse(entry) }
         @corruptions, @frames = frames.to_a.partition(&:corrupt?)
         @timeline = timeline
+        @reassembly = reassembly
       end
 
-      # @return [Nothing, Recovered, Incomplete]
+      # @return [Nothing, Recovered, Unreadable, Incomplete]
       def call
-        digest = unanswered_request_digest
-        return Nothing if digest.nil?
+        sent = unanswered_request
+        return Nothing if sent.nil?
 
+        digest = sent.fetch("digest")
         last = @frames.reverse_each.find { |frame| frame.request_digest == digest }
-        last&.complete? ? recover(digest, last) : incomplete(digest, last)
+        last&.complete? ? recover(digest, last, sent.dig("payload", "max_tokens")) : incomplete(digest, last)
       end
 
       private
@@ -167,12 +180,12 @@ module Lain
       # file -- an assistant `turn` or a `turn_usage` on record is proof of a
       # normal commit, and a `rewound` on record is proof the user moved the
       # head away on purpose.
-      def unanswered_request_digest
+      def unanswered_request
         last_sent = relevant_records.reverse_each.find { |record, _i| record["type"].to_s == REQUEST_SENT_TYPE }
         return nil if last_sent.nil?
 
         record, index = last_sent
-        superseded_after?(index) ? nil : record.fetch("digest")
+        superseded_after?(index) ? nil : record
       end
 
       def relevant_records
@@ -200,8 +213,15 @@ module Lain
                                      .to_set { |record| record["head_after"] }
       end
 
-      def recover(digest, frame)
-        response = reassemble(frame)
+      # Any failure inside the reassembly is the frame's, whatever its class --
+      # rotted bytes raise from a parser, an encoder or a Hash lookup alike --
+      # and a resume must not die on the one frame it was asked to read back.
+      def recover(digest, frame, ceiling)
+        response = @reassembly.call(frame, ceiling:)
+      rescue StandardError => e
+        unreadable(digest, frame, "it could not be reassembled (#{e.class}: #{e.message.lines.first&.strip})")
+      else
+        return unreadable(digest, frame, "it reassembled to no content") if response.content.empty?
         return already_recovered(digest, response) if already_committed?(response)
 
         timeline = @timeline.commit(role: :assistant, content: response.content)
@@ -235,44 +255,8 @@ module Lain
         Incomplete.new(request_digest: digest, bytes: frame.nil? ? 0 : frame.bytes.bytesize, corruption:)
       end
 
-      # A fresh {Provider::Anthropic::StreamAssembler} for exactly one
-      # frame -- the same lifetime a live round trip gives it.
-      def reassemble(frame)
-        assembler = Provider::Anthropic::StreamAssembler.new
-        sse_events(frame.bytes).each { |event| assembler.add(event) }
-        build_response(assembler.result)
-      end
-
-      # `EventStreamParser::Parser` is pure text -- no socket, no Faraday --
-      # so feeding it the WHOLE recorded blob in one #feed call is exactly as
-      # sound as many small chunks; it line-buffers internally either way. A
-      # `[DONE]` sentinel or an `error` event never reaches a COMPLETE frame
-      # (see the class comment), but both are filtered defensively rather than
-      # trusted blind. Entry#bytes is ASCII-8BIT (binread); force_encoding
-      # here is what makes JSON.parse (and the SSE line scan itself) safe on
-      # multibyte content.
-      def sse_events(bytes)
-        text = bytes.dup.force_encoding(Encoding::UTF_8)
-        collected = []
-        EventStreamParser::Parser.new.feed(text) { |type, data| collected << [type.to_s, data] }
-        collected.reject { |type, data| type == "error" || data == "[DONE]" }
-                 .map { |_type, data| JSON.parse(data) }
-      end
-
-      # deliberately absent: {Provider::AnthropicWire}, whose #build_response
-      # this shadows rather than includes. What would differ: the shared version
-      # runs `normalize_tool_inputs`, redundant here because the assembler has
-      # already parsed every tool input. Nothing now stops the include; the
-      # spec below is what holds the two decoders in agreement meanwhile.
-      #
-      # The usage decode is NOT shadowed -- that one is a class method, so it is
-      # the single {Usage.from_anthropic_wire} the two live providers use. A
-      # recovered turn is by definition one a crash interrupted, so it is the
-      # last place a drifted token key should hide.
-      def build_response(assembled)
-        Response.new(id: assembled.id, model: assembled.model, content: assembled.content,
-                     stop_reason: assembled.stop_reason,
-                     usage: Usage.from_anthropic_wire(assembled.usage), raw: assembled)
+      def unreadable(digest, frame, reason)
+        Unreadable.new(request_digest: digest, wire: frame.wire, bytes: frame.bytes.bytesize, reason:, corruption:)
       end
     end
   end

@@ -266,7 +266,7 @@ module Lain
       # already flushed everything it could. A Recovered outcome closes the file
       # through {Salvager#close!}; {#rebuild} reloads it afterward.
       #
-      # @return [SessionRecord::Salvage::Nothing, Recovered, Incomplete]
+      # @return [SessionRecord::Salvage::Nothing, Recovered, Unreadable, Incomplete]
       def salvage(path, recording)
         return SessionRecord::Salvage::Nothing unless recording.open?
 

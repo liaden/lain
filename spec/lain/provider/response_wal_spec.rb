@@ -15,7 +15,7 @@ RSpec.describe Lain::Provider::ResponseWal do
   describe "framing a written response" do
     it "round-trips the exact bytes, keyed by the request digest, marked complete" do
       subject = wal
-      frame = subject.open_frame(request_digest: "sha256:abc")
+      frame = subject.open_frame(request_digest: "sha256:abc", wire: "anthropic-sse")
       frame.append("event: message_start\n")
       frame.append("data: {\"x\":1}\n\n")
       frame.close(complete: true)
@@ -29,7 +29,7 @@ RSpec.describe Lain::Provider::ResponseWal do
     it "preserves bytes verbatim even when they contain the terminator's newline shapes" do
       subject = wal
       raw = "data: {\"a\":\"line1\nline2\"}\n\n\n"
-      frame = subject.open_frame(request_digest: "d")
+      frame = subject.open_frame(request_digest: "d", wire: "anthropic-sse")
       frame.append(raw)
       frame.close(complete: true)
 
@@ -41,7 +41,7 @@ RSpec.describe Lain::Provider::ResponseWal do
     it "keeps each frame of a multi-request session independent" do
       subject = wal
       %w[one two three].each do |digest|
-        frame = subject.open_frame(request_digest: digest)
+        frame = subject.open_frame(request_digest: digest, wire: "anthropic-sse")
         frame.append("body-#{digest}")
         frame.close(complete: true)
       end
@@ -88,26 +88,44 @@ RSpec.describe Lain::Provider::ResponseWal do
       end.to raise_error(ArgumentError, /carrier-pigeon/)
     end
 
-    it "reads a header with no wire key as anthropic-sse" do
-      header = "\x1e{\"request_digest\":\"old\",\"at\":\"2026-01-01T00:00:00Z\"}\n"
-      File.binwrite(File.join(@dir, "old.wal"), "#{header}raw\x1e{\"bytes\":3,\"complete\":true}\n")
+    # Frames written before the header named a wire still sit in real logs, and
+    # most of them are ollama's, so the wire is read off the first body bytes.
+    describe "a header with no wire key" do
+      def old_frame(body)
+        header = "\x1e{\"request_digest\":\"old\",\"at\":\"2026-01-01T00:00:00Z\"}\n"
+        terminator = described_class.terminator_record(body.bytesize, true)
+        File.binwrite(File.join(@dir, "old.wal"), "#{header}#{body}#{terminator}")
+        wal("old").frames.to_a.fetch(0)
+      end
 
-      entry = wal("old").frames.to_a.fetch(0)
-      expect(entry.wire).to eq("anthropic-sse")
-      expect(entry).to be_complete
+      it "reads a body that opens a JSON object as ollama NDJSON" do
+        entry = old_frame(%({"model":"m","message":{"role":"assistant","content":"hi"},"done":true}\n))
+
+        expect(entry.wire).to eq("ollama-ndjson")
+        expect(entry).to be_complete
+      end
+
+      it "reads a body that opens with an SSE field as an anthropic stream" do
+        expect(old_frame("event: message_start\ndata: {}\n\n").wire).to eq("anthropic-sse")
+        expect(old_frame("data: {}\n\n").wire).to eq("anthropic-sse")
+      end
+
+      it "names no wire for a body that is neither" do
+        expect(old_frame("raw").wire).to be_nil
+      end
     end
 
-    it "reads a torn tail with no frame open as anthropic-sse" do
+    it "names no wire for a torn tail with no frame open" do
       File.binwrite(File.join(@dir, "tail.wal"), "\x1egarbage")
 
-      expect(wal("tail").frames.to_a.fetch(0).wire).to eq("anthropic-sse")
+      expect(wal("tail").frames.to_a.fetch(0).wire).to be_nil
     end
   end
 
   describe "recovering a torn tail" do
     it "reads a header-only frame (crash before any bytes) as incomplete" do
       subject = wal
-      subject.open_frame(request_digest: "torn")
+      subject.open_frame(request_digest: "torn", wire: "anthropic-sse")
       # no append, no close -- process died right after the header line
 
       entry = wal.frames.to_a.fetch(0)
@@ -117,10 +135,10 @@ RSpec.describe Lain::Provider::ResponseWal do
 
     it "reads a mid-bytes cut as incomplete while every prior frame stays intact" do
       subject = wal
-      good = subject.open_frame(request_digest: "good")
+      good = subject.open_frame(request_digest: "good", wire: "anthropic-sse")
       good.append("all-of-it")
       good.close(complete: true)
-      cut = subject.open_frame(request_digest: "cut")
+      cut = subject.open_frame(request_digest: "cut", wire: "anthropic-sse")
       cut.append("half-written") # never closed: no terminator
 
       entries = wal.frames.to_a
@@ -166,11 +184,11 @@ RSpec.describe Lain::Provider::ResponseWal do
   describe "resync after a terminator-less frame mid-file" do
     it "marks the abandoned frame incomplete and reads every later frame intact" do
       subject = wal
-      abandoned = subject.open_frame(request_digest: "req-failed")
+      abandoned = subject.open_frame(request_digest: "req-failed", wire: "anthropic-sse")
       abandoned.append("partial bytes from a dropped stream")
       # no close: the exception path left it open and the session continued
       %w[req-next req-third].each do |digest|
-        frame = subject.open_frame(request_digest: digest)
+        frame = subject.open_frame(request_digest: digest, wire: "anthropic-sse")
         frame.append("body-#{digest}")
         frame.close(complete: true)
       end
@@ -185,16 +203,16 @@ RSpec.describe Lain::Provider::ResponseWal do
 
     it "survives a SIGKILL-torn tail across a reopen: resumed frames stay readable" do
       first_session = wal
-      turn = first_session.open_frame(request_digest: "turn-1")
+      turn = first_session.open_frame(request_digest: "turn-1", wire: "anthropic-sse")
       turn.append("first turn body")
       turn.close(complete: true)
-      torn = first_session.open_frame(request_digest: "turn-2-crashed")
+      torn = first_session.open_frame(request_digest: "turn-2-crashed", wire: "anthropic-sse")
       torn.append("partial before SIGKILL")
       # SIGKILL here: no close, no fsync beyond the unbuffered writes
 
       resumed = wal
       %w[resumed-3 resumed-4].each do |digest|
-        frame = resumed.open_frame(request_digest: digest)
+        frame = resumed.open_frame(request_digest: digest, wire: "anthropic-sse")
         frame.append("resumed-#{digest}")
         frame.close(complete: true)
       end
@@ -209,7 +227,7 @@ RSpec.describe Lain::Provider::ResponseWal do
 
     it "refuses loudly when a payload smuggles the record separator mid-file" do
       subject = wal
-      smuggler = subject.open_frame(request_digest: "has_rs")
+      smuggler = subject.open_frame(request_digest: "has_rs", wire: "anthropic-sse")
       smuggler.append("before#{described_class::RECORD_SEPARATOR}after")
       smuggler.close(complete: true)
 
@@ -233,7 +251,7 @@ RSpec.describe Lain::Provider::ResponseWal do
     it "keeps each fiber's frame contiguous when they open and append alternately" do
       subject = wal
       a = Fiber.new do
-        frame = subject.open_frame(request_digest: "a")
+        frame = subject.open_frame(request_digest: "a", wire: "anthropic-sse")
         frame.append("a1")
         Fiber.yield
         frame.append("a2")
@@ -241,7 +259,7 @@ RSpec.describe Lain::Provider::ResponseWal do
         frame.close(complete: true)
       end
       b = Fiber.new do
-        frame = subject.open_frame(request_digest: "b")
+        frame = subject.open_frame(request_digest: "b", wire: "anthropic-sse")
         frame.append("b1")
         Fiber.yield
         frame.append("b2")
@@ -264,12 +282,12 @@ RSpec.describe Lain::Provider::ResponseWal do
     it "writes a completed buffered sibling even when the streaming frame is abandoned before spool close" do
       subject = wal
       streamer = Fiber.new do
-        frame = subject.open_frame(request_digest: "streamer")
+        frame = subject.open_frame(request_digest: "streamer", wire: "anthropic-sse")
         frame.append("partial")
         # abandoned: a terminal error unwound the dispatch, the frame never closed
       end
       sibling = Fiber.new do
-        frame = subject.open_frame(request_digest: "sibling")
+        frame = subject.open_frame(request_digest: "sibling", wire: "anthropic-sse")
         frame.append("complete-body")
         frame.close(complete: true)
       end
@@ -289,14 +307,14 @@ RSpec.describe Lain::Provider::ResponseWal do
     # completed sibling lands after the taker (wrong order) or is stranded.
     it "flushes a pending sibling before a same-fiber takeover, keeping every frame readable" do
       subject = wal
-      streamer = subject.open_frame(request_digest: "streamer") # main fiber
+      streamer = subject.open_frame(request_digest: "streamer", wire: "anthropic-sse") # main fiber
       streamer.append("partial") # abandoned, never closed
       Fiber.new do
-        frame = subject.open_frame(request_digest: "sibling")
+        frame = subject.open_frame(request_digest: "sibling", wire: "anthropic-sse")
         frame.append("sib-body")
         frame.close(complete: true) # buffers into @pending (streamer still live)
       end.resume
-      taker = subject.open_frame(request_digest: "taker") # same fiber -> takeover
+      taker = subject.open_frame(request_digest: "taker", wire: "anthropic-sse") # same fiber -> takeover
       taker.append("taker-body")
       taker.close(complete: true)
       subject.close
@@ -310,7 +328,7 @@ RSpec.describe Lain::Provider::ResponseWal do
     it "flushes a buffered frame that closes FIRST only once the streaming frame closes" do
       subject = wal
       streamer = Fiber.new do
-        frame = subject.open_frame(request_digest: "streamer")
+        frame = subject.open_frame(request_digest: "streamer", wire: "anthropic-sse")
         frame.append("s1")
         Fiber.yield
         frame.append("s2")
@@ -318,7 +336,7 @@ RSpec.describe Lain::Provider::ResponseWal do
         frame.close(complete: true)
       end
       buffered = Fiber.new do
-        frame = subject.open_frame(request_digest: "buffered")
+        frame = subject.open_frame(request_digest: "buffered", wire: "anthropic-sse")
         frame.append("whole")
         frame.close(complete: true) # closes while the streamer is still live
       end
@@ -340,7 +358,7 @@ RSpec.describe Lain::Provider::ResponseWal do
       subject = wal(fsync_watermark: 8)
       expect_any_instance_of(File).to receive(:fsync).at_least(:twice).and_call_original
 
-      frame = subject.open_frame(request_digest: "d")
+      frame = subject.open_frame(request_digest: "d", wire: "anthropic-sse")
       frame.append("0123456789") # 10 bytes > 8-byte watermark -> one mid-stream fsync
       frame.close(complete: true) # + one on close
 

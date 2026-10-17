@@ -230,8 +230,9 @@ RSpec.describe Lain::SessionRecord::Salvage do
       request = anthropic_request
       wal = Lain::Provider::ResponseWal
       clean_sse = AnthropicSSE.body(canned)
-      corrupt = "#{wal.header_record("corrupt-old")}body#{wal.terminator_record(4, true)}TRAILING"
-      clean = wal.header_record(request.digest) + clean_sse + wal.terminator_record(clean_sse.bytesize, true)
+      corrupt = "#{wal.header_record("corrupt-old", "anthropic-sse")}body#{wal.terminator_record(4, true)}TRAILING"
+      header = wal.header_record(request.digest, "anthropic-sse")
+      clean = header + clean_sse + wal.terminator_record(clean_sse.bytesize, true)
       File.binwrite(@wal_path, corrupt + clean)
 
       # The strict reader refuses this file outright -- that is why salvage reads
@@ -251,7 +252,7 @@ RSpec.describe Lain::SessionRecord::Salvage do
     it "is surfaced as a reviewable artifact, never committed, and leaves the Timeline head unchanged" do
       wal = Lain::Provider::ResponseWal.new(@wal_path)
       raw = "event: message_start\ndata: {\"type\":\"message_start\""
-      wal.open_frame(request_digest: "req-incomplete").append(raw)
+      wal.open_frame(request_digest: "req-incomplete", wire: "anthropic-sse").append(raw)
       # crash: no #close -- the terminator never lands, so the Reader resyncs it as torn
 
       outcome = described_class.new(entries: [request_sent("req-incomplete")], frames:, timeline:).call
@@ -340,30 +341,151 @@ RSpec.describe Lain::SessionRecord::Salvage do
     end
   end
 
-  # This class SHADOWS {Provider::AnthropicWire#build_response} rather than
-  # including it, and nothing forces that any more. Nothing
-  # else pins the two in agreement: a field added to the shared decoder would be
-  # silently absent here, on the crash-recovery path, where the whole point is
-  # that a recovered Response equals what the live call would have produced.
-  describe "agreement with the shared Anthropic-wire decoder it shadows" do
+  # A recovered Response must equal what the live call would have produced, so
+  # the anthropic path decodes through the shared wire decoder the live
+  # provider uses rather than a copy of it.
+  describe "agreement with the shared Anthropic-wire decoder" do
     let(:assembled) do
       Lain::Provider::Anthropic::StreamAssembler::Assembled.new(
         id: "msg_1", model: "claude-opus-4-8", stop_reason: "end_turn",
-        # Tool inputs already parsed, which is the documented difference between
-        # the two bodies (the shared one also runs #normalize_tool_inputs). With
-        # parsed inputs that step is identity, so any OTHER divergence shows.
         content: [{ "type" => "thinking", "thinking" => "...", "signature" => "sig" },
                   { "type" => "tool_use", "id" => "tu_1", "name" => "t", "input" => { "path" => "a.rb" } }],
         usage: { "input_tokens" => 10, "output_tokens" => 4, "cache_read_input_tokens" => 8 }
       )
     end
 
-    it "builds the identical Response from the identical Assembled" do
-      salvage = described_class.new(entries: [], frames: [], timeline:).send(:build_response, assembled)
-      shared = Lain::Provider::Anthropic.new(transport: Object.new, api_key: "k")
-                                        .send(:build_response, assembled)
+    let(:assembled_response) do
+      Lain::Response.new(id: assembled.id, model: assembled.model, content: assembled.content,
+                         stop_reason: assembled.stop_reason, usage: Lain::Usage.from_anthropic_wire(assembled.usage))
+    end
 
-      expect(salvage).to eq(shared)
+    it "builds the identical Response from the identical stream" do
+      digest = spool(assembled_response)
+      shared = Lain::Provider::Anthropic.new(transport: Object.new, api_key: "k").send(:build_response, assembled)
+
+      recovered = Lain::Provider::Reassembly.call(frames.to_a.last, ceiling: 64)
+
+      expect(described_class.new(entries: [request_sent(digest)], frames:, timeline:).call.response).to eq(recovered)
+      expect(recovered.content).to eq(shared.content)
+      expect(recovered.usage).to eq(shared.usage)
+      expect(recovered.stop_reason).to eq(shared.stop_reason)
+    end
+  end
+
+  describe "a frame an ollama provider wrote" do
+    def ollama_request
+      Lain::Request.new(model: "qwen3:4b", max_tokens: 64, messages: [{ role: "user", content: "hi" }])
+    end
+
+    def ollama_line(message, done:, **tail)
+      "#{JSON.generate({ "model" => "qwen3:4b", "message" => { "role" => "assistant" }.merge(message),
+                         "done" => done }.merge(tail))}\n"
+    end
+
+    def spool_ollama(ndjson)
+      stub_request(:post, %r{/api/chat})
+        .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" }, body: ndjson)
+      Lain::Provider::Ollama.new(config: zero_retry_config, spool: Lain::Provider::ResponseWal.new(@wal_path))
+                            .complete(ollama_request)
+      ollama_request.digest
+    end
+
+    def sent_with_ceiling(digest) = request_sent(digest).merge("payload" => { "max_tokens" => 64 })
+
+    it "recovers the thinking and the text whole, and says so" do
+      digest = spool_ollama(ollama_line({ "content" => "hello ", "thinking" => "hm" }, done: false) +
+                            ollama_line({ "content" => "world" }, done: true, "done_reason" => "stop",
+                                                                  "prompt_eval_count" => 5, "eval_count" => 2))
+
+      outcome = described_class.new(entries: [sent_with_ceiling(digest)], frames:, timeline:).call
+
+      expect(outcome).to be_recovered
+      expect(outcome.turn.role).to eq("assistant")
+      expect(outcome.turn.content).to eq([{ "type" => "thinking", "thinking" => "hm" }, *text("hello world")])
+      expect(outcome.notice).to include("recovered")
+    end
+
+    it "reads the request's own ceiling, so a reply the window cut is not read as a spent cap" do
+      digest = spool_ollama(ollama_line({ "content" => "par" }, done: true, "done_reason" => "length",
+                                                                "eval_count" => 10))
+
+      outcome = described_class.new(entries: [sent_with_ceiling(digest)], frames:, timeline:).call
+
+      expect(outcome.response.window_cut).to be(true)
+    end
+
+    it "commits nothing when the frame reassembles to no content, and names the frame in its notice" do
+      digest = spool_ollama(ollama_line({ "content" => "" }, done: true, "done_reason" => "stop"))
+
+      outcome = described_class.new(entries: [sent_with_ceiling(digest)], frames:, timeline:).call
+
+      expect(outcome).to be_a(described_class::Unreadable)
+      expect(outcome).not_to be_recovered
+      expect(outcome.request_digest).to eq(digest)
+      expect(outcome.notice).to include("held no answer", digest, "ollama-ndjson")
+      expect(outcome.notice).not_to include("recovered turn")
+    end
+  end
+
+  # The header named no wire before the wire was recorded, and on this box
+  # every such frame is ollama's: one read as SSE parses to nothing.
+  describe "a frame written before the header named its wire" do
+    it "recovers an ollama frame whole" do
+      body = [%({"model":"m","message":{"role":"assistant","content":"hello ","thinking":"hm"},"done":false}\n),
+              %({"model":"m","message":{"role":"assistant","content":"world"},"done":true,"done_reason":"stop"}\n)].join
+      header = "\x1e{\"request_digest\":\"blake3:old\",\"at\":\"2026-10-01T00:00:00Z\"}\n"
+      File.binwrite(@wal_path, "#{header}#{body}#{Lain::Provider::ResponseWal.terminator_record(body.bytesize, true)}")
+
+      outcome = described_class.new(entries: [request_sent("blake3:old")], frames:, timeline:).call
+
+      expect(outcome).to be_recovered
+      expect(outcome.turn.content).to eq([{ "type" => "thinking", "thinking" => "hm" }, *text("hello world")])
+    end
+  end
+
+  # A resume must never die on the one frame it was asked to read back, so a
+  # frame that cannot be decoded is reported, not raised.
+  describe "a complete frame that cannot be reassembled" do
+    def complete(bytes, wire)
+      Lain::Provider::ResponseWal::Entry.new(request_digest: "d1", bytes: bytes.b, complete: true, wire:)
+    end
+
+    def salvaged(frame) = described_class.new(entries: [request_sent("d1")], frames: [frame], timeline:).call
+
+    it "is Unreadable when its wire has no decoder" do
+      outcome = salvaged(complete("hello", "carrier-pigeon"))
+
+      expect(outcome).to be_a(described_class::Unreadable)
+      expect(outcome.notice).to include("held no answer", "d1", "carrier-pigeon")
+    end
+
+    it "is Unreadable when no wire was recorded, and says so" do
+      expect(salvaged(complete("raw", nil)).notice).to include("held no answer", "no wire was recorded")
+    end
+
+    it "is Unreadable when its bytes do not parse under the wire it names" do
+      ["not json at all\n", "data: {broken\n\n"].zip(%w[ollama-ndjson anthropic-sse]).each do |bytes, wire|
+        outcome = salvaged(complete(bytes, wire))
+
+        expect(outcome).to be_a(described_class::Unreadable)
+        expect(outcome.notice).to include("held no answer", wire, "could not be reassembled", "JSON::ParserError")
+      end
+    end
+
+    it "is Unreadable when its bytes are not valid UTF-8, naming the error" do
+      outcome = salvaged(complete(%({"message":{"content":"\xFF"},"done":true}\n), "ollama-ndjson"))
+
+      expect(outcome).to be_a(described_class::Unreadable)
+      expect(outcome.notice).to include("held no answer", "Encoding::CompatibilityError")
+    end
+
+    it "is Unreadable when its JSON is not the shape the wire carries, naming the error" do
+      %w[ollama-ndjson ollama-json anthropic-json].each do |wire|
+        outcome = salvaged(complete("[1]\n", wire))
+
+        expect(outcome).to be_a(described_class::Unreadable)
+        expect(outcome.notice).to include("held no answer", wire, "TypeError")
+      end
     end
   end
 end

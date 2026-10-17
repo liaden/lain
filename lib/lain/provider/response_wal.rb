@@ -92,10 +92,9 @@ module Lain
       FSYNC_WATERMARK = 64 * 1024
 
       # What a frame's bytes are, so a reader reassembles them with the parser
-      # that wrote them. A header with no `wire` predates the key and is the
-      # only wire there was.
+      # that wrote them. A header with no `wire` predates the key; {Reader}
+      # infers it from the body.
       WIRES = %w[anthropic-sse anthropic-json ollama-ndjson ollama-json].freeze
-      DEFAULT_WIRE = "anthropic-sse"
 
       Entry = Data.define(:request_digest, :bytes, :complete, :wire) do
         def complete? = complete
@@ -156,7 +155,7 @@ module Lain
       end
 
       # @return [String] a header record naming the request digest and open time.
-      def self.header_record(request_digest, wire = DEFAULT_WIRE)
+      def self.header_record(request_digest, wire)
         header = { "request_digest" => request_digest, "wire" => wire, "at" => Time.now.utc.iso8601 }
         "#{RECORD_SEPARATOR}#{JSON.generate(header)}\n"
       end
@@ -178,7 +177,7 @@ module Lain
 
       # A frame that gets the streaming slot writes its header immediately, so a
       # crash before the first byte still leaves a readable, incomplete frame.
-      def open_frame(request_digest:, wire: DEFAULT_WIRE)
+      def open_frame(request_digest:, wire:)
         raise ArgumentError, "unknown wire #{wire.inspect}" unless WIRES.include?(wire)
 
         @monitor.synchronize do

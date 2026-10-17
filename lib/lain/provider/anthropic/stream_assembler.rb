@@ -24,7 +24,17 @@ module Lain
         # The completed turn: ordered wire blocks plus the envelope metadata the
         # response builder needs. `usage` stays a raw Hash so nil cache fields
         # survive to be normalized in one place.
-        Assembled = Data.define(:id, :model, :stop_reason, :content, :usage)
+        Assembled = Data.define(:id, :model, :stop_reason, :content, :usage) do
+          # A non-streaming body read into the shape a stream assembles to, so
+          # both paths decode through one `#build_response`.
+          #
+          # @param body [Hash] a parsed `/v1/messages` response body
+          # @return [Assembled]
+          def self.from_body(body)
+            new(id: body["id"], model: body["model"], stop_reason: body["stop_reason"],
+                content: body["content"] || [], usage: body["usage"] || {})
+          end
+        end
 
         # Event type -> handler. A table rather than a `case` so adding an event
         # is one line and the dispatcher stays flat.

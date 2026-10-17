@@ -137,10 +137,10 @@ RSpec.describe "a session killed while a tool runs", :seam do
 
     def committed_call = records.find { |record| record["type"] == "turn" && record["role"] == "assistant" }
 
-    def framed(bytes)
+    def framed(bytes, wire)
       sent = records.reverse.find { |record| record["type"] == "request_sent" }.fetch("digest")
       wal = Lain::Provider::ResponseWal.new(Lain::Paths.wal_for(session_file))
-      frame = wal.open_frame(request_digest: sent)
+      frame = wal.open_frame(request_digest: sent, wire:)
       frame.append(bytes)
       frame.close(complete: true)
       wal.close
@@ -153,14 +153,14 @@ RSpec.describe "a session killed while a tool runs", :seam do
                                            usage: Lain::Usage.new(input_tokens: 10, output_tokens: 4)))
     end
 
-    frames = { "an Ollama response log" => :ollama_log,
-               "an Anthropic stream of the committed response" => :anthropic_stream,
-               "no response log at all" => nil }
+    frames = { "an Ollama response log" => [:ollama_log, "ollama-ndjson"],
+               "an Anthropic stream of the committed response" => [:anthropic_stream, "anthropic-sse"],
+               "no response log at all" => [nil, nil] }
 
-    frames.each do |shape, bytes|
+    frames.each do |shape, (bytes, wire)|
       it "resumes onto the settled turn with #{shape}, salvaging nothing" do
         killed_before_usage
-        framed(public_send(bytes)) unless bytes.nil?
+        framed(public_send(bytes), wire) unless bytes.nil?
         written = records
 
         result = Lain::CLI::Resume.new(paths:).call

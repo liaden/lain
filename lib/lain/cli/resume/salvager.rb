@@ -26,10 +26,10 @@ module Lain
           @timeline = timeline
         end
 
-        # @return [SessionRecord::Salvage::Nothing, Recovered, Incomplete]
+        # @return [SessionRecord::Salvage::Nothing, Recovered, Unreadable, Incomplete]
         def outcome
           @outcome ||= SessionRecord::Salvage.new(entries: File.foreach(@path), frames: wal_frames,
-                                                  timeline: @timeline).call
+                                                  timeline: @timeline, reassembly: Provider::Reassembly).call
         end
 
         # Appends the salvage record, the recovered turn, and a `session_closed`

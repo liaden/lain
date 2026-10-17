@@ -21,13 +21,10 @@ module Lain
       # in the CLASS's spec and cannot move here; `decoding_spec.rb` holds only
       # the readings this file makes of one already-assembled body.
       #
-      # ONE COLLABORATOR, AND IT IS NOT DECLARED HERE: the two `#note_*` methods
-      # read `@journal`, which {Ollama} owns. A mixin cannot declare an ivar, so
-      # an includer that sets none gets a `NoMethodError` on nil. That is no
-      # longer hypothetical -- `decoding_spec.rb` includes this module into a
-      # throwaway class and assigns the ivar itself -- so the note stands as the
-      # cost it names: a second PRODUCTION includer means this reaches for a
-      # collaborator it must instead be handed.
+      # ONE COLLABORATOR, HANDED IN: the `#note_*` records go to the journal
+      # {#build_response} is given. A mixin cannot declare an ivar, and the
+      # second includer, {Provider::Reassembly}, has no session record to write
+      # to, so the journal is an argument rather than something read off `self`.
       module Decoding
         # The shape `qwen3-coder:30b` writes when it expresses a tool call as
         # assistant TEXT instead of as a tool call.
@@ -132,7 +129,7 @@ module Lain
 
         # `ceiling` is the generation cap the request sent, which is what tells
         # a spent cap from a full window: both arrive as done_reason "length".
-        def build_response(body, ceiling = nil)
+        def build_response(body, ceiling, journal)
           message = body["message"] || {}
           envelope = prose_tool_call(message)
           stray = stray_markup(body, message, envelope)
@@ -142,9 +139,9 @@ module Lain
                                   stop_reason: decode_stop_reason(body, message, envelope, silent),
                                   usage: build_usage(body), raw: body, malformed: finding(envelope, silent, stray),
                                   window_cut: window_cut?(body, ceiling))
-          note_prose_tool_call(body, envelope) unless envelope.nil?
-          note_stray_markup(body, stray) unless stray.nil?
-          note_empty_answer(body) if silent
+          note_prose_tool_call(journal, body, envelope) unless envelope.nil?
+          note_stray_markup(journal, body, stray) unless stray.nil?
+          note_empty_answer(journal, body) if silent
           response
         end
 
@@ -185,9 +182,9 @@ module Lain
 
         # A cut call keeps :max_tokens and a bare opener keeps the wire's reason,
         # so the record is the only place either is named.
-        def note_stray_markup(body, stray)
-          @journal << Telemetry::MalformedResponse.new(kind: stray.kind, model: body["model"],
-                                                       excerpt: stray.markup[0])
+        def note_stray_markup(journal, body, stray)
+          journal << Telemetry::MalformedResponse.new(kind: stray.kind, model: body["model"],
+                                                      excerpt: stray.markup[0])
         end
 
         # The witness for a turn that decoded perfectly and asked for nothing. A
@@ -201,9 +198,9 @@ module Lain
         # It REPORTS and does not repair: salvaging the envelope would execute a
         # call the model never properly expressed, and the approval gate is no
         # help when the parse itself is what is wrong.
-        def note_prose_tool_call(body, envelope)
-          @journal << Telemetry::MalformedResponse.new(kind: :prose_tool_call, model: body["model"],
-                                                       tool_name: envelope[:tool_name], excerpt: envelope[0])
+        def note_prose_tool_call(journal, body, envelope)
+          journal << Telemetry::MalformedResponse.new(kind: :prose_tool_call, model: body["model"],
+                                                      tool_name: envelope[:tool_name], excerpt: envelope[0])
         end
 
         # The witness for a turn that decoded perfectly and SAID nothing --
@@ -211,8 +208,8 @@ module Lain
         # It carries no quote and names no tool because there was nothing to
         # quote: the absence is the whole finding, and the model is what a
         # reader needs to know which one went quiet.
-        def note_empty_answer(body)
-          @journal << Telemetry::MalformedResponse.new(kind: :empty_answer, model: body["model"])
+        def note_empty_answer(journal, body)
+          journal << Telemetry::MalformedResponse.new(kind: :empty_answer, model: body["model"])
         end
 
         # Every field a model can speak through, blank at once.

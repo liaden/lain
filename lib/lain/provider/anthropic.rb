@@ -165,9 +165,7 @@ module Lain
       end
 
       def sync_dispatch(payload, frame, witness)
-        body = @transport.sync_post(payload, frame:, witness:).body || {}
-        StreamAssembler::Assembled.new(id: body["id"], model: body["model"], stop_reason: body["stop_reason"],
-                                       content: body["content"] || [], usage: body["usage"] || {})
+        StreamAssembler::Assembled.from_body(@transport.sync_post(payload, frame:, witness:).body || {})
       end
     end
   end

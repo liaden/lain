@@ -80,10 +80,9 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
   def salvaged(lines)
     entries = lines.each_line.to_a
     digest = entries.map { |line| JSON.parse(line) }.reverse.find { |record| record["type"] == "request_sent" }
-    frame = Data.define(:request_digest, :bytes) do
-      def complete? = true
-      def corrupt? = false
-    end.new(request_digest: digest.fetch("digest"), bytes: AnthropicSSE.body(text_response("recovered")))
+    frame = Lain::Provider::ResponseWal::Entry.new(request_digest: digest.fetch("digest"), complete: true,
+                                                   bytes: AnthropicSSE.body(text_response("recovered")),
+                                                   wire: "anthropic-sse")
     Lain::SessionRecord::Salvage.new(entries:, frames: [frame], timeline: loaded(lines)).call
   end
 

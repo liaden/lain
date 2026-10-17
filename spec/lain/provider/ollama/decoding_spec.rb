@@ -11,19 +11,13 @@
 # path-parity assertions belong to the class, and none of them is what these
 # examples are about.
 RSpec.describe Lain::Provider::Ollama::Decoding do
-  # `@journal` is the one collaborator the mixin reaches for and cannot declare,
-  # so an includer has to hand it one -- an Array is the whole of the `#<<`
-  # the decoder sends.
-  def decoder(journal = [])
-    Class.new do
-      include Lain::Provider::Ollama::Decoding
-
-      def initialize(journal) = @journal = journal
-    end.new(journal)
-  end
+  # The journal is handed to each decode rather than read off the includer, so
+  # an includer with no journal of its own can decode -- an Array is the whole
+  # of the `#<<` the decoder sends.
+  def decoder = Class.new { include Lain::Provider::Ollama::Decoding }.new
 
   def decode(body, journal = [], ceiling = nil)
-    decoder(journal).send(:build_response, body, ceiling)
+    decoder.send(:build_response, body, ceiling, journal)
   end
 
   def body(done_reason: "stop", **message)

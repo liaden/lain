@@ -360,7 +360,8 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     def write_complete_frame(name, request, response)
-      frame = Lain::Provider::ResponseWal.new(wal_path_for(name)).open_frame(request_digest: request.digest)
+      wal = Lain::Provider::ResponseWal.new(wal_path_for(name))
+      frame = wal.open_frame(request_digest: request.digest, wire: "anthropic-sse")
       frame.append(AnthropicSSE.body(response))
       frame.close(complete: true)
     end
@@ -527,8 +528,9 @@ RSpec.describe Lain::CLI::Resume do
       def write_corrupt_then_complete_frame(name, request, response)
         wal = Lain::Provider::ResponseWal
         clean_sse = AnthropicSSE.body(response)
-        corrupt = "#{wal.header_record("corrupt-old")}body#{wal.terminator_record(4, true)}TRAILING"
-        clean = wal.header_record(request.digest) + clean_sse + wal.terminator_record(clean_sse.bytesize, true)
+        corrupt = "#{wal.header_record("corrupt-old", "anthropic-sse")}body#{wal.terminator_record(4, true)}TRAILING"
+        header = wal.header_record(request.digest, "anthropic-sse")
+        clean = header + clean_sse + wal.terminator_record(clean_sse.bytesize, true)
         File.binwrite(wal_path_for(name), corrupt + clean)
       end
 
@@ -587,7 +589,7 @@ RSpec.describe Lain::CLI::Resume do
         write_crashed_session("20260101T000000-1.ndjson", request)
         raw = "event: message_start\ndata: {\"type\":\"message_start\""
         Lain::Provider::ResponseWal.new(wal_path_for("20260101T000000-1.ndjson"))
-                                   .open_frame(request_digest: request.digest).append(raw)
+                                   .open_frame(request_digest: request.digest, wire: "anthropic-sse").append(raw)
         # crash: never closed -- the terminator never lands
 
         path = File.join(paths.sessions_dir, "20260101T000000-1.ndjson")
