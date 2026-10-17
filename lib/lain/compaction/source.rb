@@ -378,15 +378,16 @@ module Lain
           self
         end
 
-        # @return [Boolean] whether the last recorded decision had a head to
-        #   drop that a rewrite would actually shrink
+        # @return [Boolean] whether the last recorded decision left a head to
+        #   drop that a rewrite would actually shrink: false when it advanced
         def droppable? = @droppable
 
         # @param diagnosis [Diagnosis] this turn's
         # @return [self]
         def record(diagnosis)
           @journal << diagnosis.decision
-          @droppable = !diagnosis.decision.nothing_droppable && !diagnosis.decision.would_not_shrink
+          decision = diagnosis.decision
+          @droppable = !decision.nothing_droppable && !decision.would_not_shrink && !decision.compacted
           quiet = !@made_room_for.nil? && @made_room_for == @rendering
           @made_room_for = nil if quiet
           stalled = diagnosis.stalled? && !quiet
@@ -564,7 +565,8 @@ module Lain
       # Whether the last render left anything older than `keep_last` that a
       # compaction could drop -- the decision's own `nothing_droppable`, asked
       # live by a refusal deciding whether compaction is a move worth offering.
-      # False before any render has measured a head.
+      # False before any render has measured a head, and after a render that compacted: it
+      # already dropped what it could.
       #
       # @return [Boolean]
       def droppable? = @reporting.droppable?
@@ -582,11 +584,11 @@ module Lain
       # enough to anticipate a refusal, which is why this is a fallback rather
       # than a fifth detector in {Need}.
       #
-      # It fires only where an ordinary compaction has nothing left to offer:
-      # nothing droppable past the cuts that hold, or a render that already
-      # held the newest cut the session recorded and was refused anyway. With
-      # something still droppable and a cut still to advance past, the refusal
-      # is told to compact instead -- which is what the refusal's own words say.
+      # It fires only where an ordinary compaction has nothing left to offer: the render that was
+      # refused had nothing droppable past the cuts that hold, or advanced itself and so already
+      # dropped it. A refusal over a render that deferred with something droppable is answered by
+      # the next render's advance, even when it already held the newest cut -- including one
+      # prepared while the human was away, which is a held cut like any other.
       #
       # A handoff that fires twice over an unchanged chain would re-write the
       # turns the first one replaced for a second model call; {HeldCut} refuses
@@ -598,7 +600,7 @@ module Lain
       # @return [Boolean] whether a handoff cut committed on THIS call
       def handoff(timeline:, session:)
         held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
-        return false unless stuck?(held_cut)
+        return false if droppable?
 
         committed = @fallback.call(held_cut, pins: session_pinned(held_cut.walk, session))
         # Latched, never assigned: a later attempt that could make no room does
@@ -652,11 +654,6 @@ module Lain
       end
 
       private
-
-      # The two ways an ordinary compaction has run out: it had nothing to
-      # drop when it last decided, or the render that was refused was already
-      # sending the newest cut this session recorded.
-      def stuck?(held_cut) = !@reporting.droppable? || held_cut.holds_newest?
 
       def prepared_cut(base:, timeline:, usage:, session:)
         before = session.compaction_cuts.last

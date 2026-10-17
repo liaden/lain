@@ -3043,12 +3043,11 @@ RSpec.describe Lain::Compaction::Source do
       expect(messages.first["content"].first["text"]).to eq(block(1)["text"])
     end
 
-    # With a cut already holding there is still something droppable past it,
-    # and the handoff fires anyway: the refused render WAS the newest cut, so
-    # an advance is a move that has already been made.
+    # A cut already holds and nothing is droppable past it, so an advance has
+    # no move left and the handoff fires.
     it "supersedes every cut that held, so the summaries do not accumulate" do
       line = timeline
-      built = handing_off(keep_last: 2)
+      built = handing_off(keep_last: 4)
       advance = Lain::Telemetry::CompactionCut.new(
         digest: line.to_a[1].digest, head: Lain::Event.stands_on(line.to_a.last), strategy: built.collapse_strategy,
         kind: "advance", parent: nil, supersedes: [], plan_step_completions: 0,
@@ -3083,7 +3082,7 @@ RSpec.describe Lain::Compaction::Source do
     # only account of what it replaced.
     it "carries a recorded document whole even when it is not in today's shape" do
       line = timeline
-      built = handing_off(keep_last: 2)
+      built = handing_off(keep_last: 8)
       recorded = "an older document\r\n## Goal\r\nkeep going"
       session.record_compaction_cut(
         Lain::Telemetry::CompactionCut.new(
@@ -3232,6 +3231,67 @@ RSpec.describe Lain::Compaction::Source do
         expect(refused_render(built, grown)).to be(true)
         expect(cuts.size).to eq(2)
         expect(cuts.last["supersedes"]).to eq([session.compaction_cuts.first.address])
+      end
+    end
+
+    describe "a refusal while turns past the held cut can still be dropped" do
+      let(:span_oracle) { SourceSpecSpanOracle.new("a span summary") }
+
+      def advancing
+        handing_off(need: build_need(byte_threshold: 1_000_000), hard_cap: 1,
+                    strategy: Lain::Compaction::Strategy::SummarizeConversation.new(oracle: span_oracle))
+      end
+
+      def grow(line, count)
+        (1..count).inject(line) do |grown, _|
+          grown.commit(role: role_at(grown.length + 1), content: [block(grown.length + 1)])
+        end
+      end
+
+      def cut_after_one_step(built, line)
+        complete_a_step(session)
+        context_for(built, line)
+      end
+
+      it "answers false and leaves the compaction to the next render" do
+        built = advancing
+        cut_after_one_step(built, timeline(12))
+        grown = grow(timeline(12), 6)
+        context_for(built, grown)
+
+        expect(built.handoff(timeline: grown, session:)).to be(false)
+        expect(cuts.map { |record| record["kind"] }).to eq(["advance"])
+        expect(oracle.asks).to be_empty
+      end
+
+      it "hands off when the refused render itself advanced" do
+        built = advancing
+        line = timeline(12)
+        cut_after_one_step(built, line)
+        grown = grow(line, 6)
+        complete_a_step(session, 2)
+        context_for(built, grown)
+
+        expect(built.handoff(timeline: grown, session:)).to be(true)
+      end
+
+      describe "after a cut prepared while the human was away" do
+        def prepared_on(built, line)
+          clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+          built.prepare(base:, timeline: line, usage: nil, session:)
+        end
+
+        it "still waits for the next render while turns past the prepared cut are droppable" do
+          built = handing_off(need: build_need(byte_threshold: 100), hard_cap: 1_000_000, cold: build_cold(ttl: nil),
+                              strategy: Lain::Compaction::Strategy::Summarizing.new(oracle: span_oracle))
+          line = timeline(12)
+          prepared_on(built, line)
+          grown = grow(line, 6)
+          context_for(built, grown)
+
+          expect(built.handoff(timeline: grown, session:)).to be(false)
+          expect(cuts.map { |record| record["kind"] }).to eq(["advance"])
+        end
       end
     end
 

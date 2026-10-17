@@ -146,6 +146,33 @@ module HandoffSeam
                          stop_reason: :end_turn, usage: Lain::Usage.new(input_tokens: 30, output_tokens: 9))
     end
   end
+
+  # Refuses the final ask's render until the handoff document is in the prompt, however many cuts the
+  # history carries: only a handoff, never an advance, makes room.
+  class OversizedAsk < Recorded
+    def complete(request)
+      text = Lain::Canonical.dump(request.messages)
+      return super if text.include?("no longer fits its context window")
+      return summarized if text.include?("are about to be replaced, in a later prompt")
+
+      @requests << request
+      raise refusal if text.include?("OVERSIZED") && !text.include?(ANSWER["goal"])
+
+      settled
+    end
+
+    private
+
+    def summarized
+      Lain::Response.new(content: [{ "type" => "text", "text" => JSON.generate("summary" => "a summarized stretch") }],
+                         stop_reason: :end_turn, usage: Lain::Usage.new(input_tokens: 30, output_tokens: 20))
+    end
+
+    def settled
+      Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }], stop_reason: :end_turn,
+                         usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2))
+    end
+  end
 end
 
 RSpec.describe "a handoff when no cut can make room", :seam do
@@ -413,6 +440,37 @@ RSpec.describe "a handoff when no cut can make room", :seam do
       expect(provider.requests.size - sent).to eq(2)
       expect(rendered_text(provider.requests.last)).not_to include(HandoffSeam::MARKER)
       expect(of_type("compaction_cut").map { |cut| cut["kind"] }).to eq(["advance"])
+    end
+  end
+
+  describe "a refusal of a render that itself advanced" do
+    let(:provider) { HandoffSeam::OversizedAsk.new(refusing: true) }
+
+    def advancing
+      span_tier = ->(definition) { Lain::Oracle::Model.new(definition:, provider:, model: "qwen3:4b", max_tokens: 512) }
+      strategy = Lain::CLI::CompactionStrategy.resolve("elide-tools+summarize-conversation", tier: span_tier, journal:)
+      Lain::Compaction::Source.new(
+        need: Lain::Compaction::Need.new(byte_threshold: 1),
+        cold: Lain::Compaction::Cold.new(cache_profile: Lain::CacheProfile::NO_CACHING, journal:),
+        hard_cap: 1, keep_last: 2, journal:, strategy:,
+        fallback: Lain::Compaction::Source::Fallback.new(tier: method(:handoff_tier)),
+        context_window: Lain::ContextWindow.new(windows: { "qwen3" => 8192 })
+      )
+    end
+
+    [1, 2, 4].each do |earlier|
+      it "hands off and answers the ask after #{earlier} earlier asks" do
+        chat = agent(advancing)
+        chat.ask("first question: #{"the lazy dog slept. " * 30}")
+        earlier.times { |index| chat.ask("follow-up #{index}: #{"the lazy dog slept. " * 30}") }
+        advances = of_type("compaction_cut").size
+
+        answer = chat.ask("OVERSIZED so what is left to do?")
+
+        expect(answer.text).to eq("settled")
+        expect(of_type("compaction_cut").drop(advances).map { |cut| cut["kind"] }.last).to eq("handoff")
+        expect(of_type("compaction_cut").map { |cut| cut["kind"] }).not_to include("collapse")
+      end
     end
   end
 
