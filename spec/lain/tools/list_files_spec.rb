@@ -257,5 +257,21 @@ RSpec.describe Lain::Tools::ListFiles do
     end
   end
 
+  describe "symbolic links in a recursive listing" do
+    it "ends with a trailer saying how many links it left out" do
+      touch("real.txt")
+      File.symlink("real.txt", File.join(tmpdir, "a.txt"))
+      File.symlink(".", File.join(tmpdir, "loop"))
+
+      expect(tool.call(path: tmpdir, recursive: true).content.lines.last).to eq("... 2 symlinks skipped")
+    end
+
+    it "adds no trailer to a listing with no links" do
+      touch("real.txt")
+
+      expect(tool.call(path: tmpdir, recursive: true).content).not_to include("skipped")
+    end
+  end
+
   it_behaves_like "a walk run off the reactor", ->(dir) { { "path" => dir, "recursive" => true } }
 end

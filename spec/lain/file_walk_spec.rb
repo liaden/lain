@@ -213,6 +213,40 @@ RSpec.describe Lain::FileWalk do
     end
   end
 
+  describe "#skipped_links" do
+    before do
+      write("real.txt")
+      File.symlink("real.txt", File.join(root, "alias.txt"))
+      File.symlink(".", File.join(root, "loop"))
+    end
+
+    it "counts the links a hand walk left out" do
+      walk.to_a
+
+      expect(walk.skipped_links).to eq(2)
+    end
+
+    it "counts the links a git listing left out" do
+      init_repo
+      walk.to_a
+
+      expect(walk.skipped_links).to eq(2)
+    end
+
+    it "counts none when links are yielded" do
+      linked = described_class.new(root:, links: true)
+      linked.to_a
+
+      expect(linked.skipped_links).to eq(0)
+    end
+
+    it "restarts the count on each pass" do
+      2.times { walk.to_a }
+
+      expect(walk.skipped_links).to eq(2)
+    end
+  end
+
   it "drops a submodule gitlink, which git lists but is a directory" do
     init_repo
     write("kept.rb")

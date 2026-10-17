@@ -270,5 +270,26 @@ RSpec.describe Lain::Tools::Glob do
     end
   end
 
+  describe "symbolic links" do
+    before { touch("real.txt") }
+
+    it "ends with a trailer saying how many links it left out" do
+      File.symlink("real.txt", File.join(tmpdir, "a.txt"))
+      File.symlink(".", File.join(tmpdir, "loop"))
+
+      expect(tool.call(pattern: "**/*", path: tmpdir).content.lines.last).to eq("... 2 symlinks skipped")
+    end
+
+    it "says link in the singular for one" do
+      File.symlink("real.txt", File.join(tmpdir, "a.txt"))
+
+      expect(tool.call(pattern: "**/*", path: tmpdir).content.lines.last).to eq("... 1 symlink skipped")
+    end
+
+    it "adds no trailer to a walk with no links" do
+      expect(tool.call(pattern: "**/*", path: tmpdir).content).not_to include("skipped")
+    end
+  end
+
   it_behaves_like "a walk run off the reactor", ->(dir) { { "pattern" => "**/*.rb", "path" => dir } }
 end

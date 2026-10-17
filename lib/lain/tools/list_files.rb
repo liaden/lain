@@ -62,7 +62,8 @@ module Lain
           "Output is capped at #{BOUND.limit} paths and #{BYTE_BOUND.limit} bytes; a capped listing says so " \
           "and names the true entry count rather than truncating silently. " \
           "A non-recursive listing is a plain directory read, so it shows ignored " \
-          "entries and .git; a recursive one lists only what git would show. " \
+          "entries and .git; a recursive one lists only what git would show, and a trailing " \
+          "\"N symlinks skipped\" counts the links the whole walk left out. " \
           "Returns an error result if the path does not exist, is not a " \
           "directory, or cannot be read. An empty directory is not an error " \
           "-- the result names it as empty rather than returning blank content."
@@ -121,7 +122,8 @@ module Lain
 
       def walked(path)
         walk = FileWalk.new(root: path, entries: @walk_limit.entries, include: @include)
-        [walk.relative_tree.flatten, @walk_limit.notice(listed: walk.listed, read_bytes: 0)]
+        files = walk.relative_tree.flatten
+        [files, [@walk_limit.notice(listed: walk.listed, read_bytes: 0), walk.skipped_links_notice].compact]
       end
     end
   end

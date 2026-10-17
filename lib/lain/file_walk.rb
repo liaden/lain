@@ -45,6 +45,7 @@ module Lain
       @entries = entries
       @include = include
       @listed = 0
+      @skipped_links = 0
       @shell_out_factory = shell_out_factory
     end
 
@@ -54,11 +55,23 @@ module Lain
     # @return [Integer]
     attr_reader :listed
 
+    # Links the latest pass met and left out, so a listing can say its answer is short.
+    # @return [Integer]
+    attr_reader :skipped_links
+
+    # @return [String, nil] a trailer naming the links left out; nil when none were
+    def skipped_links_notice
+      return if @skipped_links.zero?
+
+      "... #{@skipped_links} #{@skipped_links == 1 ? "symlink" : "symlinks"} skipped"
+    end
+
     # @yieldparam path [String] absolute path of an existing regular file (or link, with `links:`)
     def each(&block)
       return enum_for(:each) unless block
 
       @listed = 0
+      @skipped_links = 0
       catch(STOP) { visit(@root, probe: true, &block) }
     end
 
@@ -125,6 +138,7 @@ module Lain
 
     def yield_existing(absolute)
       entry = lstat(absolute)
+      @skipped_links += 1 if entry&.symlink? && !@links
       yield absolute if entry && wanted?(entry)
     end
 

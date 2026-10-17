@@ -123,7 +123,8 @@ module Lain
           "an optional base directory, returned one per line in sorted " \
           "order. Output is capped at #{BOUND.limit} paths and #{BYTE_BOUND.limit} bytes; a capped " \
           "result says so and names the true match count rather than truncating " \
-          "silently. No matches is not an error -- the result names the " \
+          "silently. A trailing \"N symlinks skipped\" counts the links the whole walk " \
+          "left out, not only those matching the pattern. No matches is not an error -- the result names the " \
           "pattern and says there were no matches, not an empty string."
       end
 
@@ -176,7 +177,7 @@ module Lain
         rest = pattern.delete_prefix(prefix)
         candidates = pattern.end_with?("/") ? directories.map { "#{_1}/" } : files + directories
         [candidates.select { File.fnmatch?(rest, _1, FNM_FLAGS) }.map { "#{prefix}#{_1}" },
-         @walk_limit.notice(listed: walk.listed, read_bytes: 0)]
+         [@walk_limit.notice(listed: walk.listed, read_bytes: 0), walk.skipped_links_notice].compact]
       end
     end
   end

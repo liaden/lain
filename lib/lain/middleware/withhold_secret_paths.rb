@@ -104,7 +104,21 @@ module Lain
         ONE = "path"
         MANY = "paths"
 
-        def paths_in(row) = [row]
+        # The shapes the walk and the bounds append, each anchored whole: a file whose name merely begins
+        # like one is still judged.
+        NARROWERS = ["narrow the pattern or the path", "list a subdirectory, or list without recursive"].freeze
+        TRUNCATED = Regexp.new(
+          "\\A\\.\\.\\. truncated to \\d+ of \\d+ paths, " \
+          "withholding \\d+ bytes over the \\d+-byte ceiling -- instead, "
+        )
+        TRAILER = Regexp.union(
+          /\A\.\.\. \d+ symlinks? skipped\z/,
+          /\A\.\.\. capped at \d+ of \d+ paths\z/,
+          /#{TRUNCATED.source}(?:#{Regexp.union(NARROWERS).source})\z/,
+          /\A\.\.\. listing stopped at \d+ entries; narrow the path or the pattern\z/
+        )
+
+        def paths_in(row) = TRAILER.match?(row) ? [] : [row]
       end
 
       # `base` is already resolved exactly as {Tools::ListFiles#perform} resolves

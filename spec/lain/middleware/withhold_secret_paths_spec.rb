@@ -184,6 +184,49 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
+  # A trailer is the tool talking about its answer, not a path in it; joined
+  # onto a gated base it would read as a sensitive file and take the trailer
+  # with it.
+  describe "a listing trailer under a gated base" do
+    def listing_of(*rows)
+      stack.call({ effect: effect("list_files", { "path" => "home/.ssh", "recursive" => true }),
+                   context: session }) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok(rows.join("\n")))
+      end
+    end
+
+    it "keeps the skipped-links trailer of a real walk, uncounted" do
+      File.symlink("id_rsa.pub", File.join(home, ".ssh", "lnk"))
+
+      shown = content(list("home/.ssh", recursive: true))
+
+      expect(shown.lines.map(&:chomp)).to eq(["id_rsa.pub", "... 1 symlink skipped", "1 path withheld (protected)"])
+    end
+
+    [
+      "... 2 symlinks skipped",
+      "... capped at 500 of 900 paths",
+      "... listing stopped at 10 entries; narrow the path or the pattern",
+      "... truncated to 3 of 9 paths, withholding 40 bytes over the 100-byte ceiling -- " \
+      "instead, narrow the pattern or the path"
+    ].each do |trailer|
+      it "passes #{trailer.inspect} through, neither counted nor withheld" do
+        shown = content(listing_of("id_rsa", "id_rsa.pub", trailer))
+
+        expect(shown.lines.map(&:chomp)).to eq(["id_rsa.pub", trailer, "1 path withheld (protected)"])
+      end
+    end
+
+    it "still withholds a file whose name only begins like a trailer" do
+      write("home/.ssh/... capped at 5 of 9 paths x", "k\n")
+      write("home/.ssh/... 1 symlink skipped x", "k\n")
+
+      shown = content(list("home/.ssh", recursive: true))
+
+      expect(shown).not_to include("capped at 5", "skipped x")
+    end
+  end
+
   # A walk follows a linked base, so `keys -> ~/.ssh` lists the key under a name
   # no rule matches. The run's filter is the policy's, which judges each row
   # where it lands.
