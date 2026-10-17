@@ -465,7 +465,22 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
 
     it "reports the width the provider-wide variable forces, and names that variable" do
       notice = notices_with(provider_key => "1").first
-      expect(notice).to include("up to 1 cloud requests at once").and include(provider_key)
+      expect(notice).to include("up to 1 cloud request at once").and include(provider_key)
+    end
+
+    it "says a loopback base is held to 1 request, not the declared width" do
+      tier = cloud(api_base: "https://127.0.0.1:9443")
+      notice = with_env(provider_key => nil, "OLLAMA_API_KEY" => "sk-ollama-test") { tier.startup_notices.first }
+      expect(notice).to include("loopback").and include("held to 1 request, not 3")
+    end
+
+    %w[2 5].each do |value|
+      it "reports the plain width when the variable sets #{value} on a loopback base" do
+        tier = cloud(api_base: "https://127.0.0.1:9443")
+        notice = with_env(provider_key => value, "OLLAMA_API_KEY" => "sk-ollama-test") { tier.startup_notices.first }
+        expect(notice).to include("up to #{value} cloud requests at once")
+        expect(notice).not_to include("loopback")
+      end
     end
 
     it "says there is no limit when the provider-wide variable disables admission" do

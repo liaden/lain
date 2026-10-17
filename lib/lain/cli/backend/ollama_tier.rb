@@ -214,9 +214,19 @@ module Lain
 
         def key = ENV.fetch(API_KEY_ENV_KEY, nil)
 
-        def gate
-          declared = Provider::Ollama::Deployment.cloud(api_key: key).admission_width
-          Provider::Admission.for(endpoint: @api_base || Provider::Ollama::Deployment::CLOUD_API_BASE, width: declared)
+        def declared_width = Provider::Ollama::Deployment.cloud(api_key: key).admission_width
+
+        def endpoint = @api_base || Provider::Ollama::Deployment::CLOUD_API_BASE
+
+        def gate = Provider::Admission.for(endpoint:, width: declared_width)
+
+        def loopback_forced?(width)
+          Provider::Admission.local?(endpoint) && ENV.fetch(ADMISSION_ENV_KEY, "").empty? && width != declared_width
+        end
+
+        def loopback_notice(held)
+          "ollama-cloud base #{endpoint} is a loopback address, so it is held to #{held} request, " \
+            "not #{declared_width}; #{ADMISSION_ENV_KEY} does not lift that."
         end
 
         def width_notice(width)
@@ -224,7 +234,10 @@ module Lain
             return "ollama-cloud runs with no limit on cloud requests; #{ADMISSION_ENV_KEY}=0 set that."
           end
 
-          "ollama-cloud runs up to #{width} cloud requests at once; set #{ADMISSION_ENV_KEY} to change it. " \
+          return loopback_notice(width) if loopback_forced?(width)
+
+          unit = width == 1 ? "request" : "requests"
+          "ollama-cloud runs up to #{width} cloud #{unit} at once; set #{ADMISSION_ENV_KEY} to change it. " \
             "It narrows on a concurrency refusal from the server."
         end
 
