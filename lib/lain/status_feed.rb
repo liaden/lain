@@ -275,7 +275,7 @@ module Lain
       # "when did it last happen", this one "how many times" -- an event, not a
       # clock reading, and that difference is what keeps a compaction
       # publishable (see {#observed}).
-      @compactions += 1 if event.is_a?(Telemetry::Compaction)
+      @compactions += 1 if compaction?(event)
       # Both ends of the refusal streak arrive down the journal
       # {Compaction::Source::Derived} is handed. ASSIGNED from the record, never
       # incremented here -- a tally kept here could only become a second opinion
@@ -312,6 +312,11 @@ module Lain
     end
 
     private
+
+    # A handoff journals no {Telemetry::Compaction}, so its cut is the only record of it.
+    def compaction?(event)
+      event.is_a?(Telemetry::Compaction) || (event.is_a?(Telemetry::CompactionCut) && event.handoff?)
+    end
 
     # A turn's own usage, and only that. `#usage` alone was the duck here, and
     # it shipped a live defect: {Telemetry::OracleAnswer} answers `#usage` too

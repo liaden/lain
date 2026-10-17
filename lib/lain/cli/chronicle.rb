@@ -30,7 +30,7 @@ module Lain
         def journal_path = nil
         def observer = Event::ChainWriter::Null.new
         def start(**) = self
-        def wrap_session(session) = session
+        def wrap_session(session) = @tee ? session.cuts_into(@tee) : session
         def wrap_memory(recorder) = recorder
 
         def listen(listener)
@@ -296,6 +296,8 @@ module Lain
 
       # Run-state records go to the session journal itself, never the tee: they
       # are record data like the scribe's turn records, not live-view telemetry.
+      # Compaction cuts are the exception: they go through the tee so the live views count a handoff,
+      # and the tee writes the same journal, so the file holds each once.
       # Usable before {#start}, because the Session writes through the journal
       # directly with no scribe involved.
       #
@@ -304,7 +306,7 @@ module Lain
       # with no journal attached, and rebuilding it here would lose the
       # read-set, pin-set and todo list that replay just restored.
       def wrap_session(session)
-        session.journals_into(@journal)
+        session.journals_into(@journal).cuts_into(@tee || @journal)
       end
 
       # Registers the recorder so each turn_usage is paired with the memory root

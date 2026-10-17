@@ -876,6 +876,24 @@ RSpec.describe Lain::Session do
       )
     end
 
+    it "journals a cut into the sink it was pointed at instead of the journal, when one is set" do
+      journal = []
+      live = []
+      journaled = described_class.new(journal:).cuts_into(live)
+
+      journaled.record_compaction_cut(cut("blake3:one"))
+
+      expect([journal.size, live.size]).to eq([0, 1])
+    end
+
+    it "journals a cut into its journal when no cut sink was set" do
+      journal = []
+
+      described_class.new(journal:).record_compaction_cut(cut("blake3:one"))
+
+      expect(journal.size).to eq(1)
+    end
+
     it "holds none before a compaction commits" do
       expect(session.compaction_cuts).to eq([])
     end

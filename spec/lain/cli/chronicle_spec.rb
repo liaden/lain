@@ -572,6 +572,22 @@ RSpec.describe Lain::CLI::Chronicle do
         .to include("todos" => [{ "content" => "a", "status" => "pending" }])
     end
 
+    # Cuts are the one session record a live view folds: a handoff moves the
+    # HUD's compaction count, and the tee is the only path that reaches it.
+    it "sends a compaction cut through the tee, so the file holds it once and the views see it" do
+      seen = []
+      chronicle.wrap_tee(seen)
+      wrapped = chronicle.wrap_session(Lain::Session.new)
+
+      wrapped.record_compaction_cut(
+        Lain::Telemetry::CompactionCut.new(digest: "blake3:a", head: "blake3:h", strategy: "spans", kind: "advance",
+                                           parent: nil, supersedes: [], plan_step_completions: 0,
+                                           collapses: [{ "span" => %w[blake3:a blake3:b], "content" => [] }])
+      )
+
+      expect([of_type("compaction_cut").size, seen.size]).to eq([1, 1])
+    end
+
     # The SAME object comes back, which is what lets a resumed Session keep the
     # read-set, pin-set and todo list the replay already folded into it.
     it "hands back the session it was given, state intact" do

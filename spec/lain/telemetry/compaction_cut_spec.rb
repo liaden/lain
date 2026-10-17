@@ -50,6 +50,13 @@ RSpec.describe Lain::Telemetry::CompactionCut do
       .to raise_error(ArgumentError, /supersedes must be a list of cut addresses/)
   end
 
+  it "says it is a handoff only for the handoff kind" do
+    handoff = described_class.new(**fields, kind: "handoff", supersedes: [])
+
+    expect([record.handoff?, described_class.new(**collapsing).handoff?, handoff.handoff?])
+      .to eq([false, false, true])
+  end
+
   it "answers the endpoints of each range it newly collapsed, in order" do
     later = { "span" => %w[blake3:ddd blake3:eee], "content" => summary }
 

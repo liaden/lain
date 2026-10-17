@@ -80,6 +80,13 @@ RSpec.describe Lain::RunClock do
                                     cost_saved: nil, cost_spent: nil)
   end
 
+  def cut_record(kind)
+    Lain::Telemetry::CompactionCut.new(digest: "blake3:a", head: "blake3:h", strategy: "spans", kind:, parent: nil,
+                                       supersedes: [],
+                                       collapses: [{ "span" => %w[blake3:a blake3:b], "content" => [] }],
+                                       plan_step_completions: 0)
+  end
+
   def spawn_event
     Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn", from: "parent", to: nil)
   end
@@ -132,6 +139,24 @@ RSpec.describe Lain::RunClock do
       set.call(1010.0)
 
       expect(run_clock.since_compaction).to eq(10.0)
+    end
+
+    it "resets on a handoff cut" do
+      clock, set = clock_at(1000.0)
+      run_clock = described_class.new(clock:)
+
+      run_clock << cut_record("handoff")
+      set.call(1010.0)
+
+      expect(run_clock.since_compaction).to eq(10.0)
+    end
+
+    it "does not reset on an advance cut, which its Compaction record already did" do
+      run_clock = described_class.new(clock: -> { 1000.0 })
+
+      run_clock << cut_record("advance")
+
+      expect(run_clock.since_compaction).to be_nil
     end
   end
 

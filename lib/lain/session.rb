@@ -62,7 +62,7 @@ module Lain
     # @raise [UnrecordedParent] when a seeded cut's parent is not seeded before it
     def initialize(memory: Memory::Recorder.new, worker_env: WorkerEnv.default,
                    journal: Channel::Null.instance, scope: Unconfined, seeded_cuts: [], root: nil)
-      @journal = journal
+      @journal = @cut_sink = journal
       @root = root
       @reads = ReadSet.new
       @writes = Set.new
@@ -493,7 +493,7 @@ module Lain
     # @raise [UnrecordedParent] when `cut.parent` names no cut recorded here
     def record_compaction_cut(cut)
       hold_cut(cut)
-      @journal << cut
+      @cut_sink << cut
       self
     end
 
@@ -533,7 +533,19 @@ module Lain
               "and this one already journals into a #{@journal.class}"
       end
 
-      @journal = journal
+      @journal = @cut_sink = journal
+      self
+    end
+
+    # Send compaction cuts, and only cuts, to `sink` instead of the journal. A
+    # live view counts a cut, and the sink is the tee that also writes the
+    # record, so the file still holds each cut once. Turns and every other
+    # record here stay durable-only.
+    #
+    # @param sink [#<<] where {#record_compaction_cut} writes
+    # @return [self]
+    def cuts_into(sink)
+      @cut_sink = sink
       self
     end
 
@@ -1084,6 +1096,9 @@ module Lain
       #
       # @return [self]
       def journals_into(_journal) = self
+
+      # @return [self]
+      def cuts_into(_sink) = self
 
       # @return [false]
       def read?(_path) = false

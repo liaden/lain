@@ -115,6 +115,9 @@ module Lain
               collapses:, plan_step_completions: Integer(plan_step_completions))
       end
 
+      # A handoff journals no {Compaction} record, unlike an advance or a collapse.
+      def handoff? = kind == "handoff"
+
       # @return [Array<Array(String, String)>] each newly collapsed range's endpoints
       def spans = collapses.map { |collapse| collapse.fetch("span") }
 

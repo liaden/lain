@@ -98,6 +98,13 @@ RSpec.describe Lain::StatusFeed do
                                     bytes_after: 10, cost_saved: nil, cost_spent: nil, model: nil)
   end
 
+  def cut_record(kind)
+    Lain::Telemetry::CompactionCut.new(digest: "blake3:a", head: "blake3:h", strategy: "spans", kind:, parent: nil,
+                                       supersedes: [],
+                                       collapses: [{ "span" => %w[blake3:a blake3:b], "content" => [] }],
+                                       plan_step_completions: 0)
+  end
+
   around do |example|
     Dir.mktmpdir("status-feed-spec") do |dir|
       @dir = dir
@@ -683,6 +690,26 @@ RSpec.describe Lain::StatusFeed do
       feed << compaction_record
 
       expect(published["compactions"]).to eq(2)
+    end
+
+    it "counts a handoff cut and resets the compaction age" do
+      now = 0.0
+      feed = described_class.new(path:, run_clock: Lain::RunClock.new(clock: -> { now }))
+
+      feed << cut_record("handoff")
+      now = 5.0
+      feed << spawn_event("a")
+
+      expect(published.values_at("compactions", "since_compaction")).to eq([1, 5])
+    end
+
+    it "counts an advance once, by its Compaction record and not its cut" do
+      feed = described_class.new(path:)
+
+      feed << compaction_record
+      feed << cut_record("advance")
+
+      expect(published["compactions"]).to eq(1)
     end
   end
 

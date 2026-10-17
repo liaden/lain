@@ -79,10 +79,11 @@ module Lain
     end
 
     # @param event [Object] any fan-out event; only a {Telemetry::Compaction}
-    #   moves a measure.
+    #   or a handoff {Telemetry::CompactionCut} moves a measure.
     # @return [self]
     def <<(event)
-      @last_compaction_at = @clock.call if event.is_a?(Telemetry::Compaction)
+      handoff = event.is_a?(Telemetry::CompactionCut) && event.handoff?
+      @last_compaction_at = @clock.call if event.is_a?(Telemetry::Compaction) || handoff
       self
     end
   end
