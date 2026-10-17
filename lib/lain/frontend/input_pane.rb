@@ -347,16 +347,14 @@ module Lain
         end
       end
 
-      # A finished line's echoed newline moved the cursor off the input row, so
-      # the rows above are no longer a known distance away.
+      # The echoed newline moved the cursor off the input row, so the rows above
+      # are no longer a known distance away; @below_echo makes the next idle tick
+      # print the header whole and adopt it, instead of rewriting rows it cannot reach.
       def sent(client, line)
         emit(client, { "v" => "line", "text" => line, "generation" => 0 })
-        forget_rows
-      end
-
-      def forget_rows
         @shown = ""
         @adopted = 0
+        @below_echo = true
       end
 
       def prompted(task, client, frame)
@@ -377,6 +375,8 @@ module Lain
           frame["header"] != @drawn["header"] && !@drawn["header"].to_s.empty?
       end
 
+      def header_rows(frame) = frame["header"].to_s.split("\n").size
+
       def reheaded(task, client, frame)
         header = frame["header"].to_s
         return if editing? || @resized
@@ -385,7 +385,7 @@ module Lain
           rewrite(header)
           @drawn = frame
         else
-          @replaced = @drawn["header"].to_s.split("\n").size
+          @replaced = header_rows(@drawn)
           redraw(task, client, frame)
         end
       end
@@ -404,8 +404,10 @@ module Lain
       def repainted(task, client)
         moved = @geometry.moved!
         @resized ||= moved
-        frame = @drawn
-        redraw(task, client, frame) if moved && !frame.equal?(NOTHING_DRAWN) && !editing?
+        return unless moved && !@drawn.equal?(NOTHING_DRAWN) && !editing?
+
+        @replaced = header_rows(@drawn)
+        redraw(task, client, @drawn)
       end
 
       # Whatever called for it, a draw replaces the read that was open: the

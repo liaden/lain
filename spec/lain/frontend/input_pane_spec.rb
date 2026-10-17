@@ -284,6 +284,31 @@ RSpec.describe Lain::Frontend::InputPane do
       expect(hud_prints).to eq(drawn + 1)
     end
 
+    it "takes the old header back before drawing it again after a resize" do
+      chat = open_pane
+      showing_hud(chat)
+      screen.truncate(0) && screen.rewind
+
+      window.script([6, 80])
+
+      expect(settles { hud_prints.positive? ? screen.string : nil }).to start_with("\e[1A\r\e[J")
+    end
+
+    # Regression guard: nothing is drawn at idle (no frame is held), so this holds without the fix.
+    it "stacks no 2nd header under the 1st after a resize at true idle" do
+      chat = open_pane
+      showing_hud(chat)
+      say(chat, { "v" => "unpublished", "header" => hud })
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      settles { commands == ["idle"] || nil }
+      drawn = hud_prints
+
+      window.script([6, 80])
+      sleep(0.3)
+
+      expect(hud_prints).to eq(drawn)
+    end
+
     # The clock moving under a running fleet is what this pane spends its life
     # doing, and a poller that repainted on the tick rather than on the edge
     # cost a six-row pane a row per second.
@@ -492,7 +517,7 @@ RSpec.describe Lain::Frontend::InputPane do
         .to eq(["\e[1A\r\e[J\r\e[Kfleet:2\nrow b\nabc", { "v" => "line", "text" => "abc", "generation" => 0 }])
     end
 
-    it "draws nothing over the rows once a line was sent, since the cursor left the input row" do
+    it "keeps the HUD live after a sent line, drawing it once and then rewriting it in place" do
       chat = open_pane
       publish(chat, { "generation" => 3, "header" => "fleet:1" })
       settles { screen.string.include?("fleet:1") || nil }
@@ -504,10 +529,11 @@ RSpec.describe Lain::Frontend::InputPane do
       screen.truncate(0) && screen.rewind
 
       say(chat, { "v" => "unpublished", "header" => "fleet:2" })
-      say(chat, { "v" => "context", "commands" => ["after"] })
-      settles { commands == ["after"] || nil }
+      settles { screen.string.include?("fleet:2") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:3" })
 
-      expect(screen.string).to eq("")
+      expect(settles { screen.string.include?("fleet:3") ? screen.string : nil })
+        .to eq("\r\e[Kfleet:2\n\e7\e[1A\r\e[Kfleet:3\n\e8")
     end
 
     it "rewrites the header in place below an answered approval's echo, and redraws whole at the next prompt" do
