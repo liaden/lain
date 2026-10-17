@@ -62,6 +62,12 @@ module Lain
         lines.map { |line| -line.force_encoding(encoding) }.freeze
       end
 
+      # `strip` and not `empty?`: a CRLF file's blank line is "\r", which is a
+      # line separator wearing content's clothes. `.b` because the line may
+      # hold bytes that are not valid UTF-8, and `strip` on those raises --
+      # the same reason {Review::Hunk#body} works a line at a time.
+      def self.blank_line?(line) = line.b.strip.empty?
+
       # The review keys for a whole chunking, in order. The batch is a
       # precondition, not a convenience, for {Hunk.keys}' reason: a unit cannot
       # tell on its own that it is duplicated, and byte-identical units are

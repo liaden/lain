@@ -164,7 +164,7 @@ module Lain
 
         def commentary?(line, language) = blank?(line) || marked?(line, language)
 
-        def blank?(line) = line.b.strip.empty?
+        def blank?(line) = Unit.blank_line?(line)
 
         def marked?(line, language) = language.commentary.any? { |prefix| line.b.strip.start_with?(prefix) }
 

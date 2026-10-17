@@ -56,11 +56,7 @@ module Lain
           lines.slice_when { |before, after| blank?(before) && !blank?(after) }.to_a
         end
 
-        # `strip` and not `empty?`: a CRLF file's blank line is "\r", which is a
-        # line separator wearing content's clothes. `.b` because the line may
-        # hold bytes that are not valid UTF-8, and `strip` on those raises --
-        # the same reason {Review::Hunk#body} works a line at a time.
-        def blank?(line) = line.b.strip.empty?
+        def blank?(line) = Unit.blank_line?(line)
 
         # Greedy, and greedy is right here: a run already over the ceiling
         # accepts nothing more, so an unsplittable paragraph never drags a
