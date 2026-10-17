@@ -67,6 +67,16 @@ module Lain
         -"#{DIGEST_ALGORITHM}:#{Lain::Ext.blake3_hex(dump(value))}"
       end
 
+      # Display form of a digest: the scheme plus the first +hex+ characters of
+      # the hex part. Split on the scheme, never a flat slice off the front, so
+      # a longer scheme name cannot silently eat the hex that tells digests apart.
+      # An unprefixed input is all hex.
+      def abbreviate(digest, hex: 12, scheme: true)
+        name, separator, body = digest.to_s.rpartition(":")
+        head = scheme && !separator.empty? ? "#{name}:" : ""
+        "#{head}#{body[0, hex]}"
+      end
+
       private
 
       # Re-normalizing is the common case on the render path: a turn's content

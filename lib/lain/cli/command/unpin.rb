@@ -34,7 +34,9 @@ module Lain
           timeline = env.timeline
           session = env.agent.session
           digest = Pin::Target.new(timeline:, verb: name).resolve(args.to_s.strip)
-          return "#{digest[0, 19]}... was not pinned -- nothing to release" unless session.pinned?(digest)
+          unless session.pinned?(digest)
+            return "#{Canonical.abbreviate(digest)}... was not pinned -- nothing to release"
+          end
 
           companion = pinned_companion(timeline:, session:, digest:)
           session.record_unpin(digest)
@@ -50,10 +52,10 @@ module Lain
         end
 
         def reply(digest, companion)
-          return "unpinned #{digest[0, 19]}... -- compaction may elide this turn again" if companion.nil?
+          return "unpinned #{Canonical.abbreviate(digest)}... -- compaction may elide this turn again" if companion.nil?
 
-          "unpinned #{digest[0, 19]}... and its tool counterpart #{companion[0, 19]}... -- compaction may elide " \
-            "both again"
+          "unpinned #{Canonical.abbreviate(digest)}... and its tool counterpart " \
+            "#{Canonical.abbreviate(companion)}... -- compaction may elide both again"
         end
       end
     end

@@ -233,14 +233,17 @@ module Lain
         private
 
         def compacted_reply(digest)
-          "#{digest[0, 19]}... is already compacted: a held cut collapsed it, so pinning it now would not " \
-            "bring it back"
+          "#{Canonical.abbreviate(digest)}... is already compacted: a held cut collapsed it, so pinning it now " \
+            "would not bring it back"
         end
 
         def pinned_reply(digest, companion)
-          return "pinned #{digest[0, 19]}... -- compaction keeps this turn (/unpin to release it)" if companion.nil?
+          if companion.nil?
+            return "pinned #{Canonical.abbreviate(digest)}... -- compaction keeps this turn (/unpin to release it)"
+          end
 
-          "pinned #{digest[0, 19]}... and its tool counterpart #{companion[0, 19]}... -- compaction keeps both " \
+          "pinned #{Canonical.abbreviate(digest)}... and its tool counterpart " \
+            "#{Canonical.abbreviate(companion)}... -- compaction keeps both " \
             "(/unpin either to release them)"
         end
       end

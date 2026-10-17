@@ -108,10 +108,10 @@ module Lain
       #   longer than {DIGEST_PREVIEW_LENGTH} (every fixture key in this
       #   suite is), or `<scheme>:<DIGEST_PREVIEW_LENGTH hex digits>...`
       def self.preview(hunk_key)
-        scheme, digest = hunk_key.split(":", 2)
-        return hunk_key if digest.nil? || digest.length <= DIGEST_PREVIEW_LENGTH
+        return hunk_key unless hunk_key.include?(":")
 
-        "#{scheme}:#{digest[0, DIGEST_PREVIEW_LENGTH]}..."
+        abbreviated = Canonical.abbreviate(hunk_key, hex: DIGEST_PREVIEW_LENGTH)
+        abbreviated == hunk_key ? hunk_key : "#{abbreviated}..."
       end
 
       # The port's ANSWER convention, enforced at the one call where an adapter

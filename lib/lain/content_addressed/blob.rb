@@ -37,7 +37,7 @@ module Lain
         freeze
       end
 
-      def to_s = "#<#{self.class} #{bytes.bytesize}B #{digest[0, 19]}...>"
+      def to_s = "#<#{self.class} #{bytes.bytesize}B #{Canonical.abbreviate(digest)}...>"
       alias inspect to_s
 
       private

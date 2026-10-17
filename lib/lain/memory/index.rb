@@ -49,7 +49,7 @@ module Lain
         end
 
         def to_s
-          "#<Lain::Memory::Index::Node #{id} #{digest[0, 19]}...>"
+          "#<Lain::Memory::Index::Node #{id} #{Canonical.abbreviate(digest)}...>"
         end
         alias inspect to_s
       end
@@ -140,7 +140,7 @@ module Lain
       end
 
       def to_s
-        "#<Lain::Memory::Index #{empty? ? "empty" : "#{root[0, 19]}..."}>"
+        "#<Lain::Memory::Index #{empty? ? "empty" : "#{Canonical.abbreviate(root)}..."}>"
       end
       alias inspect to_s
     end

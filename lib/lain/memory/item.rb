@@ -58,7 +58,7 @@ module Lain
       end
 
       def to_s
-        "#<Lain::Memory::Item #{id} #{digest[0, 19]}...>"
+        "#<Lain::Memory::Item #{id} #{Canonical.abbreviate(digest)}...>"
       end
       alias inspect to_s
     end

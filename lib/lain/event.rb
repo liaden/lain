@@ -155,7 +155,7 @@ module Lain
     def meta = fetch_body("meta")
 
     def to_s
-      "#<Lain::Event #{kind} #{digest[0, 19]}...>"
+      "#<Lain::Event #{kind} #{Canonical.abbreviate(digest)}...>"
     end
     alias inspect to_s
 

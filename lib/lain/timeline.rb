@@ -153,7 +153,7 @@ module Lain
     end
 
     def to_s
-      "#<Lain::Timeline #{empty? ? "empty" : "#{head_digest[0, 19]}... (#{length})"}>"
+      "#<Lain::Timeline #{empty? ? "empty" : "#{Canonical.abbreviate(head_digest)}... (#{length})"}>"
     end
     alias inspect to_s
 

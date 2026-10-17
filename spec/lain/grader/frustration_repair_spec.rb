@@ -58,6 +58,14 @@ RSpec.describe Lain::Grader::FrustrationRepair do
       expect(found.first.caused_by).to eq([digests.fetch("turn_i")])
     end
 
+    it "names each turn by its scheme and 12 hex characters, never a raw slice of the prefixed digest" do
+      why = described_class.new.signals(entries).first.why
+
+      expect(why).to include(Lain::Canonical.abbreviate(digests.fetch("turn_ik")),
+                             Lain::Canonical.abbreviate(digests.fetch("turn_i")))
+      expect(why).to match(/at blake3:\h{12} after/)
+    end
+
     it "is deterministic -- the same entries grade to the same signals every time" do
       grader = described_class.new
 

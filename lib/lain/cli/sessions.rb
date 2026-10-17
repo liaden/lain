@@ -71,7 +71,7 @@ module Lain
       # classifying open/closed/chained, counting turns, picking the head --
       # is its own responsibility, and the listing above stays a pure map.
       class Row
-        # The digest prefix the inspect idiom shows (see Event#inspect).
+        # A header timestamp is cut to its first 19 characters (to the second).
         SHORT = 19
 
         FOLDS = [SessionRecord::TURN_TYPE, SessionRecord::REWOUND_TYPE].freeze
@@ -192,7 +192,7 @@ module Lain
         # for a header-only session.
         def head_short
           digest = folded.empty? ? anchor : head_of(folded.last)
-          digest ? digest[0, SHORT] : "-"
+          digest ? Canonical.abbreviate(digest) : "-"
         end
 
         def head_of(record) = record["type"] == SessionRecord::TURN_TYPE ? record["digest"] : record["to"]

@@ -231,9 +231,6 @@ module Lain
       # instead of Channel events. Plain text on purpose: the sink may be a
       # terminal or a buffer, and neither wants ANSI invented here.
       class View
-        # The digest-prefix width the inspect idiom shows (see Event#inspect).
-        SHORT = 19
-
         Body = Data.define(:body)
         private_constant :Body
 
@@ -284,7 +281,7 @@ module Lain
           "#{payload["prefix"]}/#{payload["posture"]} spawned from #{shorten(payload["spawned_from"])}"
         end
 
-        def shorten(digest) = digest.to_s[0, SHORT]
+        def shorten(digest) = Canonical.abbreviate(digest)
       end
     end
   end

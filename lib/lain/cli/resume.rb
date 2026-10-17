@@ -343,7 +343,7 @@ module Lain
       # there it is the head again, and the head is what the repair answers.
       def buried_refusal(door, turns, violation)
         position = violation.positions.first
-        digest = turns.fetch(position).digest.delete_prefix("blake3:")[0, 12]
+        digest = Canonical.abbreviate(turns.fetch(position).digest, scheme: false)
         later = turns.length - position - 1
         dropped = "#{later} #{later == 1 ? "turn" : "turns"}"
         door.refuse("its turn #{position + 1} of #{turns.length} (#{digest}) is an assistant tool_use whose call " \

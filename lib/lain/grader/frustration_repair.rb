@@ -148,7 +148,7 @@ module Lain
         "#{found.size} frustration signal(s), #{found.count(&:repaired)} repaired: #{found.map(&:why).join("; ")}"
       end
 
-      def short(digest) = digest[0, 12]
+      def short(digest) = Canonical.abbreviate(digest)
     end
   end
 end

@@ -198,7 +198,7 @@ module Lain
         end
 
         def name_of(timeline)
-          timeline.empty? ? "the empty session" : "#{timeline.head_digest[0, 19]}..."
+          timeline.empty? ? "the empty session" : "#{Canonical.abbreviate(timeline.head_digest)}..."
         end
       end
     end

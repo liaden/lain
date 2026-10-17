@@ -533,7 +533,7 @@ module Lain
 
       # "blake3:5aaa1111…" -> "5aaa1111": the algorithm prefix earns nothing
       # in a status line; the watch COMMAND keeps the full digest.
-      def short(digest) = digest.to_s.split(":").last.to_s[0, SHORT]
+      def short(digest) = Canonical.abbreviate(digest, hex: SHORT, scheme: false)
 
       # One spelling for every question this sink asks about a window it
       # opened -- the done-marker rename and the liveness check both. See

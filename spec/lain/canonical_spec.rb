@@ -55,6 +55,31 @@ RSpec.describe Lain::Canonical do
     end
   end
 
+  describe ".abbreviate" do
+    let(:digest) { "blake3:#{"a1b2c3d4e5f6" * 5}" }
+
+    it "keeps the scheme and the first 12 hex characters by default" do
+      expect(described_class.abbreviate(digest)).to eq("blake3:a1b2c3d4e5f6")
+      expect(described_class.abbreviate(digest)).to eq(digest[0, 19])
+    end
+
+    it "takes a shorter hex count" do
+      expect(described_class.abbreviate(digest, hex: 8)).to eq("blake3:a1b2c3d4")
+    end
+
+    it "treats an unprefixed input as all hex" do
+      expect(described_class.abbreviate("a1b2c3d4e5f6a1b2")).to eq("a1b2c3d4e5f6")
+    end
+
+    it "returns a digest shorter than the cut whole" do
+      expect(described_class.abbreviate("blake3:abc")).to eq("blake3:abc")
+    end
+
+    it "drops the scheme on request" do
+      expect(described_class.abbreviate(digest, hex: 8, scheme: false)).to eq("a1b2c3d4")
+    end
+  end
+
   describe ".normalize of its own output" do
     let(:canonical) { described_class.normalize([{ b: [{ z: 1, a: "x" }], a: 2 }]) }
 

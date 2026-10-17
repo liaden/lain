@@ -31,7 +31,7 @@ module Lain
       end
 
       def to_s
-        "#<Lain::Event::Payload #{kind} #{digest[0, 19]}...>"
+        "#<Lain::Event::Payload #{kind} #{Canonical.abbreviate(digest)}...>"
       end
       alias inspect to_s
     end

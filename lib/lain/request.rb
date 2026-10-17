@@ -69,7 +69,7 @@ module Lain
 
     # The human-facing projection; inspect keeps the class-tagged debug form.
     def to_s
-      "#{model} msgs=#{messages.size} tools=#{tools.size} #{digest[0, 19]}..."
+      "#{model} msgs=#{messages.size} tools=#{tools.size} #{Canonical.abbreviate(digest)}..."
     end
   end
 
