@@ -1403,11 +1403,18 @@ module Lain
           return carry(criteria, worker_env, target, carried) unless carried.nil?
 
           @test_layout.declare(root: worker_env.cwd, path: target)
-          record = generated(criteria, worker_env, guard, subject:, level:, lane:)
-          Red.new(record:, run: failing(record, worker_env), sha: commit(worker_env.cwd, record))
+          fresh(criteria, worker_env, guard, subject:, level:, lane:)
         end
 
         private
+
+        def fresh(criteria, worker_env, guard, subject:, level:, lane:)
+          before = dirty(worker_env.cwd)
+          record = generated(criteria, worker_env, guard, subject:, level:, lane:)
+          stray!(dirty(worker_env.cwd) - before - [record.target])
+          run = failing(record, worker_env)
+          Red.new(record:, run:, sha: commit(worker_env.cwd, record))
+        end
 
         def declared
           return @layout if @layout.in_force?
@@ -1444,11 +1451,38 @@ module Lain
 
         def failing(record, worker_env)
           run = ran(record.target, worker_env)
+          unloaded!(record.target, run) if run.total == run.errors.size && !run.errors.empty?
           return run unless run.clean?
 
           raise Error, "#{record.target} ran #{run.total} examples and none failed before any work was " \
                        "done, so they check nothing the work will change: the criteria or the " \
                        "generation are wrong, and nothing was committed"
+        end
+
+        def unloaded!(target, run)
+          raise Error, "#{target} did not load: #{run.errors.first(3).join("; ")}; a run that errors before any " \
+                       "example fails is not red, and nothing was committed"
+        end
+
+        # The red commit holds the tests alone.
+        def stray!(changed)
+          changed -= changed.select { |path| tests_tree?(path) }
+          return if changed.empty?
+
+          raise Error, "the test_engineer child also wrote #{changed.join(", ")}, and the red step may write " \
+                       "only the tests, so nothing was committed"
+        end
+
+        def tests_tree?(path)
+          roots = @layout.level_roots.values.reject { |root| root == Lain::TestLayout::INLINE }
+          roots.any? { |root| path.start_with?("#{root.split("/").first}/") }
+        end
+
+        def dirty(root)
+          Lain::Isolation::Checkout.new(root, shell_out_factory: @shell_out_factory)
+                                   .run("status", "--porcelain", "-z", "--no-renames",
+                                        "--untracked-files=all")
+                                   .stdout.split("\0").map { |entry| entry[3..] }
         end
 
         # The newest commit past `since` carrying exactly this step's message,

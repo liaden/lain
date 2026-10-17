@@ -232,6 +232,96 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     expect(git(held, "rev-parse", "HEAD")).to eq(head)
   end
 
+  it "refuses tests that never load, quoting the load error, and commits nothing" do
+    head = git(held, "rev-parse", "HEAD")
+    broken = "require_relative \"../../../app/models/missing_order\"\n\nRSpec.describe(Object) { it(\"x\") { } }\n"
+
+    expect { step(writing(target, broken)) }
+      .to raise_error(Lain::Error, /did not load.*missing_order/m)
+    expect(git(held, "rev-parse", "HEAD")).to eq(head)
+  end
+
+  it "refuses a red step that also wrote the subject, naming it, and commits nothing" do
+    head = git(held, "rev-parse", "HEAD")
+    provider = mock(tool_response(["w1", "write_file", { "path" => target, "content" => red }],
+                                  ["w2", "write_file", { "path" => "app/models/greet.rb", "content" => "x = 1\n" }]),
+                    text_response("wrote the spec"))
+    FileUtils.mkdir_p(File.dirname(File.join(held, target)))
+
+    expect { step(provider) }.to raise_error(Lain::Error, %r{app/models/greet\.rb})
+    expect(git(held, "rev-parse", "HEAD")).to eq(head)
+  end
+
+  it "names the stray subject even when it makes the tests pass" do
+    satisfied = "class Order\n  def total = 3\n  def refund = 0\nend\n"
+    shell = ->(body) { "printf '%s' '#{[body].pack("m0")}' | base64 -d" }
+    provider = mock(tool_response(["w1", "write_file", { "path" => target, "content" => red }]),
+                    tool_response(["b1", "bash", { "command" => "#{shell.call(satisfied)} > app/models/order.rb" }]),
+                    text_response("wrote the spec"))
+    FileUtils.mkdir_p(File.dirname(File.join(held, target)))
+
+    expect { step(provider) }.to raise_error(Lain::Error, %r{app/models/order\.rb}) { |error|
+      expect(error.message).not_to include("none failed")
+    }
+  end
+
+  it "accepts a helper the child wrote under the test tree" do
+    helper = "spec/support/shared.rb"
+    FileUtils.mkdir_p(File.join(held, "spec/support"))
+    both = mock(tool_response(["w1", "write_file", { "path" => target, "content" => red }],
+                              ["w2", "write_file", { "path" => helper, "content" => "# helper\n" }]),
+                text_response("wrote the spec"))
+    FileUtils.mkdir_p(File.dirname(File.join(held, target)))
+
+    expect(step(both).record.target).to eq(target)
+  end
+
+  it "refuses a deleted tracked file" do
+    provider = mock(tool_response(["w1", "write_file", { "path" => target, "content" => red }]),
+                    tool_response(["b1", "bash", { "command" => "rm app/models/order.rb" }]),
+                    text_response("wrote the spec"))
+    FileUtils.mkdir_p(File.dirname(File.join(held, target)))
+
+    expect { step(provider) }.to raise_error(Lain::Error, %r{app/models/order\.rb})
+  end
+
+  it "keeps a renamed path whole when the child moved a tracked file" do
+    provider = mock(tool_response(["w1", "write_file", { "path" => target, "content" => red }]),
+                    tool_response(["b1", "bash", { "command" => "git mv app/models/order.rb app/models/moved.rb" }]),
+                    text_response("wrote the spec"))
+    FileUtils.mkdir_p(File.dirname(File.join(held, target)))
+
+    expect { step(provider) }.to raise_error(Lain::Error, %r{app/models/moved\.rb})
+  end
+
+  context "with a command adapter that reports errors inside tests" do
+    def reporting(lines)
+      lambda do |root|
+        File.write(File.join(@root, "report.txt"), lines)
+        Lain::Grader::TestHarness.new(
+          root, adapter: Lain::Grader::TestHarness::Adapter::Command.new(
+            out_argv: ->(out) { ["sh", "-c", "cp #{File.join(@root, "report.txt")} #{out}"] },
+            passed: /^ok (.+)/, failed: /^fail (.+)/, errors: /^error (.+)/
+          )
+        )
+      end
+    end
+
+    it "accepts failed plus errors as red" do
+      expect(step(writing(target, red), harness: reporting("fail a\nerror b\n"))).to be_a(described_class::Red)
+    end
+
+    it "accepts an error beside a passing example as red" do
+      expect(step(writing(target, red), harness: reporting("ok a\nerror NameError in b\n")))
+        .to be_a(described_class::Red)
+    end
+
+    it "refuses a run where nothing ran but errors" do
+      expect { step(writing(target, red), harness: reporting("error cannot load\n")) }
+        .to raise_error(Lain::Error, /did not load.*cannot load/m)
+    end
+  end
+
   # Enforcement is opt-in: a framework the files betray is never read as a
   # declared layout, which would impose level roots the project never chose.
   it "refuses, naming the tests verb, a project that declares no test layout, and spawns nothing" do
