@@ -634,6 +634,33 @@ RSpec.describe Lain::Shell::Named do
       expect(resolved("pack -xzf/x")).to include("/x", "/p/f/x")
     end
 
+    it "names none of find's expression words as paths" do
+      result = named("find . -name foo")
+      expect(result.paths.map(&:resolved)).to include("/p")
+      expect(result.paths.map(&:resolved)).not_to include("/p/ame", "/p/me", "/p/e", "/p/-name")
+    end
+
+    it "names only the value of a dd operand" do
+      result = named("dd if=/etc/shadow of=x")
+      expect(result.paths.map(&:resolved)).to contain_exactly("/etc/shadow", "/p/x")
+    end
+
+    it "marks the places an unknown program's attached value could start as guesses" do
+      guesses = named("tool -xzf/x").paths
+      expect(guesses.map(&:resolved)).to include("/p/zf/x", "/p/f/x", "/x")
+      expect(guesses).to all(have_attributes(guess: true))
+    end
+
+    it "does not mark a path the argv names outright as a guess" do
+      expect(named("cat a.txt").paths).to all(have_attributes(guess: false))
+    end
+
+    it "keeps a guessed path in the lists every gate reads" do
+      result = named("tool -xzf/x > out")
+      expect(result.paths.map(&:resolved)).to include("/x", "/p/out")
+      expect(result.written.map(&:resolved)).to eq(%w[/p/out])
+    end
+
     it "makes a ~ after a colon in a name=value operand opaque, since bash may expand it" do
       expect(named("cat x=a:~/y")).to be_opaque
     end

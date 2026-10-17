@@ -29,7 +29,12 @@ module Lain
       # @!attribute pattern [String, nil] the absolute glob this path stands
       #   for, with a quoted glob character escaped: the word's own glob, or
       #   `<root>/**` for a search root such as find's
-      Path = Data.define(:word, :resolved, :written, :directory, :pattern)
+      # @!attribute guess [Boolean] one of several places an unknown program's
+      #   attached value could start, so most of them name no real file
+      Path = Data.define(:word, :resolved, :written, :directory, :pattern, :guess) do
+        # Data has no per-member defaults, so the keyword is defaulted here.
+        def initialize(guess: false, **) = super
+      end
 
       # @param command [String] the command as the model wrote it
       # @param cwd [String] absolute directory the call runs in
@@ -357,7 +362,14 @@ module Lain
         def option?(index) = @argv.option?(index)
 
         # @param index [Integer] into the words after the program
-        def value_offset(index) = @untrusted ? nil : @argv.value_offset(index)
+        def value_offset(index)
+          return if @untrusted
+
+          @command == "find" ? @argv.words[index].size : @argv.value_offset(index)
+        end
+
+        # `dd if=x` opens `x`; the whole word names no file.
+        def assignments? = @command == "dd" && !@untrusted
 
         # @return [Array<Integer>] the words, or the option words holding an
         #   attached value, that this program writes
@@ -783,7 +795,8 @@ module Lain
             elsif program.option?(index)
               option_paths(raw, literal, program.value_offset(index), written.include?(index))
             else
-              operand_paths(raw, literal, written: written.include?(index), root: roots.include?(index))
+              operand_paths(raw, literal, written: written.include?(index), root: roots.include?(index),
+                                          assignment: program.assignments?)
             end
           end
         end
@@ -796,7 +809,7 @@ module Lain
 
           unless text.start_with?("--")
             cuts = offset ? [offset] : (2..text[SHORT_LETTERS].to_s.size)
-            return cuts.map { path(raw, literal.drop(_1), written:) }
+            return cuts.map { path(raw, literal.drop(_1), written:, guess: offset.nil?) }
           end
 
           match = LONG_VALUE.match(text)
@@ -805,13 +818,14 @@ module Lain
           value_paths(raw, literal, match.end(0), written:)
         end
 
-        # `cat a=b` opens `a=b`, while `dd if=x` opens `x`, so both are named.
-        def operand_paths(raw, literal, written:, root:)
+        # `cat a=b` opens `a=b`, so a name=value operand names the whole word and its
+        # value; `dd if=x` opens only `x`, so dd names the value alone.
+        def operand_paths(raw, literal, written:, root:, assignment:)
           whole = path(raw, literal, written:, root:)
           match = ASSIGNMENT.match(literal.text)
           return [whole] if match.nil?
 
-          [whole, *value_paths(raw, literal, match.end(0), written:)]
+          [*(whole unless assignment), *value_paths(raw, literal, match.end(0), written:)]
         end
 
         # Bash expands a `~` after the `=` of an argument shaped like an
@@ -836,13 +850,14 @@ module Lain
           found unless found.is_a?(Path) && found.resolved == File::NULL
         end
 
-        def path(raw, literal, written:, root: false)
+        def path(raw, literal, written:, root: false, guess: false)
           return if literal.text.empty? || literal.text == LONE_DASH
 
           resolved = resolve(literal)
           return :opaque if resolved.nil?
 
-          Path.new(word: -raw, resolved:, written:, directory: false, pattern: pattern(literal, resolved, root))
+          Path.new(word: -raw, resolved:, written:, directory: false, pattern: pattern(literal, resolved, root),
+                   guess:)
         end
 
         def pattern(literal, resolved, root)
