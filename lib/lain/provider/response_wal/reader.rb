@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "json"
-
 module Lain
   class Provider
     class ResponseWal
@@ -62,7 +60,7 @@ module Lain
 
         def fold(open, record, tail:, &emit)
           line, _newline, rest = record.partition("\n")
-          json = parse_line(line)
+          json = Journal.parse(line)
           return begin_frame(json, rest, open, &emit) if json&.key?("request_digest")
           return finish_frame(json, rest, open, &emit) if json&.key?("bytes")
 
@@ -107,13 +105,6 @@ module Lain
 
         def torn(open)
           Entry.new(request_digest: open.request_digest, bytes: open.raw, complete: false)
-        end
-
-        def parse_line(line)
-          parsed = JSON.parse(line)
-          parsed.is_a?(Hash) ? parsed : nil
-        rescue JSON::ParserError
-          nil
         end
       end
     end

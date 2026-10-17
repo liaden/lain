@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "json"
-
 module Lain
   module Grader
     # An LLM judge. Where {Fixture} is a deterministic bundle of hard assertions,
@@ -86,14 +84,7 @@ module Lain
         object
       end
 
-      def json_object(candidate)
-        return nil if candidate.to_s.strip.empty?
-
-        parsed = JSON.parse(candidate)
-        parsed.is_a?(Hash) ? parsed : nil
-      rescue JSON::ParserError
-        nil
-      end
+      def json_object(candidate) = Blankness.blank?(candidate) ? nil : Journal.parse(candidate)
     end
   end
 end
