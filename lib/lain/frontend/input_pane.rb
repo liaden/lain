@@ -532,7 +532,7 @@ module Lain
       end
 
       def close_quietly(client)
-        client&.close unless client.nil? || client.closed?
+        client.close unless client.nil? || client.closed?
       rescue IOError, SystemCallError
         nil
       end
