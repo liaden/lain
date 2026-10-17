@@ -155,10 +155,7 @@ module Lain
 
     # nil for every way git can fail to answer, which callers read as "no repository".
     def git(dir, *argv)
-      shell = @shell_out_factory.call("git", "-C", dir, *argv,
-                                      environment: Isolation::Worktree::GIT_CONTEXT_SCRUB,
-                                      timeout: GIT_TIMEOUT)
-      shell.run_command
+      shell = Isolation::Checkout.new(dir, shell_out_factory: @shell_out_factory).run(*argv, timeout: GIT_TIMEOUT)
       shell.stdout if Shell::Out.ok?(shell)
     rescue Shell::Out::Timeout, SystemCallError
       nil

@@ -27,6 +27,7 @@ module Lain
         def initialize(repo_root:, shell_out_factory:)
           @repo_root = repo_root
           @shell_out_factory = shell_out_factory
+          @git = Checkout.new(repo_root, shell_out_factory:)
         end
 
         # @return [String] the repository every command below runs against
@@ -36,20 +37,23 @@ module Lain
         # porcelain quotes any holding a newline. Records end in an extra NUL.
         # @return [Array<Entry>]
         def entries
-          git("worktree", "list", "--porcelain", "-z").stdout.split("\0\0").map { |record| entry(record.split("\0")) }
+          @git.run("worktree", "list", "--porcelain", "-z").stdout.split("\0\0")
+              .map { |record| entry(record.split("\0")) }
         end
 
-        def add(path, commit, reason:) = git("worktree", "add", "--lock", "--reason", reason, "--detach", path, commit)
+        def add(path, commit, reason:)
+          @git.run("worktree", "add", "--lock", "--reason", reason, "--detach", path, commit)
+        end
 
         # git refuses to lock a tree that is already locked, so a caller
         # changing a reason unlocks first.
-        def lock(path, reason) = git("worktree", "lock", "--reason", reason, path)
+        def lock(path, reason) = @git.run("worktree", "lock", "--reason", reason, path)
 
         # Nonzero when the tree was not locked, which every caller treats as
         # nothing to do.
-        def unlock(path) = git("worktree", "unlock", path)
+        def unlock(path) = @git.run("worktree", "unlock", path)
 
-        def move(from, to) = git("worktree", "move", from, to)
+        def move(from, to) = @git.run("worktree", "move", from, to)
 
         # Rewrites HEAD alone, never the index or a file, so a tree holding
         # uncommitted work or an index git cannot read detaches all the same.
@@ -60,15 +64,15 @@ module Lain
         # @param commit [String] the commit HEAD resolved to when it was read
         # @param reason [String] stamped into HEAD's reflog
         def detach(path, commit, reason:)
-          run("git", "-C", path, "update-ref", "--no-deref", "-m", reason, "HEAD", commit, commit)
+          at(path).run("update-ref", "--no-deref", "-m", reason, "HEAD", commit, commit)
         end
 
         # Refuses a locked tree, which is what makes a lock that appears after
         # a {#claim} stop the removal. It also drops the registration of an
         # unlocked checkout whose directory is already gone, and only that one.
-        def remove(path) = git("worktree", "remove", "--force", path)
+        def remove(path) = @git.run("worktree", "remove", "--force", path)
 
-        def prune = git("worktree", "prune")
+        def prune = @git.run("worktree", "prune")
 
         # @return [Anchorage] over this repository
         def anchorage = Anchorage.new(repo_root: @repo_root, shell_out_factory: @shell_out_factory)
@@ -82,7 +86,7 @@ module Lain
         def uncommitted?(path)
           return false unless File.directory?(path)
 
-          shell = run("git", "-C", path, "status", "--porcelain", "--untracked-files=all")
+          shell = at(path).run("status", "--porcelain", "--untracked-files=all")
           !Shell::Out.ok?(shell) || !shell.stdout.empty?
         rescue StandardError
           true
@@ -135,7 +139,7 @@ module Lain
         # @param path [String] a registered checkout
         # @return [String] the branch a rebase in that checkout will rewrite, or "" for none
         def rebasing(path)
-          shell = run("git", "-C", path, "rev-parse", "--absolute-git-dir")
+          shell = at(path).run("rev-parse", "--absolute-git-dir")
           return "" unless Shell::Out.ok?(shell)
 
           REBASES.map { |kind| File.join(shell.stdout.strip, kind, "head-name") }
@@ -217,16 +221,10 @@ module Lain
         def spellings(path) = Project::Resolver.spellings(path, File)
 
         def common_dir
-          @common_dir ||= -git("rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip
+          @common_dir ||= -@git.run("rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip
         end
 
-        def git(*) = run("git", "-C", @repo_root, *)
-
-        def run(*)
-          shell = @shell_out_factory.call(*, environment: GIT_CONTEXT_SCRUB)
-          shell.run_command
-          shell
-        end
+        def at(path) = Checkout.new(path, shell_out_factory: @shell_out_factory)
       end
     end
   end

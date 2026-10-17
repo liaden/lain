@@ -385,10 +385,9 @@ module Lain
       # commit's own tree.
       class Placement
         def initialize(repo_root:, layout:, base:, shell_out_factory:)
-          @repo_root = repo_root
           @layout = layout
           @base = base
-          @shell_out_factory = shell_out_factory
+          @git = Isolation::Checkout.new(repo_root, shell_out_factory:)
         end
 
         # Every refusing verdict counts, `:no_source` included.
@@ -429,13 +428,10 @@ module Lain
         end
 
         def git!(env, *args)
-          shell = @shell_out_factory.call("git", "-C", @repo_root, *args,
-                                          environment: Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(env))
-          shell.run_command
-          return shell if Shell::Out.ok?(shell)
-
-          raise MisplacedTests, "the layout check could not run: git #{args.first} failed " \
-                                "(exit #{shell.exitstatus}): #{shell.stderr.strip}"
+          @git.run!(*args, error: MisplacedTests, env:) do |shell|
+            "the layout check could not run: git #{args.first} failed " \
+              "(exit #{shell.exitstatus}): #{shell.stderr.strip}"
+          end
         end
       end
     end

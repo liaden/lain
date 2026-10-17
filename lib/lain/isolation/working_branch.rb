@@ -341,13 +341,8 @@ module Lain
         !standing.empty? && Shell::Out.ok?(transacted("verify #{ref} #{standing}", "create #{owned_ref} #{marked}"))
       end
 
-      # git applies every line or none. Not through {Checkout}, which feeds its
-      # child no stdin.
-      def transacted(*lines)
-        Shell::Out.new("git", "-C", File.expand_path(@repo_root), "update-ref", "--stdin",
-                       input: lines.map { |line| "#{line}\n" }.join,
-                       environment: Worktree::GIT_CONTEXT_SCRUB).run_command
-      end
+      # git applies every line or none.
+      def transacted(*lines) = @git.run("update-ref", "--stdin", input: lines.map { |line| "#{line}\n" }.join)
 
       def standing(owned_only)
         return if !owned_only || owned?

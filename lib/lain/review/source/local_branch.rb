@@ -55,7 +55,10 @@ module Lain
         # and the diff agree with each other on the wrong answer. Paths carrying
         # a tab or a newline stay quoted regardless, so `split("\t", 3)` is
         # unaffected by turning this off.
-        CONFIG_PINS = %w[-c core.quotePath=false].freeze
+        PINS = %w[core.quotePath=false].freeze
+
+        # {PINS} as argv, for the callers that spell git themselves.
+        CONFIG_PINS = PINS.flat_map { |pin| ["-c", pin] }.freeze
 
         # @param base [String] the ref the changeset is reviewed against; the
         #   MERGE BASE of this and `head` becomes {#base_ref}
@@ -68,7 +71,7 @@ module Lain
         def initialize(base:, head: "HEAD", repo_root: Dir.pwd,
                        shell_out_factory: Shell::Out.public_method(:new))
           @repo_root = File.expand_path(repo_root)
-          @shell_out_factory = shell_out_factory
+          @git = Isolation::Checkout.new(@repo_root, shell_out_factory:)
           @head_ref = resolve!("head", head)
           @base_ref = merge_base!(base, head)
         end
@@ -82,7 +85,7 @@ module Lain
         # @return [String] raw unified diff bytes. Binary-encoded on purpose: a
         #   diff carries whatever bytes the files carry, and a latin-1 hunk must
         #   not raise on its way to the parser.
-        def diff = @diff ||= git("diff", *DIFF_HYGIENE, @base_ref, @head_ref).stdout.b.freeze
+        def diff = @diff ||= @git.run("diff", *DIFF_HYGIENE, @base_ref, @head_ref, pins: PINS).stdout.b.freeze
 
         # @return [Array<Commit>] oldest-first, each carrying its own numstat.
         #   One subprocess for the whole walk: at the 810-file changeset §3.7
@@ -111,7 +114,7 @@ module Lain
         #   reason -- a file carries whatever bytes it carries, and a latin-1
         #   one must not raise on its way to a buffer
         def file_at(revision, path)
-          shell = git("show", "--end-of-options", "#{revision}:#{path}")
+          shell = @git.run("show", "--end-of-options", "#{revision}:#{path}", pins: PINS)
           Shell::Out.ok?(shell) ? shell.stdout.b.freeze : nil
         end
 
@@ -131,7 +134,9 @@ module Lain
         #
         # @param path [String] repository-relative, as the diff spells it
         # @return [Boolean]
-        def checked_out?(path) = Checkout.new(head_ref: @head_ref) { |*argv, **env| git(*argv, **env) }.holds?(path)
+        def checked_out?(path)
+          Checkout.new(head_ref: @head_ref) { |*argv, **opts| @git.run(*argv, pins: PINS, **opts) }.holds?(path)
+        end
 
         private
 
@@ -154,9 +159,9 @@ module Lain
         # proper UTF-8; scrubbing is then only the backstop for genuinely
         # undeclared or mislabelled bytes, which is what it should be.
         def log_output
-          git("log", "--reverse", "--topo-order", "--numstat", "--no-ext-diff",
-              "--encoding=UTF-8", "--diff-merges=first-parent", "--format=#{LOG_FORMAT}",
-              "--end-of-options", "#{@base_ref}..#{@head_ref}").stdout.b
+          @git.run("log", "--reverse", "--topo-order", "--numstat", "--no-ext-diff",
+                   "--encoding=UTF-8", "--diff-merges=first-parent", "--format=#{LOG_FORMAT}",
+                   "--end-of-options", "#{@base_ref}..#{@head_ref}", pins: PINS).stdout.b
         end
 
         # A runner's stdout encoding is its own choice: a runner may tag it UTF-8 only
@@ -188,7 +193,7 @@ module Lain
         # git spells a binary file's counts as `-`, and that is preserved as nil
         # rather than coerced to 0 -- see {FileStat}.
         #
-        # UNQUOTED before it is decoded, and {CONFIG_PINS}' `core.quotePath=false`
+        # UNQUOTED before it is decoded, and {PINS}' `core.quotePath=false`
         # is not enough on its own: that setting governs NON-ASCII paths, while a
         # name carrying a quote, a backslash, a tab or a newline is C-quoted
         # regardless. Left encoded, this side reports `"we\"ird.rb"` while the
@@ -211,7 +216,7 @@ module Lain
         # relying on rev-parse happening to reject `--upload-pack=…` as an
         # unknown option.
         def resolve!(role, ref)
-          shell = git("rev-parse", "--verify", "--quiet", "--end-of-options", "#{ref}^{commit}")
+          shell = @git.run("rev-parse", "--verify", "--quiet", "--end-of-options", "#{ref}^{commit}", pins: PINS)
           raise UnknownRef.unresolved(role, ref, @repo_root, shell) unless Shell::Out.ok?(shell)
 
           Utf8.legible(shell.stdout).strip.freeze
@@ -221,22 +226,12 @@ module Lain
         # would silently present the entire branch as additions, which reads as a
         # successful review of a changeset nobody wrote.
         def merge_base!(base, head)
-          shell = git("merge-base", "--end-of-options", "#{base}^{commit}", @head_ref)
+          shell = @git.run("merge-base", "--end-of-options", "#{base}^{commit}", @head_ref, pins: PINS)
           return Utf8.legible(shell.stdout).strip.freeze if Shell::Out.ok?(shell)
 
           # Only a failure pays for telling the two refusals apart.
           resolve!("base", base)
           raise UnknownRef.no_merge_base(base, head, @repo_root)
-        end
-
-        # {Isolation::Worktree}'s pinned scrub set, not a parallel copy: an
-        # ambient GIT_DIR (a pre-commit hook sets one) would otherwise point every
-        # call below at the hook's repository instead of `repo_root`.
-        def git(*, env: {})
-          shell = @shell_out_factory.call("git", "-C", @repo_root, *CONFIG_PINS, *,
-                                          environment: Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(env))
-          shell.run_command
-          shell
         end
 
         # One path of the working tree, measured against a head -- a class of its

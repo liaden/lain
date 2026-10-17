@@ -35,44 +35,15 @@ module Lain
     # {Stow::KNOWN_LINKS}, the conventional paths a package owns that sit deeper.
     # A link buried anywhere else is simply not seen.
     module Dotfiles
-      # The git-context env that redirects where git finds its repository, index
-      # and config. A lain launched from a pre-commit hook inherits all of them.
-      #
-      # THREE reach this answer, measured rather than assumed:
-      # `GIT_INDEX_FILE` makes `ls-files` report ANOTHER repository's tracked set
-      # as this home's editable surface, and `GIT_COMMON_DIR`/`GIT_WORK_TREE`
-      # each make `rev-parse --is-bare-repository` answer **false** for the very
-      # repository the command line named, so a real dotfiles home reports
-      # `:plain` and its whole surface disappears.
-      #
-      # THE OTHER EIGHT REACH NOTHING, and stay anyway. Every call here names
-      # `--git-dir`, `--work-tree`, `--local` and `-z` explicitly, and an explicit
-      # option beats the environment -- so `GIT_DIR` is defeated by the command
-      # line rather than by this Hash, and `GIT_CONFIG_COUNT`/
-      # `GIT_CONFIG_PARAMETERS` by `--local`. Deleting each individually changes
-      # no answer, so no example holds them and none pretends to. Scrubbing the
-      # whole inheritance class rather than the measured subset is the policy,
-      # because the measurement is of TODAY's call sites: the next `git` call
-      # added here could make any of the eight live, silently.
-      #
-      # `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` are deliberately absent, the
-      # same exclusion {Workspace::Snapshot::Scope::ShadowGit} reasons about:
-      # honouring the user's real config is the point of not scrubbing them.
-      # Unlike ShadowGit's case they DO reach an answer here, because a
-      # `core.worktree` in someone's `~/.gitconfig` is legal -- so the work-tree
-      # read is confined with `--local` instead.
-      #
-      # Its own constant rather than {Isolation::Worktree::GIT_CONTEXT_SCRUB},
-      # which is the precedent for the shape: that set predates
-      # `GIT_CEILING_DIRECTORIES`. `nil` deletes the variable in the child -- the
-      # {WorkerEnv} scrub semantics `Shell::Out` honours.
-      GIT_CONTEXT_SCRUB = {
-        "GIT_DIR" => nil, "GIT_INDEX_FILE" => nil, "GIT_WORK_TREE" => nil,
-        "GIT_PREFIX" => nil, "GIT_COMMON_DIR" => nil, "GIT_NAMESPACE" => nil,
-        "GIT_OBJECT_DIRECTORY" => nil, "GIT_ALTERNATE_OBJECT_DIRECTORIES" => nil,
-        "GIT_CEILING_DIRECTORIES" => nil,
-        "GIT_CONFIG_COUNT" => nil, "GIT_CONFIG_PARAMETERS" => nil
-      }.freeze
+      # Every git call here runs under {Isolation::Checkout}'s scrub, measured
+      # against this module: `GIT_INDEX_FILE` makes `ls-files` report ANOTHER
+      # repository's tracked set as this home's editable surface, and
+      # `GIT_COMMON_DIR`/`GIT_WORK_TREE` each make `rev-parse --is-bare-repository`
+      # answer **false** for the very repository the command line named, so a
+      # real dotfiles home reports `:plain` and its whole surface disappears.
+      # `GIT_CONFIG_GLOBAL` is absent from the scrub on purpose: a `core.worktree`
+      # in someone's `~/.gitconfig` is legal, so the work-tree read is confined
+      # with `--local` instead.
 
       # Seconds a detection may spend inside one `git`. Well under
       # {Shell::Out::DEFAULT_TIMEOUT}, deliberately: this runs while a session is
@@ -170,7 +141,7 @@ module Lain
         def initialize(home:, repository:, shell_out_factory: Shell::Out.public_method(:new))
           @home = home
           @repository = repository
-          @shell_out_factory = shell_out_factory
+          @git = Isolation::Checkout.new(home, shell_out_factory:)
         end
 
         def flavour = :bare
@@ -195,7 +166,7 @@ module Lain
 
         def bare_repository?
           File.directory?(@repository) &&
-            git("--git-dir", @repository, "rev-parse", "--is-bare-repository").strip == "true"
+            answer("--git-dir", @repository, "rev-parse", "--is-bare-repository").strip == "true"
         end
 
         # An UNSET `core.worktree` is the tutorial's own arrangement -- the work
@@ -220,12 +191,12 @@ module Lain
         # expanding it here answered a question about `Dir.pwd` that nobody
         # asked.
         def work_tree_home?
-          declared = git("--git-dir", @repository, "config", "--local", "--get", "core.worktree").strip
+          declared = answer("--git-dir", @repository, "config", "--local", "--get", "core.worktree").strip
           declared.empty? || Dotfiles.clean(declared) == Dotfiles.clean(@home)
         end
 
-        # `-C @home` is not optional. `git ls-files` reports the subtree below the
-        # CURRENT directory, and lain's process directory is routinely inside the
+        # The Checkout is rooted at the home, and that is not optional. `git ls-files`
+        # reports the subtree below the CURRENT directory, and lain's process directory is routinely inside the
         # home it is asked about: run from `~/sub` the same repository answers
         # `deep.txt` instead of `sub/deep.txt` -- a truncated surface, and paths
         # that join back to the wrong file.
@@ -235,7 +206,7 @@ module Lain
         # `core.quotePath`, and a newline in a name splits a line-delimited
         # reading into two paths that name nothing.
         def tracked
-          git("-C", @home, "--git-dir", @repository, "--work-tree", @home, "ls-files", "-z")
+          answer("--git-dir", @repository, "--work-tree", @home, "ls-files", "-z")
             .split("\0").reject(&:empty?)
         end
 
@@ -243,9 +214,8 @@ module Lain
         # to answer -- non-zero, killed by a signal (`exitstatus` is nil), timed
         # out, or not installed at all. Callers read empty as "no repository",
         # which is the fail-closed direction the class comment argues for.
-        def git(*argv)
-          shell = @shell_out_factory.call("git", *argv, environment: GIT_CONTEXT_SCRUB, timeout: GIT_TIMEOUT)
-          shell.run_command
+        def answer(*argv)
+          shell = @git.run(*argv, timeout: GIT_TIMEOUT)
           Shell::Out.ok?(shell) ? shell.stdout : ""
         rescue Shell::Out::Timeout, SystemCallError
           ""

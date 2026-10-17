@@ -994,28 +994,30 @@ RSpec.describe Lain::CLI::Epic do
     end
 
     def reason_from(runner, path: "/x")
-      described_class.new(root, shell_out_factory: ->(*) { runner }).reason(path)
+      described_class.new(root, shell_out_factory: ->(*, **) { runner }).reason(path)
     end
 
     it "asks git with -v, scoped to the root, and reads back the rule" do
       runner = shell(exitstatus: 0, stdout: ".gitignore:5:/.lain/\t.lain/epics\n")
       seen = []
-      factory = lambda do |*argv|
-        seen = argv
+      factory = lambda do |*argv, **options|
+        seen = [argv, options]
         runner
       end
 
       rule = described_class.new(root, shell_out_factory: factory).reason("/x")
 
       expect(rule).to eq(".gitignore:5:/.lain/")
-      expect(seen).to eq(["git", "-C", root, "check-ignore", "-v", "--", "/x"])
+      expect(seen).to eq([["git", "-C", root, "check-ignore", "-v", "--", "/x"],
+                          { environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB }])
     end
 
     it "asks git through Shell::Out when no factory is injected" do
       allow(Lain::Shell::Out).to receive(:new).and_call_original
 
       expect(described_class.new(root).reason("/x")).to be_a(String)
-      expect(Lain::Shell::Out).to have_received(:new).with("git", "-C", root, "check-ignore", "-v", "--", "/x")
+      expect(Lain::Shell::Out).to have_received(:new).with("git", "-C", root, "check-ignore", "-v", "--", "/x",
+                                                           environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
     end
 
     it "hands the source field on verbatim, so a pattern holding a colon survives" do

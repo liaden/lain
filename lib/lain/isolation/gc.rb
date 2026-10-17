@@ -188,7 +188,7 @@ module Lain
 
         def initialize(dir, shell_out_factory:)
           @dir = dir
-          @shell_out_factory = shell_out_factory
+          @git = Checkout.new(dir, shell_out_factory:)
         end
 
         # The working state's first parent is HEAD and its second is the
@@ -199,7 +199,7 @@ module Lain
         def commit
           staged = staged_commit
           Dir.mktmpdir("lain-gc-index") do |tmp|
-            env = Worktree::GIT_CONTEXT_SCRUB.merge(IDENTITY, "GIT_INDEX_FILE" => File.join(tmp, "index"))
+            env = IDENTITY.merge("GIT_INDEX_FILE" => File.join(tmp, "index"))
             step(env, "read-tree", "HEAD")
             step(env, "add", "--all")
             refuse_nested(env)
@@ -210,8 +210,7 @@ module Lain
         private
 
         def staged_commit
-          own = Worktree::GIT_CONTEXT_SCRUB.merge(IDENTITY)
-          step(own, "commit-tree", step(own, "write-tree"), "-p", "HEAD", "-m", STAGED)
+          step(IDENTITY, "commit-tree", step(IDENTITY, "write-tree"), "-p", "HEAD", "-m", STAGED)
         end
 
         # A gitlink whose repository keeps a `.git` DIRECTORY of its own: its
@@ -228,13 +227,9 @@ module Lain
         end
 
         def step(env, *args)
-          shell = @shell_out_factory.call("git", "-C", @dir, *args, environment: env)
-          shell.run_command
-          unless Shell::Out.ok?(shell)
-            raise Unanchored, "git #{args.first} failed in #{@dir}: #{Records.flat(shell.stderr)}"
-          end
-
-          shell.stdout.strip
+          @git.run!(*args, error: Unanchored, env:) do |shell|
+            "git #{args.first} failed in #{@dir}: #{Records.flat(shell.stderr)}"
+          end.stdout.strip
         end
       end
 

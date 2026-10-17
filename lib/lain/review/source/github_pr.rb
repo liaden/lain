@@ -253,6 +253,7 @@ module Lain
           @repo_root = File.expand_path(repo_root)
           @remote = remote.to_s
           @shell_out_factory = shell_out_factory
+          @git = Isolation::Checkout.new(@repo_root, shell_out_factory:)
           @remote_pr = Remote.new(ref: pull_request.to_s, cwd: @repo_root, timeout:,
                                   shell_out_factory:)
           read_refs
@@ -301,7 +302,8 @@ module Lain
         # @param path [String] repository-relative
         # @return [Boolean]
         def checked_out?(path)
-          LocalBranch::Checkout.new(head_ref: @head_ref) { |*argv, **env| git(*argv, **env) }.holds?(path)
+          pinned = ->(*argv, **opts) { @git.run(*argv, pins: LocalBranch::PINS, **opts) }
+          LocalBranch::Checkout.new(head_ref: @head_ref, &pinned).holds?(path)
         end
 
         # @return [DiffOrigin] where {#diff} came from. Asking forces the diff,
@@ -350,15 +352,15 @@ module Lain
         # ref into a human's repository is a side effect a read model has no
         # business having.
         def fetch!
-          shell = git("fetch", "--no-tags", "--quiet", @remote,
-                      "refs/pull/#{number}/head", "refs/heads/#{@base_name}")
+          shell = @git.run("fetch", "--no-tags", "--quiet", @remote,
+                           "refs/pull/#{number}/head", "refs/heads/#{@base_name}", pins: LocalBranch::PINS)
           return if Shell::Out.ok?(shell)
 
           raise UnknownRef, "fetching pull request #{number} from #{@remote.inspect} into " \
                             "#{@repo_root} failed#{UnknownRef.because(shell)}"
         end
 
-        def object?(sha) = Shell::Out.ok?(git("cat-file", "-e", "#{sha}^{commit}"))
+        def object?(sha) = Shell::Out.ok?(@git.run("cat-file", "-e", "#{sha}^{commit}", pins: LocalBranch::PINS))
 
         def from_object_database(origin)
           @diff_origin = origin
@@ -371,15 +373,6 @@ module Lain
 
           @diff_origin = answer.origin
           answer.bytes
-        end
-
-        # {LocalBranch}'s pins and {Isolation::Worktree}'s scrub -- the same
-        # shape, and the same reason, as {LocalBranch#git}.
-        def git(*, env: {})
-          shell = @shell_out_factory.call("git", "-C", @repo_root, *LocalBranch::CONFIG_PINS, *,
-                                          environment: Isolation::Worktree::GIT_CONTEXT_SCRUB.merge(env))
-          shell.run_command
-          shell
         end
       end
     end

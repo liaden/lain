@@ -236,15 +236,17 @@ module Lain
           @dir = dir
           @base = base
           @shell_out_factory = shell_out_factory
+          @git = Checkout.new(dir, shell_out_factory:)
           @swept = []
         end
 
         # Untracked files count: the checks would run on work the handback leaves behind.
-        def dirty? = !git!("status", "--porcelain").empty?
+        def dirty? = !@git.run!("status", "--porcelain", error: Error).stdout.empty?
 
         # Read per run, since a worker's fix may touch more files.
         def changed
-          paths(git!("diff", "--name-only", "-z", "--no-renames", "--diff-filter=d", "#{@base.tip}...HEAD"))
+          paths(@git.run!("diff", "--name-only", "-z", "--no-renames", "--diff-filter=d", "#{@base.tip}...HEAD",
+                          error: Error).stdout)
         end
 
         # TMPDIR is the checkout's own, so concurrent workers' checks never
@@ -265,7 +267,7 @@ module Lain
         private
 
         def untracked
-          paths(git!("ls-files", "--others", "--exclude-standard", "-z"))
+          paths(@git.run!("ls-files", "--others", "--exclude-standard", "-z", error: Error).stdout)
         end
 
         def paths(listed) = listed.split("\0").map { |path| path.force_encoding(FILESYSTEM) }
@@ -280,13 +282,6 @@ module Lain
           text = (shell.stdout.b + shell.stderr.b).lines.last(TAIL).join
           text = "...#{text.byteslice(-TAIL_BYTES, TAIL_BYTES)}" if text.bytesize > TAIL_BYTES
           Utf8.legible(text)
-        end
-
-        def git!(*args)
-          shell = spawn("git", "-C", @dir, *args, environment: Worktree::GIT_CONTEXT_SCRUB)
-          return shell.stdout if Shell::Out.ok?(shell)
-
-          raise Error, "git #{args.first} failed in #{@dir} (exit #{shell.exitstatus}): #{shell.stderr.strip}"
         end
 
         def spawn(*argv, environment:)

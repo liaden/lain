@@ -284,9 +284,8 @@ module Lain
         end
 
         def close_branch_hint
-          shell = @shell_out_factory.call("git", "-C", @root, "rev-parse", "--verify", "--quiet", "--end-of-options",
-                                          CLOSE_REF, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-          shell.run_command
+          shell = Lain::Isolation::Checkout.new(@root, shell_out_factory: @shell_out_factory)
+                                           .run("rev-parse", "--verify", "--quiet", "--end-of-options", CLOSE_REF)
           CLOSE_BRANCH_HINT if Shell::Out.ok?(shell)
         end
 

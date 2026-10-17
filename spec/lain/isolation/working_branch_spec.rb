@@ -12,7 +12,7 @@ class WorkingBranchSpecRacingCheckout < Lain::Isolation::Checkout
     @hook = hook
   end
 
-  def run(*args)
+  def run(*args, **)
     super.tap do
       fire = @hook if @after.call(args)
       @hook = nil if fire

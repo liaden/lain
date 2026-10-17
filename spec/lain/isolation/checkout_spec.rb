@@ -166,4 +166,58 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
       expect(probes).to eq([1, 1])
     end
   end
+
+  describe "#run options" do
+    let(:calls) { [] }
+    let(:factory) do
+      lambda do |*argv, **options|
+        calls << [argv, options]
+        instance_double(Lain::Shell::Out, run_command: nil)
+      end
+    end
+    let(:recorded) { described_class.new("/repo", shell_out_factory: factory) }
+    let(:scrub) { Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB }
+
+    it "sends only the scrub when no option is given" do
+      recorded.run("status")
+
+      expect(calls).to eq([[%w[git -C /repo status], { environment: scrub }]])
+    end
+
+    it "merges env over the scrub" do
+      recorded.run("status", env: { "GIT_INDEX_FILE" => "/x" })
+
+      expect(calls.first.last).to eq(environment: scrub.merge("GIT_INDEX_FILE" => "/x"))
+    end
+
+    it "forwards timeout and input only when given" do
+      recorded.run("update-ref", "--stdin", timeout: 5, input: "x\n")
+
+      expect(calls.first.last).to eq(environment: scrub, timeout: 5, input: "x\n")
+    end
+
+    it "spells each pin as -c before the subcommand" do
+      recorded.run("diff", pins: %w[core.quotePath=false a.b=c])
+
+      expect(calls.first.first).to eq(%w[git -C /repo -c core.quotePath=false -c a.b=c diff])
+    end
+  end
+
+  describe "#run!" do
+    let(:boom) { Class.new(StandardError) }
+
+    it "answers the shell of a command that passed" do
+      expect(checkout.run!("rev-parse", "HEAD", error: boom).stdout.strip).to eq(run_git("rev-parse", "HEAD"))
+    end
+
+    it "raises the caller's error with the verb, the directory, the status and stderr" do
+      expect { checkout.run!("rev-parse", "--verify", "nope^{commit}", error: boom) }
+        .to raise_error(boom, /\Agit rev-parse failed in #{Regexp.escape(@dir)} \(exit 128\): .+/)
+    end
+
+    it "lets a block word the message from the failed shell" do
+      expect { checkout.run!("rev-parse", "nope", error: boom) { |shell| "exit #{shell.exitstatus}" } }
+        .to raise_error(boom, "exit 128")
+    end
+  end
 end

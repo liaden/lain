@@ -194,6 +194,7 @@ module Lain
         def initialize(repo_root:, shell_out_factory:, ledger: Lain::Sensitivity::Ledger.new)
           @repo_root = File.expand_path(repo_root)
           @shell_out_factory = shell_out_factory
+          @git = Isolation::Checkout.new(@repo_root, shell_out_factory:)
           @projection = Lain::Survey::Projection.new(ledger:)
         end
 
@@ -251,18 +252,8 @@ module Lain
         # form would call a coincidence a branch and refuse a perfectly
         # ordinary pull request.
         def branch?(target)
-          Shell::Out.ok?(git("rev-parse", "--verify", "--quiet", "--end-of-options",
-                             "refs/heads/#{target}"))
-        end
-
-        # {Source::LocalBranch#git}'s shape, and its scrub: an ambient GIT_DIR
-        # (a pre-commit hook sets one) would otherwise point this at the hook's
-        # repository.
-        def git(*)
-          shell = @shell_out_factory.call("git", "-C", @repo_root, *,
-                                          environment: Isolation::Worktree::GIT_CONTEXT_SCRUB)
-          shell.run_command
-          shell
+          Shell::Out.ok?(@git.run("rev-parse", "--verify", "--quiet", "--end-of-options",
+                                  "refs/heads/#{target}"))
         end
 
         def ambiguous_message(target)

@@ -23,10 +23,31 @@ module Lain
         @shell_out_factory = shell_out_factory
       end
 
-      def run(*)
-        shell = @shell_out_factory.call("git", "-C", @dir, *, environment: Worktree::GIT_CONTEXT_SCRUB)
+      # The positional arguments are the git subcommand and its arguments.
+      # @param env [Hash] merged over the scrub, so a caller adds to it and never
+      #   replaces it: a bare `GIT_INDEX_FILE` is the one trap this class exists
+      #   to keep shut
+      # @param timeout [Numeric, nil] seconds, passed on only when given
+      # @param input [String, nil] the child's stdin, passed on only when given
+      # @param pins [Array<String>] `key=value` config, each spelled `-c key=value`
+      # @return [Shell::Out] the finished command; its status is the caller's to read
+      def run(*, env: {}, timeout: nil, input: nil, pins: [])
+        options = { environment: Worktree::GIT_CONTEXT_SCRUB.merge(env), timeout:, input: }.compact
+        shell = @shell_out_factory.call("git", "-C", @dir, *pins.flat_map { |pin| ["-c", pin] }, *, **options)
         shell.run_command
         shell
+      end
+
+      # {#run} for the caller that cannot go on without the answer.
+      # @param args [Array<String>] as for {#run}
+      # @param error [Class] raised on a non-zero exit, so each caller keeps its own refusal
+      # @yieldparam shell [Shell::Out] the failed command, to word the message from
+      # @raise [Class] `error`
+      def run!(*args, error:, **)
+        shell = run(*args, **)
+        return shell if Shell::Out.ok?(shell)
+
+        raise error, (block_given? ? yield(shell) : failure(args, shell))
       end
 
       def head = run("rev-parse", "HEAD")
@@ -107,6 +128,10 @@ module Lain
       def unresolved(paths) = paths.select { |path| read(path).match?(CONFLICTED) }
 
       private
+
+      def failure(args, shell)
+        "git #{args.first} failed in #{@dir} (exit #{shell.exitstatus}): #{shell.stderr.strip}"
+      end
 
       # Binary, because a conflicted file may hold anything and a regex
       # against invalid bytes raises. "" when there is nothing readable there

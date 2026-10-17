@@ -111,13 +111,13 @@ module Lain
         def initialize(repo_root:, remote:, shell_out_factory:)
           @repo_root = File.expand_path(repo_root)
           @remote = remote
-          @shell_out_factory = shell_out_factory
+          @git = Isolation::Checkout.new(@repo_root, shell_out_factory:)
         end
 
         # git's own opinion of the composed name: the canary for {Epic::Home::NAME}
         # and git's rules drifting apart, at the cost of one subprocess.
         def nameable!(ref)
-          shell = run("check-ref-format", ref)
+          shell = @git.run("check-ref-format", ref)
           raise Denied.new(MALFORMED_REF, "git refuses #{ref} as a refname") unless Shell::Out.ok?(shell)
         end
 
@@ -125,7 +125,7 @@ module Lain
         # caller already named: {Reconcile} confirms a promotion by comparing
         # `sha_of(ref)` to `params["sha"]`, and the remote answers full names only.
         def anchored!(sha)
-          shell = run("rev-parse", "--verify", "--quiet", "#{sha}^{commit}")
+          shell = @git.run("rev-parse", "--verify", "--quiet", "#{sha}^{commit}")
           raise Denied.new(UNKNOWN_COMMIT, "#{sha} names no commit in #{@repo_root}") unless Shell::Out.ok?(shell)
 
           resolved = shell.stdout.strip
@@ -137,34 +137,23 @@ module Lain
         # Every head the remote holds, as `ref => sha`: one round trip for every
         # question a promotion or a delete has.
         def heads
-          shell = run("ls-remote", "--heads", @remote)
+          shell = @git.run("ls-remote", "--heads", @remote)
           raise Denied.new(REMOTE_UNREACHABLE, failure("ls-remote", shell)) unless Shell::Out.ok?(shell)
 
           shell.stdout.lines.filter_map { |line| LISTED.match(line) }.to_h { |line| [line[2], line[1]] }
         end
 
         def push!(refspec)
-          shell = run("push", @remote, refspec)
+          shell = @git.run("push", @remote, refspec)
           raise Denied.new(PUSH_FAILED, failure("push", shell)) unless Shell::Out.ok?(shell)
         end
 
         def delete!(ref)
-          shell = run("push", @remote, "--delete", ref)
+          shell = @git.run("push", @remote, "--delete", ref)
           raise Denied.new(DELETE_FAILED, failure("push --delete", shell)) unless Shell::Out.ok?(shell)
         end
 
         private
-
-        # {Isolation::Worktree}'s pinned scrub set, not a parallel copy: an
-        # ambient GIT_DIR (a pre-commit hook sets one) would otherwise point
-        # every call at the hook's repository -- {Review::Source::LocalBranch#git}
-        # states the same rule at its own door.
-        def run(*)
-          shell = @shell_out_factory.call("git", "-C", @repo_root, *,
-                                          environment: Isolation::Worktree::GIT_CONTEXT_SCRUB)
-          shell.run_command
-          shell
-        end
 
         def failure(operation, shell) = "git #{operation} failed (exit #{shell.exitstatus}): #{shell.stderr.strip}"
       end

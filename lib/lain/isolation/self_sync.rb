@@ -340,7 +340,6 @@ module Lain
         def initialize(dir, shell_out_factory:)
           @dir = dir
           @checkout = Checkout.new(dir, shell_out_factory:)
-          @shell_out_factory = shell_out_factory
         end
 
         def head = run!("rev-parse", "HEAD")
@@ -382,7 +381,7 @@ module Lain
         # @raise [Failed] when it failed with no conflict to count
         def rebase(strategy, tip)
           landed = false
-          shell = git(*strategy.rebase(tip))
+          shell = @checkout.run(*strategy.rebase(tip), env: EDITORLESS)
           landed = Shell::Out.ok?(shell)
           landed ? [] : conflicts_in(shell, tip)
         ensure
@@ -413,7 +412,7 @@ module Lain
         # Exits nonzero when no rebase is in progress, which is the usual case.
         # Best-effort, because it runs on the way out of a failure.
         def abandon
-          git("rebase", "--abort")
+          @checkout.run("rebase", "--abort", env: EDITORLESS)
         rescue StandardError
           nil
         end
@@ -442,18 +441,7 @@ module Lain
 
         def ancestor?(commit, of) = @checkout.ancestor?(commit, of)
 
-        def run!(*args)
-          shell = git(*args)
-          return shell.stdout.strip if Shell::Out.ok?(shell)
-
-          raise Failed, "git #{args.first} failed in #{dir} (exit #{shell.exitstatus}): #{shell.stderr.strip}"
-        end
-
-        def git(*)
-          shell = @shell_out_factory.call("git", "-C", dir, *, environment: Worktree::GIT_CONTEXT_SCRUB.merge(EDITORLESS))
-          shell.run_command
-          shell
-        end
+        def run!(*) = @checkout.run!(*, error: Failed, env: EDITORLESS).stdout.strip
       end
     end
   end

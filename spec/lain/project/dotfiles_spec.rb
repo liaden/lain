@@ -39,7 +39,7 @@ RSpec.describe Lain::Project::Dotfiles, :seam do
   # subject scrubs: a suite run from a pre-commit hook inherits GIT_DIR and
   # GIT_INDEX_FILE aimed at lain's own repository.
   def git(*argv)
-    shell = Lain::Shell::Out.new("git", "-C", home, *argv, environment: described_class::GIT_CONTEXT_SCRUB)
+    shell = Lain::Shell::Out.new("git", "-C", home, *argv, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
     shell.run_command
     raise "git #{argv.join(" ")} failed: #{shell.stderr}" unless shell.exitstatus.zero?
 
@@ -565,7 +565,7 @@ RSpec.describe Lain::Project::Dotfiles, :seam do
 
       expect(calls).not_to be_empty
       expect(calls.map { |call| call[:timeout] }).to all(eq(described_class::GIT_TIMEOUT))
-      expect(calls.map { |call| call[:environment] }).to all(eq(described_class::GIT_CONTEXT_SCRUB))
+      expect(calls.map { |call| call[:environment] }).to all(eq(Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB))
       expect(described_class::GIT_TIMEOUT).to be < Lain::Shell::Out::DEFAULT_TIMEOUT
     end
   end

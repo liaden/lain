@@ -379,11 +379,10 @@ module Lain
           end
 
           def git!(*args)
-            shell = @git.run(*args)
-            return shell.stdout if Shell::Out.ok?(shell)
-
-            raise Lain::Error, "git #{args.first} could not say whether the retired work goes past its red commit: " \
-                               "#{shell.stderr.strip}"
+            @git.run!(*args, error: Lain::Error) do |shell|
+              "git #{args.first} could not say whether the retired work goes past its red commit: " \
+                "#{shell.stderr.strip}"
+            end.stdout
           end
         end
 
