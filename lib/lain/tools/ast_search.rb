@@ -137,16 +137,12 @@ module Lain
       # The two rules {Tool::FileTarget} cannot own, because they are about
       # this tool's INPUT rather than about its target.
       def badly_shaped(input)
-        return "give exactly one of pattern or query, not both" if present?(input.pattern) && present?(input.query)
-        unless present?(input.pattern) || present?(input.query)
+        return "give exactly one of pattern or query, not both" if input.pattern.present? && input.query.present?
+        unless input.pattern.present? || input.query.present?
           return "give one of pattern (a raw ast-grep pattern) or query (a catalog name)"
         end
 
         nil
-      end
-
-      def present?(value)
-        !value.nil? && !value.empty?
       end
 
       def resolve_patterns(input, language)
