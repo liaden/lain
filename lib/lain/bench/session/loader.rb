@@ -77,7 +77,8 @@ module Lain
             context:, context_class: header.fetch("context_class"),
             toolset:, workspace:, baseline:,
             ledger_index: Ledger::Index.from_journal(@records),
-            degraded:, mode:, memory:, open: open?, compaction: header["compact_strategy"]
+            degraded:, mode:, memory:, open: open?,
+            compaction: header["compact_strategy"], schedule: header["compact_schedule"]
           )
         end
 

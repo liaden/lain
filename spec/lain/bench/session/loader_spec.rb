@@ -95,6 +95,18 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(recording.compaction).to be_nil
     end
 
+    it "rebuilds the recorded compact_schedule from the header" do
+      lines = entries.map do |line|
+        record = JSON.parse(line)
+        record.key?("context_class") ? JSON.generate(record.merge("compact_schedule" => "idle")) : line
+      end
+      expect(described_class.new(lines).recording.schedule).to eq("idle")
+    end
+
+    it "answers nil schedule for a header carrying no compact_schedule key" do
+      expect(recording.schedule).to be_nil
+    end
+
     def flip(from, to, **over)
       { "type" => "mode_switch", "from_scope" => "checkout", "from_approval" => from,
         "to_scope" => "checkout", "to_approval" => to }.merge(over)

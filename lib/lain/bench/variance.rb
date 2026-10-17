@@ -31,6 +31,9 @@ module Lain
     # that guard refuse an `ask` run held against a `bypass` one: absent it,
     # every run reads as "not recorded" and the guard agrees with everything.
     class Variance
+      # A header without the key predates the idle schedule, so it ran per turn.
+      TURN_SCHEDULE = "turn"
+
       # @param recordings [Array<Session::Recording>] n >= 2 recordings of one task
       # @param price_book [Lain::PriceBook] how each recording's usage becomes dollars
       # @param set_aside [Array<String>] runs of the task that measured nothing,
@@ -43,6 +46,7 @@ module Lain
       #   context pipeline stages
       # @raise [Lain::Error] when the recordings declared different compaction
       #   arms
+      # @raise [Lain::Error] when the recordings compacted on different schedules
       def initialize(recordings:, price_book: PriceBook.default, set_aside: [])
         @recordings = Array(recordings).freeze
         raise ArgumentError, "variance needs at least two recordings; one run is not an experiment" if
@@ -52,6 +56,7 @@ module Lain
         @set_aside = set_aside.dup.freeze
         guard_pipelines!
         guard_compaction!
+        guard_schedule!
         @compare = build_compare
         @diffs = @recordings.map { |recording| recording.dry_replay.diff(recording.context) }.freeze
       end
@@ -156,6 +161,14 @@ module Lain
         return if mismatch.nil?
 
         raise ::Lain::Error, "cannot compare runs under different compaction arms: #{mismatch.join(" vs ")}"
+      end
+
+      def guard_schedule!
+        names = @recordings.map { |recording| recording.schedule || TURN_SCHEDULE }
+        mismatch = names.combination(2).find { |(one, other)| one != other }
+        return if mismatch.nil?
+
+        raise ::Lain::Error, "cannot compare runs under different compaction schedules: #{mismatch.join(" vs ")}"
       end
 
       # One candidate baseline held against the reference's: the first model

@@ -240,10 +240,15 @@ RSpec.describe Lain::Bench::Session do
     end
 
     it "is a frozen Recording whose non-Timeline members are Ractor-shareable" do
-      recording = load_session
+      lines = journal_io.string.each_line.map do |line|
+        record = JSON.parse(line)
+        record.key?("context_class") ? JSON.generate(record.merge("compact_schedule" => "idle")) : line
+      end
+      recording = described_class.load(lines)
+      expect(recording.schedule).to eq("idle")
       expect(recording).to be_frozen
       expect(recording.timeline).to be_frozen
-      %i[context context_class toolset workspace baseline ledger_index degraded mode open messages compaction]
+      %i[context context_class toolset workspace baseline ledger_index degraded mode open messages compaction schedule]
         .each do |member|
         expect(recording.public_send(member)).to be_deeply_frozen
       end

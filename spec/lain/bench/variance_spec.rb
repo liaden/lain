@@ -39,8 +39,18 @@ RSpec.describe Lain::Bench::Variance do
 
   # One mock-recorded run of the task, round-tripped through Session so the
   # Recording under test is exactly what the driver will hold.
-  def record(responses, degrade: nil, flips: [], under: context, compact_strategy: nil)
-    Lain::Bench::Session.load(session_bytes(responses, degrade:, flips:, under:, compact_strategy:).each_line)
+  def record(responses, degrade: nil, flips: [], under: context, compact_strategy: nil, schedule: nil)
+    bytes = session_bytes(responses, degrade:, flips:, under:, compact_strategy:)
+    Lain::Bench::Session.load(with_schedule(bytes, schedule).each_line)
+  end
+
+  def with_schedule(bytes, schedule)
+    return bytes if schedule.nil?
+
+    bytes.each_line.map do |line|
+      record = JSON.parse(line)
+      record.key?("context_class") ? "#{JSON.generate(record.merge("compact_schedule" => schedule))}\n" : line
+    end.join
   end
 
   def session_bytes(responses, degrade: nil, flips: [], under: context, compact_strategy: nil)
@@ -266,6 +276,24 @@ RSpec.describe Lain::Bench::Variance do
     it "compares an unset arm and an explicit eager arm, because both ran the same arm" do
       eager = record([tool_response("tu_1", "hi"), text_response("done")], compact_strategy: "eager")
       expect(described_class.new(recordings: [reference, eager]).report).to include("2: byte-identical")
+    end
+  end
+
+  describe "compaction schedule" do
+    def scheduled(schedule) = record([tool_response("tu_1", "hi"), text_response("done")], schedule:)
+
+    it "raises when the recordings ran under different schedules" do
+      expect { described_class.new(recordings: [scheduled("idle"), reference]) }
+        .to raise_error(Lain::Error, /cannot compare runs under different compaction schedules: idle vs turn/)
+    end
+
+    it "pools recordings that ran under the same schedule" do
+      expect(described_class.new(recordings: [scheduled("idle"), scheduled("idle")]).report)
+        .to include("2: byte-identical")
+    end
+
+    it "reads a header without the key as the turn schedule" do
+      expect(described_class.new(recordings: [scheduled("turn"), reference]).report).to include("2: byte-identical")
     end
   end
 
