@@ -592,7 +592,7 @@ module Lain
       end
 
       # @return [String] "turn" under --no-compact, else the profile's schedule_or_default
-      def compaction_schedule = compaction? ? @compaction.schedule_or_default : CompactionProfile::DEFAULT_SCHEDULE
+      def compaction_schedule = compaction? ? @compaction.schedule_or_default : "turn"
 
       # The compaction section of the session header: the arm this run was handed, said
       # or inherited, so a resume can render under it and a bench can group runs by it. Only a

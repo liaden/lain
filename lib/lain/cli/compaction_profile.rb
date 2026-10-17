@@ -15,7 +15,7 @@ module Lain
       FLAGS = { strategy: :compact_strategy, keep: :compact_keep, bytes: :compact_bytes,
                 cap: :compact_cap, fallback: :compact_fallback, schedule: :compact_schedule }.freeze
       SCHEDULES = %w[idle turn].freeze
-      DEFAULT_SCHEDULE = "turn"
+      DEFAULT_SCHEDULE = "idle"
 
       class << self
         # Read by literal key, so `chat_flags_spec`'s scan of what the CLI reads

@@ -73,7 +73,7 @@ RSpec.describe Lain::CLI::CompactionProfile do
 
       expect(described_class.typed({ compact_schedule: "turn" }).over(recorded).schedule_or_default).to eq("turn")
       expect(described_class::UNSET.over(recorded).schedule_or_default).to eq("idle")
-      expect(described_class::UNSET.schedule_or_default).to eq(described_class::DEFAULT_SCHEDULE)
+      expect(described_class::UNSET.schedule_or_default).to eq("idle")
     end
 
     it "defaults to a member of SCHEDULES" do

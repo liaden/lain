@@ -811,7 +811,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
 
     it "is the default for a fresh chat" do
       expect(described_class.new({ journal: false, max_tokens: 16, provider: "ollama" }).backend.compaction_schedule)
-        .to eq(Lain::CLI::CompactionProfile::DEFAULT_SCHEDULE)
+        .to eq("idle")
     end
 
     it "inherits the recorded schedule, and a typed flag wins" do
