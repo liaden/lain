@@ -47,6 +47,29 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(output.string).to include("the judge deferred this")
   end
 
+  it "says in the question what the ladder noted about the call" do
+    noted = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 },
+                                               notes: ["cat resolved to /repo/bin/cat (project)"])
+    policy_for("n\n").decide(noted)
+
+    expect(output.string).to include("; \"cat resolved to /repo/bin/cat (project)\"")
+  end
+
+  it "renders a planted path in a note inspected, on one line" do
+    planted = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 },
+                                                 notes: ["cat is /x/\e[2K\nforged"])
+    policy_for("n\n").decide(planted)
+
+    expect(output.string.lines.size).to eq(1)
+    expect(output.string).not_to include("\e[2K")
+  end
+
+  it "leaves a call with no note unchanged" do
+    policy_for("n\n").decide(pending)
+
+    expect(output.string).to include("auto-denies in 5:00): approve")
+  end
+
   it "does not mention a judge for a call parked at ask" do
     policy_for("n\n").decide(pending)
 

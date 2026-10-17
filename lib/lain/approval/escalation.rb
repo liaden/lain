@@ -86,7 +86,7 @@ module Lain
       # What one rung said, and everything a journal needs to attribute it.
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
       # so `Ractor.shareable?` holds and the record is safe to share.
-      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule)
+      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule, :note)
 
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
@@ -135,8 +135,12 @@ module Lain
         # `rule` names the {Rule} behind a ruling the rules rung made, so two
         # allows from one rung can be told apart; nil for any other rung. Off
         # {#record} too: {Escalation#record} adds it only when present.
+        #
+        # `note` is what an ABSTAINING rung wants the human to read when the call
+        # parks, and never the model: the ladder hands it down as {Noted}, and it
+        # is left off `told` and `said` so no refusal can carry it.
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil,
-                       said: nil, rule: nil)
+                       said: nil, rule: nil, note: nil)
           unless VERDICTS.include?(verdict)
             raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
@@ -145,7 +149,8 @@ module Lain
           end
 
           super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:,
-                final: final == true, told: -(told || reason).to_s, said: spoken(said), rule: spoken(rule))
+                final: final == true, told: -(told || reason).to_s, said: spoken(said), rule: spoken(rule),
+                note: spoken(note))
         end
 
         def allow? = verdict == :allow
@@ -160,13 +165,29 @@ module Lain
 
         def record
           { "verdict" => verdict.to_s, "rung" => rung, "reason" => reason,
-            "faulted" => fault, "authority" => authority.to_s, "final" => final }.freeze
+            "faulted" => fault, "authority" => authority.to_s, "final" => final }
+            .merge(note ? { "note" => note } : {}).freeze
         end
 
         private
 
         # One spelling of no reason, so a blank never leaves a dangling ": ".
         def spoken(said) = (-said.to_s if said.present?)
+      end
+
+      # The context a rung below an abstaining one is handed, carrying why the
+      # call reached it. Read by respond_to?, so it stays invisible to rungs
+      # that do not ask.
+      class Noted < SimpleDelegator
+        def initialize(context, note)
+          super(context)
+          @note = note
+        end
+
+        def parked_because
+          inner = __getobj__
+          [*(inner.parked_because if inner.respond_to?(:parked_because)), @note]
+        end
       end
 
       # The deterministic rungs first, the asking rung last.
@@ -243,12 +264,18 @@ module Lain
         # The FIRST fault is what suppresses, remembered rather than counted: a
         # suppression has to name the rung that broke.
         remember = ->(ruling) { faulted ||= ruling }
+        # The context grows by one {Noted} per abstaining rung that left a note,
+        # so the rung that parks the call reads every reason above it.
+        handed = context
+        step = lambda do |rung, name|
+          ruling = consult(rung, name, effect, handed)
+          handed = Noted.new(handed, ruling.note) if ruling.abstain? && ruling.note
+          decisive(ruling, &remember)
+        end
         # Lazy, so rungs past the deciding one are never consulted: parking a
         # human on a call an earlier rung already settled is what this ladder
         # exists to avoid.
-        decided = @consulted.lazy
-                            .filter_map { |rung, name| decisive(consult(rung, name, effect, context), &remember) }
-                            .first
+        decided = @consulted.lazy.filter_map { |pair| step.call(*pair) }.first
         answer(decided, faulted, effect, context)
       end
 

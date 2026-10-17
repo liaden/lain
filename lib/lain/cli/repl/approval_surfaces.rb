@@ -117,7 +117,7 @@ module Lain
           # argument rather than interpolated here, so the caller that knows
           # which buffer it is fills it in.
           NOTE = "! %<preamble>s%<requester>s asks to run %<tool>s(%<input>s)  " \
-                 "-- answer in %<buffer>s, or /approve; auto-denies in %<window>s"
+                 "-- answer in %<buffer>s, or /approve; auto-denies in %<window>s%<notes>s"
           LAPSED = "! %<requester>s asks to run %<tool>s(%<input>s)  -- %<lapse>s"
           UNANNOUNCED = "the chat could not announce a parked call (%<failure>s) -- lain://approval still lists it"
 
@@ -153,7 +153,8 @@ module Lain
           def announce(pending)
             @notice.call(format(NOTE, preamble: pending.outstanding.preamble, requester: pending.requester,
                                       tool: pending.tool, input: pending.input.inspect,
-                                      buffer: Frontend::Neovim::ApprovalView::BUFFER, window: pending.window_face))
+                                      buffer: Frontend::Neovim::ApprovalView::BUFFER, window: pending.window_face,
+                                      notes: pending.notes.map { "; #{_1.inspect}" }.join))
           rescue StandardError => e
             report(e)
           end

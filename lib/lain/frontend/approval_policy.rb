@@ -297,7 +297,9 @@ module Lain
           "approve #{pending.tool}(#{pending.input.inspect})? [y/N] "
       end
 
-      def judged(pending) = pending.judge_deferred? ? "; #{JUDGE_DEFERRED}" : ""
+      def judged(pending)
+        "#{"; #{JUDGE_DEFERRED}" if pending.judge_deferred?}#{pending.notes.map { "; #{_1.inspect}" }.join}"
+      end
 
       # Where a linked path lands, because its name says nothing about what it
       # opens. Both ends `inspect`ed, on the preamble's rule: both are

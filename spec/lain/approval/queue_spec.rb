@@ -752,6 +752,28 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
+  describe "the notes a context carries" do
+    let(:noted) { Lain::Approval::Escalation::Noted.new(nil, "cat is /repo/bin/cat") }
+
+    def notes_of(context)
+      Sync do |task|
+        run = task.async { queue.adjudicate(tool_call, context) }
+        pending = task.with_timeout(1) { queue.dequeue }
+        pending.deny(surface: "spec")
+        run.wait
+        pending.notes
+      end
+    end
+
+    it "reads them into the pending, frozen" do
+      expect(notes_of(noted)).to eq(["cat is /repo/bin/cat"]).and be_frozen
+    end
+
+    it "gives a pending parked with none an empty list" do
+      expect(notes_of(nil)).to eq([])
+    end
+  end
+
   # gate.rb's doctrine, applied to the queue's OWN writes: an unattended gate
   # refuses, it never wedges. Journalling is evidence about the turn and must
   # never be able to cost the turn -- Gate sits above Handler::Live, so an
@@ -1124,7 +1146,7 @@ RSpec.describe Lain::Approval::Queue do
       expect(described_class::Pending.instance_method(:initialize).parameters)
         .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
-                %i[key judge_deferred]])
+                %i[key judge_deferred], %i[key notes]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

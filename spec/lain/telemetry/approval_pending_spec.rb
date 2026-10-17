@@ -48,6 +48,18 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
     expect(described_class.from(pending).humans_only).to be(true)
   end
 
+  it "carries the notes of the Pending it is built from, and omits the key when there are none" do
+    pending = Lain::Approval::Queue::Pending.new(
+      effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {}),
+      requester: "agent", clock: -> { 0.0 }, notes: ["cat is /bin/cat"]
+    )
+
+    record = described_class.from(pending)
+    expect(record.to_journal["notes"]).to eq(["cat is /bin/cat"])
+    expect(record).to be_deeply_frozen
+    expect(event.to_journal).not_to have_key("notes")
+  end
+
   # Loud failure, the same validate-then-freeze contract every sibling record
   # has: a nameless park would journal `{"tool":""}` and read as evidence.
   it "refuses a record that names no tool, no call, or no requester" do

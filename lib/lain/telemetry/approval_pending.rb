@@ -37,7 +37,7 @@ module Lain
     # The Pending's `input` is deliberately left off: tool arguments are
     # unbounded and may carry exactly the credential bytes {WriteRefused} exists
     # to keep out of the journal. Id in, payload out.
-    ApprovalPending = Data.define(:requester, :tool, :tool_use_id, :humans_only) do
+    ApprovalPending = Data.define(:requester, :tool, :tool_use_id, :humans_only, :notes) do
       include Journalable
 
       # Built from the parked {Approval::Queue::Pending} at admit time, so the
@@ -53,18 +53,21 @@ module Lain
       # the identical hazard and the identical note.
       def self.from(pending)
         new(requester: pending.requester, tool: pending.tool, tool_use_id: pending.tool_use_id,
-            humans_only: pending.humans_only?)
+            humans_only: pending.humans_only?, notes: pending.notes)
       end
 
       # Interned rather than `dup.freeze`d: these three values repeat on every
       # park of a session, so two equal records share one String rather than
       # holding two copies of the same bytes.
-      def initialize(requester:, tool:, tool_use_id:, humans_only: false)
+      def initialize(requester:, tool:, tool_use_id:, humans_only: false, notes: [])
         Carriers::ApprovalPending.check!(requester:, tool:, tool_use_id:)
 
         super(requester: -requester.to_s, tool: -tool.to_s, tool_use_id: -tool_use_id.to_s,
-              humans_only: humans_only == true)
+              humans_only: humans_only == true, notes: notes.map { -_1.to_s }.freeze)
       end
+
+      # Absent when empty, so a park nothing noted journals as it always did.
+      def to_journal = super.then { |record| record["notes"].empty? ? record.except("notes") : record }
     end
   end
 end

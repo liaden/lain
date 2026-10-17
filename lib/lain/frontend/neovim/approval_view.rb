@@ -573,7 +573,10 @@ module Lain
           "#{pending.requester}  #{pending.outstanding.preamble}#{judged(pending)}#{call}  #{deadline}".lstrip
         end
 
-        def judged(pending) = pending.judge_deferred? ? "(#{ApprovalPolicy::JUDGE_DEFERRED}) " : ""
+        def judged(pending)
+          said = [*(ApprovalPolicy::JUDGE_DEFERRED if pending.judge_deferred?), *pending.notes.map(&:inspect)]
+          said.empty? ? "" : "(#{said.join("; ")}) "
+        end
       end
     end
   end

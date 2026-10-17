@@ -245,6 +245,79 @@ RSpec.describe Lain::Approval::Escalation do
       end
     end
 
+    describe "a note an abstaining rung leaves for the human" do
+      let(:note) { "cat resolved to /repo/bin/cat (project)" }
+      let(:noting) do
+        Class.new do
+          def initialize(note) = @note = note
+          def name = "noting"
+
+          def call(_effect, _context)
+            Lain::Approval::Escalation::Ruling.abstain(rung: name, because: "x", note: @note)
+          end
+        end.new(note)
+      end
+
+      def parked_notes(rung)
+        Sync do |task|
+          parked = task.async { over(rung).call(effect, nil) }
+          pending = task.with_timeout(1) { queue.dequeue }
+          pending.approve(surface: "tty")
+          parked.wait
+          pending.notes
+        end
+      end
+
+      it "reaches the parked call" do
+        expect(parked_notes(noting)).to eq([note])
+      end
+
+      it "reaches the approval_pending record" do
+        parked_notes(noting)
+
+        expect(Lain::Journal.records(journal_io.string.lines, type: "approval_pending").sole["notes"]).to eq([note])
+      end
+
+      it "gathers the notes of every abstaining rung, in order" do
+        other = Class.new(noting.class) { def name = "again" }.new("second")
+        parked = Sync do |task|
+          wait = task.async { ladder(noting, other, described_class::Surfaces.new(queue)).call(effect, nil) }
+          task.with_timeout(1) { queue.dequeue }.tap { _1.approve(surface: "tty") }.tap { wait.wait }
+        end
+
+        expect(parked.notes).to eq([note, "second"])
+      end
+
+      it "leaves a park with no note carrying none, and journals no notes key" do
+        expect(parked_notes(EscalationSpecSupport::Silent.new)).to eq([])
+        expect(Lain::Journal.records(journal_io.string.lines, type: "approval_pending").sole).not_to have_key("notes")
+      end
+
+      it "never reaches the model's refusal text" do
+        ruling = Sync { over(noting).rule(effect, nil) }
+
+        expect([ruling.told, ruling.said, ruling.reason].join).not_to include(note)
+      end
+
+      it "is journaled on the rung's ruling only when present" do
+        over(noting).call(effect, nil)
+        record = rulings.find { _1["rung"] == "noting" }
+
+        expect(record["note"]).to eq(note)
+        expect(rulings.reject { _1["rung"] == "noting" }).to all(satisfy { !_1.key?("note") })
+      end
+    end
+
+    describe "Noted" do
+      it "adds its note to the wrapped context's, and delegates the rest" do
+        inner = Lain::Approval::Escalation::Noted.new(Struct.new(:requester).new("r"), "one")
+        outer = Lain::Approval::Escalation::Noted.new(inner, "two")
+
+        expect(outer.parked_because).to eq(%w[one two])
+        expect(outer.requester).to eq("r")
+      end
+    end
+
     # The surfaces rung's ruling and the queue's decision are two records of one
     # call, and the call's id is what joins them: a person's allow honoured over
     # a fault is read off the pair.

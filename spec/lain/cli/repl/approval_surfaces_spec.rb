@@ -219,6 +219,18 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(notes).to contain_exactly(a_string_including("auto-denies in 0:01"))
     end
 
+    it "adds the ladder's note to the announcement, inspected on one line" do
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        context = Lain::Approval::Escalation::Noted.new(nil, "cat is /x/\e[2K\nforged")
+        task.with_timeout(2) { task.async { queue.call(effect, context) }.wait }
+        watched.each(&:stop)
+      end
+
+      expect(notes.sole).to include('; "cat is /x/\\e[2K\\nforged"')
+      expect(output.string).not_to include("\e[2K")
+    end
+
     it "says once, in the chat, that the clock denied a call nobody answered" do
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)

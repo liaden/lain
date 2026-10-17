@@ -153,9 +153,10 @@ module Lain
         # gate counted directory names from, see {Sensitivity::Policy.base_of}.
         def initialize(effect:, requester:, clock:, timeout: DEFAULT_TIMEOUT, outstanding: Outstanding::NONE,
                        humans_only: false, cwd: ::Lain::Session.cwd_of(nil), within: cwd, wall: -> { Time.now },
-                       judge_deferred: false)
+                       judge_deferred: false, notes: [])
           @timeout = timeout
           @judge_deferred = judge_deferred == true
+          @notes = notes.map { -_1.to_s }.freeze
           @wall = wall
           @humans_only = humans_only == true
           @cwd = cwd
@@ -205,6 +206,11 @@ module Lain
 
         # Whether the judge looked at this call and left it for a human.
         def judge_deferred? = @judge_deferred
+
+        # Why the ladder left this call for a human, one line of words per rung
+        # that said. Model-influenced (a path), so a surface renders each `inspect`ed.
+        # @return [Array<String>]
+        attr_reader :notes
 
         # A surface that asks one call at a time says when this one reached the
         # front, and the queue's window then runs from there, not from the park.
@@ -456,6 +462,7 @@ module Lain
         pending = Pending.new(effect:, requester: Queue.requester_for(context, @requester), clock: @clock,
                               timeout: @timeout, wall: @wall, outstanding:, humans_only: Escalation.barred?(context),
                               judge_deferred: context.respond_to?(:judge_deferred?) && context.judge_deferred?,
+                              notes: context.respond_to?(:parked_because) ? context.parked_because : [],
                               cwd: ::Lain::Session.cwd_of(context),
                               within: ::Lain::Sensitivity::Policy.base_of(context))
         record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }
