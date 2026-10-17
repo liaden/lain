@@ -197,16 +197,9 @@ module Lain
         # The bytes the command frames: the role's text, with its {FENCE} taken
         # off. `|| body` is the match-or-whole idiom, not a nil guard on a
         # collaborator -- an unfenced body IS the body.
-        def body_of(result) = unfence(text_of(result))
+        def body_of(result) = unfence(result.text)
 
         def unfence(body) = body[FENCE, 1] || body
-
-        # The role answers with a String body; an Array of content blocks is
-        # flattened to its text so the file stays plain ruby either way.
-        def text_of(result)
-          content = result.content
-          content.is_a?(String) ? content : content.filter_map { |block| block["text"] }.join("\n")
-        end
 
         # A slug the human can type back: the prompt reduced to its leading
         # words. A prompt that reduces to nothing falls back to the artifact's

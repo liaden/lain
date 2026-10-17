@@ -70,20 +70,15 @@ module Lain
       def bounded(&) = Sync { |task| task.with_timeout(@timeout, &) }
 
       def parse(result, on_fault)
-        return faulted(on_fault, "the judge's child returned an error: #{text_of(result)}") unless result.ok?
+        return faulted(on_fault, "the judge's child returned an error: #{result.text}") unless result.ok?
 
-        match = text_of(result).strip.match(VERDICT)
+        match = result.text.strip.match(VERDICT)
         match ? match[1].downcase.to_sym : :defer
       end
 
       def faulted(on_fault, cause)
         on_fault.call(cause)
         :fault
-      end
-
-      def text_of(result)
-        content = result.content
-        content.is_a?(String) ? content : content.filter_map { |block| block["text"] }.join("\n")
       end
 
       def prompt_for(tool, input, place)

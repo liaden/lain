@@ -192,7 +192,7 @@ module Lain
         return ["empty", EMPTY] if brief.paths.empty?
 
         result = lent.call(@role, MODE, brief.to_s)
-        outcome(result.error? ? "refused" : "answered", said(result))
+        outcome(result.error? ? "refused" : "answered", result.text)
       rescue StandardError => e
         outcome("refused", e.message)
       end
@@ -200,13 +200,6 @@ module Lain
       def outcome(outcome, words) = said?(words) ? [outcome, words] : ["refused", NOTHING_SAID]
 
       def said?(words) = !words.to_s.strip.empty?
-
-      def said(result)
-        content = result.content
-        return content if content.is_a?(String)
-
-        content.filter_map { |block| block["text"] || block[:text] }.join("\n")
-      end
 
       def record(brief, outcome, text)
         CritiqueChunk.new(head_ref: brief.head_ref, ordinal: brief.ordinal, count: brief.count,

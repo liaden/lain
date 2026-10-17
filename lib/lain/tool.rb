@@ -267,6 +267,15 @@ module Lain
       def ok?
         !is_error
       end
+
+      # The content as one String: a String whole, an Array reduced to its text
+      # blocks. Both key spellings, since a block built in-process may carry
+      # Symbols while one off the wire carries Strings.
+      def text
+        return content if content.is_a?(String)
+
+        content.filter_map { |block| block["text"] || block[:text] }.join("\n")
+      end
     end
 
     # A deliberately small type/required validator for raw JSON-schema Hashes.

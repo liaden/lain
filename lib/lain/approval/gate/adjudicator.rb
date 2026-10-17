@@ -466,7 +466,7 @@ module Lain
         # routes on it. That split was paid for: an ASCII-only test written
         # twice let U+00A0 through both copies at once.
         def findings(result, gated, latency:)
-          text = text_of(result)
+          text = result.text
           return GateEvidence.gathered(text, gated, latency:) if result.ok? && !GateEvidence.blank?(text)
 
           GateEvidence.missing(note(NO_EVIDENCE, result.ok? ? NO_FINDINGS : text), gated, latency:)
@@ -490,7 +490,7 @@ module Lain
         # anything. Everything else answers :defer and carries the text forward
         # as the hesitation a reviewer reads.
         def parse(result)
-          answer = text_of(result).strip
+          answer = result.text.strip
           match = result.ok? && answer.match(VERDICT)
           match ? [match[1].downcase.to_sym, nil] : [:defer, note(HESITATION, answer)]
         end
@@ -511,11 +511,6 @@ module Lain
         def spawn(role, prompt) = @role_spawn.never_parking.call(role, CONTEXT_MODE, prompt)
 
         def note(headline, detail) = "#{headline}: #{detail.to_s[0, MAX_REASON]}"
-
-        def text_of(result)
-          content = result.content
-          content.is_a?(String) ? content : content.filter_map { |block| block["text"] }.join("\n")
-        end
 
         def question(artifact, evidence)
           <<~PROMPT

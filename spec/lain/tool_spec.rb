@@ -38,6 +38,17 @@ RSpec.describe Lain::Tool do
       expect(described_class.ok([{ "type" => "text" }]).content).to eq([{ "type" => "text" }])
       expect { described_class.ok(42) }.to raise_error(Lain::Tool::InvalidResult, /String or an Array/)
     end
+
+    describe "#text" do
+      it "is a String content whole" do
+        expect(described_class.ok("done").text).to eq("done")
+      end
+
+      it "joins the text blocks of an Array content and skips the rest" do
+        blocks = [{ "type" => "text", "text" => "one" }, { "type" => "image" }, { type: "text", text: "two" }]
+        expect(described_class.ok(blocks).text).to eq("one\ntwo")
+      end
+    end
   end
 
   describe "the abstract surface" do

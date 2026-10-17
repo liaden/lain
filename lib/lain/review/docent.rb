@@ -557,7 +557,7 @@ module Lain
 
         def answer
           result = @answerer.call(@brief.to_s)
-          words = said(result)
+          words = result.text
           return refuse(SAID_NOTHING) if words.strip.empty?
           return refuse(words) if result.error?
 
@@ -609,16 +609,6 @@ module Lain
         def settle(speaker, text, state) = @conversation.settle(@question, speaker:, text:, state:)
 
         def render = @view.show(@conversation.anchor, @conversation.entries)
-
-        # A `tool_result`'s content is a String or an Array of provider blocks
-        # ({Tool::Result}'s own contract), and only the text of it is a thing a
-        # human reads in a thread pane.
-        def said(result)
-          content = result.content
-          return content if content.is_a?(String)
-
-          content.filter_map { |block| block["text"] || block[:text] }.join("\n")
-        end
       end
     end
 
