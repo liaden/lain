@@ -83,6 +83,21 @@ RSpec.describe Lain::Config::Middleware do
       .to(refusal_for { |e| expect(e.message).to include("/p:5").and include("settle") })
   end
 
+  it "names an anonymous turn class and both missing methods in one refusal" do
+    expect { described_class.from(calls_for(:turn, Class.new, line: 5), path: "/p") }
+      .to(refusal_for do |e|
+        expect(e.message).to include("/p:5").and include("an anonymous class").and include("#call")
+                                            .and include("#settle")
+      end)
+  end
+
+  it "says a middleware is a Class when given a Module" do
+    expect { described_class.from(calls_for(:tool, Module.new, line: 4), path: "/p") }
+      .to(refusal_for do |e|
+            expect(e.message).to include("/p:4").and include("is a Class").and include("not a Module")
+          end)
+  end
+
   it "refuses an http block" do
     expect { described_class.from(calls_for(:http, block: proc {}, line: 6), path: "/p") }
       .to(refusal_for { |e| expect(e.message).to include("/p:6").and include("Faraday middleware class") })

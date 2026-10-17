@@ -35,10 +35,19 @@ module Lain
         end
 
         def self.klass(area, klass, at)
+          refuse("a middleware is a Class, not a Module: #{klass.inspect}", at, area) if klass.instance_of?(Module)
           refuse("a middleware is a Class or a block, got #{klass.inspect}", at, area) unless klass.is_a?(Class)
-          refuse("#{klass} has no instance #call", at, area) unless area == :http || klass.method_defined?(:call)
-          refuse("#{klass} has no instance #settle", at, area) if area == :turn && !klass.method_defined?(:settle)
+          missing = missing_methods(area, klass)
+          refuse("#{describe(klass)} has no instance #{missing.join(" or ")}", at, area) unless missing.empty?
         end
+
+        def self.missing_methods(area, klass)
+          wanted = area == :http ? [] : %i[call]
+          wanted += %i[settle] if area == :turn
+          wanted.reject { |name| klass.method_defined?(name) }.map { |name| "##{name}" }
+        end
+
+        def self.describe(klass) = klass.name || "an anonymous class"
 
         def self.refuse(detail, at, area) = raise(Refusal.new(detail, path: at, table: TABLE, key: area.to_s))
       end
