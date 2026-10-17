@@ -96,7 +96,7 @@ RSpec.describe Lain::Provider do
                 Lain::Provider::WindowProbe::UNREACHABLE]
 
       expect(probes).to all(satisfy { |probe| Ractor.shareable?(probe) })
-      expect(probes.map(&:unreachable?)).to eq([false, false, true])
+      expect(probes.map(&:unreachable)).to eq([false, false, true])
     end
   end
 

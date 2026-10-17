@@ -5,33 +5,6 @@ RSpec.describe Lain::Memory::Item do
     described_class.new(id:, description:, body:)
   end
 
-  describe ".blank_id?" do
-    it "is false for ordinary text" do
-      expect(described_class.blank_id?("dosage")).to be(false)
-    end
-
-    it "is true for the empty string" do
-      expect(described_class.blank_id?("")).to be(true)
-    end
-
-    it "is true for ASCII whitespace" do
-      expect(described_class.blank_id?("   ")).to be(true)
-    end
-
-    # The comment's actual ask: String#strip is ASCII-only, so a check built
-    # on it would miss an NBSP-only id and let it through to a Manifest
-    # line nothing can visibly address. .blank_id? must not have that gap.
-    it "is true for an NBSP-only id (the Unicode edge ASCII whitespace misses)" do
-      expect(described_class.blank_id?("\u00A0")).to be(true)
-      expect(described_class.blank_id?("   \u00A0   ")).to be(true)
-    end
-
-    it "is true for an ideographic-space-only id (U+3000, the CJK blank)" do
-      expect(described_class.blank_id?("\u3000")).to be(true)
-      expect(described_class.blank_id?(" \u3000 ")).to be(true)
-    end
-  end
-
   describe "construction" do
     # The Manifest renders one line per item; any vertical whitespace in an id
     # or description would let one item masquerade as two. The invariant is

@@ -36,10 +36,6 @@ module Lain
 
       NONE_RESIDENT = new(window_tokens: nil, unreachable: false)
       UNREACHABLE = new(window_tokens: nil, unreachable: true)
-
-      def unreachable? = unreachable
-
-      private :unreachable
     end
 
     # Every capability any provider may declare. Naming them in one place is what

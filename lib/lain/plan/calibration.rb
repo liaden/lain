@@ -54,11 +54,6 @@ module Lain
         turns_distribution(size_class)&.median
       end
 
-      # @return [Float, Integer, nil] the median total-token count.
-      def median_tokens(size_class)
-        tokens_distribution(size_class)&.median
-      end
-
       # @return [Compare::Distribution, nil]
       def turns_distribution(size_class)
         distribution(size_class, &:turns)

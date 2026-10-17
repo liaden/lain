@@ -112,8 +112,6 @@ module Lain
       # @return [Array<Symbol>] the registered vocabulary
       def tokens = @styles.keys
 
-      def token?(name) = @styles.key?(name)
-
       private
 
       # Resolved once, in the constructor: below 16 colours every paint would

@@ -166,10 +166,6 @@ module Lain
           new(tool:, input: checked)
         end
 
-        # Asked, so a caller routes an undescribed tool to escalation instead
-        # of rescuing.
-        def self.describable?(tool) = !tool.input_model.nil?
-
         # The one line that makes "a rule sees the validated input object" a
         # property of the TYPE. `private_class_method :new` alone shut one of
         # three doors: `Data::[]` is a second public constructor, and `#with`

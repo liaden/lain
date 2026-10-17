@@ -29,17 +29,8 @@ module Lain
 
       attr_reader :id, :description, :body, :author, :digest
 
-      # The blank-id rule as a class-level predicate: directly testable
-      # (including the NBSP-only Unicode edge) without constructing a whole
-      # Item just to provoke the ArgumentError.
-      def self.blank_id?(id)
-        id.to_s.match?(BLANK)
-      end
-
       # Only the id gets the blank check: an item that cannot be addressed is a
       # defect, where an empty description is merely a pointless manifest line.
-      # Both rules cite the constants above rather than restating them, so the
-      # declaration and {.blank_id?} cannot drift into two answers.
       declare do
         attribute :id, :lain_canonical
         attribute :description, :lain_canonical

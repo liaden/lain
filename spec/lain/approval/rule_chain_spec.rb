@@ -256,11 +256,6 @@ RSpec.describe Lain::Approval::RuleChain do
         .to raise_error(Lain::Approval::Rule::Call::Undeclared, /nameless_probe/)
     end
 
-    it "answers whether a tool can be described at all, so a caller need not rescue" do
-      expect(Lain::Approval::Rule::Call.describable?(read_file)).to be(true)
-      expect(Lain::Approval::Rule::Call.describable?(nameless_probe)).to be(false)
-    end
-
     it "refuses a subject that is not a Call, rather than passing it to a rule" do
       expect { chain(RuleChainSpecSupport::Allower.new).decide("rm -rf /") }
         .to raise_error(Lain::Error, /a rule chain decides a Rule::Call, got String/)

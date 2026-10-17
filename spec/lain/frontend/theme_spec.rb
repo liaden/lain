@@ -179,10 +179,5 @@ RSpec.describe Lain::Frontend::Theme do
     it "answers the registered vocabulary" do
       expect(theme.tokens).to include(:response, :error, :question, :tool_error, :prompt)
     end
-
-    it "answers whether a name is registered" do
-      expect(theme.token?(:response)).to be(true)
-      expect(theme.token?(:chartreuse)).to be(false)
-    end
   end
 end

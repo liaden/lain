@@ -57,8 +57,8 @@ RSpec.describe Lain::Plan::Calibration do
 
       expect(calibration.median_turns("S")).to eq(1)
       expect(calibration.median_turns("M")).to eq(3)
-      expect(calibration.median_tokens("S")).to eq(15)
-      expect(calibration.median_tokens("M")).to eq(45)
+      expect(calibration.tokens_distribution("S")&.median).to eq(15)
+      expect(calibration.tokens_distribution("M")&.median).to eq(45)
       expect(calibration.turns_distribution("S").n).to eq(3)
       expect(calibration.tokens_distribution("M").n).to eq(3)
     end
@@ -67,7 +67,7 @@ RSpec.describe Lain::Plan::Calibration do
       calibration = described_class.fold(classed_entries)
 
       expect(calibration.median_turns("L")).to be_nil
-      expect(calibration.median_tokens("L")).to be_nil
+      expect(calibration.tokens_distribution("L")&.median).to be_nil
       expect(calibration.turns_distribution("L")).to be_nil
     end
 
@@ -129,7 +129,7 @@ RSpec.describe Lain::Plan::Calibration do
         string_calibration = described_class.fold(string_entries)
 
         expect(symbol_calibration.median_turns("S")).to eq(string_calibration.median_turns("S"))
-        expect(symbol_calibration.median_tokens("S")).to eq(string_calibration.median_tokens("S"))
+        expect(symbol_calibration.tokens_distribution("S")).to eq(string_calibration.tokens_distribution("S"))
         expect(symbol_calibration.unclassed_count).to eq(0)
       end
 

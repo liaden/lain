@@ -39,7 +39,7 @@ RSpec.describe Lain::Renderable do
     end
 
     it "registers that plain token in the theme's own vocabulary" do
-      expect(theme.token?(described_class::PLAIN)).to be(true)
+      expect(theme.tokens).to include(described_class::PLAIN)
     end
 
     it "concatenates two renderables into one" do
