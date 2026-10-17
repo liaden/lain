@@ -3325,4 +3325,191 @@ RSpec.describe Lain::Compaction::Source do
       expect(records.map { |record| record["type"] }).not_to include("memory_write", "memory_root")
     end
   end
+
+  describe "an idle prepare" do
+    let(:session) { recording_session }
+    let(:oracle) { SourceSpecSpanOracle.new("a span summary") }
+
+    def of_type(type) = records.select { |record| record["type"] == type }
+
+    def cuts = of_type("compaction_cut")
+
+    def idling(ttl: nil, **overrides)
+      source(need: build_need(byte_threshold: 100), cold: build_cold(ttl:), hard_cap: 1_000_000,
+             strategy: Lain::Compaction::Strategy::Summarizing.new(oracle:), **overrides)
+    end
+
+    def prepare(built, line, usage: nil) = built.prepare(base:, timeline: line, usage:, session:)
+
+    def at(line, index) = Lain::Timeline.new(head_digest: line.to_a[index].digest, store: line.store)
+
+    # Ends on the model's own reply, which is where a chat sits while the human is away.
+    def idle_timeline(size = 5) = timeline(size)
+
+    def ask(line, index) = line.commit(role: "user", content: [block(index)])
+
+    it "pays once for 2 ticks at 1 head" do
+      built = idling
+      line = idle_timeline
+      clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+
+      outcomes = Array.new(2) { prepare(built, line) }
+
+      expect(outcomes).to eq([true, false])
+      expect(oracle.asks).to eq(1)
+      expect([cuts.size, decisions.size]).to eq([1, 1])
+      expect(of_type("compaction_prepared"))
+        .to contain_exactly(include("cut_digest" => session.compaction_cuts.last.address,
+                                    "head_digest" => line.head_digest,
+                                    "idle_seconds" => Lain::Compaction::Source::IdleGate::FLOOR))
+      expect(of_type("compaction_prepared").first["idle_seconds"]).to be_a(Integer)
+    end
+
+    it "journals the prepared record after the cut it names" do
+      built = idling
+      clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+
+      prepare(built, idle_timeline)
+
+      types = records.map { |record| record["type"] }
+      expect(types.index("compaction_prepared")).to be > types.index("compaction_cut")
+    end
+
+    it "does nothing under the gate" do
+      built = idling
+      clock.advance(30)
+
+      expect(prepare(built, idle_timeline)).to be(false)
+      expect(records).to be_empty
+      expect(oracle.asks).to eq(0)
+    end
+
+    it "waits for a TTL provider's own TTL, not the floor" do
+      built = idling(ttl: 300)
+      clock.advance(200)
+
+      expect(prepare(built, idle_timeline)).to be(false)
+      expect(records).to be_empty
+    end
+
+    it "raises a TTL provider's pending mark, as a render would" do
+      cold = build_cold(ttl: 300)
+      built = source(need: build_need(byte_threshold: 100), cold:, strategy: Lain::Compaction::Strategy::Summarizing.new(oracle:))
+      clock.advance(600)
+
+      prepare(built, idle_timeline)
+
+      expect(cold.pending?).to be(true)
+    end
+
+    it "reports nothing prepared when it defers while an earlier cut holds" do
+      built = source(need: build_need(byte_threshold: 1_000_000), cold: build_cold(ttl: nil),
+                     strategy: Lain::Compaction::Strategy::Summarizing.new(oracle:))
+      line = idle_timeline
+      complete_a_step(session)
+      clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+      prepare(built, line)
+      replied = ask(line, 6).commit(role: "assistant", content: [block(7)])
+      clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+
+      expect(prepare(built, replied)).to be(false)
+      expect([cuts.size, of_type("compaction_prepared").size]).to eq([1, 1])
+    end
+
+    it "records a TTL provider's presumed cold as such" do
+      built = idling(ttl: 300)
+      clock.advance(600)
+
+      expect(prepare(built, idle_timeline)).to be(true)
+      expect(of_type("compaction_prepared").map { |record| record["cache_state"] }).to eq(%w[presumed_cold])
+      expect(compactions.map { |record| record["cache_state"] }).to eq(%w[cold])
+    end
+
+    it "renders the next line through the idle cut for free, and announces it once" do
+      built = idling(context_window: window_book(10_000))
+      line = idle_timeline
+      clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+      prepare(built, line, usage: 9_500)
+      asked = oracle.asks
+      prompted = ask(line, 6)
+
+      messages = render(context_for(built, prompted, usage: 9_500), prompted).messages
+      context_for(built, prompted, usage: 9_500)
+
+      expect(oracle.asks).to eq(asked)
+      expect(cuts.size).to eq(1)
+      expect(messages.first["content"]).to eq(session.compaction_cuts.last.collapses.first["content"])
+      expect(of_type("compaction_applied"))
+        .to contain_exactly(include("cut_digest" => session.compaction_cuts.last.address,
+                                    "head_digest" => prompted.head_digest))
+    end
+
+    def prepared_then_asked(built)
+      line = idle_timeline
+      clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+      prepare(built, line, usage: 9_500)
+      ask(line, 6)
+    end
+
+    it "reads a different usage afresh, such as a refusal's" do
+      built = idling(context_window: window_book(10_000))
+      prompted = prepared_then_asked(built)
+
+      context_for(built, prompted, usage: 12_000)
+
+      expect(decisions.map { |record| record["used_tokens"] }).to eq([9_500, 12_000])
+    end
+
+    it "keeps the reading consumed while the same stale value comes back after a reply" do
+      built = idling(context_window: window_book(10_000))
+      prompted = prepared_then_asked(built)
+      context_for(built, prompted, usage: 9_500)
+      built << turn_usage(cache_read: 4096)
+      asked = oracle.asks
+
+      context_for(built, prompted.commit(role: "assistant", content: [block(7)]), usage: 9_500)
+
+      expect(decisions.map { |record| record["used_tokens"] }).to eq([9_500, nil, nil])
+      expect(oracle.asks).to eq(asked)
+    end
+
+    it "forgets the consumed reading once a different value has passed" do
+      built = idling(context_window: window_book(10_000))
+      prompted = prepared_then_asked(built)
+      context_for(built, prompted, usage: 9_600)
+
+      context_for(built, prompted.commit(role: "assistant", content: [block(7)]), usage: 9_500)
+
+      expect(decisions.map { |record| record["used_tokens"] }).to eq([9_500, 9_600, 9_500])
+    end
+
+    it "recomputes only what is new after a turn between ticks" do
+      built = idling
+      line = idle_timeline
+      clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+      prepare(built, line)
+      replied = ask(line, 6).commit(role: "assistant", content: [block(7)])
+      built << turn_usage(cache_read: 0)
+      clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+
+      expect(prepare(built, replied)).to be(true)
+      expect(cuts.size).to eq(2)
+      expect(oracle.asks).to eq(2)
+    end
+
+    it "drops the cut when the timeline is rewound off the prepared head" do
+      built = idling
+      line = idle_timeline
+      clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+      prepare(built, line)
+      replacement = { "role" => Lain::Compaction::Derivation::REPLACEMENT_ROLE,
+                      "content" => session.compaction_cuts.last.collapses.first["content"] }
+      rewound = at(line, 1)
+
+      messages = render(context_for(built, rewound), rewound).messages
+
+      expect(messages).not_to include(replacement)
+      expect(of_type("compaction_applied")).to be_empty
+    end
+  end
 end

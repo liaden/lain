@@ -397,6 +397,76 @@ module Lain
       end
       private_constant :Reporting
 
+      # What an idle prepare leaves behind: one judgement per head, the records it owes (the cut it
+      # committed, and the one later render that sends that cut), and the usage reading the cut
+      # made stale, which a later render must not decide on. A restart before that render loses
+      # the announcement, which a reader counts as a cut never applied.
+      class Preparation
+        def initialize(journal:, gate: IdleGate.new)
+          @journal = journal
+          @gate = gate
+          @prepared = nil
+          @consumed = nil
+        end
+
+        # @return [Symbol, nil] the gate's reading when this head may pay, latching it; nil otherwise
+        def judge(head_digest, elapsed:, ttl:, cold:)
+          reading = @gate.reading(elapsed:, ttl:, cold:)
+          return unless @gate.ready?(reading, head_digest)
+
+          @gate.latch(head_digest)
+          reading
+        end
+
+        # @param cut [Telemetry::CompactionCut] the cut the prepare committed
+        # @param head_digest [String, nil] the head it was judged at
+        # @param elapsed [Numeric] seconds idle when it was judged
+        # @param reading [Symbol] :cold or :presumed_cold, journaled as the cache state
+        # @param used_tokens [Integer, nil] the last-turn usage the prepare decided on
+        # @return [self]
+        def prepared(cut, head_digest:, elapsed:, reading:, used_tokens:)
+          @prepared = cut.address
+          @consumed = used_tokens
+          @journal << CompactionPrepared.new(head_digest:, cut_digest: @prepared, idle_seconds: elapsed.floor,
+                                             cache_state: reading.to_s)
+          self
+        end
+
+        # @param held_cut [HeldCut] the render's
+        # @param session [Session] whose newest cut the held one is compared with
+        # @param head_digest [String, nil] the head of the chain being rendered
+        # @return [self]
+        def rendering(held_cut, session, head_digest)
+          return self unless sends_prepared?(held_cut, session)
+
+          @journal << CompactionApplied.new(cut_digest: @prepared, head_digest:)
+          @prepared = nil
+          self
+        end
+
+        # The reading a prepare decided on was taken before its cut shrank the history, so it no
+        # longer measures what the next render sends; re-firing on it would pay the summarizer
+        # again for the turn the cut just made room on. Keyed on the VALUE rather than on a reply
+        # arriving, because the Agent's reading is what moves: a refusal sets a new one with no
+        # reply, and a reply reporting no input tokens leaves the stale one in place.
+        #
+        # @param used_tokens [Integer, nil] the last-turn input tokens a render was handed
+        # @return [Integer, nil] nil while it is the consumed reading; the first other value forgets it
+        def usage(used_tokens)
+          return if !used_tokens.nil? && used_tokens == @consumed
+
+          @consumed = nil
+          used_tokens
+        end
+
+        private
+
+        def sends_prepared?(held_cut, session)
+          !@prepared.nil? && held_cut.holds_newest? && session.compaction_cuts.last.address == @prepared
+        end
+      end
+      private_constant :Preparation
+
       # The run's shared summary store; readable so callers can check they hold
       # the same one the tool observer fires into.
       attr_reader :eager
@@ -462,6 +532,7 @@ module Lain
         @cold = cold
         @eager = eager
         @reporting = Reporting.new(journal:, sink:)
+        @preparation = Preparation.new(journal:)
         @collapse_strategy = arm.name
         @widened = arm.widened
         @idle = IdleGap.new(clock:)
@@ -554,7 +625,30 @@ module Lain
         observe_idle
         @reporting.rendering(timeline.head_digest)
         held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
-        decide(base:, held_cut:, usage:, session:, pins: pinned(held_cut.walk, session))
+        @preparation.rendering(held_cut, session, timeline.head_digest)
+        decide(base:, held_cut:, usage: @preparation.usage(usage), session:, pins: pinned(held_cut.walk, session),
+               cold: @cold.cold?)
+      end
+
+      # Commits the cut while the human is away, so the next line renders through it with no
+      # summarizer call. The same arguments as {#context_for}, so the Agent passes what
+      # `render_request` passes. Idle past the gate is read as cold whether or not a response
+      # confirmed it: an idle chat has no next response to confirm anything.
+      #
+      # A command whose Boolean reports what it did, which PredicateMethod misreads as a question.
+      #
+      # @param base [Context] the Agent's own Context
+      # @param timeline [Timeline] the history as of this tick
+      # @param usage [Integer, nil] the LAST-TURN input tokens, as {#context_for} takes them
+      # @param session [Session] the run's, which records the cut
+      # @return [Boolean] whether a cut was committed
+      def prepare(base:, timeline:, usage:, session:) # rubocop:disable Naming/PredicateMethod
+        observe_idle
+        elapsed = @idle.elapsed
+        reading = @preparation.judge(timeline.head_digest, elapsed:, ttl: @cold.ttl, cold: @cold.cold?)
+        cut = reading && prepared_cut(base:, timeline:, usage:, session:)
+        @preparation.prepared(cut, head_digest: timeline.head_digest, elapsed:, reading:, used_tokens: usage) if cut
+        !cut.nil?
       end
 
       private
@@ -563,6 +657,14 @@ module Lain
       # drop when it last decided, or the render that was refused was already
       # sending the newest cut this session recorded.
       def stuck?(held_cut) = !@reporting.droppable? || held_cut.holds_newest?
+
+      def prepared_cut(base:, timeline:, usage:, session:)
+        before = session.compaction_cuts.last
+        held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
+        decide(base:, held_cut:, usage:, session:, pins: pinned(held_cut.walk, session), cold: true)
+        cut = session.compaction_cuts.last
+        cut unless cut.equal?(before)
+      end
 
       # `#usage` ALONE is not the duck: {Telemetry::OracleAnswer} answers it
       # too and its usage Hash carries no cache fields, so a landed oracle
@@ -626,16 +728,17 @@ module Lain
       #
       # The head is taken past the held cut: what a cut already collapsed is
       # not droppable again, so a threshold measures only what it has not.
-      def decide(base:, held_cut:, usage:, session:, pins:)
+      def decide(base:, held_cut:, usage:, session:, pins:, cold:)
         head = Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:,
                         claimant: @derived.claimant(pins:), widening: @derived.widening(pins:))
         resolution = window_for(base)
         need = need_for(head:, usage:, session:, resolution:)
         occupancy = ContextWindow::Occupancy.of(used_tokens: usage, window_tokens: resolution.window_tokens)
         provenance = resolution.provenance
-        return defer(base:, held_cut:, need:, head:, occupancy:, provenance:) unless movable?(need, head, held_cut)
+        turn = { base:, held_cut:, need:, head:, occupancy:, provenance:, cold: }
+        return defer(**turn) unless movable?(need, head, held_cut)
 
-        weigh(base:, held_cut:, head:, need:, pins:, occupancy:, provenance:)
+        weigh(**turn, pins:)
       end
 
       # Is there a move at all: something droppable past the cuts that hold,
@@ -721,20 +824,19 @@ module Lain
       # shrink what the turn would otherwise send. The held render is taken
       # FIRST, so on a turn that advances, the last edge journaled is the chain
       # the turn actually sends.
-      def weigh(base:, held_cut:, head:, need:, pins:, occupancy:, provenance:)
-        return defer(base:, held_cut:, need:, head:, occupancy:, provenance:) unless timely?(need, head)
+      def weigh(base:, held_cut:, head:, need:, pins:, occupancy:, provenance:, cold:)
+        turn = { base:, held_cut:, need:, head:, occupancy:, provenance:, cold: }
+        return defer(**turn) unless timely?(need, head, cold)
 
         unadvanced = held_cut.messages
         outcome = derivation_for(held_cut, head, pins)
-        return defer(base:, held_cut:, need:, head:, occupancy:, provenance:, outcome:) if outcome.refused?
+        return defer(**turn, outcome:) if outcome.refused?
 
         scheduler = scheduler_for(outcome.replay)
         rewrite = scheduler.measure(unadvanced)
-        unless rewrite.shrinks?
-          return defer(base:, held_cut:, need:, head:, occupancy:, provenance:, outcome:, would_not_shrink: true)
-        end
+        return defer(**turn, outcome:, would_not_shrink: true) unless rewrite.shrinks?
 
-        commit(base:, held_cut:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:)
+        commit(**turn, outcome:, scheduler:, rewrite:)
       end
 
       # An advance collapses what is droppable past the cut. With nothing there
@@ -764,16 +866,15 @@ module Lain
       # turn would fill the experiment record with derivations no render ever
       # used, on top of asking a model-backed strategy for summaries nothing
       # reads.
-      def timely?(need, head)
-        scheduler_for(Context::Identity).evaluate(need:, cold: @cold.cold?,
-                                                  history_size: head.bytesize).compact?
+      def timely?(need, head, cold)
+        scheduler_for(Context::Identity).evaluate(need:, cold:, history_size: head.bytesize).compact?
       end
 
       # A turn that compacts no FURTHER still renders the cut that holds: the
       # base itself only while none does.
-      def defer(base:, held_cut:, need:, head:, occupancy:, provenance:, outcome: Derived::Outcome::NOTHING,
+      def defer(base:, held_cut:, need:, head:, occupancy:, provenance:, cold:, outcome: Derived::Outcome::NOTHING,
                 would_not_shrink: false)
-        record(need:, head:, compacted: false, outcome:, occupancy:, provenance:, would_not_shrink:)
+        record(need:, head:, compacted: false, outcome:, occupancy:, provenance:, cold:, would_not_shrink:)
         holding(base, held_cut)
       end
 
@@ -800,13 +901,13 @@ module Lain
       # The advance is recorded only HERE, once this turn's pipeline is chosen:
       # a summary that failed collapsed nothing and cannot shrink the render,
       # so no cut exists until its replacement text does.
-      def commit(base:, held_cut:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:)
+      def commit(base:, held_cut:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:, cold:)
         provider = BASE_PROVIDER.call(flattened_twin(base))
-        pipeline = scheduler.pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
+        pipeline = scheduler.pipeline(need:, cold:, history_size: head.bytesize,
                                       base: provider, rewrite:, ran_under: base.model,
                                       collapse_strategy: @collapse_strategy)
         compacted = !pipeline.equal?(provider)
-        record(need:, head:, compacted:, outcome:, occupancy:, provenance:)
+        record(need:, head:, compacted:, outcome:, occupancy:, provenance:, cold:)
         return holding(base, held_cut) unless compacted
 
         held_cut.advance(outcome)
@@ -844,14 +945,13 @@ module Lain
       # snapshot's: a model-backed strategy reports its OWN content-address hit
       # rate, which is the only count a mis-keyed address shows up in -- as a
       # number that never rises. `misses_all_size_declined` is derived off the
-      # same `outcome` for the same reason -- a NEW keyword here would have
-      # tripped this method's own `Metrics/ParameterLists`, and the two counts
-      # it compares already arrive on the value that carries `hits`/`misses`.
-      def record(need:, head:, compacted:, outcome:, occupancy:, provenance:, would_not_shrink: false)
+      # same `outcome` for the same reason: the two counts it compares already
+      # arrive on the value that carries `hits`/`misses`.
+      def record(need:, head:, compacted:, outcome:, occupancy:, provenance:, cold:, would_not_shrink: false)
         decision = CompactionDecision.new(compacted:, signals: need.signals, head_bytes: head.bytesize,
                                           summary_hits: outcome.hits, summary_misses: outcome.misses,
                                           misses_all_size_declined: misses_all_size_declined?(outcome),
-                                          cold: @cold.cold?, would_not_shrink:,
+                                          cold:, would_not_shrink:,
                                           window_tokens: occupancy.window_tokens,
                                           used_tokens: occupancy.used_tokens, provenance:,
                                           nothing_droppable: head.empty?)

@@ -138,6 +138,20 @@ RSpec.describe Lain::Compaction::Cold do
     end
   end
 
+  describe "the TTL it compares idle time against" do
+    it "names a real TTL in seconds" do
+      expect(described_class.new(cache_profile: ttl_profile(ttl: 300)).ttl).to eq(300)
+    end
+
+    it "is nil when the profile has no :ttl key" do
+      expect(described_class.new(cache_profile: {}).ttl).to be_nil
+    end
+
+    it "is nil when ttl is 0, the same no-TTL provider idle! ignores" do
+      expect(described_class.new(cache_profile: { ttl: 0 }).ttl).to be_nil
+    end
+  end
+
   describe "the String-key contract, pinned against a REAL Telemetry::TurnUsage" do
     # TurnUsage#usage is Canonical-normalized (String keys only) -- this is
     # what #observe must read internally so a caller can never silently pass

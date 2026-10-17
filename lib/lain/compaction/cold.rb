@@ -56,6 +56,9 @@ module Lain
       # @return [Boolean] the cache is CONFIRMED cold
       def cold? = @cold
 
+      # @return [Numeric, nil] the provider's cache TTL in seconds; nil when it has none
+      def ttl = (@ttl if ttl?)
+
       # The idle-time signal. A no-op for a TTL-less provider: nothing here
       # raises a pending mark it has no TTL to compare against.
       #
