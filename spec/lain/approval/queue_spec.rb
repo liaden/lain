@@ -40,11 +40,11 @@ RSpec.describe Lain::Approval::Queue do
   end
 
   def decision_records
-    Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+    journal_records(journal_io, "approval_decision")
   end
 
   def pending_records
-    Lain::Journal.records(journal_io.string.lines, type: "approval_pending").to_a
+    journal_records(journal_io, "approval_pending")
   end
 
   # The approval records in the order they were written, so "announced before
@@ -57,7 +57,7 @@ RSpec.describe Lain::Approval::Queue do
   end
 
   def error_records
-    Lain::Journal.records(journal_io.string.lines, type: "journal_error").to_a
+    journal_records(journal_io, "journal_error")
   end
 
   # The same tool-builder shape gate_spec uses: a tier-3 tool is one that

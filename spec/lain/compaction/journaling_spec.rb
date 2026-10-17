@@ -27,9 +27,7 @@ RSpec.describe "Compaction journaling" do
   end
   let(:base) { JournalingShareableFixtures::BASE }
 
-  def records
-    journal_io.string.each_line.map { |line| JSON.parse(line) }
-  end
+  def records = journal_records(journal_io)
 
   def history(size = 6)
     (1...(size + 1)).map do |i|

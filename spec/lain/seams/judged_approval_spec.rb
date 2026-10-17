@@ -46,7 +46,7 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
                           project: Lain::Project.new(root: @state, cwd: @cwd, kind: :project, detected_by: :flag))
   end
 
-  def escalations = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
+  def escalations = journal_records(journal_io, "escalation")
 
   def denied_after_judging
     recorder, session = wiring.run_state(nil)

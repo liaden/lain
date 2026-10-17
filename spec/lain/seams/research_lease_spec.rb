@@ -73,7 +73,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
 
   def first_request(provider) = provider.requests.first.then { [_1.system, _1.messages].to_s }
 
-  def leases = Lain::Journal.records(journal_io.string.lines, type: "isolation_lease").to_a
+  def leases = journal_records(journal_io, "isolation_lease")
 
   def kept_dirs(text) = text.scan(kept_pattern).uniq
 

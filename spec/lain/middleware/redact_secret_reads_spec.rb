@@ -125,9 +125,9 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
   def releases = journal.grep(Lain::Telemetry::ReadReleased)
 
-  def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+  def decisions = journal_records(journal_io, "approval_decision")
 
-  def parks = Lain::Journal.records(journal_io.string.lines, type: "approval_pending").to_a
+  def parks = journal_records(journal_io, "approval_pending")
 
   describe "masking what nobody has released" do
     it "removes the region's bytes and stands a placeholder in their place" do

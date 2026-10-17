@@ -66,8 +66,6 @@ RSpec.describe "A symlink is judged where it lands", :seam do
     end
   end
 
-  def records(type) = Lain::Journal.records(journal_io.string.lines, type:).to_a
-
   def git(*args) = SeedRepo.git(@repo, *args).stdout
 
   it "refuses a read through a link to a denied file, and parks nothing" do
@@ -77,8 +75,9 @@ RSpec.describe "A symlink is judged where it lands", :seam do
 
     expect(result.content).to include("refused")
     expect(result.content).not_to include("PRIVATE KEY")
-    expect(records("read_refused")).to contain_exactly(include("path" => "notes.txt", "reason" => "protected"))
-    expect(records("approval_pending")).to be_empty
+    expect(journal_records(journal_io,
+                           "read_refused")).to contain_exactly(include("path" => "notes.txt", "reason" => "protected"))
+    expect(journal_records(journal_io, "approval_pending")).to be_empty
   end
 
   it "asks a human before reading through a link to a gated file" do
@@ -132,7 +131,9 @@ RSpec.describe "A symlink is judged where it lands", :seam do
     pending, = parked("read_file", { "path" => "loop" })
 
     expect(pending.tool).to eq("read_file")
-    expect(records("approval_pending")).to contain_exactly(include("tool" => "read_file", "tool_use_id" => "tu_1"))
+    expect(journal_records(journal_io,
+                           "approval_pending")).to contain_exactly(include("tool" => "read_file",
+                                                                           "tool_use_id" => "tu_1"))
   end
 
   # Under /mode bypass a gated call is approved with nobody asked, so a dangling

@@ -72,7 +72,6 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
     outcome
   end
 
-  def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
   def loaded(lines = journal_io.string) = Lain::Bench::Session::Loader.new(lines.each_line).timeline
   def texts(timeline) = timeline.to_a.flat_map { |turn| turn.content.filter_map { |block| block["text"] } }
 
@@ -211,7 +210,7 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
     expect(say(agent, ask, "next")&.text).to eq("settled")
 
     expect(agent.timeline.to_a.first.content.map { |block| block["text"] }).to eq(["cut off", "next"])
-    expect(records.reverse.find { |record| record["type"] == "rewound" }).to include("to" => nil)
+    expect(journal_records(journal_io).reverse.find { |record| record["type"] == "rewound" }).to include("to" => nil)
     expect(loaded.head_digest).to eq(agent.timeline.head_digest)
   end
 
@@ -229,7 +228,7 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
     say(agent, ask, "lost?")
 
     expect(agent.timeline.head_digest).to eq(stranded)
-    expect(records.reverse.find { |record| record["type"] == "run_interrupted" })
+    expect(journal_records(journal_io).reverse.find { |record| record["type"] == "run_interrupted" })
       .to include("reason" => "transport", "head" => stranded)
     expect(loaded.head_digest).to eq(stranded)
 

@@ -87,7 +87,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
 
   def effect = ApprovalSurfacesSpecSupport::Effect.new("bash", { "command" => "ls" }, "tu_1")
 
-  def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+  def decisions = journal_records(journal_io, "approval_decision")
 
   # Spawn the fan-out and drive ONE real gated call through it. Returns the
   # verdict the gated fiber received and the tasks `watch` handed back; the

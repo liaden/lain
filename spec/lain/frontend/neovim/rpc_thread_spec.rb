@@ -1168,8 +1168,6 @@ RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
                                  policy: Lain::Review::Verdict::Policy::Permissive.new)
     end
 
-    def records_of(type) = Lain::Journal.records(io.string.lines, type:).to_a
-
     before { frontend.bind_changeset_review(Lain::Review::Handover.new(session: review_session)) }
 
     it "settles the session with the verdict the editor wrote, and tells it the write took" do
@@ -1187,7 +1185,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
       dispatch("review_annotate", [annotation("path" => "a.rb", "line" => 3, "anchor_text" => "TWO",
                                               "drifted" => true)])
 
-      expect(records_of("annotation_placed").map { |record| record["drifted"] }).to eq([true])
+      expect(journal_records(io, "annotation_placed").map { |record| record["drifted"] }).to eq([true])
       expect(session).to have_received(:respond).with(7, true, nil)
     end
 

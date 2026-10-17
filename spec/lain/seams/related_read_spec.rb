@@ -49,8 +49,6 @@ RSpec.describe "A read under a related directory", :seam do
 
   def dispatch(path) = dispatch_call("read_file", { "path" => path }, toolset:, layers: stack, context: session)
 
-  def records(type) = Lain::Journal.records(journal_io.string.lines, type:).to_a
-
   it "masks the region and parks no approval" do
     configure(["~/dev/pitchcraft"])
     path = note("pitchcraft")
@@ -59,8 +57,8 @@ RSpec.describe "A read under a related directory", :seam do
 
     expect(result.content).not_to include(api_key)
     expect(result.content).to include("<redacted:1>")
-    expect(records("approval_pending")).to be_empty
-    expect(records("read_redacted")).to contain_exactly(include("path" => path, "released" => 0))
+    expect(journal_records(journal_io, "approval_pending")).to be_empty
+    expect(journal_records(journal_io, "read_redacted")).to contain_exactly(include("path" => path, "released" => 0))
   end
 
   it "still parks an approval for a read outside the related directory" do
@@ -73,7 +71,7 @@ RSpec.describe "A read under a related directory", :seam do
       call.wait
     end
 
-    expect(records("approval_pending").length).to eq(1)
+    expect(journal_records(journal_io, "approval_pending").length).to eq(1)
   end
 
   it "still parks a built-in gated name under a related directory at the read gate" do
@@ -86,7 +84,7 @@ RSpec.describe "A read under a related directory", :seam do
       call.wait
     end
 
-    expect(records("approval_pending").length).to eq(1)
+    expect(journal_records(journal_io, "approval_pending").length).to eq(1)
     expect(result.content).not_to include(api_key)
   end
 

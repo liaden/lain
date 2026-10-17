@@ -41,9 +41,9 @@ RSpec.describe Lain::CLI::Switchboard do
     Lain::CLI::ToolGuard.stack(Lain::CLI::ToolGuard::Journaled.new(journal:), board).to_a
   end
 
-  def mode_records = Lain::Journal.records(journal_io.string.lines, type: "mode_switch").to_a
+  def mode_records = journal_records(journal_io, "mode_switch")
 
-  def policy_records = Lain::Journal.records(journal_io.string.lines, type: "policy_switch").to_a
+  def policy_records = journal_records(journal_io, "policy_switch")
 
   # The wiring entry a real chat reaches (`exe/lain#chat` -> {CLI::Wiring#switchboard}
   # -> {BoardBuild.for}). Driven here rather than only through `new` because the
@@ -160,7 +160,7 @@ RSpec.describe Lain::CLI::Switchboard do
         board = unattended_auto
 
         expect(board.policy_switch.call(gated_call, nil)).to be(false)
-        expect(Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a.last)
+        expect(journal_records(journal_io, "escalation").last)
           .to include("rung" => "auto", "verdict" => "deny", "reason" => /--non-interactive/)
       end
     end
@@ -636,7 +636,7 @@ RSpec.describe Lain::CLI::Switchboard do
 
         board.policy_switch.call(gated_call, nil)
 
-        expect(Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a)
+        expect(journal_records(journal_io, "escalation"))
           .to include(a_hash_including("rung" => "unattended", "verdict" => "deny", "faulted" => false))
       end
 
@@ -1092,7 +1092,7 @@ RSpec.describe Lain::CLI::Switchboard do
       task.async { dispatch_call(name, input, toolset: board.toolset, layers: tool_stack(board), handler:) }
     end
 
-    def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+    def decisions = journal_records(journal_io, "approval_decision")
 
     # Scenario: the launch flag shows its lighter
     it "seeds the approval from --approval, so the first prompt carries BYPASS" do
@@ -1442,7 +1442,7 @@ RSpec.describe Lain::CLI::Switchboard do
         end
 
         because = start_with("plan scope cannot confine this command to #{spiked}")
-        expect(Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a.last)
+        expect(journal_records(journal_io, "escalation").last)
           .to include("rung" => "surfaces", "reason" => because)
       end
 

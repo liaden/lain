@@ -910,7 +910,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect(editor.bound).to be_nil
       expect(sink.string).to include("refused:").and include("lines")
       expect(sink.string).not_to include("notes.md")
-      expect(Lain::Journal.records(record.string.lines, type: "changeset_closed").to_a.map { |line| line["closed_by"] })
+      expect(journal_records(record, "changeset_closed").map { |line| line["closed_by"] })
         .to eq(["refusal"])
     end
 
@@ -1154,7 +1154,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # off: `set_thread`'s own payload. Nothing here invents one.
     def anchor_id = inlet.threads.last.first["id"]
 
-    def records = record.string.lines.map { |line| JSON.parse(line) }
+    def records = journal_records(record)
 
     def records_at(id) = records.select { |entry| entry["anchor_id"] == id }
 

@@ -42,7 +42,7 @@ RSpec.describe Lain::Epic::Review do
   # and the meaning, so byte_identical? and the account disagree with nothing.
   def retitled_disk = written.bytes.sub("the a issue", "a sharper title")
 
-  def records(type) = Lain::Journal.records(io.string.lines, type:).to_a
+  def records(type) = journal_records(io, type)
 
   # A doubled journal cannot be produced by two live Reviews -- both number from
   # their own records, so both hand out 1 and the second claim overwrites the

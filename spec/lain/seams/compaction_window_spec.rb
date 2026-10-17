@@ -64,8 +64,7 @@ RSpec.describe "a guessed context window never authorises a rewrite", :seam do
     agent
   end
 
-  def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
-  def decisions = records.select { |record| record["type"] == "compaction_decision" }
+  def decisions = journal_records(journal_io).select { |record| record["type"] == "compaction_decision" }
   def signals = decisions.flat_map { |record| record["signals"] }
 
   # 7_500 is over 0.9 of the 8,192 guess and under 0.9 of every real entry in
@@ -93,7 +92,7 @@ RSpec.describe "a guessed context window never authorises a rewrite", :seam do
 
     it "never rewrites history off it" do
       expect(decisions.map { |record| record["compacted"] }.uniq).to eq([false])
-      expect(records.map { |record| record["type"] }).not_to include("compaction")
+      expect(journal_records(journal_io).map { |record| record["type"] }).not_to include("compaction")
     end
 
     # A denied trigger and a trigger that never fired journal the same empty

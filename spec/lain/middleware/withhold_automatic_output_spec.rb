@@ -34,7 +34,7 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
     [env, seen.first]
   end
 
-  def withheld = Lain::Journal.records(journal_io.string.lines, type: "automatic_output_withheld").to_a
+  def withheld = journal_records(journal_io, "automatic_output_withheld")
 
   describe "an automatically approved command that printed a credential" do
     it "answers a refusal naming the region count, never the bytes" do

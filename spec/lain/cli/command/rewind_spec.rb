@@ -32,8 +32,6 @@ RSpec.describe Lain::CLI::Command::Rewind do
   end
   let(:env) { build_command_env(agent:, chronicle:) }
 
-  def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
-  def of_type(type) = records.select { |record| record["type"] == type }
   def hex(digest) = digest.delete_prefix("blake3:")
 
   def state = [agent.timeline.head_digest, journal_io.string.dup]
@@ -52,7 +50,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
       text = command.call("2", env)
 
       expect(agent.timeline.head_digest).to eq(target)
-      expect(of_type("rewound"))
+      expect(journal_records(journal_io, "rewound"))
         .to contain_exactly(a_hash_including("type" => "rewound", "from" => from, "to" => target))
       expect(text).to be_a(String).and include("rewound")
     end
@@ -160,7 +158,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
       command.call(hex(target)[0, 12], env)
 
       expect(agent.timeline.head_digest).to eq(target)
-      expect(of_type("rewound").first).to include("to" => target)
+      expect(journal_records(journal_io, "rewound").first).to include("to" => target)
     end
 
     it "accepts the full blake3:-schemed digest too" do
@@ -362,7 +360,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
 
       expect(racing.raced).to eq([false])
       expect(agent.timeline.head_digest).to eq(target)
-      expect(of_type("rewound").last).to include("to" => target)
+      expect(journal_records(journal_io, "rewound").last).to include("to" => target)
     end
 
     it "keeps today's refusal when a run holds the lock first" do
@@ -424,10 +422,10 @@ RSpec.describe Lain::CLI::Command::Rewind do
       command.call("1", env)
       command.call("1", env)
 
-      rewounds = of_type("rewound")
+      rewounds = journal_records(journal_io, "rewound")
       expect(rewounds.size).to eq(2)
       expect(rewounds.last["from"]).to eq(rewounds.first["to"])
-      loaded = Lain::Bench::Session::Loader.new(records).recording
+      loaded = Lain::Bench::Session::Loader.new(journal_records(journal_io)).recording
       expect(loaded.timeline.head_digest).to eq(agent.timeline.head_digest)
     end
   end
@@ -439,7 +437,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
       agent.ask("retry")
       chronicle.catch_up(agent.timeline)
 
-      loaded = Lain::Bench::Session::Loader.new(records).recording
+      loaded = Lain::Bench::Session::Loader.new(journal_records(journal_io)).recording
 
       expect(loaded.timeline.head_digest).to eq(agent.timeline.head_digest)
       expect(loaded.timeline.store.key?(pre_rewind_head)).to be(true)

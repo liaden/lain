@@ -194,9 +194,7 @@ RSpec.describe "a handoff when no cut can make room", :seam do
     2.times { |index| chat.ask("#{HandoffSeam::MARKER} question #{index}: #{"the lazy dog slept. " * 20}") }
   end
 
-  def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
-
-  def of_type(type) = records.select { |record| record["type"] == type }
+  def of_type(type) = journal_records(journal_io, type)
 
   def rendered_text(request)
     Lain::Canonical.dump(request.messages)
@@ -441,7 +439,9 @@ RSpec.describe "a handoff when no cut can make room", :seam do
       fill(chat)
       chat.ask("so what is left to do?")
 
-      expect(records.map { |record| record["type"] }).not_to include("memory_write", "memory_root", "memory_loaded")
+      expect(journal_records(journal_io).map do |record|
+        record["type"]
+      end).not_to include("memory_write", "memory_root", "memory_loaded")
       expect(of_type("compaction_cut").size).to eq(1)
     end
   end

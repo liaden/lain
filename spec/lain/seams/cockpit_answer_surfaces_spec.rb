@@ -136,7 +136,7 @@ RSpec.describe "cockpit answer surfaces", :seam do
 
   def effect(command = "pwd") = CockpitAnswerSurfacesSupport::Effect.new("bash", { "command" => command }, "tu_1")
 
-  def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+  def decisions = journal_records(journal_io, "approval_decision")
 
   def lines_of(text) = output.string.lines.grep(text)
 

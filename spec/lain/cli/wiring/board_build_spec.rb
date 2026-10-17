@@ -66,7 +66,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => command }.merge(rest))
   end
 
-  def rulings = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
+  def rulings = journal_records(journal_io, "escalation")
 
   # The ladder BLOCKS on the queue when every deterministic rung abstains, which
   # is itself the assertion for two of these examples. Driven the way

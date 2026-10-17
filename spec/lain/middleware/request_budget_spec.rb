@@ -27,9 +27,7 @@ RSpec.describe Lain::Middleware::RequestBudget do
     Class.new(Lain::Error) { include Lain::WindowExceeded }
   end
 
-  def records
-    journal_io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == "window_pressure" }
-  end
+  def records = journal_records(journal_io, "window_pressure")
 
   def request(system: "be terse", text: "hi")
     Lain::Request.new(model:, max_tokens: 64, system:,

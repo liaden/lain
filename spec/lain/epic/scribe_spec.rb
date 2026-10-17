@@ -41,7 +41,7 @@ RSpec.describe Lain::Epic::Scribe do
     scribe.stage_started("research")
     scribe.stage_completed("research")
 
-    records = Lain::Journal.records(io.string.lines, type: "stage_transition").to_a
+    records = journal_records(io, "stage_transition")
     expect(records.map { |r| r["event"] }).to eq(%w[started completed])
   end
 
@@ -115,7 +115,7 @@ RSpec.describe Lain::Epic::Scribe do
     it "writes a graph_revision record carrying this epic's slug and the whole fiber" do
       scribe.graph_revised(fiber)
 
-      record = Lain::Journal.records(io.string.lines, type: "graph_revision").to_a.first
+      record = journal_records(io, "graph_revision").first
 
       expect(record).to include("epic_slug" => "demo", "operation" => "split", "preimage" => %w[b],
                                 "results" => %w[b1 b2], "before" => chain.digest,

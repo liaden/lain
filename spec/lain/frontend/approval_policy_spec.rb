@@ -199,7 +199,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
     def queue = @queue ||= Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 1.0)
 
-    def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+    def decisions = journal_records(journal_io, "approval_decision")
 
     # Raises on the FIRST prompt only, so an example can ask the question that
     # matters: is this surface still answering afterwards?
@@ -330,7 +330,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       tty.drain_and_render
     end
 
-    def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+    def decisions = journal_records(journal_io, "approval_decision")
 
     around do |example|
       Dir.mktmpdir { |dir| (@dir = dir) && example.run }
@@ -409,7 +409,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       })
     end
 
-    def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+    def decisions = journal_records(journal_io, "approval_decision")
 
     # What the terminal would end the prompt's line with, as the sentences the
     # prompt yields.

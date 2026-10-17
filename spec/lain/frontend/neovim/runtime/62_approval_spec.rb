@@ -373,7 +373,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     thread
   end
 
-  def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+  def decisions = journal_records(journal_io, "approval_decision")
 
   def approval_state
     inspector.exec_lua(<<~LUA, %w[buftype filetype modifiable])

@@ -7,9 +7,7 @@ RSpec.describe Lain::Compaction::Cold do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
-  def records
-    journal_io.string.each_line.map { |line| JSON.parse(line) }
-  end
+  def records = journal_records(journal_io)
 
   # A TTL-bearing profile shaped like Anthropic's real CACHE_PROFILE.
   def ttl_profile(ttl: 300) = { ttl: }

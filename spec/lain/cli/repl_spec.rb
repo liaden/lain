@@ -902,7 +902,7 @@ RSpec.describe Lain::CLI::Repl do
       end.new(dispatched)
     end
 
-    def records(type) = Lain::Journal.records(journal_io.string.lines, type:).to_a
+    def records(type) = journal_records(journal_io, type)
 
     def iterations = records("goal_iteration").count
 

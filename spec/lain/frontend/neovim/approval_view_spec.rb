@@ -65,7 +65,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     ApprovalViewSpecSupport::Effect.new(name, input, id)
   end
 
-  def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+  def decisions = journal_records(journal_io, "approval_decision")
 
   # A real queue with real gated fibers parked in it. The block runs with every
   # pending admitted and the view already rendered, and with await: true the result
@@ -1404,7 +1404,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
     let(:moded) { described_class.new(rpc:).tap { |bound| bound.bind_mode_switch(mode_switch) } }
 
-    def flips = Lain::Journal.records(journal_io.string.lines, type: "mode_switch").to_a
+    def flips = journal_records(journal_io, "mode_switch")
 
     it "sets auto and journals the flip with the nvim surface" do
       outcome = moded.decide(0, "mode auto", generation: 0)

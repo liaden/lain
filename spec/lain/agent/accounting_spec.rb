@@ -7,9 +7,7 @@ RSpec.describe Lain::Agent::Accounting do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
-  def records
-    journal_io.string.each_line.map { |line| JSON.parse(line) }
-  end
+  def records = journal_records(journal_io)
 
   def response(input: 10, output: 5, model: "claude-opus-4-8", stop_reason: :end_turn,
                usage: Lain::Usage.new(input_tokens: input, output_tokens: output))

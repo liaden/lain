@@ -34,7 +34,7 @@ RSpec.describe Lain::Forge::Journaled do
     end
   end
 
-  def records = Lain::Journal.records(io.string.lines).to_a
+  def records = journal_records(io)
 
   # A decorator is only a decorator if it is substitutable for what it wraps.
   it_behaves_like "a gh executor" do

@@ -185,9 +185,9 @@ RSpec.describe Lain::Approval::Escalation do
 
   def ladder(*rungs) = described_class.new(rungs, journal:)
 
-  def rulings = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
+  def rulings = journal_records(journal_io, "escalation")
 
-  def faults = Lain::Journal.records(journal_io.string.lines, type: "escalation_fault").to_a
+  def faults = journal_records(journal_io, "escalation_fault")
 
   def rules_rung(*rules, faults: journal)
     described_class::Rules.new(rules:, tools:, faults: described_class::Faults.new(faults))
@@ -294,7 +294,7 @@ RSpec.describe Lain::Approval::Escalation do
   describe "composition" do
     def outcome(*rungs)
       built = ladder(*rungs)
-      [built.call(effect, nil), Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a.last["rung"]]
+      [built.call(effect, nil), journal_records(journal_io, "escalation").last["rung"]]
     end
 
     it "is unchanged by an always-abstaining rung inserted anywhere" do

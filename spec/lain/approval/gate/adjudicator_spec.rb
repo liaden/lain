@@ -124,8 +124,8 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     Sync { subject_under_test.call(item, stage:, epic_slug:) }
   end
 
-  def decisions = Lain::Journal.records(journal_io.string.lines, type: "gate_decision").to_a
-  def evidence_records = Lain::Journal.records(journal_io.string.lines, type: "gate_evidence").to_a
+  def decisions = journal_records(journal_io, "gate_decision")
+  def evidence_records = journal_records(journal_io, "gate_evidence")
 
   describe "a clean APPROVE closes the gate with evidence" do
     it "approves the artifact" do

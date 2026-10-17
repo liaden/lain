@@ -14,9 +14,7 @@ RSpec.describe Lain::Bench::LiveReplay do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
-  def records
-    journal_io.string.each_line.map { |line| JSON.parse(line) }
-  end
+  def records = journal_records(journal_io)
 
   describe ".prompts_from" do
     it "extracts only the human asks, skipping tool_result user turns" do

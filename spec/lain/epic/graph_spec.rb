@@ -437,7 +437,7 @@ RSpec.describe Lain::Epic::Graph do
       two.merge("a2", "a3", as: issue("a23")) { |fiber| scribe.graph_revised(fiber) }
     end
 
-    def journaled = Lain::Journal.records(io.string.lines, type: "graph_revision").to_a
+    def journaled = journal_records(io, "graph_revision")
 
     it "lands on the last record's after digest, replaying from the records alone", :aggregate_failures do
       finish = revised

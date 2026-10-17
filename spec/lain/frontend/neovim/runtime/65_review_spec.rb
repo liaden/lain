@@ -93,7 +93,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
           delta = settled_delta(frontend, review, token)
           expect(delta.account.changes).to eq({ retitled: ["b2"] })
-          expect(Lain::Journal.records(io.string.lines, type: "annotation").to_a).to contain_exactly(
+          expect(journal_records(io, "annotation")).to contain_exactly(
             hash_including("epic_slug" => "alpha", "generation" => token.generation, "line" => 1,
                            "text" => "tighten this AC", "issue_id" => "b2", "drifted" => false)
           )
@@ -262,7 +262,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         inspector.command("LainReviewVerdict approve")
 
         expect(buffer_lines("lain://review").join("\n")).to include("branch feature")
-        expect(Lain::Journal.records(io.string.lines, type: "changeset_closed").to_a.map { |line| line["closed_by"] })
+        expect(journal_records(io, "changeset_closed").map { |line| line["closed_by"] })
           .to eq(["human"])
         expect(wait_until_editor { messages[/no review is open here/] }).to be_truthy
         expect(messages).not_to include("stack traceback")

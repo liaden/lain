@@ -105,7 +105,7 @@ RSpec.describe Lain::CLI::Resume do
       expect(provider.last_request.messages.map { |message| message["content"].map { |block| block["text"] } })
         .to eq([%w[first], %w[ack], %w[second third]])
 
-      new_records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+      new_records = journal_records(journal_io)
       header = new_records.find { |record| record["type"] == "session" }
       expect(header["resumed_from"]).to eq(result.resumed_from)
 
@@ -441,7 +441,7 @@ RSpec.describe Lain::CLI::Resume do
         agent.ask("fourth")
         chronicle.catch_up(agent.timeline)
 
-        new_records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+        new_records = journal_records(journal_io)
         resolver = lambda { |basename|
           basename == result.file ? File.foreach(File.join(paths.sessions_dir, result.file)) : nil
         }
@@ -771,7 +771,7 @@ RSpec.describe Lain::CLI::Resume do
         agent.ask("a different second question")
         chronicle.catch_up(agent.timeline)
 
-        new_records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+        new_records = journal_records(journal_io)
         expect(new_records.find { |record| record["type"] == "session" }["resumed_from"])
           .to eq("file" => "20260101T000000-1.ndjson", "head" => ancestor)
 
@@ -1292,7 +1292,7 @@ RSpec.describe Lain::CLI::Resume do
                       resumed_from: result.resumed_from, written: result.written)
       chronicle.catch_up(result.timeline)
 
-      new_records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+      new_records = journal_records(journal_io)
       expect(new_records.select { |record| record["type"] == "turn" }.map { |record| record["digest"] })
         .to eq([result.timeline.head_digest])
 

@@ -165,8 +165,7 @@ RSpec.describe Lain::CLI::ResendBridge do
     let(:journal_io) { StringIO.new }
     let(:journal) { Lain::Journal.new(io: journal_io) }
 
-    def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
-    def record_types = records.map { |record| record["type"] }
+    def record_types = journal_records(journal_io).map { |record| record["type"] }
 
     # The chat shape wiring.rb builds: scribe-backed turn middleware (catch_up
     # per turn, Diverged on a rewound chain) plus JournalRequests, one journal.

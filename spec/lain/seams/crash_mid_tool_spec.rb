@@ -64,7 +64,7 @@ RSpec.describe "a session killed while a tool runs", :seam do
 
   def session_file = Dir[File.join(paths.sessions_dir, "*.ndjson")].sole
 
-  def records = File.foreach(session_file).map { |line| JSON.parse(line) }
+  def records = journal_records(session_file)
 
   def chat(*kill_before)
     @chat.tell(state_home, marker, *kill_before)

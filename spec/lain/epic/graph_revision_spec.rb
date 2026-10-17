@@ -42,7 +42,7 @@ RSpec.describe Lain::Epic::GraphRevision do
     io = StringIO.new
     Lain::Journal.new(io:).record(revision)
 
-    found = Lain::Journal.records(io.string.lines, type: "graph_revision").to_a
+    found = journal_records(io, "graph_revision")
 
     expect(found.first).to include("epic_slug" => "alpha", "operation" => "split", "preimage" => %w[a],
                                    "results" => %w[a1 a2], "before" => before.digest)

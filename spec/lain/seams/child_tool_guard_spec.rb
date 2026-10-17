@@ -196,7 +196,7 @@ RSpec.describe "A child's tools run behind its parent's guard", :seam do
 
     before { FileUtils.mkdir_p(File.join(root, "spec")) }
 
-    def absences = Lain::Journal.records(journal_io.string.lines, type: "test_layout_absent").to_a
+    def absences = journal_records(journal_io, "test_layout_absent")
 
     it "refuses neither of two test writes, and journals one absence" do
       script.push(writes("tu_1", "spec/a_spec.rb", describing("A")), writes("tu_2", "spec/b_spec.rb", describing("B")),

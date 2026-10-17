@@ -409,7 +409,7 @@ RSpec.describe Lain::CLI::Wiring do
       def header_of(wiring)
         recorder, session = wiring.run_state(nil)
         wiring.wire_agent(channel:, recorder:, session:, backend:)
-        journal_io.string.each_line.map { |line| JSON.parse(line) }.find { |r| r["type"] == "session" }
+        journal_records(journal_io).find { |r| r["type"] == "session" }
       end
 
       it "holds the arms that are on" do
@@ -786,7 +786,7 @@ RSpec.describe Lain::CLI::Wiring do
 
       agent.ask("ping")
 
-      turns = io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == "turn" }
+      turns = journal_records(io, "turn")
       # Two turns really landed (user + assistant), so the equality below is a
       # record agreeing with a conversation and not two empty lists agreeing.
       expect(turns.size).to eq(2)
@@ -818,8 +818,8 @@ RSpec.describe Lain::CLI::Wiring do
                                   backend: offline_backend_class.new({ provider: "ollama", model: nil,
                                                                        max_tokens: 64 }, mock: lacking))
 
-      degraded = io.string.each_line.map { |line| JSON.parse(line) }
-                   .select { |record| record["type"] == "capability_degraded" }
+      degraded = journal_records(io)
+                 .select { |record| record["type"] == "capability_degraded" }
       expect(default_requires).to include(:prompt_caching)
       expect(degraded.map { |record| record.values_at("capability", "provider") })
         .to eq([["prompt_caching", "Lain::Provider::Mock"]])
@@ -1251,9 +1251,9 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    def records = session_io.string.each_line.map { |line| JSON.parse(line) }
+    def records = journal_records(session_io)
 
-    def of_type(type) = records.select { |record| record["type"] == type }
+    def of_type(type) = journal_records(session_io, type)
 
     # Bash is tier 3 and would park on the approval gate; the board is flipped
     # to `auto` after #wire_agent memoizes it, as the live-views group does.
@@ -1440,7 +1440,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       def journaled(type)
-        journal_io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == type }
+        journal_records(journal_io, type)
       end
 
       it "records the refusal in the session record with the provider's exact figures" do
@@ -2515,7 +2515,7 @@ RSpec.describe Lain::CLI::Wiring do
           wiring.conductor.close(reason: :exit)
         end
 
-        records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+        records = journal_records(journal_io)
         # The run really opened a record, so the selection below is a search
         # through a populated file rather than two empty lists agreeing.
         expect(records.map { |record| record["type"] }).to include("session")
@@ -2533,7 +2533,7 @@ RSpec.describe Lain::CLI::Wiring do
           wiring.conductor.close(reason: :exit)
         end
 
-        records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+        records = journal_records(journal_io)
         expect(records.first["type"]).to eq(Lain::SessionRecord::HEADER_TYPE)
         expect(records.select { |record| record["type"] == "mode_switch" })
           .to contain_exactly(a_hash_including("from_approval" => "auto", "to_approval" => "auto",
@@ -4099,8 +4099,8 @@ RSpec.describe Lain::CLI::Wiring do
       it "records the address and sends the bytes" do
         _, _, reference = dispatch(over: recording)
 
-        sent = journal_io.string.each_line.map { |line| JSON.parse(line) }
-                         .find { |record| record["type"] == "request_sent" }
+        sent = journal_records(journal_io)
+               .find { |record| record["type"] == "request_sent" }
         expect(sent["payload"]["messages"].dig(0, "content", 1, "source"))
           .to include("type" => "attachment", "digest" => reference.digest)
         expect(journal_io.string).not_to include([png].pack("m0"))
@@ -4157,7 +4157,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       expect(pending).to be_a(Lain::Approval::Queue::Pending)
-      expect(Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a)
+      expect(journal_records(journal_io, "escalation"))
         .to include(a_hash_including("rung" => "auto", "reason" => "fault", "error" => "IOError: no spawn seam"))
     end
   end

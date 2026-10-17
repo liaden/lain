@@ -244,7 +244,7 @@ RSpec.describe Lain::Review::Handover do
   end
   let(:baton) { RecordingBaton.new(session:) }
 
-  def records_of(type) = Lain::Journal.records(io.string.lines, type:).to_a
+  def records_of(type) = journal_records(io, type)
 
   def handover(**overrides) = described_class.new(session:, baton:, **overrides)
 

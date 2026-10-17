@@ -122,7 +122,7 @@ RSpec.describe Lain::Review::Session do
     described_class.open(changeset: over, journal:, source: "local_branch", surface:, **rest)
   end
 
-  def records_of(type) = Lain::Journal.records(entries, type:).to_a
+  def records_of(type) = journal_records(entries, type)
 
   describe "opening a round" do
     it "journals the head of the review, addressing the changeset it opened" do

@@ -105,14 +105,11 @@ RSpec.describe "a pin on a session that journals" do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
-  def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
-  def of_type(type) = records.select { |record| record["type"] == type }
-
   it "journals a session_pin naming the digest, and holds the pin" do
     journaled.record_pin("blake3:aaaa1111")
 
     expect(journaled.pinned?("blake3:aaaa1111")).to be(true)
-    expect(of_type("session_pin"))
+    expect(journal_records(journal_io, "session_pin"))
       .to contain_exactly(a_hash_including("digest" => "blake3:aaaa1111", "pinned" => true))
   end
 
@@ -123,7 +120,7 @@ RSpec.describe "a pin on a session that journals" do
     journaled.record_unpin("blake3:aaaa1111")
 
     expect(journaled.pinned?("blake3:aaaa1111")).to be(false)
-    expect(of_type("session_pin").map { |record| record["pinned"] }).to eq([true, false])
+    expect(journal_records(journal_io, "session_pin").map { |record| record["pinned"] }).to eq([true, false])
   end
 
   it "offers the pin-set unchanged" do

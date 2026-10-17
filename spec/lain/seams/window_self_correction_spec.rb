@@ -127,7 +127,7 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
     turns.times { |index| agent(sink:).ask("turn #{index}") }
   end
 
-  def records = journal_io.string.each_line.filter_map { |line| Lain::Journal.parse(line) }
+  def records = journal_records(journal_io)
   def decisions = records.select { |record| record["type"] == "compaction_decision" }
   def measured = decisions.reject { |record| record["used_tokens"].nil? }
 

@@ -95,7 +95,7 @@ RSpec.describe "Approval::Queue pendings under concurrent gather" do
 
     # Two approval_decision records, distinct verdicts, each pending settled
     # on its own terms: the approve by the surface, the deny by the clock.
-    decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+    decisions = journal_records(journal_io, "approval_decision")
     expect(decisions.map { |record| record.values_at("tool", "verdict", "surface", "timed_out") })
       .to contain_exactly(["gated_a", "approve", "spec", false],
                           ["gated_b", "deny", "timeout", true])

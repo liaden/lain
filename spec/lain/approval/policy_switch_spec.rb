@@ -35,7 +35,7 @@ RSpec.describe Lain::Approval::PolicySwitch do
   let(:switch) { described_class.new(queue, journal:) }
 
   def flips
-    Lain::Journal.records(journal_io.string.lines, type: "policy_switch").to_a
+    journal_records(journal_io, "policy_switch")
   end
 
   describe "the delegating slot (Gate's policy duck)" do

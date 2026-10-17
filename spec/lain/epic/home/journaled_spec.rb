@@ -41,7 +41,7 @@ RSpec.describe Lain::Epic::Home::Journaled do
   # silently (home_spec's own fixture).
   def unemittable_graph = graph_of(issue(id: "a", description: "trailing space "))
 
-  def records = Lain::Journal.records(io.string.lines, type: "doc_written").to_a
+  def records = journal_records(io, "doc_written")
 
   # The one expression a reader recomputes `byte_digest` with. Spelled out here
   # rather than reused from the implementation, so deleting the Blob and going

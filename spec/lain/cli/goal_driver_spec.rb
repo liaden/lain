@@ -9,7 +9,7 @@ RSpec.describe Lain::CLI::GoalDriver do
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
 
   def iterations
-    Lain::Journal.records(journal_io.string.lines, type: "goal_iteration").to_a
+    journal_records(journal_io, "goal_iteration")
   end
 
   # A Timeline whose head is a settled assistant turn carrying `text` -- the
@@ -41,7 +41,7 @@ RSpec.describe Lain::CLI::GoalDriver do
       first = driver.poll(settled_with("x"))
       driver.withdraw
       again = driver.poll(settled_with("x"))
-      dropped = Lain::Journal.records(journal_io.string.lines, type: "goal_iteration_dropped").to_a
+      dropped = journal_records(journal_io, "goal_iteration_dropped")
 
       expect([again, iterations.map { |r| r["iteration"] }, dropped.map { |r| r["iteration"] }])
         .to eq([first, [1, 1], [1]])
@@ -183,11 +183,11 @@ RSpec.describe Lain::CLI::GoalDriver do
     end
 
     def pin_records
-      Lain::Journal.records(journal_io.string.lines, type: "goal_pin").to_a
+      journal_records(journal_io, "goal_pin")
     end
 
     def miss_records
-      Lain::Journal.records(journal_io.string.lines, type: "goal_pin_missed").to_a
+      journal_records(journal_io, "goal_pin_missed")
     end
 
     # The verbatim re-prompt, built by a throwaway driver over its own journal

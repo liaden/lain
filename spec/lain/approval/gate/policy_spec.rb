@@ -94,7 +94,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
   let(:drained) { described_class::Drained }
 
   def decisions
-    Lain::Journal.records(journal_io.string.lines, type: "gate_decision").to_a
+    journal_records(journal_io, "gate_decision")
   end
 
   def approved(signoffs, epic_slug, stages: %w[research epic_plan])
@@ -428,7 +428,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
       described_class.new(role_spawn: spawn, brief:, journal: ledger, queue: signoffs)
     end
 
-    def evidence_records = Lain::Journal.records(journal_io.string.lines, type: "gate_evidence").to_a
+    def evidence_records = journal_records(journal_io, "gate_evidence")
 
     def config_with(**gates)
       Lain::Config.new(

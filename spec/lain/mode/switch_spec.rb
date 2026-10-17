@@ -10,7 +10,7 @@ RSpec.describe Lain::Mode::Switch do
   let(:switch) { described_class.new(asking, journal:) }
 
   def flips
-    Lain::Journal.records(journal_io.string.lines, type: "mode_switch").to_a
+    journal_records(journal_io, "mode_switch")
   end
 
   describe "#journal_start" do

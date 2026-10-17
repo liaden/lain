@@ -31,17 +31,13 @@ RSpec.describe "Prompt slot journalling" do
     io.string.each_line
   end
 
-  def records_of(lines, type)
-    lines.map { |line| JSON.parse(line) }.select { |record| record["type"] == type }
-  end
-
   describe "one header record pins the session's fills" do
     it "writes exactly one slot_fills record carrying the slot name, digest, and fill bytes" do
       with_project("system" => "PROJECT GUIDANCE 42: prefer haiku.") do |root|
         slots = Lain::Prompt::Slots.load(root:)
         lines = journal_lines { |journal| journal << Lain::Telemetry::SlotFills.from(slots) }
 
-        fills = records_of(lines, "slot_fills")
+        fills = journal_records(lines, "slot_fills")
         expect(fills.size).to eq(1)
         record = fills.first
         expect(record.fetch("digests").fetch("system")).to eq(Lain::Canonical.digest(slots.render("system")))
@@ -116,9 +112,9 @@ RSpec.describe "Prompt slot journalling" do
         end
 
         parsed = lines.to_a
-        recorded_system = records_of(parsed, "request_sent").first.fetch("payload").fetch("system")
+        recorded_system = journal_records(parsed, "request_sent").first.fetch("payload").fetch("system")
         expect(Lain::Canonical.digest(system_text(recorded_system)))
-          .to eq(records_of(parsed, "slot_fills").first.fetch("digests").fetch("system"))
+          .to eq(journal_records(parsed, "slot_fills").first.fetch("digests").fetch("system"))
       end
     end
   end

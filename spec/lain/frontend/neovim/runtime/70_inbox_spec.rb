@@ -55,9 +55,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     let(:driver) { Lain::CLI::GoalDriver.new(journal: Lain::Journal.new(io: journal_io)) }
     let(:session) { Lain::Session.new }
 
-    def records(type) = Lain::Journal.records(journal_io.string.lines, type:).to_a
-
-    def iterations = records("goal_iteration").count
+    def iterations = journal_records(journal_io, "goal_iteration").count
 
     # The driven prompt committed with a reply, as the iteration's ask commits it.
     def driven(prompt)
@@ -100,7 +98,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(driver.poll(timeline)).to be_nil
       expect(iterations).to eq(1)
       expect(session.pins.size).to eq(1)
-      expect(records("goal_pin_missed")).to be_empty
+      expect(journal_records(journal_io, "goal_pin_missed")).to be_empty
     end
   end
 end

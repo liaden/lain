@@ -130,7 +130,7 @@ RSpec.describe Lain::Shell::Executable::Fresh do
       journal << { "type" => "file_written", "path" => nil }
 
       expect(fresh.fresh?(plant("bin/cat"))).to be(true)
-      expect(io.string.each_line.map { |line| JSON.parse(line) })
+      expect(journal_records(io))
         .to include(include("type" => "journal_error", "observer" => described_class.name))
     end
 

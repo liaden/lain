@@ -11,7 +11,7 @@ RSpec.describe Lain::CLI::Command::Model do
   let(:env) { instance_double(Lain::CLI::Command::Env, model_switch: switch) }
 
   def switches
-    Lain::Journal.records(journal_io.string.lines, type: "model_switch").to_a
+    journal_records(journal_io, "model_switch")
   end
 
   it "registers as /model with a one-line usage" do

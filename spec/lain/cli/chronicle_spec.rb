@@ -23,8 +23,8 @@ RSpec.describe Lain::CLI::Chronicle do
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
-  def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
-  def of_type(type) = records.select { |record| record["type"] == type }
+  def records = journal_records(journal_io)
+  def of_type(type) = journal_records(journal_io, type)
 
   describe ".for" do
     it "opens a recording Chronicle on a Paths-based fsync journal when enabled" do

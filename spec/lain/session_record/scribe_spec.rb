@@ -28,8 +28,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
   let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:) }
 
   def text(body) = [{ "type" => "text", "text" => body }]
-  def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
-  def of_type(type) = records.select { |record| record["type"] == type }
+  def records = journal_records(journal_io)
+  def of_type(type) = journal_records(journal_io, type)
   def digests_of(type) = of_type(type).map { |record| record["digest"] }
 
   # The parent's own loop, wired the way {Lain::CLI::Chronicle} wires a chat:

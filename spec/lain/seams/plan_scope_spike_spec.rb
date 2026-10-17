@@ -80,7 +80,7 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
     end
   end
 
-  def rulings = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
+  def rulings = journal_records(journal_io, "escalation")
 
   def plan_branches
     git("for-each-ref", "--format=%(refname)", "refs/heads/lain/plan/",

@@ -310,7 +310,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(later).to have_attributes(is_error: true, content: end_with("not your business"))
       parked = Lain::Journal.records(journal_io.string.lines, type: "approval_pending").map { |r| r["requester"] }
       expect(parked.to_a).to eq(["researcher"])
-      expect(Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a)
+      expect(journal_records(journal_io, "escalation"))
         .to include(a_hash_including("rung" => "remembered", "requester" => "researcher", "verdict" => "deny"))
     end
   end
@@ -360,7 +360,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       described_class.stack(chronicle, ToolGuardSpecBoard.new)
                      .call({ effect: refused, tool: Lain::Tools::ReadFile.new, context: nil }) { |passed| passed }
 
-      expect(Lain::Journal.records(journal_io.string.lines, type: "read_refused").to_a.size).to eq(1)
+      expect(journal_records(journal_io, "read_refused").size).to eq(1)
     end
 
     # The child's half of the same record: a refused path lands where its
@@ -372,7 +372,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       described_class.child_stack(chronicle, ToolGuardSpecBoard.new, Lain::WorkerEnv.default, requester: "researcher")
                      .call({ effect: refused, tool: Lain::Tools::ReadFile.new, context: nil }) { |passed| passed }
 
-      expect(Lain::Journal.records(journal_io.string.lines, type: "read_refused").to_a.size).to eq(1)
+      expect(journal_records(journal_io, "read_refused").size).to eq(1)
     end
 
     it "names the child on a child's refused path" do
@@ -592,7 +592,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(refused).to have_attributes(is_error: true, content: start_with("write_file refused"))
       expect(refused.content).to include(@lease)
       expect(refused.content).not_to include("plan scope", "/mode")
-      expect(Lain::Journal.records(journal_io.string.lines, type: "approval_pending").to_a).to be_empty
+      expect(journal_records(journal_io, "approval_pending")).to be_empty
     end
 
     it "lets a write inside it through to the gate" do
@@ -717,7 +717,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     it "journals the refusal as the unattended rung's ruling" do
       Sync { read_through(spawned(parking).never_parking, env_file) }
 
-      rulings = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
+      rulings = journal_records(journal_io, "escalation")
 
       expect(rulings.map { |ruling| ruling.values_at("rung", "verdict", "reason") })
         .to eq([["unattended", "deny", described_class::Unasked::BECAUSE]])
@@ -1211,7 +1211,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(told).to have_attributes(is_error: true)
       expect(told.content).to include("1 credential-shaped region", "now needs a human's approval")
       expect(told.content).not_to include("PRIVATE KEY")
-      expect(Lain::Journal.records(journal_io.string.lines, type: "automatic_output_withheld").to_a)
+      expect(journal_records(journal_io, "automatic_output_withheld"))
         .to contain_exactly(include("tool_use_id" => "tu_1", "regions" => 1))
     end
 

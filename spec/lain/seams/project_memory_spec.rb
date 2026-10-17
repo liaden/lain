@@ -86,7 +86,7 @@ RSpec.describe "Project memory across chats", :seam do
 
   def manifest_of(run) = run.fetch(:provider).requests.map { |request| request.cache_payload.to_s }.join
 
-  def records(io) = io.string.each_line.map { |line| JSON.parse(line) }
+  def records(io) = journal_records(io)
 
   def replay(io) = Lain::SessionRecord::Replay.new(records(io))
 

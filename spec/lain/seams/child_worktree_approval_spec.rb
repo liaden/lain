@@ -90,7 +90,7 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
                                                handler: Lain::Effect::Handler::Mock.new(default: answer))
   end
 
-  def rulings = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
+  def rulings = journal_records(journal_io, "escalation")
 
   # A parked call is heard from the queue; the 2s bound only fires on a hang.
   def outcome(stack, command, cwd: nil, worker_env: lease.worker_env)

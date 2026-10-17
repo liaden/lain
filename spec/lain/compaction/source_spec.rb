@@ -168,9 +168,7 @@ RSpec.describe Lain::Compaction::Source do
     session.write_todos(Array.new(count) { |index| todo("step #{index}", "completed") })
   end
 
-  def records
-    journal_io.string.each_line.map { |line| JSON.parse(line) }
-  end
+  def records = journal_records(journal_io)
 
   def decisions = records.select { |record| record["type"] == "compaction_decision" }
 

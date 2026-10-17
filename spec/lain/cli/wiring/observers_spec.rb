@@ -45,7 +45,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
     observers = described_class.register(chronicle:, paths:, resumed: resumed("missing.ndjson"))
 
     expect(observers.fresh.fresh?(file)).to be(true)
-    expect(io.string.each_line.map { |line| JSON.parse(line) })
+    expect(journal_records(io))
       .to contain_exactly(include("type" => "journal_error", "observer" => Lain::Shell::Executable::Fresh.name))
   end
 end

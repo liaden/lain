@@ -732,7 +732,7 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
 
     def parsed_records
-      journal_io.string.each_line.map { |line| JSON.parse(line) }
+      journal_records(journal_io)
     end
 
     def memory_records

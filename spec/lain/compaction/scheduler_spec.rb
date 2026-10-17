@@ -31,9 +31,7 @@ RSpec.describe Lain::Compaction::Scheduler do
   # decision rides Compact ahead of THIS; a deferring decision hands it back.
   let(:base) { SchedulerShareableFixtures::BASE }
 
-  def records
-    journal_io.string.each_line.map { |line| JSON.parse(line) }
-  end
+  def records = journal_records(journal_io)
 
   # Six substantial messages: enough that Compact's keep_last(2) leaves a head
   # over its byte threshold, so a scheduled compaction actually rewrites it.

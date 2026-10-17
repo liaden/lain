@@ -18,7 +18,7 @@ RSpec.describe Lain::CLI::Command::Mode do
                                              agent: instance_double(Lain::Agent, dispatching?: dispatching))
   end
 
-  def flips = Lain::Journal.records(journal_io.string.lines, type: "mode_switch").to_a
+  def flips = journal_records(journal_io, "mode_switch")
 
   it "registers as /mode with a one-line usage naming the reset" do
     expect(command.name).to eq("mode")

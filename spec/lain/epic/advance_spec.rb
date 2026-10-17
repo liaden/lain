@@ -15,10 +15,10 @@ RSpec.describe Lain::Epic::Advance do
 
   def lines = io.string.lines
   def fold = Lain::Epic::Progress.fold(lines, graph: chain, epic_slug: "demo")
-  def records = Lain::Journal.records(lines).to_a
+  def records = journal_records(lines)
 
   def stage_events
-    transitions = Lain::Journal.records(lines, type: "stage_transition").to_a
+    transitions = journal_records(lines, "stage_transition")
     transitions.map { |record| record.values_at("stage", "event") }
   end
 

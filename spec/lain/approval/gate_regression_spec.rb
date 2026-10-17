@@ -28,7 +28,7 @@ RSpec.describe Lain::Approval::Gate do
   end
 
   def decisions
-    Lain::Journal.records(journal_io.string.lines, type: "gate_decision").to_a
+    journal_records(journal_io, "gate_decision")
   end
 
   describe "journal failure" do

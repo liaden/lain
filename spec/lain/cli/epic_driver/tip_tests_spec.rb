@@ -42,7 +42,7 @@ RSpec.describe Lain::CLI::EpicDriver::TipTests, :seam do
 
   def tip_tests(harness: rspec) = described_class.new(repo_root: repo, harness:, journal:, tmp:)
 
-  def journaled = Lain::Journal.records(io.string.lines, type: "tests_ran").to_a
+  def journaled = journal_records(io, "tests_ran")
 
   def worktrees = git("worktree", "list", "--porcelain").scan(/^worktree (.+)$/).flatten
 

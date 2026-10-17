@@ -61,8 +61,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
   end
 
   def text(body) = [{ "type" => "text", "text" => body }]
-  def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
-  def of_type(type) = records.select { |record| record["type"] == type }
+  def records = journal_records(journal_io)
+  def of_type(type) = journal_records(journal_io, type)
 
   # The Loader's own integrity check, inline: re-commit each turn record in file
   # order and demand it lands on the digest recorded beside it.
@@ -729,7 +729,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       journaled = Lain::Session.new(journal:)
       journaled.record_read("/tmp/a.rb")
 
-      hashes = journal_io.string.each_line.map { |line| JSON.parse(line) }
+      hashes = journal_records(journal_io)
 
       expect(replayed_session(hashes).read?("/tmp/a.rb")).to be(true)
     end

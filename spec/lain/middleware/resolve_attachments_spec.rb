@@ -52,7 +52,7 @@ RSpec.describe Lain::Middleware::ResolveAttachments, :seam do
   end
 
   def journaled(type)
-    journal_io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == type }
+    journal_records(journal_io, type)
   end
 
   def sent_image(request) = request.messages.dig(0, "content", 1)

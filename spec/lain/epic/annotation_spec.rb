@@ -21,7 +21,7 @@ RSpec.describe Lain::Epic::Annotation do
     io = StringIO.new
     Lain::Journal.new(io:).record(annotation)
 
-    found = Lain::Journal.records(io.string.lines, type: "annotation").to_a
+    found = journal_records(io, "annotation")
 
     expect(found).to contain_exactly(
       hash_including("type" => "annotation", "epic_slug" => "alpha", "generation" => 1, "issue_id" => "b2",

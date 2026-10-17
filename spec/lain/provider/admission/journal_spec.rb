@@ -169,7 +169,7 @@ RSpec.describe Lain::Provider::Admission::Journal do
       release.call
       [waiter, holder].each { |thread| thread.join(5) }
 
-      kinds = Lain::Journal.records(io.string.lines, type: "provider_wait").to_a.map { |r| r["kind"] }
+      kinds = journal_records(io, "provider_wait").map { |r| r["kind"] }
       expect(kinds).to eq(["waited"])
     end
   end

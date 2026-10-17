@@ -43,7 +43,7 @@ RSpec.describe Lain::Bench::Session do
   end
 
   def parsed_records
-    journal_io.string.each_line.map { |line| JSON.parse(line) }
+    journal_records(journal_io)
   end
 
   describe ".write" do
@@ -74,7 +74,7 @@ RSpec.describe Lain::Bench::Session do
       named = Lain::CLI::ContextPipeline.named("default").context(model: "claude-opus-4-8", max_tokens: 1024)
       described_class.write(Lain::Journal.new(io: named_io), timeline: agent.timeline, context: named,
                                                              toolset:, workspace:)
-      header = named_io.string.each_line.map { |line| JSON.parse(line) }.find { |record| record["type"] == "session" }
+      header = journal_records(named_io).find { |record| record["type"] == "session" }
       # `ts` is the Journal's own stamp on every record, not part of the header.
       # `provider` and `compact_strategy` are deliberately NOT Context
       # constructor inputs -- the provider choice and the compaction arm both
@@ -99,7 +99,7 @@ RSpec.describe Lain::Bench::Session do
       other_journal = Lain::Journal.new(io: journal_io2)
       described_class.write(other_journal, timeline: agent.timeline, context:, toolset:, workspace:,
                                            provider: "anthropic")
-      header = journal_io2.string.each_line.map { |line| JSON.parse(line) }.find { |r| r["type"] == "session" }
+      header = journal_records(journal_io2).find { |r| r["type"] == "session" }
       expect(header.fetch("provider")).to eq("anthropic")
       expect(header.fetch("model")).to eq("claude-opus-4-8")
     end
@@ -121,7 +121,7 @@ RSpec.describe Lain::Bench::Session do
       other_journal = Lain::Journal.new(io: journal_io2)
       described_class.write(other_journal, timeline: agent.timeline, context:, toolset:, workspace:,
                                            compact_strategy: "elide")
-      header = journal_io2.string.each_line.map { |line| JSON.parse(line) }.find { |r| r["type"] == "session" }
+      header = journal_records(journal_io2).find { |r| r["type"] == "session" }
       expect(header.fetch("compact_strategy")).to eq("elide")
     end
 
@@ -155,7 +155,7 @@ RSpec.describe Lain::Bench::Session do
     let(:written) do
       io = StringIO.new
       described_class.write(Lain::Journal.new(io:), timeline: lockstep_timeline, context:, toolset:, workspace:)
-      io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == "turn" }
+      journal_records(io, "turn")
     end
 
     def text(body) = [{ "type" => "text", "text" => body }]

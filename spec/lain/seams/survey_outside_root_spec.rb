@@ -35,7 +35,7 @@ RSpec.describe "a survey of a tree outside the project", :seam do
     end
   end
 
-  def placed = Lain::Journal.records(journal_io.string.lines, type: "annotation_placed").to_a
+  def placed = journal_records(journal_io, "annotation_placed")
 
   it "projects both secret directories masked whole" do
     verdicts = walk.files.to_h { [_1.path, _1.verdict] }

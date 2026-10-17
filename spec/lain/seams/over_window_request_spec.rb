@@ -100,7 +100,7 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
   def published = JSON.parse(File.read(File.join(@dir, "state.json")))
 
   def journaled(type)
-    journal_io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == type }
+    journal_records(journal_io, type)
   end
 
   def prose(label, bytes) = "#{label} #{"the quick brown fox jumped over the lazy dog. " * (bytes / 46)}"

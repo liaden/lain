@@ -362,8 +362,6 @@ RSpec.describe Lain::Tools::RequestReview do
     end
   end
 
-  def journal_records = io.string.each_line.map { |line| JSON.parse(line) }
-
   # ---- Scenario: the round trip returns edits and notes ----------------------
 
   describe "an epic_plan review that comes back edited and annotated" do
@@ -626,7 +624,7 @@ RSpec.describe Lain::Tools::RequestReview do
 
         it "closes it as abandoned, not as a settle nobody made" do
           attempt(failing_tool)
-          closed = Lain::Journal.records(io.string.lines, type: "review_closed").to_a.last
+          closed = journal_records(io, "review_closed").last
 
           expect(closed["error_kind"]).to eq(Lain::Epic::Review::Abandoned.name)
           expect(closed["changes"]).to eq({})
@@ -985,7 +983,7 @@ RSpec.describe Lain::Tools::RequestReview do
 
     it "journals the verdict against the changeset it judged" do
       settled_implementation
-      verdicts = journal_records.select { |record| record["type"] == "review_verdict" }
+      verdicts = journal_records(io, "review_verdict")
 
       expect(verdicts.map { |record| record["verdict"] }).to eq(["approve"])
       expect(verdicts.first["changeset_digest"]).to start_with("review-changeset-v1:")
@@ -1005,7 +1003,7 @@ RSpec.describe Lain::Tools::RequestReview do
     # assertion cannot pass tautologically.
     it "records the diff as the bytes lain wrote, not an empty written side" do
       settled_implementation
-      opened = journal_records.find { |record| record["type"] == "review_opened" }
+      opened = journal_records(io).find { |record| record["type"] == "review_opened" }
 
       expect(opened["written_digest"]).to eq(Lain::Epic::Intake.byte_digest(changeset_diff.b))
       expect(opened["graph_digest"]).to be_nil
@@ -1015,7 +1013,7 @@ RSpec.describe Lain::Tools::RequestReview do
     # edited bytes -- the one statement that record makes about a diff.
     it "closes with the same digest on the disk side, because nothing came back edited" do
       settled_implementation
-      closed = journal_records.find { |record| record["type"] == "review_closed" }
+      closed = journal_records(io).find { |record| record["type"] == "review_closed" }
       diff_digest = Lain::Epic::Intake.byte_digest(changeset_diff.b)
 
       expect(closed.values_at("written_digest", "disk_digest")).to eq([diff_digest, diff_digest])
@@ -1030,7 +1028,7 @@ RSpec.describe Lain::Tools::RequestReview do
       second = changeset_review.wrote_verdict("approve")
 
       expect(second).to be_a(String)
-      expect(journal_records.count { |record| record["type"] == "review_verdict" }).to eq(1)
+      expect(journal_records(io).count { |record| record["type"] == "review_verdict" }).to eq(1)
     end
 
     # `Verdict::Policy` is INJECTED so a `deferred` run can swap it. The default
@@ -1145,9 +1143,9 @@ RSpec.describe Lain::Tools::RequestReview do
 
     it "journals the abandon, so a restart does not rebuild the refused claim" do
       changeset_tool(bindings: Lain::Tools::RequestReview::NoBindings).call(implementation_input, invocation)
-      rebuilt = Lain::Epic::Review.from_journal(journal_records, journal:, epic_slug: "alpha")
+      rebuilt = Lain::Epic::Review.from_journal(journal_records(io), journal:, epic_slug: "alpha")
 
-      expect(journal_records.map { |record| record["type"] }).to include("review_opened", "review_closed")
+      expect(journal_records(io).map { |record| record["type"] }).to include("review_opened", "review_closed")
       expect(rebuilt.open_generations).to be_empty
     end
   end
@@ -1252,7 +1250,7 @@ RSpec.describe Lain::Tools::RequestReview do
         call_in(task, implementation_input, changeset_tool).stop
         task.yield
       end
-      rebuilt = Lain::Epic::Review.from_journal(journal_records, journal:, epic_slug: "alpha")
+      rebuilt = Lain::Epic::Review.from_journal(journal_records(io), journal:, epic_slug: "alpha")
 
       expect(rebuilt.open_generations).to be_empty
     end
@@ -1516,7 +1514,7 @@ RSpec.describe Lain::Tools::RequestReview do
       tee << Lain::Epic::ReviewOpened.new(epic_slug: "alpha", path: "/tmp/a.md", generation: 1,
                                           written_digest: "blake3:beef")
 
-      expect(Lain::Journal.records(io.string.lines, type: "review_opened").to_a.size).to eq(1)
+      expect(journal_records(io, "review_opened").size).to eq(1)
     end
 
     it "keeps each review's notes apart by the pair a generation is identified by" do

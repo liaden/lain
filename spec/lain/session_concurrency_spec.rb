@@ -110,7 +110,7 @@ RSpec.describe "Session read-set coherence under concurrent gather" do
     expect(session.reads).to eq([path])
     # ...and the journal holds exactly ONE session_read for it: the second
     # fiber saw "already read", because check-and-mutate ran without a yield.
-    reads = Lain::Journal.records(journal_io.string.lines, type: "session_read").to_a
+    reads = journal_records(journal_io, "session_read")
     expect(reads.map { |record| record["path"] }).to eq([path])
   end
 
@@ -147,7 +147,7 @@ RSpec.describe "Session read-set coherence under concurrent gather" do
 
     expect(session.read?("/tmp/a.rb")).to be(true)
     expect(session.read?("/tmp/b.rb")).to be(true)
-    reads = Lain::Journal.records(journal_io.string.lines, type: "session_read").to_a
+    reads = journal_records(journal_io, "session_read")
     expect(reads.map { |record| record["path"] }).to contain_exactly("/tmp/a.rb", "/tmp/b.rb")
   end
 
@@ -207,7 +207,7 @@ RSpec.describe "Session read completeness under concurrent gather" do
   let(:entered) { Async::Queue.new }
   let(:release) { Async::Queue.new }
 
-  def read_records = Lain::Journal.records(journal_io.string.lines, type: "session_read").to_a
+  def read_records = journal_records(journal_io, "session_read")
   def replayed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session.on_chain(@delivered)
 
   def reader(name, complete)

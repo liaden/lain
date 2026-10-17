@@ -64,10 +64,7 @@ RSpec.describe "a chat hung up on mid-spawn", :seam do
   let(:state_home) { File.join(@dir, "state") }
   let(:stderr) { File.join(@dir, "chat.err") }
 
-  def records
-    file = Dir[File.join(state_home, "**", "sessions", "**", "*.ndjson")].sole
-    File.foreach(file).map { |line| JSON.parse(line) }
-  end
+  def records = journal_records(Dir[File.join(state_home, "**", "sessions", "**", "*.ndjson")].sole)
 
   def chat
     env = { "XDG_STATE_HOME" => state_home, "ANTHROPIC_API_KEY" => "sk-hangup", "HOME" => @dir }

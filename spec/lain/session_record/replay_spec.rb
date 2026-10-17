@@ -70,7 +70,7 @@ RSpec.describe Lain::SessionRecord::Replay do
          .messages
   end
 
-  def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+  def records = journal_records(journal_io)
 
   def todo(content) = Struct.new(:content, :status).new(content, "completed")
 
@@ -327,7 +327,7 @@ RSpec.describe Lain::SessionRecord::Replay do
 
         through(guard(queue), "read_file", { "path" => path }, Lain::Tools::ReadFile.new, resumed)
 
-        expect(Lain::Journal.records(approvals_io.string.lines, type: "approval_pending").to_a.length).to eq(1)
+        expect(journal_records(approvals_io, "approval_pending").length).to eq(1)
       end
     end
 

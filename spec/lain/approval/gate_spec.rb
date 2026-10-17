@@ -48,7 +48,7 @@ RSpec.describe Lain::Approval::Gate do
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
   def decisions
-    Lain::Journal.records(journal_io.string.lines, type: "gate_decision").to_a
+    journal_records(journal_io, "gate_decision")
   end
 
   def gate(**overrides)
@@ -409,7 +409,7 @@ RSpec.describe Lain::Approval::Gate do
     let(:asker) { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:)) }
 
     def consumptions
-      Lain::Journal.records(journal_io.string.lines, type: "questions_consumed").to_a
+      journal_records(journal_io, "questions_consumed")
     end
 
     def asked_digest = asker.last_question.digest

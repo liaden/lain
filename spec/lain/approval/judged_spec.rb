@@ -59,7 +59,7 @@ RSpec.describe Lain::Approval::Judged do
 
   def bash(command = "make test", **rest) = call("bash", { "command" => command, **rest })
 
-  def escalations = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
+  def escalations = journal_records(journal_io, "escalation")
 
   # Runs the rung in a reactor; a parked call is answered by the human the
   # block plays, and an unparked one finishes on its own.

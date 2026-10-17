@@ -632,7 +632,7 @@ RSpec.describe Lain::CLI::Command::Review do
   describe "closing the round this chat has open" do
     let(:registry) { Lain::CLI::Command::Registry.new([command]).bind(env) }
 
-    def closes = Lain::Journal.records(record.string.lines, type: "changeset_closed").to_a
+    def closes = journal_records(record, "changeset_closed")
 
     it "journals the close as the human's, lets the outbox go and unbinds the rails" do
       attached
@@ -969,7 +969,7 @@ RSpec.describe Lain::CLI::Command::Review do
 
       expect { bounded(max_files: 1).call("feature", env) }.to raise_error(Lain::Review::Bounds::TooLarge)
 
-      expect(Lain::Journal.records(record.string.lines, type: "changeset_closed").to_a.map { |line| line["closed_by"] })
+      expect(journal_records(record, "changeset_closed").map { |line| line["closed_by"] })
         .to eq(["refusal"])
       expect(record.string).not_to include("review_verdict")
     end

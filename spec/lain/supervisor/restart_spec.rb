@@ -141,10 +141,6 @@ RSpec.describe Lain::Supervisor::Restart do
     end
   end
 
-  def journal_records(type)
-    record_io.string.each_line.filter_map { |line| JSON.parse(line) }.select { |r| r["type"] == type }
-  end
-
   def workspace_file(name) = File.join(dir, name)
 
   # ---- Scenario: restart re-acquires an equivalent lease ---------------------
@@ -239,11 +235,11 @@ RSpec.describe Lain::Supervisor::Restart do
                                           ])
       Sync { |task| record_killed_actor(task, provider:) }
 
-      snapshots = journal_records("message").select { |r| r["kind"] == "snapshot" }
+      snapshots = journal_records(record_io, "message").select { |r| r["kind"] == "snapshot" }
       expect(snapshots.size).to eq(2)
       expect(snapshots.last["payload"].fetch("files").keys).to contain_exactly("a.txt", "b.txt")
 
-      blobs = journal_records("workspace_blob")
+      blobs = journal_records(record_io, "workspace_blob")
       expect(blobs.size).to eq(2)
       expect(blobs.map { |r| r["digest"] }).to match_array(snapshots.last["payload"].fetch("files").values)
     end

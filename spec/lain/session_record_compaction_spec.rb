@@ -53,8 +53,6 @@ RSpec.describe "compaction-retention invariant" do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
-  def of_type(records, type) = records.select { |record| record["type"] == type }
-
   it "renders a compacted request to the provider but journals -- and reloads -- the full history" do
     provider = Lain::Provider::Mock.new(responses: [text_response(reply1), text_response(reply2),
                                                     text_response(reply3)])
@@ -84,7 +82,7 @@ RSpec.describe "compaction-retention invariant" do
     scribe.catch_up(agent.timeline)
     scribe.close(reason: :exit)
 
-    turn_records = of_type(journal_io.string.each_line.map { |line| JSON.parse(line) }, "turn")
+    turn_records = journal_records(journal_io, "turn")
     committed = agent.timeline.to_a
 
     expect(turn_records.map { |record| record.fetch("content") }).to eq(committed.map(&:content))

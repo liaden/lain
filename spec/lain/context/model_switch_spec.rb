@@ -8,7 +8,7 @@ RSpec.describe Lain::Context::ModelSwitch do
   let(:switch) { described_class.new("claude-opus-4-8", journal:) }
 
   def switches
-    Lain::Journal.records(journal_io.string.lines, type: "model_switch").to_a
+    journal_records(journal_io, "model_switch")
   end
 
   describe "the delegating slot" do

@@ -23,10 +23,10 @@ RSpec.describe Lain::Tools::Subagent::Actor do
                        journal: session_file, observer: scribe, mode: :actor)
   end
 
-  def records = session_io.string.each_line.map { |line| JSON.parse(line) }
-
   def stops
-    records.select { |record| record["type"] == "message" && record.dig("payload", "lifecycle") == "stopped" }
+    journal_records(session_io).select do |record|
+      record["type"] == "message" && record.dig("payload", "lifecycle") == "stopped"
+    end
   end
 
   describe "#stop" do
@@ -57,7 +57,7 @@ RSpec.describe Lain::Tools::Subagent::Actor do
         supervisor&.stop
       end
 
-      spawn = records.find { |record| record["type"] == "message" && record["kind"] == "spawn" }
+      spawn = journal_records(session_io).find { |record| record["type"] == "message" && record["kind"] == "spawn" }
       expect(spawn.fetch("payload")).to include("task" => Lain::Canonical.digest("watch the build"), "adoption" => 1)
     end
   end
@@ -72,9 +72,13 @@ RSpec.describe Lain::Tools::Subagent::Actor do
                          journal: session_file, observer: scribe, mode: :actor)
     end
 
-    def lifecycles = records.filter_map { |record| record.dig("payload", "lifecycle") if record["type"] == "message" }
+    def lifecycles
+      journal_records(session_io).filter_map do |record|
+        record.dig("payload", "lifecycle") if record["type"] == "message"
+      end
+    end
 
-    def failed_note = records.find { |record| record.dig("payload", "lifecycle") == "failed" }
+    def failed_note = journal_records(session_io).find { |record| record.dig("payload", "lifecycle") == "failed" }
 
     def run_to_failure
       Sync do |task|
