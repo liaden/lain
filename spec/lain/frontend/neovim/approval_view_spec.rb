@@ -161,6 +161,17 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(rpc.last[:rows]).to eq(0)
     end
 
+    it "says a call closed because its requester was stopped, once, naming the call" do
+      gated(timeout: 60) do |queue|
+        queue.first.deny(surface: Lain::Approval::Queue::ABANDONED_SURFACE)
+        2.times { view.sweep(queue) }
+      end
+
+      said = rpc.posts.flat_map { |post| post[:lines] }.grep(/requester was stopped/)
+      expect(said.size).to eq(1)
+      expect(said.first).to include("bash(", "closed: its requester was stopped")
+    end
+
     it "does not report a call a person denied as a lapse" do
       gated(await: true) do |queue|
         view.decide(1, "deny", generation:)

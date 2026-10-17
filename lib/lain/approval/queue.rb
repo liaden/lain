@@ -261,6 +261,14 @@ module Lain
         def decided? = @promise.resolved?
         def approved? = @decision == :approve
         def timed_out? = @surface == TIMEOUT_SURFACE
+        def abandoned? = @surface == ABANDONED_SURFACE
+
+        # What a surface says of a call nobody answered: the clock's sentence,
+        # or the stop's, so a stopped requester is never reported as a decision.
+        def closure = abandoned? ? "closed: its requester was stopped" : lapse
+
+        # Whether the call left the parked set with no answer to report.
+        def unanswered? = timed_out? || abandoned?
 
         # Park the calling fiber until decided (see Promise#await).
         def await = @promise.await

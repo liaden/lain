@@ -113,7 +113,18 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     closing = []
     asked.closed { |note| closing << note }
 
-    expect(closing).to eq(["-- denied after 5:00 with no answer"])
+    expect(closing).to eq(["-- agent asks to run bash(#{effect.input.inspect}): denied after 5:00 with no answer"])
+  end
+
+  it "closes a prompt whose requester was stopped in words that say so, never as a surface's decision" do
+    stopped = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, timeout: 300)
+    asked = described_class::Asked.new("approve? ", stopped)
+    stopped.deny(surface: Lain::Approval::Queue::ABANDONED_SURFACE)
+    closing = []
+    asked.closed { |note| closing << note }
+
+    expect(closing).to eq(["-- agent asks to run bash(#{effect.input.inspect}): closed: its requester was stopped"])
+    expect(closing.join).not_to include("decided by")
   end
 
   it "separates a fleet: two requesters ask two different questions" do
@@ -511,7 +522,9 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
         watcher&.stop
       end
 
-      expect(closing_of(asked.dequeue(timeout: 0))).to eq(["-- denied after 0:01 with no answer"])
+      expect(closing_of(asked.dequeue(timeout: 0)))
+        .to contain_exactly(a_string_including("bash(",
+                                               "echo call_1").and(end_with(": denied after 0:01 with no answer")))
     end
 
     # A `[y/N]` that waits its turn behind another prompt has no row of its own
@@ -699,7 +712,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   # again as the outer task finishes. A closing line that waits for the writer
   # lock yields in between, and the second stop used to land inside it.
   describe "a window that closes while another fiber holds the writer" do
-    let(:note) { "-- denied after 0:01 with no answer" }
+    let(:note) { ": denied after 0:01 with no answer" }
     let(:journal) { Lain::Journal.new(io: StringIO.new) }
     let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.2) }
     let(:channel) { Lain::Channel.new }

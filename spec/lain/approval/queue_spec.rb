@@ -278,6 +278,29 @@ RSpec.describe Lain::Approval::Queue do
       expect(pending.lapse).to eq("denied after 2:05 with no answer")
     end
 
+    it "reads a clock denial as unanswered, with the lapse sentence as its closure" do
+      lapsed = pending_at(-> { 0.0 }, timeout: 125)
+      lapsed.deny(surface: described_class::TIMEOUT_SURFACE)
+
+      expect(lapsed).to have_attributes(abandoned?: false, unanswered?: true,
+                                        closure: "denied after 2:05 with no answer")
+    end
+
+    it "reads a stopped requester as unanswered, closed in its own words" do
+      stopped = pending_at(-> { 0.0 }, timeout: 125)
+      stopped.deny(surface: described_class::ABANDONED_SURFACE)
+
+      expect(stopped).to have_attributes(abandoned?: true, unanswered?: true,
+                                         closure: "closed: its requester was stopped")
+    end
+
+    it "reads a surface's decision as answered" do
+      answered = pending_at(-> { 0.0 }, timeout: 125)
+      answered.deny(surface: "tty")
+
+      expect(answered).to have_attributes(abandoned?: false, unanswered?: false)
+    end
+
     it "is given the queue's timeout by the queue that admits it" do
       timed = described_class.new(journal:, timeout: 90)
       seen = nil

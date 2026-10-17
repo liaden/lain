@@ -451,10 +451,10 @@ module Lain
           @shown = parked if posted(parked, lapsed_from(@shown))
         end
 
-        # What the clock denied since the last drawing: a row that left the
-        # parked set unanswered would otherwise just vanish. Said in the one
+        # What the clock denied or a stop closed since the last drawing: a row
+        # that left the parked set unanswered would otherwise just vanish. Said in the one
         # rendering that follows, since the next set is no longer holding it.
-        def lapsed_from(shown) = (shown || []).select(&:timed_out?)
+        def lapsed_from(shown) = (shown || []).select(&:unanswered?)
 
         # The ONE rule that keeping a rendering needs: a stamp is handed out
         # only once the editor has TAKEN the lines it names. A refused post is a
@@ -509,7 +509,7 @@ module Lain
         end
 
         # Names the call because the row it described is gone from the list.
-        def lapse_note(pending) = "! #{pending.requester}  #{call_of(pending)}  -- #{pending.lapse}"
+        def lapse_note(pending) = "! #{pending.requester}  #{call_of(pending)}  -- #{pending.closure}"
 
         # One entry per LINE, the pending it belongs to -- what {ListView}
         # resolves a cursor through, and never sent across the wire itself.

@@ -243,6 +243,38 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(output.string.lines.grep(/denied after/).join).to include("bash(")
     end
 
+    it "starts the announcement with the time it was made" do
+      fan_out(attached: editor)
+
+      expect(notes).to contain_exactly(match(/\A\d\d:\d\d:\d\d ! agent asks to run/))
+    end
+
+    it "starts the lapse line with the time too" do
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        task.with_timeout(2) { task.async { queue.call(effect, nil) }.wait }
+        task.sleep(0.2)
+        watched.each(&:stop)
+      end
+
+      expect(output.string.lines.grep(/denied after/)).to contain_exactly(match(/\A\d\d:\d\d:\d\d ! agent asks/))
+    end
+
+    it "says a call closed because its requester was stopped, not that someone decided it" do
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        gated = task.async { queue.call(effect, nil) }
+        task.sleep(0.2)
+        gated.stop
+        task.sleep(0.2)
+        watched.each(&:stop)
+      end
+
+      closed = output.string.lines.grep(/requester was stopped/)
+      expect(closed).to contain_exactly(match(/\A\d\d:\d\d:\d\d ! agent asks to run bash\(.*-- closed: its requester/))
+      expect(output.string).not_to include("abandoned")
+    end
+
     # A watch stopped and started again over the same parked call -- a chat
     # whose conversation restarts its surfaces -- does not announce it twice:
     # "this just arrived" is false by then.

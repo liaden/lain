@@ -100,7 +100,7 @@ module Lain
         # asks while the read is ending, which is before an answer typed at
         # THIS prompt is recorded, so a decided call is always someone else's.
         def closed
-          yield "-- #{outcome}" if decided_elsewhere?
+          yield "-- #{closing}" if decided_elsewhere?
         end
 
         # Yields the one line announcing this prompt while it waits its turn.
@@ -150,10 +150,14 @@ module Lain
                        input: @pending.input.inspect)
         end
 
+        # A call nobody answered is led by the call, since the line it ends may
+        # have scrolled off; a decision names its decider and the call is above it.
+        def closing = @pending.unanswered? ? "#{call}: #{outcome}" : outcome
+
         def verdict = @pending.approved? ? "approved" : "denied"
 
         def outcome
-          @pending.timed_out? ? @pending.lapse : format(CLOSED, surface: @pending.surface, verdict:)
+          @pending.unanswered? ? @pending.closure : format(CLOSED, surface: @pending.surface, verdict:)
         end
       end
 
