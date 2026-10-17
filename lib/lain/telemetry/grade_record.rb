@@ -34,7 +34,9 @@ module Lain
     # `criteria_digest` is nil by default, since not every grader judges against
     # a parsed criteria doc. Its presence is what lets a later replay recover
     # "which criteria was this run graded against" from the record alone.
-    GradeRecord = Data.define(:grader, :score, :pass, :why, :subject_digest, :criteria_digest) do
+    # `arm` names the {Arm} a bench run was graded under; nil for a grade made
+    # outside a comparison, and for journals written before the field existed.
+    GradeRecord = Data.define(:grader, :score, :pass, :why, :subject_digest, :criteria_digest, :arm) do
       include Journalable
 
       # Built from a live {Grader::Grade} plus the attribution
@@ -44,7 +46,7 @@ module Lain
         new(grader:, score: grade.score, pass: grade.pass?, why: grade.why, subject_digest:, criteria_digest:)
       end
 
-      def initialize(grader:, score:, pass:, why:, subject_digest:, criteria_digest: nil)
+      def initialize(grader:, score:, pass:, why:, subject_digest:, criteria_digest: nil, arm: nil)
         grader = grader.to_s
         Carriers::GradeRecord.check!(grader:, subject_digest:, pass:, why:)
 
@@ -54,7 +56,8 @@ module Lain
           pass:,
           why: -why.to_s,
           subject_digest: subject_digest.dup.freeze,
-          criteria_digest: criteria_digest&.dup&.freeze
+          criteria_digest: criteria_digest&.dup&.freeze,
+          arm: arm && -arm.to_s
         )
       end
     end

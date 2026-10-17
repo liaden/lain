@@ -656,6 +656,19 @@ RSpec.describe Lain::Bench::CLI do
       expect(report.lines.count { |line| line.match?(/\A\d+\s/) }).to eq(2)
     end
 
+    it "heads a grade that names no arm with (no arm), not an empty line" do
+      record = Lain::Telemetry::GradeRecord.new(grader: "G", score: 1.0, pass: true, why: "ok", subject_digest: "d")
+
+      expect(cli.send(:partial_arms_report, [record]).lines.map(&:chomp)).to include("(no arm)")
+    end
+
+    it "groups the partial table under the arm that ran each grade" do
+      provider = InterruptingProvider.new(allow: 2, responses: [text_response("FILE lib/widget.rb\nEND")])
+      allow(backend).to receive(:provider).and_return(provider)
+
+      expect(arms.lines.map(&:chomp)).to include("single-thread")
+    end
+
     # A run graded BEFORE the interrupt still journals its own
     # Telemetry::GradeRecord into the real `--journal` -- the observing wrap
     # {Bench::CLI#arms_report} builds changes nothing about what {Arm::Driver}
@@ -693,7 +706,7 @@ RSpec.describe Lain::Bench::CLI do
     end
 
     it "marks the failed arm's cell with the reason instead of a distribution" do
-      expect(report.lines.grep(/single-thread/).first).to include("failed", "ceiling")
+      expect(report).to include("single-thread: failed: ceiling")
     end
 
     it "journals a failing grade record naming the ceiling" do

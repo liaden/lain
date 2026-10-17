@@ -35,6 +35,25 @@ module DriverSpecSupport
     end
   end
 
+  # Fails only the task whose prompt it was told to, and runs the rest as a
+  # SingleThread would, so one arm can end part-way through a suite.
+  class FlakyArm < Lain::Arm
+    def initialize(name:, failing:)
+      super(name:)
+      @failing = failing
+      @steady = Lain::Arm::SingleThread.new(name:)
+    end
+
+    def run(task, **)
+      if task == @failing
+        raise Lain::Response::Failed,
+              Lain::Response::Failure.new(stop_reason: :malformed, message: "bad")
+      end
+
+      @steady.run(task, **)
+    end
+  end
+
   class CeilingArm < Lain::Arm
     def run(_task, **)
       raise Lain::Agent::Budget::Exceeded, "loop ran 25 iterations, ceiling is 25"
@@ -580,6 +599,40 @@ RSpec.describe Lain::Arm::Driver do
       expect(row_for(report, "grader score", "orchestrator-worker")).not_to include("failed")
       expect(report).not_to include("<function=x>")
       expect(graded.timeline.to_a.last.content.first["text"]).to include("[failed] malformed")
+    end
+  end
+
+  describe "#report — one task of several fails" do
+    let(:journal) { Lain::Channel.new }
+    let(:three) { ["first task", "second task", "third task"] }
+    let(:arm_list) { [DriverSpecSupport::FlakyArm.new(name: "flaky", failing: "second task"), arms.first] }
+    let(:report) { described_class.new(arm_list, tasks: three, spawn_seam:, grader:, journal:).report }
+
+    it "keeps the surviving runs, reading n as survivors of total" do
+      row = row_for(report, "grader score", "flaky")
+
+      expect(row).to include("2 of 3", "1.000")
+      expect(row).not_to include("failed:")
+    end
+
+    it "says which task failed, under the table" do
+      expect(section_for(report, "grader score")).to include("flaky: failed: malformed (task 2)")
+    end
+
+    it "says in the cost table that the arm covers 2 of 3 tasks" do
+      expect(row_for(report, "cost (USD)", "flaky")).to include("2 of 3")
+      expect(section_for(report, "cost (USD)")).to include("flaky: failed: malformed (task 2)")
+    end
+
+    it "leaves a complete arm's row as a plain count" do
+      expect(row_for(report, "grader score", "single-thread")).not_to include(" of ")
+    end
+
+    it "names the arm on every grade record, the failed one included" do
+      report
+      records = journal.drain.grep(Lain::Telemetry::GradeRecord)
+
+      expect(records.map(&:arm).tally).to eq("flaky" => 3, "single-thread" => 3)
     end
   end
 

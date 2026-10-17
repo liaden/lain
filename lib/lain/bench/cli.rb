@@ -150,12 +150,14 @@ module Lain
       #   lands, and {Arm::Driver} journals every arm's grade into it. Named
       #   rather than left riding `backend_options`, because a keyword the
       #   resolver merely forwards could never also reach the Driver
+      # @param graded [Array, nil] where a copy of every grade record the Driver
+      #   journals is kept, so an interrupt can report them; the resolver never sees it
       # @return [String] never printed here
       # @raise [Lain::CLI::IsolationBackend::Unknown] on a name outside the
       #   resolver's advertised set
       # @raise [ArgumentError] on backend options with no name to resolve
       def arm_report(arms, tasks:, spawn_seam:, grader:, isolation: nil, journal: nil, fixture: nil, model: nil,
-                     **backend_options)
+                     graded: nil, **backend_options)
         # Absent, NO keyword at all on either side, so each one's own default
         # stands -- {Arm::Driver}'s Null channel here, and {#arm_isolation}'s
         # deliberate refusal of options given with no name to resolve them for.
@@ -165,8 +167,16 @@ module Lain
         # {Isolation::Journal} decorator once `--isolation` requires a journal,
         # so a class name renders `none` and `worktree` identically.
         Arm::Driver.new(arms, tasks:, spawn_seam:, grader:, fixture:, model:, isolation_name: isolation,
-                              **journaling,
-                              **arm_isolation(isolation, **backend_options, **journaling)).report
+                              **arm_isolation(isolation, **backend_options, **journaling),
+                              **graded_journal(journaling, graded)).report
+      end
+
+      # The Driver's journal, tapped when the caller wants the grades kept. The
+      # tap is the Driver's alone: the resolver's lease records go to the real journal.
+      def graded_journal(journaling, graded)
+        return journaling if graded.nil?
+
+        { journal: GradeTap.new(journaling.fetch(:journal, Channel::Null::INSTANCE), graded) }
       end
 
       # The live arm comparison, ASSEMBLED: the entry point `bench arms` sits
@@ -242,20 +252,9 @@ module Lain
         spawn_options = journaled_provider(backend, journal, spawn_options)
         LiveArms.refuse_unservable!(spawn_options.fetch(:provider), cheap_model) if router.nil?
         spawn_seam = SpawnSeam.new(backend:, memory: memory_store(memory), **spawn_options)
-        # {Grader::Journaling} REUSED rather than a bespoke observer: it already
-        # does exactly what an interrupt handler needs -- pass the {Grade}
-        # through unchanged and journal a {Telemetry::GradeRecord} beside it --
-        # so wrapping {SuiteGrader} in one, with `graded` standing in for a
-        # journal, is what lets `graded` grow one entry per run AS THE DRIVER
-        # completes it. {Arm::Driver} wraps whatever `grader:` it is handed in
-        # a SECOND {Grader::Journaling} of its own, over the real `journal:`
-        # from {#lease_options} -- so this changes nothing about what that
-        # journal records.
-        grader = Grader::Journaling.new(inner: SuiteGrader.new(suite), journal: graded,
-                                        subject_digest: :head_digest.to_proc)
         arm_report(LiveArms.build(price_book:, decompose:, model: spawn_seam.model, router:, cheap_model:),
                    tasks: suite.map(&:prompt), spawn_seam:, fixture: fixture_path, model: spawn_seam.model,
-                   grader:, **lease_options(isolation:, journal:))
+                   grader: SuiteGrader.new(suite), graded:, **lease_options(isolation:, journal:))
       rescue Interrupt
         partial_arms_report(graded)
       end
@@ -409,17 +408,18 @@ module Lain
       # the interrupt, so the money already spent buys a table rather than
       # nothing -- and PARTIAL says outright that no arm past this point ran.
       #
-      # A plain run/pass/score table, not {Arm::Driver}'s per-metric one: a
-      # {Telemetry::GradeRecord} carries no arm name (the Driver folds THAT
-      # in only once every arm's every task has finished), so a row here is a
-      # completed GRADE, in the order it landed, rather than a completed arm.
+      # One run/pass/score table per arm, in the order each arm first landed a
+      # grade, since a {Telemetry::GradeRecord} names the arm that earned it.
       def partial_arms_report(graded)
-        rows = graded.each_with_index.map do |record, index|
-          [(index + 1).to_s, record.pass.to_s,
-           format("%.3f", record.score)]
+        records = graded
+        tables = records.group_by(&:arm).map do |arm, group|
+          rows = group.each_with_index.map do |record, index|
+            [(index + 1).to_s, record.pass.to_s, format("%.3f", record.score)]
+          end
+          "#{arm || "(no arm)"}\n#{Compare::Table.new(headers: %w[run pass score], rows:)}"
         end
-        "Arm driver -- PARTIAL, interrupted after #{graded.size} graded run#{"s" unless graded.size == 1}\n" \
-          "#{Compare::Table.new(headers: %w[run pass score], rows:)}"
+        "Arm driver -- PARTIAL, interrupted after #{records.size} graded run#{"s" unless records.size == 1}\n" \
+          "#{tables.join("\n\n")}"
       end
 
       # The isolation half of the {#arm_report} call, and the one place the
@@ -699,6 +699,17 @@ module Lain
       rescue Lain::CLI::Backend::MissingAPIKey
         raise MissingAPIKey, "bench record calls the real API and spends money; set ANTHROPIC_API_KEY to run it"
       end
+
+      # Passes every record on to the real journal and keeps a copy of each
+      # {Telemetry::GradeRecord}, so an interrupt can report the grades that
+      # landed before it.
+      GradeTap = Data.define(:journal, :graded) do
+        def <<(record)
+          graded << record if record.is_a?(Telemetry::GradeRecord)
+          journal << record
+        end
+      end
+      private_constant :GradeTap
 
       # Grades a run against THE TASK IT WAS GIVEN. {Arm::Driver} threads ONE
       # `#grade` duck through every arm and every task while {ArmTasks} carries

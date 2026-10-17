@@ -74,6 +74,7 @@ module Lain
       # testing which of the three it was handed.
       Measured = Data.define(:distribution) do
         def refuses? = false
+        def note(_name) = nil
 
         def row(name, fmt)
           [name, distribution.n.to_s,
@@ -93,9 +94,17 @@ module Lain
       # honest zero would be the false claim, not the fix.
       Unmeasured = Data.define(:n) do
         def refuses? = false
+        def note(_name) = nil
         def row(name, _fmt) = [name, n.to_s, *([NOT_MEASURED_CELL] * 4)]
       end
       private_constant :Unmeasured
+
+      # Stamps the arm onto every grade record on its way to the journal. The
+      # grader is shared by all arms and cannot know which one called it.
+      ArmJournal = Data.define(:journal, :arm) do
+        def <<(record) = journal << record.with(arm:)
+      end
+      private_constant :ArmJournal
 
       TaskFailure = Data.define(:index, :reason)
       private_constant :TaskFailure
@@ -112,6 +121,7 @@ module Lain
       # instead, and only that arm's cell does.
       Failed = Data.define(:total, :failures) do
         def refuses? = false
+        def note(_name) = nil
 
         def row(name, _fmt)
           [name, "#{failures.size} of #{total}", *(["failed: #{reasons}"] * 4)]
@@ -119,14 +129,36 @@ module Lain
 
         private
 
-        def reasons
+        def reasons = FailureReasons.describe(failures)
+      end
+      private_constant :Failed
+
+      # Wording for the failed tasks of an arm, shared by a wholly failed cell
+      # and the note under a partial one.
+      module FailureReasons
+        def self.describe(failures)
           failures.group_by(&:reason).map do |reason, group|
             indexes = group.map(&:index)
             "#{reason} (#{indexes.size == 1 ? "task" : "tasks"} #{indexes.join(", ")})"
           end.join("; ")
         end
       end
-      private_constant :Failed
+      private_constant :FailureReasons
+
+      # An arm that lost some tasks and kept the rest: the figures are over the
+      # survivors only, so `n` reads survivors of total and a note names what
+      # was lost, rather than the arm passing as a complete one.
+      Partial = Data.define(:cell, :total, :failures) do
+        def refuses? = false
+
+        def row(name, fmt)
+          name, _n, *figures = cell.row(name, fmt)
+          [name, "#{total - failures.size} of #{total}", *figures]
+        end
+
+        def note(name) = "#{name}: failed: #{FailureReasons.describe(failures)}"
+      end
+      private_constant :Partial
 
       # @param arms [Array<Arm>] the topologies under comparison
       # @param tasks [Array<String>] the suite; n >= 2 so each arm's fold is a
@@ -170,7 +202,7 @@ module Lain
         # so it is a forward contract for the arms a project will author, not a
         # description of one in the tree.
         @journal = journal
-        @grader = Grader::Journaling.new(inner: grader, journal:, subject_digest: SUBJECT_DIGEST)
+        @grader = grader
         @isolation = isolation
         @isolation_name = isolation_name
         @fixture = fixture
@@ -193,27 +225,30 @@ module Lain
       end
 
       def distributions_for(arm)
-        runs = @tasks.each_with_index.map { |task, index| run_task(arm, task, index + 1) }
+        grader = Grader::Journaling.new(inner: @grader, journal: ArmJournal.new(@journal, arm.name),
+                                        subject_digest: SUBJECT_DIGEST)
+        runs = @tasks.each_with_index.map { |task, index| run_task(arm, task, index + 1, grader) }
         METRICS.transform_values { |spec| fold(runs, spec) }
       end
 
-      def run_task(arm, task, number)
-        arm.run(task, spawn_seam: @spawn_seam, isolation: @isolation, grader: @grader)
+      def run_task(arm, task, number, grader)
+        arm.run(task, spawn_seam: @spawn_seam, isolation: @isolation, grader:)
       rescue Agent::Budget::Exceeded => e
-        journal_failure(task, number, "at the ceiling", e)
+        journal_failure(arm, task, number, "at the ceiling", e)
         TaskFailure.new(index: number, reason: CEILING_REASON)
       rescue Response::Failed => e
         reason = e.failure.stop_reason.to_s
-        journal_failure(task, number, reason, e)
+        journal_failure(arm, task, number, reason, e)
         TaskFailure.new(index: number, reason:)
       end
 
       # The arm never handed back a Timeline, so the task's own prompt is the
       # only thing left to address the failed grade by.
-      def journal_failure(task, number, where, error)
-        @journal << Telemetry::GradeRecord.new(grader: self.class.name, score: 0.0, pass: false,
-                                               why: "task #{number} failed #{where}: #{error.message}",
-                                               subject_digest: Canonical.digest(task))
+      def journal_failure(arm, task, number, where, error)
+        ArmJournal.new(@journal, arm.name) << Telemetry::GradeRecord.new(
+          grader: self.class.name, score: 0.0, pass: false,
+          why: "task #{number} failed #{where}: #{error.message}", subject_digest: Canonical.digest(task)
+        )
       end
 
       # One metric across one arm's runs -- or, where the arm's own PriceBook
@@ -231,9 +266,15 @@ module Lain
       # {Compare::Run} could not name answers with that {Compare::Unpriced}.
       def fold(runs, spec)
         failed = runs.grep(TaskFailure)
-        return Failed.new(total: runs.size, failures: failed) if failed.any?
+        survivors = runs - failed
+        return Failed.new(total: runs.size, failures: failed) if survivors.empty? && failed.any?
 
-        values = runs.map { |run| value_of(run, spec.fetch(:of)) }
+        cell = fold_survivors(survivors, spec)
+        failed.empty? || cell.refuses? ? cell : Partial.new(cell:, total: runs.size, failures: failed)
+      end
+
+      def fold_survivors(survivors, spec)
+        values = survivors.map { |run| value_of(run, spec.fetch(:of)) }
         return Unmeasured.new(n: values.size) if spec.fetch(:optional, false) && values.all?(&:zero?)
         return priced_fold(values) if spec.fetch(:priced, false)
 
@@ -309,7 +350,8 @@ module Lain
       def table(label, folds)
         fmt = METRICS.fetch(label).fetch(:fmt)
         rows = folds.map { |(name, cell)| cell.row(name, fmt) }
-        "#{label}\n#{Compare::Table.new(headers: COLUMNS, rows:)}"
+        notes = folds.filter_map { |(name, cell)| cell.note(name) }
+        ["#{label}\n#{Compare::Table.new(headers: COLUMNS, rows:)}", *notes.map { |note| "  #{note}" }].join("\n")
       end
 
       # Compare's wording, so the arm report and every Compare-backed report
