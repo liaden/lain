@@ -207,6 +207,7 @@ module Lain
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
                        handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
                        middleware: Lain::Config::Middleware.empty, display: Lain::Channel::Null.instance,
+                       # A spec convenience: production passes the launch's own backend.
                        exec: ExecBackend.resolve(options[:exec],
                                                  image: options[:exec_image], root:,
                                                  child_env: Lain::Exec::ChildEnv.from(ENV, pass: config.env_pass)),

@@ -140,18 +140,61 @@ RSpec.describe Lain::CLI::ExecBackend do
     end
   end
 
-  describe ".resolver_for" do
+  describe "#resolver" do
     let(:fresh) { Lain::Shell::Executable::Resolver::NeverFresh }
 
+    def backend_for(name, path: empty_path) = described_class.new(name, path:, root: "/srv/app")
+
     it "names no host file for a docker backend, whose programs run in the container" do
-      expect(described_class.resolver_for("docker", root: "/srv/app", fresh:))
+      expect(backend_for("docker", path: docker_on_path).resolver(fresh:))
         .to equal(Lain::Shell::Executable::Resolver::CONTAINER)
     end
 
     it "resolves on the host for the local backend and for no flag" do
-      resolvers = [described_class::DEFAULT, nil].map { described_class.resolver_for(_1, root: "/srv", fresh:) }
+      resolvers = [described_class::DEFAULT, nil].map { backend_for(_1).resolver(fresh:) }
 
       expect(resolvers).to all(be_a(Lain::Shell::Executable::Resolver))
+    end
+  end
+
+  describe "#backend" do
+    it "builds the backend once, so every reader holds the same object" do
+      built = described_class.new("docker", path: docker_on_path, root: "/srv/app")
+
+      expect(built.backend).to equal(built.backend)
+    end
+  end
+
+  describe ".launch" do
+    it "reads the exec flags from the options and builds the child env from the project's env pass" do
+      built = described_class.launch({ exec: "docker", exec_image: "img:1" }, env_pass: %w[DATABASE_URL],
+                                                                              root: "/srv/app", path: docker_on_path)
+
+      expect(built.backend).to be_a(Lain::Exec::Docker).and have_attributes(image: "img:1")
+      expect(built.child_env.passes?("DATABASE_URL")).to be(true)
+    end
+
+    it "hands a local child the host's value for a passed name" do
+      built = described_class.launch({}, env_pass: %w[LAIN_T1_LAUNCH], root: @bin)
+      stdout = with_env("LAIN_T1_LAUNCH" => "from-host") do
+        built.backend.call(command: "printenv LAIN_T1_LAUNCH", cwd: @bin, env: ENV.to_h, timeout: 10).stdout
+      end
+
+      expect(stdout).to eq("from-host\n")
+    end
+  end
+
+  describe "what it holds for the launch" do
+    it "reads back the child env, journal, paths and notice it was given" do
+      child_env = Lain::Exec::ChildEnv.new(pass: %w[DATABASE_URL])
+      journal = Lain::Channel.new
+      paths = Lain::Paths.new
+      notice = ->(_text) {}
+
+      held = described_class.new(root: "/srv/app", child_env:, journal:, paths:, notice:)
+
+      expect([held.child_env, held.journal, held.paths, held.notice])
+        .to match([equal(child_env), equal(journal), equal(paths), equal(notice)])
     end
   end
 

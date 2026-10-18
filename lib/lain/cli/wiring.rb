@@ -801,10 +801,10 @@ module Lain
       # with an unassigned slot.
       def build_toolset(recorder, backend:, parent:, ask_human:, session: Lain::Session::Null.instance, notice: nil)
         @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend), session:,
-                                          chronicle:, options:, root:, usage: -> { @agent&.usage }, askers: @askers,
+                                          chronicle:, options:, root:, usage: method(:current_usage), askers: @askers,
                                           supervisor: @supervisor, parent:, library: backend.library,
                                           switchboard: -> { @switchboard }, journal: durable_journal,
-                                          verdict:, isolation: fleet_isolation,
+                                          verdict:, isolation: fleet_isolation, exec: exec_backend.backend,
                                           handback:, epic: epic_mount(notice),
                                           attachments:, middleware: backend.middleware, paths: @paths,
                                           display: @channel, resolver: exec_resolver,
@@ -812,10 +812,16 @@ module Lain
         @toolset_build.build(recorder, ask_human:)
       end
 
-      # Memoized: the bash tool and the approval ladder must resolve by one instance.
-      def exec_resolver
-        @exec_resolver ||= ExecBackend.resolver_for(options[:exec], root:, fresh: observers.fresh)
+      def current_usage = @agent&.usage
+
+      # Memoized: the toolset's exec and the resolver must come from one build.
+      def exec_backend
+        @exec_backend ||= ExecBackend.launch(options, env_pass: config.env_pass, root:, journal: durable_journal,
+                                                      paths: @paths, notice: @notice)
       end
+
+      # Memoized: the bash tool and the approval ladder must resolve by one instance.
+      def exec_resolver = @exec_resolver ||= exec_backend.resolver(fresh: observers.fresh)
 
       # Total before #wire_agent has registered the real ones. Fails closed: with
       # no lineage read, a never-fresh answer would let a rewritten file pass as

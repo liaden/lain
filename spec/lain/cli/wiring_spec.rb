@@ -569,6 +569,31 @@ RSpec.describe Lain::CLI::Wiring do
         expect(board.toolset.fetch("bash").instance_variable_get(:@resolver)).to equal(from_ladder)
       end
 
+      describe "the exec backend the launch builds once" do
+        it "hands the bash tool the backend its ExecBackend built, and the ladder a resolver over the root" do
+          board = board_on_path("/usr/bin")
+          held = classed.send(:exec_backend)
+
+          expect(board.toolset.fetch("bash").instance_variable_get(:@exec)).to equal(held.backend)
+          expect(board.toolset.fetch("bash").instance_variable_get(:@resolver))
+            .to be_a(Lain::Shell::Executable::Resolver)
+        end
+
+        it "memoizes the ExecBackend" do
+          expect(classed.send(:exec_backend)).to equal(classed.send(:exec_backend))
+        end
+
+        it "passes the host's value of an env pass name to a bash child, end to end through the build" do
+          stdout = with_env("HOME" => @home, "XDG_STATE_HOME" => @state, "LAIN_T1_PASSED" => "from-host") do
+            write_config(@root, "env pass: %w[LAIN_T1_PASSED]\n")
+            exec = board_on_path("/usr/bin").toolset.fetch("bash").instance_variable_get(:@exec)
+            exec.call(command: "printenv LAIN_T1_PASSED", cwd: @root, env: ENV.to_h, timeout: 10).stdout
+          end
+
+          expect(stdout).to eq("from-host\n")
+        end
+      end
+
       context "with --exec docker" do
         let(:docked) do
           described_class.new(options: { grace: 5, approval: "auto", confine: "classes", exec: "docker" },
@@ -3708,7 +3733,7 @@ RSpec.describe Lain::CLI::Wiring do
     # well.
     it "hands the isolation and exec backends, epic mount, review seams and command surface the ROOT" do
       allow(Lain::CLI::IsolationBackend).to receive(:resolve).and_call_original
-      allow(Lain::CLI::ExecBackend).to receive(:resolve).and_call_original
+      allow(Lain::CLI::ExecBackend).to receive(:new).and_call_original
       allow(Lain::CLI::EpicMount).to receive(:for).and_call_original
       allow(Lain::CLI::ReviewSeams).to receive(:for).and_call_original
       allow(Lain::CLI::Command::Surface).to receive(:new).and_call_original
@@ -3717,7 +3742,7 @@ RSpec.describe Lain::CLI::Wiring do
         run_project(project_at(root, cwd))
 
         expect(Lain::CLI::IsolationBackend).to have_received(:resolve).with(anything, hash_including(root:))
-        expect(Lain::CLI::ExecBackend).to have_received(:resolve).with(anything, hash_including(root:))
+        expect(Lain::CLI::ExecBackend).to have_received(:new).with(anything, hash_including(root:))
         expect(Lain::CLI::EpicMount).to have_received(:for).with(hash_including(root:))
         expect(Lain::CLI::ReviewSeams).to have_received(:for).with(anything, root:)
         expect(Lain::CLI::Command::Surface).to have_received(:new).with(hash_including(root:))

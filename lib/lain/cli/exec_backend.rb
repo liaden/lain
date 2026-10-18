@@ -48,16 +48,18 @@ module Lain
       # @return [#call] the resolved backend
       def self.resolve(...) = new(...).backend
 
-      # What a stage of a command run through the named backend resolves to.
+      # The one place a launch's flags and project config become a backend.
       #
-      # @param name [String, nil] the `--exec` value; nil means {DEFAULT}
-      # @param root [String] the project root
-      # @param fresh [#fresh?] whether a path changed during this lineage
-      # @return [#for] {Shell::Executable::Resolver::CONTAINER} for docker, else a host resolver
-      def self.resolver_for(name, root:, fresh:)
-        return Shell::Executable::Resolver::CONTAINER if name == "docker"
-
-        Shell::Executable::Resolver.new(root:, fresh:)
+      # @param options [Hash] the parsed flags
+      # @param env_pass [Array<String>] the project's `env pass:` names
+      # @param root [String] the project root, as in {#initialize}
+      # @param rest [Hash] the remaining {#initialize} keywords
+      # @option options [String] :exec the `--exec` value
+      # @option options [String] :exec_image the `--exec-image` value
+      # @return [ExecBackend]
+      def self.launch(options, env_pass:, root:, **rest)
+        new(options[:exec], image: options[:exec_image], root:,
+                            child_env: Exec::ChildEnv.from(ENV, pass: env_pass), **rest)
       end
 
       # @param name [String, nil] the `--exec` value; nil means {DEFAULT}
@@ -85,24 +87,45 @@ module Lain
       #   asks, injected on the same rule
       # @param child_env [Exec::ChildEnv] what every backend built here hands a
       #   child, so the project's `env pass:` reaches each one
+      # @param journal [#<<] the durable journal of the run
+      # @param paths [Lain::Paths] where this launch keeps its files
+      # @param notice [#call] where a notice raised after launch is told
       def initialize(name = nil, root:, image: nil, path: ENV.fetch("PATH", ""), filesystem: File,
-                     child_env: Exec::ChildEnv::DEFAULT)
+                     child_env: Exec::ChildEnv::DEFAULT, journal: Channel::Null.instance, paths: Paths.new,
+                     notice: ->(_text) {})
         @name = name || DEFAULT
         @image = image || Exec::Docker::DEFAULT_IMAGE
         @root = Project::Resolver.resolved(File.expand_path(root), File)
         @path = path
         @filesystem = filesystem
         @child_env = child_env
+        @journal = journal
+        @paths = paths
+        @notice = notice
       end
 
+      attr_reader :child_env, :journal, :paths, :notice
+
+      # Memoized: the toolset and the resolver must come from one build.
+      #
       # @return [#call] the concrete backend
       # @raise [Unknown] on a name outside {BACKENDS}
       # @raise [Unavailable] for `docker` with no docker client on PATH
       def backend
-        case backend_name
-        when "docker" then docker
-        else Exec::Local.new(child_env: @child_env)
-        end
+        @backend ||= case backend_name
+                     when "docker" then docker
+                     else Exec::Local.new(child_env: @child_env)
+                     end
+      end
+
+      # What a stage of a command run through this backend resolves to.
+      #
+      # @param fresh [#fresh?] whether a path changed during this lineage
+      # @return [#for] {Shell::Executable::Resolver::CONTAINER} for docker, else a host resolver
+      def resolver(fresh:)
+        return Shell::Executable::Resolver::CONTAINER if backend_name == "docker"
+
+        Shell::Executable::Resolver.new(root: @root, fresh:)
       end
 
       private
