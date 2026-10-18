@@ -8,6 +8,14 @@ module Lain
     #
     # `stages` holds {Shell::Executable#to_journal} hashes, one per stage, so
     # the record carries no object a journal reader would have to rebuild.
+    #
+    # For a command the verdict did not allow, the stages are read off the
+    # parse and each also carries `"basis" => "parsed"` and the `"cwd"` it
+    # resolved in, nil where a stage may run somewhere else. They are a guess
+    # at what the shell will run, never what the confinement was handed.
+    # Builtins are left out, so a command made only of them, `cd sub`,
+    # journals `stages: []`. A command the parse cannot read whole journals
+    # the one unresolved entry named by the whole command.
     ExecResolution = Data.define(:tool_use_id, :stages) do
       include Journalable
 

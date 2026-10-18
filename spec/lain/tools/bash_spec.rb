@@ -1350,5 +1350,122 @@ RSpec.describe Lain::Tools::Bash do
       expect(resolutions.fetch(0).stages.map { |stage| [stage["name"], stage["klass"]] })
         .to eq([%w[ls unresolved], %w[wc unresolved]])
     end
+
+    describe "a command the verdict abstains on" do
+      let(:path) { "#{root}/bin:#{ENV.fetch("PATH")}" }
+
+      def stages = resolutions.fetch(0).stages
+
+      def crate
+        plant(root, "cargo").tap do
+          FileUtils.mkdir_p(File.join(root, "sub"))
+          File.write(File.join(root, "sub", "Cargo.toml"), "[package]\n")
+        end
+      end
+
+      def on_path(name)
+        ENV.fetch("PATH").split(":").map { File.join(_1, name) }.find { File.executable?(_1) }
+      end
+
+      it "resolves each stage where it runs, read off the parse and marked as such" do
+        planted = crate
+
+        run("cd sub && cargo run", env: { "PATH" => path })
+
+        expect(stages.map { _1.slice("name", "resolved", "basis", "cwd") })
+          .to eq([{ "name" => "cargo", "resolved" => planted, "basis" => "parsed", "cwd" => File.join(root, "sub") }])
+        expect(stages.first["run_files"].map { _1["path"] }).to eq([File.join(root, "sub", "Cargo.toml")])
+      end
+
+      it "journals an interpreter's run file" do
+        File.write(File.join(root, "x.rb"), "")
+
+        run("ruby x.rb", env: {})
+
+        expect(stages.map { _1.slice("resolved", "basis") })
+          .to eq([{ "resolved" => on_path("ruby"), "basis" => "parsed" }])
+        expect(stages.first["run_files"].map { _1["path"] }).to eq([File.join(root, "x.rb")])
+      end
+
+      it "approves nothing with what it parsed: the call runs on the string arm, confined as unresolved" do
+        crate
+        requests = []
+        backend = Class.new do
+          define_method(:takes_term?) { |_term| true }
+          define_method(:call) do |command:, confinement:, **|
+            requests << [command, confinement]
+            Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+          end
+        end.new
+        tool = described_class.new(exec: backend, journal:, resolver:)
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => path }))
+
+        tool.call({ command: "cd sub && cargo run" }, Lain::Tool::Invocation.new(tool_use_id: "tu_p", context: session,
+                                                                                 channel:))
+
+        _, confinement = requests.fetch(0)
+        expect(confinement.executables.map { [_1.name, _1.klass] }).to eq([["cd sub && cargo run", :unresolved]])
+      end
+
+      it "leaves the shell's builtins out of the record" do
+        crate
+
+        run("cd sub && umask 022 && cargo run", env: { "PATH" => path })
+
+        expect(stages.map { _1["name"] }).to eq(["cargo"])
+      end
+
+      it "keeps the one unresolved entry when an export could change what the stages after it resolve to" do
+        run("export PATH=bin && ls", env: {})
+
+        expect(stages.map { _1.slice("name", "klass", "basis") })
+          .to eq([{ "name" => "export PATH=bin && ls", "klass" => "unresolved" }])
+      end
+
+      it "leaves a stage unresolved when a newline lets it run where the cd failed to leave" do
+        crate
+
+        run("ls && cd sub && ls\ncargo run", env: { "PATH" => path })
+
+        expect(stages.map { _1.slice("name", "klass", "cwd") })
+          .to eq([{ "name" => "ls", "klass" => "system", "cwd" => root },
+                  { "name" => "ls", "klass" => "system", "cwd" => File.join(root, "sub") },
+                  { "name" => "cargo", "klass" => "unresolved", "cwd" => nil }])
+      end
+
+      it "runs a command holding a NUL byte and journals it as the one unresolved entry" do
+        command = "cd sub && ca\0rgo"
+        crate
+
+        result = run(command, env: { "PATH" => path })
+
+        expect(result).to be_ok
+        expect(stages.map { _1.slice("name", "klass", "basis") })
+          .to eq([{ "name" => command, "klass" => "unresolved" }])
+      end
+
+      it "journals the one unresolved entry for a NUL byte in a redirect target" do
+        command = "cd sub && ls > a\0b"
+        crate
+
+        run(command, env: { "PATH" => path })
+
+        expect(stages.map { _1.slice("name", "klass", "basis") })
+          .to eq([{ "name" => command, "klass" => "unresolved" }])
+      end
+
+      it "journals the one unresolved entry when reading the parsed stages raises" do
+        raising = Class.new { define_method(:for) { |_worker_env| raise IOError, "resolver gone" } }.new
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: ENV.to_h))
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_x", context: session, channel:)
+
+        result = described_class.new(exec: recording_local.first, journal:, resolver: raising)
+                                .call({ command: "ruby x.rb" }, invocation)
+
+        expect(result).to be_ok
+        expect(stages.map { _1.slice("name", "klass", "basis") })
+          .to eq([{ "name" => "ruby x.rb", "klass" => "unresolved" }])
+      end
+    end
   end
 end

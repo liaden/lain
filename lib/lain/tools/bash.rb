@@ -331,10 +331,19 @@ module Lain
       # Resolved where the command runs, since a relative PATH entry and a build
       # tool's run files are read from there.
       def journal_resolution(command, decision, invocation, cwd)
-        stages = resolve(command, decision, session_of(invocation).worker_env.with(cwd:))
+        worker_env = session_of(invocation).worker_env.with(cwd:)
+        stages = resolve(command, decision, worker_env)
         journal_record(Telemetry::ExecResolution.new(tool_use_id: invocation.tool_use_id,
-                                                     stages: stages.map(&:to_journal)))
+                                                     stages: recorded(command, decision, stages, worker_env)))
         stages
+      end
+
+      # A parsed stage is a guess at what the shell will run, so it is
+      # journalled and never handed to the confinement, which grants and
+      # refuses by what a stage resolved to.
+      def recorded(command, decision, stages, worker_env)
+        parsed = Parsed.new(resolver: @resolver, worker_env:).journal(command) unless decision.allow?
+        parsed || stages.map(&:to_journal)
       end
 
       # A context no ladder ruled through gets the ruling that allowed nothing.
@@ -452,6 +461,51 @@ module Lain
       def output_sink(invocation, stream)
         Sink::IOAdapter.new(invocation.channel, tool_use_id: invocation.tool_use_id, stream:)
       end
+
+      # The stages the string arm will hand a shell, each resolved in the
+      # directory it runs in, for the journal alone.
+      class Parsed
+        BASIS = "parsed"
+        NUL = "\0"
+
+        # @param resolver [#for] binds to a cwd, so each stage resolves where it runs
+        # @param worker_env [WorkerEnv] the call's env, at the call's cwd
+        def initialize(resolver:, worker_env:)
+          @resolver = resolver
+          @worker_env = worker_env
+        end
+
+        # A journal step must not fail the call it describes, so a NUL byte,
+        # which every path call raises on, and a filesystem error both leave
+        # the record it would have had without the parse.
+        #
+        # @param command [String]
+        # @return [Array<Hash>, nil] one journal hash per stage a shell would
+        #   exec, builtins left out; nil when a stage could hide another program
+        def journal(command)
+          return if command.include?(NUL)
+
+          result = Shell::Parse.new.call(command)
+          return unless Shell::Verdict.literal?(result)
+
+          placed(result).reject { |stage, _| Shell::Verdict.builtin?(stage.argv.first) }
+                        .map { |stage, directory| entry(stage.argv, directory) }
+        rescue SystemCallError, IOError
+          nil
+        end
+
+        private
+
+        def placed(result) = result.stages.zip(Shell::Named.directories(result, cwd: @worker_env.cwd, home: nil))
+
+        def entry(argv, directory)
+          executable = directory ? resolved(argv, directory) : Shell::Executable.unresolved(argv.first.to_s)
+          executable.to_journal.merge("basis" => BASIS, "cwd" => directory)
+        end
+
+        def resolved(argv, directory) = @resolver.for(@worker_env.with(cwd: directory)).call(Shell::Term.of(argv)).first
+      end
+      private_constant :Parsed
     end
   end
 end

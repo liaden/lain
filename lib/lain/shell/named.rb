@@ -54,6 +54,20 @@ module Lain
         Walk.new(result, cwd:, home:).named
       end
 
+      # Read by the same walk that binds each `cd`, so a stage is placed only
+      # where {.from} would name its paths.
+      #
+      # @param result [Parse::Result]
+      # @param cwd [String] absolute directory the call runs in
+      # @param home [String, nil] as for {.of}
+      # @return [Array<String, nil>] one per stage: the directory it runs in,
+      #   nil from the first stage that may run somewhere else on
+      def self.directories(result, cwd:, home:)
+        return Array.new(result.stages.size) unless cwd.is_a?(String) && cwd.start_with?("/")
+
+        Walk.new(result, cwd:, home:).directories
+      end
+
       def opaque? = opaque
 
       # A lower bound: an output redirect's target, and the operands and output
@@ -667,6 +681,7 @@ module Lain
           @moved = false
           @paths = []
           @opaque = false
+          @directories = []
         end
 
         # @return [Named]
@@ -675,6 +690,15 @@ module Lain
 
           @result.stages.each_index.all? { |index| step(index) }
           Named.new(paths: @paths.uniq.freeze, opaque: @opaque)
+        end
+
+        # @return [Array<String, nil>]
+        def directories
+          stages = @result.stages.size
+          return Array.new(stages) unless readable?
+
+          @result.stages.each_index.all? { |index| step(index) }
+          @directories + Array.new(stages - @directories.size)
         end
 
         private
@@ -689,13 +713,18 @@ module Lain
           return halt if @moved && !AFTER_A_CD.include?(join_before(index))
 
           stage = @result.stages[index]
-          raws = [*stage.argv, *stage.redirects.flat_map(&:extra_words)]
-          words = Words.new(raws:, literals: raws.map { Word.read(_1) })
+          words = words_of(stage)
+          @directories << @dir
           return halt if SHELL_OPTIONS.include?(words.texts.first)
           return change_directory(index, words) if DIRECTORY_CHANGERS.include?(words.texts.first)
 
           name(stage, words)
           true
+        end
+
+        def words_of(stage)
+          raws = [*stage.argv, *stage.redirects.flat_map(&:extra_words)]
+          Words.new(raws:, literals: raws.map { Word.read(_1) })
         end
 
         def halt

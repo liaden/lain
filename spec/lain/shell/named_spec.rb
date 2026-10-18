@@ -796,4 +796,36 @@ RSpec.describe Lain::Shell::Named do
   it "is deeply frozen" do
     expect(named("cd x && cat 'a b' > o")).to be_deeply_frozen
   end
+
+  describe ".directories" do
+    def directories(command, cwd: "/p")
+      described_class.directories(Lain::Shell::Parse.new.call(command), cwd:, home: nil)
+    end
+
+    it "names the directory each stage runs in, a cd's own stage included" do
+      expect(directories("cd x && cat a | grep b")).to eq(%w[/p /p/x /p/x])
+    end
+
+    it "names a repeated cd's directory as many times as it runs" do
+      expect(directories("cd /a && cd /b && cd /a && ls")).to eq(%w[/p /a /b /a])
+    end
+
+    it "knows no directory past a join after which a stage may run where the cd failed to leave" do
+      expect(directories("cd x && ls\ncargo")).to eq(["/p", "/p/x", nil])
+      expect(directories("cd x && ls ; cargo")).to eq(["/p", "/p/x", nil])
+    end
+
+    it "knows no directory after a cd it cannot bind" do
+      expect(directories("ls && cd - && ls")).to eq(["/p", "/p", nil])
+    end
+
+    it "keeps the call's directory across any join when nothing changes it" do
+      expect(directories("ls ; pwd")).to eq(%w[/p /p])
+    end
+
+    it "knows none for a command it cannot read, or a relative cwd" do
+      expect(directories("echo $(id) && ls")).to eq([nil, nil])
+      expect(directories("ls", cwd: "p")).to eq([nil])
+    end
+  end
 end

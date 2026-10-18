@@ -817,4 +817,34 @@ RSpec.describe Lain::Shell::Verdict do
       expect(decide("cat a >/dev/null | wc -l")).to be_abstain
     end
   end
+
+  describe ".literal?" do
+    it "holds for a parse made only of literal structure, whatever the verdict made of it" do
+      ["cd sub && cargo run", "ruby x.rb", "ls ; pwd", "cargo run 2>/dev/null"].each do |command|
+        expect(described_class.literal?(parse.call(command))).to be(true), command.inspect
+      end
+    end
+
+    # Each can run a program, or change what one resolves to, that no stage names.
+    it "fails for a substitution, a heredoc, an assignment or an export" do
+      ["echo $(id)", "cat <<EOF | bash\nx\nEOF", "PATH=bin cargo run", "export PATH=bin && cargo run"]
+        .each { |command| expect(described_class.literal?(parse.call(command))).to be(false), command.inspect }
+    end
+
+    # Each of these parses into literal node kinds alone.
+    it "fails for bytes nothing accounted for, an escaped word and a word a shell would expand" do
+      ["ls )", "\\cd sub && cargo --version", "ruby *.rb", "cd ~ && ls"]
+        .each { |command| expect(described_class.literal?(parse.call(command))).to be(false), command.inspect }
+    end
+  end
+
+  describe ".builtin?" do
+    it "names a program only a shell can run" do
+      expect(%w[cd umask].map { described_class.builtin?(_1) }).to eq([true, true])
+    end
+
+    it "does not name a program on disk, or a builtin's name spelled as a path, which execs" do
+      expect(%w[cargo /usr/bin/cd].map { described_class.builtin?(_1) }).to eq([false, false])
+    end
+  end
 end
