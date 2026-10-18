@@ -2063,6 +2063,14 @@ XDG path relative, which put machine state back inside the user's repository)
    `Compaction::Prepared` deleted, since a hold keyed on the exact head can never match after the prompt lands;
    `--compact-schedule idle|turn` as a bench arm with `idle` the default, recorded in the header and guarded by
    `bench variance`; 2 records, `compaction_prepared` and `compaction_applied`, and 3 Compare columns. 10 cards, panel-reviewed.
+63. **Planned (2026-10-17)**: `planning/specs/simplify-15-unreached-code.md`, the no-decision half of the
+   2026-10-17 simplification survey: the unreached request/response half of the vendored HTTP provider
+   deleted; `crates/lain-core` cut to its msgpack-RPC wire (`rpc.rs`, `main.rs`, `Core::Client`), with the
+   `exec` and `grep` RPCs, the vsock listener, `Exec::Core` and `Core::Child` gone, by the ruling that the
+   wire is the seed for the phone relay and the code-mode handle store; `Project::Dotfiles`, the spec-only
+   landing desk, the Rust tracing scaffold and 3 spec-only names deleted; 1 session writer (the Scribe)
+   and a `format` stamp on the header that the loader refuses when absent, after the human purges
+   `~/.local/state/lain`; 8 runtime tolerances for pre-stamp records made hard. 17 cards, panel-reviewed.
 
 ## Map of the documents
 
