@@ -371,6 +371,11 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   alone in 0.79s and green in a full suite on the base and on the card);
   and `a chat whose terminal is gone ends at its prompt once the terminal is closed`.
 
+  Added 2026-10-18, red once in a pre-commit suite at a load of about 6 with agents working beside it
+  ("pane session ... outlived its tmux server"), green alone and in a full suite on the base and on
+  the card: `plugin/tmux lain.tmux against a real tmux server survives an install path with spaces in
+  it`.
+
   Added 2026-10-09, red once (watchdog STUCK at 30s) in a pre-commit suite under a load of about
   11 on 16 cores with a reviewer's probes running beside it, and green 3 of 3 runs of its file
   alone: `a line typed while an ask is in flight on the chat's own terminal keeps a line typed
