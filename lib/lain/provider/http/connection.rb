@@ -44,22 +44,6 @@ module Lain
 
         attr_reader :provider, :connection, :config
 
-        # A bare Faraday connection with only logging + raise_error, for
-        # requests that do not go through a Provider (kept for parity with
-        # the vendored source; nothing in this slice calls it yet).
-        def self.basic(sink: Sink::Null.new, &block)
-          Faraday.new do |f|
-            f.response :logger,
-                       Logging::SinkLogger.new(sink: sink),
-                       bodies: false,
-                       errors: true,
-                       headers: false,
-                       log_level: :debug
-            f.response :raise_error
-            yield f if block_given?
-          end
-        end
-
         # @param provider [HTTP::Provider] the owning provider; supplies `#headers` for
         #   {#provider_headers}, `#configured?`/`#configuration_requirements` for the startup
         #   check, and `#slug`/`#name` for instrumentation and the config-error message

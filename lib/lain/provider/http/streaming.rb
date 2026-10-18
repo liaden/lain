@@ -4,70 +4,46 @@ require "event_stream_parser"
 require "faraday"
 require "json"
 
-# Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/streaming.rb.
-# Dropped upstream's `event: error` fast path and added an end-of-stream flush
-# ({#flush_stream}). The fast path read `chunk.split("\n")[1]` off a RAW
-# `on_data` fragment, so a transport that split the event line from the data
-# line made `[1]` nil and the provider raised NoMethodError instead of the typed
-# error. Deleting it alone would have traded that crash for silence, because the
-# parser DISCARDS an event that never got its terminating blank line -- so the
-# flush comes with it, covering every truncated terminal event.
-#
-# Three methods here are Lain's, not upstream's, and a re-vendor MUST carry them
-# forward or it breaks code outside this directory:
-#
-# * {#post_stream} -- posts a streaming request, assigns the handler, and runs
-#   the flush. `Anthropic::Transport#stream`
-#   (both outside the vendored slice) post through it precisely so the flush
-#   cannot be forgotten; dropping it silently restores the swallow.
-# * {#accumulating_handler} -- the handler `stream_response` used to build
-#   inline, extracted because the flush needs it after the response completes.
-# * `assign_on_data(req, handler)` -- upstream's took `(req, accumulator,
-#   &block)` and built the handler itself; it is pure assignment now.
-#
-# The base SSE engine: the provider-generic half of streaming, `include`d into
-# the base `Provider`, so `self` inside every method here is a provider
-# instance. A provider that defines no `streaming.rb` of its own still streams,
-# using the generic `parse_streaming_error` in {ErrorHandling} --
-# `Anthropic::Streaming` overrides it and is included at the subclass level so
-# its version wins.
-#
-# Streaming *error* handling is a separate responsibility (a successful stream
-# never touches it) and lives in {ErrorHandling}, composed in by `include`
-# because those methods must dispatch back through the provider. Both that
-# extraction and {FaradayHandlers} also keep this module under the default
-# `Metrics/ModuleLength` without loosening the cop.
-#
-# Every upstream `RubyLLM.logger.debug { }` becomes `stream_debug { }`, writing
-# to the provider's injected `@sink` under the injected `@stream_debug` flag --
-# one of this slice's global-logger removals.
-
 module Lain
   class Provider
     module HTTP
-      # Base streaming engine; see the file header.
+      # Base streaming engine.
+      #
+      # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/streaming.rb.
+      # Dropped upstream's `event: error` fast path and added an end-of-stream flush
+      # ({#flush_stream}). The fast path read `chunk.split("\n")[1]` off a RAW
+      # `on_data` fragment, so a transport that split the event line from the data
+      # line made `[1]` nil and the provider raised NoMethodError instead of the typed
+      # error. Deleting it alone would have traded that crash for silence, because the
+      # parser DISCARDS an event that never got its terminating blank line -- so the
+      # flush comes with it, covering every truncated terminal event.
+      #
+      # {#post_stream} is Lain's, not upstream's, and a re-vendor MUST carry it
+      # forward or it breaks code outside this directory: it posts a streaming
+      # request, assigns the handler, and runs the flush.
+      # `Anthropic::Transport#stream` posts through it precisely so the flush
+      # cannot be forgotten; dropping it silently restores the swallow. Upstream's
+      # `assign_on_data(req, accumulator, &block)` built the handler itself; ours is
+      # pure assignment.
+      #
+      # The base SSE engine: the provider-generic half of streaming, `include`d into
+      # the base `Provider`, so `self` inside every method here is a provider
+      # instance. A provider that defines no `streaming.rb` of its own still streams,
+      # using the generic `parse_streaming_error` in {ErrorHandling} --
+      # `Anthropic::Streaming` overrides it and is included at the subclass level so
+      # its version wins.
+      #
+      # Streaming *error* handling is a separate responsibility (a successful stream
+      # never touches it) and lives in {ErrorHandling}, composed in by `include`
+      # because those methods must dispatch back through the provider. Both that
+      # extraction and {FaradayHandlers} also keep this module under the default
+      # `Metrics/ModuleLength` without loosening the cop.
+      #
+      # Every upstream `RubyLLM.logger.debug { }` becomes `stream_debug { }`, writing
+      # to the provider's injected `@sink` under the injected `@stream_debug` flag --
+      # one of this slice's global-logger removals.
       module Streaming
         include ErrorHandling
-
-        module_function
-
-        def stream_response(connection, payload, additional_headers = {}, &block)
-          accumulator = StreamAccumulator.new(sink: @sink, debug: @stream_debug)
-          on_data = accumulating_handler(accumulator, &block)
-          response = post_stream(connection, stream_url, payload, on_data) do |req|
-            req.headers = additional_headers.merge(req.headers) unless additional_headers.empty?
-          end
-
-          message = accumulator.to_message(response)
-          stream_debug { "Stream completed: #{message.content}" }
-          message
-        end
-
-        def handle_stream(&block)
-          build_on_data_handler do |data|
-            yield(build_chunk(data)) if data.is_a?(Hash)
-          end
-        end
 
         private
 
@@ -75,21 +51,10 @@ module Lain
           @sink.puts(yield) if @stream_debug
         end
 
-        # Built before the request rather than inside the `post` block, because
-        # {#flush_stream} needs the same handler -- and so the same parser --
-        # after the response is complete.
-        def accumulating_handler(accumulator, &block)
-          handle_stream do |chunk|
-            accumulator.add chunk
-            yield chunk
-          end
-        end
-
         # Every SSE streaming POST goes through here, so no caller can install a
-        # handler and forget the flush -- `Anthropic::Transport` and
-        # installs its own and posts its own request, and
-        # both silently dropped truncated terminal events until they came
-        # through this method. `Ollama::Transport` posts its own and is the one
+        # handler and forget the flush -- `Anthropic::Transport`
+        # installs its own handler and posts through here; it silently dropped
+        # truncated terminal events until it did. `Ollama::Transport` posts its own and is the one
         # deliberate exception: `application/x-ndjson` has no SSE parser and so
         # no buffered event to flush, and its `StreamAssembler#result` already
         # flushes a trailing line that arrived without its newline. The block
@@ -120,7 +85,7 @@ module Lain
         # empty line, the incomplete event is not dispatched"). A provider that
         # writes `event: error` and then drops the connection lands exactly
         # there -- and a discarded error event does not surface as an exception,
-        # it surfaces as an empty Message recorded as a successful turn. Feeding
+        # it surfaces as an empty response recorded as a successful turn. Feeding
         # one blank line through the same handler once the body is read
         # dispatches whatever is still buffered; after a clean stream the
         # parser's data buffer is empty, so the same feed dispatches nothing.

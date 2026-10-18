@@ -51,8 +51,6 @@ module ErrorTaxonomyDiscipline
       "one raise site inside the rspec adapter",
     "Lain::Provider::HTTP::ConfigurationError" =>
       "vendored from ruby_llm 1.16.0 -- deleting it forks the vendor, see the file header",
-    "Lain::Provider::HTTP::InvalidRoleError" =>
-      "vendored from ruby_llm 1.16.0, same reason",
     "Lain::Review::Partition::Strategy::Incomplete" =>
       "one raise site naming what a candidate strategy failed to answer",
     "Lain::Review::Session::NotWidened" =>

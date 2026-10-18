@@ -200,7 +200,7 @@ exemplars. A unit-level constant several children read at class-body time belong
 `eager_load` is load-bearing, not a performance choice. 296 constants under `Lain` have no path of
 their own and are reachable only through the file that defines them; loaded lazily each becomes a
 load-order dependency that boots clean and raises from a method body later, which is why
-`lib/lain/provider/http/providers/anthropic.rb` names the guarantee in writing.
+`lib/lain.rb` says so in writing, in the loader comment above `loader.setup`.
 
 A cycle still has to be able to show itself — but the manifest was never where it did, and the old
 claim that it was did not survive its removal: the one "irrecoverable cycle" found on the way out

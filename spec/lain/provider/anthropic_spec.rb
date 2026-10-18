@@ -395,8 +395,7 @@ RSpec.describe Lain::Provider::Anthropic do
   end
 
   # This is the path `lain chat` runs: Provider::Anthropic -> Transport#stream,
-  # which installs its own on_data handler and never calls the vendored
-  # `stream_response`. A server that writes `event: error` and then drops the
+  # which installs its own on_data handler. A server that writes `event: error` and then drops the
   # connection leaves that event one blank line short, and the SSE spec has the
   # parser DISCARD an incomplete event -- so with no end-of-stream flush an
   # overload arrives as a successful, empty turn. Real transport + webmock,
