@@ -1,6 +1,6 @@
 # Container facts and passed-value masking
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1087,3 +1087,11 @@ After the last card lands:
      in secret-boundary, as T14 and T15 left them.
 
 ## Execution log
+
+- 2026-10-18 start. Base `main` at `0535a9f0`. `git worktree list`: `/home/tara/dev/lain 0535a9f0 [main]` only. Branches
+  before the run: `flake/review`, `main`, `spike/combined`, `spike/combined2`.
+- Hook (`.pre-commit-config.yaml`): file hygiene hooks, shellcheck, cargo fmt/clippy/test (Rust files only), `bundle exec rake
+  compile check` (rubocop whole repo plus `rake pspec`, on any Ruby or Rust file), `bundle exec yard-lint --staged`,
+  `bin/lint-gherkin-docs` (staged plan docs), `bin/lint-commit-msg`, `bin/lint-price-freshness`. A Ruby commit takes about
+  70s and runs the full suite, so it must run alone on the box. Agent-runnable checks: `bundle exec rubocop <paths>`,
+  `bundle exec yard-lint <paths>`, `bundle exec rspec <spec paths>`. No paths need user approval.
