@@ -33,6 +33,27 @@ RSpec.describe Lain::Bench::Harness do
     end
   end
 
+  describe "the bash exec" do
+    let(:inner) { Lain::Exec::Local.new }
+
+    def exec_of(toolset) = toolset.fetch("bash").instance_variable_get(:@exec)
+
+    it "is the one the factory is handed" do
+      expect(exec_of(described_class::TOOLS.call(recorder:, journal:, exec: inner))).to be(inner)
+    end
+
+    it "names its stages by the resolver the factory is handed" do
+      resolver = instance_double(Lain::Shell::Executable::Resolver)
+      bash = described_class::TOOLS.call(recorder:, journal:, resolver:).fetch("bash")
+
+      expect(bash.instance_variable_get(:@resolver)).to be(resolver)
+    end
+
+    it "is accepted and ignored by the empty arm, as its sibling's keywords are" do
+      expect(described_class::NO_TOOLS.call(recorder:, journal:, exec: inner).to_a).to be_empty
+    end
+  end
+
   # The partition is what makes a tool added to the floor a RED example rather
   # than a silent promotion to "safe", which is the whole worth of naming a
   # write set at all.

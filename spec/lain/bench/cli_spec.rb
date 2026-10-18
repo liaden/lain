@@ -580,6 +580,108 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
+  # The production path: arms_report builds the tools and the guard the arms run with, and
+  # --confine reader is what puts the sandbox under their bash.
+  describe "#arms_report under --confine reader" do
+    let(:journal) { RecordingChannel.new }
+    let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }, root: Dir.pwd) }
+    let(:execs) { [] }
+    let(:tools) do
+      lambda { |recorder:, journal:, exec: nil, resolver: nil|
+        execs << exec
+        Lain::Bench::Harness::NO_TOOLS.call(recorder:, journal:, resolver:)
+      }
+    end
+    let(:box) { ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] } }
+    let(:probe) do
+      ->(journal:, fence:) { Lain::Confine::Probe.new(fence:, journal:, runner: box, ptrace_scope: -> { "0" }) }
+    end
+    let(:reader) { Lain::CLI::Arms::OFF.with(confine: :reader) }
+    let(:looping) do
+      unresolved = { "type" => "tool_use", "id" => "t1", "name" => "nothing", "input" => {} }
+      turn = Lain::Response.new(content: [unresolved], stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 1))
+      Lain::Provider::Mock.new(responses: [*[turn] * 30, text_response("FILE lib/widget.rb\nEND")])
+    end
+
+    def report(arms, **)
+      allow(backend).to receive(:provider).and_return(looping)
+      cli.arms_report(fixture_path: File.join(__dir__, "..", "..", "fixtures", "arms", "tasks.yml"), backend:,
+                      tools:, isolation: "none", journal:, arms:, probe:, **)
+    end
+
+    it "hands every arm's tools a sandboxed exec" do
+      report(reader)
+
+      expect(execs.compact).not_to be_empty
+      expect(execs.compact).to all(be_a(Lain::Exec::Sandboxed))
+    end
+
+    it "records the arm as a field of the report header, beside the isolation" do
+      text = report(reader)
+
+      expect(text.lines.first).to start_with("Arm driver")
+      expect(text).to match(/^  confine:\s+reader$/)
+    end
+
+    it "journals the arms the run was started with, once" do
+      report(reader)
+
+      expect(journal.events.grep(Lain::Telemetry::RunArms))
+        .to eq([Lain::Telemetry::RunArms.new(arms: { "confine" => "reader" })])
+    end
+
+    it "writes no record when the run is refused before it starts" do
+      unroutable = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b" }, root: Dir.pwd)
+      refused = begin
+        cli.arms_report(fixture_path: File.join(__dir__, "..", "..", "fixtures", "arms", "tasks.yml"),
+                        backend: unroutable, journal:, isolation: "none", arms: reader, probe:)
+      rescue Lain::Error => e
+        e
+      end
+
+      expect(refused).to be_a(Lain::Error)
+      expect(journal.events).to be_empty
+    end
+
+    it "builds the project and paths from the injected ones rather than the process's" do
+      Dir.mktmpdir do |dir|
+        root = File.realpath(dir)
+        project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+        allow(Lain::Project::Resolver).to receive(:default_project)
+
+        report(reader, project:, paths: Lain::Paths.new)
+
+        expect(Lain::Project::Resolver).not_to have_received(:default_project)
+      end
+    end
+
+    context "when the box lacks the layers" do
+      let(:box) { ->(_argv) { ["", false] } }
+
+      it "says in the report that the arm is degraded, and journals that the sandbox is unavailable once" do
+        text = report(reader)
+
+        expect(text).to match(/^  confine:\s+reader \(degraded: the box lacks bwrap and landlock\)$/)
+        expect(journal.events.grep(Lain::Telemetry::CapabilityDegraded).count { _1.capability == :sandbox }).to eq(1)
+        expect(execs.compact).to all(be_a(Lain::Exec::Local))
+      end
+    end
+
+    it "hands the tools no exec, journals no arms and prints no confine field with every arm off" do
+      text = report(Lain::CLI::Arms::OFF)
+
+      expect(execs.uniq).to eq([nil])
+      expect(text).not_to include("confine:")
+      expect(journal.events.grep(Lain::Telemetry::RunArms)).to be_empty
+    end
+
+    it "refuses an arm that is on but is not reader, before anything is paid for" do
+      expect { report(Lain::CLI::Arms::OFF.with(confine: :classes)) }
+        .to raise_error(described_class::Refusal, /--confine classes.*off.*reader/)
+      expect(journal.events).to be_empty
+    end
+  end
+
   describe "#arms_report refuses before any record is written" do
     let(:journal) { Lain::Channel.new }
     let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }, root: Dir.pwd) }
@@ -624,7 +726,8 @@ RSpec.describe Lain::Bench::CLI do
       end
 
       expect(refused.message).to include("--isolation worktree", "paths the tools name", "a shell command's reads",
-                                         "an opaque command's writes")
+                                         "an opaque command's writes", "--confine reader", "read-only command",
+                                         "unconfined either way")
     end
 
     it "for an unknown isolation name, without resolving any backend" do

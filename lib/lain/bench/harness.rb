@@ -23,8 +23,9 @@ module Lain
       # {Lain::CLI::Wiring::BaseTools} production builds it from
       # (`cli/wiring/toolset_build.rb`'s `#capability_floor`), so a bench arm
       # and a chat cannot come to hold two different lists.
-      TOOLS = lambda { |recorder:, journal: Channel::Null.instance|
-        Toolset.new(::Lain::CLI::Wiring::BaseTools.build(recorder, journal:))
+      TOOLS = lambda { |recorder:, journal: Channel::Null.instance, exec: Exec::Local.new,
+                        resolver: Shell::Executable::Resolver::NULL|
+        Toolset.new(::Lain::CLI::Wiring::BaseTools.build(recorder, journal:, exec:, resolver:))
       }
 
       # No capabilities at all. Kept as a NAMED arm rather than left as the
@@ -32,10 +33,10 @@ module Lain
       # this bench can answer if the toolless run is still runnable, and it is
       # also the only harness a command that leases nothing may default to.
       #
-      # It names both keywords its sibling reads and ignores them, rather than
+      # It names every keyword its sibling reads and ignores them, rather than
       # swallowing them in a `**`. The two arms of one duck must fail equally
       # loudly on a keyword neither knows.
-      NO_TOOLS = ->(recorder:, journal: nil) { Toolset.new([]) } # rubocop:disable Lint/UnusedBlockArgument
+      NO_TOOLS = ->(recorder:, journal: nil, exec: nil, resolver: nil) { Toolset.new([]) } # rubocop:disable Lint/UnusedBlockArgument
 
       # The floor's members that reach a filesystem the run does not own. The
       # partition below it is TOTAL and there is a spec saying so, which is what
@@ -61,6 +62,9 @@ module Lain
       # @param toolset [Lain::Toolset]
       # @return [Boolean]
       def writes?(toolset) = WRITERS.intersect?(toolset.names)
+
+      # The probe a confined arm asks what the box offers.
+      PROBE = ->(journal:, fence:) { Confine::Probe.new(fence:, journal:) }
 
       # Where a bench run REPORTS: the journal it was called with, wrapped so
       # each turn is paired with the memory root in force when it rendered;
@@ -101,13 +105,16 @@ module Lain
       # per agent: a store shared across arms is the cross-arm contamination the
       # per-spawn recorder exists to prevent. Injectable, so a caller holding the
       # run's one store can hand it over instead.
+      #
+      # `guard:` is the tool-phase builder, the unconfined `detached` unless a caller brings its own.
       INSTRUMENTATION = lambda { |journal:, recorder:, worker_env:,
-                                  attachments: Attachment::Store.for(root: worker_env.cwd)|
+                                  attachments: Attachment::Store.for(root: worker_env.cwd),
+                                  guard: ::Lain::CLI::ToolGuard.detached(journal:)|
         Agent::Instrumentation.new(
           journal: Memory::JournalMemoryRoot.new(journal:, recorder:),
           model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal:),
                                                    Middleware::ResolveAttachments.new(attachments:)]),
-          tool_middleware: ::Lain::CLI::ToolGuard.detached(journal:).call(worker_env)
+          tool_middleware: guard.call(worker_env)
         )
       }
     end

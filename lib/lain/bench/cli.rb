@@ -44,9 +44,13 @@ module Lain
       # environment and cuts nothing.
       CONTAINING_BACKENDS = %w[worktree].freeze
 
+      # The `--confine` values a bench arm takes; a chat's `classes` would change nothing here.
+      CONFINES = %w[off reader].freeze
+
       WORKTREE_REACH = "--isolation worktree holds the paths the tools name inside each arm's worktree; a shell " \
-                       "command's reads, and an opaque command's writes, stay open until the sandbox applies to " \
-                       "bench arms"
+                       "command's reads, and an opaque command's writes, stay open; --confine reader confines a " \
+                       "read-only command to the checkout, but an opaque command runs traced and unconfined " \
+                       "either way"
 
       # What `--memory` may name. `empty` is the default and the comparable
       # one: a run that started from whatever the operator's project happened
@@ -152,12 +156,13 @@ module Lain
       #   resolver merely forwards could never also reach the Driver
       # @param graded [Array, nil] where a copy of every grade record the Driver
       #   journals is kept, so an interrupt can report them; the resolver never sees it
+      # @param confine [String, nil] what the arms' shell was confined by, named in the report header
       # @return [String] never printed here
       # @raise [Lain::CLI::IsolationBackend::Unknown] on a name outside the
       #   resolver's advertised set
       # @raise [ArgumentError] on backend options with no name to resolve
       def arm_report(arms, tasks:, spawn_seam:, grader:, isolation: nil, journal: nil, fixture: nil, model: nil,
-                     graded: nil, **backend_options)
+                     graded: nil, confine: nil, **backend_options)
         # Absent, NO keyword at all on either side, so each one's own default
         # stands -- {Arm::Driver}'s Null channel here, and {#arm_isolation}'s
         # deliberate refusal of options given with no name to resolve them for.
@@ -166,7 +171,7 @@ module Lain
         # can NAME the backend: every name resolves to the same
         # {Isolation::Journal} decorator once `--isolation` requires a journal,
         # so a class name renders `none` and `worktree` identically.
-        Arm::Driver.new(arms, tasks:, spawn_seam:, grader:, fixture:, model:, isolation_name: isolation,
+        Arm::Driver.new(arms, tasks:, spawn_seam:, grader:, fixture:, model:, confine:, isolation_name: isolation,
                               **arm_isolation(isolation, **backend_options, **journaling),
                               **graded_journal(journaling, graded)).report
       end
@@ -218,6 +223,12 @@ module Lain
       #   given.
       # @param price_book [Lain::PriceBook] prices every arm's journal
       # @param memory [String, nil] `--memory`: what each arm's view starts from
+      # @param arms [Lain::CLI::Arms] the bench arms; `confine: :reader` runs every arm's bash in the
+      #   sandbox a chat's is, and the report says so
+      # @param probe [#call] `call(journal:, fence:) -> Confine::Probe`, what the box offers
+      # @param project [Lain::Project, nil] the checkout the sandbox and its approvals are anchored on;
+      #   the one the process runs in when nil
+      # @param paths [Lain::Paths, nil] the state home; the process's when nil
       # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam}; ITS
       #   signature owns those defaults, including the unset `system:` that
       #   teaches the arms the FILE/END trajectory format the gold graders
@@ -236,7 +247,8 @@ module Lain
       # @raise [Lain::CLI::IsolationBackend::Unknown] on an isolation name outside it
       def arms_report(fixture_path:, backend:, isolation: nil, journal: nil,
                       decompose: LiveArms::DEFAULT_DECOMPOSE, router: nil, cheap_model: nil,
-                      price_book: PriceBook.default, memory: nil, **spawn_options)
+                      price_book: PriceBook.default, memory: nil, arms: Lain::CLI::Arms::OFF,
+                      probe: Harness::PROBE, project: nil, paths: nil, **spawn_options)
         # Declared before anything that could be interrupted, so the rescue
         # below always has an Array to report on rather than the bare local a
         # Ctrl-C before the first grade would otherwise leave nil.
@@ -251,10 +263,12 @@ module Lain
         refuse_unroutable_before_provider!(backend, router, cheap_model)
         spawn_options = journaled_provider(backend, journal, spawn_options)
         LiveArms.refuse_unservable!(spawn_options.fetch(:provider), cheap_model) if router.nil?
-        spawn_seam = SpawnSeam.new(backend:, memory: memory_store(memory), **spawn_options)
+        confinement = confinement_for(arms, journal:, probe:, project:, paths:)
+        spawn_seam = seam_for(backend, memory, confinement, spawn_options)
         arm_report(LiveArms.build(price_book:, decompose:, model: spawn_seam.model, router:, cheap_model:),
                    tasks: suite.map(&:prompt), spawn_seam:, fixture: fixture_path, model: spawn_seam.model,
-                   grader: SuiteGrader.new(suite), graded:, **lease_options(isolation:, journal:))
+                   grader: SuiteGrader.new(suite), graded:, confine: confinement.state,
+                   **lease_options(isolation:, journal:))
       rescue Interrupt
         partial_arms_report(graded)
       end
@@ -495,6 +509,26 @@ module Lain
         raise Refusal, "this run's tools can write (#{Harness::WRITERS.join(", ")}) and " \
                        "#{uncontained(isolation)} where they write, so they would act in the working tree " \
                        "this command was run from#{remedy(flag)}"
+      end
+
+      # Only `reader` changes what the tools can do, so only it builds a sandbox. `classes` is a chat's
+      # approval arm and would change nothing here, so it is refused rather than reported as applied.
+      def confinement_for(arms, journal:, probe:, project:, paths:)
+        return Harness::Confinement::Off if arms.confine == :off
+
+        unless arms.confine == :reader
+          raise Refusal,
+                "--confine #{arms.confine} is a chat arm: bench arms take --confine #{CONFINES.join(" or ")}"
+        end
+
+        run = journal || Channel::Null.instance
+        Harness::Confinement.new(project: project || Lain::Project::Resolver.default_project,
+                                 paths: paths || Lain::Paths.new, journal: run, probe:)
+                            .tap { run << Telemetry::RunArms.new(arms: arms.to_header) }
+      end
+
+      def seam_for(backend, memory, confinement, spawn_options)
+        SpawnSeam.new(backend:, memory: memory_store(memory), **confinement.apply(spawn_options))
       end
 
       def remedy(flag) = flag.nil? ? "" : "; add #{flag}. #{WORKTREE_REACH}"

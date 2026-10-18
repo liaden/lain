@@ -1043,7 +1043,47 @@ RSpec.describe Lain::CLI::ToolGuard do
   # Out of chat there is no board to borrow: the run builds its own, once, and
   # every child it spawns reads behind a stack over that one board.
   describe ".detached" do
+    # The ladder a run with no chat is given in place of the approving gate: whichever worker_env the
+    # call came from, leased or not, asks the policy built for that environment.
     let(:secret) { "AKIAIOSFODNN7EXAMPLE" }
+
+    describe "with a policy of its own" do
+      let(:asked) { [] }
+      let(:policy) do
+        Class.new do
+          def initialize(asked) = @asked = asked
+          def call(effect, context) = rule(effect, context).allow?
+
+          def rule(effect, _context)
+            @asked << effect.name
+            Lain::Approval::Escalation::Ruling.deny(rung: "spec", because: "no", final: true)
+          end
+        end.new(asked)
+      end
+      let(:builder) { described_class.detached(journal:, policy_for: ->(_worker_env) { policy }) }
+
+      def bash_gate(worker_env)
+        stack = builder.call(worker_env)
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
+        stack.call({ effect:, tool: Lain::Tools::Bash.new, context: Lain::Session.new(worker_env:) }) do |passed|
+          passed.merge(result: Lain::Tool::Result.ok("ran"))
+        end.fetch(:result)
+      end
+
+      it "asks it for a worker with no checkout" do
+        bash_gate(Lain::WorkerEnv.default)
+
+        expect(asked).to eq(["bash"])
+      end
+
+      it "asks it for a worker leased a checkout" do
+        Dir.mktmpdir do |dir|
+          bash_gate(Lain::WorkerEnv.default.with(cwd: File.realpath(dir), checkout: File.realpath(dir)))
+        end
+
+        expect(asked).to eq(["bash"])
+      end
+    end
 
     def outside_read(builder)
       Dir.mktmpdir do |dir|

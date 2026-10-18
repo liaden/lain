@@ -359,6 +359,39 @@ RSpec.describe "lain bench arms" do
       expect(kwargs).to include(system: "be terse", isolation: "none")
     end
 
+    it "hands the entry point the arms it was started with, all off when no arm flag is given" do
+      run("arms", "suite/tasks.yml")
+      expect(kwargs.fetch(:arms)).to eq(Lain::CLI::Arms::OFF)
+
+      run("arms", "suite/tasks.yml", "--confine", "reader")
+      expect(kwargs.fetch(:arms)).to eq(Lain::CLI::Arms::OFF.with(confine: :reader))
+    end
+
+    it "refuses every --confine value but off and reader cleanly, before the entry point" do
+      %w[tight classes].each do |value|
+        result = run("arms", "suite/tasks.yml", "--confine", value)
+
+        expect(result.stderr).to include("confine", "reader")
+      end
+      expect(calls).to be_empty
+    end
+
+    it "accepts --confine off, and hands the entry point every arm off" do
+      run("arms", "suite/tasks.yml", "--confine", "off")
+
+      expect(kwargs.fetch(:arms)).to eq(Lain::CLI::Arms::OFF)
+    end
+
+    it "declares --confine and none of the other exec and arm flags, which mean nothing to a bench" do
+      declared = command.options.keys
+
+      expect(declared).to include(:confine)
+      expect(declared & %i[exec exec_image judge_facts tripwire]).to be_empty
+      description = command.options.fetch(:confine).description
+      expect(description).to include("off, reader")
+      expect(description).not_to include("classes")
+    end
+
     it "hands the entry point one backend, never the loose flags beside it" do
       run("arms", "suite/tasks.yml")
 

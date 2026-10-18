@@ -176,6 +176,8 @@ module Lain
       #   name `bench arms` can resolve comes back wrapped in the SAME
       #   {Isolation::Journal} decorator, so a class name cannot tell `none` from
       #   `worktree`; this can.
+      # @param confine [String, nil] what the arms' shell was confined by, for the header; a run that
+      #   confined nothing names no field, so its header stays what it was
       # @param journal [#<<] where each graded run's {Telemetry::GradeRecord}
       #   lands. THE GRADE IS THE BENCH'S HEADLINE METRIC and, alone among the
       #   columns folded here, reached the rendered report and nothing else --
@@ -187,7 +189,7 @@ module Lain
       #   for. {Channel::Null::INSTANCE} is how a caller says "nowhere".
       # @raise [ArgumentError] on fewer than two tasks, no arms, or a nil journal
       def initialize(arms, tasks:, spawn_seam:, grader:, isolation: NoIsolation, isolation_name: nil,
-                     fixture: nil, model: nil, journal: Channel::Null::INSTANCE)
+                     fixture: nil, model: nil, confine: nil, journal: Channel::Null::INSTANCE)
         @arms = Array(arms).freeze
         @tasks = Array(tasks).freeze
         raise ArgumentError, "the driver needs at least one arm to compare" if @arms.empty?
@@ -207,6 +209,7 @@ module Lain
         @isolation_name = isolation_name
         @fixture = fixture
         @model = model
+        @confine = confine
       end
 
       # A scannable report as a String -- never printed (output discipline). One
@@ -303,8 +306,10 @@ module Lain
         ["Arm driver — #{@arms.size} arms over #{@tasks.size} tasks",
          "  fixture:   #{attributed(@fixture)}",
          "  model:     #{attributed(@model)}",
-         "  isolation: #{isolation_label}"].join("\n")
+         "  isolation: #{isolation_label}", *confine_field].join("\n")
       end
+
+      def confine_field = @confine.nil? ? [] : ["  confine:   #{@confine}"]
 
       # BLANK IS UNSET, not an attribution -- {Bench::SpawnSeam}'s own rule for
       # `--system`, applied for the same reason: `--model ''` is truthy, and a

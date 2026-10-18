@@ -289,7 +289,7 @@ module Lain
 
         # Starts the sandbox's mask classification, when there is a sandbox. Separate from {#build}
         # because it reads the board's policy, which {Wiring} builds after the toolset.
-        def prime_masks = @masks&.prime
+        def prime_masks = @sandbox&.prime
 
         private
 
@@ -325,34 +325,16 @@ module Lain
           end
         end
 
-        # A container is not a sandbox, and a box without the layers cannot make one; either way the
-        # run says so, because the session header still records the reader arm.
         def unsandboxed(exec, because)
-          seam.journal << Lain::Telemetry::CapabilityDegraded.new(capability: :sandbox, requirer: self.class.name,
-                                                                  provider: because)
-          exec
+          Lain::Confine::Sandbox.degraded(exec, journal: seam.journal, requirer: self.class.name, because:)
         end
 
         def sandboxed(inner)
-          lacking = %i[bwrap landlock].reject { @probe.supports?(_1) }
-          return unsandboxed(inner, "the box lacks #{lacking.join(" and ")}") if lacking.any?
-
-          Lain::Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: seam.journal)
-        end
-
-        # The probe finds both programs on PATH, so the launcher runs the ones it found.
-        def launcher
-          Lain::Confine::Bwrap.new(fence: @fence, bwrap: on_path("bwrap"), strace: on_path("strace"))
-        end
-
-        def on_path(program)
-          ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).map { File.join(_1, program) }
-             .find { File.file?(_1) && File.executable?(_1) }
-        end
-
-        def profiles
-          @masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
-          Lain::Confine::Profiles.new(masks: @masks, probe: @probe, home: @in_chat.fetch(:paths).home, root: @root)
+          home = @in_chat.fetch(:paths).home
+          masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
+          @sandbox = Lain::Confine::Sandbox.new(root: @root, home:, masks:, probe: @probe, fence: @fence,
+                                                journal: seam.journal)
+          @sandbox.wrap(inner, requirer: self.class.name)
         end
 
         # The session model's own capabilities, memoized because the probe is a

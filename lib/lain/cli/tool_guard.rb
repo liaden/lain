@@ -139,7 +139,9 @@ module Lain
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @return [Middleware::Stack] a fresh one per child, over the one board
         def call(worker_env)
-          return ToolGuard.working(chronicle, guard_inputs, worker_env) unless worker_env.checkout
+          unless worker_env.checkout
+            return ToolGuard.working(chronicle, guard_inputs, worker_env, guard_inputs.policy_for.call(worker_env))
+          end
 
           ToolGuard.leased(chronicle, guard_inputs, worker_env)
         end
@@ -230,9 +232,11 @@ module Lain
 
         # @param sensitivity [#gates?] the path policy the run's gate asks
         # @param lease [String] the checkout the run was leased
-        def initialize(sensitivity:, lease:)
+        # @param allow [#rule] who rules a call inside the lease; approves it by default
+        def initialize(sensitivity:, lease:, allow: ALLOW)
           @sensitivity = sensitivity
           @lease = lease
+          @allow = allow
           freeze
         end
 
@@ -240,7 +244,7 @@ module Lain
 
         # @return [Approval::Escalation::Ruling]
         def rule(effect, context)
-          return ALLOW.rule(effect, context) unless outside?(effect, context)
+          return @allow.rule(effect, context) unless outside?(effect, context)
 
           because = format(LEASED_READ, lease: @lease)
           Approval::Escalation::Ruling.deny(rung: RUNG, because:, final: true)
@@ -335,7 +339,8 @@ module Lain
       # @return [Middleware::Stack]
       def leased(chronicle, inputs, worker_env)
         held = confined(inputs, worker_env)
-        policy = LeasedPolicy.new(sensitivity: held.sensitivity, lease: worker_env.checkout)
+        policy = LeasedPolicy.new(sensitivity: held.sensitivity, lease: worker_env.checkout,
+                                  allow: inputs.policy_for.call(worker_env))
         layered(chronicle, held, inputs.test_layout.roots_for(worker_env), policy,
                 held: held_for(worker_env, home: inputs.sensitivity.home))
       end
@@ -404,14 +409,17 @@ module Lain
       # @param journal [#<<] where a refusal or a mask is recorded
       # @param roots [Array<String>] absolute; the run's own trees, in scope
       #   for every child wherever it stands
+      # @param policy_for [#call, nil] `worker_env -> #rule`, who rules a call a child may make;
+      #   approves every one when nil
       # @return [Detached] `worker_env -> stack`, a fresh one per call, every
       #   one over the same board
-      def detached(journal:, roots: [])
+      def detached(journal:, roots: [], policy_for: nil)
         approve_all = Middleware::Gate::ApproveAll.new
+        policy_for ||= ->(_worker_env) { approve_all }
         inputs = Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: Unreleased,
                             sensitivity: Lain::Sensitivity::Policy::Null.instance.confined(roots:),
                             test_layout: Middleware::GuardTestLayout::Run.undeclared,
-                            policy: approve_all, policy_for: ->(_worker_env) { approve_all },
+                            policy: approve_all, policy_for:,
                             denial: Middleware::Gate::DENIAL, bar: Middleware::WithholdAutomaticOutput::Bar.new)
         Detached.new(chronicle: Journaled.new(journal:), guard_inputs: inputs)
       end

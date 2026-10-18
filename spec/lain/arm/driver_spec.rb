@@ -425,6 +425,14 @@ RSpec.describe Lain::Arm::Driver do
     # the misattribution below survived a first red-first cycle.
     def wrapped(backend) = Lain::Isolation::Journal.new(backend:, journal: Lain::Channel.new)
 
+    it "names the confinement as a field of its own when one was given, and no field when not" do
+      confined = described_class.new(arms, tasks:, spawn_seam:, grader:, confine: "reader").report
+      plain = described_class.new(arms, tasks:, spawn_seam:, grader:).report
+
+      expect(confined).to match(/^  confine:\s+reader$/)
+      expect(plain).not_to include("confine:")
+    end
+
     it "names the fixture, the model and the isolation backend" do
       report = described_class.new(arms, tasks:, spawn_seam:, grader:,
                                          fixture: "spec/fixtures/arms/tasks.yml", model: "claude-opus-4-8",
