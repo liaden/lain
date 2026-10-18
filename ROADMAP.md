@@ -2027,7 +2027,7 @@ XDG path relative, which put machine state back inside the user's repository)
    for unknown programs, a credential-printing command denylist, `Shell::Parse` kinds per stage, the terminal
    flake family (5 recorded), a project's `system.md` reaching approver prompts, and read roots for dev
    children. Round 25 re-drives each closed finding (`planning/specs/qa-round-24-fixes.md`, Integration checks).
-59. **Planned (2026-10-16)**: `planning/specs/bash-confinement.md`, the research's "plan now" items
+59. **Done (2026-10-17)**: `planning/specs/bash-confinement.md`, the research's "plan now" items
    (`planning/binary-identity-research-2026-10.md`, untracked): the inherited env scrubbed of exported
    functions and loader injection, every `bash` stage resolved into a journalled `Shell::Executable` with
    ctime-based freshness, `ComposedTerm` ruling by the resolved class, its approvals run under bwrap, strace

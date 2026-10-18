@@ -57,6 +57,18 @@ Its step 7 is the one to read before using this arm for anything: **neither olla
 determinism-comparable bench arm on this machine right now**, so a `bench variance` number taken
 from either is measuring the server rather than the change.
 
+**Added 2026-10-17: bash confinement**, the three places a `bash` call is bounded (what it resolves to, the
+ladder's class table, the sandbox) and the observe-only tripwire. It needs a local model for four of its six
+sections and a box with bwrap, strace and Landlock for two; it says where a section cannot be driven:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`bash-confinement.md`](scenarios/bash-confinement.md) | Does a **planted `bin/cat`** earn no automatic approval, does an **exported function** stay out of the child while the journal still names it, does a **fresh program** trip the tripwire to `would_stop` with the call still running, does a **refused exec** end with the `REFUSED by the sandbox` wording and an `EACCES` in the `exec_record`, does a **memfd exec** fail inside the fence, and does a **degraded box** say it runs unconfined? Each ends in a journal record. | cheap (about 8 local model runs) |
+
+It also owns the check that the default arms (`--confine reader`, `--tripwire observe`) behave as
+`session-and-window.md` §9c records them. `secret-boundary.md` §8 reuses its harness to check that the sandbox
+hides a masked file.
+
 **Added 2026-08-25** — the first scenario to own a **command** rather than a tier, written because
 `/survey`'s coverage was scattered across another scenario's two subsections and the parts nobody
 had driven were the parts nobody owned:

@@ -1036,3 +1036,24 @@ three places at once.
 - **The AKIA string the driver types.** The driver's own prompt carries `AKIAIOSFODNN7EXAMPLE`, so it
   appears in the request that holds the prompt. Use a distinct string for the planted file and for
   anything typed, or exclude the typed one.
+
+## 8: The sandbox hides the masked paths from a confined bash call *(no model; the harness in `bash-confinement.md` §4)*
+
+A fourth enforcement of the same classification, and the only one that holds against a command string the
+parser read wrongly: under `--confine reader`, `Confine::MaskList` asks the session's one `Sensitivity::Policy`
+for the paths a name-and-shape pass marks, and bwrap binds `/dev/null` over each before the call runs. It
+covers only calls the reader profile runs (a `ComposedTerm`-approved call), which already refuse a sensitive
+word at the ladder, so this is the layer behind that one. The mask list lists the project with
+`git ls-files`, so a file outside a git tree is not on it; the harness hands the masks in by name instead,
+which tests the bind and not the listing.
+
+```bash
+echo "TOKEN=planted-not-a-real-secret" > $QA/proj/.env
+( cd <checkout> && bundle exec ruby -Ilib $QA/harness.rb $QA/proj 'cat .env; echo rc=$?; cat README.md' .env )
+( cd <checkout> && bundle exec ruby -Ilib $QA/harness.rb $QA/proj 'cat .env' )     # the control, no mask
+```
+
+Driven 2026-10-17. With the mask: `stdout="rc=1\nhello readme\n"` and `stderr="cat: .env: Permission denied\n"`,
+the rest of the project still readable. The control prints `TOKEN=planted-not-a-real-secret`, which is why the
+first result means anything. A masked file that still prints is the defect. Whether the real
+`MaskList` finds the right files in a real project is not driven here.

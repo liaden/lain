@@ -687,8 +687,9 @@ abstains the whole sequence), and a redirect to `/dev/null` is understood. Accou
 are a `Sensitivity` rule anchored at the filesystem root (`Rule.absolute`), denied for every agent
 and level, and a child's reads of `/etc/passwd` and `/etc/group` are refused in
 `Sensitivity::Policy::Confined`. `Middleware::RememberedDenials` refuses a requester the paths a
-human denied it, for the session. `Approval::ComposedTerm` approves `ls`, `pwd`, `which` and a
-named program's `--version` with no human or model, and an interpreter is never one of those.
+human denied it, for the session. `Approval::ComposedTerm` approves a bare allowlisted reader (`cat`, `grep`, `ls`,
+`wc`, `pwd` and the like) over ordinary words, and a named program's `--version`, with no human or model,
+and an interpreter is never one of those. What a bare name resolves to is a separate question, below.
 
 Shift+Tab (`Switchboard#cycle_approval`) flips `ask` and `auto` through `mode_switch`, from the
 chat's own prompt (only at its prompts; a key typed ahead mid-run is dropped) or the `lain input`
@@ -890,6 +891,71 @@ sees their argv, not their code. `bundle exec X` may not run the `X` its name sa
 opaque still applies, but none that claims to know what `X` reads, writes or where it runs; otherwise `X` is
 named like a script runner, and every path it names is marked as possibly written. `Exec.child_env` scrubs `CDPATH`, so a `cd`
 lands where Named resolved it.
+
+### Bounding a bash call: resolution, the class table, the sandbox
+
+A program name is not an identity: `PATH` is inherited, so a bare `cat` runs whatever `execvp` finds
+first, and a planted `<root>/bin/cat` ran under a `ComposedTerm` approval. A bash call is now bounded in
+three places, and each answers a different question. All three read one `Shell::Executable` per stage.
+
+1. **Resolution** (`lib/lain/shell/executable/resolver.rb`) answers *what will run*. One `Resolver` per
+   session turns each stage of the term, wrappers (`env`, `nice`, `timeout`, `bundle exec`) unwrapped, into a
+   frozen `Shell::Executable`: the resolved path, its realpath and link chain, later `PATH` hits it shadows,
+   the anomalies in the environment (`empty_path_entry`, `relative_path_entry`, `project_path_entry`,
+   `exported_function`, `ld_preload`), and a class: `system`, `user`, `project` or `unresolved`. For an
+   interpreter or build tool it also classes the file that will run (`run_files`). `fresh` is the answer to
+   "did this lineage write it": a `file_written` journal record names its path, or its ctime is newer than
+   the lineage's first record. ctime, because `touch -d` sets mtime back and nothing unprivileged sets ctime.
+   A lineage that cannot be read answers every path fresh. Every bash call
+   journals an `exec_resolution` record before it runs, whatever the arms, and the child env drops
+   `LD_PRELOAD`, `LD_AUDIT`, `BASH_FUNC_*` and `CDPATH` (`Exec::ChildEnv`) so an exported function never
+   reaches the shell. `LD_LIBRARY_PATH` stays: the child Ruby needs it for OpenSSL.
+2. **The ladder's class table** answers *may a machine approve it*. Under `--confine classes` or `reader`,
+   `ComposedTerm` has a twelfth predicate: every stage, wrapper and run file must be `system`, or `user`,
+   unchanged this lineage and shadowing nothing, with no anomaly. A `project` file, a fresh or shadowing one,
+   or an `unresolved` stage abstains, so the call falls to the judge or a human; the abstain's note names the
+   program and the class. The judge sees the same facts under `--judge-facts facts`, and
+   `Shell::Executable.bar` then defers any judge approval over a `fresh` or `unresolved` stage or run file or
+   an anomaly (the escalation record says `bar`, and carries the reasons); `--judge-facts request` also puts
+   the human's last line in the judge's prompt. The bar never turns a deny into anything else. Under the default arms (`--judge-facts off`) the class table stops only machine approval: a judge or human approval of a project, fresh or shadowing program runs `traced` and unconfined, and only `--judge-facts facts` or a human refusal closes it.
+3. **The sandbox** answers *what can the call reach if it runs anyway*, and is the only place that holds
+   against a string the parser read wrongly. Under `--confine reader`, a call that `ComposedTerm` approved
+   (and no other) runs as `Exec::Sandboxed` over `Exec::Local` in the `reader` profile (`Confine::Profiles`).
+   `Confine::Bwrap` prefixes each stage with `bwrap` (read-only root, a private sized `/tmp`, the session's
+   secret paths masked from `Sensitivity::Policy` by `Confine::MaskList`, a fresh pid namespace), then `strace`
+   writing the execs to a descriptor the call cannot reach, then `lain-fence`. The fence
+   (`crates/lain-fence`, its own binary crate since confinement is isolation, not pure work) applies Landlock:
+   exec beneath `/usr` and the rustup toolchains plus exactly the unchanged `user` files the call resolved, read beneath the project and a
+   short system list, write only `/dev/null` and the private `/tmp`, no TCP, no abstract sockets, and a
+   seccomp filter refusing a `memfd_create` without `MFD_NOEXEC_SEAL`. Any other allow (a human's, a config
+   rule's, the judge's) runs `traced`: watched and journaled, not confined. `--exec docker` is not wrapped; the
+   container is its boundary. A refused exec ends the tool output with the `REFUSED by the sandbox` line, so
+   the model asks instead of retrying.
+
+Each call journals a `sandbox` record (the profile) and, when traced, an `exec_record` (every execve, the
+refusals, descriptor execs) joined to its escalation by `tool_use_id`. A box that lacks a layer (no user
+namespaces, no Landlock, no `strace` or a `ptrace_scope` that forbids it) journals `capability_degraded` per
+layer through `Confine::Probe`, and when bwrap or Landlock is missing there is no sandbox at all: the exec stays
+`Exec::Local` and the chat prints a startup notice that bash runs unconfined. A missing layer is never read as
+a granted one, and an unsandboxed call writes no `exec_record`, so the tripwire sees nothing of it.
+
+The tripwire (`lib/lain/tripwire/`) is a `Journal` observer, so it folds every record, teed or not. It counts
+signals per requester (strong: a `fresh` program or run file, read from `exec_resolution` under any profile, and
+under a confining (`reader`) profile only, a refused exec, an exec the call did not resolve, and a descriptor or
+loader exec; under `traced` the descriptor and loader exec count at medium and the other two not at all; medium: a final deny on a protected path, a re-ask after a human's deny; weak:
+the judge's own deny) and writes a `tripwire` record per signal. At a score of 10 the record says
+`would_stop`. It is observe-only: nothing is stopped or paused.
+
+The arms, recorded in the session header's `arms` key when on (`CLI::Arms`):
+
+| Flag | Values | Default | Switches |
+|---|---|---|---|
+| `--confine` | `off`, `classes`, `reader` | `reader` | `classes`: the class table. `reader`: the table plus the sandbox |
+| `--tripwire` | `off`, `observe` | `observe` | the ledger |
+| `--judge-facts` | `off`, `facts`, `request` | `off` | facts and the bar; `request` adds the human's last line |
+
+`lain bench arms` defaults `--confine` to `off` (it takes `off` or `reader`) and always runs `--tripwire off`.
+Resolution and the env scrub are not arms: they run in every session.
 
 ## The secret boundary
 

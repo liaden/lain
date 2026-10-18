@@ -546,11 +546,20 @@ regression; a refusal for the second is too.
 
 ### 9c: the bench arm flags
 
-Three more flags select bench arms: `--confine off|classes|reader`, `--judge-facts off|facts|request` and
-`--tripwire off|observe`. An unknown value refuses at launch, exit 1, with no session file and no tmux session. A
-typed `off` writes no key; any other value writes `"arms":{...}` into the header. Until plan card T25 lands the arms
-change nothing, nothing reads `arms` back (`bench variance` ignores it and `--resume` drops it), so a header that
-records an arm is not evidence that the arm ran (round 25, a25-1 and a25-2).
+Three flags select bench arms: `--confine off|classes|reader`, `--judge-facts off|facts|request` and
+`--tripwire off|observe`. The defaults are `reader`, `off` and `observe`: a plain launch runs the sandbox and the
+observe-only tripwire. An unknown value refuses at launch, exit 1, with no session file and no tmux session
+(`unknown --confine value "bogus", expected one of off, classes, reader`). The header (the `session` record)
+records only the arms that are on, as `"arms":{"confine":"reader","tripwire":"observe"}` for a plain launch, and
+a launch with every arm off writes no `arms` key at all. The arms act: `--confine` and `--tripwire` change what
+a bash call runs under and what the journal holds, so a header that names an arm is evidence the arm was built,
+but not that it ran. A box that cannot build the sandbox still records `confine: reader` in the header, with a
+`capability_degraded` record and a startup notice that bash runs unconfined. `bench variance` ignores `arms`, and
+`--resume` takes the arms from its own launch flags, not from the old header. Driving every arm is
+[`bash-confinement.md`](bash-confinement.md); this section only reads the header.
+
+Verified 2026-10-17 against `06375702` on a no-nvim chat run with `--non-interactive`: the plain launch wrote the
+header above, `--confine off --tripwire off` wrote none, and `--confine bogus` refused by name.
 
 ### What §9 cannot reach
 
