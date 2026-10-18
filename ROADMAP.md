@@ -2076,13 +2076,15 @@ XDG path relative, which put machine state back inside the user's repository)
    landing desk, the Rust tracing scaffold and 3 spec-only names deleted; 1 session writer (the Scribe)
    and a `format` stamp on the header that the loader refuses when absent, after the human purges
    `~/.local/state/lain`; 8 runtime tolerances for pre-stamp records made hard. 17 cards, panel-reviewed.
-64. **Planned (2026-10-18)**: `planning/specs/container-facts-and-passed-masking.md`, the 2 UX points QA round 25 left
+64. **Done (2026-10-18, 15 cards, `14c883f9`)**: `planning/specs/container-facts-and-passed-masking.md`, the 2 UX points QA round 25 left
    for the human. Under `--exec docker` a bash program resolves from the image itself: an inspect per call names the image ID
    the run uses, 1 `docker export` per ID lists the image's `PATH` and is cached on disk, a mounted path resolves on the host,
    and an image path classes `system` because every call is a fresh `--rm` container, so a judge approval goes through under
    `--judge-facts facts`. A value a project passes with `env pass:` is masked in bash output wherever what the region detector
    finds in it recurs, and a name hinting at a connection string also masks its random-looking tokens. Refactors first: 1 exec
    backend and child environment per launch, the entropy test and the literal choice as named units. 15 cards, panel-reviewed.
+   Follow-ups left open: an ADO.NET `Password=pw;Database=x` value is not masked when `pw` is printed alone; only pass-listed
+   names are scanned, not `KEEP` names or lent values under other names; `Config` readers build their own `Paths` over `ENV`.
 
 ## Map of the documents
 

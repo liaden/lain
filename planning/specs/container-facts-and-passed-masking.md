@@ -1,6 +1,6 @@
 # Container facts and passed-value masking
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -198,7 +198,7 @@ T1, T2, T3, T4, T9 and T10 can start at once. T3 has no dependants.
 
 ## Tasks
 
-### T1: Build the launch's exec backend once and derive the resolver from it          [risk: medium]
+### T1: [x] Build the launch's exec backend once and derive the resolver from it          [risk: medium]
 
 **Depends on:** none
 **Files:** `lib/lain/cli/exec_backend.rb`, `lib/lain/cli/wiring.rb`, `lib/lain/cli/wiring/toolset_build.rb`,
@@ -269,7 +269,7 @@ end
 - `exe/lain:796`'s preflight `ExecBackend.resolve` cannot keep working unchanged.
 - `ExecBackend` instances are frozen, so `backend` cannot memoize; report rather than unfreezing a class other code shares.
 
-### T2: Name the entropy test as its own unit          [risk: low]
+### T2: [x] Name the entropy test as its own unit          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/sensitivity/entropy.rb` (new), `lib/lain/sensitivity/regions.rb`, `spec/lain/sensitivity/entropy_spec.rb` (new)
@@ -315,7 +315,7 @@ end
 - A Regions constant moved here is read by another file (grep `Regions::HEX_`, `Regions::BASE64_`).
 - The example count of `spec/lain/sensitivity/regions_spec.rb` changes.
 
-### T3: Give "detect and mask" one helper          [risk: low]
+### T3: [x] Give "detect and mask" one helper          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/sensitivity/masking.rb`, `lib/lain/consolidation.rb`, `lib/lain/cli/improve.rb`,
@@ -354,7 +354,7 @@ end
 - Another `Masking.render(..., Regions.detect(...))` site exists beyond the 2 named (grep); add it here rather than leave a
   third copy.
 
-### T4: Move the literal-secret choice out of the bash masker          [risk: medium]
+### T4: [x] Move the literal-secret choice out of the bash masker          [risk: medium]
 
 **Depends on:** none
 **Files:** `lib/lain/sensitivity/literals.rb` (new), `lib/lain/exec/child_env.rb`, `lib/lain/middleware/redact_secret_reads.rb`,
@@ -414,7 +414,7 @@ end
 - The "unreadable env withholds the result" example (`redact_secret_reads_spec.rb`, near `:1382`) stops passing: the raise
   from `to_h` must still happen inside the middleware's rescue.
 
-### T5: Hand the bash masker the launch's child environment          [risk: medium]
+### T5: [x] Hand the bash masker the launch's child environment          [risk: medium]
 
 **Depends on:** T1, T4
 **Files:** `lib/lain/middleware/redact_secret_reads.rb`, `lib/lain/cli/tool_guard.rb`, `lib/lain/cli/switchboard.rb`,
@@ -469,7 +469,7 @@ Lain::CLI::ToolGuard::Inputs      # gains :child_env, default Exec::ChildEnv::DE
 - Another builder of `ToolGuard::Inputs` exists in `lib/` beyond the 2 named (grep `Inputs.new`).
 - `Switchboard.for` has a caller other than `board_build.rb:74`.
 
-### T6: Mask what the region detector finds in a passed value          [risk: high]
+### T6: [x] Mask what the region detector finds in a passed value          [risk: high]
 
 **Depends on:** T5
 **Files:** `lib/lain/sensitivity/literals.rb`, `spec/lain/sensitivity/literals_spec.rb`,
@@ -515,7 +515,7 @@ Spec files: `spec/lain/sensitivity/literals_spec.rb`, `spec/lain/seams/passed_va
 **Stop and report if:**
 - A region `Regions.detect` returns on a value is not a byte substring of the value.
 
-### T7: Relax the entropy bar for a value whose name hints at a connection string          [risk: high]
+### T7: [x] Relax the entropy bar for a value whose name hints at a connection string          [risk: high]
 
 **Depends on:** T2, T6
 **Files:** `lib/lain/sensitivity/entropy.rb`, `lib/lain/sensitivity/literals.rb`, `spec/lain/sensitivity/entropy_spec.rb`,
@@ -582,7 +582,7 @@ end
 - A dashed UUID, a semantic version or a pure-digit token passes `Entropy.hinted?` (a 32-hex UUID with no dashes passes, and
   `Regions` flags it too).
 
-### T8: Journal each bash mask          [risk: medium]
+### T8: [x] Journal each bash mask          [risk: medium]
 
 **Depends on:** T6
 **Files:** `lib/lain/telemetry/command_redacted.rb` (new), `lib/lain/middleware/redact_secret_reads.rb`,
@@ -624,7 +624,7 @@ Lain::Telemetry::CommandRedacted = Data.define(:tool_use_id, :regions)   # regio
 - A session reader or `Compare` enumerates record types in a closed list that would refuse the new one (grep `ReadRedacted`
   outside `lib/lain/telemetry/`).
 
-### T9: Inspect the docker image for its ID on each call          [risk: high]
+### T9: [x] Inspect the docker image for its ID on each call          [risk: high]
 
 **Depends on:** none
 **Files:** `lib/lain/exec/docker.rb`, `lib/lain/exec/docker/image.rb` (new), `spec/lain/exec/docker_spec.rb`,
@@ -689,7 +689,7 @@ end
   outlives the call would bring back the frozen tag.
 - A spec pins the argv to name the tag after a successful inspect.
 
-### T10: Answer the filesystem port from an image listing          [risk: medium]
+### T10: [x] Answer the filesystem port from an image listing          [risk: medium]
 
 **Depends on:** none
 **Files:** `lib/lain/shell/executable/listed_stat.rb` (new), `lib/lain/shell/executable/realpath_walk.rb` (new),
@@ -766,7 +766,7 @@ end
 - `Bound`, `RunFiles` or `Fresh` calls a method on `lstat`'s result other than `symlink?` and `ctime` (grep `lstat(` under
   `lib/lain/shell/`).
 
-### T11: Route a mounted path to the host filesystem          [risk: low]
+### T11: [x] Route a mounted path to the host filesystem          [risk: low]
 
 **Depends on:** T10
 **Files:** `lib/lain/shell/executable/mounted_stat.rb` (new), `lib/lain/shell/executable/mounted_fresh.rb` (new),
@@ -818,7 +818,7 @@ end
 - "Under a mount" cannot be decided lexically. The mounts are realpaths (`ExecBackend` resolves the root), so a lexical test
   should hold.
 
-### T12: Fetch and cache an image's listing once per ID          [risk: high]
+### T12: [x] Fetch and cache an image's listing once per ID          [risk: high]
 
 **Depends on:** T9, T10
 **Files:** `lib/lain/exec/docker/image.rb`, `lib/lain/exec/docker/export.rb` (new), `lib/lain/paths.rb`,
@@ -905,7 +905,7 @@ end
 - The cache location cannot stay a `listing` argument without `Image` holding state about it; `Image.new` and
   `ExecBackend` stay untouched here, because T1 and T13 own `exec_backend.rb`.
 
-### T13: Resolve container programs from the image listing          [risk: high]
+### T13: [x] Resolve container programs from the image listing          [risk: high]
 
 **Depends on:** T1, T11, T12
 **Files:** `lib/lain/exec/docker/resolver.rb` (new), `lib/lain/exec/docker.rb`, `lib/lain/cli/exec_backend.rb`,
@@ -1001,7 +1001,7 @@ Lain::Telemetry::ExecImage = Data.define(:image, :id, :listed, :reason)
   those rather than breaking them.
 - `Facts::Resolving` (`judge/facts.rb:105-115`) reaches the resolver through a path other than `Wiring#exec_resolver`.
 
-### T14: Document container resolution          [risk: low]
+### T14: [x] Document container resolution          [risk: low]
 
 **Depends on:** T13
 **Files:** `ARCHITECTURE.md`, `planning/qa/scenarios/bash-confinement.md`, `planning/qa/scenarios/subagents-and-backends.md`,
@@ -1029,7 +1029,7 @@ Spec file: `spec/lain/comment_census_spec.rb` (unchanged, must stay green)
 **Stop and report if:**
 - Either scenario file has other docker claims that T13 made false beyond the lines named.
 
-### T15: Document passed-value masking          [risk: low]
+### T15: [x] Document passed-value masking          [risk: low]
 
 **Depends on:** T7, T8, T14
 **Files:** `ARCHITECTURE.md`, `planning/qa/scenarios/secret-boundary.md`, `lib/lain/config/builder.rb` (the `Builder#env`
@@ -1095,3 +1095,63 @@ After the last card lands:
   `bin/lint-gherkin-docs` (staged plan docs), `bin/lint-commit-msg`, `bin/lint-price-freshness`. A Ruby commit takes about
   70s and runs the full suite, so it must run alone on the box. Agent-runnable checks: `bundle exec rubocop <paths>`,
   `bundle exec yard-lint <paths>`, `bundle exec rspec <spec paths>`. No paths need user approval.
+- T1, T2, T3, T4, T9, T10 started, worktrees under `tmp/worktrees/t<id>` cut at `3002241a`.
+- T3 landed `c052f038`. T2 landed `6e690fa9` (review fix: a regions_spec comment named the moved method). T10 landed
+  `811a66ec` (review fix: pinned `children("/")` and `MAX_LINKS`).
+- T11 started at `3002241a` with T10's files laid in. Review found `directory?` and `children` disagreed with `lstat` for an
+  ancestor of a mount; fixed and approved on second review.
+- A passing hook prints no example count; each landing checks that `tmp/parallel_runtime_rspec.log` names the card's new
+  spec files instead.
+- T4 landed `8735a4d4`. T11 landed `6a9292c0`.
+- The repo's hook-wait pattern `[p]re-commit (hook-impl|run)` reads 0 while a hook runs (the process is
+  `python -mpre_commit hook-impl`); this run waits on `[p]re[-_]commit (hook-impl|run)`.
+- T1 landed `dc926e41`, after `64d44c74` raised `Metrics/ClassLength` to 302 for Wiring (reason in `.rubocop.yml`).
+  Review moved the option mapping into `ExecBackend.launch(options, env_pass:, ...)`. The first hook went red on the known
+  `WebFetch ... walk budget quickly` wall-clock flake (3.06s against 3s); green alone, green in a full suite on base and on
+  the card, recorded again in `docs/toolchain-traps.md` (`5dc6a8ef`).
+- T9 review: the inspect output was cut at the 16 KB bash capture ceiling on real images, so the pin was silently nil; fixed
+  with `--format '{{.Id}} {{json .Config}}'`. Interface: `Image.new(tag:, exec:, cwd:)`.
+- T12 started at `6a9292c0` with T9's files laid in. Review: an interrupt during `docker rm` leaked the container; `#listing`
+  now returns a `Listing` value whose `Failure` carries the reason and the cache file (only when written). Known trade:
+  `#listing` takes no deadline, so a first call on a new image ID can hold the approval up to create 5s + export 60s + rm 5s.
+- T5 started at `5dc6a8ef`.
+- T5 landed `8eed128d` (review fix: pinned that the production Wiring hands the board its ExecBackend's ChildEnv).
+- T6 started at `8eed128d`.
+- T9 landed `8bebe8eb`. Second review found `{{json .Config}}` still outgrew the capture on an image with large labels; the inspect now asks for `{{.Id}}`, `{{json .Config.Env}}` and `{{json .Config.Entrypoint}}`, 1 per line.
+- Follow-ups out of T6 review, outside this plan: (1) `Regions`' credential-assignment shape captures to whitespace, so
+  `Password=pw;Database=x` lists `pw;Database=x` and a bare `pw` printed alone is not masked; ending the value at `;` changes
+  file-read masking too, so it needs its own card. (2) `Literals` scans only pass-listed names, while `ChildEnv#call` also
+  hands the child every `KEEP` name and lent values under other names; 1 rule should decide both. (3) `Config` readers default
+  to their own `Paths` over `ENV`, so an injected `Paths` does not reach them (no production effect today).
+- T12 landed `76f2a264`, ported onto T9's final `image.rb`. Interface: `#listing(pin, paths:)` returns
+  `Listing(entries, failure)`, `Failure(reason, cache)`.
+- T13 started at `76f2a264`.
+- T6 landed `54db69fe` (review fix: the readable-part seam example now reads the passed value).
+- T7 and T8 started at `54db69fe`.
+- T8 landed `40dd5ab4`. The first hook went red on `plugin/tmux ... survives an install path with spaces in it`; green
+  alone, green in full suites on base and card, recorded in `docs/toolchain-traps.md`.
+- T7 review, 2 card changes ruled by the main session: the scan class drops `/` (`[A-Za-z0-9+_-]{16,}={0,2}`), so the
+  token after `scheme://` in a DSN is measured (same 28 and 2 on the corpus, 0 added on the real environment); `HINTED`
+  anchors `CONN` as `CONN(?:ECTION)?(?:_|\z)`, so `CONNECTOR_NAME` is not hinted. Also fixed: a non-UTF-8 byte in a hinted
+  value made every bash call withheld.
+- T13 review ruling by the main session: `Docker#mount_points` returns realpaths and the `--volume`/`--workdir` argv uses
+  them, so the run and the resolver read 1 mount set (a symlinked cwd outside the project had them disagree).
+- T7 landed `618ae488`, approved on second review. Accepted trade: with `/` out of the scan, a 40-hex git SHA in a
+  hinted URL's path is listed, the same false positive the corpus already accepts for a bare SHA.
+- Scope change on T13: `ListedStat#lstat`/`#readlink` looked up the exact path, so a relative link with `..` in its target
+  (common on Debian and Ubuntu) came back unresolved; MountedStat's mount test was lexical over the same path. T13 fixes both
+  landed files (`listed_stat.rb`, `mounted_stat.rb`) by resolving the parent before the lookup.
+- T13 landed `25873a27`, after `16b2ccc0` (the parent-first lookup in ListedStat and MountedStat). The 2 earlier hook
+  runs went red on 2 different timing examples (`Tool::Offload`, `EpicSubmit Ctrl-C`), each green alone and the first green
+  in full suites on base and card; both recorded in `docs/toolchain-traps.md`.
+- T14 started at `25873a27`.
+- T14 landed `da955768` (review fix: the listing notice fires on the first docker bash call, not at startup).
+- T15 started at `da955768`.
+- T15 landed `14c883f9` (review fix: the 4g session-file grep is scoped to tool_result and command_redacted records, since
+  the approved command's tool_use holds the token).
+- Close-out at `14c883f9`: `rake pspec` 3 times, 25,393 examples, 0 failures each (25,198 at `edf27b5f` plus this plan's
+  195). `rubocop` clean; `comment-census --check-tickets --check-load-order` 0 unclassified; `zeitwerk-census --check` 0;
+  `runtime-census --record` 3 times then `--check` ok. `spec-census --check` fails `assertions: 186 > 184`, identically on the
+  base `3002241a`, so this plan added none. `grep -rn resolver_for lib spec exe` is empty; `~/.cache/lain` does not exist.
+  `git worktree list` and `git branch --list` match the start. No container, tmux or nvim process left.
+- Manual pass still owed: the 8 Integration-check steps with real docker and podman, and the new secret-boundary 4g checks.
