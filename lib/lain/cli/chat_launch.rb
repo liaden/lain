@@ -112,8 +112,9 @@ module Lain
         # server, which is the one thing that method promises it never does.
         backend.num_ctx
         backend.refuse_compaction_flags!
-        resumed = resumed_run(backend)
         resolve_project!
+        refuse_isolation!
+        resumed = resumed_run(backend)
         schedule_gc
         open_chronicle
         converse(backend:, resumed:, &notice)
@@ -164,6 +165,7 @@ module Lain
       def preflight(&notice)
         refuse_contradictory_flags!
         resolve_project!
+        refuse_isolation!
         Config.load(root: project.root)
         configured_middleware
         @recorded_header = preflight_header
@@ -283,6 +285,11 @@ module Lain
       def exit_status = @wiring ? @wiring.exit_status : Repl::Outcome::COMPLETED
 
       private
+
+      # Before a resume salvages and before the record opens: salvage appends to
+      # the old file and opening makes the session directory, and a refused flag
+      # must leave nothing behind.
+      def refuse_isolation! = IsolationBackend.check!(@options[:isolation], root: project.root)
 
       def release_fleet
         fleet = @live_views&.fleet

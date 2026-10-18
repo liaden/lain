@@ -1536,3 +1536,84 @@ RSpec.describe Lain::CLI::ChatLaunch, "reading configured middleware" do
       .to all(be_empty)
   end
 end
+
+RSpec.describe Lain::CLI::ChatLaunch, "a refused --isolation" do
+  around do |example|
+    Dir.mktmpdir("lain-launch-isolation") do |dir|
+      @dir = File.realpath(dir)
+      with_env("XDG_STATE_HOME" => File.join(@dir, "state"), "HOME" => File.join(@dir, "home")) { example.run }
+    end
+  end
+
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: JSON.generate("models" => []))
+  end
+
+  let(:project) do
+    root = File.join(@dir, "plain").tap { |dir| FileUtils.mkdir_p(dir) }
+    Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+  end
+
+  def launch(**options)
+    described_class.new({ journal: true, nvim: false, max_tokens: 16, isolation: "worktree", **options },
+                        profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama"),
+                        project_factory: -> { project }, gc_schedule_factory: ->(**) { -> {} })
+  end
+
+  def state_entries = Dir.glob(File.join(@dir, "state", "**", "*"))
+
+  it "refuses outside a repository and leaves no session directory and no session file" do
+    expect { launch.call { |_notice| nil } }.to raise_error(Lain::CLI::IsolationBackend::NotARepository)
+    expect(state_entries.grep(/sessions/)).to be_empty
+  end
+
+  it "refuses an unknown backend name before the record opens" do
+    expect { launch(isolation: "docker").call { |_notice| nil } }
+      .to raise_error(Lain::CLI::IsolationBackend::Unknown)
+    expect(state_entries.grep(/sessions/)).to be_empty
+  end
+
+  # A crashed recording whose writer is dead, with a request never answered:
+  # resuming it salvages, and salvage appends a close anchor to the file.
+  def write_crashed_session
+    records = [dead_writer_header, *answered_turns, unanswered_request]
+    File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson")
+        .tap { |path| File.write(path, records.map { |record| "#{JSON.generate(record)}\n" }.join) }
+  end
+
+  def dead_writer_header
+    Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64),
+                               toolset: Lain::Toolset.new, profile: { "provider" => "ollama" })
+                       .merge(Lain::Liveness::Writer.current.with(start: "1").to_header)
+  end
+
+  def answered_turns
+    Lain::Timeline.empty(store: Lain::Store.new)
+                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+                  .to_a.map { |turn| Lain::SessionRecord.turn(turn) }
+  end
+
+  def unanswered_request
+    request = Lain::Request.new(model: "qwen3:4b", max_tokens: 64, messages: [{ role: "user", content: "again" }])
+    Lain::Telemetry::RequestSent.new(digest: request.digest, payload: request.cache_payload,
+                                     stream: request.stream, extra: request.extra,
+                                     prefix_digests: request.prefix_digests).to_journal
+  end
+
+  it "refuses a --resume before salvaging the old session file" do
+    old = write_crashed_session
+    before = File.binread(old)
+
+    expect { launch(resume: "", journal: false).call { |_notice| nil } }
+      .to raise_error(Lain::CLI::IsolationBackend::NotARepository)
+    expect(File.binread(old)).to eq(before)
+  end
+
+  # `lain up` learns of a refusal only from its pre-flight, or from a dead pane.
+  it "refuses a pre-flight outside a repository" do
+    expect { launch(journal: false).preflight { |_notice| nil } }
+      .to raise_error(Lain::CLI::IsolationBackend::NotARepository, /--isolation worktree/)
+  end
+end

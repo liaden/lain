@@ -84,6 +84,9 @@ module Lain
       # @return [#acquire] the resolved, decorated backend
       def self.resolve(...) = new(...).backend
 
+      # @return [String] the backend name, once {#check!} accepts it
+      def self.check!(...) = new(...).check!
+
       # Keyed on the REPOSITORY, never on the cwd: two runs started in
       # different subdirectories of one project lease out of one root (so the
       # clearing of a leftover checkout finds it), while two projects never
@@ -144,6 +147,27 @@ module Lain
       # @raise [Isolation::WorkingBranch::Refused] for `worktree` on a detached HEAD
       def backend = with_compose(with_databases(journalled(concrete)))
 
+      # The refusals {#backend} makes about the flag and the checkout, made
+      # without building anything, so a launch can refuse before it writes.
+      # Every step only reads: a name check, the repository walk, one
+      # `git symbolic-ref`, and a look for the compose file.
+      #
+      # `.lain/services.rb` is evaluated for `worktree` only, so `none` never
+      # runs the project's Ruby twice; under `none` a missing compose file is
+      # still the build's refusal. What loading the file itself raises (an
+      # untrusted or broken file) is not in this contract: it passes through
+      # unchanged, as it does from {#backend}.
+      #
+      # @return [String] the backend name
+      # @raise [Unknown] on a name outside {BACKENDS}
+      # @raise [NotARepository] for `worktree` outside a git repository
+      # @raise [UnboundedSearch] for `worktree` with no usable home
+      # @raise [Isolation::WorkingBranch::Refused] for `worktree` on a detached HEAD
+      # @raise [Error] for compose services declared with no compose file
+      def check!
+        backend_name.tap { |name| check_worktree if name == "worktree" }
+      end
+
       private
 
       # The `none` branch is built with the same root/paths/home this object
@@ -160,6 +184,11 @@ module Lain
       # known to be in {BACKENDS}.
       def backend_name
         self.class.known!(@name)
+      end
+
+      def check_worktree
+        working_branch(repo_root)
+        refuse_without_compose_file if services.grep(Isolation::Services::Compose).any?
       end
 
       def worktree

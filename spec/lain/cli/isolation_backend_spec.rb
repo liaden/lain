@@ -298,6 +298,62 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
     end
   end
 
+  # The launch runs this before it opens a session record, so it must refuse
+  # what resolve refuses about the flag and build nothing while it does.
+  describe ".check!" do
+    def check(name, root: @project, **) = described_class.check!(name, root:, paths:, shell_out_factory: shells, **)
+
+    it "refuses an unknown name" do
+      expect { check("docker") }.to raise_error(described_class::Unknown, /unknown isolation backend "docker"/)
+    end
+
+    it "refuses worktree outside a git repository, running nothing" do
+      expect { check("worktree") }.to raise_error(described_class::NotARepository, /git repository/)
+      expect(shells.calls).to be_empty
+    end
+
+    it "refuses worktree when the repository search cannot be bounded" do
+      expect { check("worktree", home: nil) }.to raise_error(described_class::UnboundedSearch)
+    end
+
+    it "accepts worktree in a repository without making a worktree root or a checkout" do
+      init_repo(@project)
+
+      expect(check("worktree")).to eq("worktree")
+      expect(File).not_to exist(worktree_root)
+      expect(registered_worktrees.lines.grep(/^worktree /).size).to eq(1)
+    end
+
+    it "refuses worktree on a detached HEAD, as the build does" do
+      init_repo(@project)
+      run_git(@project, "checkout", "-q", "--detach")
+
+      expect { check("worktree") }.to raise_error(Lain::Isolation::WorkingBranch::Refused, /detached HEAD/)
+    end
+
+    it "refuses a compose declaration with no compose file, as the build does" do
+      init_repo(@project)
+      declare_services(%(compose service: "db", container_port: 5432, env_var: "COMPOSE_DB_URL"\n))
+
+      expect { check("worktree") }.to raise_error(Lain::Error, /compose file.*compose\.yaml/m)
+    end
+
+    # The project's Ruby is evaluated by the build; a second evaluation here
+    # would be a cost on every launch and could repeat its side effects.
+    it "never evaluates .lain/services.rb for the none backend" do
+      marker = File.join(@project, "evaluated")
+      declare_services(%(File.write(#{marker.inspect}, "x")\n))
+
+      check(nil)
+
+      expect(File).not_to exist(marker)
+    end
+
+    it "accepts no flag, and needs no home for it" do
+      expect(check(nil, home: nil)).to eq(described_class::DEFAULT)
+    end
+  end
+
   describe "declared services" do
     it "provisions a declared postgres service over the worktree lease" do
       init_repo(@project)

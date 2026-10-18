@@ -516,9 +516,8 @@ module Lain
       # every later one, so the signature would promise a choice the object does
       # not offer. Its leases go to {#durable_journal}, which is the chronicle's to answer.
       #
-      # Resolved on the first call, before the chronicle pins its header, so an
-      # unrecognized name refuses while the session record is still empty -- the
-      # refusal-before-journal ordering --resume already keeps.
+      # A launch has already refused a bad flag by now, in
+      # {ChatLaunch#refuse_isolation!}, before the session record exists.
       #
       # The root is the {Project}'s, not `Dir.pwd`: it is what
       # `.lain/services.rb` is read from and where the repository search starts,
