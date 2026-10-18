@@ -106,16 +106,15 @@ module Lain
     #
     # nil is NOT "no strategy": an unflagged run still HAS a policy, the eager
     # tool-result tier every `--compact-strategy` run is measured against, so
-    # such a caller passes {Compaction::EAGER_CONTROL_ARM} explicitly. nil is
-    # reserved for a journal written before the field existed.
+    # such a caller passes {Compaction::EAGER_CONTROL_ARM} explicitly.
     Compaction = Data.define(:trigger, :cache_state, :bytes_before, :bytes_after, :cost_saved, :cost_spent,
                              :model, :collapse_strategy) do
       include Journalable
 
-      # Both later fields default, so a constructor that predates either keeps
-      # building the record it always did.
-      def initialize(trigger:, cache_state:, bytes_before:, bytes_after:, cost_saved:, cost_spent:, model: nil,
-                     collapse_strategy: nil)
+      def initialize(trigger:, cache_state:, bytes_before:, bytes_after:, cost_saved:, cost_spent:,
+                     collapse_strategy:, model: nil)
+        raise ArgumentError, "collapse_strategy must not be nil" if collapse_strategy.nil?
+
         trigger = Array(trigger).map(&:to_sym).freeze
         cache_state = cache_state.to_sym
         cost_saved = Telemetry.fixed_point(cost_saved)
@@ -123,7 +122,7 @@ module Lain
         Carriers::Compaction.check!(trigger:, cache_state:, cost_saved:, cost_spent:)
         super(trigger:, cache_state:, bytes_before: Integer(bytes_before), bytes_after: Integer(bytes_after),
               cost_saved:, cost_spent:, model: model&.to_s&.freeze,
-              collapse_strategy: collapse_strategy&.to_s&.freeze)
+              collapse_strategy: collapse_strategy.to_s.freeze)
       end
 
       # Does this record CARRY figures at all? False for exactly one cause: the

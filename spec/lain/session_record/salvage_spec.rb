@@ -427,19 +427,20 @@ RSpec.describe Lain::SessionRecord::Salvage do
     end
   end
 
-  # The header named no wire before the wire was recorded, and on this box
-  # every such frame is ollama's: one read as SSE parses to nothing.
-  describe "a frame written before the header named its wire" do
-    it "recovers an ollama frame whole" do
-      body = [%({"model":"m","message":{"role":"assistant","content":"hello ","thinking":"hm"},"done":false}\n),
-              %({"model":"m","message":{"role":"assistant","content":"world"},"done":true,"done_reason":"stop"}\n)].join
+  # A header without a wire key is corrupt: guessing the wire from the body
+  # would read an anthropic frame as ollama's or the reverse.
+  describe "a frame whose header names no wire" do
+    it "is a skipped corrupt region, and the notice names the missing key" do
+      body = %({"model":"m","message":{"role":"assistant","content":"hello"},"done":true}\n)
       header = "\x1e{\"request_digest\":\"blake3:old\",\"at\":\"2026-10-01T00:00:00Z\"}\n"
       File.binwrite(@wal_path, "#{header}#{body}#{Lain::Provider::ResponseWal.terminator_record(body.bytesize, true)}")
 
-      outcome = described_class.new(entries: [request_sent("blake3:old")], frames:, timeline:).call
+      outcome = described_class.new(entries: [request_sent("blake3:old")],
+                                    frames: Lain::Provider::ResponseWal.new(@wal_path).salvageable_frames,
+                                    timeline:).call
 
-      expect(outcome).to be_recovered
-      expect(outcome.turn.content).to eq([{ "type" => "thinking", "thinking" => "hm" }, *text("hello world")])
+      expect(outcome).not_to be_recovered
+      expect(outcome.notice).to include("corrupt region", "wire")
     end
   end
 

@@ -8,6 +8,8 @@ RSpec.describe Lain::Provider::ResponseWal do
     Dir.mktmpdir("wal") { |dir| @dir = dir and example.run }
   end
 
+  def header_json(digest) = JSON.generate("request_digest" => digest, "wire" => "anthropic-sse", "at" => "t")
+
   def wal(name = "session", **opts)
     described_class.new(File.join(@dir, "#{name}.wal"), **opts)
   end
@@ -88,30 +90,37 @@ RSpec.describe Lain::Provider::ResponseWal do
       end.to raise_error(ArgumentError, /carrier-pigeon/)
     end
 
-    # Frames written before the header named a wire still sit in real logs, and
-    # most of them are ollama's, so the wire is read off the first body bytes.
     describe "a header with no wire key" do
-      def old_frame(body)
+      def old_wal(body)
         header = "\x1e{\"request_digest\":\"old\",\"at\":\"2026-01-01T00:00:00Z\"}\n"
         terminator = described_class.terminator_record(body.bytesize, true)
         File.binwrite(File.join(@dir, "old.wal"), "#{header}#{body}#{terminator}")
-        wal("old").frames.to_a.fetch(0)
+        wal("old")
       end
 
-      it "reads a body that opens a JSON object as ollama NDJSON" do
-        entry = old_frame(%({"model":"m","message":{"role":"assistant","content":"hi"},"done":true}\n))
+      let(:ollama_body) { %({"model":"m","message":{"role":"assistant","content":"hi"},"done":true}\n) }
 
-        expect(entry.wire).to eq("ollama-ndjson")
-        expect(entry).to be_complete
+      it "is refused in strict mode, naming the missing key" do
+        expect { old_wal(ollama_body).frames.to_a }.to raise_error(described_class::CorruptFrame, /wire/)
       end
 
-      it "reads a body that opens with an SSE field as an anthropic stream" do
-        expect(old_frame("event: message_start\ndata: {}\n\n").wire).to eq("anthropic-sse")
-        expect(old_frame("data: {}\n\n").wire).to eq("anthropic-sse")
+      it "is a corrupt region in the tolerant scan, never a guessed wire" do
+        regions = old_wal(ollama_body).salvageable_frames.to_a
+
+        expect(regions).to all(be_corrupt)
+        expect(regions.first.reason).to include("wire")
       end
 
-      it "names no wire for a body that is neither" do
-        expect(old_frame("raw").wire).to be_nil
+      it "still reads a clean frame written after it" do
+        old_wal(ollama_body)
+        good = wal("old").open_frame(request_digest: "good", wire: "ollama-ndjson")
+        good.append(ollama_body)
+        good.close(complete: true)
+
+        clean = wal("old").salvageable_frames.reject(&:corrupt?)
+
+        expect(clean.map(&:request_digest)).to eq(["good"])
+        expect(clean.first.wire).to eq("ollama-ndjson")
       end
     end
 
@@ -154,7 +163,7 @@ RSpec.describe Lain::Provider::ResponseWal do
       path = File.join(@dir, "mismatch.wal")
       rs = described_class::RECORD_SEPARATOR
       # A terminator claiming 999 bytes over an 8-byte body: a torn terminator.
-      File.binwrite(path, "#{rs}#{JSON.generate("request_digest" => "m", "at" => "t")}\neight-ish" \
+      File.binwrite(path, "#{rs}#{header_json("m")}\neight-ish" \
                           "#{rs}#{JSON.generate("bytes" => 999, "complete" => true)}\n")
 
       entry = described_class.new(path).frames.to_a.fetch(0)
@@ -164,7 +173,7 @@ RSpec.describe Lain::Provider::ResponseWal do
     it "treats an explicit complete:false terminator as incomplete" do
       path = File.join(@dir, "false.wal")
       rs = described_class::RECORD_SEPARATOR
-      File.binwrite(path, "#{rs}#{JSON.generate("request_digest" => "f", "at" => "t")}\nbody" \
+      File.binwrite(path, "#{rs}#{header_json("f")}\nbody" \
                           "#{rs}#{JSON.generate("bytes" => 4, "complete" => false)}\n")
 
       entry = described_class.new(path).frames.to_a.fetch(0)

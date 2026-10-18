@@ -184,9 +184,8 @@ module Lain
       #   scheduler cannot answer it for itself: it is handed a PIPELINE, so
       #   the policy behind it is not a thing it can name. The default is the
       #   control arm rather than nil, because a caller naming none is running
-      #   this scheduler's bare Compact, which IS the eager tier; nil is
-      #   reserved for a record written before the field existed, and
-      #   defaulting to it would make "control arm" and "unreadable" one value.
+      #   this scheduler's bare Compact, which IS the eager tier. The record's
+      #   own keyword is required and nil raises.
       # @return the base itself, or a provider riding Compact ahead of it
       def pipeline(need:, cold:, history_size:, base:, rewrite: nil, ran_under: nil,
                    collapse_strategy: Telemetry::Compaction::EAGER_CONTROL_ARM)
@@ -262,11 +261,9 @@ module Lain
         @journal << accounting(decision, need, rewrite || measure(NO_MESSAGES), quote, collapse_strategy)
       end
 
-      # `collapse_strategy:` is named EXPLICITLY and never left to the member's
-      # own default: that default is nil, which {Telemetry::Compaction} reserves
-      # for a record written before the field existed, so relying on it would
-      # make "this journal predates the field" and "the caller forgot"
-      # indistinguishable in the one stream a bench groups by arm.
+      # `collapse_strategy:` is passed EXPLICITLY: {Telemetry::Compaction}
+      # requires it and raises on nil, so a forgotten arm cannot reach the one
+      # stream a bench groups by arm.
       def accounting(decision, need, rewrite, quote, collapse_strategy)
         Telemetry::Compaction.new(
           trigger: need.signals, cache_state: decision.cache_state,

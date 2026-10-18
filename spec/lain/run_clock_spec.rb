@@ -75,7 +75,7 @@ RSpec.describe Lain::RunClock do
   end
 
   def compaction_event
-    Lain::Telemetry::Compaction.new(trigger: %i[token_threshold], cache_state: :cold,
+    Lain::Telemetry::Compaction.new(collapse_strategy: "eager", trigger: %i[token_threshold], cache_state: :cold,
                                     bytes_before: 100, bytes_after: 10,
                                     cost_saved: nil, cost_spent: nil)
   end

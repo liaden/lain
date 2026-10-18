@@ -19,9 +19,9 @@ RSpec.describe Lain::Telemetry::Compaction do
   # constructor to be refused there rather than by this helper.
   def record(trigger: %i[token_threshold], cache_state: :forced, bytes_before: 26_174, bytes_after: 21_867,
              cost_saved: BigDecimal("0.002"), cost_spent: BigDecimal("0.0005"),
-             model: "claude-sonnet-4-6", **unknown)
+             model: "claude-sonnet-4-6", collapse_strategy: "eager", **extra)
     described_class.new(trigger:, cache_state:, bytes_before:, bytes_after:, cost_saved:, cost_spent:,
-                        model:, **unknown)
+                        model:, collapse_strategy:, **extra)
   end
 
   describe "the unit it names" do
@@ -101,15 +101,15 @@ RSpec.describe Lain::Telemetry::Compaction do
       expect(control.to_journal).to include("collapse_strategy" => "eager")
     end
 
-    # The one case nil is still allowed to mean: a journal written before
-    # this field existed, where the kwarg was never offered at all.
-    it "is nil, and the record still deeply frozen, for a journal older than this field" do
-      predates = described_class.new(trigger: %i[token_threshold], cache_state: :forced, bytes_before: 26_174,
-                                     bytes_after: 21_867, cost_saved: BigDecimal("0.002"),
-                                     cost_spent: BigDecimal("0.0005"))
+    it "refuses a record with no collapse strategy" do
+      expect do
+        described_class.new(trigger: %i[token_threshold], cache_state: :forced, bytes_before: 26_174,
+                            bytes_after: 21_867, cost_saved: BigDecimal("0.002"), cost_spent: BigDecimal("0.0005"))
+      end.to raise_error(ArgumentError, /collapse_strategy/)
+    end
 
-      expect(predates.to_journal).to include("collapse_strategy" => nil)
-      expect(predates).to be_deeply_frozen
+    it "refuses a nil collapse strategy" do
+      expect { record(collapse_strategy: nil) }.to raise_error(ArgumentError, /collapse_strategy/)
     end
   end
 end

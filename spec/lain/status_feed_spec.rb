@@ -95,7 +95,8 @@ RSpec.describe Lain::StatusFeed do
 
   def compaction_record
     Lain::Telemetry::Compaction.new(trigger: "token_threshold", cache_state: :cold, bytes_before: 100,
-                                    bytes_after: 10, cost_saved: nil, cost_spent: nil, model: nil)
+                                    bytes_after: 10, cost_saved: nil, cost_spent: nil, model: nil,
+                                    collapse_strategy: "eager")
   end
 
   def cut_record(kind)
@@ -1675,7 +1676,7 @@ RSpec.describe Lain::StatusFeed do
                  "cache_read_input_tokens" => 0, "cache_creation_input_tokens" => 0 }
       )
       telemetry << Lain::Telemetry::Compaction.new(trigger: "token_threshold", cache_state: :cold,
-                                                   bytes_before: 10, bytes_after: 1,
+                                                   collapse_strategy: "eager", bytes_before: 10, bytes_after: 1,
                                                    cost_saved: nil, cost_spent: nil)
 
       expect(published["occupancy"]).to eq(0.5)

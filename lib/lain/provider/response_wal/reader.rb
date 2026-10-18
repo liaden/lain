@@ -67,19 +67,11 @@ module Lain
           unrecognized(record, open, tail:, &emit)
         end
 
-        def begin_frame(json, raw, open)
+        def begin_frame(json, raw, open, &emit)
           yield torn(open) if open
-          Open.new(request_digest: json["request_digest"], raw:, wire: json.fetch("wire") { inferred_wire(raw) })
-        end
+          return corrupt('frame header lacks the "wire" key', &emit) unless json.key?("wire")
 
-        # A header with no wire predates the key. Most such frames are ollama's,
-        # so the first body bytes decide: an NDJSON line opens an object, an SSE
-        # stream opens with a field. Anything else is left unnamed, and a reader
-        # refuses it rather than guess.
-        def inferred_wire(raw)
-          return "ollama-ndjson" if raw.start_with?("{")
-
-          "anthropic-sse" if raw.start_with?("event:", "data:")
+          Open.new(request_digest: json["request_digest"], raw:, wire: json["wire"])
         end
 
         def finish_frame(json, rest, open, &emit)

@@ -33,6 +33,7 @@ RSpec.describe Lain::Compare::CompactionTally do
 
     it "reads the journal form of a real Telemetry::Compaction record" do
       record = Lain::Telemetry::Compaction.new(trigger: :tokens, cache_state: :cold, bytes_before: 10, bytes_after: 5,
+                                               collapse_strategy: "eager",
                                                cost_saved: "0.5", cost_spent: "0.2").to_journal
       expect(described_class.from_records([record]).cost_delta).to eq(BigDecimal("0.3"))
     end

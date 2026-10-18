@@ -58,6 +58,7 @@ RSpec.describe "compaction cuts on the HUD", :seam do
 
   it "counts an advance and its Compaction record once" do
     compaction = Lain::Telemetry::Compaction.new(trigger: "token_threshold", cache_state: :cold, bytes_before: 100,
+                                                 collapse_strategy: "eager",
                                                  bytes_after: 10, cost_saved: nil, cost_spent: nil, model: nil)
     session.record_compaction_cut(cut("advance"))
     feed << compaction

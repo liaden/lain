@@ -183,7 +183,7 @@ RSpec.describe Lain::Telemetry do
 
     it "is what an unpriced Compaction formats through, so its refusal stays nil in the record" do
       refused = Lain::Telemetry::Compaction.new(trigger: %i[token_threshold], cache_state: :cold,
-                                                bytes_before: 100, bytes_after: 40,
+                                                collapse_strategy: "eager", bytes_before: 100, bytes_after: 40,
                                                 cost_saved: nil, cost_spent: nil, model: "claude-opus-4-8")
       expect(refused).not_to be_priced
       expect(refused.to_journal).to include("cost_saved" => nil, "cost_spent" => nil)

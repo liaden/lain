@@ -265,6 +265,7 @@ RSpec.describe "Compaction journaling" do
   describe Lain::Telemetry::Compaction do
     subject(:compaction) do
       described_class.new(
+        collapse_strategy: "eager",
         trigger: %i[token_threshold], cache_state: :forced, bytes_before: 100, bytes_after: 40,
         cost_saved: BigDecimal("0.002"), cost_spent: BigDecimal("0.0005")
       )
@@ -293,14 +294,14 @@ RSpec.describe "Compaction journaling" do
     it "rejects an empty trigger -- a compaction record must name what fired it" do
       expect do
         described_class.new(trigger: [], cache_state: :cold, bytes_before: 1, bytes_after: 1,
-                            cost_saved: 0, cost_spent: 0)
+                            collapse_strategy: "eager", cost_saved: 0, cost_spent: 0)
       end.to raise_error(ArgumentError, /trigger/)
     end
 
     it "rejects a cache_state outside warm/cold/forced" do
       expect do
         described_class.new(trigger: %i[manual], cache_state: :lukewarm, bytes_before: 1, bytes_after: 1,
-                            cost_saved: 0, cost_spent: 0)
+                            collapse_strategy: "eager", cost_saved: 0, cost_spent: 0)
       end.to raise_error(ArgumentError, /cache_state/)
     end
 
@@ -314,6 +315,7 @@ RSpec.describe "Compaction journaling" do
 
     it "holds the model as a frozen String and stays Ractor-shareable with one" do
       priced = described_class.new(
+        collapse_strategy: "eager",
         trigger: %i[token_threshold], cache_state: :forced, bytes_before: 100, bytes_after: 40,
         cost_saved: 0, cost_spent: 0, model: +"claude-opus-4-8"
       )
@@ -329,6 +331,7 @@ RSpec.describe "Compaction journaling" do
     describe "a record that quotes no figures" do
       subject(:refused) do
         described_class.new(
+          collapse_strategy: "eager",
           trigger: %i[token_threshold], cache_state: :forced, bytes_before: 100, bytes_after: 40,
           cost_saved: nil, cost_spent: nil, model: "claude-opus-4-8"
         )
@@ -373,20 +376,21 @@ RSpec.describe "Compaction journaling" do
       it "refuses a `false` cost -- nil is the refusal, and nothing else is" do
         expect do
           described_class.new(trigger: %i[manual], cache_state: :cold, bytes_before: 1, bytes_after: 1,
-                              cost_saved: false, cost_spent: false)
+                              collapse_strategy: "eager", cost_saved: false, cost_spent: false)
         end.to raise_error(ArgumentError, /BigDecimal/)
       end
 
       it "refuses to quote one figure without the other -- absence is a property of the record" do
         expect do
           described_class.new(trigger: %i[manual], cache_state: :cold, bytes_before: 1, bytes_after: 1,
-                              cost_saved: 0, cost_spent: nil)
+                              collapse_strategy: "eager", cost_saved: 0, cost_spent: nil)
         end.to raise_error(ArgumentError, /cost_saved/)
       end
     end
 
     it "accepts a String cache_state (JSON never round-trips Symbols) equal to the Symbol form" do
       from_string = described_class.new(
+        collapse_strategy: "eager",
         trigger: %i[token_threshold], cache_state: "forced", bytes_before: 100, bytes_after: 40,
         cost_saved: 0, cost_spent: 0
       )

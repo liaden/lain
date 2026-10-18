@@ -92,8 +92,7 @@ module Lain
       FSYNC_WATERMARK = 64 * 1024
 
       # What a frame's bytes are, so a reader reassembles them with the parser
-      # that wrote them. A header with no `wire` predates the key; {Reader}
-      # infers it from the body.
+      # that wrote them. A header with no `wire` is corrupt to {Reader}.
       WIRES = %w[anthropic-sse anthropic-json ollama-ndjson ollama-json].freeze
 
       Entry = Data.define(:request_digest, :bytes, :complete, :wire) do

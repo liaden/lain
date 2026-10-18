@@ -177,7 +177,8 @@ module Lain
       def corruption
         return nil if @corruptions.empty?
 
-        "#{@corruptions.size} corrupt region(s) in the response log were skipped during salvage"
+        "#{@corruptions.size} corrupt region(s) in the response log were skipped during salvage " \
+          "(#{@corruptions.map(&:reason).uniq.join("; ")})"
       end
 
       # The last `request_sent` with nothing superseding it after it in the
