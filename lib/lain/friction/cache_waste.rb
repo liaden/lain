@@ -413,7 +413,7 @@ module Lain
       end
 
       # The rewrite semantics -- shared-position rule, depth, and the
-      # cross-format refusal -- stay entirely inside {Bench::Rewrites}: this
+      # format refusal -- stay entirely inside {Bench::Rewrites}: this
       # asks it about one consecutive pair rather than re-deriving any of it.
       def rebill_between(before, after)
         rewrite = Bench::Rewrites.new(chains: [[before.chain_version, before.chain],

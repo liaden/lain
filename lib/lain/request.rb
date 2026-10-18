@@ -97,12 +97,11 @@ module Lain
     # "nothing".
     SYSTEM_PREFIX = -1
 
-    # Journaled alongside the chain (see {Telemetry::RequestSent}). Format 1 --
-    # implicit in journals recorded before the version existed -- digested the FULL
-    # stripped prefix per marker; format 2 is the rolling chain below. The two
-    # formats' digests never agree on a shared position, which is why the version
-    # must ride with the chain: {Bench::Rewrites} refuses to compare across formats
-    # rather than misread the migration as a rewrite.
+    # Journaled alongside the chain (see {Telemetry::RequestSent}). Format 2 is the
+    # rolling chain below; the retired format 1 digested the FULL stripped prefix per
+    # marker. Two formats' digests never agree on a shared position, which is why the
+    # version must ride with the chain: {Bench::Rewrites} reads this format only and
+    # refuses any other rather than misread a change of format as a rewrite.
     PREFIX_CHAIN_VERSION = 2
 
     # `[[position, digest], ...]`, one entry per neutral cache marker in ascending

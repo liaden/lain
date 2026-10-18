@@ -152,7 +152,7 @@ module Lain
         # flat events, in the same currency.
         def recommitted(chain, record, index)
           chain.commit(role: role_of(record, index), content: required(record, index, "content"),
-                       meta: record.fetch("meta", {}), causal_parents: cited_parents(record, index))
+                       meta: required(record, index, "meta"), causal_parents: cited_parents(record, index))
         rescue Store::MissingObject => e
           raise Corrupt, "#{labelled(record, index)} cites a causal parent this fold never " \
                          "landed: #{e.message}"

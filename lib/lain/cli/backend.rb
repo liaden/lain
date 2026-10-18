@@ -596,13 +596,12 @@ module Lain
       end
 
       # @return [String] "turn" under --no-compact, else the profile's schedule_or_default
-      def compaction_schedule = compaction? ? @compaction.schedule_or_default : "turn"
+      def compaction_schedule = compaction? ? @compaction.schedule_or_default : SessionRecord::UNCOMPACTED_SCHEDULE
 
       # The compaction section of the session header: the arm this run was handed, said
       # or inherited, so a resume can render under it and a bench can group runs by it. Only a
       # set field is written, except the schedule that runs, which is always
-      # written so a journal without the key dates from before the field and
-      # ran on the turn. Any other unset flag is not "the default", it is the
+      # written, "turn" under --no-compact. Any other unset flag is not "the default", it is the
       # absence a later resume must be able to tell from a choice; an unset
       # `compact_strategy` in particular is the run's own eager tool-result
       # tier, the comparability axis's CONTROL arm, which a reader normalizes
@@ -615,8 +614,7 @@ module Lain
       #
       # @return [Hash{String=>Object}]
       def compaction_header
-        header = @compaction.to_header.except("compact_schedule")
-        compaction? ? header.merge("compact_schedule" => compaction_schedule) : header
+        @compaction.to_header.except("compact_schedule").merge("compact_schedule" => compaction_schedule)
       end
 
       # The run's ONE {Skill::Library} -- the project's skills and the prompt

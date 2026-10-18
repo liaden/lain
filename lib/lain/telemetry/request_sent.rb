@@ -39,11 +39,11 @@ module Lain
     # secret_oracle) so readers that pair a request with the agent's own usage
     # can skip the rest; nil is an older record and reads as the agent.
     #
-    # `prefix_chain_version` names the chain's FORMAT; nil covers both a nil
-    # chain and the unversioned chains in older journals. {Bench::Rewrites}
-    # compares chains only within one format -- the formats' digests never
-    # agree, so an unversioned reader would misread the migration itself as a
-    # rewrite.
+    # `prefix_chain_version` names the chain's FORMAT, and a computed chain
+    # must carry it: {Bench::Rewrites} reads one format and refuses the rest,
+    # since two formats' digests never agree and a comparison across them
+    # would misread the change of format as a rewrite. A not-computed chain
+    # carries none.
     RequestSent = Data.define(:digest, :payload, :stream, :extra, :prefix_digests, :prefix_chain_version,
                               :requester) do
       include Journalable
@@ -76,6 +76,7 @@ module Lain
       def initialize(digest:, payload:, stream:, extra:, prefix_digests: nil, prefix_chain_version: nil,
                      requester: nil, normalized: false)
         Carriers::RequestSent.check!(stream:)
+        raise ArgumentError, "prefix_digests needs a prefix_chain_version" if prefix_digests && !prefix_chain_version
 
         super(
           digest: digest.dup.freeze,

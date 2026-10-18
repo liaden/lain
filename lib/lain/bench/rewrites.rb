@@ -14,20 +14,19 @@ module Lain
     # so a shared position hashes identically regardless of whether a marker
     # sits on it, so only genuinely rewritten bytes disagree on a shared one.
     #
-    # `prefix_digests` distinguishes nil ("not computed" -- an older Journal,
-    # or a run that never enabled the chain) from `[]` ("computed, empty" --
-    # no cache markers were placed at all). A nil chain is skipped entirely
-    # rather than compared, so it never straddles two real chains as a false
-    # gap; an `[]` chain participates normally -- it shares no positions with
-    # any neighbor, so it can only rule a rewrite out, never be one.
+    # `prefix_digests` distinguishes nil ("not computed" -- a run that never
+    # enabled the chain) from `[]` ("computed, empty" -- no cache markers were
+    # placed at all). A nil chain is skipped entirely rather than compared, so
+    # it never straddles two real chains as a false gap; an `[]` chain
+    # participates normally -- it shares no positions with any neighbor, so it
+    # can only rule a rewrite out, never be one.
     #
-    # Chains are comparable only within ONE format: the record's
-    # `prefix_chain_version` (nil for journals recorded before the rolling
-    # chain -- format 1) tags each chain, and a pair straddling a format
-    # boundary reports nothing. The two formats' digests never agree on a
-    # shared position by construction, so an unversioned comparison would
-    # misread the migration itself as one giant rewrite at the earliest
-    # shared position.
+    # Every computed chain must carry {Request::PREFIX_CHAIN_VERSION}, the one
+    # format read here. Another format's digests never agree with this one's
+    # on a shared position, so comparing across them would report the change
+    # of format as one giant rewrite; a chain under any other version, or
+    # none, is refused instead. `new` takes computed chains only, each with
+    # its version; {.from_journal} drops a not-computed chain before it gets there.
     #
     # ONE CONFLATION, inherited from the chain itself: `Request#prefix_digests`
     # folds `model` into every entry, since the chains are per-model by design
@@ -64,10 +63,10 @@ module Lain
         new(chains:)
       end
 
-      # @param chains [Enumerable<Array(Object, Array<Array(Integer, String)>)>]
+      # @param chains [Enumerable<Array(Integer, Array<Array(Integer, String)>)>]
       #   one `[format_version, position/digest chain]` pair per request_sent
-      #   record that HAD a chain computed, in journal (call) order; the
-      #   version is nil for pre-versioning (format 1) journals
+      #   record that HAD a chain computed, in journal (call) order
+      # @raise [Session::Corrupt] for a version other than {Request::PREFIX_CHAIN_VERSION}
       def initialize(chains:)
         # `.to_a` before `.freeze`: `chains` from {.from_journal} is
         # `Journal.records`' lazy walk, and `each_cons`/`filter_map` on a
@@ -76,7 +75,8 @@ module Lain
         # `Ractor.shareable?`. Materializing is also what makes this a value
         # object: a Rewrites answers the same rewrites on every read, not a
         # stream that can only be walked once.
-        @rewrites = chains.each_cons(2).filter_map { |before, after| rewrite_between(before, after) }.to_a.freeze
+        @rewrites = chains.map { |pair| current_chain(*pair) }.each_cons(2)
+                          .filter_map { |before, after| rewrite_between(before, after) }.to_a.freeze
         freeze
       end
 
@@ -91,11 +91,15 @@ module Lain
 
       private
 
-      # A cross-format pair is INCOMPARABLE, not a rewrite: see the class
-      # comment.
-      def rewrite_between((before_version, before), (after_version, after))
-        return nil unless before_version == after_version
+      def current_chain(version, chain)
+        return chain if version == Request::PREFIX_CHAIN_VERSION
+        raise Session::Corrupt, "a request_sent chain has no prefix_chain_version" if version.nil?
 
+        raise Session::Corrupt, "a request_sent chain records format #{version.inspect}; " \
+                                "this reader reads format #{Request::PREFIX_CHAIN_VERSION}"
+      end
+
+      def rewrite_between(before, after)
         before_chain = before.to_h
         after_chain = after.to_h
         diverging = (before_chain.keys & after_chain.keys)

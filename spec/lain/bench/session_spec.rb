@@ -61,8 +61,9 @@ RSpec.describe Lain::Bench::Session do
       named = Lain::CLI::ContextPipeline.named("default").context(model: "claude-opus-4-8", max_tokens: 1024)
       write_session(into: Lain::Journal.new(io: named_io), under: named)
       header = journal_records(named_io).find { |record| record["type"] == "session" }
-      # `ts` is the Journal's own stamp on every record, not part of the header.
-      recorded = (header.keys - %w[type format context_class tools reminders ts])
+      # `ts` is the Journal's own stamp on every record, not part of the header,
+      # and `compact_schedule` is the run's compaction, not the Context's.
+      recorded = (header.keys - %w[type format compact_schedule context_class tools reminders ts])
                  .map { |key| key == "context_pipeline" ? "pipeline_name" : key }
       # `pipeline` is a live CODE collaborator (a Combinator or ->(workspace)
       # provider), not serializable data -- like a `self.pipeline`-

@@ -133,7 +133,10 @@ class DemoSupervision
                       timeline: recording.timeline)
     end
     report(supervisor, result)
-    supervisor.stop
+  ensure
+    # A refused restart raises past the report; a supervisor left running
+    # would keep Sync, and so the process, waiting forever.
+    supervisor&.stop
   end
 
   def restarter(supervisor)

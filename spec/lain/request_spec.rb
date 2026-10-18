@@ -299,6 +299,19 @@ RSpec.describe Lain::Request do
       expect(event.to_journal.fetch("prefix_chain_version")).to eq(Lain::Request::PREFIX_CHAIN_VERSION)
     end
 
+    it "refuses a chain with no format version, which no reader could compare" do
+      expect do
+        Lain::Telemetry::RequestSent.new(digest: "blake3:req", payload: {}, stream: true, extra: {},
+                                         prefix_digests: [[0, "blake3:a"]])
+      end.to raise_error(ArgumentError, /prefix_chain_version/)
+    end
+
+    it "records a not-computed chain with no version" do
+      event = Lain::Telemetry::RequestSent.new(digest: "blake3:req", payload: {}, stream: true, extra: {})
+
+      expect(event.prefix_chain_version).to be_nil
+    end
+
     it "does not normalize the payload again: the digest's own pass was taken at construction" do
       req = marked_request
       payload = req.cache_payload

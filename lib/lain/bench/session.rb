@@ -208,8 +208,7 @@ module Lain
       # that absence is normalized to the named control arm, not here, because
       # this member is what the header actually recorded, nothing folded in.
       # `compaction_tally` is the {Compare::CompactionTally} of the journal's compaction records.
-      # `schedule` is the header's `compact_schedule`, nil for a header older
-      # than the field; {Variance} reads nil as the turn schedule.
+      # `schedule` is the header's `compact_schedule`, which every header records.
       # `arms` is the header's bench arms, `{}` when none were on; defaulted
       # because the header omits the key for an unarmed run.
       #

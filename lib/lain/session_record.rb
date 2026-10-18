@@ -23,7 +23,12 @@ module Lain
     HEADER_TYPE = "session"
     # A removed, renamed or re-meant header or record key bumps this; an added
     # key does not, since a reader that ignores it still reads the file right.
+    # A key a reader starts to require also bumps this, unless no file of the
+    # current format lacks it: compact_schedule became required without a bump
+    # because no format-1 file without it survived the state purge.
     FORMAT = 1
+    # What a run with no compaction configured schedules on: every turn renders whole.
+    UNCOMPACTED_SCHEDULE = "turn"
     TURN_TYPE = "turn"
     REWOUND_TYPE = "rewound"
     # Named beside the types it deliberately is NOT: a spawned chain's turn is no
@@ -49,7 +54,9 @@ module Lain
     # `profile:` because the two are read for different things: a resumed chat
     # DEFAULTS its backend to the profile, while nothing resolves a fallback
     # from a recording. It merges on `profile:`'s own rule, so a run that
-    # recorded none writes no key.
+    # recorded none writes no key -- except `compact_schedule`, which is always
+    # written so the Loader can require it: {UNCOMPACTED_SCHEDULE} for an empty
+    # section, while a section without one is a writer that forgot it, and raises.
     #
     # `arms:` is the bench arms that are on (`CLI::Arms#to_header`); an empty
     # hash writes no key, so a run with every arm off keeps the older header.
@@ -67,7 +74,7 @@ module Lain
                  "model" => context.model, "max_tokens" => context.max_tokens,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "tools" => toolset.to_schema, "reminders" => workspace.reminders }
-      record = record.merge(context_pipeline(context), profile, compaction, section("arms", arms),
+      record = record.merge(context_pipeline(context), profile, scheduled(compaction), section("arms", arms),
                             section("middleware", middleware), writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
@@ -78,6 +85,16 @@ module Lain
     # @param header [Hash{String=>Object}]
     # @return [Boolean]
     def current_format?(header) = header["format"] == FORMAT
+
+    # @param compaction [Hash{String=>Object}] `CLI::Backend#compaction_header`, or empty
+    # @return [Hash{String=>Object}] the section, or {UNCOMPACTED_SCHEDULE} alone for an empty one
+    # @raise [ArgumentError] for a non-empty section that names no schedule
+    def scheduled(compaction)
+      return { "compact_schedule" => UNCOMPACTED_SCHEDULE } if compaction.empty?
+      return compaction if compaction.key?("compact_schedule")
+
+      raise ArgumentError, "a compaction section must name its compact_schedule, got #{compaction.keys.inspect}"
+    end
 
     # Fields nested under one key, so a reader of the header's flat keys never
     # mistakes one for a profile field.

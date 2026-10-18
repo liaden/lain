@@ -148,7 +148,7 @@ module Lain
       # @param profile [Hash{String=>Object}] the run profile's header fields
       #   (`CLI::RunProfile#to_header`); empty writes none
       # @param compaction [Hash{String=>Object}] the run's compaction section
-      #   (`CLI::Backend#compaction_header`); empty writes none
+      #   (`CLI::Backend#compaction_header`); empty writes the turn schedule alone
       # @param arms [Hash{String=>String}] the bench arms that are on
       #   (`CLI::Arms#to_header`); empty writes none
       # @param middleware [Hash{String=>String}] whose trust digest admitted the

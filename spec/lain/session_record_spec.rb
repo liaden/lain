@@ -120,7 +120,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
   # because the two are read for different things: a resumed chat defaults its
   # backend to the profile, while nothing resolves a fallback from a recording.
   it "writes the run's compaction section into that header" do
-    described_class.new(journal:, context:, toolset:, workspace:, compaction: { "compact_fallback" => "none" })
+    described_class.new(journal:, context:, toolset:, workspace:,
+                        compaction: { "compact_fallback" => "none", "compact_schedule" => "turn" })
 
     expect(of_type("session").first).to include("compact_fallback" => "none")
   end
@@ -160,7 +161,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
   # same word for the same arm regardless of which scribe wrote the header.
   it "writes a named compact_strategy into that same section" do
     described_class.new(journal:, context:, toolset:, workspace:,
-                        compaction: { "compact_fallback" => "handoff", "compact_strategy" => "elide" })
+                        compaction: { "compact_fallback" => "handoff", "compact_strategy" => "elide",
+                                      "compact_schedule" => "turn" })
 
     expect(of_type("session").first).to include("compact_fallback" => "handoff", "compact_strategy" => "elide")
   end
@@ -172,7 +174,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
   end
 
   it "writes no compact_strategy key when the run recorded no strategy" do
-    described_class.new(journal:, context:, toolset:, workspace:, compaction: { "compact_fallback" => "handoff" })
+    described_class.new(journal:, context:, toolset:, workspace:,
+                        compaction: { "compact_fallback" => "handoff", "compact_schedule" => "turn" })
 
     expect(of_type("session").first).not_to have_key("compact_strategy")
   end
@@ -1030,6 +1033,26 @@ RSpec.describe Lain::SessionRecord, ".header" do
     expect(header(Lain::Context.new(model: "m", max_tokens: 8))).not_to have_key("writer")
   end
 
+  # "turn" is what a run with no compaction configured schedules on, so every
+  # writer records it rather than leaving the reader to guess from an absence.
+  it "records the turn schedule when there is no compaction section" do
+    expect(header(Lain::Context.new(model: "m", max_tokens: 8))).to include("compact_schedule" => "turn")
+  end
+
+  # A section with no schedule is a writer that forgot it, not a run without compaction.
+  it "refuses a compaction section that names no schedule" do
+    expect do
+      described_class.header(context: Lain::Context.new(model: "m", max_tokens: 8), toolset:,
+                             compaction: { "compact_fallback" => "none" }, writer: CoreGraph::NO_WRITER)
+    end.to raise_error(ArgumentError, /compact_schedule/)
+  end
+
+  it "keeps the schedule the compaction section names" do
+    expect(described_class.header(context: Lain::Context.new(model: "m", max_tokens: 8), toolset:,
+                                  compaction: { "compact_schedule" => "idle" }, writer: CoreGraph::NO_WRITER))
+      .to include("compact_schedule" => "idle")
+  end
+
   describe "on a real launch" do
     include ChatLaunchProbe
 
@@ -1052,6 +1075,10 @@ RSpec.describe Lain::SessionRecord, ".header" do
 
     it "writes no key when the chat was launched without the flag" do
       expect(launched_header({})).not_to have_key("context_pipeline")
+    end
+
+    it "records the turn schedule for a chat launched with --no-compact" do
+      expect(launched_header(compact: false)).to include("compact_schedule" => "turn")
     end
 
     # The argv goes through the exe's own flag band and profile resolution, so

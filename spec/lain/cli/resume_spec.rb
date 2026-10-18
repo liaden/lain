@@ -388,9 +388,7 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     def request_sent_record(request)
-      Lain::Telemetry::RequestSent.new(digest: request.digest, payload: request.cache_payload,
-                                       stream: request.stream, extra: request.extra,
-                                       prefix_digests: request.prefix_digests).to_journal
+      Lain::Telemetry::RequestSent.from(request).to_journal
     end
 
     def wal_path_for(name) = Lain::Paths.wal_for(File.join(paths.sessions_dir, name))
@@ -1065,7 +1063,8 @@ RSpec.describe Lain::CLI::Resume do
     before do
       write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), provider: "ollama",
                                                                   compaction: { "compact_keep" => 4,
-                                                                                "compact_strategy" => "elide" })
+                                                                                "compact_strategy" => "elide",
+                                                                                "compact_schedule" => "turn" })
     end
 
     def typed(**options) = Lain::CLI::CompactionProfile.typed(options)
@@ -1095,7 +1094,7 @@ RSpec.describe Lain::CLI::Resume do
         .to include("recorded with --compact-schedule turn; continuing with idle")
     end
 
-    it "treats a header with no schedule as the turn: silent untyped, a notice when idle is typed" do
+    it "reads the recorded turn schedule: silent untyped, a notice when idle is typed" do
       expect(resume.call(compaction: typed).notices).to be_empty
       expect(resume.call(compaction: typed(compact_schedule: "idle")).notices.join)
         .to include("recorded with --compact-schedule turn")

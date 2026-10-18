@@ -116,8 +116,7 @@ module Lain
         def record(journal, responses)
           toolset = Toolset.new([DosingLookup.new])
           context = Context.new(model: MODEL, max_tokens: 1024, system: "be terse")
-          scribe = SessionRecord::Scribe.new(journal:, context:, toolset:, writer: WRITER,
-                                             compaction: CLI::RunRecorder::COMPACTION)
+          scribe = SessionRecord::Scribe.new(journal:, context:, toolset:, writer: WRITER)
           agent = Agent.new(provider: Provider::Mock.new(responses:),
                             toolset:, context:, journal:,
                             model_middleware: journaling_stack(journal))

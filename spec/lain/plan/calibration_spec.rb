@@ -7,13 +7,10 @@
 # with no history answers nil, the annotation-only fallback.
 RSpec.describe Lain::Plan::Calibration do
   # A closure_record line as Plan::Closure#record actually journals it (see
-  # spec/lain/plan/closure_spec.rb) -- raw Hash, the Journal.records duck,
-  # never reconstructed through Telemetry::ClosureRecord (whose Guard demands
-  # `size`, so a pre-migration line without it could never become one).
+  # spec/lain/plan/closure_spec.rb) -- raw Hash, the Journal.records duck.
   def closure_record(step_id:, size:, digests:)
-    record = { "type" => "closure_record", "closure_digest" => "blake3:closure-#{step_id}",
-               "step_id" => step_id, "plan_digest" => "blake3:plan", "chunk_turn_digests" => digests }
-    size.nil? ? record : record.merge("size" => size)
+    { "type" => "closure_record", "closure_digest" => "blake3:closure-#{step_id}",
+      "step_id" => step_id, "plan_digest" => "blake3:plan", "chunk_turn_digests" => digests, "size" => size }
   end
 
   # 10 in, 5 out -> 15 total tokens per turn, the same fixture shape
@@ -75,7 +72,6 @@ RSpec.describe Lain::Plan::Calibration do
       calibration = described_class.fold([])
 
       expect(calibration.median_turns("S")).to be_nil
-      expect(calibration.unclassed_count).to eq(0)
     end
 
     it "accepts a Symbol size class the same as a String" do
@@ -84,26 +80,10 @@ RSpec.describe Lain::Plan::Calibration do
       expect(calibration.median_turns(:S)).to eq(calibration.median_turns("S"))
     end
 
-    describe "a closure_record with no recoverable size (pre-migration line, hand-built fixture)" do
-      let(:unclassed_digests) { %w[u1t1] }
-      let(:entries) do
-        classed_entries + [closure_record(step_id: "U1", size: nil, digests: unclassed_digests),
-                           *turns_for(unclassed_digests)]
-      end
+    it "refuses a closure_record with no size" do
+      sizeless = closure_record(step_id: "U1", size: nil, digests: %w[u1t1]).except("size")
 
-      it "folds as unclassed: excluded from every per-class distribution" do
-        calibration = described_class.fold(entries)
-
-        expect(calibration.median_turns("S")).to eq(1)
-        expect(calibration.median_turns("M")).to eq(3)
-        expect(calibration.unclassed_count).to eq(1)
-      end
-
-      it "names the gap in the report rather than silently dropping it" do
-        calibration = described_class.fold(entries)
-
-        expect(calibration.render).to match(/unclassed.*: 1/)
-      end
+      expect { described_class.fold(classed_entries + [sizeless]) }.to raise_error(KeyError, /size/)
     end
 
     # Panel finding: Telemetry::ClosureRecord's Guard only checks size's
@@ -130,16 +110,14 @@ RSpec.describe Lain::Plan::Calibration do
 
         expect(symbol_calibration.median_turns("S")).to eq(string_calibration.median_turns("S"))
         expect(symbol_calibration.tokens_distribution("S")).to eq(string_calibration.tokens_distribution("S"))
-        expect(symbol_calibration.unclassed_count).to eq(0)
       end
 
-      it "does not crash #render and does not vanish from either per-class or unclassed accounting" do
+      it "does not crash #render and does not vanish from the per-class accounting" do
         calibration = described_class.fold([symbol_sized_record(step_id: "SYM", size: :S, digests: %w[sym1]),
                                             *turns_for(%w[sym1])])
 
         expect { calibration.render }.not_to raise_error
         expect(calibration.median_turns("S")).to eq(1)
-        expect(calibration.unclassed_count).to eq(0)
       end
     end
 

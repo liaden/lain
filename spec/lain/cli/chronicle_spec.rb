@@ -722,10 +722,7 @@ RSpec.describe Lain::CLI::Chronicle do
         # is a stand-in for.
         request = Lain::Request.new(model: "claude-opus-4-8", max_tokens: 16,
                                     messages: [{ role: "user", content: "and ibuprofen?" }])
-        chronicle.instrumentation.journal << Lain::Telemetry::RequestSent.new(
-          digest: request.digest, payload: request.cache_payload, stream: request.stream,
-          extra: request.extra, prefix_digests: request.prefix_digests
-        )
+        chronicle.instrumentation.journal << Lain::Telemetry::RequestSent.from(request)
 
         # The nvim-shaped hand-edit: a human resent the same in-flight request
         # from the editor, over the SAME journal the scribe writes into (the

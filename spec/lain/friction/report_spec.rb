@@ -133,7 +133,7 @@ RSpec.describe Lain::Friction::Report do
   describe "the cache-rewrite count is a strictly-greater-than threshold (boundary)" do
     def request_sent_chain(digests)
       digests.map do |digest|
-        { "type" => "request_sent", "prefix_chain_version" => 1,
+        { "type" => "request_sent", "prefix_chain_version" => Lain::Request::PREFIX_CHAIN_VERSION,
           "prefix_digests" => [[0, digest]] }
       end
     end
@@ -165,7 +165,7 @@ RSpec.describe Lain::Friction::Report do
   describe "the two cache lines, when one fires and the other reports nothing" do
     def request_sent(digest)
       { "type" => "request_sent", "digest" => "blake3:req", "payload" => { "model" => "claude-opus-4-8" },
-        "prefix_chain_version" => 1, "prefix_digests" => [[0, digest]] }
+        "prefix_chain_version" => Lain::Request::PREFIX_CHAIN_VERSION, "prefix_digests" => [[0, digest]] }
     end
 
     def turn_usage(read:)
@@ -198,7 +198,7 @@ RSpec.describe Lain::Friction::Report do
 
   def request_sent(digest, model)
     { "type" => "request_sent", "digest" => "blake3:req", "payload" => { "model" => model },
-      "prefix_chain_version" => 1, "prefix_digests" => [[0, digest]] }
+      "prefix_chain_version" => Lain::Request::PREFIX_CHAIN_VERSION, "prefix_digests" => [[0, digest]] }
   end
 
   def turn_usage(model, read: 0, create: 0)

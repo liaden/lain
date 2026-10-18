@@ -12,11 +12,6 @@ module Lain
         # partial file is an open session cut off part way through a run.
         FAILED = ".failed.ndjson"
 
-        # Every bench run renders each turn whole: no compaction runs between
-        # turns, so the header names the schedule
-        # {Lain::CLI::Backend#compaction_schedule} answers under `--no-compact`.
-        COMPACTION = { "compact_schedule" => "turn" }.freeze
-
         # Where the records a shared provider writes about its own round trips
         # land: the file of whichever run is recording, and nowhere between
         # runs. One provider serves every run, so a destination handed to it
@@ -157,8 +152,7 @@ module Lain
         def run_and_write(journal)
           recorder = @memory.view
           toolset = @tools.call(recorder:, journal:)
-          scribe = SessionRecord::Scribe.new(journal:, context: @context, toolset:, profile: @profile,
-                                             compaction: COMPACTION)
+          scribe = SessionRecord::Scribe.new(journal:, context: @context, toolset:, profile: @profile)
           journal << @attribution
           Capability::Policy.for(:degrade, journal:).resolve(@context, @provider)
           agent = build_agent(journal, recorder, toolset)

@@ -31,9 +31,6 @@ module Lain
     # that guard refuse an `ask` run held against a `bypass` one: absent it,
     # every run reads as "not recorded" and the guard agrees with everything.
     class Variance
-      # A header without the key predates the idle schedule, so it ran per turn.
-      TURN_SCHEDULE = "turn"
-
       # @param recordings [Array<Session::Recording>] n >= 2 recordings of one task
       # @param price_book [Lain::PriceBook] how each recording's usage becomes dollars
       # @param set_aside [Array<String>] runs of the task that measured nothing,
@@ -167,7 +164,7 @@ module Lain
       end
 
       def guard_schedule!
-        names = @recordings.map { |recording| recording.schedule || TURN_SCHEDULE }
+        names = @recordings.map(&:schedule)
         mismatch = names.combination(2).find { |(one, other)| one != other }
         return if mismatch.nil?
 

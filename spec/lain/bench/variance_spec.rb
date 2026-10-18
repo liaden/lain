@@ -76,7 +76,7 @@ RSpec.describe Lain::Bench::Variance do
   def run_and_write(journal, responses, context, compact_strategy: nil)
     agent, = record_journaled_run(responses, journal:, toolset:,
                                              context:, workspace:)
-    compaction = compact_strategy.nil? ? {} : { "compact_strategy" => compact_strategy }
+    compaction = compact_strategy.nil? ? {} : { "compact_strategy" => compact_strategy, "compact_schedule" => "turn" }
     Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, compaction:, writer: CoreGraph::NO_WRITER)
                                .catch_up(agent.timeline).close(reason: :exit)
   end
@@ -312,7 +312,7 @@ RSpec.describe Lain::Bench::Variance do
         .to include("2: byte-identical")
     end
 
-    it "reads a header without the key as the turn schedule" do
+    it "pools a recording that named the turn schedule with one that configured no compaction" do
       expect(described_class.new(recordings: [scheduled("turn"), reference]).report).to include("2: byte-identical")
     end
   end

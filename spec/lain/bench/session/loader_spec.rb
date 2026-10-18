@@ -28,7 +28,7 @@ RSpec.describe Lain::Bench::Session::Loader do
   # The Loader's own input duck: the Journal.parse entries, here the raw NDJSON
   # lines Session.load hands it from a file the one session writer closed.
   def entries(compact_strategy: nil)
-    compaction = compact_strategy.nil? ? {} : { "compact_strategy" => compact_strategy }
+    compaction = compact_strategy.nil? ? {} : { "compact_strategy" => compact_strategy, "compact_schedule" => "turn" }
     write_session(agent.timeline, toolset:, compaction:)
     journal_io.string.each_line
   end
@@ -141,8 +141,8 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(recording.arms).to eq({})
     end
 
-    it "answers nil schedule for a header carrying no compact_schedule key" do
-      expect(recording.schedule).to be_nil
+    it "reads the turn schedule the header records for a run that configured no compaction" do
+      expect(recording.schedule).to eq("turn")
     end
 
     def flip(from, to, **over)
@@ -308,6 +308,20 @@ RSpec.describe Lain::Bench::Session::Loader do
       records = forge("session") { |header| header["format"] = 2 }
       expect { described_class.new(records).recording }
         .to raise_error(Lain::Bench::Session::Corrupt, /format 2.*format 1/)
+    end
+
+    %w[compact_schedule extra].each do |key|
+      it "raises Corrupt naming #{key} when a stamped header lacks it" do
+        records = forge("session") { |header| header.delete(key) }
+        expect { described_class.new(records).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt, /session header has no #{key} key/)
+      end
+    end
+
+    it "raises Corrupt naming meta when a turn record lacks it" do
+      records = forge("turn") { |turn| turn.delete("meta") }
+      expect { described_class.new(records).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /turn record \d+ \(\w+\) has no meta key/)
     end
 
     it "raises Corrupt rather than fabricating a context when no header is present" do

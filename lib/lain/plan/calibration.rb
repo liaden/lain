@@ -20,16 +20,9 @@ module Lain
     # `chunk_turn_digests` rather than a live Timeline's reachability walk: a
     # closure already attests which turns its chunk spent, so no Timeline (and
     # no Store) is needed to price them.
-    #
-    # A `closure_record` line missing `size` (a pre-migration journal, or a
-    # hand-built fixture predating the field) folds UNCLASSED rather than
-    # raising: {Telemetry::ClosureRecord}'s Guard demands `size` for anything
-    # CONSTRUCTED as one, but a Journal reader sees raw parsed Hashes, and
-    # history a migration cannot rewrite is real. Unclassed chunks are excluded
-    # from every per-class distribution and counted, never silently dropped.
     class Calibration
       # One closed chunk's measurements, folded from one closure_record (+ its
-      # turn_usage join). `size` is nil for an unclassed line.
+      # turn_usage join).
       Chunk = Data.define(:step_id, :size, :turns, :tokens)
 
       # @param entries [Enumerable<Hash, String>] the {Journal.records} duck --
@@ -64,40 +57,32 @@ module Lain
         distribution(size_class, &:tokens)
       end
 
-      # @return [Integer] closures whose size class could not be recovered
-      #   from the Journal.
-      def unclassed_count
-        @chunks.count { |chunk| chunk.size.nil? }
-      end
-
       # @return [String] a scannable report: each class's turn/token
-      #   distribution, per-chunk drift against its own class's median, and
-      #   the unclassed count, named rather than hidden. Never printed here
-      #   (output discipline).
+      #   distribution and per-chunk drift against its own class's median.
+      #   Never printed here (output discipline).
       def render
-        [class_table, "", drift_table, "", unclassed_line].join("\n")
+        [class_table, "", drift_table].join("\n")
       end
 
       private
 
-      # `size` is normalized to a String (or nil) here, not trusted from the
+      # `size` is normalized to a String here, not trusted from the
       # record: a Journal reader mostly sees JSON-round-tripped Hashes where a
       # Symbol could never survive, but nothing stops a live in-process caller
       # from handing `Telemetry::ClosureRecord#to_journal`'s Hash straight to
       # `.fold` -- the Guard only checks `size`'s PRESENCE, not its type. An
       # un-normalized Symbol would compare unequal to every String size_class
-      # callers pass, so the chunk would silently fold into NEITHER its class
-      # NOR the unclassed count. A digest with no `turn_usage` entry at all
+      # callers pass, so the chunk would silently fold into no class. A digest with no `turn_usage` entry at all
       # contributes zero tokens -- the same "un-instrumented turns are free"
       # reading {Ledger#usage_of} gives a digest the Journal never priced.
       def chunk_from(record, usage_index)
         digests = record.fetch("chunk_turn_digests")
         tokens = digests.sum { |digest| usage_index.entries_for(digest).sum { |entry| entry.usage.total_tokens } }
-        Chunk.new(step_id: record.fetch("step_id"), size: record["size"]&.to_s, turns: digests.length, tokens:)
+        Chunk.new(step_id: record.fetch("step_id"), size: record.fetch("size").to_s, turns: digests.length, tokens:)
       end
 
       def classes
-        @chunks.filter_map(&:size).uniq.sort
+        @chunks.map(&:size).uniq.sort
       end
 
       def distribution(size_class, &reader)
@@ -116,21 +101,15 @@ module Lain
       end
 
       def drift_table
-        rows = @chunks.filter_map { |chunk| drift_row(chunk) }
-        return "no classed chunks to measure drift against" if rows.empty?
+        rows = @chunks.map { |chunk| drift_row(chunk) }
+        return "no chunks to measure drift against" if rows.empty?
 
         Compare::Table.new(headers: %w[step class turns class_median drift], rows:).to_s
       end
 
       def drift_row(chunk)
-        return nil if chunk.size.nil?
-
         median = median_turns(chunk.size)
         [chunk.step_id, chunk.size, chunk.turns.to_s, format("%.1f", median), format("%+.1f", chunk.turns - median)]
-      end
-
-      def unclassed_line
-        "unclassed closures (no size recoverable from the Journal): #{unclassed_count}"
       end
     end
   end

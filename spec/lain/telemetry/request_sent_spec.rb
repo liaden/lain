@@ -59,7 +59,8 @@ RSpec.describe Lain::Telemetry::RequestSent do
     it "journals a nil default as null and an explicit empty chain as [], distinguishably" do
       computed_empty = described_class.new(digest: request.digest, payload: request.cache_payload,
                                            stream: request.stream, extra: request.extra,
-                                           prefix_digests: [])
+                                           prefix_digests: [],
+                                           prefix_chain_version: Lain::Request::PREFIX_CHAIN_VERSION)
       expect(JSON.generate(event.to_journal)).to include('"prefix_digests":null')
       expect(JSON.generate(computed_empty.to_journal)).to include('"prefix_digests":[]')
     end
@@ -67,7 +68,8 @@ RSpec.describe Lain::Telemetry::RequestSent do
     it "carries the digest chain the caller passed, normalized to canonical wire form" do
       chained = described_class.new(digest: request.digest, payload: request.cache_payload,
                                     stream: request.stream, extra: request.extra,
-                                    prefix_digests: [[-1, "blake3:sys"], [0, "blake3:m0"]])
+                                    prefix_digests: [[-1, "blake3:sys"], [0, "blake3:m0"]],
+                                    prefix_chain_version: Lain::Request::PREFIX_CHAIN_VERSION)
       expect(chained.prefix_digests).to eq([[-1, "blake3:sys"], [0, "blake3:m0"]])
       expect(chained.prefix_digests).to be_deeply_frozen
     end
@@ -75,14 +77,16 @@ RSpec.describe Lain::Telemetry::RequestSent do
     it "is Ractor-shareable with a populated chain" do
       chained = described_class.new(digest: request.digest, payload: request.cache_payload,
                                     stream: request.stream, extra: request.extra,
-                                    prefix_digests: [[0, "blake3:m0"]])
+                                    prefix_digests: [[0, "blake3:m0"]],
+                                    prefix_chain_version: Lain::Request::PREFIX_CHAIN_VERSION)
       expect(chained).to be_deeply_frozen
     end
 
     it "journals as position/digest pairs that round-trip through JSON" do
       chained = described_class.new(digest: request.digest, payload: request.cache_payload,
                                     stream: request.stream, extra: request.extra,
-                                    prefix_digests: [[-1, "blake3:sys"], [0, "blake3:m0"]])
+                                    prefix_digests: [[-1, "blake3:sys"], [0, "blake3:m0"]],
+                                    prefix_chain_version: Lain::Request::PREFIX_CHAIN_VERSION)
       expect(chained.to_journal).to include("prefix_digests" => [[-1, "blake3:sys"], [0, "blake3:m0"]])
       expect(JSON.parse(JSON.generate(chained.to_journal))).to include(
         "prefix_digests" => [[-1, "blake3:sys"], [0, "blake3:m0"]]

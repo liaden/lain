@@ -34,8 +34,8 @@ RSpec.describe Lain::CLI::CompactionProfile do
       expect(described_class.from_header({ "compact_schedule" => "idle" })).to have_attributes(schedule: "idle")
     end
 
-    it "reads a header older than the schedule field as having run on the turn" do
-      expect(described_class.from_header({ "provider" => "ollama" })).to have_attributes(schedule: "turn")
+    it "invents no schedule a header does not record" do
+      expect(described_class.from_header({ "provider" => "ollama" })).to have_attributes(schedule: nil)
     end
 
     it "is unset for no header at all" do

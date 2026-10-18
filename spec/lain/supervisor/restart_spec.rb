@@ -157,7 +157,7 @@ RSpec.describe Lain::Supervisor::Restart do
     result = nil
     provider = Lain::Provider::Mock.new(responses: life_responses)
 
-    Sync do |task|
+    supervised do |supervisor, task|
       actor = record_killed_actor(task, provider:)
       expect(actor).to be_stopped # the kill landed: the fiber is gone
       killed_head = actor.timeline.head_digest
@@ -165,14 +165,12 @@ RSpec.describe Lain::Supervisor::Restart do
       # restored files must come from the RECORD, not the ruins.
       File.delete(workspace_file("notes.md"), workspace_file("log.md"))
 
-      supervisor = Lain::Supervisor.new.run(task)
       result = restart_over(record_io.string.each_line, supervisor:)
 
       expect(result.actor.timeline.head_digest).to eq(killed_head)
       expect(supervisor.map(&:role)).to eq(["researcher"])
       expect(supervisor.map(&:state)).to eq([:running])
       expect(supervisor.map(&:head_digest)).to eq([killed_head])
-      supervisor.stop
     end
 
     expect(File.read(workspace_file("notes.md"))).to eq("v2")
@@ -191,11 +189,9 @@ RSpec.describe Lain::Supervisor::Restart do
   it "makes zero provider calls during replay -- the same no-respend property as resume" do
     provider = Lain::Provider::Mock.new(responses: life_responses)
 
-    Sync do |task|
+    supervised do |supervisor, task|
       record_killed_actor(task, provider:)
-      supervisor = Lain::Supervisor.new.run(task)
       restart_over(record_io.string.each_line, supervisor:)
-      supervisor.stop
     end
 
     expect(provider.requests.size).to eq(3) # life 1's spend, unchanged
@@ -204,9 +200,23 @@ RSpec.describe Lain::Supervisor::Restart do
 
   # ---- Scenario: the demo driver runs it end-to-end --------------------------
 
+  # The limit sits under the spec watchdog's 30s, which cannot interrupt a read
+  # blocked on the child.
+  def bounded_capture(*argv, limit: 20)
+    Open3.popen3(*argv) do |stdin, out, err, wait|
+      stdin.close
+      readers = [out, err].map { |io| Thread.new { io.read } }
+      unless wait.join(limit)
+        Process.kill(:KILL, wait.pid)
+        raise "#{argv.last} ran past #{limit}s"
+      end
+      [*readers.map(&:value), wait.value]
+    end
+  end
+
   it "bin/demo-supervision prints the kill, the restart, and matching head digests, exit 0" do
     root = File.expand_path("../../..", __dir__)
-    stdout, stderr, status = Open3.capture3(
+    stdout, stderr, status = bounded_capture(
       RbConfig.ruby, "-I", File.join(root, "lib"),
       "-r", File.join(root, "spec", "bootsnap_setup"),
       File.join(root, "bin", "demo-supervision")
@@ -250,14 +260,12 @@ RSpec.describe Lain::Supervisor::Restart do
       result = nil
       provider = Lain::Provider::Mock.new(responses: life_responses)
 
-      Sync do |task|
+      supervised do |supervisor, task|
         killed_head = record_killed_actor(task, provider:).timeline.head_digest
         File.delete(workspace_file("notes.md"), workspace_file("log.md"))
         stripped = record_io.string.each_line.reject { |line| JSON.parse(line)["type"] == "workspace_blob" }
 
-        supervisor = Lain::Supervisor.new.run(task)
         result = restart_over(stripped, supervisor:)
-        supervisor.stop
       end
 
       expect(result.actor.timeline.head_digest).to eq(killed_head)
@@ -292,17 +300,15 @@ RSpec.describe Lain::Supervisor::Restart do
   it "refuses to clobber post-crash out-of-band bytes (Restore::Dirty), waived by force:" do
     provider = Lain::Provider::Mock.new(responses: life_responses)
 
-    Sync do |task|
+    supervised do |supervisor, task|
       record_killed_actor(task, provider:)
       File.write(workspace_file("notes.md"), "post-crash meddling")
 
-      supervisor = Lain::Supervisor.new.run(task)
       expect { restart_over(record_io.string.each_line, supervisor:) }
         .to raise_error(Lain::Workspace::Restore::Dirty)
       expect(supervisor.to_a).to be_empty # a refused restore registers nothing
 
       restart_over(record_io.string.each_line, supervisor:, force: true)
-      supervisor.stop
     end
 
     expect(File.read(workspace_file("notes.md"))).to eq("v2")
@@ -314,11 +320,9 @@ RSpec.describe Lain::Supervisor::Restart do
     provider = Lain::Provider::Mock.new(responses: [text_response("pondered, wrote nothing")])
     result = nil
 
-    Sync do |task|
+    supervised do |supervisor, task|
       record_killed_actor(task, provider:)
-      supervisor = Lain::Supervisor.new.run(task)
       result = restart_over(record_io.string.each_line, supervisor:)
-      supervisor.stop
     end
 
     expect(result.snapshot).to be_nil
@@ -374,15 +378,13 @@ RSpec.describe Lain::Supervisor::Restart do
     it "refuses a dangling causal parent as a Corrupt naming the role being restarted" do
       provider = Lain::Provider::Mock.new(responses: life_responses)
 
-      Sync do |task|
+      supervised do |supervisor, task|
         record_killed_actor(task, provider:)
-        supervisor = Lain::Supervisor.new.run(task)
 
         expect { restart_over(dangling_parent_record, supervisor:) }
           .to raise_error(Lain::Bench::Session::Corrupt, /researcher/)
 
         expect(supervisor.to_a).to be_empty
-        supervisor.stop
       end
     end
 
@@ -394,9 +396,8 @@ RSpec.describe Lain::Supervisor::Restart do
     it "raises with the fold's own refusal preserved as the cause, not a bare re-raise" do
       provider = Lain::Provider::Mock.new(responses: life_responses)
 
-      Sync do |task|
+      supervised do |supervisor, task|
         record_killed_actor(task, provider:)
-        supervisor = Lain::Supervisor.new.run(task)
         error = nil
 
         begin
@@ -407,21 +408,17 @@ RSpec.describe Lain::Supervisor::Restart do
 
         expect(error.cause).to be_a(Lain::Bench::Session::Corrupt)
         expect(error.cause.message).to include("cites a causal parent this fold never landed")
-        supervisor.stop
       end
     end
 
     it "refuses a malformed causal parent in the SAME currency, never a raw store complaint" do
       provider = Lain::Provider::Mock.new(responses: life_responses)
 
-      Sync do |task|
+      supervised do |supervisor, task|
         record_killed_actor(task, provider:)
-        supervisor = Lain::Supervisor.new.run(task)
 
         expect { restart_over(null_parent_record, supervisor:) }
           .to raise_error(Lain::Bench::Session::Corrupt, /researcher/)
-
-        supervisor.stop
       end
     end
 
@@ -429,10 +426,9 @@ RSpec.describe Lain::Supervisor::Restart do
       provider = Lain::Provider::Mock.new(responses: life_responses)
       killed_head = nil
 
-      Sync do |task|
+      supervised do |supervisor, task|
         actor = record_killed_actor(task, provider:)
         killed_head = actor.timeline.head_digest
-        supervisor = Lain::Supervisor.new.run(task)
 
         expect { restart_over(null_parent_record, supervisor:) }.to raise_error(Lain::Bench::Session::Corrupt)
         expect(supervisor.to_a).to be_empty
@@ -441,7 +437,6 @@ RSpec.describe Lain::Supervisor::Restart do
         result = restart_over(record_io.string.each_line, supervisor:)
         expect(result.actor.timeline.head_digest).to eq(killed_head)
         expect(supervisor.map(&:role)).to eq(["researcher"])
-        supervisor.stop
       end
     end
   end
@@ -488,9 +483,8 @@ RSpec.describe Lain::Supervisor::Restart do
   it "refuses a revival that does not stand at the replayed head, registering nothing" do
     provider = Lain::Provider::Mock.new(responses: life_responses)
 
-    Sync do |task|
+    supervised do |supervisor, task|
       record_killed_actor(task, provider:)
-      supervisor = Lain::Supervisor.new.run(task)
 
       expect do
         described_class.new(entries: record_io.string.each_line, supervisor:,
@@ -502,7 +496,6 @@ RSpec.describe Lain::Supervisor::Restart do
       end.to raise_error(Lain::Error, /replayed head/)
 
       expect(supervisor.to_a).to be_empty
-      supervisor.stop
     end
   end
 
@@ -511,9 +504,8 @@ RSpec.describe Lain::Supervisor::Restart do
     seen = nil
     provider = Lain::Provider::Mock.new(responses: life_responses)
 
-    Sync do |task|
+    supervised(Lain::Supervisor.new(isolation: backend)) do |supervisor, task|
       record_killed_actor(task, provider:)
-      supervisor = Lain::Supervisor.new(isolation: backend).run(task)
 
       described_class.new(entries: record_io.string.each_line, supervisor:,
                           journal: restart_journal, root: dir)
@@ -526,7 +518,6 @@ RSpec.describe Lain::Supervisor::Restart do
       expect(backend.acquired.size).to eq(1)   # re-acquired on Restart#call
       expect(seen).to eq(leased_env)           # the revived worker's Session runs under it
       expect(supervisor.map(&:role)).to eq(["researcher"])
-      supervisor.stop
     end
 
     expect(backend.released.size).to eq(1)     # released on teardown, like any adoption
@@ -541,14 +532,12 @@ RSpec.describe Lain::Supervisor::Restart do
     end.new
     provider = Lain::Provider::Mock.new(responses: life_responses)
 
-    Sync do |task|
+    supervised(Lain::Supervisor.new(isolation: failing)) do |supervisor, task|
       record_killed_actor(task, provider:)
-      supervisor = Lain::Supervisor.new(isolation: failing).run(task)
 
       expect { restart_over(record_io.string.each_line, supervisor:) }
         .to raise_error(Lain::Error, /no isolation/)
       expect(supervisor.to_a).to be_empty # no worker revived on a failed acquire
-      supervisor.stop
     end
   end
 

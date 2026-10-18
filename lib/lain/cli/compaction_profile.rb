@@ -29,15 +29,9 @@ module Lain
               schedule: options[:compact_schedule])
         end
 
-        # A header without the key predates the field, and that run scheduled on the turn.
-        #
         # @param record [Hash{String=>Object}] a session header record
-        # @return [CompactionProfile] nil for each key the header lacks; schedule "turn" for a
-        #   non-empty header without the key, and every field nil for an empty one
-        def from_header(record)
-          recorded = new(**FLAGS.to_h { |field, flag| [field, record[flag.to_s]] })
-          record.empty? || recorded.schedule ? recorded : recorded.with(schedule: "turn")
-        end
+        # @return [CompactionProfile] nil for each key the header lacks
+        def from_header(record) = new(**FLAGS.to_h { |field, flag| [field, record[flag.to_s]] })
       end
 
       # These fields laid over a recording: a field nobody set takes the

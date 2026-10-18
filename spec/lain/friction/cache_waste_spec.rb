@@ -21,9 +21,10 @@ require "bigdecimal"
 RSpec.describe Lain::Friction::CacheWaste do
   # The `request_sent` shape `Telemetry::RequestSent#to_journal` writes: the
   # model lives in `payload` because the payload IS `Request#cache_payload`.
-  def request_sent(chain, model: "claude-opus-4-8", version: Lain::Request::PREFIX_CHAIN_VERSION)
+  def request_sent(chain, model: "claude-opus-4-8")
     { "type" => "request_sent", "digest" => "blake3:req", "payload" => { "model" => model },
-      "stream" => true, "extra" => {}, "prefix_digests" => chain, "prefix_chain_version" => version }
+      "stream" => true, "extra" => {}, "prefix_digests" => chain,
+      "prefix_chain_version" => Lain::Request::PREFIX_CHAIN_VERSION }
   end
 
   # The `turn_usage` shape, which is where the BILLED cache split lives.
@@ -265,10 +266,12 @@ RSpec.describe Lain::Friction::CacheWaste do
   describe "a journal that records no model at all" do
     subject(:waste) do
       described_class.from_journal(
-        [{ "type" => "request_sent", "prefix_digests" => [[0, "blake3:a"]], "prefix_chain_version" => 1 },
+        [{ "type" => "request_sent", "prefix_digests" => [[0, "blake3:a"]],
+           "prefix_chain_version" => Lain::Request::PREFIX_CHAIN_VERSION },
          { "type" => "turn_usage", "digest" => "d", "model" => nil, "stop_reason" => "end_turn",
            "usage" => { "cache_creation_input_tokens" => 4_000 } },
-         { "type" => "request_sent", "prefix_digests" => [[0, "blake3:b"]], "prefix_chain_version" => 1 },
+         { "type" => "request_sent", "prefix_digests" => [[0, "blake3:b"]],
+           "prefix_chain_version" => Lain::Request::PREFIX_CHAIN_VERSION },
          { "type" => "turn_usage", "digest" => "d", "model" => nil, "stop_reason" => "end_turn",
            "usage" => { "cache_creation_input_tokens" => 3_000 } }]
       )

@@ -1725,12 +1725,12 @@ RSpec.describe Lain::CLI::Backend do
             .to raise_error(Lain::CLI::Backend::UnknownSchedule, /--compact-schedule "nightly".*idle, turn/m)
         end
 
-        it "answers turn and records no schedule under --no-compact, typed or not" do
+        it "answers and records turn under --no-compact, typed or not" do
           [{}, { compact_schedule: "idle" }].each do |typed|
             backend = compacting_backend(compact: false, **typed)
 
             expect(backend.compaction_schedule).to eq("turn")
-            expect(backend.compaction_header).not_to have_key("compact_schedule")
+            expect(backend.compaction_header).to include("compact_schedule" => "turn")
           end
         end
 

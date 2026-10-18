@@ -80,7 +80,7 @@ module Lain
             toolset:, workspace:, baseline:,
             ledger_index: Ledger::Index.from_journal(@records),
             degraded:, mode:, memory:, open: open?,
-            compaction: header["compact_strategy"], schedule: header["compact_schedule"],
+            compaction: header["compact_strategy"], schedule: header_field("compact_schedule"),
             arms: header["arms"] || {},
             compaction_tally: Compare::CompactionTally.from_records(@records)
           )
@@ -226,6 +226,8 @@ module Lain
                          "bench recorder wrote; re-record the session"
         end
 
+        def header_field(key) = RequiredKeys.read(header, key) { "the session header" }
+
         def sole_slot_fills
           sole("slot_fills", "\"slot_fills\" records in one journal; fills are session-fixed, one record pins them")
         end
@@ -241,8 +243,7 @@ module Lain
         end
 
         # `extra` (sampler params) loads unverified like the other transport
-        # fields; `|| {}` tolerates recordings written before the key existed.
-        # A missing `context_pipeline` is the ordinary case, not an old one:
+        # fields. A missing `context_pipeline` is the ordinary case:
         # a session nobody named a pipeline for writes no key.
         #
         # A name the catalog no longer holds refuses as {Corrupt}, {#mode}'s
@@ -251,7 +252,7 @@ module Lain
         def context
           @context_factory.call(model: header.fetch("model"), max_tokens: header.fetch("max_tokens"),
                                 system: header["system"], stream: header.fetch("stream"),
-                                extra: header["extra"] || {}, context_pipeline: header["context_pipeline"])
+                                extra: header_field("extra"), context_pipeline: header["context_pipeline"])
         rescue ::Lain::CLI::ContextPipeline::Unknown => e
           raise Corrupt, "the session header records context_pipeline #{header["context_pipeline"].inspect}, " \
                          "which no longer resolves: #{e.message}"

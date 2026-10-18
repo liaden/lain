@@ -834,10 +834,6 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
       expect(schedule_for({}, { "compact_schedule" => "idle" })).to eq("idle")
       expect(schedule_for({ compact_schedule: "turn" }, { "compact_schedule" => "idle" })).to eq("turn")
     end
-
-    it "treats a recording older than the field as the turn" do
-      expect(schedule_for({}, { "provider" => "ollama" })).to eq("turn")
-    end
   end
 
   it "hands the resolver the compaction flags the human typed, to be compared with the recording" do
@@ -1599,9 +1595,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "a refused --isolation" do
 
   def unanswered_request
     request = Lain::Request.new(model: "qwen3:4b", max_tokens: 64, messages: [{ role: "user", content: "again" }])
-    Lain::Telemetry::RequestSent.new(digest: request.digest, payload: request.cache_payload,
-                                     stream: request.stream, extra: request.extra,
-                                     prefix_digests: request.prefix_digests).to_journal
+    Lain::Telemetry::RequestSent.from(request).to_journal
   end
 
   it "refuses a --resume before salvaging the old session file" do
