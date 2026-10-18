@@ -23,7 +23,6 @@ RSpec.describe Lain::Isolation::CandidateDesk, :seam do
   let(:queue_class) { Lain::Isolation::LandingQueue }
   let(:branch) { "main" }
   let(:journal) { [] }
-  let(:resolver) { queue_class::Resolver::Standing }
   let(:verified) { [] }
   let(:verify) { passing }
   let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state }) }
@@ -36,7 +35,7 @@ RSpec.describe Lain::Isolation::CandidateDesk, :seam do
       shell_out_factory: Lain::Shell::Out.public_method(:new)
     )
   end
-  let(:queue) { queue_class.new(repo_root: @repo, base:, desk:, resolver:, verify:) }
+  let(:queue) { queue_class.new(repo_root: @repo, base:, desk:, verify:) }
 
   def passing = verdict(:passed)
 
@@ -327,6 +326,51 @@ RSpec.describe Lain::Isolation::CandidateDesk, :seam do
     end
   end
 
+  describe "a verdict taken against another tip" do
+    it "is refused rather than landing a wrong tree" do
+      w1 = worker("w1", f: "a\nB1\nc\n")
+      w2 = worker("w2", g: "new\n")
+      probe = queue_class::Probe.new(parent: Lain::Isolation::Checkout.new(@repo),
+                                     strategy: Lain::Isolation::MergeStrategy::DEFAULT)
+      stale = probe.call(tip, w1.sha)
+      desk.ready!
+      desk.merge(w2, probe.call(desk.tip, w2.sha))
+
+      expect { desk.merge(w1, stale) }.to raise_error(ArgumentError, /taken against/)
+    end
+
+    it "is refused when it says neither fast_forward nor clean" do
+      desk.ready!
+      landed = queue_class::Probe::Probed.new(verdict: :landed, paths: [], detail: "", tree: "", tip: desk.tip)
+
+      expect { desk.merge(worker("w1", f: "x\n"), landed) }.to raise_error(ArgumentError, /fast_forward or clean/)
+    end
+  end
+
+  describe "a clean merge git cannot write" do
+    let(:desk) do
+      refusing = lambda do |*argv, **options|
+        Lain::Shell::Out.new(*(argv.include?("commit-tree") ? ["sh", "-c", "exit 1"] : argv), **options)
+      end
+      described_class.new(
+        repo_root: @repo, base:, journal:, strategy: Lain::Isolation::MergeStrategy::DEFAULT,
+        home: Lain::Isolation::MergeCoordinator::Home.for(repo_root: @repo, branch:),
+        checkout: Lain::Isolation::VerifyCheckout.for(repo_root: @repo, branch:, paths:, keep: []),
+        shell_out_factory: refusing
+      )
+    end
+
+    it "reports the worker failed, landing the rest" do
+      w1 = worker("w1", f: "a\nB1\nc\n")
+      w2 = worker("w2", g: "new\n")
+
+      result = queue.call([w1, w2])
+
+      expect([result.report("w1").kind, result.report("w2").kind, contains?(w1.sha), contains?(w2.sha)])
+        .to eq([:merged, :failed, true, false])
+    end
+  end
+
   describe "a conflicting worker" do
     it "is skipped and the rest still land, its work on its ref" do
       commit_in(@repo, "f", "a\nTIP\nc\n")
@@ -339,29 +383,6 @@ RSpec.describe Lain::Isolation::CandidateDesk, :seam do
       expect(result.report("w1")).to have_attributes(kind: :conflicted, paths: ["f"], ref: w1.ref)
       expect(git("rev-parse", w1.ref)).to eq(w1.sha)
       expect([handbacks.map(&:worker_key), candidate_refs]).to eq([["w2"], ""])
-    end
-
-    context "with a spawned resolver" do
-      let(:resolver) { queue_class::Resolver::Spawned.new(spawn:) }
-      let(:spawn) do
-        lambda do |_role, _mode, _prompt|
-          File.write(File.join(desk.repo_root, "f"), "a\nB1 and B3\nc\n")
-          Lain::Tool::Result.ok("kept both sides")
-        end
-      end
-
-      it "resolves in the scratch checkout and lands the resolution, the parent never mid-merge" do
-        w1 = worker("w1", f: "a\nB1\nc\n")
-        w3 = worker("w3", f: "a\nB3\nc\n")
-
-        result = queue.call([w1, w3])
-
-        expect(result.report("w3").kind).to eq(:resolved)
-        expect(git("show", "#{branch}:f")).to eq("a\nB1 and B3\nc")
-        expect([contains?(w1.sha), contains?(w3.sha), merging?, desk.repo_root == @repo])
-          .to eq([true, true, false, false])
-        expect(handbacks.map { |record| [record.worker_key, record.outcome] }).to eq([["w1", :merged], ["w3", :merged]])
-      end
     end
   end
 end

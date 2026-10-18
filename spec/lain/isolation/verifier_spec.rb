@@ -70,7 +70,8 @@ RSpec.describe Lain::Isolation::Verifier do
                                                              git: Lain::Isolation::Checkout.new(repo))
 
       verify = described_class.from(table, paths:, strategies: { "probe" => probe })
-      queue = Lain::Isolation::LandingQueue.new(repo_root: repo, base:, verify:)
+      queue = Lain::Isolation::LandingQueue.candidate(root: repo, base:, journal: [], paths:, verify:,
+                                                      isolation: isolation(verify: %w[true]))
       result = queue.call([Lain::Isolation::LandingQueue::Worker.new(id: "w1", ref:, sha:)])
 
       expect([result.verification, judged])

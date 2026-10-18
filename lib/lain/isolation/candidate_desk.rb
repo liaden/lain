@@ -15,6 +15,7 @@ module Lain
     # lock, then {ParentLock}, and only one drainer resets the scratch tree.
     class CandidateDesk
       REASON = "lain candidate"
+      STANDS = "the conflict stands; the work waits on its ref"
 
       # @param repo_root [String] any checkout of the repository
       # @param base [WorkingBranch] the branch the batch lands onto
@@ -35,12 +36,7 @@ module Lain
         @strategy = strategy
         root = File.expand_path(repo_root)
         @git = Checkout.new(root, shell_out_factory:)
-        @scratch = Checkout.new(checkout.path, shell_out_factory:)
-        @probe = LandingQueue::Probe.new(parent: @git, strategy:)
         @forward = Forward.new(repo_root: root, base:, strategy:, shell_out_factory:)
-        # Its own records would land before the branch moves; this desk journals at the end.
-        @handback = Worktree::Handback.new(base:, repo_root: checkout.path, journal: Channel::Null.instance,
-                                           strategy:, shell_out_factory:)
       end
 
       # @return [String] the candidate's head, the branch's tip until something merges
@@ -52,10 +48,6 @@ module Lain
       attr_reader :lock
 
       def branch = @base.name
-
-      # Where a conflicted merge stands for a resolver to edit: the scratch
-      # worktree, never a checkout anybody works in.
-      def repo_root = @checkout.path
 
       # Reads the branch's tip once, under the lock, as the candidate's start.
       # @raise [WorkingBranch::Refused] when the branch names no commit
@@ -71,27 +63,23 @@ module Lain
         @checkout.at(tip)
       end
 
+      # A verdict's inputs are immutable SHAs taken on this thread, so it stays
+      # true of the tip it was taken against and of nothing else.
+      #
+      # @param worker [LandingQueue::Worker]
+      # @param probed [LandingQueue::Probe::Probed] the queue's verdict for this
+      #   worker against {#tip}
       # @return [Worktree::Handback::Outcome] `merged` with the candidate's new
-      #   head, `conflicted` with the merge replayed in the scratch worktree for
-      #   a resolver, `nothing_to_do`, or `failed`
-      def merge(worker)
-        probed = @probe.call(tip, worker.sha)
-        case probed.verdict
-        when :landed then outcome(:nothing_to_do, worker, detail: "the candidate already holds #{worker.sha}")
-        when :fast_forward then advanced(worker, worker.sha, fast_forward: true)
-        when :clean then joined(worker, probed.tree)
-        when :conflicted then replayed(worker, probed.paths)
-        else outcome(:failed, worker, detail: probed.detail)
-        end
-      end
+      #   head, or `failed`
+      # @raise [ArgumentError] when the verdict was taken against another tip,
+      #   or says neither `fast_forward` nor `clean`
+      def merge(worker, probed)
+        raise ArgumentError, "a verdict taken against #{probed.tip} cannot land onto #{tip}" unless probed.tip == tip
+        raise ArgumentError, "only a fast_forward or clean verdict lands, got #{probed.verdict}" unless
+          %i[fast_forward clean].include?(probed.verdict)
 
-      def continue(worker)
-        continued = @handback.continue(worker.sha, worker_id: worker.id)
-        @tip = continued.sha if continued.kind == :merged
-        continued
+        probed.verdict == :fast_forward ? advanced(worker, worker.sha, fast_forward: true) : joined(worker, probed.tree)
       end
-
-      def abandon(worker) = @handback.abandon(worker.sha, worker_id: worker.id)
 
       def landed(worker, outcome)
         LandingQueue::Landed.new(worker:, report: WorkerHandoff::Report.from(outcome).with(ref: worker.ref))
@@ -101,7 +89,7 @@ module Lain
 
       def failed(worker, detail) = report(worker, :failed, detail:)
 
-      def stand(worker, paths, detail = LandingQueue::ParentDesk::STANDS)
+      def stand(worker, paths, detail = STANDS)
         report(worker, :conflicted, paths:, detail:)
       end
 
@@ -163,14 +151,6 @@ module Lain
       def advanced(worker, commit, fast_forward:)
         @tip = commit
         outcome(:merged, worker, sha: commit, fast_forward:)
-      end
-
-      # The resolver edits files and cannot run git, so the conflict is laid
-      # out in the scratch worktree with its markers for it to read.
-      def replayed(worker, paths)
-        @checkout.at(tip)
-        @scratch.run(*@strategy.merge(worker.sha))
-        outcome(:conflicted, worker, paths:, parent_state: :merging, detail: Worktree::Handback::IN_PROGRESS)
       end
 
       def outcome(kind, worker, **)

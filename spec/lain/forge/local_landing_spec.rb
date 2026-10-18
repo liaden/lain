@@ -12,6 +12,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
   around do |example|
     Dir.mktmpdir("lain-local-landing") do |repo|
       @repo = File.realpath(repo)
+      @state = File.realpath(Dir.mktmpdir("lain-local-landing-state"))
       SeedRepo.derived("local_landing_epic", into: @repo) do |template|
         SeedRepo.git(template, "branch", "-M", "main")
         FileUtils.mkdir_p(File.join(template, "app/models"))
@@ -21,6 +22,8 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
         SeedRepo.git(template, "switch", "-q", "-c", "epic/demo")
       end
       example.run
+    ensure
+      FileUtils.rm_rf(@state)
     end
   end
 
@@ -32,7 +35,12 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
   let(:base) do
     Lain::Isolation::WorkingBranch.new("epic/demo", repo_root: @repo, git: Lain::Isolation::Checkout.new(@repo))
   end
-  let(:queue) { Lain::Isolation::LandingQueue.new(repo_root: @repo, base:, journal:, shell_out_factory: recording) }
+  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }) }
+  let(:isolation) { Lain::Config::Isolation.from({}, path: nil) }
+  let(:queue) do
+    Lain::Isolation::LandingQueue.candidate(root: @repo, base:, journal:, isolation:, paths:,
+                                            shell_out_factory: recording)
+  end
   let(:approvals) { described_class::Approvals.from(decisions.map(&:to_journal)) }
   let(:plan) { ->(issue_id) { planned << issue_id } }
   let(:progress) { -> { instance_double(Lain::Epic::Progress, status:) } }
@@ -295,7 +303,10 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     let(:base) do
       Lain::Isolation::WorkingBranch.new("epic/demo", repo_root: project, git: Lain::Isolation::Checkout.new(project))
     end
-    let(:queue) { Lain::Isolation::LandingQueue.new(repo_root: project, base:, journal:, shell_out_factory: recording) }
+    let(:queue) do
+      Lain::Isolation::LandingQueue.candidate(root: project, base:, journal:, isolation:, paths:,
+                                              shell_out_factory: recording)
+    end
 
     before { commit("proj/app/models/order.rb" => "class Order\nend\n") }
 

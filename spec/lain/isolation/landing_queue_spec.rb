@@ -9,20 +9,20 @@ require "tmpdir"
 RSpec.describe Lain::Isolation::LandingQueue, :seam do
   include HeldParentLock
 
-  subject(:queue) { described_class.new(repo_root: @repo, base:, journal:, retries:, resolver:, verify:) }
+  subject(:queue) { queue_with(retries:, verify:) }
 
   around do |example|
     Dir.mktmpdir("lain-landing-queue") do |repo|
       @repo = File.realpath(repo)
       FileUtils.cp_r("#{SeedRepo.at(seed_files)}/.", @repo)
       git("switch", "-q", "-c", "epic/demo")
+      File.write(File.join(@repo, ".git", "info", "exclude"), ".state/\n")
       example.run
     end
   end
 
   let(:journal) { [] }
   let(:retries) { 1 }
-  let(:resolver) { described_class::Resolver::Standing }
   let(:verified) { [] }
   let(:verify) do
     lambda do |candidate|
@@ -34,6 +34,18 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
   # parent away still holds the queue to the epic branch.
   let(:base) do
     Lain::Isolation::WorkingBranch.new("epic/demo", repo_root: @repo, git: Lain::Isolation::Checkout.new(@repo))
+  end
+
+  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@repo, ".state"), "HOME" => @repo }) }
+
+  def queue_with(retries: 1, verify: Lain::Isolation::Verifier::Skipped, **)
+    desk = Lain::Isolation::CandidateDesk.new(
+      repo_root: @repo, base:, journal:, strategy: Lain::Isolation::MergeStrategy::DEFAULT,
+      home: Lain::Isolation::MergeCoordinator::Home.for(repo_root: @repo, branch: "epic/demo"),
+      checkout: Lain::Isolation::VerifyCheckout.for(repo_root: @repo, branch: "epic/demo", paths:, keep: []),
+      shell_out_factory: Lain::Shell::Out.public_method(:new)
+    )
+    described_class.new(repo_root: @repo, base:, desk:, retries:, verify:, **)
   end
 
   def seed_files = { "f" => "a\nb\nc\n", "h" => "x\n" }
@@ -69,37 +81,23 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
 
   def handbacks = journal.grep(Lain::Telemetry::Handback)
 
-  describe "re-sync waits until the queue drains, and leftovers share one resolver" do
-    let(:spawned) { [] }
-    let(:resolver) { described_class::Resolver::Spawned.new(spawn:) }
-    # What a merge_resolver child does with its file tools: rewrite the
-    # conflicted file with both sides kept and every marker gone.
-    let(:spawn) do
-      lambda do |role, mode, prompt|
-        spawned << { role:, mode:, prompt: }
-        File.write(File.join(@repo, "f"), "a\nB1 and B3\nc\n")
-        Lain::Tool::Result.ok("kept both sides")
-      end
-    end
-
-    it "lands w2 before w3 is asked, asks w3 once, spawns one resolver and verifies once" do
+  describe "re-sync waits until the queue drains" do
+    it "lands w2 before w3 is asked, asks w3 once and verifies once" do
       w1 = worker("w1", "f" => "a\nB1\nc\n")
       w2 = worker("w2", "h" => "y\n")
       w3 = worker("w3", "f" => "a\nB3\nc\n")
       asked = []
       resync = lambda do |stale, tip:|
-        asked << { id: stale.id, tip:, holding_w2: contains?(w2.sha) }
+        asked << { id: stale.id, tip: }
         nil
       end
 
       result = queue.call([w1, w2, w3], resync:)
 
-      expect(asked).to eq([{ id: "w3", tip: result.report("w2").sha, holding_w2: true }])
-      expect(spawned.size).to eq(1)
-      expect(spawned.first).to include(role: :merge_resolver, mode: :fresh)
+      expect(asked).to eq([{ id: "w3", tip: result.report("w2").sha }])
       expect(verified.map(&:sha)).to eq([tip])
-      expect([w1, w2, w3].map(&:sha)).to all(satisfy { |sha| contains?(sha) })
-      expect(result.report("w3").kind).to eq(:resolved)
+      expect([w1, w2].map(&:sha)).to all(satisfy { |sha| contains?(sha) })
+      expect(result.report("w3").kind).to eq(:conflicted)
     end
 
     # The reports and the journal are asserted off ONE run: they are two
@@ -119,45 +117,7 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
       expect(handbacks.map(&:ref)).to eq([w1.ref, w2.ref])
       expect(handbacks.map(&:sha)).to eq([w1.sha, tip])
       expect(handbacks.map(&:strategy)).to all(eq(Lain::Isolation::MergeStrategy::DEFAULT.to_s))
-      expect(verified).to eq([Lain::Isolation::Candidate.new(sha: tip, path: @repo)])
-    end
-
-    it "gives the one resolver every leftover, in the intended order" do
-      w1 = worker("w1", "f" => "a\nB1\nc\n")
-      w3 = worker("w3", "f" => "a\nB3\nc\n")
-      w4 = worker("w4", "f" => "a\nB4\nc\n")
-
-      queue.call([w1, w3, w4])
-
-      prompt = spawned.first[:prompt]
-      expect(prompt.index(w3.ref)).to be < prompt.index(w4.ref)
-      expect(prompt).to include(File.join(@repo, "f").inspect)
-    end
-
-    # The one resolver is ONE: a second leftover that still conflicts once the
-    # first is resolved stands, anchored, with the parent put back.
-    # A record's ref names where the work is anchored; the commit rides `sha`.
-    it "journals every record of a resolved worker under its anchor ref, never its commit" do
-      w1 = worker("w1", "f" => "a\nB1\nc\n")
-      w3 = worker("w3", "f" => "a\nB3\nc\n")
-
-      queue.call([w1, w3])
-
-      expect(handbacks.select { |record| record.worker_key == "w3" }.map(&:ref).uniq).to eq([w3.ref])
-    end
-
-    it "spawns once for two leftovers, and the second stands with the parent clean" do
-      w1 = worker("w1", "f" => "a\nB1\nc\n")
-      w3 = worker("w3", "f" => "a\nB3\nc\n")
-      w4 = worker("w4", "f" => "a\nB4\nc\n")
-
-      result = queue.call([w1, w3, w4])
-
-      expect(spawned.size).to eq(1)
-      expect(result.report("w3").kind).to eq(:resolved)
-      expect(result.report("w4")).to have_attributes(kind: :conflicted, ref: w4.ref)
-      expect(merging?).to be(false)
-      expect(git("rev-parse", w4.ref)).to eq(w4.sha)
+      expect(verified.map(&:sha)).to eq([tip])
     end
   end
 
@@ -167,23 +127,6 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
     it "refuses a worker with no ref" do
       expect { described_class::Worker.new(id: "w", sha: "a" * 40) }.to raise_error(ArgumentError, /ref/)
       expect { described_class::Worker.new(id: "w", sha: "a" * 40, ref: nil) }.to raise_error(ArgumentError, /ref/)
-    end
-  end
-
-  describe "the parent must be standing on the working branch" do
-    it "refuses, naming both branches, and lands nothing" do
-      w1 = worker("w1", "f" => "a\nB1\nc\n")
-      git("switch", "-q", "-c", "other")
-
-      expect { queue.call([w1]) }.to raise_error(described_class::Refused) { |error|
-        expect(error.message).to include("other").and include("epic/demo")
-      }
-      expect(contains?(w1.sha)).to be(false)
-    end
-
-    it "refuses a working branch that names nothing" do
-      expect { described_class.new(repo_root: @repo, base: Lain::Isolation::WorkingBranch::NONE) }
-        .to raise_error(described_class::Refused, /working branch/)
     end
   end
 
@@ -205,14 +148,15 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
 
       result = queue.call([w1, w3])
 
-      expect(result.report("w3")).to have_attributes(kind: :conflicted, ref: w3.ref, paths: ["f"])
+      expect(result.report("w3"))
+        .to have_attributes(kind: :conflicted, ref: w3.ref, paths: ["f"], detail: Lain::Isolation::CandidateDesk::STANDS)
       expect(tip).to eq(w1.sha)
       expect(merging?).to be(false)
       expect(git("rev-parse", w3.ref)).to eq(w3.sha)
     end
 
     it "asks nobody to re-sync when rebase_retries is 0" do
-      queue = described_class.new(repo_root: @repo, base:, journal:, retries: 0, verify:)
+      queue = queue_with(retries: 0, verify:)
       w1 = worker("w1", "f" => "a\nB1\nc\n")
       w3 = worker("w3", "f" => "a\nB3\nc\n")
       asked = []
@@ -224,7 +168,7 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
     end
 
     it "asks a stale worker up to rebase_retries times" do
-      queue = described_class.new(repo_root: @repo, base:, journal:, retries: 3, verify:)
+      queue = queue_with(retries: 3, verify:)
       w1 = worker("w1", "f" => "a\nB1\nc\n")
       w3 = worker("w3", "f" => "a\nB3\nc\n")
       asked = []
@@ -241,7 +185,7 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
     end
 
     it "stops asking once a re-sync integrates" do
-      queue = described_class.new(repo_root: @repo, base:, journal:, retries: 3, verify:)
+      queue = queue_with(retries: 3, verify:)
       w1 = worker("w1", "f" => "a\nB1\nc\n")
       w3 = worker("w3", "f" => "a\nB3\nc\n")
       asked = 0
@@ -273,7 +217,7 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
     it "is skipped, saying so, when no verify is given" do
       w1 = worker("w1", "f" => "a\nB1\nc\n")
 
-      result = described_class.new(repo_root: @repo, base:).call([w1])
+      result = queue_with.call([w1])
 
       expect(result.verification).to eq(described_class::Verification.new(
                                           outcome: :skipped, tip:, detail: Lain::Isolation::Verifier::Skipped::DETAIL
@@ -282,16 +226,17 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
     end
   end
 
-  describe "a desk given" do
-    let(:desk) { described_class::ParentDesk.new(repo_root: @repo, base:, journal:, strategy:, shell_out_factory:) }
-    let(:strategy) { Lain::Isolation::MergeStrategy::DEFAULT }
-    let(:shell_out_factory) { Lain::Shell::Out.public_method(:new) }
+  describe "building a queue" do
+    it "needs a desk" do
+      expect { described_class.new(repo_root: @repo, base:) }.to raise_error(ArgumentError, /desk/)
+    end
 
-    it "refuses a journal or a strategy beside it, since the desk carries its own" do
-      [{ journal: }, { strategy: }].each do |extra|
-        expect { described_class.new(repo_root: @repo, base:, desk:, **extra) }
-          .to raise_error(ArgumentError, /desk/)
-      end
+    it "refuses a working branch that names nothing" do
+      nameless = Lain::Isolation::WorkingBranch::NONE
+      desk = instance_double(Lain::Isolation::CandidateDesk)
+
+      expect { described_class.new(repo_root: @repo, base: nameless, desk:) }
+        .to raise_error(described_class::Refused, /working branch/)
     end
   end
 
@@ -299,8 +244,6 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
   # candidate commit verified in the project's scratch checkout, and the
   # branch moves only once verification has not failed.
   describe ".candidate" do
-    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@repo, ".state"), "HOME" => @repo }) }
-
     def isolation(command) = Lain::Config::Isolation.from({ "verify" => ["sh", "-c", command] }, path: nil)
 
     def candidate(command, root: @repo, **)
@@ -308,8 +251,6 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
     end
 
     def verify_tree = Lain::Isolation::VerifyCheckout.for(repo_root: @repo, branch: "epic/demo", paths:, keep: []).path
-
-    before { File.write(File.join(@repo, ".git", "info", "exclude"), ".state/\n") }
 
     it "lands a verified batch as one candidate, checked in the project's scratch checkout" do
       w1 = worker("w1", "f" => "a\nB1\nc\n")
@@ -355,10 +296,6 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
   end
 
   describe ".candidate run from a linked worktree" do
-    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@repo, ".state"), "HOME" => @repo }) }
-
-    before { File.write(File.join(@repo, ".git", "info", "exclude"), ".state/\n") }
-
     it "verifies in the scratch checkout keyed by the main worktree" do
       linked = File.join(@repo, ".state", "linked")
       git("worktree", "add", "-q", "--detach", linked)
@@ -402,27 +339,22 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
       expect(landing.value.report("w1").kind).to eq(:merged)
     end
 
-    def lock_path
-      File.join(git("rev-parse", "--path-format=absolute", "--git-common-dir"), Lain::Isolation::ParentLock::NAME)
-    end
-
     def free?
-      File.open(lock_path, File::RDWR | File::CREAT) { |file| file.flock(File::LOCK_EX | File::LOCK_NB) }
+      Lain::Isolation::MergeCoordinator::Home.for(repo_root: @repo, branch: "epic/demo").drain_lock.try { nil }
     end
 
-    it "is held for the whole run, under the repository's git dir, and released after" do
+    it "holds the branch's drain lock for the whole run, and releases it after" do
       w1 = worker("w1", "f" => "a\nB1\nc\n")
       during = nil
-      queue = described_class.new(repo_root: @repo, base:, journal:,
-                                  verify: lambda { |candidate|
-                                    during = free?
-                                    described_class::Verification.new(outcome: :passed, tip: candidate.sha)
-                                  })
+      queue = queue_with(verify: lambda { |candidate|
+        during = free?
+        described_class::Verification.new(outcome: :passed, tip: candidate.sha)
+      })
 
       queue.call([w1])
 
       expect(during).to be(false)
-      expect(free?).to be_truthy
+      expect(free?).to be(true)
     end
   end
 end
