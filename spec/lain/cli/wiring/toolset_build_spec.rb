@@ -213,6 +213,17 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
+    it "builds a chat toolset whose grep answers a lookaround pattern" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "a.txt"), "foobar\nfoobaz\n")
+
+        grep = toolset_build.build(recorder, ask_human:).fetch("grep")
+        result = grep.call({ "pattern" => "foo(?=bar)", "path" => dir })
+
+        expect(result.content).to eq("a.txt:1:foobar")
+      end
+    end
+
     it "layers the capability floor, the child seam, and the three main-agent-only tools" do
       names = toolset_build.build(recorder, ask_human:).names
 

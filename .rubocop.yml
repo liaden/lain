@@ -480,7 +480,7 @@ RSpec/IncludeExamples:
 # A spec file is named for the concept it covers, not by mirroring a class path. Some
 # describe one member of a subsystem (approval_spec covers Approval::Queue,
 # pipeline_source_spec covers its Null), some describe a relationship rather than a
-# class (core/grep_parity_spec pins the Rust and Ruby greps against each other), and
+# class (the seams under spec/lain/seams/ drive two real components together), and
 # spec/integration/ is a deliberate second tree. Renaming 30 files to satisfy a
 # mirror rule would cost every one of those names its meaning. It also folds a
 # `describe Klass, "scope"` docstring into the expected FILENAME, so it cannot both

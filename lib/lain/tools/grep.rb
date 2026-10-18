@@ -9,37 +9,8 @@ module Lain
     # {Middleware::Gate}. An invalid pattern is reported as an error
     # {Result}, never a raise.
     #
-    # TWO SEARCH PATHS, one result shape: the walk runs in this process by
-    # default, and a started {Core::Client} sends the same call to the
-    # lain-core daemon instead. They are NOT interchangeable, and the
-    # differences are behavioural rather than cosmetic:
-    #
-    #   * REGEX DIALECT. The daemon's engine is finite automata, so it has no
-    #     backreferences and no lookaround -- and that absence is what bounds a
-    #     pathological pattern. {#description} therefore promises the SUBSET
-    #     both paths accept and never names Ruby, because that string is what
-    #     the model reads to decide what to send.
-    #   * WALK ORDER, AND THEREFORE WHICH MATCHES. {Files.under} sorts ONE flat list
-    #     of full paths, where "." (0x2E) sorts before "/" (0x2F); the daemon
-    #     sorts per directory during a depth-first walk. Two entries show it:
-    #
-    #         {a.txt, a/b.txt}  ->  in process: ["a.txt", "a/b.txt"]
-    #                               over wire:  ["a/b.txt", "a.txt"]
-    #
-    #     NOT cosmetic: a search that exceeds {MAX_MATCHES} stops as soon as it
-    #     has enough, so the two paths return DIFFERENT SUBSETS of the same
-    #     tree, not the same 200 reordered. Decided and left standing. The fix,
-    #     if ever wanted, is `.sort_by { |entry| entry.split("/") }` in
-    #     {Files.walk}, because a depth-first walk with sorted
-    #     entries yields paths in exactly the order you get by sorting their
-    #     COMPONENT ARRAYS. It is left out because it would change which
-    #     matches today's in-process callers get. Pinned as a witness in
-    #     spec/lain/core/grep_parity_spec.rb rather than smoothed over.
-    #
-    # VCS ignore rules agree: the in-process walk lists a repository through
-    # {FileWalk}, and {CoreSearch} sends `respect_ignores: true` with the same
-    # include list, so the daemon skips what git ignores too. The remaining
-    # gaps are pinned in spec/lain/core/grep_parity_spec.rb.
+    # The regex is Ruby's own, built with a {REGEX_TIMEOUT}, so a pattern that
+    # backtracks without end comes back as an error {Result} rather than a hang.
     class Grep < Tool
       include Tool::FileTarget
 
@@ -47,9 +18,11 @@ module Lain
       # result content.
       MAX_MATCHES = 200
 
-      # Both paths hand back the same {Tool::Bounds::Found} inside a {Searched}, so
-      # {#format_matches} never learns which one ran, and the collect-one-
-      # past-the-cap discipline stays inside the path that needs it (see
+      # Seconds one pattern may spend backtracking on one line.
+      REGEX_TIMEOUT = 1
+
+      # The search hands back a {Tool::Bounds::Found} inside a {Searched}, and the
+      # collect-one-past-the-cap discipline stays inside it (see
       # {RubySearch#call}) rather than being re-derived from the rows
       # downstream. Shared with {Tools::AstSearch}, the other tool that caps
       # mid-walk and cannot use {Tool::Bounds::Enumeration} for the reason
@@ -69,7 +42,7 @@ module Lain
       # case-insensitivity flag.
       class Input < Tool::Input
         field :pattern, :string,
-              description: "Regular expression to search for. Backreferences and lookaround are not supported.",
+              description: "Regular expression to search for.",
               required: true
         field :path, :string, description: "File or directory to search. A directory is searched recursively.",
                               required: true
@@ -122,9 +95,7 @@ module Lain
 
         # {FileWalk} lists what git would show, so a repository's ignored build
         # output is never visited. Links come back and are filtered by what they
-        # point at, so a link to a file is still searched as it always was. The
-        # trailing `.sort` in {.under} is a FLAT sort of full paths, which is not
-        # the order the daemon walks in -- see the walk-order note on {Grep}.
+        # point at, so a link to a file is still searched as it always was.
         def self.walked(walk) = walk.map { |entry| utf8(entry) }.select { |entry| File.file?(entry) }
 
         def self.utf8(name) = String.new(name, encoding: Encoding::UTF_8)
@@ -201,8 +172,7 @@ module Lain
         end
       end
 
-      # The default, and the tool's tier-1 claim in full: {FileWalk} and
-      # File.foreach, no boundary.
+      # The tool's tier-1 claim in full: {FileWalk} and File.foreach, no boundary.
       #
       # An {Enumerator} so the MAX_MATCHES+1 pull stops reading files the moment
       # it has enough, rather than scanning every file under `path` before
@@ -224,11 +194,10 @@ module Lain
         private
 
         def build_regex(input)
-          Regexp.new(input.pattern, input.case_insensitive ? Regexp::IGNORECASE : 0)
+          Regexp.new(input.pattern, input.case_insensitive ? Regexp::IGNORECASE : 0, timeout: REGEX_TIMEOUT)
         end
 
         # `display` is the model's original spelling, for {Files#label}.
-        # {CoreSearch} reproduces both labelling rules.
         def matching(reads, display, regex)
           Enumerator.new do |yielder|
             reads.each_file.each do |file|
@@ -251,50 +220,6 @@ module Lain
         end
       end
 
-      # The same search, one msgpack-RPC round trip out of process. The daemon
-      # owns the walk, the engine and the cap; this class owns the params it
-      # sends and the one label the reply does not spell our way: a FILE target
-      # comes back labelled with the `path` param VERBATIM, which is the
-      # WorkerEnv-resolved absolute locator rather than the model's spelling,
-      # so `input.path` is substituted back.
-      class CoreSearch
-        # The started {Core::Client} is injected: the caller owns the daemon's
-        # lifecycle and its reactor. One round trip per search, and the client
-        # demuxes by msgid, which keeps {Grep#parallel_safe?} true here.
-        def initialize(client, include)
-          @client = client
-          @include = include
-        end
-
-        def call(path, input)
-          reply = @client.call("grep", [wire_params(path, input)])
-          # ONE target means one labelling rule, decided once rather than
-          # re-derived -- and re-stat'd -- for each of up to 200 rows.
-          under_root = File.directory?(path)
-          rows = reply.fetch("matches").map do |match|
-            [under_root ? match.fetch("path") : input.path, match.fetch("line_number"), match.fetch("line")]
-          end
-          # The daemon's walk reports no skipped names, so this arm writes none.
-          Searched.new(found: Tool::Bounds::Found.new(rows:, capped: reply.fetch("capped")), notices: [])
-        end
-
-        private
-
-        # msgpack has no "absent": a flag the model omitted would ride as nil.
-        # Today's daemon happens to read that nil as false (measured), but that
-        # is a decoder's incidental behaviour and not the wire contract, so the
-        # default is resolved HERE and the wire always carries a bool.
-        #
-        # `respect_ignores` is sent explicitly, so this side's intent is
-        # auditable on the wire and a change of the daemon's default cannot
-        # alter grep's behaviour silently. It is not a model-facing input.
-        def wire_params(path, input)
-          { "pattern" => input.pattern, "path" => path,
-            "case_insensitive" => input.case_insensitive || false,
-            "respect_ignores" => true, "include" => @include }
-        end
-      end
-
       class << self
         # Public and class-level so {Middleware::WithholdSecretPaths} can
         # recognize this exact sentinel STRUCTURALLY -- rebuilding it from this
@@ -308,21 +233,16 @@ module Lain
 
       input_model Input
 
-      # The out-of-process arm is OPTED INTO, because it is a different
-      # dialect and a different walk (see the class note), not merely a
-      # different wire.
-      def initialize(client: nil, walk_limit: Tool::Bounds::WalkLimit::DEFAULT, include: [])
+      def initialize(walk_limit: Tool::Bounds::WalkLimit::DEFAULT, include: [])
         super()
-        @search = client ? CoreSearch.new(client, include) : RubySearch.new(walk_limit, include)
+        @search = RubySearch.new(walk_limit, include)
       end
 
       def name = "grep"
 
       def description
         "Searches file contents for a regular expression pattern. " \
-          "Backreferences and lookaround are not supported -- write a plain " \
-          "regular expression, with no (?=...), (?<=...) or \\1. Returns " \
-          "matching lines as file:line plus the line text. Given a directory, " \
+          "Returns matching lines as file:line plus the line text. Given a directory, " \
           "searches recursively, skipping .git and, inside a git repository, " \
           "files git ignores. A line that is not valid UTF-8 " \
           "comes back with each invalid byte written as \\xNN; a file whose name " \
@@ -333,10 +253,8 @@ module Lain
           "not an empty string."
       end
 
-      # Audited on BOTH paths: reads Session#worker_env.cwd to resolve `path`,
-      # then either walks the filesystem or makes one {Core::Client#call},
-      # which demuxes concurrent callers by msgid. No Session write, no chdir,
-      # no shared state across calls either way.
+      # Reads Session#worker_env.cwd to resolve `path`, then walks the
+      # filesystem. No Session write, no chdir, no shared state across calls.
       def parallel_safe? = true
 
       protected
@@ -345,35 +263,19 @@ module Lain
         # The FILESYSTEM locator. The match LABELS keep the model's original
         # spelling -- see {RubySearch#matching}.
         path = target(invocation, input.path)
-        # Asked on THIS side whichever arm runs, so a missing or unreadable
-        # target reads identically and costs no round trip. `:either` because
-        # grep takes a file or a directory and says so in one sentence.
+        # `:either` because grep takes a file or a directory and says so in one sentence.
         problem = problem_with(path, expecting: :either)
         return Tool::Result.error(problem) if problem
 
         Tool::Result.ok(format_matches(@search.call(path, input), input))
+      # TimeoutError is a RegexpError, so it must be rescued first.
+      rescue Regexp::TimeoutError => e
+        Tool::Result.error("pattern #{input.pattern.inspect} hit the #{REGEX_TIMEOUT}s regex timeout: #{e.message}")
       rescue RegexpError => e
         Tool::Result.error("invalid pattern #{input.pattern.inspect}: #{e.message}")
-      rescue Core::Client::Refused => e
-        pattern_refusal(e)
-      rescue Core::Died, Core::Client::Stopped => e
-        # Boundary death is a tool ERROR, never a raise past the loop: loud,
-        # named and immediate.
-        Tool::Result.error("lain-core boundary failed: #{e.class}: #{e.message}")
       end
 
       private
-
-      # The daemon refusing a pattern its engine cannot compile is the
-      # out-of-process spelling of {RubySearch}'s RegexpError, and the only
-      # refusal the model can act on. Any OTHER refusal is a bug on THIS side --
-      # a param spelled wrong, a daemon too old to know "grep" -- and stays a
-      # raise.
-      def pattern_refusal(error)
-        raise error unless error.message.start_with?("invalid pattern")
-
-        Tool::Result.error(error.message)
-      end
 
       # A skipped name is reported beside the no-match sentence too: "no
       # matches" alone claims files nobody searched.

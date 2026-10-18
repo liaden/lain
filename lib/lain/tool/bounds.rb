@@ -232,9 +232,8 @@ module Lain
         def admits?(count) = count <= limit
 
         # Applied AFTER the caller's deterministic ordering, never by stopping a
-        # walk early -- `spec/lain/core/grep_parity_spec.rb` records that walk
-        # order diverges under a cap, so which rows survive must be decided by
-        # the sort and not by the filesystem.
+        # walk early -- walk order differs between walkers, so under a cap
+        # which rows survive must be decided by the sort and not by the filesystem.
         #
         # Frozen on BOTH branches, and that symmetry is the point rather than
         # the freezing: returning the caller's own mutable Array when it fits
