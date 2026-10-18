@@ -1344,7 +1344,7 @@ Scenario: medium signals
   Then the ledger counts medium
 
 Scenario: weak signals
-  When the journal carries an escalation with rung "auto" and verdict deny
+  When the journal carries an escalation recording the judge's own deny (not the unattended refusal, which no judge decided)
   Then the ledger counts weak
 
 Scenario: the requester of a bash record comes from its escalation
