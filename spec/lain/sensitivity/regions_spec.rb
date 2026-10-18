@@ -198,7 +198,7 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
 
       # The floor pinned from both sides: 20 bytes is reported, 19 is not. The
-      # lengths are LITERAL and not derived from `HEX_LENGTH` on purpose -- an
+      # lengths are LITERAL and not derived from `Entropy::HEX_LENGTH` on purpose -- an
       # example that slices its fixture to the constant under test moves with it
       # and can never fail, which is how the first draft of this pair passed
       # against a floor of 10.
@@ -209,18 +209,18 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
 
       # Named for what it actually pins. A BARE 19-byte run is below `TOKEN`'s own
-      # `{20,}` minimum, so it is never a candidate and `HEX_LENGTH` never gets to
-      # speak -- which is why no mutant of `HEX_LENGTH` can fail THIS example.
+      # `{20,}` minimum, so it is never a candidate and `Entropy::HEX_LENGTH` never gets to
+      # speak -- which is why no mutant of `Entropy::HEX_LENGTH` can fail THIS example.
       it "ignores a bare 19-byte run, which is below the token scanner's minimum" do
         below = "9f8e7d6c5b4a3928170"
 
         expect(detect("value #{below} end")).to be_empty
       end
 
-      # `high_entropy?` has TWO callers, and only the entropy scanner is
+      # `Entropy.high?` has TWO callers, and only the entropy scanner is
       # TOKEN-filtered. An assignment's VALUE reaches it through
       # `qualifies? -> secret_shaped?` with no length pre-filter at all, so
-      # `HEX_LENGTH` binds in BOTH directions on this path. Lowering it to 10
+      # `Entropy::HEX_LENGTH` binds in BOTH directions on this path. Lowering it to 10
       # makes this line report a region; nothing else in the file covers that.
       it "ignores a short hex assignment value, which no token filter guards" do
         expect(detect("blob = 3f5a9c2e1d7b\n")).to be_empty

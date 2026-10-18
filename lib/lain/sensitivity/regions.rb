@@ -46,23 +46,6 @@ module Lain
       # triage rather than reading like a matched credential.
       ENTROPY_REASON = "high-entropy token"
 
-      # Hex maxes out at 4.0 bits/char, so it needs its own floor; a random
-      # 32-char hex key sits at ~3.9 and a sha1 at ~3.74, and catching the second
-      # to keep the first is the trade this asymmetry is worth. Base64 runs need
-      # the higher floor because paths and URLs are base64url-legal and sit at
-      # 4.0-4.2 -- at 4.0 the detector reported 41 `lib/` file paths as secrets.
-      #
-      # `HEX_LENGTH` binds in BOTH directions, and a spec covers each.
-      # `entropy_candidates` is `TOKEN`-filtered at `{20,}`, so on that path a
-      # shorter run never arrives and the constant is inert; an assignment's
-      # VALUE reaches the same predicate through `qualifies? -> secret_shaped?`
-      # with no pre-filter, so at 10 a line like `blob = 3f5a9c2e1d7b` reports a
-      # region and at 20 it does not.
-      HEX_ENTROPY = 3.0
-      HEX_LENGTH = 20
-      BASE64_ENTROPY = 4.2
-      BASE64_LENGTH = 24
-
       NAME_HINT = /pass|secret|token|api[_-]?key|credential|auth|private|signature|session/i
 
       # A name hint is a weak signal and needs the value to be worth showing a
@@ -90,19 +73,6 @@ module Lain
       # one run swallow `API_KEY=` along with the secret, which then merged the
       # name back into the region the value-only rule exists to exclude.
       TOKEN = %r{[A-Za-z0-9+/_-]{20,}={0,2}}
-      # Entropy cannot tell a path from a secret: slash-joined words score 4.21
-      # to 4.40 bits per character, an AWS secret key 4.66. Each segment can
-      # be judged alone, though: a word keeps one case shape and is short or
-      # repetitive, while a generated key mixes case or is a long
-      # high-entropy run in one case. A secret split into short lowercase
-      # segments is given up for that.
-      WORD_SEGMENT = /\A(?:[a-z0-9._-]+|[A-Z0-9_]+|[A-Z][a-z]+)\z/
-      # An alphabet literal (base64's, a charset table) is maximally varied and
-      # wholly predictable; no generator emits 16 consecutive code points. The
-      # runs must cover most of the token, or a key glued onto one goes too.
-      ALPHABET_RUN = 16
-      HEX = /\A[0-9a-fA-F]+\z/
-      BASE64 = %r{\A[A-Za-z0-9+/=_-]+\z}
       ASSIGNMENT = /\A[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_-]*)[ \t]*[:=][ \t]*(\S.*)\z/m
       # Public-key material is public by definition, and its base64 blob is
       # exactly the run the entropy detector exists to find -- so every `.pub`,
@@ -287,23 +257,8 @@ module Lain
         end
 
         def entropy_candidates(scanned)
-          matches(scanned, TOKEN).select { secret_shaped?(_1[0]) && !predictable?(_1[0]) }
+          matches(scanned, TOKEN).select { secret_shaped?(_1[0]) && !Entropy.predictable?(_1[0]) }
                                  .map { span(_1.begin(0), _1[0], ENTROPY_REASON, :entropy) }
-        end
-
-        def predictable?(token) = slash_joined_words?(token) || alphabet_run?(token)
-
-        def slash_joined_words?(token)
-          segments = token.split("/").reject(&:empty?)
-
-          segments.size >= 2 && segments.all? { _1.match?(WORD_SEGMENT) && !high_entropy?(_1) }
-        end
-
-        def alphabet_run?(token)
-          covered = token.each_byte.chunk_while { |before, after| after == before + 1 }
-                         .sum { _1.size >= ALPHABET_RUN ? _1.size : 0 }
-
-          covered * 2 > token.bytesize
         end
 
         def span(start, text, reason, detector)
@@ -314,7 +269,7 @@ module Lain
         def secret_shaped?(value)
           token = unquote(value)
 
-          issuer_fixed?(token) || high_entropy?(token)
+          issuer_fixed?(token) || Entropy.high?(token)
         end
 
         # Quotes belong to the file's syntax, not to the secret. Left on, a short
@@ -324,20 +279,6 @@ module Lain
         end
 
         def issuer_fixed?(token) = CredentialPatterns.for(:write).any? { |_, shape| token.match?(shape) }
-
-        def high_entropy?(token)
-          return token.length >= HEX_LENGTH && shannon(token) >= HEX_ENTROPY if token.match?(HEX)
-
-          token.length >= BASE64_LENGTH && token.match?(BASE64) && shannon(token) >= BASE64_ENTROPY
-        end
-
-        # Bits per character. `each_char` over BINARY bytes is deliberate: the
-        # measure is over the symbols as they were written, and re-decoding to
-        # find codepoints is the thing that raises.
-        def shannon(token)
-          length = token.length.to_f
-          -token.each_char.tally.each_value.sum { |count| (count / length) * Math.log2(count / length) }
-        end
       end
 
       # Whether bytes that look like a public key ARE one, parsed exactly. The
