@@ -300,7 +300,7 @@ end
 
 ## Tasks
 
-### T1: Delete Project::Dotfiles          [risk: low]
+### [x] T1: Delete Project::Dotfiles          [risk: low]
 
 **Depends on:** none
 **Files:** delete `lib/lain/project/dotfiles.rb`, `spec/lain/project/dotfiles_spec.rb`; modify
@@ -369,7 +369,7 @@ examples pin the second scenario)
 - `spec/lain/review/deletability_spec.rb` carries a row for `ParentDesk` (it does not at grounding), or
   `grep -rn "desk: nil\|ParentDesk" lib` finds a site outside `landing_queue.rb`
 
-### T3: Delete the vendored request and response model          [risk: medium]
+### [x] T3: Delete the vendored request and response model          [risk: medium]
 
 **Depends on:** none
 **Files:** delete `lib/lain/provider/http/{message,content,chunk,tool_call,tokens,thinking,invalid_role_error,stream_accumulator}.rb`,
@@ -451,7 +451,7 @@ modify `lib/lain/provider/http/provider.rb` (drop `extend Registry`), `spec/lain
 144), `docs/porting-providers.md` (keep the wire-protocol survey and leak-site table; delete the
 sections that port `StreamAccumulator`, `build_chunk`, `#complete` and `error_handling_spec.rb` at 29
 to 30, 46 to 49, 66 to 81, 91 to 101), `docs/providers/anthropic.md:75-77`, `README.md:645` (the "SSE
-accumulator" phrase), `lib/lain/provider/anthropic/transport.rb:11-16`, `lib/lain/provider/anthropic/stream_assembler.rb:12`,
+accumulator" phrase), `lib/lain/provider/anthropic/transport.rb:11-16`, `lib/lain/provider/anthropic/stream_assembler.rb:12` (and `spec/lain/provider/anthropic/stream_assembler_spec.rb:4`, added by the T3 review),
 `lib/lain/provider/ollama/transport.rb:9` (comments)
 **Reuse:** `Ollama::Transport.configuration_options` and its direct `register_provider_options` call
 are the shape to copy
@@ -553,7 +553,7 @@ Spec file: `crates/lain-core/src/rpc.rs` (`mod tests`), `crates/lain-core/tests/
 ### T6: Remove the Ruby daemon lifecycle, the vsock transport and Exec::Core          [risk: medium]
 
 **Depends on:** T7
-**Files:** delete `lib/lain/exec/core.rb`, `lib/lain/core/transport/vsock.rb`, `lib/lain/core/child.rb`,
+**Files:** (added by the T5 review: the `{Exec::Core}` comment at `lib/lain/tools/bash.rb:21`) delete `lib/lain/exec/core.rb`, `lib/lain/core/transport/vsock.rb`, `lib/lain/core/child.rb`,
 `spec/lain/exec/core_spec.rb`, `spec/lain/core/transport/vsock_spec.rb`, `spec/lain/core/child_spec.rb`,
 `spec/support/vsock_availability.rb`, `spec/support/vsock_daemon.rb`; create `spec/support/core_daemon.rb`
 (a spec-side spawner: `Process.spawn` of the built binary at `Paths::Shipped.cargo_target/debug/lain-core`
@@ -1021,7 +1021,7 @@ Spec file: `spec/lain/provider/response_wal_spec.rb`, `spec/lain/telemetry/compa
 - a `Telemetry::Compaction` constructor outside `Compaction::Scheduler` passes no `collapse_strategy`
   (grounding grep: none in `lib/`)
 
-### T15: Delete the Redis tombstone from the services DSL          [risk: low]
+### [x] T15: Delete the Redis tombstone from the services DSL          [risk: low]
 
 **Depends on:** none
 **Files:** modify `lib/lain/isolation/services/builder.rb` (delete `REDIS_REPLACEMENT` at 31 to 32
@@ -1044,7 +1044,7 @@ Spec file: `spec/lain/isolation/services_spec.rb`
 **Stop and report if:**
 - `docs/commands.md` or `README.md` documents the `redis` upgrade message (grounding: no hit)
 
-### T16: Replace Async::Variable with Async::Promise          [risk: low]
+### [x] T16: Replace Async::Variable with Async::Promise          [risk: low]
 
 **Depends on:** none
 **Files:** modify `lib/lain/promise.rb` (23, 30 to 43: `await` becomes `@variable.wait`, never
@@ -1176,3 +1176,33 @@ reads 0, and `pgrep -cf '[p]re-commit (hook-impl|run)'` reads 0):
 - T1, T2, T3, T5, T13, T15, T16 started from `534169a7`.
 - Cross-plan holds (main session): T7 after bash-confinement T31; T6 after T7, its docker.rb comments after qa-round-25 T56; T9 after T5 and bash-confinement T32, and after T4 (both edit README.md); T8 after T4, T5, T6, T7, T9 and bash-confinement T32; T10 after qa-round-25 T53 and T57; T17 after T9.
 - User ruling 2026-10-17: agents research and evaluate issues; only UX or design forks, or problems we cannot settle, go to the human.
+- T1 implemented (dotfiles.rb and its spec deleted; 1 row out of planning/project-root-and-secret-boundary.md); light review started.
+- T15 implemented (REDIS_REPLACEMENT gone; 5 redis examples become 1 unknown-service example); light review started, asked to check compose scheme: coverage.
+- T3 implemented (vendored model, Anthropic chat and mixins, stream_accumulator deleted; streaming_spec rewritten onto Transport); standard review started. Open: CLAUDE.md eager-load sentence may need repointing with T3, not after T4.
+- T16 implemented (Lain::Promise and Subagent::Actor on Async::Promise; AlreadyResolved guard kept, since resolve ignores a repeat; Actor#run's resolved? guard dropped beyond the card); standard review started. Shared diff for lain.gemspec is pending: activesupport ~> 8.0, concurrent-ruby ~> 1.3.
+- T1 light review APPROVE. T1 landed `4049857f`.
+- T1's hook skipped the Ruby checks (only deletions staged); pspec run on main after landing to cover it.
+- T15 light review APPROVE-WITH-FIXES, mechanical: restore scheme: coverage through the DSL (forwarding and the tcp default) without redis; un-nest the refusal expect. Same implementer, no second review.
+- T2 implemented (ParentDesk and Resolver::Spawned deleted, desk: required, STANDS moved to CandidateDesk); standard review started, with the dropped examples to check.
+- pspec on main at `4049857f` (after T1): 24974 examples, 0 failures, 13 pending.
+- T15 fixes applied (scheme forwarding and tcp default pinned, each shown red by mutation). T15 landed `083762ac`.
+- T3 standard review APPROVE-WITH-FIXES, all mechanical: the CLAUDE.md eager-load sentence is repointed at lib/lain.rb WITH T3 (lib/lain.rb:72-78 already states it), so T4 drops that repoint; providers/anthropic.rb header names its eager-load dependency; 1 redundant truncation example; 2 stale comments. T4 must be re-grounded against the T3 tree (header now 9-17) and gains spec/lain/provider/anthropic/stream_assembler_spec.rb:4.
+- T13 stopped: fleet_windows_spec pins a mark-less result as terminal, and @state.fetch breaks partial feed fixtures in 4 other specs. Ruling: scope widens to those fixtures (1 shared spec helper building a complete feed state; wiring_spec and switchboard_spec limited to their fixture lines and 3-way merged with confinement T29 and T30), plus wiring ensure_parkable! into gate/policy.rb Deferred#decide and gate/adjudicator.rb settle.
+- T3 fix round done. Landing hook RED on yard-lint only (DuplicateNamespaceComment, Lain documented in http/provider.rb:11 and http/streaming.rb:40); the suite passed. Not landed: main restored and the fix returned to the implementer. CLAUDE.md:203 repoint is staged in the T3 worktree.
+- T5 implemented (lain-core answers ping only; exec.rs, grep.rs and vsock tests deleted; Cargo.lock regenerated). 26 :core-tier Ruby examples now fail on exec and grep; they are T6's. High review started.
+- TC1 (toolchain, outside the plan): the user's rustup update brought a clippy lint at ext/lain/src/event.rs:70 that the workspace-wide clippy hook would fail on for any Rust commit. Started from `083762ac` in tmp/worktrees/s15-TC1; it lands before T5.
+- T3 yard fix done (header blocks moved onto Provider and Streaming). T3 landed `af9c0413`, with CLAUDE.md:203 repointed at lib/lain.rb in the same commit; T4 drops that repoint from its Shared-file wiring. T4 is now ready.
+- T4 started from `af9c0413`, re-grounded on T3's tree.
+- T16 standard review APPROVE-WITH-FIXES: async raised to ~> 2.35, >= 2.35.1 (Promise#wait spurious-wakeup fix), applied by the main session in the worktree with activesupport and concurrent-ruby; -W example checks exit status; stale comments; a Mutex around Promise#resolve's check-then-act (substantive, so a short second review follows); unused variable param dropped.
+- T2 standard review APPROVE-WITH-FIXES. Ruling: also delete CandidateDesk's Spawned-only surface (continue, repo_root, replayed, @scratch; all unexercised by mutation) and inline Resolver::Standing, dropping the resolver: seam; header and YARD rewrites; spec tidy-ups. Second review follows.
+- TC1 landed `5dad1f87` (Role: TryFrom<&str> to FromStr; hook clippy, test and fmt green). T5 is unblocked on clippy.
+- T16 fix round done (Mutex around resolve with a race spec; gemspec and Gemfile.lock updated); second review started.
+- T13 done with widened scope (4848 examples green over 77 files; PublishedFeedState helper; ensure_parkable! wired into the deferral paths); standard review started.
+- T2 fix round done, beyond the ruling: the queue hands its probe verdict to desk.merge, which no longer re-probes. Second review started.
+- T4 implemented (mixins folded into providers/anthropic.rb; streaming.rb and provider/registry.rb deleted; kept 4 live api_base examples the card's range would have cut). Stale comments in http/streaming.rb and error_body.rb added to scope before review.
+- T4 stale comments fixed; standard review started.
+- T16 second review APPROVE-WITH-FIXES: the race spec is sound and bounded, and the Mutex cannot deadlock with fiber waits; the new actor example must observe the parking (2 mutants survived); reflow 2 comments. Same implementer; lands after.
+- T16 landed `66f872f1` (gemspec and Gemfile.lock shared lines carried in the card's commit).
+- T5 high review APPROVE-WITH-FIXES: test that the shipped binary refuses sleep; reword the Cargo.toml isolation-boundary comment (no card owned it); io-util moves to dev-dependencies (plan amended: production builds without it); the sleep delay pinned; lifecycle test renamed. Note for T6 and the relay: main.rs never unlinks its socket on shutdown, and an argv of vsock:5252 now binds a relative socket. The 23 grep_parity failures are T7's; tools/bash.rb:21 added to T6.
+- T2 second review APPROVE-WITH-FIXES: the re-probe drop is safe because the inputs are immutable SHAs on one thread (not the drain lock), but a stale verdict lands a wrong tree in silence, so Probed carries its tip and merge guards tip and verdict. Same implementer, no third review.
+- T4 standard review APPROVE-WITH-FIXES, all mechanical: 6 stale comments and docs, the porting-providers leak table marked as history, VENDOR.md history restored, 1 redundant example.
