@@ -30,6 +30,25 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the env table" do
+    it "is read by .load" do
+      Dir.mktmpdir do |root|
+        write_config(root, "env pass: %w[DATABASE_URL]\n")
+
+        expect(described_class.load(root:).env_pass).to eq(%w[DATABASE_URL])
+      end
+    end
+
+    it "tells two configs apart by it alone, as a value and as a hash key" do
+      epics = Lain::Config::Epics.new(home: :xdg)
+      one = described_class.new(epics:, env_pass: %w[DATABASE_URL])
+      other = described_class.new(epics:, env_pass: %w[RAILS_ENV])
+
+      expect([one == other, one.hash == other.hash, one == described_class.new(epics:, env_pass: %w[DATABASE_URL])])
+        .to eq([false, false, true])
+    end
+  end
+
   describe "the isolation table" do
     it "is read by .load" do
       Dir.mktmpdir do |root|

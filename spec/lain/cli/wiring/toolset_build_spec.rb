@@ -152,6 +152,17 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
         expect(floor.find { |tool| tool.name == "bash" }.instance_variable_get(:@exec)).to be(chosen)
       end
+
+      it "hands a bash child the variables the project's env pass names" do
+        config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg), env_pass: %w[DATABASE_URL RAILS_ENV])
+        exec = bash_backend(build_with(options, config:).build(recorder, ask_human:))
+
+        stdout = with_env("DATABASE_URL" => "postgres://db", "RAILS_ENV" => "test") do
+          exec.call(command: "printenv DATABASE_URL RAILS_ENV", cwd: Dir.pwd, env: ENV.to_h, timeout: 10).stdout
+        end
+
+        expect(stdout).to eq("postgres://db\ntest\n")
+      end
     end
 
     # The OTHER thing that has to reach the bash tool, and the reason it is

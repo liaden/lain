@@ -9,7 +9,7 @@ module Lain
     # `execvp` through {Shell::Pipeline} as it is, and a String reaches the same
     # runner as the one-stage term `["/bin/sh", "-c", command]`. So the session of its
     # own, the group kill, the live sinks, the capture bound and the child's
-    # `/dev/null` stdin are one implementation, and {Exec.child_env} is applied in one place above
+    # `/dev/null` stdin are one implementation, and its {ChildEnv} is applied in one place above
     # them -- the same reason {Tools::Bash.render_output} is one rendering rather
     # than one per arm.
     #
@@ -24,9 +24,12 @@ module Lain
       # @param pipeline [#call] runs both arms; injectable so a spec can pin a
       #   shorter TERM->KILL grace without giving up the real process-group kill
       # @param ceiling [Integer] the output ceiling the bytes are bound for
-      def initialize(pipeline: Shell::Pipeline.new, ceiling: Tool::Bounds::CEILINGS.fetch("bash"))
+      # @param child_env [#call] decides what a child inherits and is lent
+      def initialize(pipeline: Shell::Pipeline.new, ceiling: Tool::Bounds::CEILINGS.fetch("bash"),
+                     child_env: ChildEnv::DEFAULT)
         @pipeline = pipeline
         @ceiling = ceiling
+        @child_env = child_env
         freeze
       end
 
@@ -68,7 +71,7 @@ module Lain
                fds: {}, launch: Shell::Pipeline::AS_WRITTEN, pinned_env: {}, confinement: Confine::Request::NONE)
         confinement => Confine::Request
         capture = Capture::Bounded.new(ceiling: @ceiling, stdout_sink:, stderr_sink:)
-        @pipeline.call(term(command), cwd:, env: Exec.child_env(env).merge(pinned_env), timeout:, capture:, fds:,
+        @pipeline.call(term(command), cwd:, env: @child_env.call(env).merge(pinned_env), timeout:, capture:, fds:,
                                       launch:)
       rescue Shell::Pipeline::Timeout => e
         raise Timeout, e.message

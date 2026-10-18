@@ -93,6 +93,20 @@ RSpec.describe Lain::Exec::ChildEnv do
       expect(passed).to contain_exactly("RAILS_ENV", "JAVA_HOME", "LAIN_ENV_PASS")
     end
 
+    it "joins the names a project passes to the ones LAIN_ENV_PASS lists" do
+      env = parent.merge("LAIN_ENV_PASS" => "JAVA_HOME")
+
+      passed = described_class.from(env, pass: %w[RAILS_ENV]).call(env).compact.keys
+
+      expect(passed).to contain_exactly("RAILS_ENV", "JAVA_HOME", "LAIN_ENV_PASS")
+    end
+
+    it "says whether a name is one it passes" do
+      passing = described_class.new(pass: %w[RAILS_ENV], env: parent)
+
+      expect(%w[RAILS_ENV EDITOR].map { |name| passing.passes?(name) }).to eq([true, false])
+    end
+
     it "refuses a secret-shaped name at construction, naming it and the remedy" do
       expect { described_class.new(pass: %w[RAILS_ENV GITHUB_TOKEN], env: parent) }
         .to raise_error(described_class::Refused, /GITHUB_TOKEN.*remove/)

@@ -44,9 +44,13 @@ module Lain
                 "lain runs; remove them from #{PASS_VARIABLE}".freeze
 
       # @param env [#[], #to_h] the process environment the child would inherit
-      # @return [ChildEnv] passing the names {PASS_VARIABLE} lists
+      # @param pass [Array<String>] the names a project's `env pass:` lists
+      # @return [ChildEnv] passing those and the names {PASS_VARIABLE} lists
       # @raise [Refused] when one of them is secret-shaped
-      def self.from(env) = new(pass: env.fetch(PASS_VARIABLE, "").split(",").map(&:strip).reject(&:empty?), env:)
+      def self.from(env, pass: []) = new(pass: pass + listed(env), env:)
+
+      def self.listed(env) = env.fetch(PASS_VARIABLE, "").split(",").map(&:strip).reject(&:empty?)
+      private_class_method :listed
 
       # @param pass [Array<String>] names to keep from the process beyond {KEEP}
       # @param env [#[], #to_h] the process environment the child would
@@ -78,9 +82,13 @@ module Lain
         passed.merge(removed(withheld)).merge(removed((lent.keys + inherited.keys).grep(SCRUB)))
       end
 
+      # @param name [String] a variable name
+      # @return [Boolean] whether the pass list names it
+      def passes?(name) = @pass.include?(name)
+
       private
 
-      def keep?(name) = (KEEP.match?(name) || @pass.include?(name)) && !SECRET.match?(name)
+      def keep?(name) = (KEEP.match?(name) && !SECRET.match?(name)) || passes?(name)
 
       def removed(names) = names.to_h { |name| [name, nil] }
     end

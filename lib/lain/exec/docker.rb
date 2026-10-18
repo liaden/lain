@@ -25,9 +25,6 @@ module Lain
     # which runs as `sh -c` inside the container. A shell reads the model's
     # bytes there, the same exposure for a sequence as for a pipe, and what
     # stands in for the term arm is the container plus the same gate.
-    #
-    # ⚠️ Shares {Core}'s namespace hazard in reverse: a bare `Core` here is
-    # {Exec::Core}, never {Lain::Core}.
     class Docker
       # Named because {CLI::ExecBackend} probes PATH for exactly this file
       # before resolving a run onto this backend; two spellings, two answers.
@@ -62,9 +59,9 @@ module Lain
       # rather than in a failing command: `LANGUAGE` does not cross though
       # `LANG` and `LC_*` do, and it OUTRANKS `LC_MESSAGES`, so a container can
       # answer in a different language from its host; `http_proxy`,
-      # `HTTPS_PROXY` and `NO_PROXY` have no in-band route at all -- a container
-      # needs those exact names and the `LAIN_` hatch cannot rename -- so behind
-      # a proxy an `apk add` in the container hangs. Bake those into the image.
+      # `HTTPS_PROXY` and `NO_PROXY` do not cross either, so behind a proxy an
+      # `apk add` in the container hangs. A project's `env pass:` is the route
+      # for those names: a name it passes crosses as written.
       CROSSES = /\A(?:LANG\z|LC_[A-Z]+\z|TZ\z|TERM\z|NO_COLOR\z|CI\z|LAIN_)/
 
       # @param image [String] what `docker run` starts from
@@ -74,9 +71,13 @@ module Lain
       #   shows a container whichever subdirectory the shell happened to be in,
       #   leaving every path above it missing INSIDE while it still resolves
       #   outside, and nothing at the call site would look wrong in review.
+      # @param child_env [ChildEnv] what the client inherits; a name it passes
+      #   also crosses into the container, beside {CROSSES}
       # @param exec [#call] the backend the `docker` client itself runs through.
       #   The reuse is the point: the deadline, the process-group kill, the live
-      #   sinks and the {Timeout} mapping are one implementation, not three.
+      #   sinks and the {Timeout} mapping are one implementation, not three. It
+      #   shares `child_env`, which would otherwise withhold a passed name from
+      #   the client that hands it to `--env`.
       # @param user [String] the `--user` value, WHERE ONE IS PASSED -- the
       #   CALLING user, so a file written into the mounted project is owned the
       #   way {Local} would have owned it. {UserMapping} decides whether it is
@@ -84,10 +85,11 @@ module Lain
       # @param prober [#call] what asks the client which of those it is.
       #   Defaulted through the same inner backend, so a doubled `exec:` doubles
       #   the probe and a unit example spawns nothing.
-      def initialize(project:, image: DEFAULT_IMAGE, exec: Local.new,
+      def initialize(project:, image: DEFAULT_IMAGE, child_env: ChildEnv::DEFAULT, exec: Local.new(child_env:),
                      user: "#{Process.uid}:#{Process.gid}", prober: Prober.new(exec:, cwd: project))
         @image = image
         @project = project
+        @child_env = child_env
         @exec = exec
         @user_mapping = UserMapping.new(user:, prober:)
         @names = Names.new
@@ -191,18 +193,20 @@ module Lain
       # of `/srv/project`, not a child of it.
       def inside_project?(path) = path == @project || path.start_with?("#{@project}/")
 
-      # An explicit nil from {Exec.child_env} is the REMOVAL lever, and here
+      # An explicit nil from the {ChildEnv} is the REMOVAL lever, and here
       # removal is the absence of a NAME: a container inherits nothing, so a
-      # variable exists only where it is named -- {Core}'s opposite, whose
-      # daemon holds its own copy and needs the nil sent. The scrub stays in the
+      # variable exists only where it is named -- {Local}'s opposite, whose
+      # child inherits this process's env and needs the nil sent. The scrub stays in the
       # chain so the two rules cannot come to disagree about a name only one of
       # them knows.
       #
       # @return [Hash] the name => value map that crosses, which is BOTH the
       #   client's override map and, by its keys, the argv's `--env` names
       def crossing(env)
-        Exec.child_env(env).select { |name, value| !value.nil? && CROSSES.match?(name) }
+        @child_env.call(env).select { |name, value| !value.nil? && crosses?(name) }
       end
+
+      def crosses?(name) = CROSSES.match?(name) || @child_env.passes?(name)
 
       def envs(names) = names.flat_map { |name| ["--env", name] }
 
@@ -275,7 +279,7 @@ module Lain
         # back through it. Both steps are inside it because both can raise -- an
         # injected prober by raising, and `match?` by being handed a String
         # tagged UTF-8 whose bytes are not valid UTF-8, which {Shell::Pipeline}
-        # cannot produce but a decoding `exec:` such as {Exec::Core} can.
+        # cannot produce but a decoding `exec:` can.
         def maps_caller_to_root?(timeout)
           PODMAN.match?(@prober.call(timeout).to_s)
         rescue StandardError
@@ -397,13 +401,13 @@ module Lain
         private
 
         # {Timeout} ONLY -- what {Exec}'s own contract promises for "this did
-        # not finish in time," {Unenforced} included as its subclass. A wider
-        # rescue here would read an unrelated bug anywhere in the exec chain
-        # (a bad argument, a real `NoMethodError`) as an ordinary unconfirmed
-        # cleanup, reporting "may still be running" with no hint anything
-        # actually broke -- the opposite of this codebase's loud-failure
-        # preference, and worse than raising: a bug swallowed here now looks
-        # exactly like a legitimately unresponsive daemon.
+        # not finish in time." A wider rescue here would read an unrelated bug
+        # anywhere in the exec chain (a bad argument, a real `NoMethodError`)
+        # as an ordinary unconfirmed cleanup, reporting "may still be running"
+        # with no hint anything actually broke -- the opposite of this
+        # codebase's loud-failure preference, and worse than raising: a bug
+        # swallowed here now looks exactly like a legitimately unresponsive
+        # daemon.
         def run(argv, ends_by)
           remaining = ends_by - @clock.call
           return false unless remaining.positive?

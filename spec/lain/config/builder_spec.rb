@@ -56,7 +56,41 @@ RSpec.describe Lain::Config::Builder do
                                                        shell: Lain::Shell::Exclusions.empty,
                                                        search: Lain::SearchRules.empty,
                                                        tests: nil,
+                                                       env_pass: [],
                                                        approval_timeout: 300)
+    end
+
+    it "builds the names env pass hands every child" do
+      expect(build("env pass: %w[DATABASE_URL RAILS_ENV]\n").env_pass).to eq(%w[DATABASE_URL RAILS_ENV])
+    end
+
+    it "refuses a secret-shaped pass name at its line, naming the shape it matched" do
+      expect { build("\nenv pass: %w[RAILS_ENV AWS_SECRET_ACCESS_KEY]\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: `env` .*AWS_SECRET_ACCESS_KEY.*SECRET/)
+    end
+
+    it "refuses an env key other than pass at its line" do
+      expect { build("\nenv passs: %w[RAILS_ENV]\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: `env` has no keys "passs"; known keys: pass/)
+    end
+
+    ["", "A=B", "AWS_*", "has space", "1ST"].each do |name|
+      it "refuses #{name.inspect} as a pass name at its line, saying it is not a variable name" do
+        expect { build("\nenv pass: [#{name.inspect}]\n") }
+          .to raise_error(Lain::Config::Refusal,
+                          /config\.rb:2: `env` .*#{Regexp.escape(name.inspect)}.*not a variable name/)
+      end
+    end
+
+    %w[LD_PRELOAD BASH_FUNC_x%% CDPATH RUBYOPT].each do |name|
+      it "refuses #{name} as a pass name at its line, saying every child has it deleted" do
+        expect { build("\nenv pass: [#{name.inspect}]\n") }
+          .to raise_error(Lain::Config::Refusal, /config\.rb:2: `env` .*#{Regexp.escape(name)}.*deleted/)
+      end
+    end
+
+    it "refuses a pass list that is not a list of names" do
+      expect { build("env pass: \"RAILS_ENV\"\n") }.to raise_error(Lain::Config::Refusal, /config\.rb:1: `env` pass/)
     end
 
     it "leaves the framework fallback reachable when no tests table is declared" do

@@ -191,7 +191,7 @@ module Lain
         # @param paths [Lain::Paths] the state home the epic gate's session
         #   journals are read from
         # @param config [Lain::Config] `.lain/config.rb`, which names each epic
-        #   stage's gate policy
+        #   stage's gate policy and the variables `exec` passes to every child
         # @param resolver [#for] the run's ONE {Lain::Shell::Executable::Resolver}, handed to
         #   {BaseTools} so every bash tool, a child's included, names its stages by it
         # @param arms [Lain::CLI::Arms] the bench arms the run was started with
@@ -207,7 +207,9 @@ module Lain
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
                        handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
                        middleware: Lain::Config::Middleware.empty, display: Lain::Channel::Null.instance,
-                       exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:),
+                       exec: ExecBackend.resolve(options[:exec],
+                                                 image: options[:exec_image], root:,
+                                                 child_env: Lain::Exec::ChildEnv.from(ENV, pass: config.env_pass)),
                        arms: Lain::CLI::Arms::OFF, resolver: Lain::Shell::Executable::Resolver::NULL,
                        fence: Lain::Confine::Bwrap.fence_binary,
                        probe: Lain::Confine::Probe.new(fence:, journal:))

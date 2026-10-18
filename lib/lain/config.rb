@@ -34,7 +34,7 @@ module Lain
     # @raise [Refusal] naming the file and line of whatever it got wrong
     def self.load(root: Dir.pwd)
       built = built(root)
-      new(epics: built.epics, approval: built.approval, isolation: built.isolation)
+      new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass)
     end
 
     # What a project adds to the path classifier's built-in tables, and the
@@ -173,10 +173,15 @@ module Lain
 
     attr_reader :epics, :approval, :isolation
 
-    def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty)
+    # @return [Array<String>] the variables `env pass:` hands every child,
+    #   beyond what {Exec::ChildEnv::KEEP} keeps
+    attr_reader :env_pass
+
+    def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [])
       @epics = epics
       @approval = Answers.coerce(approval)
       @isolation = Isolation.coerce(isolation)
+      @env_pass = env_pass.map(&:-@).freeze
       freeze
     end
 
@@ -193,12 +198,12 @@ module Lain
     # treat as distinct keys must not collide.
     def ==(other)
       other.instance_of?(self.class) && epics == other.epics && approval == other.approval &&
-        isolation == other.isolation
+        isolation == other.isolation && env_pass == other.env_pass
     end
     alias eql? ==
 
     def hash
-      [self.class, epics, approval, isolation].hash
+      [self.class, epics, approval, isolation, env_pass].hash
     end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads

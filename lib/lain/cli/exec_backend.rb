@@ -83,12 +83,16 @@ module Lain
       #   box that has never installed docker
       # @param filesystem [#file?, #executable?] the two questions the probe
       #   asks, injected on the same rule
-      def initialize(name = nil, root:, image: nil, path: ENV.fetch("PATH", ""), filesystem: File)
+      # @param child_env [Exec::ChildEnv] what every backend built here hands a
+      #   child, so the project's `env pass:` reaches each one
+      def initialize(name = nil, root:, image: nil, path: ENV.fetch("PATH", ""), filesystem: File,
+                     child_env: Exec::ChildEnv::DEFAULT)
         @name = name || DEFAULT
         @image = image || Exec::Docker::DEFAULT_IMAGE
         @root = Project::Resolver.resolved(File.expand_path(root), File)
         @path = path
         @filesystem = filesystem
+        @child_env = child_env
       end
 
       # @return [#call] the concrete backend
@@ -97,7 +101,7 @@ module Lain
       def backend
         case backend_name
         when "docker" then docker
-        else Exec::Local.new
+        else Exec::Local.new(child_env: @child_env)
         end
       end
 
@@ -113,7 +117,7 @@ module Lain
 
       def docker
         refuse_without_client!
-        Exec::Docker.new(image: @image, project: @root)
+        Exec::Docker.new(image: @image, project: @root, child_env: @child_env)
       end
 
       def refuse_without_client!

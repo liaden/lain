@@ -154,4 +154,34 @@ RSpec.describe Lain::CLI::ExecBackend do
       expect(resolvers).to all(be_a(Lain::Shell::Executable::Resolver))
     end
   end
+
+  # Real processes, because what is claimed is what a child SEES: a ChildEnv a
+  # backend held but never applied would pass any assertion made on the object.
+  describe "the child environment it builds the backend over" do
+    let(:passing) { Lain::Exec::ChildEnv.new(pass: %w[DATABASE_URL]) }
+
+    def host(&) = with_env("PATH" => "#{@bin}:#{ENV.fetch("PATH")}", "DATABASE_URL" => "postgres://db", &)
+
+    def printed(backend, command)
+      host { backend.call(command:, cwd: @bin, env: ENV.to_h, timeout: 10).stdout }
+    end
+
+    it "hands a local child the names it passes" do
+      expect(printed(resolve(root: @bin, child_env: passing), "printenv DATABASE_URL")).to eq("postgres://db\n")
+    end
+
+    it "withholds those names from a local child when none are passed" do
+      expect(printed(resolve(root: @bin), "printenv DATABASE_URL")).to eq("")
+    end
+
+    it "hands the docker client the names it passes, and names each one to cross into the container" do
+      client = File.join(docker_on_path, "docker")
+      File.write(client, "#!/bin/sh\nprintf '%s|%s' \"$DATABASE_URL\" \"$*\"\n")
+
+      value, argv = printed(resolve("docker", path: @bin, root: @bin, child_env: passing), "true").split("|")
+
+      expect([value, argv]).to match(["postgres://db", a_string_including("--env DATABASE_URL")])
+      expect(argv).not_to include("postgres://db")
+    end
+  end
 end

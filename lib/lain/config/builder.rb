@@ -9,7 +9,7 @@ module Lain
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
-                        :approval_timeout, :keys) do
+                        :env_pass, :approval_timeout, :keys) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -23,7 +23,17 @@ module Lain
     # A refusal names the line of the verb that caused it, because the user
     # wrote Ruby and a backtrace into this file points nowhere they can edit.
     class Builder
-      VERBS = %i[epics approval isolation sensitivity shell search tests middleware].freeze
+      VERBS = %i[epics approval isolation sensitivity shell search tests middleware env].freeze
+
+      ENV_TABLE = "`env`"
+
+      SECRET_PASS = "pass names %<names>s, which match the secret shape #{Exec::ChildEnv::SECRET.source}; " \
+                    "remove them from env pass".freeze
+      SCRUBBED_PASS = "pass names %<names>s, which every child has deleted whatever the pass list says; " \
+                      "remove them from env pass"
+      MALFORMED_PASS = "pass names %<names>s, each not a variable name; " \
+                       "a name is letters, digits and underscores, not starting with a digit"
+      VARIABLE_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 
       # The user's config.rb runs in every project, so the tables that rule
       # one project stay in that project's file.
@@ -108,6 +118,7 @@ module Lain
                   search: @tables.fetch(:search, SearchRules.empty),
                   tests: @tables[:tests],
                   middleware: @tables.fetch(:middleware, Middleware.empty),
+                  env_pass: @tables.fetch(:env, []),
                   approval_timeout: @approval_timeout,
                   keys: @tables.fetch(:keys) { Keys.empty })
       end
@@ -151,6 +162,17 @@ module Lain
 
       def keys(**table) = declare(:keys, Keys::TABLE, table) { |at| Keys.from(shaped(table), path: at) }
 
+      # `env pass: %w[DATABASE_URL RAILS_ENV]` hands those variables, from the
+      # environment lain started under, to every command the bash tool runs.
+      #
+      # The check reads the NAME, never the value: a secret-shaped name
+      # ({Exec::ChildEnv::SECRET}) is refused, while `DATABASE_URL` passes and
+      # can carry a password inside its value. Passing a name is the project's
+      # decision about what that value holds. The bash output mask catches a
+      # passed value only where its region detector recognises one, so a DSN
+      # key or an opaque token can come back to the model unmasked.
+      def env(**table) = declare(:env, ENV_TABLE, table) { |at| env_pass_from(shaped(table), at) }
+
       def tests(**table) = declare(:tests, TestLayout::TABLE, table) { |at| TestLayout.from(shaped(table), path: at) }
 
       # Kernel#test answers the likeliest typo of `tests` with an unrelated TypeError.
@@ -184,6 +206,26 @@ module Lain
         twice = keywords.keys.map(&:to_s).tally.select { |_, count| count > 1 }.keys
         raise Refusal.new("gives #{twice.join(", ")} twice", path: at, table: label, key: twice) if twice.any?
       end
+
+      def env_pass_from(table, at)
+        unknown = table.keys - %w[pass]
+        raise Refusal.unknown_keys(unknown, known: %w[pass], path: at, table: ENV_TABLE) if unknown.any?
+
+        names = table.fetch("pass", [])
+        refuse_env("pass must be a list of variable names, got #{names.inspect}", at) unless names_list?(names)
+        refuse_names(names.grep(Exec::ChildEnv::SCRUB), SCRUBBED_PASS, at)
+        refuse_names(names.grep_v(VARIABLE_NAME), MALFORMED_PASS, at)
+        refuse_names(names.grep(Exec::ChildEnv::SECRET), SECRET_PASS, at)
+        names.map(&:-@).uniq.freeze
+      end
+
+      def refuse_names(names, message, at)
+        refuse_env(format(message, names: names.map(&:inspect).join(", ")), at) if names.any?
+      end
+
+      def names_list?(names) = names.is_a?(Array) && names.all?(String)
+
+      def refuse_env(detail, at) = raise(Refusal.new(detail, path: at, table: ENV_TABLE, key: "pass"))
 
       def timeout_from(timeout, at)
         return @approval_timeout if timeout.nil?
