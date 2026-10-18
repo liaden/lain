@@ -1,6 +1,6 @@
 # Simplify 15: delete what nothing reaches, and stop reading files that no longer exist
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (2 Rust cards: T5, T9; T17 touches 1 Rust registration)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust cards add Raph Levien and Andrew Gallant
@@ -752,7 +752,7 @@ Spec file: `spec/lain/journal_spec.rb`, `spec/lain/rust/*_spec.rb`
   card is in it (bash-confinement T33 landed in `e36a67d0`; nothing open names the file at grounding)
 - `cargo deny check bans` changes verdict on `nu-ansi-term` (it should not; lain-core keeps the dep)
 
-### T10: Stamp the session header with a format and refuse older files          [risk: medium]
+### [x] T10: Stamp the session header with a format and refuse older files          [risk: medium]
 
 **Depends on:** none
 **Files:** modify `lib/lain/session_record.rb` (a `FORMAT` constant and a `"format"` key in `header`
@@ -819,7 +819,7 @@ Lain::Bench::Session::Loader#header  # raises Corrupt unless header["format"] ==
 - a spec outside the 4 named loads a variance fixture through `Loader` (grounding grep: those 4 and
   `chain_fold_spec.rb:68`, which reads records directly)
 
-### T11: Write every bench session through the Scribe          [risk: high]
+### [x] T11: Write every bench session through the Scribe          [risk: high]
 
 **Depends on:** T10
 **Files:** modify `lib/lain/bench/cli/run_recorder.rb` (`write` at 130 to 160 opens a
@@ -880,7 +880,7 @@ Spec file: `spec/lain/bench/cli/run_recorder_spec.rb`, `spec/lain/bench/variance
   `Loader#header` (grounding: none does; if one appears, stamp those fixtures by hand in this card)
 - `Anchor` has a reader of the header's `"head"` other than the branch this card deletes
 
-### T12: Require the chain and header fields the bench readers tolerate          [risk: medium]
+### [x] T12: Require the chain and header fields the bench readers tolerate          [risk: medium]
 
 **Depends on:** T11
 **Files:** modify `lib/lain/cli/backend.rb` (`compaction_header` at 617 to 619 always writes
@@ -991,7 +991,7 @@ Spec file: `spec/lain/status_feed/spawn_lifecycle_spec.rb`, `spec/lain/status_fe
 - `status_feed/reading.rb`'s `state.json` writer omits any of the 3 keys on first write: fix the
   writer in this card, not the reader
 
-### T14: Require the WAL wire and the compaction strategy          [risk: low]
+### [x] T14: Require the WAL wire and the compaction strategy          [risk: low]
 
 **Depends on:** T11
 **Files:** modify `lib/lain/provider/response_wal/reader.rb` (72: `json.fetch("wire")`; delete
@@ -1232,3 +1232,23 @@ reads 0, and `pgrep -cf '[p]re-commit (hook-impl|run)'` reads 0):
 - T8 implemented (ARCHITECTURE, README, toolchain-traps, concurrency: lain-core as the ping-only wire seed, lain-fence in both diagrams, the vsock flake retired); light review started.
 - T8 light review APPROVE-WITH-FIXES; the main session removed the stale dup'd-fd edge and named the bwrap and strace hop in the topology diagram. T8 landed `5f85b6ea`. Left: T10 to T14 (behind qa-round-25 T53) and the held docker.rb follow-up (behind T56).
 - T10 started from `9d63c261` (qa-round-25 T53 and T57 landed; purge done 20:07; ~/.local/state/lain/sessions holds only empty dirs that spec runs created, no ndjson).
+- T10 implemented (FORMAT 1 stamped; Loader and Selector refuse unstamped files with no backtrace; fixtures regenerated). The main session added format to session_spec's excluded header keys. Standard review started.
+- T10 standard review APPROVE-WITH-FIXES: every header writer stamps and the tolerant readers fit the card; 7 mutants killed. Fix: one current_format? rule for Loader and Selector (a format-2 or "1" file was picked then refused), with split wording; 4 comment fixes. The main session verifies; no second review.
+- T10 fixes verified (SessionRecord.current_format? is the one rule). T10 landed `3987d044`. T11 is ready.
+- T11 started from `3987d044`.
+- T11 stopped: dropping SessionRecord.header's head: and requiring writer: breaks 13 spec calls in 11 files outside the list. Ruling: widen to those spec files and keep the Interfaces; variance fixtures regenerate with a fixed writer to stay byte-identical.
+- The 4 held docker.rb comment edits from T6 landed with qa-round-25 T56 (`1b439e8c`). T6's acceptance grep is now clean.
+- T11 implemented (every bench session written through the Scribe; header has no head:, writer: required; the bench header records the run's profile; a failed run leaves an open N.failed.ndjson). High review started.
+- T11 high review REQUEST-CHANGES: a SIGKILLed bench record leaves a header-only file that makes bench variance refuse the whole directory. Rulings: set aside any file with no session_closed; the Loader refuses a non-nil header head (retired recorder) rather than accepting it silently; the Selector skips failed bench files; comments and a spec constant. Fix round, then second review.
+- T11 fix round done (unclosed files set aside, a non-nil header head refused, the Selector skips failed files, CoreGraph::NO_WRITER); second review started.
+- T11 nits applied. First landing RED: qa-round-25 T58's new resume example built a header without writer:. The main session passed the dead writer through writer: (an override with T66's core_graph.rb merge). T11 landed `636f043f`. T12 and T14 are ready, in parallel (no shared file).
+- T12 and T14 started from `636f043f`.
+- T14 stopped: 27 failures in 7 spec files outside the list (Telemetry::Compaction now requires collapse_strategy:; salvage_spec pinned the deleted wire inference). Ruling: widen to those 7 specs, and rewrite the salvage example to assert a wire-less frame is corrupt.
+- T14 done after widening (2401 examples green; the salvage notice names the missing wire, a lib file accepted by the main session); light review started, asked to confirm the reverted over-matched edits.
+- T14 first landing refused with a green suite (25192 examples, 0 failures): the hook reported 'files were modified' because the main session wrote plan-log lines while the hook ran. A probe of rake compile check showed no tracked file changes. Re-landed: T14 landed `0cabaf3b`. Only T12 remains.
+- T12 implemented under option B (2 header writers' default 'turn'; the Loader requires compact_schedule). It found restart_spec examples wait 30s for the watchdog on any red (the supervisor task is never stopped inside Sync); the spec fix is added to T12.
+- T12 hang fix done (restart_spec uses the shared Supervised helper; a red fails in 0.08s, not 30s). Standard review started.
+- T12 standard review APPROVE-WITH-FIXES (10 of 11 mutants killed; no T14 conflict). Rulings: one home for 'turn' (SessionRecord::UNCOMPACTED_SCHEDULE); the default only for an empty section, else ArgumentError; FORMAT stays 1 by ruling (state purged 2026-10-17 20:07, window under a day, no real file), with the FORMAT comment extended for newly required keys; stale comments; the demo-supervision hang fixed (a capture3 timeout and an ensure stop). Note for a follow-up: Plan::Calibration has no construction in lib, exe or bin (unreached). Short second review follows.
+- T12 second review APPROVE; the main session reworded the FORMAT comment to give the ruling's reason. T12 landed `edf27b5f`. Every card of this plan has landed. Close-out next.
+- Close-out at `edf27b5f`: pspec 25198 examples, 0 failures (the plan's 23,223 baseline predates this run's other plans); rspec --tag core 1 example, 0 failures (the one real-binary wire seam); rubocop, cargo test, clippy and deny clean; rake compile builds without tracing; zeitwerk-census and comment-census clean; runtime-census 3 records and check ok (the dry-run count is above EXAMPLE_FLOOR, so no change); spec-census lib_reach 49, ceiling lowered in `ec324734`; assertions 186, pre-existing. Status set to done.
+- Manual smoke owed by the human (Integration checks): lain chat 2 turns then --resume; --no-compact shows compact_schedule turn; bench record plus variance; lain watch names its writer.
