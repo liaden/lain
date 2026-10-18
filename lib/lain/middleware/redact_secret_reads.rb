@@ -290,7 +290,11 @@ module Lain
         output = Output.new(result.text, secrets: session_secrets(carried.fetch(:context)))
         return carried unless output.masked?
 
-        carried.merge(result: Tool::Result.new(content: output.to_s, is_error: result.error?))
+        masked = carried.merge(result: Tool::Result.new(content: output.to_s, is_error: result.error?))
+        record(Telemetry::CommandRedacted) do
+          Telemetry::CommandRedacted.new(tool_use_id: carried.fetch(:effect).tool_use_id, regions: output.count)
+        end
+        masked
       end
 
       def session_secrets(context)
@@ -757,6 +761,10 @@ module Lain
           freeze
         end
 
+        # @return [Integer] how many spans were masked
+        attr_reader :count
+
+        # @return [Boolean] whether anything was masked
         def masked? = @count.positive?
 
         # @return [String] the masked output, then the trailer saying how much was masked

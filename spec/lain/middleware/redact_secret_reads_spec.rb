@@ -1389,11 +1389,41 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
         expect(result).to have_attributes(is_error: true)
         expect(result.content).to include("bash could not be checked", "nothing was returned")
         expect(result.content).not_to include(token)
+        expect(journal.grep(Lain::Telemetry::CommandRedacted)).to be_empty
       end
     end
 
     it "leaves clean output byte-identical, with no trailer" do
       expect(bash("echo hello").content).to eq("exit status: 0\n--- stdout ---\nhello\n--- stderr ---\n")
+    end
+
+    describe "what it journals" do
+      let(:aws_key) { "AKIAIOSFODNN7EXAMPLE" }
+      let(:password) { "hunter2xyz" }
+      let(:child_env) do
+        Lain::Exec::ChildEnv.new(pass: %w[DATABASE_URL],
+                                 env: { "DATABASE_URL" => "postgres://app:#{password}@db.local/app" })
+      end
+
+      def commands = journal.grep(Lain::Telemetry::CommandRedacted)
+
+      it "writes 1 command_redacted record counting the masked regions" do
+        bash("echo #{aws_key}; echo #{password}")
+
+        expect(commands).to contain_exactly(have_attributes(tool_use_id: "tu_bash", regions: 2))
+      end
+
+      it "writes nothing for a result with nothing to mask" do
+        bash("echo hello")
+
+        expect(commands).to be_empty
+      end
+
+      it "never serializes the masked bytes" do
+        bash("echo #{aws_key}; echo #{password}")
+
+        expect(commands.map(&:to_journal).to_json).not_to include(aws_key, password)
+      end
     end
   end
 
