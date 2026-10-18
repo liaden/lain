@@ -56,7 +56,7 @@ Everything below is optional, and lain runs without any of it.
 | **Neovim** | No editor integration. | `lain up --nvim`, live `lain://` buffers, the editable `lain://request` buffer that round-trips a hand-edited prompt back to the provider. |
 | **Ollama** | Compaction still fires, but drops tool results to an elision line instead of a summary. | Local tool-result summarization, and `--provider ollama` as a free offline arm. |
 | **An Ollama Cloud key** | The local ollama arm, on whatever your box can serve. | `--provider ollama-cloud`: the same native wire against hosted models. Reads `OLLAMA_API_KEY` (create one at [ollama.com/settings/keys](https://ollama.com/settings/keys)). Costs a subscription, and is **not** determinism-comparable with the local arm — see [Providers](#providers). |
-| **`rake core:build`** | `bash` runs in-process. | `crates/lain-core`, the out-of-process exec daemon, for the bench's exec-comparison arm. |
+| **`rake core:build`** | `bash` runs in-process. | `crates/lain-core`, the out-of-process msgpack-RPC wire seed (answers `ping` only), and the one `:core` spec that drives it. |
 
 Without an API key the offline paths still run: dry replay, the sweeps, `lain friction`,
 `lain bench variance`, and local Ollama.
@@ -587,8 +587,8 @@ with it. [`docs/GLOSSARY.md`](docs/GLOSSARY.md) defines the math and CS vocabula
 | `Journal` / `Channel` / `StatusFeed` / `SessionRecord` | One NDJSON file per session on its own fd, crash-resumable via a `.wal`. | The experiment record. Everything a frontend shows is a projection of it. |
 | `Skill` / `Role` / `Plan` / `Gherkin` / `Oracle` | Config values, not behavior. | A role is an attenuation plus a prompt slot; `Gherkin` is a content-addressed IR a grader can attest against. |
 | `Frontend::TTY` / `Frontend::Neovim` | Two subscribers to the same stream. | Editor code never reaches into the agent. |
-| `ext/lain` | In-process Rust (`lain.so`): Canonical/digest, the persistent DAG, in-memory BM25, AST search, `tracing` to NDJSON on a dup'd fd. | Data-structure work Ruby's object model makes asymptotically worse. Pure, synchronous, no tokio. |
-| `crates/lain-core` | Out-of-process [msgpack-RPC](docs/GLOSSARY.md#messagepack-rpc) exec daemon. Builds only under `rake core:build`. | Async and isolation-relevant work belongs out of process. An in-process sandbox is not a sandbox. |
+| `ext/lain` | In-process Rust (`lain.so`): Canonical/digest, the persistent DAG, in-memory BM25, AST search. | Data-structure work Ruby's object model makes asymptotically worse. Pure, synchronous, no tokio. |
+| `crates/lain-core` | Out-of-process [msgpack-RPC](docs/GLOSSARY.md#messagepack-rpc) wire seed for the relay and code-mode handles; answers `ping` only. Builds only under `rake core:build`. | Async and isolation-relevant work belongs out of process. An in-process sandbox is not a sandbox. |
 
 ## Configuration
 

@@ -39,8 +39,10 @@ Subagent spawns can open read-only viewer windows (`chat --windows`, each runnin
 
 `crates/lain-core` and Neovim talk to `lain` over the same transport, msgpack-RPC on a Unix
 socket, which is why they look symmetric below. The Neovim path is live. The `lain-core` path is
-dashed because that daemon is off the default chat path today: opt-in `:core` specs and the
-bench's exec-comparison arm only. `ext/lain` is in-process and built.
+dashed because that daemon is off the default chat path today: it answers `ping` and nothing
+else, is kept as the wire seed for the phone relay and code-mode handles, and only the one opt-in
+`:core` spec drives it. `crates/lain-fence` is a separate binary that bash confinement execs per
+call (Landlock and seccomp, no socket). `ext/lain` is in-process and built.
 
 ```mermaid
 flowchart LR
@@ -53,13 +55,13 @@ flowchart LR
   IN <-->|lines up, HUD frames down<br/>unix socket · one input rail| TTY
   TTY <-->|msgpack-RPC · unix socket<br/>runtime injected at attach| NVIM
   TTY -->|read-only journal tail| WATCH
-  TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust) · built<br/>pure · synchronous<br/>tracing → NDJSON · BLAKE3 · Rust canonical encoder for the DAG<br/>persistent DAG · BM25 · AST search"]
-  TTY -.->|msgpack-RPC · unix socket<br/>off default path · opt-in| CORE["crates/lain-core (Rust · tokio)<br/>out-of-process exec daemon<br/>bench exec-comparison arm"]
+  TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust) · built<br/>pure · synchronous<br/>BLAKE3 · Rust canonical encoder for the DAG<br/>persistent DAG · BM25 · AST search"]
+  TTY -.->|msgpack-RPC · unix socket<br/>off default path · opt-in| CORE["crates/lain-core (Rust · tokio)<br/>out-of-process wire seed<br/>answers ping only"]
+  TTY -->|bwrap, strace, then lain-fence per confined bash call| FENCE["crates/lain-fence (Rust)<br/>Landlock + seccomp<br/>runs one command, then exits"]
   TTY -->|HTTPS| ANTH["api.anthropic.com (default: vendored transport)"]
   TTY -->|HTTP| OLL["local Ollama (--provider ollama)"]
   TTY -->|HTTPS · Bearer| OCL["ollama.com (--provider ollama-cloud)<br/>same native wire, someone else's server"]
   TTY -->|own fd, append-only| J[("$XDG_STATE_HOME/lain/sessions/&lt;hash&gt;/*.ndjson")]
-  EXT -->|dup'd fd| J
 ```
 
 ### Runtime boundaries: which language, which scheduler
@@ -85,8 +87,9 @@ flowchart TB
   end
 
   subgraph RUST["Rust"]
-    EXT["<b>ext/lain</b> · in-process · magnus FFI<br/><i>pure · synchronous · NO tokio</i><br/>runs on the calling Ruby thread, holding the GVL<br/>canonical · digest · dag · bm25 · astgrep<br/>deny print_stdout/stderr · 8 unsafe FFI sites"]
-    CORE["<b>crates/lain-core</b> · separate OS process<br/><i>tokio rt-multi-thread</i><br/>exec daemon · kill_on_drop<br/>forbid(unsafe_code) · off default path"]
+    EXT["<b>ext/lain</b> · in-process · magnus FFI<br/><i>pure · synchronous · NO tokio</i><br/>runs on the calling Ruby thread, holding the GVL<br/>canonical · digest · dag · bm25 · astgrep<br/>deny print_stdout/stderr · unsafe only at the FFI boundary"]
+    CORE["<b>crates/lain-core</b> · separate OS process<br/><i>tokio rt-multi-thread</i><br/>wire seed · answers ping only<br/>forbid(unsafe_code) · off default path"]
+    FENCE["<b>crates/lain-fence</b> · short-lived process per confined call<br/>Landlock + seccomp, then execs the command<br/>isolation, not pure work"]
   end
 
   LOOP --> GATHER --> APPR
@@ -2036,12 +2039,15 @@ The rule, verbatim from `CLAUDE.md`: **anything async, I/O-bound, or isolation-r
 out of process (`crates/lain-core`, msgpack-RPC over a Unix socket); data-structure work lives
 in-process (`ext/lain`, magnus, pure and synchronous).** `ext/lain/CLAUDE.md` restates the same
 line and adds the mechanical reason: driving an async runtime from inside an FFI call while
-holding the GVL is a known footgun, and an in-process sandbox is not a sandbox.
+holding the GVL is a known footgun, and an in-process sandbox is not a sandbox. Today
+`crates/lain-core` serves one method, `ping`: it is the wire seed for the phone relay and
+code-mode handles, with no production caller, and the isolation work that exists lives in its
+sibling `crates/lain-fence`.
 
 `ext/lain` denies `clippy::print_stdout` and `clippy::print_stderr` at the crate root, matching
 what `spec/output_discipline_spec.rb` enforces on the Ruby side. It does not forbid `unsafe`:
-`lib.rs` has 8 `unsafe` sites, all confined to the magnus and libc FFI boundary (`libc::dup`
-and `File::from_raw_fd` for the tracing fd, and magnus calls like `classname` and `as_slice`).
+`lib.rs` has 6 `unsafe` sites, all confined to the magnus FFI boundary (`classname` and
+`as_slice`).
 `#![forbid(unsafe_code)]` lives on `crates/lain-core` instead, whose `main.rs` carries it at the
 crate root alongside the same print denies.
 
@@ -2075,9 +2081,13 @@ the port's acceptance test.
 
 `crates/lain-core` is a separate binary. `main.rs` is a msgpack-RPC daemon on a Unix socket
 whose path arrives via argv, because path *policy* stays in Ruby (`Paths#runtime_dir`) and the
-daemon never computes its own. `exec.rs` and `rpc.rs` are the out-of-process,
-isolation-relevant exec boundary the placement rule reserves for this side.
+daemon never computes its own. `rpc.rs` is the codec and server, and today the daemon answers
+`ping` and nothing else: it is the wire seed the phone relay and code-mode handles will grow
+methods on, which is the out-of-process side the placement rule reserves for async and
+isolation-relevant work. `crates/lain-fence` is the other out-of-process crate, a binary that
+applies Landlock and a seccomp filter to itself and execs one command (see the sandbox section
+above).
 
-`lib/lain/core.rb` is the Ruby half: `Core::Child` owns the daemon's process lifecycle, and
-`Core::Client` owns the wire, with one reader-loop fiber demuxing an `msgid -> Promise` map over
+`lib/lain/core.rb` is the Ruby half: `Core::Client` owns the wire over an injected
+`Core::Transport`, with one reader-loop fiber demuxing an `msgid -> Promise` map over
 out-of-order completions. Both `ext/lain` and `crates/lain-core` are real, built crates today.

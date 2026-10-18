@@ -149,8 +149,8 @@ check `#closed?` explicitly; the exception class does not do that work for you.
 Referring to the [process topology diagram](../ARCHITECTURE.md#process-topology):
 
 - **Sequential (today, M1).** `lain` is one thread. Every arrow on the diagram — the HTTPS call
-  to `api.anthropic.com`, the in-process FFI call into `ext/lain`, eventually the msgpack-RPC
-  calls to `nvim` and `lain-core` — happens one at a time, in the loop's own call stack. Nothing
+  to `api.anthropic.com`, the in-process FFI call into `ext/lain`, the msgpack-RPC
+  calls to `nvim` (and to `lain-core`, which only its one `:core` spec calls today) — happens one at a time, in the loop's own call stack. Nothing
   changes about the diagram; only the loop's internals are single-shot today.
 - **Threads.** Multiple `bash`/`read_file`/`grep` tool calls in one turn would each get a thread;
   the HTTPS arrow to Anthropic and any parallel subagent's own loop would be separate threads

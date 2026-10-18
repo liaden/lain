@@ -361,10 +361,8 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   long-lived role child`;
   `lain.rb without the compiled extension keeps Ruby's own LoadError message rather than replacing
   it`;
-  `the review annotation runtime a buffer that goes away drops the orphaned entry once it has
-  settled it, so a reused bufnr inherits nothing`;
-  and the vsock harness's `VsockAvailability.available? leaks no descriptor across repeated
-  probing`.
+  and `the review annotation runtime a buffer that goes away drops the orphaned entry once it has
+  settled it, so a reused bufnr inherits nothing`.
 
   Added 2026-10-06, wall-clock examples red under a load average of about 12 (agents running specs
   beside a suite) and green alone each time: `Lain::Tools::WebFetch an HTML page comes back as
@@ -438,6 +436,10 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-17: the vsock harness's `VsockAvailability.available? leaks no descriptor across
+    repeated probing` (listed above as load-induced since 2026-09-11). The spec went with the vsock
+    tier, whose listener, `Transport::Vsock` and `:vsock` tag were deleted; nothing opens an
+    `AF_VSOCK` socket now, so a red under that name cannot recur.
   - 2026-10-16: `Lain::Frontend::LineEditor#read, and the submit predicate asking the terminal for
     Shift+Enter resets at EOF`, `... resets after an exception` and `... writes the request before
     the read and the reset after it, on a terminal` (red 6 times across seeds 63896, 48225, 9063 and
