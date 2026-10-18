@@ -104,8 +104,8 @@ module Lain
             RunFiles::Entry.new(path:, klass: :unresolved, fresh: false)
           end
 
-          def unresolved(name, env, wrappers, anomalies: anomalies_of(env))
-            Executable.unresolved(name, anomalies:, wrappers:)
+          def unresolved(name, env, wrappers, anomalies: anomalies_of(env), skipped: [])
+            Executable.unresolved(name, anomalies:, wrappers:, skipped:)
           end
 
           def resolve(name, env, wrappers)
@@ -131,9 +131,24 @@ module Lain
             hits = entries.map { |entry| File.join(absolute(entry), name) }
             index = hits.index { |hit| @stat.executable?(hit) }
             anomalies = path_anomalies(index ? entries.take(index + 1) : entries) | anomalies_of(env)
-            return unresolved(name, env, wrappers, anomalies:) unless index
+            skipped = skipped_before(hits, index)
+            return unresolved(name, env, wrappers, anomalies:, skipped:) unless index
 
-            identify(name, hits[index], shadowed(hits, index), anomalies, wrappers)
+            identify(name, hits[index], shadowed(hits, index), anomalies, wrappers).with(skipped:)
+          end
+
+          # A candidate written or changed this lineage is left out: one made
+          # executable between resolve and exec is a plant, not a stray.
+          def skipped_before(hits, index)
+            hits.take(index || hits.size).select { |hit| present?(hit) && !@fresh.fresh?(hit) }
+          end
+
+          # Every hit before the resolved one failed {Stat#executable?}, so one that exists is one execvp is refused.
+          def present?(path)
+            @stat.lstat(path)
+            true
+          rescue SystemCallError
+            false
           end
 
           # execvp reads an empty PATH as one empty entry, which is the cwd.

@@ -48,7 +48,7 @@ module Lain
       end
 
       def grantable?(executable)
-        %i[system user].include?(executable.klass) && !executable.realpath.nil? &&
+        Profile::GRANTED_CLASSES.include?(executable.klass) && !executable.realpath.nil? &&
           Profile::SYSTEM_EXEC.none? { executable.realpath.start_with?("#{_1}/") }
       end
     end

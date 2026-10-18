@@ -16,6 +16,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
   let(:journal) { Lain::Journal.new(io: StringIO.new) }
   let(:chronicle) { Lain::CLI::Chronicle.new(journal:) }
   let(:file) { File.join(@state, "cat").tap { |path| File.write(path, "") } }
+  let(:arms) { Lain::CLI::Arms::OFF }
 
   def resumed(name)
     Lain::CLI::Resume::Result.new(file: name, timeline: Lain::Timeline.new(head_digest: nil, store: Lain::Store.new),
@@ -32,7 +33,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
   end
 
   it "folds the write records the session's journal writes into the lineage's Fresh" do
-    observers = described_class.register(chronicle:, paths:, resumed: lineage("first.ndjson"))
+    observers = described_class.register(chronicle:, paths:, resumed: lineage("first.ndjson"), arms:)
 
     expect(observers.fresh.fresh?(file)).to be(false)
     journal << Lain::Telemetry::FileWritten.from_stat(File.stat(file), path: file, tool_use_id: "tu_1")
@@ -42,11 +43,52 @@ RSpec.describe Lain::CLI::Wiring::Observers do
   it "answers every path fresh when the resumed chain cannot be walked, and records why" do
     io = StringIO.new
     chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:))
-    observers = described_class.register(chronicle:, paths:, resumed: resumed("missing.ndjson"))
+    observers = described_class.register(chronicle:, paths:, resumed: resumed("missing.ndjson"), arms:)
 
     expect(observers.fresh.fresh?(file)).to be(true)
     expect(journal_records(io))
       .to contain_exactly(include("type" => "journal_error", "observer" => Lain::Shell::Executable::Fresh.name))
+  end
+
+  describe "the tripwire ledger" do
+    let(:io) { StringIO.new }
+    let(:chronicle) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:)) }
+
+    def tripwires_after_a_remembered_deny(arms)
+      described_class.register(chronicle:, paths:, resumed: nil, arms:)
+      chronicle.durable_journal << { "type" => "escalation", "tool" => "bash", "tool_use_id" => "tu_1",
+                                     "requester" => "agent", "verdict" => "deny", "rung" => "remembered",
+                                     "reason" => "", "final" => false }
+      journal_records(io).select { _1["type"] == "tripwire" }
+    end
+
+    it "folds the session's journal into a ledger under --tripwire observe" do
+      expect(tripwires_after_a_remembered_deny(Lain::CLI::Arms::OFF.with(tripwire: :observe)).sole)
+        .to include("requester" => "agent", "signal" => "remembered_reask")
+    end
+
+    it "registers no ledger when the arm is off" do
+      expect(tripwires_after_a_remembered_deny(Lain::CLI::Arms::OFF)).to be_empty
+    end
+
+    # Under --no-journal --nvim the teed records land in a journal the tee opens, not in the durable one.
+    it "folds the teed journal as well as the durable one" do
+      tee = Lain::Journal.new(io: StringIO.new)
+      allow(Lain::Journal).to receive(:open).and_return(tee)
+      ledgers = []
+      allow(Lain::Tripwire::Ledger).to receive(:new).and_wrap_original do |new, **kwargs|
+        new.call(**kwargs).tap { |ledger| ledgers << ledger }
+      end
+      null = Lain::CLI::Chronicle::Null.new
+      described_class.register(chronicle: null, paths:, resumed: nil,
+                               arms: Lain::CLI::Arms::OFF.with(tripwire: :observe))
+      null.wrap_tee(Lain::Channel.new)
+
+      tee << { "type" => "escalation", "tool" => "bash", "tool_use_id" => "tu_1", "requester" => "agent",
+               "verdict" => "deny", "rung" => "remembered", "reason" => "", "final" => false }
+
+      expect(ledgers.sole.standing("agent").score).to be_positive
+    end
   end
 
   describe "#notices" do
@@ -54,26 +96,26 @@ RSpec.describe Lain::CLI::Wiring::Observers do
       name = "torn.ndjson"
       lineage(name)
       File.write(File.join(paths.sessions_dir, name), %({"type":"file_written"\n), mode: "a")
-      observers = described_class.register(chronicle:, paths:, resumed: resumed(name))
+      observers = described_class.register(chronicle:, paths:, resumed: resumed(name), arms:)
 
       expect(observers.notices)
         .to contain_exactly(match(/could not be read.*changed this session.*resume from an intact session/))
     end
 
     it "says the same when the resumed chain cannot be walked" do
-      observers = described_class.register(chronicle:, paths:, resumed: resumed("missing.ndjson"))
+      observers = described_class.register(chronicle:, paths:, resumed: resumed("missing.ndjson"), arms:)
 
       expect(observers.notices).to contain_exactly(/write records could not be read/)
     end
 
     it "says nothing for a clean lineage" do
-      observers = described_class.register(chronicle:, paths:, resumed: lineage("first.ndjson"))
+      observers = described_class.register(chronicle:, paths:, resumed: lineage("first.ndjson"), arms:)
 
       expect(observers.notices).to be_empty
     end
 
     it "says nothing for a fresh chat" do
-      expect(described_class.register(chronicle:, paths:, resumed: nil).notices).to be_empty
+      expect(described_class.register(chronicle:, paths:, resumed: nil, arms:).notices).to be_empty
     end
   end
 end

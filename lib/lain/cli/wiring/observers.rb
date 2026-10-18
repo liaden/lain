@@ -12,10 +12,12 @@ module Lain
         #   writes, and takes the reason a lineage could not be read
         # @param paths [Paths] resolves the sessions directory a resume chains through
         # @param resumed [Resume::Result, nil] nil for a fresh chat
+        # @param arms [Arms] under `tripwire: :observe` a {Tripwire::Ledger} folds the journal too
         # @return [Observers]
-        def self.register(chronicle:, paths:, resumed:)
+        def self.register(chronicle:, paths:, resumed:, arms:)
           new(fresh: lineage_fresh(paths, resumed, chronicle.durable_journal)).tap do |observers|
             observers.register(chronicle)
+            chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal)) if arms.tripwire == :observe
           end
         end
 

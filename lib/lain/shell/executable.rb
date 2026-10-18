@@ -3,7 +3,7 @@
 module Lain
   module Shell
     Executable = Data.define(:name, :resolved, :realpath, :chain, :shadowed, :anomalies, :klass, :fresh, :run_files,
-                             :wrappers)
+                             :wrappers, :skipped)
 
     # One stage's program, resolved: which file runs, through which links, and
     # whether a user or the project could have put it there. {Resolver} builds
@@ -16,6 +16,8 @@ module Lain
     # `:exported_function`, `:ld_preload`. `wrappers` are the programs (`nice`,
     # `env`, `bundle exec`) that ran this one, outermost first, each resolved
     # in its own right because a planted `nice` runs as surely as a planted `cat`.
+    # `skipped` are the earlier `PATH` hits that were not executable, which the
+    # shell tries and the kernel refuses before it reaches the resolved one.
     #
     # Rides on journal records and approval decisions, so it is deeply frozen.
     class Executable
@@ -28,14 +30,17 @@ module Lain
         ld_preload: "LD_PRELOAD is set"
       }.freeze
 
+      # @param skipped [Array<String>] the PATH hits that were not executable; none by default
       # @param members [Hash{Symbol=>Object}]
-      def initialize(**members) = super(**members.transform_values { |value| Ractor.make_shareable(value) })
+      def initialize(skipped: [], **members)
+        super(**members.merge(skipped:).transform_values { |value| Ractor.make_shareable(value) })
+      end
 
       # @return [Hash{String=>Object}] JSON-safe, for a journal record
       def to_journal
         { "name" => name, "resolved" => resolved, "realpath" => realpath, "chain" => chain, "shadowed" => shadowed,
           "anomalies" => anomalies.map(&:to_s), "klass" => klass.to_s, "fresh" => fresh,
-          "run_files" => run_files.map(&:to_journal), "wrappers" => wrappers.map(&:to_journal) }
+          "run_files" => run_files.map(&:to_journal), "wrappers" => wrappers.map(&:to_journal), "skipped" => skipped }
       end
 
       # @return [Array<Executable>] every wrapper that runs this one, outermost first, then this one
@@ -58,10 +63,11 @@ module Lain
       # @param name [String] the program word, as written or as unwrapped
       # @param anomalies [Array<Symbol>]
       # @param wrappers [Array<Executable>]
+      # @param skipped [Array<String>] the PATH hits that were not executable
       # @return [Executable] a stage nothing is known about but its name
-      def self.unresolved(name, anomalies: [], wrappers: [])
+      def self.unresolved(name, anomalies: [], wrappers: [], skipped: [])
         new(name:, resolved: nil, realpath: nil, chain: [], shadowed: [], anomalies:, klass: :unresolved,
-            fresh: false, run_files: [], wrappers:)
+            fresh: false, run_files: [], wrappers:, skipped:)
       end
 
       private

@@ -9,7 +9,7 @@ RSpec.describe Lain::Shell::Executable do
     it "names the program and knows nothing else about it" do
       expect(executable).to have_attributes(name: "cat", resolved: nil, realpath: nil, chain: [], shadowed: [],
                                             anomalies: [:ld_preload], klass: :unresolved, fresh: false,
-                                            run_files: [], wrappers: [])
+                                            run_files: [], wrappers: [], skipped: [])
     end
 
     it "is Ractor-shareable" do
@@ -22,12 +22,13 @@ RSpec.describe Lain::Shell::Executable do
       wrapper = described_class.unresolved("nice", anomalies: [:ld_preload])
       executable = described_class.new(name: "cat", resolved: "/usr/bin/cat", realpath: "/usr/bin/cat",
                                        chain: ["/usr/bin/cat"], shadowed: [], anomalies: [:empty_path_entry],
-                                       klass: :system, fresh: false, run_files: [], wrappers: [wrapper])
+                                       klass: :system, fresh: false, run_files: [], wrappers: [wrapper],
+                                       skipped: ["/home/u/noexec/cat"])
 
       expect(executable.to_journal).to eq(
         "name" => "cat", "resolved" => "/usr/bin/cat", "realpath" => "/usr/bin/cat", "chain" => ["/usr/bin/cat"],
         "shadowed" => [], "anomalies" => ["empty_path_entry"], "klass" => "system", "fresh" => false,
-        "run_files" => [], "wrappers" => [wrapper.to_journal]
+        "run_files" => [], "wrappers" => [wrapper.to_journal], "skipped" => ["/home/u/noexec/cat"]
       )
       expect(JSON.parse(JSON.generate(executable.to_journal))).to eq(executable.to_journal)
     end

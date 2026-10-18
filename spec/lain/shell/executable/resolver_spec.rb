@@ -191,6 +191,39 @@ RSpec.describe Lain::Shell::Executable::Resolver do
     expect(stage.shadowed).to eq(["#{root}/three/cat"])
   end
 
+  # execvp tries such a file and gets EACCES before it finds the real one, so the
+  # tripwire must be able to tell that refusal from a plant.
+  describe "PATH candidates it skipped as not executable" do
+    before do
+      FileUtils.mkdir_p(["#{home}/noexec", "#{home}/dir/wc"])
+      File.write("#{home}/noexec/wc", "not a program\n")
+    end
+
+    it "names a non-executable file and a directory met before the program it resolved" do
+      stage = resolve(%w[wc -l], path: "#{home}/missing:#{home}/noexec:#{home}/dir:/usr/bin").sole
+
+      expect(stage).to have_attributes(resolved: "/usr/bin/wc", skipped: ["#{home}/noexec/wc", "#{home}/dir/wc"])
+    end
+
+    context "when a candidate was written or changed this lineage" do
+      let(:fresh_paths) { ["#{home}/noexec/wc"] }
+
+      # A plant made executable between resolve and exec would otherwise pass as noise.
+      it "leaves it out" do
+        expect(resolve(%w[wc -l], path: "#{home}/noexec:#{home}/dir:/usr/bin").sole.skipped).to eq(["#{home}/dir/wc"])
+      end
+    end
+
+    it "names none past the program it resolved" do
+      expect(resolve(%w[wc -l], path: "/usr/bin:#{home}/noexec").sole.skipped).to eq([])
+    end
+
+    it "names them for a program it could not find at all" do
+      expect(resolve(%w[wc], path: "#{home}/noexec").sole).to have_attributes(klass: :unresolved,
+                                                                              skipped: ["#{home}/noexec/wc"])
+    end
+  end
+
   describe "wrappers" do
     before do
       plant("#{home}/bin/bundle")

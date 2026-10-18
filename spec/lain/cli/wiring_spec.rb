@@ -517,6 +517,154 @@ RSpec.describe Lain::CLI::Wiring do
         expect(board.toolset.fetch("bash").instance_variable_get(:@resolver)).to equal(from_ladder)
       end
     end
+
+    describe "under --tripwire" do
+      let(:journal_io) { StringIO.new }
+      let(:state_dir) { Dir.mktmpdir("wiring-tripwire") }
+      let(:chronicle) do
+        Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io),
+                                 journal_path: File.join(state_dir, "session.ndjson"))
+      end
+
+      after { FileUtils.rm_rf(state_dir) }
+
+      def remembered_deny_after_wiring(options)
+        armed = described_class.new(options: { grace: 5, **options }, chronicle:, status_feed:)
+        recorder, session = armed.run_state(nil)
+        armed.wire_agent(channel:, recorder:, session:, backend:)
+        chronicle.durable_journal << { "type" => "escalation", "tool" => "bash", "tool_use_id" => "tu_1",
+                                       "requester" => "agent", "verdict" => "deny", "rung" => "remembered",
+                                       "reason" => "", "final" => false }
+        journal_records(journal_io).select { _1["type"] == "tripwire" }
+      end
+
+      it "folds the session's journal into a ledger under observe" do
+        expect(remembered_deny_after_wiring(tripwire: "observe").sole)
+          .to include("requester" => "agent", "signal" => "remembered_reask", "stop" => "none")
+      end
+
+      it "keeps no ledger when the arm is off" do
+        expect(remembered_deny_after_wiring(tripwire: "off")).to be_empty
+      end
+    end
+
+    describe "under --confine reader --tripwire observe, on this box", :seam do
+      let(:base) { File.realpath(Dir.mktmpdir("wiring-tripwire-seam")) }
+      let(:project_root) { File.join(base, "repo") }
+      # Outside the project, since a project directory on PATH alone makes the ladder abstain.
+      let(:planted) { File.join(base, "userbin", "cat") }
+      let(:journal_io) { StringIO.new }
+      let(:chronicle) do
+        Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io), journal_path: "seam.ndjson")
+      end
+      let(:tripped) do
+        described_class.new(options: { grace: 5, approval: "auto", confine: "reader", tripwire: "observe" },
+                            chronicle:, status_feed:, project: throwaway_project(project_root),
+                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(base, "s"),
+                                                          "HOME" => File.join(base, "h") }))
+      end
+      # A stray non-executable wc first on PATH: the shell tries it and the kernel refuses it on an honest call.
+      let(:noise) { File.join(base, "noexec", "wc") }
+
+      before do
+        fence = Lain::Confine::Bwrap.fence_binary
+        skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+        skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+        FileUtils.mkdir_p([project_root, File.join(base, "s"), File.join(base, "h")])
+        File.write(File.join(project_root, "README.md"), "the readme\n")
+        FileUtils.mkdir_p(File.dirname(noise))
+        File.write(noise, "not a program\n")
+      end
+
+      around do |example|
+        was = ENV.fetch("PATH")
+        ENV["PATH"] = "#{File.dirname(noise)}:#{File.dirname(planted)}:/usr/bin:/bin"
+        example.run
+      ensure
+        ENV["PATH"] = was
+        FileUtils.rm_rf(base)
+      end
+
+      # Planted once the call has resolved, so the ladder approved a system cat and only the kernel meets the plant.
+      def plant_before_each_exec
+        allow(Lain::Exec::Sandboxed).to receive(:new).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs).tap do |exec|
+            allow(exec).to receive(:call).and_wrap_original do |call, **run|
+              FileUtils.mkdir_p(File.dirname(planted))
+              File.write(planted, "#!/bin/sh\necho planted\n")
+              File.chmod(0o755, planted)
+              call.call(**run)
+            end
+          end
+        end
+      end
+
+      # @return [Array(Lain::Tool::Result, Array<Hash>)] the call's result and every record journalled
+      # @yield once the lineage has started and before the call resolves
+      def run_bash(command)
+        recorder, session = tripped.run_state(nil)
+        tripped.wire_agent(channel:, recorder:, session:, backend:)
+        yield if block_given?
+        board = tripped.instance_variable_get(:@switchboard)
+        layers = Lain::CLI::ToolGuard.stack(chronicle, board).to_a
+        result = Sync do |task|
+          task.with_timeout(20) do
+            dispatch_call("bash", { "command" => command }, id: "tu_seam", toolset: board.toolset, layers:,
+                                                            context: session)
+          end
+        end
+        [result, journal_records(journal_io)]
+      end
+
+      def exec_record_of(records) = records.find { _1["type"] == "exec_record" }
+
+      def tripwires_of(records) = records.select { _1["type"] == "tripwire" }
+
+      it "counts the kernel's refusal of a planted program as a strong signal for the call's requester" do
+        plant_before_each_exec
+        result, records = run_bash("cat README.md")
+
+        expect(result.content).not_to include("planted")
+        expect(exec_record_of(records)["refusals"]).to include({ "path" => planted, "errno" => "EACCES" })
+        expect(tripwires_of(records))
+          .to include(a_hash_including("requester" => "agent", "signal" => "refused_exec", "weight" => "strong"))
+      end
+
+      it "counts nothing for the refusal of a stray file the resolution skipped as not executable" do
+        result, records = run_bash("wc -l README.md")
+
+        expect(result.content).to include("1")
+        expect(exec_record_of(records)["refusals"]).to include({ "path" => noise, "errno" => "EACCES" })
+        expect(tripwires_of(records)).to be_empty
+      end
+
+      # The stray above was written before the lineage began; one written after cannot pass as noise.
+      it "counts a non-executable candidate written this lineage and made executable before the exec" do
+        game = File.join(File.dirname(noise), "head")
+        allow(Lain::Exec::Sandboxed).to receive(:new).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs).tap do |exec|
+            allow(exec).to receive(:call).and_wrap_original do |call, **run|
+              File.chmod(0o755, game)
+              call.call(**run)
+            end
+          end
+        end
+
+        _, records = run_bash("head -1 README.md") { File.write(game, "#!/bin/sh\necho planted\n") }
+
+        expect(exec_record_of(records)["refusals"]).to include({ "path" => game, "errno" => "EACCES" })
+        expect(tripwires_of(records)).to include(a_hash_including("signal" => "refused_exec", "weight" => "strong"))
+      end
+
+      it "starts every stage of a pipeline with the launcher, and counts nothing for an honest one" do
+        _, records = run_bash("cat README.md | head -1")
+        execs = exec_record_of(records)["execs"].select { _1["rc"].zero? }.map { _1["path"] }
+
+        expect(execs).to eq([execs.first, "/usr/bin/cat", execs.first, "/usr/bin/head"])
+        expect(File.basename(execs.first)).to eq("lain-fence")
+        expect(tripwires_of(records)).to be_empty
+      end
+    end
   end
 
   # The record tee never reaches the transcript, so a write is told to the

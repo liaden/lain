@@ -18,6 +18,11 @@ module Lain
       # is granted whole; tmpfs would otherwise take up to half of RAM.
       TMPFS_BYTES = 1024 * 1024 * 1024
 
+      UNCONFINED = %i[none traced].freeze
+      # The classes a reader profile may grant a program outside /usr: one the project could have put there is
+      # the plant it exists to stop.
+      GRANTED_CLASSES = %i[system user].freeze
+
       SYSTEM_EXEC = %w[/usr].freeze
       # bwrap's /proc belongs to the call's own pid namespace, so it shows
       # only the call's processes; /proc/self alone would cover only the fence.
@@ -43,7 +48,11 @@ module Lain
       end
 
       # @return [Boolean] whether the kernel bounds what the call may reach
-      def confined? = !%i[none traced].include?(name)
+      def confined? = Profile.confines?(name)
+
+      # @param name [Symbol, String] a profile's name, as a record journals it
+      # @return [Boolean] whether a profile of that name bounds what the call may reach
+      def self.confines?(name) = !UNCONFINED.include?(name.to_sym)
 
       # @param path [String] a resolved program
       # @return [Boolean] whether the fence lets the call exec it
