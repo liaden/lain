@@ -371,6 +371,10 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   alone in 0.79s and green in a full suite on the base and on the card);
   and `a chat whose terminal is gone ends at its prompt once the terminal is closed`.
 
+  Added 2026-10-18, red once in a pre-commit suite (exit 130 and the screen right, but no
+  `gate_decision` journaled yet) and green 3 of 3 alone: `Lain::CLI::EpicSubmit Ctrl-C through the real
+  CLI exits 130, with the fail-closed decision already journaled`.
+
   Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
   alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber
   running while the work never gives up the lock between threads`.
