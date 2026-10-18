@@ -433,7 +433,6 @@ is loud by construction, so use it rather than an `if landlock_available?`.
 |---|---|---|
 | `Lain::Project` | `lib/lain/project.rb` | frozen value, `Ractor.shareable?`, sent-not-stored |
 | Root ladder | `lib/lain/project/resolver.rb` | pure over an injected filesystem probe, so it's unit-testable without a real `$HOME` |
-| Dotfiles flavour | `lib/lain/project/dotfiles.rb` | three named detectors, `:seam` specs against real repos |
 | `Lain::Sensitivity` | `lib/lain/sensitivity.rb` | pure, name-shaped, no IO, no entropy |
 | `Middleware::RedactSecretReads` | `lib/lain/middleware/` | mirror of `RefuseSecretWrites`, same seam, `Telemetry::ReadRedacted` |
 | Credential patterns | shared constant | one table, both middlewares |
