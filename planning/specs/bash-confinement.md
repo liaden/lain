@@ -1156,7 +1156,7 @@ Spec file: `spec/lain/tools/bash_spec.rb`, `spec/lain/cli/wiring/toolset_build_s
 **Stop and report if:**
 - The bash_spec examples on the env passed to the exec change.
 
-### T25: Build the sandbox into the production toolset          [risk: medium]
+### [x] T25: Build the sandbox into the production toolset          [risk: medium]
 
 **Depends on:** T7, T18, T22, T24
 **Files:** `lib/lain/cli/wiring/toolset_build.rb`, `spec/lain/cli/wiring/toolset_build_spec.rb`
@@ -1215,7 +1215,7 @@ Spec file: `spec/lain/exec/sandboxed_spec.rb`
 **Stop and report if:**
 - A refusal of a benign probe (cgroup files, `/proc/stat`, thread-name writes) would trigger the wording: those are not exec refusals; only exec and write refusals count.
 
-### T27: Give the judge each stage's resolution facts          [risk: high]
+### [x] T27: Give the judge each stage's resolution facts          [risk: high]
 
 **Depends on:** T3, T13, T14, T18
 **Files:** `lib/lain/approval/judge.rb`, `lib/lain/approval/judged.rb`, `lib/lain/approval/judge/facts.rb` (new), `lib/lain/prompt/templates/role/auto_approver.md`, `lib/lain/cli/switchboard.rb`, `lib/lain/cli/wiring/board_build.rb`, `spec/lain/approval/judge_spec.rb`, `spec/lain/approval/judged_spec.rb`, `spec/lain/approval/judge/facts_spec.rb` (new), `spec/lain/cli/switchboard_spec.rb`
@@ -1243,7 +1243,7 @@ Spec file: `spec/lain/approval/judge/facts_spec.rb`, `spec/lain/approval/judge_s
 - judge_spec's example that the role text must not match `/intent/i` conflicts with the 2 role sentences.
 - The facts must be computed a second time in `Judged`: they come from the same resolver instance, per worker env.
 
-### T28: Defer a judge approval the structured bar forbids          [risk: high]
+### [x] T28: Defer a judge approval the structured bar forbids          [risk: high]
 
 **Depends on:** T27
 **Files:** `lib/lain/approval/judged.rb`, `lib/lain/shell/executable.rb`, `spec/lain/approval/judged_spec.rb`, `spec/lain/shell/executable_spec.rb`
