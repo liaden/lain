@@ -77,13 +77,8 @@ RSpec.describe Lain::CLI::EnvDefaults do
   end
 
   describe "the name tables" do
-    it "keeps every read name apart from every retired one" do
-      expect(described_class::READ & described_class::RETIRED).to be_empty
-    end
-
     it "is deeply frozen and sorted" do
       expect(Ractor.shareable?(described_class::READ)).to be(true)
-      expect(Ractor.shareable?(described_class::RETIRED)).to be(true)
       expect(described_class::READ).to eq(described_class::READ.sort)
     end
   end

@@ -31,9 +31,6 @@ module Lain
     # neither, over a machine that can gain a state.
     QUIESCENT = %i[awaiting_user done failed].freeze
 
-    # Kept for callers that rescue the harness's own halt. See Agent::Budget.
-    BudgetExceeded = Budget::Exceeded
-
     # A rewind asked of an Agent whose run someone else holds. That run settles
     # onto the Timeline it captured and hands it back, so a head moved under it
     # is committed over the moment it lands.

@@ -656,7 +656,7 @@ RSpec.describe Lain::Agent do
                      budget: Lain::Agent::Budget.new(max_total_tokens: 50),
                      timeline: CoreGraph.timeline(store: UncommittableResults::Store.new(notice)))
 
-        expect { over.ask("hi") }.to raise_error(described_class::BudgetExceeded)
+        expect { over.ask("hi") }.to raise_error(described_class::Budget::Exceeded)
         expect(Lain::Event.pending_tool_use?(over.timeline.head)).to be(true)
       end
     end
@@ -708,7 +708,7 @@ RSpec.describe Lain::Agent do
       end
 
       it "stops with the budget refusal and a head that answers the call" do
-        expect { over_budget.ask("hi") }.to raise_error(described_class::BudgetExceeded)
+        expect { over_budget.ask("hi") }.to raise_error(described_class::Budget::Exceeded)
 
         expect(over_budget.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
         expect(over_budget.timeline.head.content)
@@ -878,14 +878,14 @@ RSpec.describe Lain::Agent do
     it "raises once max_iterations is reached" do
       a = agent([tool_response(["tu_1", "echo", { "text" => "loop" }])],
                 budget: Lain::Agent::Budget.new(max_iterations: 3))
-      expect { a.ask("hi") }.to raise_error(described_class::BudgetExceeded, /3 iterations/)
+      expect { a.ask("hi") }.to raise_error(described_class::Budget::Exceeded, /3 iterations/)
     end
 
     it "raises once the token ceiling is passed" do
       usage = Lain::Usage.new(input_tokens: 100, output_tokens: 100)
       a = agent([Lain::Response.new(content: [], stop_reason: :end_turn, usage:)],
                 budget: Lain::Agent::Budget.new(max_total_tokens: 50))
-      expect { a.ask("hi") }.to raise_error(described_class::BudgetExceeded, /ceiling is 50/)
+      expect { a.ask("hi") }.to raise_error(described_class::Budget::Exceeded, /ceiling is 50/)
     end
 
     # A budget stop is the harness's decision, not the model's output; a refusal
@@ -923,7 +923,7 @@ RSpec.describe Lain::Agent do
         a.ask("one")
 
         expect { a.ask("two") }
-          .to raise_error(described_class::BudgetExceeded, "loop ran 2 iterations, ceiling is 2")
+          .to raise_error(described_class::Budget::Exceeded, "loop ran 2 iterations, ceiling is 2")
       end
 
       # The silent-swallow half. A refused ask says which ceiling stopped it
@@ -936,7 +936,7 @@ RSpec.describe Lain::Agent do
                                 budget: Lain::Agent::Budget.new(max_iterations: 2))
 
         expect { a.ask("one") }
-          .to raise_error(described_class::BudgetExceeded, "loop ran 2 iterations, ceiling is 2")
+          .to raise_error(described_class::Budget::Exceeded, "loop ran 2 iterations, ceiling is 2")
         expect(a.ask("two").text).to eq("recovered")
         expect(provider.call_count).to eq(4)
       end
@@ -1035,7 +1035,7 @@ RSpec.describe Lain::Agent do
                 budget: Lain::Agent::Budget.new(max_total_tokens: 50),
                 journal:)
 
-      expect { a.ask("hi") }.to raise_error(described_class::BudgetExceeded)
+      expect { a.ask("hi") }.to raise_error(described_class::Budget::Exceeded)
       expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant])
       expect(turn_usage_records.size).to eq(1)
       expect(turn_usage_records.first["digest"]).to eq(a.timeline.head_digest)

@@ -41,13 +41,6 @@ module Lain
       # preamble forwards.
       READ = %w[LAIN_API_BASE LAIN_MODEL LAIN_NUM_BATCH LAIN_NUM_CTX LAIN_PROVIDER].freeze
 
-      # Names that were env defaults and are flags only now; moving one into
-      # {READ} and back into an `exe/lain` call is the whole restore.
-      RETIRED = %w[
-        LAIN_KEEP_ALIVE LAIN_MAX_TOKENS LAIN_SEED LAIN_SUMMARIZER_MAX_TOKENS
-        LAIN_SUMMARIZER_MODEL LAIN_SUMMARIZER_PROVIDER LAIN_TEMPERATURE
-      ].freeze
-
       module_function
 
       # @param name [String] the variable, `LAIN_`-prefixed by convention

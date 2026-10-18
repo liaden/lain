@@ -49,7 +49,7 @@
 
 use anstyle::{Ansi256Color, AnsiColor, Color, Effects, RgbColor, Style};
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use unicode_width::UnicodeWidthStr;
 
@@ -73,7 +73,7 @@ const SPECIAL: [char; 6] = ['[', ']', '(', ')', '$', '\\'];
 /// exceed four -- and shallow enough that the deepest legal parse uses a few
 /// kilobytes of stack. Because a [`Format`] can ONLY be built by
 /// [`Format::parse`], bounding the parse bounds every later walk over the same
-/// tree -- `render_elements`, `any_variable_set`, `collect_variables`, and the
+/// tree -- `render_elements`, `any_variable_set`, and the
 /// `Vec<Element>` drop glue -- so there is one limit here rather than four.
 ///
 /// **Scope: this bounds [`Format`], and nothing else in this file.** [`Setting`]
@@ -645,17 +645,6 @@ impl Format {
         Ok(Format { elements })
     }
 
-    /// Every variable the format references, in first-appearance order, without
-    /// duplicates -- including the ones that only supply style words. This is
-    /// how a caller knows which values are worth computing.
-    pub fn variables(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        collect_variables(&self.elements, &mut names);
-        let mut seen = HashSet::new();
-        names.retain(|name| seen.insert(name.clone()));
-        names
-    }
-
     /// Render to a String. Pure in its three arguments: same format, same vars,
     /// same `color` gives the same bytes in every process.
     ///
@@ -792,23 +781,6 @@ fn any_variable_set(elements: &[Element], vars: &Vars) -> bool {
         Element::TextGroup { body, .. } => any_variable_set(body, vars),
         Element::Conditional(body) => any_variable_set(body, vars),
     })
-}
-
-/// Gather variable names depth-first, style variables included.
-fn collect_variables(elements: &[Element], out: &mut Vec<String>) {
-    elements.iter().for_each(|element| match element {
-        Element::Text(_) => {}
-        Element::Variable(name) => out.push(name.clone()),
-        Element::TextGroup { body, style } => {
-            collect_variables(body, out);
-            style.iter().for_each(|token| {
-                if let StyleToken::Variable(name) = token {
-                    out.push(name.clone());
-                }
-            });
-        }
-        Element::Conditional(body) => collect_variables(body, out),
-    });
 }
 
 /// Turn styled segments into the final String.
@@ -1000,7 +972,6 @@ mod tests {
     fn every_walk_survives_a_format_nested_to_the_limit() {
         let source = format!("{}$x{}", "(".repeat(MAX_DEPTH), ")".repeat(MAX_DEPTH));
         let format = Format::parse(&source).expect("parses at the limit");
-        assert_eq!(format.variables(), vec!["x"]);
         assert_eq!(
             format.render(&vars(&[("x", "y")]), true).expect("renders"),
             "y"
@@ -1150,14 +1121,6 @@ mod tests {
                 style: vec![StyleToken::Literal("red".to_string())],
             }]
         );
-    }
-
-    // -- variables ---------------------------------------------------------
-
-    #[test]
-    fn variables_are_listed_once_in_first_appearance_order() {
-        let format = Format::parse("$b [$a$b]($style) ($a)").expect("parses");
-        assert_eq!(format.variables(), vec!["b", "a", "style"]);
     }
 
     #[test]
@@ -1446,8 +1409,8 @@ pub mod ffi {
     // `coerce_text`: that policy is laxer and its taxonomy is different.
     use crate::read_text::read_text;
     use magnus::{
-        DataTypeFunctions, Error, ExceptionClass, RArray, RHash, RModule, Ruby, TypedData, Value,
-        function, method,
+        DataTypeFunctions, Error, ExceptionClass, RHash, RModule, Ruby, TypedData, Value, function,
+        method,
         prelude::*,
         r_hash::ForEach,
         scan_args::{get_kwargs, scan_args},
@@ -1501,16 +1464,6 @@ pub mod ffi {
             Ok(display_width(&read_text(ruby, text, || {
                 "text".to_string()
             })?))
-        }
-
-        fn variables(ruby: &Ruby, rb_self: &Prompt) -> Result<RArray, Error> {
-            let names = rb_self.format.variables();
-            let out = ruby.ary_new_capa(names.len());
-            names
-                .iter()
-                .try_for_each(|name| out.push(frozen_str(ruby, name)))?;
-            out.freeze();
-            Ok(out)
         }
 
         fn settings(ruby: &Ruby, rb_self: &Prompt) -> Result<Value, Error> {
@@ -1614,7 +1567,6 @@ pub mod ffi {
         prompt.define_error("ConfigError", lain_error)?;
         prompt.define_singleton_method("from_toml", function!(Prompt::from_toml, 1))?;
         prompt.define_singleton_method("width", function!(Prompt::width, 1))?;
-        prompt.define_method("variables", method!(Prompt::variables, 0))?;
         prompt.define_method("settings", method!(Prompt::settings, 0))?;
         prompt.define_method("render", method!(Prompt::render, -1))?;
         Ok(())

@@ -1141,7 +1141,12 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
   end
 
   it "ignores a retired variable, so only a flag can set what it once set" do
-    env = Lain::CLI::EnvDefaults::RETIRED.to_h { |name| [name, "7"] }
+    # Pins that these once-read names now do nothing, so a restore is deliberate.
+    retired = %w[
+      LAIN_KEEP_ALIVE LAIN_MAX_TOKENS LAIN_SEED LAIN_SUMMARIZER_MAX_TOKENS
+      LAIN_SUMMARIZER_MODEL LAIN_SUMMARIZER_PROVIDER LAIN_TEMPERATURE
+    ]
+    env = retired.to_h { |name| [name, "7"] }
     options = options_under(env, [])
 
     expect(options["max_tokens"]).to eq(16_384)

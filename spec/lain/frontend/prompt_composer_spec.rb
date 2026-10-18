@@ -909,9 +909,11 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
 
     it "ships a default that parses, and names the variables the run supplies" do
-      shipped = Lain::Ext::Prompt.from_toml(File.read(described_class::DEFAULT_CONFIG))
+      source = File.read(described_class::DEFAULT_CONFIG)
+      Lain::Ext::Prompt.from_toml(source)
 
-      expect(shipped.variables).to contain_exactly("model", "occupancy", "fleet", "idle", "mode", "compaction")
+      expect(source[/^format = .*$/].scan(/\$(\w+)/).flatten.uniq).to contain_exactly("model", "occupancy", "fleet",
+                                                                                      "idle", "mode", "compaction")
     end
   end
 
@@ -970,7 +972,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
   # word and watch it fail before believing any of these.
   describe "the shipped config's own documentation" do
     let(:source) { File.read(Lain::Frontend::PromptComposer::DEFAULT_CONFIG) }
-    let(:shipped) { Lain::Ext::Prompt.from_toml(source) }
+    let(:shipped_variables) { source[/^format = .*$/].scan(/\$(\w+)/).flatten.uniq }
 
     # One `#   $name ...` entry, to the next entry or the end of the glossary.
     def entry_for(name) = source[/^\#\s+\$#{name}\b.*?(?=\n\#\s+\$|\n\#\n)/m].to_s
@@ -981,7 +983,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     def prose_for(name) = entry_for(name).gsub(/\n\#\s+/, " ").sub(/\A\#\s+/, "")
 
     it "names exactly the variables the format supplies" do
-      expect(source.scan(/^\#\s+\$(\w+)/).flatten).to match_array(shipped.variables)
+      expect(source.scan(/^\#\s+\$(\w+)/).flatten).to match_array(shipped_variables)
     end
 
     # `$model` is the one reading always present, so it owes no such note. The

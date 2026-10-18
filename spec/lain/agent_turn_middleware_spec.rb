@@ -71,7 +71,7 @@ RSpec.describe "Agent turn_middleware" do
 
       a = agent(responses, budget: Lain::Agent::Budget.new(max_iterations: 3), turn_middleware: stack)
 
-      expect { a.ask("hi") }.to raise_error(Lain::Agent::BudgetExceeded, /3 iterations/)
+      expect { a.ask("hi") }.to raise_error(Lain::Agent::Budget::Exceeded, /3 iterations/)
       # The budget check itself lives inside the wrapped body (#step), so the
       # phase's outer middleware still observes the 4th, over-the-ceiling
       # attempt before Budget::Exceeded unwinds out of the downstream call --

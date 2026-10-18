@@ -26,12 +26,6 @@ RSpec.describe Lain::Ext::Prompt do
       expect(compile("[lain](bold green) ")).to be_deeply_frozen
     end
 
-    it "names every variable the format references, once, in appearance order" do
-      format = compile("$b [$a$b]($style) ($a)")
-
-      expect(format.variables).to eq(%w[b a style])
-    end
-
     it "carries no settings" do
       expect(compile("$model").settings).to eq({})
     end
@@ -91,7 +85,7 @@ RSpec.describe Lain::Ext::Prompt do
     end
 
     it "accepts BINARY whose bytes are already valid UTF-8" do
-      expect(described_class.from_toml(%(format = "abc"\n).b).variables).to eq([])
+      expect(described_class.from_toml(%(format = "abc"\n).b).render({}, color: false)).to eq("abc")
     end
 
     it "applies the same policy to from_toml, width, and render" do

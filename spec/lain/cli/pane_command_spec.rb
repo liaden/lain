@@ -251,7 +251,7 @@ RSpec.describe Lain::CLI::PaneCommand do
         # .lua reads no LAIN_ name, and a name built by interpolation is invisible to a text scan.
         files = Dir[File.join(root, "{lib,exe}/**/*")].select { |f| File.file?(f) && f.end_with?(".rb", "lain") }
         found = files.flat_map { |f| File.read(f).scan(/(?<![A-Z])LAIN_[A-Z][A-Z0-9_]*[A-Z0-9]/) }.uniq
-        known = described_class::PANE_ENV + described_class::RUNTIME_ENV + excluded + Lain::CLI::EnvDefaults::RETIRED
+        known = described_class::PANE_ENV + described_class::RUNTIME_ENV + excluded
 
         expect(found - known).to eq([])
       end
