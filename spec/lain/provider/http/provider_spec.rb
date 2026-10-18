@@ -5,10 +5,11 @@
 # config options; this branch vendors Anthropic only, so the table keeps its
 # *shape* (a Hash keyed by slug, one row per provider) with a single row.
 # Adding openai/gemini/bedrock later is one new row in `api_base_cases` and
-# one more line in `config_for`, not a rewrite. The generic `.register` /
+# one more line in `config_for`, not a rewrite. The generic
 # `.configured?` / "provider configuration schema" examples are unchanged
 # apart from namespace, since they exercise the base `Provider`/
-# `Configuration` seam directly and never touch a specific provider.
+# `Configuration` seam directly; only the requirements-subset and api_base
+# examples read the Anthropic table.
 RSpec.describe Lain::Provider::HTTP::Provider do
   let(:api_base_cases) do
     {
@@ -24,40 +25,6 @@ RSpec.describe Lain::Provider::HTTP::Provider do
   def config_for(slug)
     Lain::Provider::HTTP::Configuration.new.tap do |config|
       config.anthropic_api_key = "anthropic-key" if slug == :anthropic
-    end
-  end
-
-  describe ".register" do
-    it "registers provider configuration options on Configuration" do
-      provider_key = :test_provider_spec
-      option_keys = %i[test_provider_api_key test_provider_api_base]
-
-      provider_class = Class.new(described_class) do
-        class << self
-          def configuration_options
-            %i[test_provider_api_key test_provider_api_base]
-          end
-
-          def configuration_requirements
-            %i[test_provider_api_key]
-          end
-        end
-      end
-
-      original_providers = described_class.send(:registered_providers).dup
-
-      begin
-        described_class.register(provider_key, provider_class)
-
-        config = Lain::Provider::HTTP::Configuration.new
-        option_keys.each do |key|
-          expect(config).to respond_to(key)
-          expect(config).to respond_to("#{key}=")
-        end
-      ensure
-        described_class.send(:registered_providers).replace(original_providers)
-        deregister_options(option_keys)
-      end
     end
   end
 
@@ -87,14 +54,8 @@ RSpec.describe Lain::Provider::HTTP::Provider do
 
   describe "provider configuration schema" do
     it "keeps requirements as a subset of declared configuration options" do
-      # `registered_providers` is private (there is no public reader left --
-      # nothing at runtime resolves a provider by slug); reached via `send` so
-      # this claim covers every provider that actually registers, not just the
-      # ones this file happens to list in api_base_cases. Iterating the table
-      # instead would make this pass only because the "covers every registered
-      # provider" example below separately pins that table to the registry --
-      # a coupling that would let this one narrow in silence if that pin ever weakened.
-      described_class.send(:registered_providers).each_value do |provider_class|
+      api_base_cases.each_value do |data|
+        provider_class = data[:provider]
         missing = provider_class.configuration_requirements - provider_class.configuration_options
         expect(missing).to be_empty, "#{provider_class.name} is missing options for requirements: #{missing.inspect}"
       end
@@ -107,20 +68,6 @@ RSpec.describe Lain::Provider::HTTP::Provider do
   end
 
   context "with API base configuration" do
-    it "covers every registered provider" do
-      # `registered_providers` is private (there is no public reader left --
-      # nothing at runtime resolves a provider by slug), so this reaches past
-      # the boundary deliberately to keep the real cross-provider invariant:
-      # the table above must not silently fall behind what actually registers.
-      expect(api_base_cases.keys).to match_array(described_class.send(:registered_providers).keys)
-    end
-
-    it "registers an API base option for every provider" do
-      expected_options = api_base_cases.values.map { |data| data[:key] }
-
-      expect(Lain::Provider::HTTP::Configuration.options).to include(*expected_options)
-    end
-
     it "uses the configured API base for every provider" do
       api_base_cases.each do |slug, data|
         config = config_for(slug)
@@ -139,10 +86,10 @@ RSpec.describe Lain::Provider::HTTP::Provider do
 
   private
 
-  # `.register`'s and `.configured?`'s throwaway provider classes leave
-  # options registered on the shared `Configuration` class; RSpec examples
-  # run in random order (spec/support/rspec_configuration.rb), so a leaked
-  # option would otherwise leak into whichever example runs next.
+  # `.configured?`'s throwaway provider class leaves an option registered on
+  # the shared `Configuration` class; RSpec examples run in random order
+  # (spec/support/rspec_configuration.rb), so a leaked option would otherwise
+  # leak into whichever example runs next.
   def deregister_options(option_keys)
     option_keys.each do |key|
       Lain::Provider::HTTP::Configuration.send(:option_keys).delete(key)

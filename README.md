@@ -642,7 +642,7 @@ There is nothing to fall back to, so lain says so and stops rather than guessing
 | `LAIN_PROVIDER`, `LAIN_MODEL`, `LAIN_API_BASE`, `LAIN_NUM_CTX`, `LAIN_NUM_BATCH` | `lain chat` and the other commands taking the run-profile flags | Defaults for `--provider`, `--model`, `--api-base`, `--num-ctx` and `--num-batch`, so a project can pin them in a direnv `.envrc`. A typed flag wins, a malformed number refuses by name, and an empty variable counts as unset. |
 | `LAIN_STREAM_STALL_TIMEOUT` | the provider's stall watch | Seconds of silence on an open stream before lain reports `stalled_stream` and stops. Defaults to **30**, except on `--provider ollama` and `ollama-cloud`, which default to 5 seconds under their request timeout: **295** for a local ollama (request timeout 300) and **115** for ollama cloud (120). Ollama sends a tool call's arguments whole, after a silence that grows with their size, so a long `epic_write` needs the room. A set variable wins on every provider, and `0` turns the check off. A stalled ask names this variable in the message that ends it. |
 | `LAIN_CONNECT_TIMEOUT` | the provider's connect watch | Seconds to wait for a connection before giving up; defaults to **5**, and `0` folds connect time back into the request timeout. |
-| `LAIN_STREAM_DEBUG` | the SSE accumulator | Dumps raw stream frames while debugging a provider. |
+| `LAIN_STREAM_DEBUG` | the SSE engine | Dumps raw stream frames while debugging a provider. |
 | `LAIN_INTEGRATION`, `LAIN_OLLAMA`, `LAIN_OLLAMA_CLOUD`, `LAIN_SPIKE` | the test suite | Opt in to the specs that cost money, need a local Ollama, spend Ollama Cloud quota, or run a spike. |
 
 The library does **not** read `OLLAMA_API_BASE`. The Ollama base is a constructor argument or the

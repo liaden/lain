@@ -5,8 +5,7 @@ module Lain
     class Ollama < Provider
       # A thin subclass of the vendored HTTP provider base, REUSING its Faraday
       # stack (timeout, faraday-retry, JSON handling, error mapping, the
-      # injected-Sink logger). It deliberately does NOT go through the vendored
-      # `complete`/`sync_response`: the payload is already rendered by
+      # injected-Sink logger). The payload is already rendered by
       # {Ollama::Encoding}, so the body is posted as-is and handed straight back.
       #
       # Which server, and with whose credential, are answered PER INSTANCE off
@@ -20,11 +19,7 @@ module Lain
       # where it is per-deployment.
       #
       # The Configuration options are registered below through
-      # `register_provider_options` directly, NOT
-      # `Provider::HTTP::Provider.register`: this is a Lain-native provider
-      # reusing the transport base rather than a member of the vendored slice's
-      # slug registry, so it takes the option seam without adding a
-      # `resolve(:ollama)` entry the vendored code never looks up.
+      # `register_provider_options`, as `providers/anthropic.rb` does.
       class Transport < Provider::HTTP::Provider
         COMPLETION_PATH = "api/chat"
         # The loaded-runner listing. It is the ONLY endpoint that states the

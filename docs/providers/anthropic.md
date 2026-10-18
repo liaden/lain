@@ -73,8 +73,8 @@ Each of these cost real debugging. They are verified, not remembered.
 ## The vendored transport
 
 `lib/lain/provider/http/` is a slice of `ruby_llm`'s HTTP layer: the Faraday connection stack,
-the SSE stream accumulator, and error mapping. MIT, © 2025 Carmine Paolino, namespace-rewritten
-and stripped of the lossy `Message` and `Content` model in favor of `Lain::Response`.
+the SSE engine, and error mapping. MIT, © 2025 Carmine Paolino, namespace-rewritten
+and stripped of its lossy `Message` and `Content` model, which `Lain::Response` replaced.
 
 `lib/lain/provider/http/VENDOR.md` maps each vendored file to its upstream path and records what
 changed. The full porting trace, including the 11 leak sites and the 4 wire protocols across

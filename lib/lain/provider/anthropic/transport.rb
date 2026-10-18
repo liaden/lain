@@ -8,12 +8,9 @@ module Lain
       # A thin subclass of the vendored Anthropic HTTP provider, REUSING its
       # Faraday stack and SSE engine.
       #
-      # It deliberately does NOT go through the vendored
-      # `complete`/`stream_response`: that path builds and consumes the lossy
-      # `Message`, folding the stream through the flattening
-      # `StreamAccumulator`. Here the payload is already rendered by
-      # {AnthropicEncoding} and each parsed SSE event is handed straight out, so
-      # the block-preserving {StreamAssembler} does the reassembly.
+      # The payload is already rendered by {AnthropicEncoding} and each parsed
+      # SSE event is handed straight out, so the block-preserving
+      # {StreamAssembler} does the reassembly.
       #
       # == Spooling raw bytes to the WAL
       #

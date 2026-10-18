@@ -91,6 +91,15 @@ RSpec.describe Lain::Provider::HTTP::Configuration do
     end
   end
 
+  describe "provider options" do
+    it "declares the Anthropic options without a provider registry" do
+      config = described_class.new
+
+      expect(config).to respond_to(:anthropic_api_key, :anthropic_api_key=, :anthropic_api_base, :anthropic_api_base=)
+      expect(Lain::Provider::HTTP::Provider).not_to respond_to(:register)
+    end
+  end
+
   describe "#http_middleware" do
     it "is frozen and empty for every instance" do
       expect(Array.new(2) { described_class.new.http_middleware }).to all(be_frozen.and(be_empty))

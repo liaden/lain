@@ -1,9 +1,7 @@
 # frozen_string_literal: true
 
-# The assembler is the "stop flattening" mutation, tested where the flattening
-# used to live. These assertions are exactly what the vendored StreamAccumulator
-# CANNOT satisfy: every block survives in order, and every thinking signature
-# survives -- not just the first.
+# The assembler must not flatten: every block survives in order, and every
+# thinking signature survives -- not just the first.
 RSpec.describe Lain::Provider::Anthropic::StreamAssembler do
   # Feed a full, ordered turn one event at a time, the way the transport does.
   def feed(assembler, events)
@@ -45,8 +43,7 @@ RSpec.describe Lain::Provider::Anthropic::StreamAssembler do
     expect(result).to stop_with("tool_use")
   end
 
-  # The headline of Step A: the vendored accumulator keeps only the FIRST
-  # thinking signature. This one must keep both.
+  # Flattening keeps only the FIRST thinking signature; this must keep both.
   it "keeps a second thinking block's signature rather than dropping it" do
     result = feed(described_class.new, [
                     message_start,

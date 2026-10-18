@@ -8,12 +8,10 @@ module Lain
       # Reassembles Anthropic's SSE events into the FULL, ordered content-block
       # list -- text, thinking, and tool_use alike -- keyed by the wire `index`.
       #
-      # This is the mutation the fork exists for. The vendored
-      # {Provider::HTTP::StreamAccumulator} flattens: it joins every text block
-      # into one String, joins every thinking block, and keeps only the *first*
-      # thinking block's signature. A second thinking block's missing signature
-      # corrupts the very next turn, because Anthropic rejects a thinking block
-      # replayed without its verbatim signature.
+      # Flattening is the failure to avoid: joining every thinking block and
+      # keeping only the *first* signature leaves a second thinking block
+      # without its signature, which corrupts the very next turn, because
+      # Anthropic rejects a thinking block replayed without its verbatim signature.
       #
       # So this assembler keeps each block separate under its own index and
       # applies deltas to it in place, which is also what makes `input_json_delta`

@@ -4,10 +4,10 @@ require "json"
 
 # New code, not a port. Upstream folds error-body parsing
 # (`parse_error`/a JSON-or-string `try_parse_json` fallback) directly into
-# `Provider`, which -- together with {Registry} -- pushed the class past
-# this project's default `Metrics/ClassLength` (100). Turning a raw response
+# `Provider`, which pushed the class past this project's default
+# `Metrics/ClassLength` (100). Turning a raw response
 # body into the message {ErrorMiddleware} wraps in an exception is a real,
-# separate responsibility from one instance's `#complete` round trip, so it
+# separate responsibility from the connection and streaming the class owns, so it
 # is extracted rather than disabled away. Behavior is unchanged.
 
 module Lain

@@ -28,10 +28,9 @@ module Lain
       #
       # The base SSE engine: the provider-generic half of streaming, `include`d into
       # the base `Provider`, so `self` inside every method here is a provider
-      # instance. A provider that defines no `streaming.rb` of its own still streams,
-      # using the generic `parse_streaming_error` in {ErrorHandling} --
-      # `Anthropic::Streaming` overrides it and is included at the subclass level so
-      # its version wins.
+      # instance. A provider that defines no `parse_streaming_error` of its own still
+      # streams, using the generic one in {ErrorHandling} -- a provider class
+      # that defines it (as `Providers::Anthropic` does) wins over this include.
       #
       # Streaming *error* handling is a separate responsibility (a successful stream
       # never touches it) and lives in {ErrorHandling}, composed in by `include`

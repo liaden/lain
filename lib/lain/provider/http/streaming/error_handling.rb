@@ -1,32 +1,30 @@
 # frozen_string_literal: true
 
-# Split from streaming.rb -- see that file's header. Streaming error handling
-# is a real, separate responsibility from the SSE engine: a successful stream
-# never reaches any of these methods. They recognize an error chunk/payload,
-# reconstruct a response-shaped object, and hand it to {ErrorMiddleware} to
-# raise the same typed error the non-streaming path would.
-#
-# Composed into {Provider} the same way {Streaming} is (`include`), not
-# delegated to, because these methods must run with the provider as `self`:
-# `parse_streaming_error` is provider-overridable (Anthropic's version, in
-# providers/anthropic/streaming.rb, replaces the generic one below), and
-# {ErrorMiddleware}.parse_error is called with `provider: self`. That is the
-# ActiveSupport::Concern-style composition of orthogonal behavior CLAUDE.md
-# endorses -- two distinct modules mixed into one class -- not one oversized
-# module reopened across files. `stream_debug` resolves back through `self`
-# onto {Streaming}, which is mixed into the same provider.
-#
-# Changed from upstream: `error_chunk?`/`handle_error_chunk` are deleted. They
-# read a raw `on_data` fragment and crashed on an error event split across two
-# of them; `handle_error_event`, reached through the buffering parser and
-# {Streaming#flush_stream}, covers both the fragmented and the truncated shape.
-# See streaming.rb's header.
-
 module Lain
   class Provider
     module HTTP
       module Streaming
-        # Recognizes and raises streaming errors; see the file header.
+        # Split from streaming.rb -- see that file's header. Streaming error handling
+        # is a real, separate responsibility from the SSE engine: a successful stream
+        # never reaches any of these methods. They recognize an error chunk/payload,
+        # reconstruct a response-shaped object, and hand it to {ErrorMiddleware} to
+        # raise the same typed error the non-streaming path would.
+        #
+        # Composed into {Provider} the same way {Streaming} is (`include`), not
+        # delegated to, because these methods must run with the provider as `self`:
+        # `parse_streaming_error` is provider-overridable (Anthropic's version, in
+        # providers/anthropic.rb, replaces the generic one below), and
+        # {ErrorMiddleware}.parse_error is called with `provider: self`. That is the
+        # ActiveSupport::Concern-style composition of orthogonal behavior CLAUDE.md
+        # endorses -- two distinct modules mixed into one class -- not one oversized
+        # module reopened across files. `stream_debug` resolves back through `self`
+        # onto {Streaming}, which is mixed into the same provider.
+        #
+        # Changed from upstream: `error_chunk?`/`handle_error_chunk` are deleted. They
+        # read a raw `on_data` fragment and crashed on an error event split across two
+        # of them; `handle_error_event`, reached through the buffering parser and
+        # {Streaming#flush_stream}, covers both the fragmented and the truncated shape.
+        # See streaming.rb's header.
         module ErrorHandling
           module_function
 

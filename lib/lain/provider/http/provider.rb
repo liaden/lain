@@ -9,13 +9,11 @@ module Lain
       # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/provider.rb.
       # Changed: RubyLLM:: -> Lain::Provider::HTTP::.
       #
-      # The class-level registry (`providers`/`register`/`resolve`) and error-body
-      # parsing moved to {Registry}/{ErrorBody} -- each a real, separate
+      # Error-body parsing moved to {ErrorBody} -- a real, separate
       # responsibility -- to clear the default `Metrics/ClassLength` without
       # loosening it. Lain drives the round trip itself through
       # `Provider::Anthropic::Transport`, so the upstream `complete` seam is not here.
       class Provider
-        extend Registry
         include Streaming
 
         attr_reader :config, :connection

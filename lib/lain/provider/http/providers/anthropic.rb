@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module Lain
   class Provider
     module HTTP
@@ -11,12 +13,6 @@ module Lain
         #
         # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/providers/anthropic.rb.
         # Changed: RubyLLM:: -> Lain::Provider::HTTP::.
-        #
-        # `anthropic/streaming.rb` mixes itself in as it loads. Including it from
-        # here instead is a cycle -- it reopens this class, so the loader could
-        # reach this file's `include` while that require is still in flight. That
-        # is safe only because `lib/lain.rb` eager loads every file: autoloaded
-        # alone, this class would lack the streaming hooks and fail on a request.
         class Anthropic < Provider
           def api_base
             @config.anthropic_api_base || "https://api.anthropic.com"
@@ -45,10 +41,29 @@ module Lain
           def completion_url
             "v1/messages"
           end
+
+          def stream_url
+            completion_url
+          end
+
+          def parse_streaming_error(data)
+            error_data = JSON.parse(data)
+            return unless error_data["type"] == "error"
+
+            case error_data.dig("error", "type")
+            when "overloaded_error"
+              [529, error_data["error"]["message"]]
+            else
+              [500, error_data["error"]["message"]]
+            end
+          end
         end
       end
     end
   end
 end
 
-Lain::Provider::HTTP::Provider.register(:anthropic, Lain::Provider::HTTP::Providers::Anthropic)
+# Eager load is what guarantees this runs before anything reads Configuration.options.
+Lain::Provider::HTTP::Configuration.register_provider_options(
+  Lain::Provider::HTTP::Providers::Anthropic.configuration_options
+)

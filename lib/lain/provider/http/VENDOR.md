@@ -19,32 +19,26 @@ text, thinking, and tool_use — verbatim. `ruby_llm`'s own `Message`/`Content`
 flatten all text blocks into one String, join all thinking blocks, and keep
 only the *first* thinking block's signature. That is a real information
 loss Lain's correctness gates cannot tolerate, and no configuration option
-undoes it. Forking the four files below it that make the HTTP round trip
-(`provider.rb`, `connection.rb`, `stream_accumulator.rb`, the Anthropic wire
-format) and taking ownership of the response mapping is cheaper and more
-honest than fighting the gem's own abstraction. See `ARCHITECTURE.md`'s Provider
+undoes it. Forking the four files below it that made the HTTP round trip
+(at the time: `provider.rb`, `connection.rb`, `stream_accumulator.rb`, the
+Anthropic wire format) and taking ownership of the response mapping was
+cheaper and more honest than fighting the gem's own abstraction. See `ARCHITECTURE.md`'s Provider
 boundary section for why the Anthropic official SDK stays mounted as a
 correctness oracle rather than the primary path once the fork lands.
 
 ## Scope: Anthropic only
 
-Taken: `provider.rb`, `connection.rb`, `configuration.rb`,
-`stream_accumulator.rb`, `error.rb`, `error_middleware.rb`, `chunk.rb`,
-`tool_call.rb`, `message.rb`, `content.rb`,
-`providers/anthropic.rb`, `providers/anthropic/{chat,streaming,tools}.rb`.
+Taken: `provider.rb`, `connection.rb`, `configuration.rb`, `error.rb`,
+`error_middleware.rb`, `providers/anthropic.rb`, and the base SSE engine
+`streaming.rb` (`RubyLLM::Streaming`, at the top of `lib/ruby_llm/`, NOT under
+`providers/`), which needs the `event_stream_parser` gem. The engine has since
+grown Lain's own `post_stream`/`flush_stream`, which the non-vendored
+transports depend on -- see **Streaming** below before re-vendoring it.
 
-Also taken, not in the original file list but required transitively for the
-above to load and behave correctly (see `docs/porting-providers.md` for why
-each was missing from the brief): `thinking.rb`, `tokens.rb`, and the base
-SSE engine `streaming.rb` (`RubyLLM::Streaming`, at the top of `lib/ruby_llm/`,
-NOT under `providers/`) — it defines `stream_response`, which
-`Provider#complete(&block)` calls, and needs the `event_stream_parser` gem
-(added to the gemspec for exactly this). It has since grown Lain's own
-`post_stream`/`flush_stream`, which the non-vendored transports depend on —
-see **Streaming** below before re-vendoring it. `models.rb`'s five
-streaming-usage-extraction methods were folded into
-`providers/anthropic/streaming.rb` rather than resurrecting a `Models` file
-— see that file's header.
+The vendored `Message`/`Content`/`Chunk`/`ToolCall` model, `StreamAccumulator`,
+`Provider#complete` and the Anthropic `chat`/`tools` mixins are gone: nothing
+in lain ran them. The Anthropic stream hooks (`stream_url`,
+`parse_streaming_error`) live in `providers/anthropic.rb` itself.
 
 **Not taken, and not planned for this branch:** `models.rb`, `models.json`
 (1.4MB of pricing tables — cost accounting is `Lain::Usage`), `capabilities.rb`,
@@ -55,59 +49,33 @@ gpustack, mistral, ollama, openrouter, perplexity, vertexai, xai).
 ## Structure
 
 ```
-http.rb                              # require-order loader; the subject every spec requires
 http/
   LICENSE                            # upstream MIT license, verbatim
   VENDOR.md                          # this file
-  error.rb
+  error.rb                           # and one file per status-mapped subclass
   error_middleware.rb
   configuration.rb
   logging/sink_logger.rb             # NEW: Sink-backed Logger duck (leak sites 1/2)
   connection.rb
   connection/middleware_stack.rb     # split out: Metrics/ClassLength
-  tokens.rb                          # not in the original file list; required transitively
-  thinking.rb                        # not in the original file list; required transitively
-  tool_call.rb
-  content.rb
-  message.rb
-  chunk.rb
-  stream_accumulator.rb
-  stream_accumulator/
-    think_tag_scanner.rb             # split out: Metrics/ClassLength
-    tool_call_accumulator.rb         # split out: Metrics/ClassLength
   streaming.rb                       # base SSE engine; not in the original file list
   streaming/
     error_handling.rb                # split out: Metrics/ModuleLength (separate responsibility)
     faraday_handlers.rb              # split out: Metrics/ModuleLength (on_data proc + StallClock)
   provider.rb
   provider/
-    registry.rb                      # split out: Metrics/ClassLength
     error_body.rb                    # split out: Metrics/ClassLength
   providers/
     anthropic.rb
-    anthropic/
-      chat.rb                        # payload assembly
-      chat/
-        message_formatting.rb        # split out: Metrics/ModuleLength
-        thinking_payload.rb          # split out: Metrics/ModuleLength
-        response_parsing.rb          # split out: Metrics/ModuleLength
-      streaming.rb
-      tools.rb
 ```
 
-Files under `connection/`, `provider/`, `stream_accumulator/`, `streaming/`,
-and `providers/anthropic/chat/` are **new code, not ports** — each says so in
-its own header. They exist solely so the ported classes/modules clear this
-project's default `Metrics/ClassLength`/`Metrics/ModuleLength` without
-loosening either cop (forbidden by `CLAUDE.md`). Each extraction is a real,
-separate responsibility (a think-tag scanner, a tool-call-fragment
-accumulator, a provider registry, a streaming error handler, ...), not a
-mechanical line-count dodge — see each file's header for the specific
-reasoning. In particular, the `chat/` files are genuine `Chat::MessageFormatting`
-/ `Chat::ThinkingPayload` / `Chat::ResponseParsing` modules that `Chat`
-delegates to, NOT one `Chat` module reopened across four files (that would
-duck the per-file cop while the module stayed the same size — the opposite of
-what the cop is for).
+Files under `connection/`, `provider/` and `streaming/` are **new code, not
+ports** -- each says so in its own header. They exist solely so the ported
+classes/modules clear this project's default `Metrics/ClassLength`/
+`Metrics/ModuleLength` without loosening either cop (forbidden by `CLAUDE.md`).
+Each extraction is a real, separate responsibility (an error-body parser, a
+streaming error handler, ...), not a mechanical line-count dodge -- see each
+file's header for the specific reasoning.
 
 ## The eleven leak sites
 
@@ -118,27 +86,19 @@ file's provenance header, plus one further site the brief didn't enumerate
 
 ## Streaming
 
-`Provider#complete(&block)` streams: the base SSE engine (`streaming.rb`,
-mixed into `Provider`) drives Faraday's `on_data`, parses the event stream
-through `event_stream_parser` (MIT, a declared dependency), accumulates the
-deltas via `StreamAccumulator`, yields each `Chunk`, and returns one
-`Message`. `spec/lain/provider/http/streaming_spec.rb` proves it end-to-end
-against a WebMock-delivered event stream, including the error-event path
-(an `overloaded_error` raises `OverloadedError` through
+The base SSE engine (`streaming.rb`, mixed into `Provider`) drives Faraday's
+`on_data` and parses the event stream through `event_stream_parser` (MIT, a
+declared dependency). `spec/lain/provider/http/streaming_spec.rb` proves it
+end-to-end against a WebMock-delivered event stream, including the error-event
+path (an `overloaded_error` raises `OverloadedError` through
 `Streaming::ErrorHandling` and Anthropic's own `parse_streaming_error`).
 
-`Provider#complete(&block)` is **not** the path Lain runs, though:
 `Anthropic::Transport#stream` (outside this directory) posts its own request
 and installs its own `on_data` handler. It reaches the vendored engine through `Streaming#post_stream`, which assigns
-the handler and then runs `flush_stream` — a blank line fed to the parser once
+the handler and then runs `flush_stream` -- a blank line fed to the parser once
 the body is read, because the SSE spec discards an event that never got its
 terminating blank line, and a discarded `event: error` is an overload recorded
 as a successful empty turn. Both methods are Lain's, not upstream's: a
 re-vendor that drops them reintroduces that swallow in that transport with
 nothing failing in this directory. `streaming.rb`'s header lists all three
 Lain-side additions.
-
-What this branch still deliberately does **not** do (all `transport`'s job,
-stacked on top): stop `parse_completion_response` from flattening text/thinking
-blocks, map the vendored `Message`/`Content` onto `Lain::Response`/`Lain::Request`,
-and build `Provider::Anthropic`.
