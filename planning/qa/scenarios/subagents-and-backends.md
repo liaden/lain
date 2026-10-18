@@ -1,6 +1,6 @@
 # Scenario: subagents, isolation, and where a command becomes a process
 
-**Round 26 is the re-check** for the round 25 fixes stated in §4 (e25-2: a docker session's stages read `container_backend`).
+**Round 26 is the re-check** for the round 25 fixes stated in §4 (e25-2: a docker stage that cannot be listed reads `container_backend`).
 
 **What it exercises:** `Tools::Subagent` in **both** modes (`one_shot` and `actor`), the
 `Supervisor` reactor that un-refuses a model-dispatched actor, `--isolation` (`none` / `worktree`)
@@ -412,15 +412,22 @@ Then the backend's own behaviour:
   sentence beside an actually-clean `docker ps -a` is correct, not a finding: it reports the
   confirmation failing, not the container surviving. A leftover container **with** no such
   sentence is the finding.
-- **A docker session's `exec_resolution` cannot name the file that runs** (round 25, e25-2, fixed). The program inside the container is
-  out of lain's sight, and resolving the host's `PATH` for it would name a binary that is not the one that runs. So under `--exec docker`
-  every stage of every `bash` call journals `"klass":"unresolved"` with the anomaly `container_backend` (`the command runs inside a
-  container, where lain cannot see which file runs`), whatever the command. Read one with
-  `jq -c 'select(.type=="exec_resolution") | .stages[] | {name,klass,anomalies}' "$JOURNAL"`. The approval consequence is by arm:
-  `--confine classes` or `reader` never lets `ComposedTerm` approve a docker call (it abstains on an unresolved stage); with
-  `--judge-facts facts` or `request`, a judge approve of a docker `bash` call is Overruled and parks for a human, because the bar
-  is never empty; with the default `--judge-facts off`, a judge approve still goes through. A docker session that auto-approves
-  `cat README.md` under `facts` is the finding. (Read from the code and its specs; a live docker run was not driven for this edit.)
+- **A docker session's `exec_resolution` names the file that runs, from the image** (round 25, e25-2, reworked after). Each call asks
+  `docker image inspect` for the tag's ID, `Config.Env` and `Config.Entrypoint`; `docker run` starts that ID. The image's files come from
+  `docker create`, `docker export` and `docker rm`, cached per ID at `$XDG_CACHE_HOME/lain/exec-images/v1/<id>.json`; the first call on a
+  new ID can wait for all three (no deadline of its own). Docker mounts and runs in the cwd's realpath. Read one with
+  `jq -c 'select(.type=="exec_resolution") | .stages[] | {name,klass,anomalies}' "$JOURNAL"` and expect `system` for `cat`, never
+  `fresh` for an image path. Each image ID journals one `exec_image` record: `jq -c 'select(.type=="exec_image")' "$JOURNAL"`.
+  **Drive each fallback**, which leaves every stage `"klass":"unresolved"` with the anomaly `container_backend` (`the command runs inside
+  a container, where lain cannot see which file runs`): (1) an image absent locally, where the record has `id` null and a reason naming
+  the inspect; (2) an image with an `ENTRYPOINT` (such as `rhysd/actionlint`), where the reason quotes it and nothing is exported;
+  (3) a listing that fails, such as a `docker export` over 60s or an unreadable tar, where a notice on the first docker bash call says container programs
+  could not be listed and, for a cached failure, names the cache file to delete and says to relaunch (the failure is also remembered in
+  the process, so deleting the file alone does not retry). The approval consequence is by arm: on a fallback, `--confine classes` or
+  `reader` never lets `ComposedTerm` approve a docker call; with `--judge-facts facts` or `request`, a judge approve is Overruled and
+  parks for a human; with the default `--judge-facts off`, a judge approve still goes through. On a listed image, `cat README.md` can be
+  approved by `ComposedTerm` under `classes`.
+  (Read from the code and its specs; a live docker run was not driven for this edit.)
 - **A stopped daemon surfaces as a tool error**, named in the class doc rather than pretended away.
   Stop the daemon mid-session and confirm the model gets a legible tool error and the session
   survives. A session that dies because docker did is worse than the error. **On this box `docker`

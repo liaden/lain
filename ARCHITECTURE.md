@@ -913,6 +913,30 @@ three places, and each answers a different question. All three read one `Shell::
    journals an `exec_resolution` record before it runs, whatever the arms, and the child env drops
    `LD_PRELOAD`, `LD_AUDIT`, `BASH_FUNC_*` and `CDPATH` (`Exec::ChildEnv`) so an exported function never
    reaches the shell. `LD_LIBRARY_PATH` stays: the child Ruby needs it for OpenSSL.
+
+   Under `--exec docker` the file that runs is in the image, so `Exec::Docker::Resolver` answers from the
+   image's own files. Every call asks `docker image inspect` for the ID, `Config.Env` and `Config.Entrypoint`
+   of the tag (never memoized, so a rebuilt tag applies to the next call), and `docker run` starts that ID.
+   The files come from `docker create`, `docker export` and `docker rm`, read as tar headers with nothing run
+   in the image: the `PATH` directories' children, every link hop and every ancestor directory, cached per ID
+   at `$XDG_CACHE_HOME/lain/exec-images/v1/<id>.json`. The inspect and the create get 5s each, the export 60s
+   and the rm 5s; `#listing` has no deadline of its own, so the first call on a new ID can wait for all
+   three. Each ID journals one `exec_image` record (tag, ID, whether it was listed, why not).
+
+   Docker mounts the project and the cwd's realpath at themselves and runs in that realpath. A path under a
+   mount is answered by the host (`Shell::Executable::MountedStat`), any other by the listing (`ListedStat`),
+   and a relative link with `..` resolves parent-first as the kernel does. An image path is `system` because
+   no call can write the image (`writable?` is false) and is never `fresh` because every call starts a new
+   container; only a mounted path can be either otherwise.
+
+   Three fallbacks leave every stage `unresolved` with the `container_backend` anomaly
+   (`Resolver::CONTAINER`), so the class table abstains and the call goes to the judge or a human: an inspect
+   that names no ID, an image declaring an `ENTRYPOINT` (the argv goes to it, and the listing cannot say what
+   that runs), and a listing that failed. A failed listing prints a notice on the first docker bash call
+   that meets the image, once per ID; the launch prints nothing. A timeout or a bad tar is cached on disk and
+   remembered in the process, so its notice names the cache file to delete and says to relaunch. A refusal
+   is remembered only in the process and has no file.
+
 2. **The ladder's class table** answers *may a machine approve it*. Under `--confine classes` or `reader`,
    `ComposedTerm` has a twelfth predicate: every stage, wrapper and run file must be `system`, or `user`,
    unchanged this lineage and shadowing nothing, with no anomaly. A `project` file, a fresh or shadowing one,

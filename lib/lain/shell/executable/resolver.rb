@@ -370,10 +370,8 @@ module Lain
 
         NULL = Null.new.freeze
 
-        # Under `--exec docker` the file that runs is inside the container, so a
-        # host path would name the wrong one. Resolving in the container would
-        # cost a 2nd `docker run` per call and still could not tell who can
-        # write there.
+        # The fallback under `--exec docker`, for a call whose image cannot be listed: the host's
+        # path would name the wrong file, so every stage stays unresolved.
         CONTAINER = Null.new(anomalies: [:container_backend]).freeze
 
         private

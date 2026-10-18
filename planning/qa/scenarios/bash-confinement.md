@@ -258,11 +258,13 @@ Record, for every section, the box's probe output from the top of this file, the
 needed a re-run. A section that could not be driven on the box (no Landlock, no bwrap) is recorded as
 unreachable here, with the probe line that shows it.
 
-**Under `--exec docker` nothing resolves** (round 25, e25-2). Every stage journals `"klass":"unresolved"` with the anomaly
-`container_backend`, so the class table has nothing to trust: `--confine classes` and `reader` never let `ComposedTerm` approve a docker
-call, and under `--judge-facts facts` or `request` a judge approve of a docker `bash` call is Overruled and parks for a human. Under the
-default `--judge-facts off` a judge approve still goes through. [`subagents-and-backends.md`](subagents-and-backends.md) §4 owns the check; it
-was read from the code and its specs, not driven live.
+**Under `--exec docker` stages resolve against the image, with 3 fallbacks to unresolved** (round 25, e25-2, reworked after). A listed
+image answers each stage `system` (nothing can write the image) or, for a path under a mount, from the host; a stage is never `fresh`
+unless it is mounted. Each fallback journals `"klass":"unresolved"` with the anomaly `container_backend`, so `--confine classes` and
+`reader` never let `ComposedTerm` approve the call, and under `--judge-facts facts` or `request` a judge approve is Overruled and parks
+for a human; under the default `--judge-facts off` a judge approve still goes through. The fallbacks are an inspect that names no ID, an
+image with an `ENTRYPOINT`, and a listing that failed (which also prints a notice on the first docker bash call). [`subagents-and-backends.md`](subagents-and-backends.md)
+§4 owns the check; it was read from the code and its specs, not driven live.
 
 **Predictions this scenario has already had to correct, kept so nobody re-derives them:**
 
