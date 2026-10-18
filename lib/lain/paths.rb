@@ -292,6 +292,17 @@ module Lain
       File.join(ensure_dir(state_home), "improvements.ndjson")
     end
 
+    # Purgeable: deleting the directory costs one export per image on the next run.
+    #
+    # @param id [String] 64 hex characters
+    # @return [String] where the listing of that image's files is cached, its directory created
+    # @raise [ArgumentError] for a key that is not an image ID, which could name a path outside the directory
+    def exec_image_listing(id)
+      raise ArgumentError, "#{id.inspect} is not an image ID" unless /\A\h{64}\z/.match?(id)
+
+      File.join(ensure_dir(File.join(cache_home, "exec-images", "v1")), "#{id}.json")
+    end
+
     private
 
     # Expansion first (`~`, relative segments), THEN kernel resolution, so the

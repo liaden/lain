@@ -313,6 +313,27 @@ RSpec.describe Lain::Paths do
     end
   end
 
+  describe "#exec_image_listing" do
+    let(:id) { "d529dd0c6e5597ac7e4a3e2dea65c3fcc6173f4cae713c409265c1dd9914a11b" }
+
+    it "names a file under cache_home keyed by format version and image ID, and creates its directory" do
+      Dir.mktmpdir do |tmp|
+        file = paths("XDG_CACHE_HOME" => tmp).exec_image_listing(id)
+
+        expect(file).to eq("#{tmp}/lain/exec-images/v1/#{id}.json")
+        expect([Dir.exist?(File.dirname(file)), File.exist?(file)]).to eq([true, false])
+      end
+    end
+
+    it "refuses a key that is not an image ID, so no name can leave the directory" do
+      Dir.mktmpdir do |tmp|
+        expect { paths("XDG_CACHE_HOME" => tmp).exec_image_listing("../../evil") }
+          .to raise_error(ArgumentError, /image ID/)
+        expect(Dir.exist?("#{tmp}/lain/exec-images")).to be(false)
+      end
+    end
+  end
+
   describe ".wal_for" do
     it "derives <session-stem>.wal beside the given NDJSON path" do
       expect(described_class.wal_for("/x/lain/sessions/proj/20260101T000000-1.ndjson"))
