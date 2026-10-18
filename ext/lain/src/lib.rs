@@ -841,7 +841,7 @@ mod ffi {
         };
         // `InvalidRole`'s `Display` (see `turn.rs`) IS this message; no
         // hand-built duplicate to keep in sync with the pure error type.
-        Role::try_from(raw.as_str()).map_err(|invalid| {
+        raw.parse::<Role>().map_err(|invalid| {
             lookup_error(
                 ruby,
                 &["Lain", "Ext", "Turn", "InvalidRole"],

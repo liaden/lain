@@ -67,10 +67,10 @@ impl Role {
 
 /// Validate a role string against the wire roles, mapping an unknown one onto the
 /// same [`InvalidRole`] whose `Display` is the FFI-visible message.
-impl TryFrom<&str> for Role {
-    type Error = InvalidRole;
+impl std::str::FromStr for Role {
+    type Err = InvalidRole;
 
-    fn try_from(role: &str) -> Result<Self, InvalidRole> {
+    fn from_str(role: &str) -> Result<Self, InvalidRole> {
         Self::ALL
             .into_iter()
             .find(|candidate| candidate.as_str() == role)
@@ -661,10 +661,10 @@ mod tests {
 
     #[test]
     fn parses_wire_roles_and_rejects_the_rest() {
-        assert_eq!(Role::try_from("user"), Ok(Role::User));
-        assert_eq!(Role::try_from("assistant"), Ok(Role::Assistant));
+        assert_eq!("user".parse::<Role>(), Ok(Role::User));
+        assert_eq!("assistant".parse::<Role>(), Ok(Role::Assistant));
         assert_eq!(
-            Role::try_from("system"),
+            "system".parse::<Role>(),
             Err(InvalidRole("system".to_string()))
         );
     }
