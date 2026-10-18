@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "stringio"
 require "tmpdir"
 
 # A provider whose endpoint says, flatly, that it has not got the model asked
@@ -75,6 +76,63 @@ RSpec.describe Lain::Skill::RoleSpawn do
       described_class.new(provider: mock(text_response("unused")), context_factory: -> { child_context },
                           parent:, toolset: union, slots:)
     end.to raise_error(ArgumentError, /tool_middleware/)
+  end
+
+  # ---- The judge is told which role is asking --------------------------------
+
+  describe "the requester a role's child asks under" do
+    let(:asked) { [] }
+    let(:policy) do
+      Class.new do
+        def initialize(asked) = @asked = asked
+        def call(effect, context) = rule(effect, context).allow?
+
+        def rule(_effect, context)
+          @asked << context.requester
+          Lain::Approval::Escalation::Ruling.deny(rung: "spec", because: "not here")
+        end
+      end.new(asked)
+    end
+    let(:inputs) do
+      Lain::CLI::ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: nil,
+                                       sensitivity: Lain::Sensitivity::Policy::Null.instance,
+                                       test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
+                                       policy:, policy_for: ->(_worker_env) { policy },
+                                       denial: Lain::Middleware::Gate::DENIAL,
+                                       bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new)
+    end
+    let(:board) { Struct.new(:guard_inputs).new(inputs) }
+    let(:spawned) do
+      Lain::CLI::ToolGuard::Spawned.new(chronicle: Lain::CLI::ToolGuard::Journaled.new(journal: Lain::Channel::Null.instance),
+                                        board: -> { board }, requester: "subagent")
+    end
+
+    it "names a role skill's child by its role, not as the run's subagent" do
+      provider = mock(tool_response(["b1", "bash", { "command" => "make" }]), text_response("done"))
+
+      seam(provider:, tool_middleware: spawned).call(:dev, :fresh, "go")
+
+      expect(asked).to eq(["dev"])
+    end
+
+    it "renames a Detached builder" do
+      guard = Lain::CLI::ToolGuard.detached(journal: Lain::Channel::Null.instance)
+
+      expect(seam(provider: mock(text_response("adjudicated")), tool_middleware: guard).call(:qa, :fresh, "go").content)
+        .to eq("adjudicated")
+    end
+
+    # Epic submit's adjudication spawns this way: the never-parking copy of a
+    # run with no chat, whose refusals are recorded under the child's role.
+    it "names the role on a refusal through a Detached builder's never-parking copy" do
+      journal_io = StringIO.new
+      guard = Lain::CLI::ToolGuard.detached(journal: Lain::Journal.new(io: journal_io))
+      provider = mock(tool_response(["b1", "bash", { "command" => "make" }]), text_response("done"))
+
+      Sync { seam(provider:, tool_middleware: guard).never_parking.call(:dev, :fresh, "go") }
+
+      expect(journal_records(journal_io, "escalation").map { |ruling| ruling["requester"] }).to eq(%w[dev])
+    end
   end
 
   # ---- The child runs under its role's iteration ceiling ---------------------
@@ -293,7 +351,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     # runs in, so recording it is recording where the child stands.
     def watched(provider:)
       seam(provider:, isolation: Lain::Isolation::Leases.new(backend:),
-           tool_middleware: ->(worker_env, **) { ToolRegistry::UNGUARDED.call(worker_env).tap { seen << worker_env } })
+           tool_middleware: ToolRegistry.builder { |env, **| ToolRegistry::UNGUARDED.call(env).tap { seen << env } })
     end
 
     def tool_results(request)
@@ -462,7 +520,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
       Lain::Toolset.new(union.to_a + [Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
     end
 
-    def recording(into) = ->(worker_env, **) { ToolRegistry::UNGUARDED.call(worker_env).tap { into << worker_env } }
+    def recording(into) = ToolRegistry.builder { |env, **| ToolRegistry::UNGUARDED.call(env).tap { into << env } }
 
     def kept(root)
       Lain::Tools::Subagent::Kept.new(root:, paths: Lain::Paths.new(env: { "HOME" => root }), related: ->(_) { false },
@@ -508,8 +566,6 @@ RSpec.describe Lain::Skill::RoleSpawn do
       Dir.mktmpdir do |root|
         provider = mock(text_response("unused"))
         spawn = placed_spawn(provider, root)
-        guard = spawn.seam.tool_middleware
-        guard.define_singleton_method(:never_parking) { guard }
 
         expect { spawn.never_parking.call(:researcher, :fresh, "go") }
           .to raise_error(described_class::Refused, /researcher/)

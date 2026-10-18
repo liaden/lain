@@ -20,7 +20,7 @@
 # * Every default is BUILT FRESH per call. A memoized Store or Toolset shared
 #   between examples is a cross-example leak. Exactly two defaults are shared,
 #   and both are stateless and frozen: {Lain::Channel::Null}'s singleton, and
-#   `ToolRegistry::UNGUARDED`, a frozen lambda that returns a FRESH
+#   `ToolRegistry::UNGUARDED`, a frozen builder that returns a FRESH
 #   {Lain::Middleware::Stack} on each call rather than closing over one.
 # * The default graph touches nothing outside the process. The provider is
 #   {Lain::Provider::Mock} (no socket) and the journal is a Null channel (no

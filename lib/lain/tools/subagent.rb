@@ -1237,7 +1237,9 @@ module Lain
         # a `#use` on one reach them all. The environment is what tells a guard
         # where a child leased into a checkout of its own writes; the task is
         # what the child was spawned to do, which a judged approval is weighed
-        # against. A builder that has no use for the task still takes it.
+        # against. A builder that has no use for the task still takes it. It
+        # also answers `with(requester:)`, the same builder naming another
+        # child: {Skill::RoleSpawn} tells the judge each child's role that way.
         #
         # `askers` wants the same treatment and does not yet have it: its
         # default is {NoAskers}, so a chat seam assembled with no askers takes

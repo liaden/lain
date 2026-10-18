@@ -50,7 +50,8 @@ module Lain
       # Subagent's own, so omitting them is byte-identical to spawning the tool
       # directly; the loose pre-Seam keywords still work through `**spawn_over`,
       # and passing a seam AND its members raises. The tool guard is the one
-      # member with no default, on the loose path as on the seam.
+      # member with no default, on the loose path as on the seam, and it answers
+      # `with(requester:)` beside `call`, so each child is named by its role.
       #
       # @param toolset [Toolset] the union a role attenuates from
       # @param slots [Prompt::Slots] where a role's persona is read from
@@ -61,14 +62,11 @@ module Lain
       #   it builds reads its parent's held cuts through
       # @param placed [Hash{Symbol => Placed}] by role name, the roles whose
       #   children each work in a kept directory of their own
-      # @param unparked [Boolean] whether the seam's guard is a never-parking one,
-      #   which each child's role renames
       # @param spawn_over [Hash] the loose seam members, when no seam is given
       def initialize(toolset:, slots:, seam: nil, max_depth: 1, compaction: Tools::Subagent::ParentView::None,
-                     placed: {}, unparked: false, **spawn_over)
+                     placed: {}, **spawn_over)
         @seam = Tools::Subagent::Seam.resolve(seam, **spawn_over)
         @placed = placed
-        @unparked = unparked
         @toolset = toolset
         @slots = slots
         @max_depth = max_depth
@@ -103,7 +101,7 @@ module Lain
       # @raise [Isolation::Leases::Lane::Refused] when git would not accept the name
       def within(worker_env, lane: nil)
         self.class.new(seam: @seam.with(isolation: lent(worker_env, lane)), toolset: @toolset, slots: @slots,
-                       max_depth: @max_depth, compaction: @compaction, placed: @placed, unparked: @unparked)
+                       max_depth: @max_depth, compaction: @compaction, placed: @placed)
       end
 
       # This spawn, its children built through the seam guard's never-parking
@@ -115,7 +113,7 @@ module Lain
       # @return [RoleSpawn]
       def never_parking
         self.class.new(seam: @seam.with(tool_middleware: @seam.tool_middleware.never_parking), toolset: @toolset,
-                       slots: @slots, max_depth: @max_depth, placed: unplaceable, unparked: true)
+                       slots: @slots, max_depth: @max_depth, placed: unplaceable)
       end
 
       private
@@ -140,12 +138,9 @@ module Lain
         )
       end
 
-      # A never-parking guard records its refusals under the child's own role.
-      def named_for(role, seam)
-        return seam unless @unparked
-
-        seam.with(tool_middleware: seam.tool_middleware.with(requester: role.name.to_s))
-      end
+      # The judge and the journal are told the child's own role, not whoever
+      # spawned it.
+      def named_for(role, seam) = seam.with(tool_middleware: seam.tool_middleware.with(requester: role.name.to_s))
 
       def unplaceable = @placed.to_h { |name, _| [name, Unplaceable.new(name)] }
 

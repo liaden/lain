@@ -192,7 +192,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
       Lain::Skill::RoleSpawn.new(provider: writing(nested, greeting),
                                  context_factory: -> { Lain::Context.new(model: "child", max_tokens: 256) },
                                  toolset: union, parent: Lain::Timeline.empty(store: Lain::Store.new), slots:,
-                                 tool_middleware: method(:guarded))
+                                 tool_middleware: ToolRegistry.builder { |env, **| guarded(env) })
     end
 
     def nested_step

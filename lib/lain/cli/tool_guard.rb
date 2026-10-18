@@ -136,15 +136,23 @@ module Lain
       # What {.detached} answers: a builder over the inputs a run with no chat
       # built for itself, once. A child whose lease cut a checkout is held
       # inside it ({.leased}).
-      Detached = Data.define(:chronicle, :guard_inputs) do
-        # @param worker_env [WorkerEnv] the environment the child runs in
-        # @return [Middleware::Stack] a fresh one per child, over the one board
-        def call(worker_env, **)
-          unless worker_env.checkout
-            return ToolGuard.working(chronicle, guard_inputs, worker_env, guard_inputs.policy_for.call(worker_env))
-          end
+      #
+      # It answers `with(requester:)` as {Spawned} does, so a role spawn names
+      # its children to the gate and the journal whichever builder its seam
+      # holds. Until then its gate asks as the run's own agent. No current
+      # caller spawns a role over it except through {#never_parking}, whose
+      # copy names the child's role the same way.
+      Detached = Data.define(:chronicle, :guard_inputs, :requester) do
+        def initialize(chronicle:, guard_inputs:, requester: nil) = super
 
-          ToolGuard.leased(chronicle, guard_inputs, worker_env)
+        # @param worker_env [WorkerEnv] the environment the child runs in
+        # @param task [String, nil] what the child was spawned to do, asked about beside its name
+        # @return [Middleware::Stack] a fresh one per child, over the one board
+        def call(worker_env, task: nil)
+          return ToolGuard.leased(chronicle, guard_inputs, worker_env, requester:, task:) if worker_env.checkout
+
+          ToolGuard.working(chronicle, guard_inputs, worker_env,
+                            ToolGuard.named(guard_inputs.policy_for.call(worker_env), requester, task:), requester:)
         end
 
         # @return [NeverParking]
@@ -165,7 +173,7 @@ module Lain
       NeverParking = Data.define(:guard, :requester) do
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @return [Middleware::Stack] a fresh one per child
-        def call(worker_env, **) = ToolGuard.working(chronicle, refused, worker_env, asking)
+        def call(worker_env, **) = ToolGuard.working(chronicle, refused, worker_env, asking, requester:)
 
         # The child's own role names the refusal it records: the seam's requester
         # is whoever spawned the child, and a refusal is not that spawner's doing.
@@ -340,13 +348,23 @@ module Lain
       # a human, because nobody is attached to answer ({LeasedPolicy}).
       #
       # @return [Middleware::Stack]
-      def leased(chronicle, inputs, worker_env)
+      def leased(chronicle, inputs, worker_env, requester: nil, task: nil)
         held = confined(inputs, worker_env)
         policy = LeasedPolicy.new(sensitivity: held.sensitivity, lease: worker_env.checkout,
                                   allow: inputs.policy_for.call(worker_env))
-        layered(chronicle, held, inputs.test_layout.roots_for(worker_env), policy,
-                held: held_for(worker_env, home: inputs.sensitivity.home))
+        layered(chronicle, held, inputs.test_layout.roots_for(worker_env), named(policy, requester, task:),
+                requester:, held: held_for(worker_env, home: inputs.sensitivity.home))
       end
+
+      # A gate policy asked in `requester`'s name, or as it is when nobody is
+      # named: {Asking} refuses a nil name, and the approval queue reads a bare
+      # context as the run's own agent ({Approval::Queue::REQUESTER}).
+      #
+      # @param policy [#rule]
+      # @param requester [String, nil]
+      # @param task [String, nil] what the child was spawned to do
+      # @return [#rule]
+      def named(policy, requester, task: nil) = requester ? Asking.new(policy:, requester:, task:) : policy
 
       def confined(inputs, worker_env)
         roots = worker_env.checkout ? [worker_env.checkout, *worker_env.read_roots] : [worker_env.cwd]

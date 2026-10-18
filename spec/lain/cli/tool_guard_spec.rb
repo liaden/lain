@@ -1067,15 +1067,15 @@ RSpec.describe Lain::CLI::ToolGuard do
           def initialize(asked) = @asked = asked
           def call(effect, context) = rule(effect, context).allow?
 
-          def rule(effect, _context)
-            @asked << effect.name
+          def rule(effect, context)
+            @asked << [effect.name, Lain::Approval::Queue.requester_for(context)]
             Lain::Approval::Escalation::Ruling.deny(rung: "spec", because: "no", final: true)
           end
         end.new(asked)
       end
       let(:builder) { described_class.detached(journal:, policy_for: ->(_worker_env) { policy }) }
 
-      def bash_gate(worker_env)
+      def bash_gate(worker_env, builder: self.builder)
         stack = builder.call(worker_env)
         effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
         stack.call({ effect:, tool: Lain::Tools::Bash.new, context: Lain::Session.new(worker_env:) }) do |passed|
@@ -1083,18 +1083,29 @@ RSpec.describe Lain::CLI::ToolGuard do
         end.fetch(:result)
       end
 
-      it "asks it for a worker with no checkout" do
+      it "asks it for a worker with no checkout, as the run's own agent" do
         bash_gate(Lain::WorkerEnv.default)
 
-        expect(asked).to eq(["bash"])
+        expect(asked).to eq([%w[bash agent]])
       end
 
-      it "asks it for a worker leased a checkout" do
+      it "asks it for a worker leased a checkout, as the run's own agent" do
         Dir.mktmpdir do |dir|
           bash_gate(Lain::WorkerEnv.default.with(cwd: File.realpath(dir), checkout: File.realpath(dir)))
         end
 
-        expect(asked).to eq(["bash"])
+        expect(asked).to eq([%w[bash agent]])
+      end
+
+      it "asks it in the name a renamed copy was given, leased or not" do
+        renamed = builder.with(requester: "qa")
+        Dir.mktmpdir do |dir|
+          bash_gate(Lain::WorkerEnv.default, builder: renamed)
+          bash_gate(Lain::WorkerEnv.default.with(cwd: File.realpath(dir), checkout: File.realpath(dir)),
+                    builder: renamed)
+        end
+
+        expect(asked).to eq([%w[bash qa], %w[bash qa]])
       end
     end
 
@@ -1144,6 +1155,22 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
 
     def detached_guards(thunk) = thunk.call(Lain::WorkerEnv.default).to_a
+
+    # A role spawn renames whichever builder its seam holds, so a run with no
+    # chat names its children as a chat's builder does.
+    it "names a different child in a copy, leaving itself as it was" do
+      detached = described_class.detached(journal:)
+      renamed = detached.with(requester: "qa")
+      named = Dir.mktmpdir do |dir|
+        leased = Lain::WorkerEnv.default.with(cwd: File.realpath(dir), checkout: File.realpath(dir))
+        [Lain::WorkerEnv.default, leased].map do |worker_env|
+          renamed.call(worker_env).to_a.grep(Lain::Middleware::Sensitivity).first.instance_variable_get(:@requester)
+        end
+      end
+
+      expect(named).to eq(%w[qa qa])
+      expect(detached.requester).to be_nil
+    end
 
     it "answers a thunk building the chat's layers, in the chat's order" do
       expect(detached_guards(described_class.detached(journal:)).map(&:class))
