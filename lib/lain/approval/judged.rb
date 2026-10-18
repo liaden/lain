@@ -23,6 +23,15 @@ module Lain
       NAME = "auto"
       APPROVED = "the judge approved this call"
       DENIED = "the judge refused this call"
+      # Not final: the judge is a model, and a human who switches approval can still say yes.
+      DENIED_TOLD = "the judge refused this call; that is a model's answer, not a human's, and a human can still " \
+                    "approve it by switching approval to ask, so tell the user what you needed it for rather than " \
+                    "re-sending it"
+      UNLOOKED = "the judge did not look: %<why>s"
+      OPAQUE = "its paths cannot be named"
+      BARRED = "this command is barred from automatic approval"
+      TOO_MANY = "it reaches more files than the judge weighs"
+      UNWEIGHABLE = "%<path>s is not a path it may weigh"
       DEFERRED = "deferred"
       BAR = "bar"
       OVERRULED = "the judge approved this, but what lain resolved the command to bars an automatic approval"
@@ -116,6 +125,10 @@ module Lain
 
         def name = NAME
 
+        # What the model is told of a judge deny, read by the rung above: the
+        # session's own refusal already says nobody can approve it.
+        def denied_told = DENIED
+
         def call(_effect, context)
           return Escalation::Ruling.deny(rung: NAME, because: BARRED, final: true, told: TOLD) \
             if Escalation.barred?(context)
@@ -154,7 +167,7 @@ module Lain
       # @param asking [#call] the rung a call goes to when the judge does not
       #   settle it: {Escalation::Surfaces}, or {Unattended}
       # @param journal [#record]
-      # @param display [#<<] told a {Telemetry::JudgeApproved} for each call the judge approves
+      # @param display [#<<] told a {Telemetry::JudgeRuled} for each call the judge approves or denies
       # @param facts [#call] `(command, cwd, tool_use_id:) -> Judge::Facts` for a bash call; none by default
       # @param request [#call] `context -> Judge::Request or nil`, what the call was made for; none by default
       def initialize(judge:, policy:, asking:, journal:, display: ::Lain::Channel::Null.instance,
@@ -175,7 +188,8 @@ module Lain
       # @param context [Object, nil] as {Middleware::Gate} threads it through
       # @return [Escalation::Ruling]
       def call(effect, context)
-        return handed_down(effect, context, abstain(UNJUDGEABLE)) unless judgeable?(effect, context)
+        unlooked = unlooked(effect, context)
+        return unjudged(effect, context, format(UNLOOKED, why: unlooked)) if unlooked
 
         cause = nil
         place = place_for(effect, context)
@@ -188,7 +202,7 @@ module Lain
       def ruled(verdict, effect, context, cause, bar:)
         case verdict
         when :approve then bar.empty? ? approved(effect) : overruled(effect, context, bar)
-        when :deny then Escalation::Ruling.deny(rung: NAME, because: DENIED)
+        when :deny then denied(effect)
         when :defer then handed_down(effect, Deferred.new(context), abstain(DEFERRED))
         else faulted(effect, context, cause)
         end
@@ -198,14 +212,26 @@ module Lain
 
       # Evidence about a call must never cost the call, so a notice that fails is lost.
       def approved(effect)
-        show(effect)
+        show(effect, "approved")
         Escalation::Ruling.allow(rung: NAME, because: APPROVED)
       end
 
-      def show(effect)
-        @display << Telemetry::JudgeApproved.new(call: format(CALL, tool: effect.name, input: effect.input.inspect))
+      def denied(effect)
+        show(effect, "denied")
+        told = @asking.respond_to?(:denied_told) ? @asking.denied_told : DENIED_TOLD
+        Escalation::Ruling.deny(rung: NAME, because: DENIED, said: told)
+      end
+
+      def show(effect, verdict)
+        @display << Telemetry::JudgeRuled.new(call: format(CALL, tool: effect.name, input: effect.input.inspect),
+                                              verdict:)
       rescue StandardError
         nil
+      end
+
+      def unjudged(effect, context, note)
+        handed_down(effect, Escalation::Noted.new(context, note),
+                    Escalation::Ruling.abstain(rung: NAME, because: UNJUDGEABLE, note:))
       end
 
       # Marked faulted so the ladder suppresses an automatic allow from below,
@@ -217,14 +243,22 @@ module Lain
 
       def abstain(reason) = Escalation::Ruling.abstain(rung: NAME, because: reason)
 
-      def judgeable?(effect, context)
-        return false if Escalation.barred?(context)
+      # @return [String, nil] why the judge may not be asked; nil when it may
+      def unlooked(effect, context)
+        return BARRED if Escalation.barred?(context)
 
         named = named_in(effect, context)
+        return OPAQUE if named.opaque?
+
         reached = named.paths.map { Reach.of(_1) }
-        !named.opaque? && reached.none?(&:nil?) && [*named_by_field(effect), *reached.flatten].all? do |path|
-          verdict_on(path, context).oracle_approvable?
-        end
+        return TOO_MANY if reached.any?(&:nil?)
+
+        unweighable(effect, reached.flatten, context)
+      end
+
+      def unweighable(effect, reached, context)
+        path = [*named_by_field(effect), *reached].find { !verdict_on(_1, context).oracle_approvable? }
+        path && format(UNWEIGHABLE, path:)
       end
 
       # A path in the requester's own checkout is where it works, not outside it.

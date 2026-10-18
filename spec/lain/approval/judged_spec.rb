@@ -159,13 +159,47 @@ RSpec.describe Lain::Approval::Judged do
     it "tells the display which call the judge approved" do
       ruled(rung(spawn_answering("approve"), display: told), bash("git log --oneline -5"))
 
-      expect(told).to eq([Lain::Telemetry::JudgeApproved.new(call: 'bash({"command" => "git log --oneline -5"})')])
+      expect(told).to eq([Lain::Telemetry::JudgeRuled.new(call: 'bash({"command" => "git log --oneline -5"})',
+                                                          verdict: "approved")])
     end
 
-    it "says nothing about a call the judge denied" do
-      ruled(rung(spawn_answering("deny"), display: told), bash)
+    it "tells the display which call the judge denied" do
+      ruled(rung(spawn_answering("deny"), display: told), bash("ls -la /home/u"))
 
-      expect(told).to be_empty
+      expect(told).to eq([Lain::Telemetry::JudgeRuled.new(call: 'bash({"command" => "ls -la /home/u"})',
+                                                          verdict: "denied")])
+    end
+
+    it "tells the model the judge refused the call and a human can still approve it" do
+      ruling = ruled(rung(spawn_answering("deny")), bash("ls -la /home/u"))
+
+      expect(ruling.said).to eq("the judge refused this call; that is a model's answer, not a human's, and a " \
+                                "human can still approve it by switching approval to ask, so tell the user what " \
+                                "you needed it for rather than re-sending it")
+    end
+
+    it "tells the parked row why the judge did not look at an opaque command" do
+      ruled(rung(spawn_answering("approve")), bash("cd $D && cat notes.txt")) do |pending|
+        expect(pending.notes).to eq(["the judge did not look: its paths cannot be named"])
+        pending.deny(surface: "human_spec")
+      end
+
+      expect(escalations.sole).to include("reason" => "unjudgeable",
+                                          "note" => "the judge did not look: its paths cannot be named")
+    end
+
+    it "tells the parked row why the judge did not look at a path it may not weigh" do
+      ruled(rung(spawn_answering("approve")), call("read_file", { "path" => ".env" })) do |pending|
+        expect(pending.notes).to eq(["the judge did not look: .env is not a path it may weigh"])
+        pending.deny(surface: "human_spec")
+      end
+    end
+
+    it "tells the parked row why the judge did not look at a call barred from automatic approval" do
+      ruled(rung(spawn_answering("approve")), bash, within: context.with(automatic_approval_barred: true)) do |pending|
+        expect(pending.notes).to eq(["the judge did not look: this command is barred from automatic approval"])
+        pending.deny(surface: "human_spec")
+      end
     end
 
     it "marks the parked call as one the judge deferred" do
@@ -624,6 +658,17 @@ RSpec.describe Lain::Approval::Judged do
           expect(asked_about_command("cat many/*.txt")).to eq(0)
         end
 
+        it "tells the parked row why the judge did not look at a glob with too many matches" do
+          many = File.join(root, "many")
+          FileUtils.mkdir_p(many)
+          (described_class::Reach::MATCHES + 1).times { File.write(File.join(many, "f#{_1}.txt"), "") }
+
+          ruled(rung(spawn_answering("approve")), bash("cat many/*.txt")) do |pending|
+            expect(pending.notes).to eq(["the judge did not look: it reaches more files than the judge weighs"])
+            pending.deny(surface: "human_spec")
+          end
+        end
+
         it "never asks the judge about a recursive read of a tree whose only credential is .env" do
           FileUtils.mkdir_p(File.join(root, "only"))
           File.write(File.join(root, "only", ".env"), "TOKEN=1\n")
@@ -753,6 +798,12 @@ RSpec.describe Lain::Approval::Judged do
 
     it "still applies a clear approve" do
       expect(ruled(rung(spawn_answering("approve"), asking: unattended), bash).verdict).to eq(:allow)
+    end
+
+    it "does not tell the model a human can approve a call the judge denied, with no human to ask" do
+      ruling = ruled(rung(spawn_answering("deny"), asking: unattended), bash)
+
+      expect([ruling.verdict, ruling.final?, ruling.said]).to eq([:deny, false, "the judge refused this call"])
     end
   end
 

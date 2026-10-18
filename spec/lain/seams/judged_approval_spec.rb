@@ -86,7 +86,7 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
       Sync { agent.ask("show the log") }
       channel.close
       theme = Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false))
-      lines = channel.drain.grep(Lain::Telemetry::JudgeApproved).map { Lain::Frontend::Decorators.for(_1).render(theme) }
+      lines = channel.drain.grep(Lain::Telemetry::JudgeRuled).map { Lain::Frontend::Decorators.for(_1).render(theme) }
 
       expect(lines).to eq(['the judge approved bash({"command" => "git log --oneline -5"})'])
     end
