@@ -123,6 +123,16 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("session").first).not_to have_key("arms")
   end
 
+  it "writes whose trust admitted the configured middleware under one middleware key" do
+    described_class.new(journal:, context:, toolset:, workspace:, middleware: { "project" => "d1" })
+
+    expect(of_type("session").first).to include("middleware" => { "project" => "d1" })
+  end
+
+  it "writes no middleware key when none is registered" do
+    expect(Lain::SessionRecord.header(context:, toolset:, workspace:, middleware: {})).not_to have_key("middleware")
+  end
+
   it "writes no compaction key when the run recorded no section" do
     scribe
 

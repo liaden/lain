@@ -352,8 +352,8 @@ module Lain
         # refusal must land ahead of the header.
         switchboard(backend, toolset)
         @toolset_build.prime_masks
-        chronicle.start(context: backend.context, toolset:, profile: backend.run_profile,
-                        compaction: backend.compaction_header, arms: arms.to_header, **resume_start(resumed))
+        chronicle.start(context: backend.context, toolset:, profile: backend.run_profile, resumed:,
+                        compaction: backend.compaction_header, arms:, middleware: backend.middleware)
         @switchboard.journal_launch
         # ASSIGNED to an ivar, not merely returned: the `parent` thunk above and
         # the usage thunk #build_toolset passes both read this slot at CALL time.
@@ -761,10 +761,6 @@ module Lain
       def spooled_provider(backend, channel: Lain::Channel::Null.instance)
         backend.provider(spool: chronicle.spool, channel:)
       end
-
-      # A resumed chat opens its NEW journal chained to the old one. Derived from
-      # the Resume result so the exe never assembles the wire-format hashes.
-      def resume_start(resumed) = resumed ? { resumed_from: resumed.resumed_from, written: resumed.written } : {}
 
       # The run's ask-the-human seam, and the parent agent's own asker off it.
       # The registration that comes back is dropped ON PURPOSE: this asker is

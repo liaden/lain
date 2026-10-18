@@ -136,6 +136,59 @@ RSpec.describe Lain::Config::Middleware do
     expect(registry.http_entries.first.first).to eq(plain)
   end
 
+  describe "#to_header" do
+    it "names whose trust digest admitted the registrations" do
+      registry = described_class.from(calls_for(:tool, stamp), path: "/p").trusted_by("project", "d1")
+
+      expect(registry.to_header).to eq("project" => "d1")
+    end
+
+    it "is empty when nothing is registered, whoever trusted the file" do
+      expect(described_class.empty.trusted_by("project", "d1").to_header).to eq({})
+    end
+
+    it "keeps each side's digest across a merge, and drops a side that registered nothing" do
+      user = described_class.from(calls_for(:model, stamp), path: "/u").trusted_by("user", "u1")
+      project = described_class.empty.trusted_by("project", "p1")
+
+      expect([(user + project).to_header, (user + user.trusted_by("project", "p1")).to_header])
+        .to eq([{ "user" => "u1" }, { "user" => "u1", "project" => "p1" }])
+    end
+
+    it "records a trusted project's digest through Config.middleware" do
+      Dir.mktmpdir do |root|
+        write_config(root, "class Stamp < Lain::Middleware::Base; end\nmiddleware { tool Stamp }\n")
+        digest = Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root:), paths: Lain::Paths.new).digest
+
+        expect(Lain::Config.middleware(root:).to_header).to eq("project" => digest)
+      end
+    end
+
+    it "records the user's digest beside the project's when both configs register middleware" do
+      Dir.mktmpdir do |home|
+        paths = Lain::Paths.new(env: { "HOME" => home, "XDG_CONFIG_HOME" => File.join(home, "config"),
+                                       "XDG_STATE_HOME" => File.join(home, "state") })
+        root = File.join(home, "project")
+        FileUtils.mkdir_p(File.dirname(paths.user_config))
+        File.write(paths.user_config, "class UserStamp < Lain::Middleware::Base; end\nmiddleware { tool UserStamp }\n")
+        user = Lain::Project::Trust.for_user(paths:).tap(&:grant!).digest
+        write_config(root, "class ProjectStamp < Lain::Middleware::Base; end\nmiddleware { tool ProjectStamp }\n",
+                     paths:)
+        project = Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root:, paths:), paths:).digest
+
+        expect(Lain::Config.middleware(root:, paths:).to_header).to eq("user" => user, "project" => project)
+      end
+    end
+
+    it "is empty through Config.middleware when a trusted file registers nothing" do
+      Dir.mktmpdir do |root|
+        write_config(root, "shell exclude: %w[curl]\n")
+
+        expect(Lain::Config.middleware(root:).to_header).to eq({})
+      end
+    end
+  end
+
   it "freezes its per-area arrays apart from the caller's input" do
     input = [described_class::Registration.new(factory: stamp, args: [], kwargs: {}, block: nil, at: "/p:1")]
     registry = described_class.new(model: input)

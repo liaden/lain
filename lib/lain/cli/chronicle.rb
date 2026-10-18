@@ -278,19 +278,22 @@ module Lain
       end
 
       # Write the OPEN header, pinning exactly what the Agent renders with. A
-      # resumed chat passes `resumed_from:` and `written:` through to the scribe.
+      # resumed chat passes its resume, whose `resumed_from` and `written` go
+      # through to the scribe.
       # `message_journal` is the tee when --nvim wrapped one, so Q/A message
       # records fan to the live views while the file gets them once. `profile`
       # is the backend the run resolved, which the header records so a chat
       # forked or resumed from this file defaults to it. `compaction` is the
       # run's compaction section, recorded to be READ BACK by a bench rather
-      # than resolved from: nothing defaults a fallback to a recording.
+      # than resolved from: nothing defaults a fallback to a recording. `arms`
+      # and `middleware` are the run's own objects; the header records the arms
+      # that are on and whose trust admitted the middleware.
       # @see SessionRecord::Scribe#initialize
-      def start(context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
-                profile: RunProfile::UNRECORDED, compaction: {}, arms: {})
-        @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:,
-                                            resumed_from:, written:, message_journal: @tee, live: @live,
-                                            profile: profile.to_header, compaction:, arms:)
+      def start(context:, toolset:, workspace: Workspace.empty, resumed: nil, profile: RunProfile::UNRECORDED,
+                compaction: {}, arms: Arms::OFF, middleware: Config::Middleware.empty)
+        @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:, **resume_fields(resumed),
+                                            message_journal: @tee, live: @live, profile: profile.to_header,
+                                            compaction:, arms: arms.to_header, middleware: middleware.to_header)
         self
       end
 
@@ -426,6 +429,10 @@ module Lain
 
         Paths::Ephemeral.new(@journal_path).reap!
       end
+
+      # A resumed chat opens its NEW journal chained to the old one. Derived from
+      # the Resume result so the exe never assembles the wire-format hashes.
+      def resume_fields(resumed) = resumed ? { resumed_from: resumed.resumed_from, written: resumed.written } : {}
 
       def scribe
         @scribe or raise NotStarted, "the chronicle has not started: no toolset was pinned, so there " \

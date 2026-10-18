@@ -93,8 +93,7 @@ RSpec.describe Lain::CLI::Resume do
       result = resume.call
       journal_io = StringIO.new
       chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
-      chronicle.start(context: recorded_context, toolset:,
-                      resumed_from: result.resumed_from, written: result.written)
+      chronicle.start(context: recorded_context, toolset:, resumed: result)
 
       provider = Lain::Provider::Mock.new(responses: [text_response("answered")])
       agent = Lain::Agent.new(provider:, toolset:, context: recorded_context, timeline: result.timeline)
@@ -437,8 +436,7 @@ RSpec.describe Lain::CLI::Resume do
 
         journal_io = StringIO.new
         chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
-        chronicle.start(context: recorded_context, toolset:,
-                        resumed_from: result.resumed_from, written: result.written)
+        chronicle.start(context: recorded_context, toolset:, resumed: result)
         provider = Lain::Provider::Mock.new(responses: [text_response("answered")])
         agent = Lain::Agent.new(provider:, toolset:, context: recorded_context, timeline: result.timeline)
         agent.ask("fourth")
@@ -816,8 +814,7 @@ RSpec.describe Lain::CLI::Resume do
         result = resume.fork(selector: "20260101@#{prefix_for(ancestor)}")
         journal_io = StringIO.new
         chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
-        chronicle.start(context: recorded_context, toolset:,
-                        resumed_from: result.resumed_from, written: result.written)
+        chronicle.start(context: recorded_context, toolset:, resumed: result)
         provider = Lain::Provider::Mock.new(responses: [text_response("forked answer")])
         agent = Lain::Agent.new(provider:, toolset:, context: recorded_context, timeline: result.timeline)
         agent.ask("a different second question")
@@ -1377,8 +1374,7 @@ RSpec.describe Lain::CLI::Resume do
       result = resume.call
       journal_io = StringIO.new
       chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
-      chronicle.start(context: recorded_context, toolset:,
-                      resumed_from: result.resumed_from, written: result.written)
+      chronicle.start(context: recorded_context, toolset:, resumed: result)
       chronicle.catch_up(result.timeline)
 
       new_records = journal_records(journal_io)

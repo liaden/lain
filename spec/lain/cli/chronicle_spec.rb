@@ -289,9 +289,23 @@ RSpec.describe Lain::CLI::Chronicle do
     end
 
     it "pins the bench arms it is handed into that header" do
-      chronicle.start(context:, toolset:, arms: { "confine" => "reader" })
+      arms = Lain::CLI::Arms.new(confine: :reader, judge_facts: :off, tripwire: :off)
+      chronicle.start(context:, toolset:, arms:)
 
       expect(of_type("session").first).to include("arms" => { "confine" => "reader" })
+    end
+
+    it "pins whose trust admitted the configured middleware into that header" do
+      chronicle.start(context:, toolset:, middleware: instance_double(Lain::Config::Middleware,
+                                                                      to_header: { "project" => "d1" }))
+
+      expect(of_type("session").first).to include("middleware" => { "project" => "d1" })
+    end
+
+    it "writes no middleware key when none is handed" do
+      chronicle.start(context:, toolset:)
+
+      expect(of_type("session").first).not_to have_key("middleware")
     end
 
     it "writes no arms key when none is handed" do
@@ -318,7 +332,8 @@ RSpec.describe Lain::CLI::Chronicle do
   describe "a resumed #start" do
     it "writes resumed_from into the open header and catch_up skips the already-written turns" do
       resumed_from = { "file" => "a.ndjson", "head" => timeline.head_digest }
-      chronicle.start(context:, toolset:, resumed_from:, written: timeline.to_a.map(&:digest))
+      resumed = instance_double(Lain::CLI::Resume::Result, resumed_from:, written: timeline.to_a.map(&:digest))
+      chronicle.start(context:, toolset:, resumed:)
 
       expect(of_type("session").first).to include("head" => nil, "resumed_from" => resumed_from)
 

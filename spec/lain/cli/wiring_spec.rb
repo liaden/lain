@@ -428,6 +428,22 @@ RSpec.describe Lain::CLI::Wiring do
 
         expect(header_of(off)).not_to have_key("arms")
       end
+
+      context "with configured middleware" do
+        let(:backend) do
+          middleware = Lain::Config::Middleware.new(tool: [Lain::Config::Middleware::Registration.new(
+            factory: WiringSpecToolStamp, args: [], kwargs: {}, block: nil, at: "/spec/config.rb:1"
+          )]).trusted_by("project", "d1")
+          offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider,
+                                                                                        root: backend_root, middleware:)
+        end
+
+        it "holds whose trust admitted it" do
+          plain = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+
+          expect(header_of(plain)).to include("middleware" => { "project" => "d1" })
+        end
+      end
     end
 
     it "hands the toolset build and the board build the same instance" do

@@ -57,27 +57,33 @@ module Lain
     # `arms:` is the bench arms that are on (`CLI::Arms#to_header`); an empty
     # hash writes no key, so a run with every arm off keeps the older header.
     #
+    # `middleware:` is whose trust digest admitted the configured middleware
+    # (`Config::Middleware#to_header`), nested the same way and on the same
+    # rule: a run with none registered keeps the older header.
+    #
     # `writer:` is the process writing the file ({Liveness::Writer}), so a
     # reader elsewhere can tell a crashed session from a quiet one; an
     # unrecorded writer writes no field.
     def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil, profile: {},
-               compaction: {}, arms: {}, writer: Liveness::Writer::UNRECORDED)
+               compaction: {}, arms: {}, middleware: {}, writer: Liveness::Writer::UNRECORDED)
       record = { "type" => HEADER_TYPE, "context_class" => context.class.name,
                  "model" => context.model, "max_tokens" => context.max_tokens,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "head" => head,
                  "tools" => toolset.to_schema, "reminders" => workspace.reminders }
-      record = record.merge(context_pipeline(context), profile, compaction, arms_section(arms), writer.to_header)
+      record = record.merge(context_pipeline(context), profile, compaction, section("arms", arms),
+                            section("middleware", middleware), writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
 
-    # The bench arms that are on, nested under one key so a reader of the
-    # header's flat keys never mistakes one for a profile field.
+    # Fields nested under one key, so a reader of the header's flat keys never
+    # mistakes one for a profile field.
     #
-    # @param arms [Hash{String=>String}] `CLI::Arms#to_header`
-    # @return [Hash{String=>Hash}] empty when every arm is off
-    def arms_section(arms)
-      arms.empty? ? {} : { "arms" => arms }
+    # @param name [String] the header key, `arms` or `middleware`
+    # @param fields [Hash{String=>String}]
+    # @return [Hash{String=>Hash}] empty when there are no fields
+    def section(name, fields)
+      fields.empty? ? {} : { name => fields }
     end
 
     # The header field naming which catalog pipeline rendered the session, and

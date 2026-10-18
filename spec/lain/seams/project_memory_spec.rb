@@ -54,7 +54,7 @@ RSpec.describe "Project memory across chats", :seam do
     recorder, session = wiring(chronicle).run_state(resumed)
     toolset = Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat)])
     context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024)
-    chronicle.start(context:, toolset:, **resumed_start(resumed))
+    chronicle.start(context:, toolset:, resumed: resumed_start(resumed))
     provider = Lain::Provider::Mock.new(responses:)
     agent = Lain::Agent.new(provider:, context:, toolset:, session:,
                             journal: Lain::Memory::JournalMemoryRoot.new(journal: chronicle.durable_journal,
@@ -69,10 +69,11 @@ RSpec.describe "Project memory across chats", :seam do
   # continues and the digests already written, so the scribe appends rather
   # than re-recording the chain it inherited.
   def resumed_start(resumed)
-    return {} if resumed.nil?
+    return if resumed.nil?
 
-    { resumed_from: { "file" => "first.ndjson", "head" => resumed.timeline.head_digest },
-      written: resumed.timeline.to_a.map(&:digest) }
+    instance_double(Lain::CLI::Resume::Result,
+                    resumed_from: { "file" => "first.ndjson", "head" => resumed.timeline.head_digest },
+                    written: resumed.timeline.to_a.map(&:digest))
   end
 
   # The value CLI::Resume hands Wiring#run: the replayed view and session, plus

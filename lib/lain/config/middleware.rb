@@ -83,12 +83,32 @@ module Lain
       private_class_method :shareable
 
       # @param by_area [Hash{Symbol => Array<Registration>}]
-      def initialize(**by_area)
+      # @param digests [Hash{String => String}] whose config, `user` or `project`, to the trust digest it ran under
+      def initialize(digests: {}, **by_area)
         @by_area = AREAS.to_h { |area| [area, by_area.fetch(area, []).dup.freeze] }.freeze
+        @digests = digests.dup.freeze
       end
 
       # @return [Middleware] this one's registrations first, per area
-      def +(other) = self.class.new(**AREAS.to_h { |area| [area, registrations(area) + other.registrations(area)] })
+      def +(other)
+        self.class.new(digests: digests.merge(other.digests),
+                       **AREAS.to_h { |area| [area, registrations(area) + other.registrations(area)] })
+      end
+
+      # A file that registered nothing put nothing in the run, so it earns no digest.
+      #
+      # @param whose [String] `user` or `project`
+      # @param digest [String] {Project::Trust#digest} of the files this one was read from
+      # @return [Middleware]
+      def trusted_by(whose, digest)
+        return self if AREAS.all? { |area| registrations(area).empty? }
+
+        self.class.new(digests: digests.merge(whose => digest), **@by_area)
+      end
+
+      # @return [Hash{String => String}] whose trust digest admitted each side's
+      #   registrations; empty when nothing is registered
+      def to_header = digests
 
       # @param area [Symbol] model, tool, turn or repl
       # @return [Array] fresh instances, in written order
@@ -98,6 +118,8 @@ module Lain
       def http_entries = registrations(:http).map { |reg| [reg.factory, *reg.args, reg.kwargs].freeze }.freeze
 
       protected
+
+      attr_reader :digests
 
       def registrations(area) = @by_area.fetch(area)
     end

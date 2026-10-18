@@ -126,17 +126,19 @@ module Lain
       path = project_dir.config
       return Builder.new(path).built unless File.exist?(path)
 
-      judged(path, Project::Trust.for(project_dir:, paths:), Builder::VERBS, "this project's")
+      judged(path, Project::Trust.for(project_dir:, paths:), Builder::VERBS, "this project's", "project")
     end
 
     def self.user(paths)
       path = paths.user_config
       return Builder.new(path).built unless File.exist?(path)
 
-      judged(path, Project::Trust.for_user(paths:), Builder::USER_VERBS, "the user's")
+      judged(path, Project::Trust.for_user(paths:), Builder::USER_VERBS, "the user's", "user")
     end
 
-    def self.judged(path, trust, verbs, whose)
+    # The digest is stamped after the memo, which is keyed on config.rb alone
+    # while the trust covers every `.lain/*.rb`.
+    def self.judged(path, trust, verbs, whose, side)
       source = trust.sources[path]
       raise Project::Trust::Unreadable, Project::Trust.legible(format(NOT_A_FILE, path:, whose:)) if source.nil?
 
@@ -144,7 +146,7 @@ module Lain
       outcome = evaluated(path, source, verbs)
       raise outcome if outcome.is_a?(Refusal)
 
-      outcome
+      outcome.with(middleware: outcome.middleware.trusted_by(side, trust.digest))
     end
 
     # A refusal is memoised like a value, so a failing file runs once too.
