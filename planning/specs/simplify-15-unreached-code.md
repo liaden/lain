@@ -1,6 +1,6 @@
 # Simplify 15: delete what nothing reaches, and stop reading files that no longer exist
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (2 Rust cards: T5, T9; T17 touches 1 Rust registration)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust cards add Raph Levien and Andrew Gallant
@@ -1167,3 +1167,12 @@ reads 0, and `pgrep -cf '[p]re-commit (hook-impl|run)'` reads 0):
   names its writer.
 
 ## Execution log
+
+### Run 1 (2026-10-17, run by the session executing qa-round-25-fixes)
+
+- Base: `main` at `534169a7` (this plan's commit), cut from HEAD. Worktrees `tmp/worktrees/s15-T<id>` on `card/s15-T<id>`, TMPDIR `~/tmp/lain/s15-T<id>`. Landed through the round-25 run's `~/tmp/lain/r25/window.sh` and `land.sh` (taught deletions and the `s15-` prefix), under its LANDING lock; agents gate rspec, `rake compile` and cargo on `wait-lock.sh`.
+- Hook: same as qa-round-25 Run 1 (rubocop plus `rake pspec` on staged Ruby; cargo fmt, clippy, test and deny on staged Rust; yard-lint).
+- 20:07 The human ran the purge (`rm -rf ~/.local/state/lain`). An empty `sessions/90e709ee23c9/` reappeared at 20:07:37 during a landing suite: some e2e spec writes under the real state dir (round 26 test-isolation note); no file without a format key, so T10's stop condition is not hit by it.
+- T1, T2, T3, T5, T13, T15, T16 started from `534169a7`.
+- Cross-plan holds (main session): T7 after bash-confinement T31; T6 after T7, its docker.rb comments after qa-round-25 T56; T9 after T5 and bash-confinement T32, and after T4 (both edit README.md); T8 after T4, T5, T6, T7, T9 and bash-confinement T32; T10 after qa-round-25 T53 and T57; T17 after T9.
+- User ruling 2026-10-17: agents research and evaluate issues; only UX or design forks, or problems we cannot settle, go to the human.
