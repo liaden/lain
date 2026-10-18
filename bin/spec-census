@@ -1007,7 +1007,7 @@ module SpecCensus
 
   # The two censuses' entry points, and the only place either one can FAIL.
   #
-  # The ratchet is `count <= ceiling`, not `count.zero?`: at 184 and 76 a hard
+  # The ratchet is `count <= ceiling`, not `count.zero?`: at 184 and 49 a hard
   # zero would need an allowlist sized to the count, which is the disabled
   # guard this whole script exists instead of. A ceiling makes a new instance
   # cost an old one, and nothing gates on it yet -- `--check` is here so that
@@ -1017,7 +1017,7 @@ module SpecCensus
     # brings its census down -- that is the whole mechanism. Raising one is a
     # commit that says why, in the commit message, the way a `.rubocop.yml`
     # limit is raised.
-    CEILINGS = { assertions: 184, lib_reach: 76 }.freeze
+    CEILINGS = { assertions: 184, lib_reach: 49 }.freeze
 
     # One census's name, everything it found, and the ceiling it is held to.
     # The violations travel WITH the count because a failing ratchet that
