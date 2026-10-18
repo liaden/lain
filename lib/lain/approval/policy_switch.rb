@@ -43,6 +43,9 @@ module Lain
         # @return [String] what a human is TOLD is asking
         attr_reader :requester
 
+        # @return [String, nil] the task the asking child was spawned with, in its parent model's words
+        attr_reader :task
+
         # Refused at construction, the one place that cannot be degraded away,
         # for two separate reasons that happen to share a rule.
         #
@@ -80,11 +83,12 @@ module Lain
                               } }
         end
 
-        def initialize(context, requester)
+        def initialize(context, requester, task: nil)
           self.class.check!(requester:)
 
           super(context)
           @requester = -requester.to_s
+          @task = task && -task.to_s
         end
       end
 

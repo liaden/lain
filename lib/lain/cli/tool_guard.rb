@@ -88,9 +88,9 @@ module Lain
       # new parameter, because `rule(effect, context)` is what every policy on
       # this seam already answers. What it wraps is adapted the way the Gate
       # adapts what it is handed, since the Gate only ever sees this wrapper.
-      Asking = Data.define(:policy, :requester) do
-        def initialize(policy:, requester:)
-          super(policy: Middleware::Gate::Callable.of(policy), requester:)
+      Asking = Data.define(:policy, :requester, :task) do
+        def initialize(policy:, requester:, task: nil)
+          super(policy: Middleware::Gate::Callable.of(policy), requester:, task:)
         end
 
         def call(effect, context) = rule(effect, context).allow?
@@ -101,7 +101,7 @@ module Lain
 
         private
 
-        def requested(context) = Approval::PolicySwitch::Requested.new(context, requester)
+        def requested(context) = Approval::PolicySwitch::Requested.new(context, requester, task:)
       end
 
       # What a chat's spawn seam carries as its tool middleware: a builder over
@@ -122,8 +122,9 @@ module Lain
       # outside plan the board's scope confines nothing.
       Spawned = Data.define(:chronicle, :board, :requester) do
         # @param worker_env [WorkerEnv] the environment the child runs in
+        # @param task [String, nil] what the child was spawned to do, asked about beside its name
         # @return [Middleware::Stack] a fresh one per child
-        def call(worker_env) = ToolGuard.child_stack(chronicle, board.call, worker_env, requester:)
+        def call(worker_env, task: nil) = ToolGuard.child_stack(chronicle, board.call, worker_env, requester:, task:)
 
         # Read off the board as a child is built, never before.
         def guard_inputs = board.call.guard_inputs
@@ -138,7 +139,7 @@ module Lain
       Detached = Data.define(:chronicle, :guard_inputs) do
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @return [Middleware::Stack] a fresh one per child, over the one board
-        def call(worker_env)
+        def call(worker_env, **)
           unless worker_env.checkout
             return ToolGuard.working(chronicle, guard_inputs, worker_env, guard_inputs.policy_for.call(worker_env))
           end
@@ -164,7 +165,7 @@ module Lain
       NeverParking = Data.define(:guard, :requester) do
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @return [Middleware::Stack] a fresh one per child
-        def call(worker_env) = ToolGuard.working(chronicle, refused, worker_env, asking)
+        def call(worker_env, **) = ToolGuard.working(chronicle, refused, worker_env, asking)
 
         # The child's own role names the refusal it records: the seam's requester
         # is whoever spawned the child, and a refusal is not that spawner's doing.
@@ -295,10 +296,12 @@ module Lain
       # @param board [CLI::Switchboard] as on {.stack}
       # @param worker_env [WorkerEnv] the environment the child runs in
       # @param requester [String] who a human is told is asking
+      # @param task [String, nil] what the child was spawned to do
       # @return [Middleware::Stack]
-      def child_stack(chronicle, board, worker_env, requester:)
+      def child_stack(chronicle, board, worker_env, requester:, task: nil)
         inputs = board.guard_inputs
-        working(chronicle, inputs, worker_env, Asking.new(policy: inputs.policy_for.call(worker_env), requester:),
+        asking = Asking.new(policy: inputs.policy_for.call(worker_env), requester:, task:)
+        working(chronicle, inputs, worker_env, asking,
                 requester:, held: held_for(worker_env, home: inputs.sensitivity.home))
       end
 

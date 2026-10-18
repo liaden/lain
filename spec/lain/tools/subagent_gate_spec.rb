@@ -385,7 +385,7 @@ RSpec.describe "Subagent gating" do
     it "inserts the unpermitted-call refusal into a copy, never into the stack the guard handed over" do
       shared = ToolRegistry::UNGUARDED.call(Lain::WorkerEnv.default)
       builder = Lain::Tools::Subagent::ChildBuilder.new(
-        seam: seam(provider: mock).with(tool_middleware: ->(_worker_env) { shared }), toolset: union,
+        seam: seam(provider: mock).with(tool_middleware: ->(_worker_env, **) { shared }), toolset: union,
         policy: Lain::Role::Catalog[:merge_resolver].spawn_policy(posture: :handler_union),
         budget: Lain::Agent::Budget.new
       )
@@ -410,7 +410,7 @@ RSpec.describe "Subagent gating" do
       tool.call({ "prompt" => "go" }, invocation)
     end
 
-    def empty = ->(_worker_env) { Lain::Middleware::Stack.new }
+    def empty = ->(_worker_env, **) { Lain::Middleware::Stack.new }
 
     it "refuses a child over an empty stack, and bash never runs" do
       expect { spawned_over(empty) }.to raise_error(Lain::Middleware::Gate::Unclosed)
@@ -423,7 +423,7 @@ RSpec.describe "Subagent gating" do
     end
 
     it "refuses a child whose stack has a layer after the gate" do
-      after_gate = lambda do |worker_env|
+      after_gate = lambda do |worker_env, **|
         ToolRegistry::UNGUARDED.call(worker_env).use(Lain::Middleware::RefuseSecretWrites.new)
       end
 

@@ -293,7 +293,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     # runs in, so recording it is recording where the child stands.
     def watched(provider:)
       seam(provider:, isolation: Lain::Isolation::Leases.new(backend:),
-           tool_middleware: ->(worker_env) { ToolRegistry::UNGUARDED.call(worker_env).tap { seen << worker_env } })
+           tool_middleware: ->(worker_env, **) { ToolRegistry::UNGUARDED.call(worker_env).tap { seen << worker_env } })
     end
 
     def tool_results(request)
@@ -462,7 +462,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
       Lain::Toolset.new(union.to_a + [Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
     end
 
-    def recording(into) = ->(worker_env) { ToolRegistry::UNGUARDED.call(worker_env).tap { into << worker_env } }
+    def recording(into) = ->(worker_env, **) { ToolRegistry::UNGUARDED.call(worker_env).tap { into << worker_env } }
 
     def kept(root)
       Lain::Tools::Subagent::Kept.new(root:, paths: Lain::Paths.new(env: { "HOME" => root }), related: ->(_) { false },
@@ -523,9 +523,9 @@ RSpec.describe Lain::Skill::RoleSpawn do
       named = []
       parked = Class.new do
         define_method(:with) { |requester:| (named << requester) && self }
-        def call(worker_env) = ToolRegistry::UNGUARDED.call(worker_env)
+        def call(worker_env, **) = ToolRegistry::UNGUARDED.call(worker_env)
       end.new
-      guard = ->(worker_env) { ToolRegistry::UNGUARDED.call(worker_env) }
+      guard = ->(worker_env, **) { ToolRegistry::UNGUARDED.call(worker_env) }
       guard.define_singleton_method(:never_parking) { parked }
       wide = Lain::Toolset.new(union.to_a + [Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
       roles = %i[auto_approver gate_adjudicator evidence_researcher]

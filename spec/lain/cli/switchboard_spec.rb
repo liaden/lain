@@ -1197,7 +1197,7 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # Under `--confine classes` a planted cat is left to the judge, which is what lets it be asked.
-    def board_in(root, home, judge_facts:, resolver: nil)
+    def board_in(root, home, judge_facts:, resolver: nil, request: Lain::Approval::Judge::Unrequested)
       project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
       fresh = Struct.new(:root) { def fresh?(path) = path.start_with?("#{root}/") }.new(root)
       resolver ||= Lain::Shell::Executable::Resolver.new(root:, fresh:)
@@ -1206,9 +1206,13 @@ RSpec.describe Lain::CLI::Switchboard do
         paths: Lain::Paths.new(env: { "HOME" => home }), judge: Lain::Approval::Judge.new(role_spawn: spawn),
         verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:),
         arms: Lain::CLI::Arms.from(confine: "classes", judge_facts:),
-        resolver:,
+        resolver:, request:,
         worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "#{planted_cat(File.join(root, "bin"))}:/usr/bin" })
       )
+    end
+
+    def heard(line)
+      Lain::Approval::Judge::Heard.new.tap { _1.remember(line) }
     end
 
     def cat_readme(root) = gated_call.class.new("bash", { "command" => "cat README.md", "cwd" => root }, "tu_1")
@@ -1246,6 +1250,24 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(prompts.sole).to include('"cat README.md" -> not resolved [unresolved]')
         expect(journal_records(journal_io, "escalation_fault"))
           .to include(a_hash_including("rule" => "judge facts", "tool_use_id" => "tu_1", "message" => "boom"))
+      end
+    end
+
+    it "tells the judge the human's last line under --judge-facts request" do
+      in_project do |root, home|
+        board_in(root, home, judge_facts: "request", request: heard("summarize the README"))
+          .policy_switch.call(cat_readme(root), nil)
+
+        expect(prompts.sole).to include('the user\'s request: "summarize the README"').and include("facts (computed")
+      end
+    end
+
+    it "tells the judge no request under --judge-facts facts, whatever source it was handed" do
+      in_project do |root, home|
+        board_in(root, home, judge_facts: "facts", request: heard("summarize the README"))
+          .policy_switch.call(cat_readme(root), nil)
+
+        expect(prompts.sole).not_to include("summarize the README")
       end
     end
 

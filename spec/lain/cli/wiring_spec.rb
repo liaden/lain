@@ -440,6 +440,36 @@ RSpec.describe Lain::CLI::Wiring do
       expect(seen).to match([armed.arms, armed.arms]).and(satisfy { |pair| pair.first.equal?(pair.last) })
     end
 
+    # The board reads what the Repl hears, so both must hold the one Heard, and a
+    # --prompt seed must reach it through the run's own path.
+    it "hands the board and the Repl one Heard, which hears the --prompt seed" do
+      requests = []
+      heards = []
+      allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
+        requests << kwargs[:request]
+        original.call(**kwargs)
+      end
+      allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
+        heards << kwargs[:heard]
+        original.call(**kwargs)
+      end
+
+      Dir.mktmpdir("wiring-heard") do |dir|
+        options = { grace: 5, approval: "auto", judge_facts: "request", prompt: "summarize the README",
+                    non_interactive: true }
+        terminal = lambda do |channel:, **|
+          Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
+        end
+        wiring = described_class.new(options:, chronicle:, status_feed:, stdin: StringIO.new, tty_factory: terminal,
+                                     paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }))
+        Timeout.timeout(20) { wiring.run(backend:, resumed: nil, nvim: nil) }
+        wiring.conductor.close(reason: :exit)
+      end
+
+      expect(requests.sole).to equal(heards.sole)
+      expect(requests.sole.call(Lain::Session.new)&.text).to eq("summarize the README")
+    end
+
     # The mask list classifies against the board's policy, so a prime started before the board
     # exists would hand the first bash call a NoMethodError.
     it "primes the sandbox's mask list only once the board exists" do

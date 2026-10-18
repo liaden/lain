@@ -3836,12 +3836,40 @@ RSpec.describe Lain::Tools::Subagent do
     it "asks the seam for the guard once per child, when that child is built" do
       built = 0
       tool = build_subagent(provider: mock(text_response("a"), text_response("b")),
-                            tool_middleware: ->(env) { (built += 1) && ToolRegistry::UNGUARDED.call(env) })
+                            tool_middleware: ->(env, **) { (built += 1) && ToolRegistry::UNGUARDED.call(env) })
 
       expect(built).to eq(0)
       2.times { tool.call({ "prompt" => "go" }, invocation) }
 
       expect(built).to eq(2)
+    end
+
+    it "hands the guard the task the child was spawned with" do
+      tasks = []
+      tool = build_subagent(provider: mock(text_response("done")),
+                            tool_middleware: lambda { |env, task: nil|
+                              (tasks << task) && ToolRegistry::UNGUARDED.call(env)
+                            })
+
+      tool.call({ "prompt" => "find the flaky spec" }, invocation)
+
+      expect(tasks).to eq(["find the flaky spec"])
+    end
+
+    it "hands the guard the task a background actor was launched with" do
+      tasks = []
+      tool = build_subagent(provider: mock(text_response("done")), mode: :actor,
+                            tool_middleware: lambda { |env, task: nil|
+                              (tasks << task) && ToolRegistry::UNGUARDED.call(env)
+                            })
+
+      Sync do
+        actor = tool.launch_actor("find the flaky spec", worker_env: Lain::WorkerEnv.default)
+        actor.settle
+        actor.stop
+      end
+
+      expect(tasks).to eq(["find the flaky spec"])
     end
 
     # A child leased into a checkout of its own writes there, so its guard has
@@ -3851,7 +3879,7 @@ RSpec.describe Lain::Tools::Subagent do
         cwds = []
         tool = build_subagent(provider: mock(text_response("done")),
                               isolation: Lain::Isolation::Leases.new(backend: SubagentSpecIsolation.new(dir)),
-                              tool_middleware: ->(env) { (cwds << env.cwd) && ToolRegistry::UNGUARDED.call(env) })
+                              tool_middleware: ->(env, **) { (cwds << env.cwd) && ToolRegistry::UNGUARDED.call(env) })
 
         tool.call({ "prompt" => "go" }, invocation)
 

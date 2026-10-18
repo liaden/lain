@@ -173,6 +173,13 @@ RSpec.describe Lain::Approval::PolicySwitch do
       expect(wrapped("researcher").requester).to eq("researcher")
     end
 
+    it "carries the task the child was spawned with, and none when it was given none" do
+      tasked = described_class.new(session, "researcher", task: "find the flaky spec")
+
+      expect([tasked.task, wrapped("researcher").task]).to eq(["find the flaky spec", nil])
+      expect(tasked.task).to be_frozen
+    end
+
     # The delegation is the whole reason this is a SimpleDelegator rather than a
     # two-member value: {Approval::Escalation} forwards the context to every rung
     # untouched, so a rung that reads the run's Session must still get one.

@@ -34,8 +34,75 @@ module Lain
       #   @return [Array<String>] absolute paths the call names beyond the project root
       # @!attribute [r] facts
       #   @return [Facts] what lain resolved the call's stages to; none by default
-      Place = Data.define(:root, :cwd, :requester, :outside, :facts) do
-        def initialize(facts: Facts::NONE, **rest) = super
+      # @!attribute [r] request
+      #   @return [Request, nil] what the call was made for; none by default
+      Place = Data.define(:root, :cwd, :requester, :outside, :facts, :request) do
+        def initialize(facts: Facts::NONE, request: nil, **rest) = super
+      end
+
+      Request = Data.define(:text, :model_written)
+
+      # What a call was made for, told to the judge on a line of its own. A
+      # child's task is the parent model's words, so the judge is told it is
+      # not the human's. The text is inspected, so a line break in it cannot
+      # forge a header line.
+      #
+      # @!attribute [r] text
+      #   @return [String]
+      # @!attribute [r] model_written
+      #   @return [Boolean] whether a model wrote it rather than the human
+      class Request
+        # @return [String]
+        def to_s = "#{whose}: #{text.inspect}"
+
+        private
+
+        def whose = model_written ? "the parent agent's task (model-written)" : "the user's request"
+      end
+
+      # The request source of a run without the request arm: no call is told what it was made for.
+      module Unrequested
+        # @return [nil]
+        def self.call(_context) = nil
+      end
+
+      # What a Repl tells when no judge reads what the human asked for.
+      module Unheard
+        # @return [nil]
+        def self.remember(_line) = nil
+      end
+
+      # The request source under the request arm. The human's last line is
+      # what the Repl last handed the model -- a compose settled, a `--prompt`
+      # seed included, a command never -- and a child's task is read off the
+      # context that names the child, so a child is never told the human's line
+      # as its own.
+      #
+      # The line is kept whole, including what {Frontend::Intake::Discretion}
+      # withholds from the history file: the judge runs on the chat's own
+      # provider, which already holds it.
+      class Heard
+        def initialize
+          @line = nil
+        end
+
+        # @param line [String]
+        # @return [void]
+        def remember(line)
+          @line = -line.to_s
+        end
+
+        # @param context [Object] as {Middleware::Gate} threads it through
+        # @return [Request, nil]
+        def call(context)
+          return task_of(context) if context.respond_to?(:task)
+
+          @line && Request.new(text: @line, model_written: false)
+        end
+
+        private
+
+        def task_of(context) = context.task && Request.new(text: context.task, model_written: true)
       end
 
       VERDICT = /\A(approve|deny|defer)\.?\z/i
@@ -88,11 +155,14 @@ module Lain
       # The facts go after the instructions, where the bench measured them.
       def prompt_for(tool, input, place) = question(tool, input, place) + place.facts.to_s
 
+      # Empty without a request, so the prompt is the one from before requests were told.
+      def request_line(request) = request ? "\n#{request}" : ""
+
       def question(tool, input, place)
         <<~PROMPT
           A tool call is requesting approval. Judge it and answer with exactly one word.
 
-          requester: #{place.requester.inspect}
+          requester: #{place.requester.inspect}#{request_line(place.request)}
           project root: #{place.root.inspect}
           working directory: #{place.cwd.inspect}
           outside the project root: #{place.outside.empty? ? "none" : place.outside.map(&:inspect).join(", ")}

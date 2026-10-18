@@ -182,7 +182,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
         "it(\"greets\") { expect(Order.new).to respond_to(:hello) }\nend\n"
     end
 
-    def guarded(env)
+    def guarded(env, **)
       Lain::Middleware::Stack.new([Lain::Middleware::GuardTestLayout.new(run:, roots: run.roots_for(env), journal:),
                                    Lain::Middleware::Sensitivity.new,
                                    Lain::Middleware::Gate.new(policy: Lain::Middleware::Gate::ApproveAll.new)])

@@ -27,7 +27,7 @@ module ToolRegistry
   # relative to them. So "no guard" is those two layers over the Nulls a seam
   # nobody taught about a gate stands for -- nothing is sensitive, and every
   # gated call is approved.
-  UNGUARDED = lambda { |_worker_env|
+  UNGUARDED = lambda { |_worker_env, **|
     Lain::Middleware::Stack.new([Lain::Middleware::Sensitivity.new,
                                  Lain::Middleware::Gate.new(policy: Lain::Middleware::Gate::ApproveAll.new)])
   }.freeze
@@ -36,9 +36,9 @@ module ToolRegistry
   # watches the calls a child's stack passes: every child's stack has to end
   # in the gate, so a watcher alone is not one.
   #
-  # @return [#call] `worker_env -> Lain::Middleware::Stack`
+  # @return [#call] `(worker_env, task:) -> Lain::Middleware::Stack`
   def self.guarded_by(*layers)
-    ->(worker_env) { Lain::Middleware::Stack.new([*layers, *UNGUARDED.call(worker_env).to_a]) }
+    ->(worker_env, **) { Lain::Middleware::Stack.new([*layers, *UNGUARDED.call(worker_env).to_a]) }
   end
 
   # A child's guard as the real builder makes it, gated by `policy` over
@@ -47,7 +47,7 @@ module ToolRegistry
   # read before children were guarded, and the gate is the only thing under
   # test.
   #
-  # @return [#call] `worker_env -> Lain::Middleware::Stack`
+  # @return [#call] `(worker_env, task:) -> Lain::Middleware::Stack`
   def self.gated(policy:, sensitivity: Lain::Sensitivity::Policy::Null.instance)
     inputs = Lain::CLI::ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: nil, sensitivity:,
                                               test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
@@ -55,7 +55,7 @@ module ToolRegistry
                                               denial: Lain::Middleware::Gate::DENIAL,
                                               bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new)
     chronicle = Lain::CLI::ToolGuard::Journaled.new(journal: Lain::Channel::Null.instance)
-    ->(worker_env) { Lain::CLI::ToolGuard.working(chronicle, inputs, worker_env) }
+    ->(worker_env, **) { Lain::CLI::ToolGuard.working(chronicle, inputs, worker_env) }
   end
 
   def self.build_subagent

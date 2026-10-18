@@ -105,6 +105,8 @@ module Lain
       #   would quietly hand every call to a human
       # @param display [#<<] told each call the judge approves; the run's display channel
       # @param arms [Arms] the bench arms; `judge_facts` decides whether the judge is told the facts
+      # @param request [#call] `context -> Approval::Judge::Request or nil`, what a judged call was made
+      #   for; read only under `--judge-facts request`
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [String] :approval the session starts at this approval
@@ -115,9 +117,10 @@ module Lain
                    sensitivity: Sensitivity::Policy::Null.instance,
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
-                   approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF)
+                   approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF,
+                   request: Approval::Judge::Unrequested)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
-            verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:, arms:,
+            verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:, arms:, request:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -216,18 +219,19 @@ module Lain
       #   behind it parks under `auto` exactly as under `ask`
       # @param display [#<<] as on {.for}
       # @param arms [Arms] as on {.for}; every arm off by default
+      # @param request [#call] as on {.for}; none by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
                      verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
                      attended: true, approval: :ask, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                      approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
-                     display: Channel::Null.instance, arms: Arms::OFF)
+                     display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested)
         @attended = attended
         @display = display
         @journal = journal
         @spike = spike
-        hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:)
+        hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
         @approvals = Approval::Queue.new(journal:, timeout: approval_timeout, home: sensitivity.home) if @attended
@@ -393,8 +397,9 @@ module Lain
       # judge and the policy among them are why: every judged rung, the leased
       # workers' included, is built over these two, so `auto` judges alike
       # wherever a call is asked.
-      def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:)
+      def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:)
         @judge_facts = arms.judge_facts != :off
+        @request = arms.judge_facts == :request ? request : Approval::Judge::Unrequested
         @rules = rules.to_a.freeze
         @approving = approving
         @classifiers = classifiers
@@ -517,7 +522,7 @@ module Lain
       def judged(classifiers)
         asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Approval::Judged::Unattended.new
         Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display,
-                             facts: facts_over(classifiers))
+                             facts: facts_over(classifiers), request: @request)
       end
 
       # Over the ladder's own factory, so a leased worker's stages resolve

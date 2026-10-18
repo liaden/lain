@@ -52,6 +52,8 @@ module Lain
         # @param arms [Lain::CLI::Arms] the bench arms the run was started with;
         #   any `confine` but off rules approvals by the resolved class, and any
         #   `judge_facts` but off tells the judge each stage's resolution
+        # @param request [#call] `context -> Approval::Judge::Request or nil`, what a judged call
+        #   was made for, on {Switchboard.for}'s terms
         # @param identity [Hash] `resolver:` and `worker_env:`, on {Classifiers#initialize}'s
         #   terms: the session's ONE resolver, the instance the bash tool holds,
         #   and the session's own env, whose PATH the main agent's stages resolve through
@@ -61,7 +63,7 @@ module Lain
         def for(chronicle:, options:, model:, toolset:, project:, judge:, paths: Paths.new,
                 verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty,
                 config: Config.load(root: project.root), display: Channel::Null.instance,
-                arms: Lain::CLI::Arms::OFF, **identity)
+                arms: Lain::CLI::Arms::OFF, request: Lain::Approval::Judge::Unrequested, **identity)
           # Compiled once: the exemption check stats the disk.
           table = rules(project:, paths:)
           # The SAME factory reaches both the triage rung and the approving
@@ -74,7 +76,8 @@ module Lain
                           approving: ->(remembered, each) { approving(remembered, each, classes:) },
                           sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, test_layout: test_layout(project:), middleware:,
-                          approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:)
+                          approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:,
+                          request:)
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree

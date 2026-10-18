@@ -943,8 +943,12 @@ module Lain
         @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
                                         verdict:, middleware: backend.middleware, config:, paths: @paths,
                                         judge: JudgeSource.new(method(:role_spawn)), display: @channel, arms:,
-                                        resolver: exec_resolver, worker_env: chat_env)
+                                        request: heard, resolver: exec_resolver, worker_env: chat_env)
       end
+
+      # What the judge is told the human asked for under `--judge-facts request`. One for the run,
+      # because the board reads it and the Repl, built after the board, writes it.
+      def heard = @heard ||= Lain::Approval::Judge::Heard.new
 
       # The session's ONE {Lain::Shell::Verdict}, and the memo is the whole
       # mechanism. #build_toolset gives it to the bash tool and #switchboard
@@ -988,7 +992,7 @@ module Lain
                  commands: @command_surface.commands,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
                  echo_input: attended? && !input_socket_name.nil?, notes:, mode_switch: @switchboard.mode_switch,
-                 idle: idle_compaction(agent:, backend:))
+                 idle: idle_compaction(agent:, backend:), heard:)
       end
 
       # The same route compaction's own diagnostics take, so a fault lands on the

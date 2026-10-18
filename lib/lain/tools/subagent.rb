@@ -199,7 +199,7 @@ module Lain
         # child's LIFETIME: `Supervisor#stop` farewells every row, so a
         # `deregister` there rides the same lease teardown that reaps the fiber.
         # {ChildBuilder::Child} owns the case where no actor comes out at all.
-        build_child(parent, worker_env).launched do |agent, registration, tools|
+        build_child(parent, worker_env, task: prompt).launched do |agent, registration, tools|
           Actor.new(agent:, registration:, lineage:, parent:, journal:, answer: @answer,
                     worker: Isolation::SelfSync.worker(agent, tools:)).launch(prompt)
         end
@@ -299,7 +299,7 @@ module Lain
         scope, lent = lending(scope, lease)
         lent.hold(@name, journal:) do |worker_env, sync, worker|
           progress = reporting(record.spawned(prompt), prompt, worker)
-          child = build_child(record.parent, worker_env, scope, progress:)
+          child = build_child(record.parent, worker_env, scope, progress:, task: prompt)
           run_child(record.built(child), prompt, sync, on_stream_started:)
         end
       end
@@ -383,8 +383,8 @@ module Lain
         raise MalformedAnswer, failure.message
       end
 
-      def build_child(parent, worker_env, scope = @seam.scope.current, progress: Progress::Null)
-        @builder.build(parent, ceiling: @max_depth - 1, worker_env:, scope:, progress:)
+      def build_child(parent, worker_env, scope = @seam.scope.current, progress: Progress::Null, task: nil)
+        @builder.build(parent, ceiling: @max_depth - 1, worker_env:, scope:, progress:, task:)
       end
 
       # {Lineage} writes the :spawn and :message events; the causal-edge and
@@ -1230,12 +1230,14 @@ module Lain
         # and a defaulted one is how a production spawn would run ungated while
         # nothing said so. So it is refused unless it can build one at all.
         #
-        # It is a builder over the child's {WorkerEnv}, called once per child as
+        # It is a builder, `call(worker_env, task:)`, called once per child as
         # that child is built, because a chat's stack reads a board that does
         # not exist yet when this seam does ({CLI::ToolGuard::Spawned}), and
         # because a stack is mutable, so one shared between children would let
         # a `#use` on one reach them all. The environment is what tells a guard
-        # where a child leased into a checkout of its own writes.
+        # where a child leased into a checkout of its own writes; the task is
+        # what the child was spawned to do, which a judged approval is weighed
+        # against. A builder that has no use for the task still takes it.
         #
         # `askers` wants the same treatment and does not yet have it: its
         # default is {NoAskers}, so a chat seam assembled with no askers takes
@@ -1479,13 +1481,16 @@ module Lain
         # A child built while a scope confines runs in the scope's environment
         # whatever environment it was handed -- an actor's supervisor leases one
         # of the run's own -- and its session is confined to that scope.
+        #
+        # The task is handed to the tool guard, so an approval the child asks
+        # for can be weighed against what it was spawned to do.
         def build(parent, ceiling:, worker_env: WorkerEnv.default, scope: @seam.scope.current,
-                  progress: Progress::Null)
+                  progress: Progress::Null, task: nil)
           child = nil
           chain = own_chain(parent, progress) { child.timeline }
           union = child_union(chain.timeline, chain.escalation, ceiling)
           view = @compaction.call(base: chain.base, worker_env: scope.env_over(worker_env), scope:)
-          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, view)
+          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, view, task:)
             .tap { |built| child = built.agent }
         end
 
@@ -1526,11 +1531,11 @@ module Lain
         # for anyone to hang a `deregister` on, and retention runs from
         # `register` to `deregister` and nothing else -- so this method is the
         # only place that release can live.
-        def spawned(enrolled, chain, union, view)
+        def spawned(enrolled, chain, union, view, task:)
           child = nil
           asker = enrolled.asker
           allowed = granted(@policy.attenuate(union), asker)
-          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, view),
+          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, view, task:),
                             registration: enrolled.registration, tools: allowed.names, asker:, feed: chain.feed)
         ensure
           # Keyed on the handle rather than `rescue StandardError`, so a
@@ -1601,13 +1606,13 @@ module Lain
         # file would read as the parent's: salvage would pair it with the
         # parent's in-flight `request_sent`, cache-waste would count it, and the
         # ledger would price it as the parent's spend.
-        def spawn_agent(chain, union, allowed, (pipeline_source, session))
+        def spawn_agent(chain, union, allowed, (pipeline_source, session), task:)
           mailbox = child_mailbox(chain)
           Agent.new(
             provider: @seam.provider, context: child_context(session.worker_env),
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain, mailbox),
-            model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed),
+            model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed, task:),
             session:, budget: @budget, journal: Channel::Null.instance, pipeline_source:, mailbox:,
             display: CLI::JournalTee.new(@seam.telemetry, @seam.display_channel), display_as: @name
           )
@@ -1663,8 +1668,8 @@ module Lain
         # first: the builder is the only place a child's gate comes from, so a
         # stack it does not end in the gate is refused here, as the child is
         # built and before any of its tools can run.
-        def child_stack(worker_env, allowed)
-          stack = Middleware::Gate.closes!(Middleware::Stack.new(@seam.tool_middleware.call(worker_env).to_a))
+        def child_stack(worker_env, allowed, task:)
+          stack = Middleware::Gate.closes!(Middleware::Stack.new(@seam.tool_middleware.call(worker_env, task:).to_a))
           return stack unless @policy.posture.refuses_over_union?
 
           stack.insert_before(path_refusal(stack),

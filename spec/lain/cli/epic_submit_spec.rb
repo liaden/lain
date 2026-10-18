@@ -1549,7 +1549,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       # its reads go through must be HANDED IN -- and the spawn seam is where a
       # guard reaches a child.
       it "hands its spawned children the tool middleware it was given" do
-        guard = ->(_worker_env) { Lain::Middleware::Stack.new }
+        guard = ->(_worker_env, **) { Lain::Middleware::Stack.new }
 
         expect(pair(tool_middleware: guard).role_spawn.seam.tool_middleware).to be(guard)
       end

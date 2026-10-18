@@ -156,10 +156,12 @@ module Lain
       # @param journal [#record]
       # @param display [#<<] told a {Telemetry::JudgeApproved} for each call the judge approves
       # @param facts [#call] `(command, cwd, tool_use_id:) -> Judge::Facts` for a bash call; none by default
+      # @param request [#call] `context -> Judge::Request or nil`, what the call was made for; none by default
       def initialize(judge:, policy:, asking:, journal:, display: ::Lain::Channel::Null.instance,
-                     facts: Judge::Facts::Off)
+                     facts: Judge::Facts::Off, request: Judge::Unrequested)
         @judge = judge
         @facts = facts
+        @request = request
         @display = display
         @policy = policy
         @asking = asking
@@ -232,7 +234,7 @@ module Lain
         held = [root, ::Lain::Sensitivity::Policy.base_of(context)]
         Judge::Place.new(root:, cwd:, requester: Queue.requester_for(context),
                          outside: named_paths(effect, context, cwd).reject { within?(held, _1) },
-                         facts: facts_for(effect, context))
+                         facts: facts_for(effect, context), request: @request.call(context))
       end
 
       def facts_for(effect, context)

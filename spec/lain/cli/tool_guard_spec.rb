@@ -657,6 +657,19 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(spawned.requester).to eq("subagent")
     end
 
+    it "asks the board's policy with the task the child was spawned with beside its name" do
+      board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true))
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "make" })
+      stack = described_class.new(chronicle:, board: -> { board }, requester: "researcher")
+                             .call(Lain::WorkerEnv.default, task: "find the flaky spec")
+
+      stack.call({ effect:, tool: Lain::Tools::Bash.new, context: Lain::Session.new }) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok("ran"))
+      end
+
+      expect(board.policy.contexts.map { [_1.requester, _1.task] }).to eq([["researcher", "find the flaky spec"]])
+    end
+
     it "builds a fresh stack per child, so a layer one child's builder inserts reaches no other" do
       expect(spawned.call(Lain::WorkerEnv.default)).not_to be(spawned.call(Lain::WorkerEnv.default))
     end

@@ -27,14 +27,18 @@ module Lain
       #
       # `notes:` is asked, as each line's run settles, whether a note typed
       # during it never reached a request ({HumanNotes}).
+      #
+      # `heard:` is told each line the model is handed, which is what the
+      # judge is told the human asked for under `--judge-facts request`.
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
                      supervisor: Lain::Supervisor::Null,
                      middleware: Lain::Middleware::Stack.new, secret_surface: nil,
                      goal_driver: Lain::CLI::GoalDriver::Null, attended: true, input: Lain::Frontend::StdinPump::Idle,
                      echo_input: false, notes: HumanNotes::Null,
                      mode_switch: Lain::Frontend::Neovim::ApprovalView::NoModeSwitch,
-                     idle: IdleCompaction::Never)
+                     idle: IdleCompaction::Never, heard: Lain::Approval::Judge::Unheard)
         @agent = agent
+        @heard = heard
         @notes = notes
         @tty = tty
         @input = input
@@ -300,6 +304,7 @@ module Lain
       # raised past here, still says it; a closed session takes no next prompt
       # for the note to join.
       def middleware_turn(text)
+        @heard.remember(text)
         settle_line(supervise_line(text))
         nil
       ensure

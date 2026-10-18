@@ -2261,4 +2261,79 @@ RSpec.describe Lain::CLI::Repl do
       expect(out.string).not_to include("note for the agent")
     end
   end
+
+  # The judge's request arm reads the line the Repl hands the model: after a
+  # compose settled, with a --prompt seed included, and never a command.
+  describe "the line the judge is told the human asked for" do
+    let(:heard) { Lain::Approval::Judge::Heard.new }
+    let(:compose_marker) { format(Lain::Frontend::Neovim::Compose::MARKER, "lain://compose", 1) }
+
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = dir
+        example.run
+      end
+    end
+
+    def answered
+      Lain::Middleware::Stack.new([Class.new(Lain::Middleware::Base) do
+        def call(env, &_app)
+          env.merge(response: Lain::Response.new(content: [{ "type" => "text", "text" => "ok" }],
+                                                 stop_reason: :end_turn))
+        end
+      end.new])
+    end
+
+    # A slash line is a command's; everything else falls through to the model.
+    def commands
+      Struct.new(:nothing) do
+        def dispatch(text) = text.start_with?("/") ? "done" : yield
+        def serves_replies?(_text) = false
+      end.new(nil)
+    end
+
+    def conductor_reading(*lines)
+      instance_double(Lain::CLI::Conductor, closed?: false).tap do |conductor|
+        allow(conductor).to receive(:supervise) do |*, &line|
+          Lain::CLI::Conductor::Outcome.new(response: line.call, closed: false)
+        end
+        allow(conductor).to receive(:read_prompt) { lines.shift }
+      end
+    end
+
+    def repl_hearing(conductor, attended: false)
+      described_class.new(
+        agent: instance_double(Lain::Agent, timeline: nil), middleware: answered, attended:, commands:,
+        chronicle: Lain::CLI::Chronicle::Null.new, heard:, conductor:,
+        tty: Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: StringIO.new, input: StringIO.new,
+                                     history_path: File.join(@dir, "history")),
+        replies: instance_double(Lain::CLI::HumanReplies, take_held: nil)
+      )
+    end
+
+    def told = heard.call(Lain::Session.new)&.text
+
+    it "hears the --prompt seed" do
+      repl_hearing(conductor_reading).converse(first_prompt: "fix the build")
+
+      expect(told).to eq("fix the build")
+    end
+
+    it "does not hear a slash command" do
+      repl_hearing(conductor_reading).converse(first_prompt: "/mode auto")
+
+      expect(told).to be_nil
+    end
+
+    it "hears a compose's final text, never its marker" do
+      marker = compose_marker
+      compose = Object.new
+      compose.define_singleton_method(:settle) { |text, &_keep| text == marker ? "the composed request" : text }
+      allow(Lain::Frontend::Neovim::Compose).to receive(:new).and_return(compose)
+
+      repl_hearing(conductor_reading(marker, "quit"), attended: true).converse
+
+      expect(told).to eq("the composed request")
+    end
+  end
 end

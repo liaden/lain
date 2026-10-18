@@ -120,6 +120,39 @@ RSpec.describe Lain::Approval::Judged do
     expect(escalations.sole).to include("reason" => "deferred", "requester" => "agent")
   end
 
+  describe "the request the judge is told" do
+    def prompt_under(request, within: context)
+      spawn = spawn_answering("defer")
+      ruled(rung(spawn, request:), bash, within:) { |pending| pending.approve(surface: "human_spec") }
+      spawn.calls.sole[:prompt]
+    end
+
+    it "tells the judge the human's last line as the user's request" do
+      asked = Lain::Approval::Judge::Request.new(text: "summarize the README", model_written: false)
+
+      expect(prompt_under(->(_context) { asked }))
+        .to include('the user\'s request: "summarize the README"')
+    end
+
+    it "tells the judge a child's task as model-written, never the human's line" do
+      heard = Lain::Approval::Judge::Heard.new
+      heard.remember("summarize the README")
+      child = Lain::Approval::PolicySwitch::Requested.new(context, "researcher", task: "find the flaky spec")
+
+      prompt = prompt_under(heard, within: child)
+
+      expect(prompt).to include('the parent agent\'s task (model-written): "find the flaky spec"')
+      expect(prompt).not_to include("summarize the README")
+    end
+
+    it "tells the judge no request by default" do
+      spawn = spawn_answering("defer")
+      ruled(rung(spawn), bash) { |pending| pending.approve(surface: "human_spec") }
+
+      expect(spawn.calls.sole[:prompt]).not_to include("the user's request", "model-written")
+    end
+  end
+
   describe "what a human is shown of the judge" do
     let(:told) { [] }
 
@@ -471,6 +504,20 @@ RSpec.describe Lain::Approval::Judged do
       it "never asks the judge about a read of a credential, and parks it" do
         expect(parked_unjudged("cat .env"))
           .to eq(["surfaces", 0, { "rung" => "auto", "reason" => "unjudgeable", "tool" => "bash" }])
+      end
+
+      it "never asks the judge about a read of a Rails master key, a vault password file or a local env file" do
+        commands = ["cat config/master.key", "cat .vault_pass", "cat .vault-password", "cat .env.local"]
+
+        expect(commands.to_h { [_1, judged?(_1)] }).to eq(commands.to_h { [_1, false] })
+      end
+
+      it "never asks the judge about a named secret the user's request asked for" do
+        spawn = spawn_answering("approve")
+        asked = Lain::Approval::Judge::Request.new(text: "print .env", model_written: false)
+        settled(rung(spawn, request: ->(_context) { asked }), bash("cat .env"))
+
+        expect(spawn.calls).to be_empty
       end
 
       it "never asks the judge about a command whose paths it cannot name" do
