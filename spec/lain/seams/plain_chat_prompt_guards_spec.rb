@@ -283,7 +283,9 @@ module PlainChatPromptGuards
     def exited? = File.exist?(File.join(@dir, "exited"))
 
     # The screen with its escape sequences taken out, as a human reads it.
-    def text = screen.gsub(/\e\[[\d;?]*[A-Za-z]/, "").gsub(/\e[>=]/, "")
+    # The private-parameter prefixes include `>`, whose Shift+Enter reset a read
+    # stopped from another fiber can write on a row of its own.
+    def text = screen.gsub(/\e\[[<=>?]?[\d;]*[A-Za-z]/, "").gsub(/\e[>=]/, "")
 
     def close
       @child.reap

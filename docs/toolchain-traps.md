@@ -374,14 +374,6 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   alone: `a line typed while an ask is in flight on the chat's own terminal keeps a line typed
   mid-ask for the next prompt, once`.
 
-  Added 2026-10-15, red once in a pre-commit suite on a quiet box (seed 50146) with a stray
-  `\e[>4;0m` row between a prompt and its verdict, and green alone and 3 of 3 runs of its file
-  with that seed, both with and without the change being landed: `a plain chat's inline prompts
-  over a real terminal a prompt the approval window decides ends its line with who decided it and
-  how, and a y typed afterwards decides nothing`. The stray bytes are the Shift+Enter reset the
-  retired LineEditor names below were about, but their fix was to how a spec reads a PTY it owns,
-  and this example reads a real chat's terminal, so it stays live.
-
   Added 2026-09-29, red once in a whole-suite run (seed 59509) and green 3 of 3 alone. It counts
   every descriptor in `/proc/self/fd`, so anything else live in the same worker process moves the
   count: `Lain::Agent the graph CoreGraph hands out by default runs to completion holding no file
@@ -425,15 +417,24 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   Added 2026-10-15, from a pre-commit run and a reviewer's run beside about 10 agents running specs (load
   13). Each passed alone, and each reads terminal bytes before a write that is still in flight lands, so a
-  red under load is timing. 2 LineEditor names and 1 InputPane name from this run are retired below.
-  `a plain chat's inline prompts over a real terminal a prompt the approval window decides ends its line
-  with who decided it and how, and a y typed afterwards decides nothing` (passed 3 of 3 with its worker
-  seed on the base commit);
-  and `Shift+Enter in a pane inserts a newline and submits the whole draft on Enter` (load 14, passed alone
+  red under load is timing. 2 LineEditor names, 1 InputPane name and the plain chat's "ends its line with
+  who decided it and how" from this run are retired below.
+  `Shift+Enter in a pane inserts a newline and submits the whole draft on Enter` (load 14, passed alone
   and 3 of 3 with its seed on the base commit).
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-17: `a plain chat's inline prompts over a real terminal a prompt the approval window
+    decides ends its line with who decided it and how, and a y typed afterwards decides nothing`
+    (red 2026-10-15 at seed 50146 and on a later landing at seed 17844, both with `expected
+    ["\e[>4;0m\r\r\n"] to all match /\A\s*\z/`). Not a lib race, and not the 2026-10-02 one below,
+    which stays fixed: the row it reddened on was blank to a human. When the window closes, the
+    fixture's raw `SETTLED` can end the prompt's row, the pump's read, stopped on its own fiber,
+    then writes the Shift+Enter reset `\e[>4;0m`, and only then does the closing note start with
+    its own CRLF. The spec's `text` stripped CSI sequences with a `?` prefix but not `>`, so that
+    invisible reset read as text on a row that has to be empty. `text` now strips every
+    private-parameter prefix. A probe that delays the closing note by 100ms failed 3 of 3 with
+    the old filter and passed 3 of 3 with the new one.
   - 2026-10-17: the vsock harness's `VsockAvailability.available? leaks no descriptor across
     repeated probing` (listed above as load-induced since 2026-09-11). The spec went with the vsock
     tier, whose listener, `Transport::Vsock` and `:vsock` tag were deleted; nothing opens an
@@ -598,7 +599,7 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   TERM`, seen later the same day and green 6/6 alone — **two of the six examples in that one file
   wait on a wall clock, so treat the whole file as load-sensitive rather than these two names**.
   (A third, `plain_chat_prompt_guards_spec`'s "ends its line with who decided it and how", is retired
-  below: it was a lib race, not the clock.)
+  below: it was a lib race, then a spec filter, never the clock.)
 
   Added 2026-09-20 on a **second** sighting — two agents, two runs, both under a sibling suite, and
   110/0 alone each time: `Lain::Frontend::TTY a note rendered while a prompt is drawn holds the note
