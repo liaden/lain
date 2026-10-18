@@ -78,12 +78,6 @@ module Lain
 
       COMMAND_TOOLS = Set["bash"].freeze
 
-      # Higher than the floor {Rows::Row} seeks a recurrence at, because an
-      # environment value has no detector behind it: a 6 or 7 byte value such
-      # as "staging" recurs in ordinary output, and the placeholders would
-      # spell it back out.
-      LITERAL_FLOOR = 8
-
       # A row is a partial view, so its regions are masked and never parked: a park per
       # matched file would turn one search into a queue of prompts, and
       # `read_file` stays the way to ask.
@@ -298,13 +292,9 @@ module Lain
         carried.merge(result: Tool::Result.new(content: output.to_s, is_error: result.error?))
       end
 
-      # A child gets whatever its caller lends, whatever the name, so the
-      # worker's environment is read as well as the process's.
       def session_secrets(context)
         lent = (context || Session::Null.instance).worker_env.env
-        [@environment.to_h, lent].flat_map(&:to_a).filter_map do |name, value|
-          value if Exec::ChildEnv::SECRET.match?(name) && value.to_s.bytesize >= LITERAL_FLOOR
-        end.uniq
+        ::Lain::Sensitivity::Literals.new(child_env: Exec::ChildEnv.new(env: @environment), lent:).to_a
       end
 
       # Content this class cannot scan cannot be vouched for, so it is not sent.

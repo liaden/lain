@@ -82,6 +82,9 @@ module Lain
         passed.merge(removed(withheld)).merge(removed((lent.keys + inherited.keys).grep(SCRUB)))
       end
 
+      # @return [Hash] the parent environment as it is now
+      def environment = @env.to_h
+
       # @param name [String] a variable name
       # @return [Boolean] whether the pass list names it
       def passes?(name) = @pass.include?(name)

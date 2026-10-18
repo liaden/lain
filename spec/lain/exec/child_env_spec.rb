@@ -15,6 +15,16 @@ RSpec.describe Lain::Exec::ChildEnv do
 
   def child_of(lent) = child_env.call(lent).compact
 
+  describe "#environment" do
+    it "is the live parent environment" do
+      live = { "PATH" => "/usr/bin" }
+      env = described_class.new(env: live)
+      live["EDITOR"] = "vim"
+
+      expect(env.environment).to eq("PATH" => "/usr/bin", "EDITOR" => "vim")
+    end
+  end
+
   describe "a parent's environment" do
     it "withholds every secret-shaped name from a child handed the parent's own environment" do
       expect(child_of(parent).keys).not_to include("OLLAMA_API_KEY", "SSH_AUTH_SOCK", "GITHUB_TOKEN")
