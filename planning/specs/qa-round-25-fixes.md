@@ -2466,3 +2466,35 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - bcT25: classification needs the policy, so a prime at toolset build cannot remove the first-call stall. Picked (b): Wiring starts the prime once the board exists (no polling thread). Scope widened to cli/wiring.rb (call site only).
 - bcT27 option (c) done; second review running. T59 wiring done; in review.
 - User rulings: commit the uncommitted planning edits (done: `e3c2cb0d` round 25 QA notes; `e54978ba` the confinement plan's log with the takeover recorded); leave `references/repos/smolagents` alone. T60 and bcT32 are no longer blocked on uncommitted notes. T59 review APPROVE-WITH-FIXES (notice wording); fix sent.
+- T59 fixes done: approved.
+- T59 landed `3ac9eed5`.
+- T59 landed `3ac9eed5`. bcT25 option (b) done (first call 0.01s after a 3s gap, full pass with none); second review running.
+- bcT27 second review APPROVE (21 of 22 mutants red; 1 equivalent); comment fixed.
+- bcT27 landed `07d649b9`.
+- bcT27 landed `07d649b9` (also ticked in bash-confinement.md). bcT28 started (cut at `07d649b9`).
+- bcT28: the bar needs a predicate on Judge::Facts (facts.rb, T27's file, now landed); ruled in scope.
+- T54 handed back (parsed stages journaled with basis "parsed", never decided on); in high review.
+- bcT25 second review APPROVE-WITH-FIXES (race closed; all mutants killed; the ordering spec cannot fail). Last fix sent.
+- bcT28 handed back (barred facts defer a judge approve with reason "bar"); in high review.
+- bcT25 last fix done: approved.
+- bcT25 landed `b2af632c`.
+- bcT25 landed `b2af632c` (ticked in bash-confinement.md). bcT30 and T57 started (cut at `b2af632c`).
+- T57 stopped on its own condition (the sandbox build is private to ToolsetBuild; a bench arm has no switchboard). Ruled: extract one public sandbox builder that ToolsetBuild and the bench both call; scope widened to cli/wiring/toolset_build.rb; build the arm's Sensitivity::Policy with the same constructor, else stop.
+- T54 high review REQUEST-CHANGES (blocker: a journal-only parse aborts the call on a NUL byte; literal? skips escaping checks; a duplicate cd rule). Ruled: Named exposes each stage's directory (scope widened to shell/named.rb). Second review follows.
+- bcT28 high review APPROVE-WITH-FIXES (substantive: a bar-deferred call is shown and refused as "the judge deferred"; per-stage bar reasons to the queue and the record). Second review follows. Round 26 / bench note: under --judge-facts off the bar never fires, so the arm bundles showing facts with enforcing the bar (by the card, not a defect).
+- bcT28 fix round done (3 items); second review started.
+- T54 fix round done (5 items); second review started. Round 26: `ls\0x` raises an uncaught ArgumentError in the allowed path's resolver, on base too.
+- T26 implemented (escalation.rb + 2 specs, 624 examples green); light review started. Round 26 candidates: WithholdAutomaticOutput::WITHHELD and Judged TOLD still tell the model "/mode ask".
+- T26 light review APPROVE-WITH-FIXES (1 optional NIT, not taken: no spec shows the human's refusal reason reaching a surface). T26 landed `e28ca0e0`.
+- bcT28 second review APPROVE-WITH-FIXES, all mechanical (2 surviving mutants to pin, 2 now spec-only methods to remove, 1 comment); same implementer fixes, no third review.
+- bcT30 stopped on scope: the ledger's 1 registration line put Wiring#wire_agent over AbcSize with Wiring at 300 of 300 lines. Scope widened to cli/wiring/observers.rb and its spec (the logged route; no in-flight card shares it).
+- bcT28 fix round 2 done (plus the optional Noted reuse; Executable.bar? and Facts#barred? removed, so the card's Interfaces line naming Executable.bar? is stale). bcT28 landed `27a9774a`.
+- bcT29 started from `27a9774a`.
+- T54 second review APPROVE-WITH-FIXES, mechanical (narrow Parsed#journal's rescue to SystemCallError, IOError so the existing NUL example pins the guard; check the whole command for NUL); same implementer, no third review.
+- T57 implemented (Confine::Sandbox extracted; bench arms --confine; unwired exec and arm flags refused); standard review started. Bench sandboxed exec proven by specs only: qwen3:4b never called bash.
+- T54 fix round 2 done (narrow rescue pins the NUL guard; whole-command NUL check). Landing hook RED, NOT landed: 4 failures (web_fetch walk-budget timing, repo_as_fixture 30s watchdog, e2e two_cockpits x2) at load1 53 on 16 cores, from an unrelated cargo build in ~/dev/belle-curves after the user's rustup update. Re-land on a quiet box per the flaky procedure. Seeds in hook-T54-1.log.
+- bcT29 stopped on its first stop condition (the human's last line is not reachable at judge time). Main session ruling: a late-bound request source with a Null default, through Switchboard.for(request:) to Judged; the child task rides on PolicySwitch::Requested. Scope widened to switchboard.rb, board_build.rb, tool_guard.rb, policy_switch.rb and their specs; the wiring.rb binding is a shared-file diff applied at landing (bcT30 holds wiring.rb).
+- bcT30 lint fix done via Observers (Wiring under 300 lines, no limit raised); high review started.
+- T54 second landing RED again, NOT landed: starvation at load1 48-55 (web_fetch walk budget, repo_as_fixture and project_dir watchdogs, e2e cockpit_approval x3, fork_resume x3), caused by 7 simplify-15 agents' first `rake compile` starting under the landing. Not counted as a flake. window.sh now waits 30s at load1 < nproc/2, and agent briefs gate rake compile and cargo on wait-lock. `da1c730f` removed a review note that `27a9774a` committed by mistake; land.sh now excludes .review files.
+- bcT29: second stop, the task text exists only in Subagent. Ruling: widen the tool-middleware builder contract to call(worker_env, task: nil); scope adds tools/subagent.rb (child_stack only). Secret probe passed: none of 8 secret reads reached the judge.
+- T57 review REQUEST-CHANGES: under --confine reader the bench confines nothing (ApproveAll never earns the reader profile). Ruling: the bench gate gets the chat's read-only ComposedTerm rung ahead of ApproveAll, with a spec on profile :reader. Also: refuse classes; journal the arm and a degraded sandbox to the run journal; declare only --confine (enum off, reader) and drop the refusal table; small fixes. Fix round, then second review.
