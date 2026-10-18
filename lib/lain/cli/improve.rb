@@ -124,7 +124,7 @@ module Lain
         # mechanical signals and digests too, and carries no turn text at all.
         def trace(content, ordinals)
           text = Array(content).grep(Hash).filter_map { |block| summarize(block) }.join(" ")
-          Sensitivity::Masking.render(text, Sensitivity::Regions.detect(text), ordinals:)
+          Sensitivity::Masking.redact(text, ordinals:)
         end
 
         # An unknown block kind summarizes to nil and `filter_map` drops it,

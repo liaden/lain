@@ -42,6 +42,13 @@ module Lain
           (parts << bytes.byteslice(cursor..)).join.force_encoding(content.encoding)
         end
 
+        # Detects and masks in one call, for a caller that releases nothing.
+        #
+        # @param text [String]
+        # @param ordinals [Enumerator] see {render}
+        # @return [String]
+        def redact(text, ordinals:) = render(text, Regions.detect(text), ordinals:)
+
         private
 
         # The bytes kept since the previous region, then the placeholder that

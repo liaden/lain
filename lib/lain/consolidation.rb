@@ -252,7 +252,7 @@ module Lain
       # withhold: a scaffold that asked the clerk to cite evidence it had just
       # masked would be useless.
       def withheld(text, ordinals)
-        Sensitivity::Masking.render(text, Sensitivity::Regions.detect(text), ordinals:)
+        Sensitivity::Masking.redact(text, ordinals:)
       end
 
       # A closed `case`: an unknown block kind summarizes to nil and `filter_map`

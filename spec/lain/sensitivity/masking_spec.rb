@@ -105,4 +105,19 @@ RSpec.describe Lain::Sensitivity::Masking do
       expect(described_class.render(mixed, detect(mixed))).to eq("naïve=café API_KEY=#{placeholder(1)}\n")
     end
   end
+
+  describe ".redact" do
+    it "masks every detected region and leaves the words around them" do
+      text = "key AKIAIOSFODNN7EXAMPLE and plain words"
+
+      expect(described_class.redact(text, ordinals: (1..).each)).to eq("key #{placeholder(1)} and plain words")
+    end
+
+    it "continues the numbering of the ordinals it is handed" do
+      ordinals = (1..).each
+      described_class.redact("AKIAIOSFODNN7EXAMPLE", ordinals:)
+
+      expect(described_class.redact("AKIAIOSFODNN7EXAMPLE", ordinals:)).to eq(placeholder(2))
+    end
+  end
 end
