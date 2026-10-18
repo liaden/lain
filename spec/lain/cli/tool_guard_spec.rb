@@ -1053,6 +1053,30 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
   end
 
+  describe "the child env the bash masker reads" do
+    let(:child_env) { Lain::Exec::ChildEnv.new(env: { "API_TOKEN" => "tok-abc123lowentropy" }) }
+
+    it "is the one the board's inputs carry" do
+      board = Lain::CLI::Switchboard.new(journal:, model: "m", toolset: Lain::Toolset.new([]), child_env:)
+
+      expect(board.guard_inputs.child_env).to be(child_env)
+      expect(read_guard(board).child_env).to be(child_env)
+    end
+
+    it "defaults to the process default" do
+      board = Lain::CLI::Switchboard.new(journal:, model: "m", toolset: Lain::Toolset.new([]))
+
+      expect(read_guard(board).child_env).to be(Lain::Exec::ChildEnv::DEFAULT)
+    end
+
+    it "stays the default for a detached run" do
+      stack = described_class.detached(journal:).call(Lain::WorkerEnv.default)
+
+      expect(stack.to_a.grep(Lain::Middleware::RedactSecretReads).first.child_env)
+        .to be(Lain::Exec::ChildEnv::DEFAULT)
+    end
+  end
+
   # Out of chat there is no board to borrow: the run builds its own, once, and
   # every child it spawns reads behind a stack over that one board.
   describe ".detached" do

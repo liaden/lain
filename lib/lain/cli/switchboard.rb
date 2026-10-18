@@ -107,6 +107,7 @@ module Lain
       # @param arms [Arms] the bench arms; `judge_facts` decides whether the judge is told the facts
       # @param request [#call] `context -> Approval::Judge::Request or nil`, what a judged call was made
       #   for; read only under `--judge-facts request`
+      # @param child_env [Exec::ChildEnv] the launch's, which the bash masker reads; the process default by default
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [String] :approval the session starts at this approval
@@ -118,9 +119,10 @@ module Lain
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                    approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF,
-                   request: Approval::Judge::Unrequested)
+                   request: Approval::Judge::Unrequested, child_env: Exec::ChildEnv::DEFAULT)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:, arms:, request:,
+            child_env:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -220,13 +222,15 @@ module Lain
       # @param display [#<<] as on {.for}
       # @param arms [Arms] as on {.for}; every arm off by default
       # @param request [#call] as on {.for}; none by default
+      # @param child_env [Exec::ChildEnv] as on {.for}; the process default by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
                      verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
                      attended: true, approval: :ask, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                      approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
-                     display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested)
+                     display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested,
+                     child_env: Exec::ChildEnv::DEFAULT)
         @attended = attended
         @display = display
         @journal = journal
@@ -242,7 +246,7 @@ module Lain
         @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
                                               test_layout:, policy: @policy_switch, policy_for: method(:policy_for),
                                               denial:, bar: Middleware::WithholdAutomaticOutput::Bar.new,
-                                              scope: @scoping, middleware:)
+                                              scope: @scoping, middleware:, child_env:)
       end
 
       # The main agent's context grafted over the live model slot -- the ONLY

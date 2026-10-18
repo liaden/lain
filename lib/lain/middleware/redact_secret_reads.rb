@@ -160,7 +160,7 @@ module Lain
       # ledger and the board's one queue, not a second of either. Asserting on
       # behaviour instead cannot tell a fresh ledger from the board's, which is
       # exactly the mutation that survived review.
-      attr_reader :ledger, :queue, :journal, :related
+      attr_reader :ledger, :queue, :journal, :related, :child_env
 
       # @param ledger [Sensitivity::Ledger] the run's ONE region ledger.
       #   REQUIRED, with no default and no Null Object: a default is how a
@@ -176,11 +176,12 @@ module Lain
       # @param related [#related?] answers whether an absolute path lies under
       #   a `sensitivity related:` directory, whose regions mask without asking.
       #   A default is safe here, unlike the two above: the default asks.
-      # @param environment [#to_h] read on every command result for the values
-      #   of secret-named variables, beside the calling worker's own
+      # @param child_env [Exec::ChildEnv] the launch's child environment, read on
+      #   every command result for the values of secret-named variables, beside
+      #   the calling worker's own
       # @raise [ArgumentError] on a nil ledger or queue
       def initialize(ledger:, queue:, journal: Channel::Null.instance, requester: nil, related: Unrelated,
-                     environment: ENV)
+                     child_env: Exec::ChildEnv::DEFAULT)
         # A missing KEYWORD is Ruby's error; a nil VALUE is not, and nil is
         # exactly what `Switchboard#approvals` carries in an unattended run -- so
         # without this the argument that "no default means no silent approval"
@@ -193,7 +194,7 @@ module Lain
         @journal = journal
         @requester = requester
         @related = related
-        @environment = environment
+        @child_env = child_env
         # Mutable, on a frozen object, deliberately: `freeze` seals the ivars,
         # not the Set they point at, and this is the run's accumulating
         # answer-memory -- {Sensitivity::Ledger}'s own posture, for its reason.
@@ -294,7 +295,7 @@ module Lain
 
       def session_secrets(context)
         lent = (context || Session::Null.instance).worker_env.env
-        ::Lain::Sensitivity::Literals.new(child_env: Exec::ChildEnv.new(env: @environment), lent:).to_a
+        ::Lain::Sensitivity::Literals.new(child_env: @child_env, lent:).to_a
       end
 
       # Content this class cannot scan cannot be vouched for, so it is not sent.

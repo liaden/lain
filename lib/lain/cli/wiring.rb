@@ -807,8 +807,7 @@ module Lain
                                           verdict:, isolation: fleet_isolation, exec: exec_backend.backend,
                                           handback:, epic: epic_mount(notice),
                                           attachments:, middleware: backend.middleware, paths: @paths,
-                                          display: @channel, resolver: exec_resolver,
-                                          config:, arms:)
+                                          display: @channel, resolver: exec_resolver, config:, arms:)
         @toolset_build.build(recorder, ask_human:)
       end
 
@@ -946,7 +945,8 @@ module Lain
         @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
                                         verdict:, middleware: backend.middleware, config:, paths: @paths,
                                         judge: JudgeSource.new(method(:role_spawn)), display: @channel, arms:,
-                                        request: heard, resolver: exec_resolver, worker_env: chat_env)
+                                        request: heard, resolver: exec_resolver, worker_env: chat_env,
+                                        child_env: exec_backend.child_env)
       end
 
       # What the judge is told the human asked for under `--judge-facts request`. One for the run,

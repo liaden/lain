@@ -64,8 +64,11 @@ module Lain
       # is what the chat's config.rb files registered; a run with no chat
       # reads no config, which is its default.
       Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
-                           :scope, :middleware) do
-        def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty, **) = super
+                           :scope, :middleware, :child_env) do
+        def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty,
+                       child_env: Exec::ChildEnv::DEFAULT, **)
+          super
+        end
       end
 
       # The scope of a run with no board that can enter plan.
@@ -484,7 +487,8 @@ module Lain
       def read_kwargs(chronicle, inputs)
         { ledger: inputs.ledger,
           queue: inputs.approvals || Middleware::RedactSecretReads::Unqueued.instance,
-          journal: chronicle.instrumentation.journal, related: inputs.sensitivity }
+          journal: chronicle.instrumentation.journal, related: inputs.sensitivity,
+          child_env: inputs.child_env }
       end
 
       # The journal is READ off the chronicle's {Agent::Instrumentation}, whose

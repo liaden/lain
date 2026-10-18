@@ -152,6 +152,15 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "hands the board's guard stack the child env it is given" do
+      in_tree do |root, home|
+        child_env = Lain::Exec::ChildEnv.new(env: { "API_TOKEN" => "tok-abc123lowentropy" })
+        board = board_for(root, home, child_env:)
+
+        expect(board.guard_inputs.child_env).to be(child_env)
+      end
+    end
+
     it "hands the board the judge it is given, so auto approves what the judge approves" do
       in_tree do |root, home|
         judge = ->(**) { :approve }

@@ -579,6 +579,12 @@ RSpec.describe Lain::CLI::Wiring do
             .to be_a(Lain::Shell::Executable::Resolver)
         end
 
+        it "hands the board's guard inputs the child env the backend holds" do
+          board = board_on_path("/usr/bin")
+
+          expect(board.guard_inputs.child_env).to equal(classed.send(:exec_backend).child_env)
+        end
+
         it "memoizes the ExecBackend" do
           expect(classed.send(:exec_backend)).to equal(classed.send(:exec_backend))
         end

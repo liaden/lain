@@ -1293,10 +1293,11 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
   # A command's output has no file to key a release on, so its regions are
   # masked on every call, whoever approved it, and nothing parks.
   describe "a bash result" do
-    subject(:middleware) { described_class.new(ledger:, queue:, journal:, environment:) }
+    subject(:middleware) { described_class.new(ledger:, queue:, journal:, child_env:) }
 
     let(:token) { "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5" }
     let(:environment) { {} }
+    let(:child_env) { Lain::Exec::ChildEnv.new(env: environment) }
 
     def bash(command = nil, tool: Lain::Tools::Bash.new)
       call = Lain::Effect::ToolCall.new(tool_use_id: "tu_bash", name: "bash", input: { "command" => command })
