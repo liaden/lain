@@ -815,7 +815,7 @@ module Lain
 
       # Memoized: the bash tool and the approval ladder must resolve by one instance.
       def exec_resolver
-        @exec_resolver ||= Lain::Shell::Executable::Resolver.new(root:, fresh: observers.fresh)
+        @exec_resolver ||= ExecBackend.resolver_for(options[:exec], root:, fresh: observers.fresh)
       end
 
       # Total before #wire_agent has registered the real ones. Fails closed: with

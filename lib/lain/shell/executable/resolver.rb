@@ -350,18 +350,31 @@ module Lain
           private_class_method :exec_of, :unreadable, :build, :env_options, :env_assignments
         end
 
-        # Resolves every stage `:unresolved`: the resolver where no session exists.
+        # Resolves every stage `:unresolved`, each carrying the same anomalies:
+        # the resolver where no session exists, and where the file that runs is
+        # out of sight.
         class Null
+          # @param anomalies [Array<Symbol>] what every stage carries; none by default
+          def initialize(anomalies: [])
+            @anomalies = anomalies.freeze
+          end
+
           # @param _worker_env [WorkerEnv]
           # @return [Null]
           def for(_worker_env) = self
 
           # @param term [Term]
           # @return [Array<Executable>]
-          def call(term) = term.stages.map { |stage| Executable.unresolved(stage.program.to_s) }
+          def call(term) = term.stages.map { |stage| Executable.unresolved(stage.program.to_s, anomalies: @anomalies) }
         end
 
         NULL = Null.new.freeze
+
+        # Under `--exec docker` the file that runs is inside the container, so a
+        # host path would name the wrong one. Resolving in the container would
+        # cost a 2nd `docker run` per call and still could not tell who can
+        # write there.
+        CONTAINER = Null.new(anomalies: [:container_backend]).freeze
 
         private
 

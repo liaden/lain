@@ -139,4 +139,19 @@ RSpec.describe Lain::CLI::ExecBackend do
       expect(resolve("docker", path: docker_on_path, root: absent).project).to eq(absent)
     end
   end
+
+  describe ".resolver_for" do
+    let(:fresh) { Lain::Shell::Executable::Resolver::NeverFresh }
+
+    it "names no host file for a docker backend, whose programs run in the container" do
+      expect(described_class.resolver_for("docker", root: "/srv/app", fresh:))
+        .to equal(Lain::Shell::Executable::Resolver::CONTAINER)
+    end
+
+    it "resolves on the host for the local backend and for no flag" do
+      resolvers = [described_class::DEFAULT, nil].map { described_class.resolver_for(_1, root: "/srv", fresh:) }
+
+      expect(resolvers).to all(be_a(Lain::Shell::Executable::Resolver))
+    end
+  end
 end

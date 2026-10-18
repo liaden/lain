@@ -540,12 +540,12 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       # The session env is a snapshot of ENV taken when the board is built.
-      def board_on_path(path)
+      def board_on_path(path, wiring = classed)
         was = ENV.fetch("PATH")
         ENV["PATH"] = path
-        recorder, session = classed.run_state(nil)
-        classed.wire_agent(channel:, recorder:, session:, backend:)
-        classed.instance_variable_get(:@switchboard)
+        recorder, session = wiring.run_state(nil)
+        wiring.wire_agent(channel:, recorder:, session:, backend:)
+        wiring.instance_variable_get(:@switchboard)
       ensure
         ENV["PATH"] = was
       end
@@ -567,6 +567,65 @@ RSpec.describe Lain::CLI::Wiring do
         from_ladder = rule.instance_variable_get(:@sensitivity).instance_variable_get(:@resolver)
 
         expect(board.toolset.fetch("bash").instance_variable_get(:@resolver)).to equal(from_ladder)
+      end
+
+      context "with --exec docker" do
+        let(:docked) do
+          described_class.new(options: { grace: 5, approval: "auto", confine: "classes", exec: "docker" },
+                              chronicle:, status_feed:, project: throwaway_project(@root),
+                              paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
+        end
+
+        # A stand-in client, so the launch probe passes on a box with no docker.
+        def client_dir
+          File.join(@home, "client").tap do |dir|
+            FileUtils.mkdir_p(dir)
+            File.write(File.join(dir, "docker"), "#!/bin/sh\n")
+            File.chmod(0o755, File.join(dir, "docker"))
+          end
+        end
+
+        it "resolves cat unresolved, for the container, naming no host file" do
+          board = board_on_path("#{client_dir}:/usr/bin", docked)
+          worker_env = Lain::WorkerEnv.new(cwd: @root, env: { "PATH" => "/usr/bin" })
+          stage = board.toolset.fetch("bash").instance_variable_get(:@resolver).for(worker_env)
+                       .call(Lain::Shell::Term.of(%w[cat README.md])).sole
+
+          expect(stage.to_journal).to include("klass" => "unresolved", "anomalies" => ["container_backend"],
+                                              "resolved" => nil, "realpath" => nil)
+        end
+
+        it "leaves cat README.md to the rest of the ladder" do
+          ruling = board_on_path("#{client_dir}:/usr/bin", docked).policy_switch.rule(bash_of("cat README.md"), nil)
+
+          expect(ruling&.rule).not_to eq("composed_term")
+        end
+
+        # Every stage is unresolved, so the bar is never empty: the project
+        # mount is writable inside the container, and a human rules.
+        it "parks a judge approve for a human under --judge-facts facts, overruled by what lain resolved" do
+          approving = Struct.new(:prompts) do
+            def never_parking = self
+            def call(_role, _mode, _prompt) = Lain::Tool::Result.ok("approve")
+          end.new([])
+          allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
+            original.call(**kwargs, judge: Lain::Approval::Judge.new(role_spawn: approving))
+          end
+          judged = described_class.new(options: { grace: 5, approval: "auto", confine: "classes", exec: "docker",
+                                                  judge_facts: "facts" },
+                                       chronicle:, status_feed:, project: throwaway_project(@root),
+                                       paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
+          board = board_on_path("#{client_dir}:/usr/bin", judged)
+
+          notes = Sync do |task|
+            call = task.async { board.policy_switch.call(bash_of("cat README.md"), nil) }
+            task.with_timeout(1) { board.approvals.dequeue }.notes
+          ensure
+            call&.stop
+          end
+
+          expect(notes).to include(Lain::Approval::Judged::OVERRULED, include("inside a container"))
+        end
       end
     end
 

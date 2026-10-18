@@ -13,9 +13,10 @@ module Lain
     # link from `resolved` to `realpath`; `shadowed` the later `PATH` hits, one
     # per realpath. `anomalies` name what in the environment could change what
     # runs: `:empty_path_entry`, `:relative_path_entry`, `:project_path_entry`,
-    # `:exported_function`, `:ld_preload`. `wrappers` are the programs (`nice`,
-    # `env`, `bundle exec`) that ran this one, outermost first, each resolved
-    # in its own right because a planted `nice` runs as surely as a planted `cat`.
+    # `:exported_function`, `:ld_preload`, `:container_backend`. `wrappers` are
+    # the programs (`nice`, `env`, `bundle exec`) that ran this one, outermost
+    # first, each resolved in its own right because a planted `nice` runs as
+    # surely as a planted `cat`.
     # `skipped` are the earlier `PATH` hits that were not executable, which the
     # shell tries and the kernel refuses before it reaches the resolved one.
     #
@@ -27,7 +28,8 @@ module Lain
         relative_path_entry: "PATH has a relative entry",
         project_path_entry: "PATH has an entry inside the project",
         exported_function: "the env exports a shell function",
-        ld_preload: "LD_PRELOAD is set"
+        ld_preload: "LD_PRELOAD is set",
+        container_backend: "the command runs inside a container, where lain cannot see which file runs"
       }.freeze
 
       # @param skipped [Array<String>] the PATH hits that were not executable; none by default

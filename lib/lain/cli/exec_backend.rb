@@ -48,6 +48,18 @@ module Lain
       # @return [#call] the resolved backend
       def self.resolve(...) = new(...).backend
 
+      # What a stage of a command run through the named backend resolves to.
+      #
+      # @param name [String, nil] the `--exec` value; nil means {DEFAULT}
+      # @param root [String] the project root
+      # @param fresh [#fresh?] whether a path changed during this lineage
+      # @return [#for] {Shell::Executable::Resolver::CONTAINER} for docker, else a host resolver
+      def self.resolver_for(name, root:, fresh:)
+        return Shell::Executable::Resolver::CONTAINER if name == "docker"
+
+        Shell::Executable::Resolver.new(root:, fresh:)
+      end
+
       # @param name [String, nil] the `--exec` value; nil means {DEFAULT}
       # @param image [String, nil] the `--exec-image` value; nil means
       #   {Exec::Docker::DEFAULT_IMAGE}. Thor hands an unset String option

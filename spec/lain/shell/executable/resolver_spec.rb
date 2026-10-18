@@ -495,4 +495,21 @@ RSpec.describe Lain::Shell::Executable::Resolver do
       expect(stages.map(&:klass)).to all(eq(:unresolved))
     end
   end
+
+  describe "CONTAINER" do
+    let(:stages) do
+      worker_env = Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "/usr/bin" })
+      described_class::CONTAINER.for(worker_env).call(Lain::Shell::Term.of(%w[cat README.md], %w[wc]))
+    end
+
+    it "resolves every stage :unresolved with the container_backend anomaly, naming no host file" do
+      expect(stages.map(&:to_journal)).to all(include("klass" => "unresolved", "resolved" => nil, "realpath" => nil,
+                                                      "anomalies" => ["container_backend"]))
+      expect(stages.map(&:name)).to eq(%w[cat wc])
+    end
+
+    it "says why no machine may approve the call" do
+      expect(Lain::Shell::Executable.bar(stages)).to include(include("container"))
+    end
+  end
 end
