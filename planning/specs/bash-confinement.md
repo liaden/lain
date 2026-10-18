@@ -1,6 +1,6 @@
 # Bash confinement: binary identity, a reader sandbox, judge facts, and an observing tripwire
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (2 Rust cards: T15, T16)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust cards add Raph Levien and Andrew Gallant
@@ -1405,7 +1405,7 @@ Spec file: `spec/lain/cli/arms_spec.rb`
 - Any `:e2e` journey (`spec/e2e/*`) fails under the new defaults: the journeys drive the real `exe/lain`. Report which, with the refusal the trace shows, rather than adding a flag to the journey.
 - `rake pspec` on a quiet box shows a new failure that `LAIN_SLOW=1` serially does not: a contention flake, not this card (`CLAUDE.md` Toolchain).
 
-### T32: Document confinement and its QA scenarios          [risk: low]
+### [x] T32: Document confinement and its QA scenarios          [risk: low]
 
 **Depends on:** T31
 **Files:** `ARCHITECTURE.md`, `planning/qa/scenarios/secret-boundary.md`, `planning/qa/scenarios/bash-confinement.md` (new), `planning/qa/README.md`, `planning/qa/scenarios/session-and-window.md` (section 9c: the new chat defaults and the bench's off default; added by the T31 review)
@@ -1565,3 +1565,4 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 17:17 Landed: T14 `77eb05a6`, T26 `0595c439`. Both green.
 - 17:17 T24, T27 started from `963d53b9`.
 - 2026-10-17 Takeover: this plan's own session had been idle since 2026-10-16 17:17. By the user's ruling, the session running `planning/specs/qa-round-25-fixes.md` adopts T24, T25 and T27 to T32 and lands them on `main`, logging each step in that plan's Execution log (Run 1). T24 and T27 were ported from `tmp/worktrees/T24` and `T27` (cut at `963d53b9`) onto current `main` and re-reviewed. T24 landed `455176be`, after the main checkout's identical uncommitted copies were dropped. With the user's consent, `a0dae0db` replaced the 16:38 `tee -p` relay with a direct `strace -o /dev/fd/N`: under load the relay lost its tracer at start and the dead seccomp tracer killed the call's background process, while strace ignores SIGPIPE under `-D`.
+- 2026-10-17 bcT32 landed `d96ed032` (ROADMAP item 59 marked Done). Every card of this plan has landed; status set to done by the round 25 run.
