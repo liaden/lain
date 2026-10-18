@@ -168,9 +168,9 @@ module Lain
       # The check reads the NAME, never the value: a secret-shaped name
       # ({Exec::ChildEnv::SECRET}) is refused, while `DATABASE_URL` passes and
       # can carry a password inside its value. Passing a name is the project's
-      # decision about what that value holds. The bash output mask catches a
-      # passed value only where its region detector recognises one, so a DSN
-      # key or an opaque token can come back to the model unmasked.
+      # decision about what that value holds.
+      #
+      # What the bash output mask does with a passed value is {Sensitivity::Literals}' to say.
       def env(**table) = declare(:env, ENV_TABLE, table) { |at| env_pass_from(shaped(table), at) }
 
       def tests(**table) = declare(:tests, TestLayout::TABLE, table) { |at| TestLayout.from(shaped(table), path: at) }

@@ -1032,6 +1032,16 @@ is not masked there. The journal records each masked file as `search_redacted`, 
 folds every `read_redacted` into the masked read-set, and a search reads no file whole. `ast_search` rows
 under a secret path are withheld by `WithholdSecretPaths`, as `grep` rows are.
 
+A `bash` result is masked by the same step, with no release. `Sensitivity::Literals` is where a literal is chosen:
+the values of secret-named variables, plus, for each variable `env pass:` hands the command, the regions
+`Sensitivity::Regions` finds in its value (a DSN gives its password, so the password is masked printed alone while
+`RAILS_ENV=development` lists nothing). A passed name ending `_URL`, `_URI` or `_DSN`, or holding `DATABASE`, or `CONN` or
+`CONNECTION` followed by `_` or the end of the name, also lists each token `Sensitivity::Entropy.hinted?` accepts: 16 characters or more,
+lower, upper and a digit, 3.5 bits per character, or hex at 3.0. Nothing under 8 bytes is listed. Limits: a value the
+detector reads whole (`Password=pw;Database=x`) lists that run, so the password printed alone is not masked, and a
+passed name that is not hinted gets no relaxed bar. Only passed names are scanned, never the kept ones. A masked
+result journals `command_redacted` with a count of regions, never their bytes.
+
 A spawned child is also confined by path: `ToolGuard.working` wraps the board's policy in `Sensitivity::Policy::Confined`
 with the child's roots (the project root, the `related` directories and the worker's own checkout), so a read tool
 (`read_file`, `glob`, `grep`, `list_files`, `ast_search`, `file_symbols`) aimed anywhere else is gated as `outside_project`

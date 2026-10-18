@@ -603,6 +603,39 @@ a25-4, fixed). A command's output has no release: nothing parks asking for one.
    command is barred from automatic approval: the retry goes to a human, and a human-approved retry is masked as in 1.
 *Wrong looks like:* the raw token in the tool result, the journal or the display; a prompt offering to release it.
 
+### 4g: a passed environment value is masked where it recurs *(a chat with a model, approval `ask`)*
+
+`env pass:` hands a variable to every bash command, and the output mask lists what it holds by 2 rules
+(`Sensitivity::Literals`): the regions the detector finds in the value, and, under a name ending `_URL`, `_URI` or `_DSN` or
+holding `DATABASE`, or `CONN` or `CONNECTION` followed by `_` or the end of the name, each random-looking token of 16 characters or more. Nothing under 8 bytes is masked.
+
+```bash
+# .lain/config.rb:  env pass: %w[DATABASE_URL REDIS_URL BUILD_TAG RAILS_ENV]
+export DATABASE_URL='postgres://app:hunter2xyz@db.local/app'
+export REDIS_URL='redis://cache.local:6379/0?sig=Qm9vT2s3x9ZpL1aB'
+export BUILD_TAG=Zx8kLm2Pq7RtVb4Y RAILS_ENV=development
+# launch lain from this shell, /mode ask, and approve each command the model is asked to run:
+#   echo hunter2xyz          echo Qm9vT2s3x9ZpL1aB           echo $BUILD_TAG
+#   echo $RAILS_ENV          echo $REDIS_URL                 echo db.local
+```
+
+| command | expected |
+|---|---|
+| `echo hunter2xyz` | `<redacted:1>`: the DSN's password, printed alone, where no URL surrounds it |
+| `echo $REDIS_URL` | the token after `sig=` is `<redacted:N>`; `redis://cache.local:6379/0?sig=` stays legible |
+| `echo Qm9vT2s3x9ZpL1aB` | `<redacted:1>`: the hinted name `REDIS_URL` lists the token |
+| `echo $BUILD_TAG` | **not masked**: `BUILD_TAG` is passed but not hinted, so its token `Zx8kLm2Pq7RtVb4Y` is legible. The control |
+| `echo $RAILS_ENV`, `echo db.local` | **not masked**: nothing detectable in the value, and the host is not a region |
+
+Each masked result ends with the trailer of 4f, and the session file holds 1 `command_redacted` record per masked result, with
+the call's `tool_use_id` and `regions` as a count. Grep the session file's `tool_result` and `command_redacted` records for `hunter2xyz` and `Qm9vT2s3x9ZpL1aB`: no byte of
+either. The `tool_use` record holds the command text the model wrote, so it does match.
+
+*Known limits, not findings:* `export ADO='Server=db;Password=hunter2xyz;Database=x'` lists the whole run the detector reads, so
+`echo hunter2xyz` alone is NOT masked there; and only passed names are scanned, never the kept ones (`PATH`, `HOME`).
+*Wrong looks like:* the password or the hinted token in the result, the journal or the display; a masked `BUILD_TAG` or
+`RAILS_ENV`; a `command_redacted` record that holds bytes instead of a count.
+
 ## 5 — The unliftable rung, and `/mode bypass`
 
 `Escalation::Triage` inspects a `bash` call's **argv** for protected paths and rules `the command
