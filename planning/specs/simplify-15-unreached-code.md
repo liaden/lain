@@ -550,7 +550,7 @@ Spec file: `crates/lain-core/src/rpc.rs` (`mod tests`), `crates/lain-core/tests/
   `deny.toml` has none; `nix` stays in the lock through `crates/lain-fence`)
 - `crates/lain-fence` fails to build (it shares the workspace lock; it must not be touched)
 
-### T6: Remove the Ruby daemon lifecycle, the vsock transport and Exec::Core          [risk: medium]
+### [x] T6: Remove the Ruby daemon lifecycle, the vsock transport and Exec::Core          [risk: medium]
 
 **Depends on:** T7
 **Files:** (added by the T5 review: the `{Exec::Core}` comment at `lib/lain/tools/bash.rb:21`) delete `lib/lain/exec/core.rb`, `lib/lain/core/transport/vsock.rb`, `lib/lain/core/child.rb`,
@@ -620,7 +620,7 @@ Spec file: `spec/lain/core/client_spec.rb` (unit examples and the 1 `:core` exam
 - a spec outside the Files list carries `:vsock` (grounding grep: none)
 - `spec/support/slow_files.rb` names a deleted file (grounding: it does not)
 
-### T7: Give Tools::Grep 1 search engine          [risk: low]
+### [x] T7: Give Tools::Grep 1 search engine          [risk: low]
 
 **Depends on:** none
 **Files:** modify `lib/lain/tools/grep.rb` (delete `CoreSearch` at 254 to 295, the `client:` keyword
@@ -650,7 +650,7 @@ Scenario: a lookaround pattern is accepted and matches
 
 Scenario: a pattern that backtracks past the timeout is a tool error, not a hang
   Given a file with 40 "a" characters on one line
-  When grep runs with pattern "(a+)+$b"
+  When grep runs with pattern "(a+)+\1$b" (amended by T7: Onigmo memoizes "(a+)+$b" on 4.0.6 and it never times out; the backreference defeats the memo)
   Then the tool returns an error result naming the timeout within 2 seconds and the process is still responsive
 
 Scenario: the description no longer forbids what the engine accepts
@@ -671,7 +671,7 @@ Spec file: `spec/lain/tools/grep_spec.rb`, `spec/lain/cli/wiring/toolset_build_s
   VCR cassette body, which VCR does not match on)
 - `Regexp.new` with `timeout:` is unavailable on the interpreter the suite runs (grounding: 4.0.6)
 
-### T8: Describe lain-core as the wire seed          [risk: low]
+### [x] T8: Describe lain-core as the wire seed          [risk: low]
 
 **Depends on:** T4, T5, T6, T7, T9
 **Files:** modify `ARCHITECTURE.md` (40 to 43, 57, 89, 119 to 121, 2010 to 2017: no exec daemon, no
@@ -1220,3 +1220,15 @@ reads 0, and `pgrep -cf '[p]re-commit (hook-impl|run)'` reads 0):
 - T17 light review APPROVE-WITH-FIXES: delete Format::variables and collect_variables and their tests instead of cfg(test) gating (the card's 'stays for Rust tests' was wrong once the binding went). The main session verifies; no second review.
 - T17 dead chain deleted (verified: no collect_variables or fn variables left). T17 landed `fa0bf6b9`.
 - T7 started from `06375702` (bash-confinement T31 landed).
+- T7 implemented (CoreSearch gone, one Ruby engine, a regex timeout is a tool error; grep_parity_spec deleted; bounds.rb comment fixed). Card amended: the timeout pattern is (a+)+\1$b, since Onigmo memoizes (a+)+$b. Main session put the .rubocop.yml:483 comment edit in the T7 worktree; ROADMAP:1120 goes with T6's dated note (vsock and grep_parity together). Light review started.
+- T7 fixes applied (the timeout spec pins the rescue order, red with them swapped). T7 landed `f1284b73`. T6 is ready; its docker.rb comments wait on qa-round-25 T56, so they become a follow-up line per its stop condition.
+- T6 started from `f1284b73`.
+- Note for T8: also name crates/lain-fence in ARCHITECTURE.md's topology diagram and the lain-core placement section (found by bash-confinement T32).
+- T6 implemented (Exec::Core, Core::Child, Transport::Vsock and the vsock tier deleted; client_spec keeps 1 real-binary :core seam; docker.rb comments held for qa-round-25 T56). Standard review started, including a recount of the CLAUDE.md:48 tier count.
+- T6 standard review APPROVE-WITH-FIXES: Exec::Unenforced is dead and goes; Timeout doc; CoreDaemon cleans up on a failed connect; CLAUDE.md:48 stays Eight with the 8 tags named; ROADMAP gets a dated note rather than an edit; 3 docker.rb references held for the follow-up. Implementer authorized to edit the shared files in its worktree; the main session verifies.
+- Notes for T8 from the T6 review: docs/toolchain-traps.md:366-367 moves the VsockAvailability flake to the retired list (spec deleted with the vsock tier, 2026-10-17); ARCHITECTURE.md:2011-2016 drops Core::Child and exec.rs (the daemon answers only ping; Core::Client owns the wire over an injected Core::Transport).
+- T6 shared edits verified by the main session (10 filter_run_excluding calls, 8 excluded by default). T6 landed `6c25ea68`. 4 docker.rb comment edits are held until qa-round-25 T56 lands; the text is in ~/tmp/lain/r25/.handback-s15-T6.md. T8 is ready (all its waits have landed).
+- T8 started from `6c25ea68`.
+- T8 implemented (ARCHITECTURE, README, toolchain-traps, concurrency: lain-core as the ping-only wire seed, lain-fence in both diagrams, the vsock flake retired); light review started.
+- T8 light review APPROVE-WITH-FIXES; the main session removed the stale dup'd-fd edge and named the bwrap and strace hop in the topology diagram. T8 landed `5f85b6ea`. Left: T10 to T14 (behind qa-round-25 T53) and the held docker.rb follow-up (behind T56).
+- T10 started from `9d63c261` (qa-round-25 T53 and T57 landed; purge done 20:07; ~/.local/state/lain/sessions holds only empty dirs that spec runs created, no ndjson).
