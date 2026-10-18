@@ -1,0 +1,199 @@
+# Synthetic values only, each labelled by whether it is a secret. Generated once with a fixed
+# seed and frozen here, so the measured score cannot drift with the generator.
+# A vendor-shaped value is written as parts the spec joins, because a push scanner matches the
+# whole token and refuses a push that carries one, fake or not.
+- label: aws id
+  value: [AKIA, PEZWDTXH4ZOXIZOK]
+  secret: true
+- label: aws secret
+  value: [AiNMeWhSal36gt8Sf4y3, 1W79aI4joMeUjxJditWb]
+  secret: true
+- label: gh token
+  value: [ghp_, aq2FDSC8hxkPJa9hxC3GvKJHd7BHtBetH7E5]
+  secret: true
+- label: stripe
+  value: [sk_live_, LjDrFctYsv3dl6VqmDRPjmdU]
+  secret: true
+- label: slack
+  value: [xoxb-, 64233247356-88832438581-8p7JWeRiA62RVxnYNdDmmpDi]
+  secret: true
+- label: jwt
+  value: [eyJhbGciOiJIUzI1NiJ9., eyJzdWIiOiIxMjM0NSJ9.2M1gvSBhrQVfK0PPDAa8wImgOI7QU0XDMQrfpX2mPOC]
+  secret: true
+- label: b64 16
+  value: 2VLjxveBmPlg4Hvv
+  secret: true
+- label: b64 24
+  value: ERC4Z335mmTKhv6PMpR7sCqf
+  secret: true
+- label: b64 32
+  value: JnG1xFHTO0BoTPQGIFW3MsjjnvRbFoqW
+  secret: true
+- label: hex 16
+  value: 91e153f20daae4ab
+  secret: true
+- label: hex 32
+  value: c87149ce36ac71f027c00c9e820fb550
+  secret: true
+- label: hex 40
+  value: 9ba0845cbd1dea40f7cfa20efeed39d8371a01bb
+  secret: true
+- label: hex 64
+  value: 46fdb1deecbc01aa0cb184e1f6852c4c74b12852962577556fd0a6e4e6d2c68d
+  secret: true
+- label: pw Tr0ub4dor
+  value: Tr0ub4dor&3
+  secret: true
+- label: pw hunter2pass
+  value: hunter2pass
+  secret: true
+- label: pw short
+  value: s3cr3t!x
+  secret: true
+- label: pw passphrase
+  value: correct-horse-battery-staple
+  secret: true
+- label: urlsafe 22
+  value: B73qU8fODjS3NogcLwXUjJ
+  secret: true
+- label: postgres pw
+  value: postgres://app:puGJvguauHvclVlKiTR9@db.internal.example.com:5432/app
+  secret: true
+- label: postgres weak
+  value: postgres://app:hunter2pass@db:5432/app
+  secret: true
+- label: mysql pw
+  value: mysql2://root:Tr0ub4dor&3@10.0.0.5/app
+  secret: true
+- label: redis pw
+  value: redis://:h1hvtNwTYJrHi0pksB7rANai@cache.internal:6379/0
+  secret: true
+- label: amqp pw
+  value: amqps://guest:nymXId8GArlbLL2W@mq.example.com/vhost
+  secret: true
+- label: mongo srv
+  value: mongodb+srv://user:jBtRYucVi6u5WkG6Tc@cluster0.abcde.mongodb.net/db?retryWrites=true
+  secret: true
+- label: mongo weak
+  value: mongodb+srv://user:pass1234@cluster0.mongodb.net/db
+  secret: true
+- label: adonet
+  value: Server=db.example.com;Database=app;User Id=sa;Password=w8dPC1p0TMjPPK;
+  secret: true
+- label: adonet weak
+  value: Server=x;User Id=u;Password=Tr0ub4dor3;
+  secret: true
+- label: kv pwd
+  value: host=db user=app password=hunter2pass dbname=app
+  secret: true
+- label: url token q
+  value: https://api.example.com/v1/x?token=OmIKwf7pdLYwUoKtYSL5UxfylA1IqPtI
+  secret: true
+- label: url sig q
+  value: https://s3.example.com/b/k?X-Amz-Signature=f2a43487aa0278a8d404174cd9f010a6e2024f41a002376c9356d8c67c3b8b56&X-Amz-Expires=300
+  secret: true
+- label: url sig q short
+  value: https://cdn.example.com/a?sig=CKcDNP2Q6iMArqh2
+  secret: true
+- label: url key q
+  value: https://api.example.com/v1?api_key=854ee307ecc4f08a5bf0c7ba5c159419
+  secret: true
+- label: uuid
+  value: 550e8400-e29b-41d4-a716-446655440000
+  secret: false
+- label: uuid2
+  value: fe8c394e-dec9-4db9-9d53-606b66924ff0
+  secret: false
+- label: git sha
+  value: 6a56b859e4d60f62ad31670047029612ee2f8dc9
+  secret: false
+- label: git sha7
+  value: a72477c
+  secret: false
+- label: sha256 digest
+  value: cb9fd10187a4af6b1487e3db3e6495d79eeac9ed7698b86b222b514149db5efa
+  secret: false
+- label: semver
+  value: 1.24.3-rc.1
+  secret: false
+- label: semver2
+  value: v20.11.1
+  secret: false
+- label: host1
+  value: db.internal.example.com
+  secret: false
+- label: host2
+  value: ip-10-0-1-23.ec2.internal
+  secret: false
+- label: path1
+  value: "/var/lib/postgresql/data"
+  secret: false
+- label: path2
+  value: "/home/user/.cache/x"
+  secret: false
+- label: path3
+  value: "/usr/local/lib/ruby/gems/4.0.0/gems/activesupport-8.0.1/lib"
+  secret: false
+- label: rails env
+  value: production
+  secret: false
+- label: rails env2
+  value: development
+  secret: false
+- label: port
+  value: '5432'
+  secret: false
+- label: date
+  value: '2026-10-18'
+  secret: false
+- label: datetime
+  value: '2026-10-18T12:34:56Z'
+  secret: false
+- label: bool
+  value: 'true'
+  secret: false
+- label: url nopw
+  value: https://api.example.com/v1/things
+  secret: false
+- label: pg nopw
+  value: postgres://app@db.internal.example.com:5432/app
+  secret: false
+- label: pg nopw2
+  value: postgres://db:5432/app_development
+  secret: false
+- label: redis nopw
+  value: redis://cache.internal:6379/0
+  secret: false
+- label: amqp nopw
+  value: amqp://mq.example.com:5672/vhost
+  secret: false
+- label: mongo nopw
+  value: mongodb+srv://cluster0.abcde.mongodb.net/db?retryWrites=true
+  secret: false
+- label: adonet nopw
+  value: Server=db.example.com;Database=app;Integrated Security=true;
+  secret: false
+- label: url q harmless
+  value: https://example.com/search?q=hello&page=2
+  secret: false
+- label: locale
+  value: en_US.UTF-8
+  secret: false
+- label: email
+  value: dev@example.com
+  secret: false
+- label: docker img
+  value: registry.example.com/team/app:1.2.3
+  secret: false
+- label: kebab path
+  value: "/srv/app/releases/20261018123456/public"
+  secret: false
+- label: long ident
+  value: com.example.application.MainActivityLongName
+  secret: false
+- label: ci url
+  value: https://ci.example.com/job/build-and-deploy-main/1234/
+  secret: false
+- label: s3 bucket
+  value: my-company-prod-assets-us-east-1
+  secret: false

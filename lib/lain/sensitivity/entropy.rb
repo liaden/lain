@@ -35,6 +35,20 @@ module Lain
       HEX = /\A[0-9a-fA-F]+\z/
       BASE64 = %r{\A[A-Za-z0-9+/=_-]+\z}
 
+      # The relaxed bar for a value passed under a name that hints at a
+      # connection string, measured on a 65-value labelled corpus: 16 chars at
+      # 3.5 bits found the most secrets for the fewest harmless values. The
+      # three character classes are what keep a UUID or a long identifier out.
+      HINTED_LENGTH = 16
+      HINTED_ENTROPY = 3.5
+      HINTED_CLASSES = [/[a-z]/, /[A-Z]/, /[0-9]/].freeze
+      # Hex has one letter case and tops out at 4.0 bits, so a hex key cannot
+      # pass the class rule and gets its own branch. At 3.0 bits it took the
+      # corpus from 27 secrets to 28 with no new harmless value. The letter
+      # rule keeps a 16-digit number or a 17-digit timestamp out.
+      HINTED_HEX = /\A(?=.*[a-f])[0-9a-f]{#{HINTED_LENGTH},}\z/i
+      HINTED_HEX_ENTROPY = 3.0
+
       class << self
         def high?(token)
           return token.length >= HEX_LENGTH && shannon(token) >= HEX_ENTROPY if token.match?(HEX)
@@ -43,6 +57,14 @@ module Lain
         end
 
         def predictable?(token) = slash_joined_words?(token) || alphabet_run?(token)
+
+        def hinted?(token)
+          return false if token.include?("/") || predictable?(token)
+          return shannon(token) >= HINTED_HEX_ENTROPY if token.match?(HINTED_HEX)
+
+          token.length >= HINTED_LENGTH && HINTED_CLASSES.all? { token.match?(_1) } &&
+            shannon(token) >= HINTED_ENTROPY
+        end
 
         # Bits per character. `each_char` over BINARY bytes is deliberate: the
         # measure is over the symbols as they were written, and re-decoding to
