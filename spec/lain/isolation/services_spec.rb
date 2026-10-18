@@ -43,6 +43,20 @@ RSpec.describe Lain::Isolation::Services do
       expect(services.first).to be_a(Lain::Isolation::Services::Compose)
     end
 
+    it "forwards a declared scheme into the compose service's URL" do
+      services = load_services(
+        %(compose service: "cache", container_port: 6379, env_var: "CACHE_URL", scheme: "cache"\n)
+      )
+
+      expect(services.first.url(32_768)).to eq("cache://localhost:32768")
+    end
+
+    it "defaults a compose service's URL scheme to tcp" do
+      services = load_services(%(compose service: "cache", container_port: 6379, env_var: "CACHE_URL"\n))
+
+      expect(services.first.url(32_768)).to eq("tcp://localhost:32768")
+    end
+
     it "declares several services in declaration order" do
       services = load_services(%(postgres\ncompose service: "cache", container_port: 6379, env_var: "CACHE_URL"\n))
 
@@ -70,34 +84,9 @@ RSpec.describe Lain::Isolation::Services do
         .to raise_error(Lain::Error, /mongodb.*postgres.*compose/m)
     end
 
-    # Redis was a real verb once, so a `.lain/services.rb` that worked before an
-    # upgrade hits this line. A bare "unknown service" would strand its author
-    # with no route, which is why the retired verb keeps a method of its own.
-    it "refuses a retired `redis` line by name rather than as an unknown verb" do
+    it "refuses a redis line as an unknown service, with no upgrade message" do
       expect { load_services("redis\n") }
-        .to raise_error(Lain::Error, /`redis` service was retired/)
-    end
-
-    it "names the container route in the refusal, so an upgraded project knows what to declare instead" do
-      expect { load_services("redis\n") }
-        .to raise_error(Lain::Error, /container.*compose|compose.*container/mi)
-    end
-
-    it "quotes the whole replacement declaration, so the refusal is copy-pasteable rather than a hint" do
-      expect { load_services("redis\n") }
-        .to raise_error(Lain::Error,
-                        a_string_including(Lain::Isolation::Services::Builder::REDIS_REPLACEMENT))
-    end
-
-    # Advice a spec cannot falsify is advice that rots, so the refusal's
-    # replacement line is DECLARED here through the real DSL and the URL it
-    # yields is checked -- `scheme:` is what stands between this and a
-    # `tcp://host:port` no redis client parses.
-    it "hands over a replacement line that really works, yielding a URL a redis client can parse" do
-      services = load_services("#{Lain::Isolation::Services::Builder::REDIS_REPLACEMENT}\n")
-
-      expect(services.first.name).to eq(:compose_redis)
-      expect(services.first.url(32_768)).to eq("redis://localhost:32768")
+        .to raise_error(Lain::Error, /unknown service :redis/)
     end
 
     it "refuses a duplicate service declaration loudly (a second one would silently clobber its URL)" do

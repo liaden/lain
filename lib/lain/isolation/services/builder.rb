@@ -13,23 +13,7 @@ module Lain
       class Builder
         # The DSL verbs, which ARE the stable user surface. Named here so an
         # unknown verb's error can list them.
-        #
-        # {#redis} is deliberately NOT here while still being a defined method,
-        # so `respond_to?(:redis)` answers true for a verb this list omits. The
-        # divergence is the point: the method exists only to refuse, and a
-        # retired verb belongs in neither the valid set an error reads back nor
-        # the unknown-verb path that would strand its author.
         VERBS = %i[postgres compose].freeze
-
-        # The declaration that replaces a retired `redis` line. Spelled out once
-        # so the refusal hands over something copy-pasteable AND a spec can
-        # declare THIS STRING through the real DSL and check the URL it yields:
-        # advice a spec cannot falsify is advice that rots. `scheme:` is load
-        # bearing -- {Services::Compose} defaults it to "tcp", and a
-        # `tcp://host:port` REDIS_URL fails inside the operator's own app, as
-        # far from this refusal as a failure can land.
-        REDIS_REPLACEMENT = 'compose service: "redis", container_port: 6379, ' \
-                            'env_var: "REDIS_URL", scheme: "redis"'
 
         # `path` and line 1 give backtraces that point into the user's
         # `.lain/services.rb`, not into this evaluator.
@@ -47,27 +31,6 @@ module Lain
 
         def postgres(**) = declare(Services::Postgres.new(**))
         def compose(**) = declare(Services::Compose.new(**))
-
-        # Retired rather than merely dropped, because a working `.lain/services.rb`
-        # hits this on upgrade and a bare "unknown service" would strand it.
-        #
-        # Every other service here derives its resource from the WORKER KEY --
-        # postgres names a database from it, compose names a project from it.
-        # Redis alone allocated a logical DB-index out of state shared across one
-        # backend's workers, so a second backend resolved in one run handed out a
-        # colliding index, and redis's own 16 logical DBs capped the fan-out on
-        # top of that. A container has neither problem, so that is the route.
-        def redis(**)
-          # A verb that WAS real and is not any more. Said apart from an unknown
-          # verb because a typo and an upgrade are different operator problems: a typo
-          # wants the valid set read back, while a file that worked yesterday
-          # wants the route that replaced what it declared.
-          raise Error, "the `redis` service was retired from .lain/services.rb; a container is the " \
-                       "isolation route for redis now -- put it in your compose file and declare it " \
-                       "here as `#{REDIS_REPLACEMENT}`, which leases a stack per worker with no " \
-                       "shared DB-index and no 16-database ceiling. " \
-                       "Known services: #{VERBS.join(", ")}"
-        end
 
         def method_missing(name, *, **)
           # An unrecognized service verb. The DSL is a stable surface, so a typo
