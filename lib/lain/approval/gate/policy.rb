@@ -183,6 +183,7 @@ module Lain
           # deferral parks into the very partition a later stage must find
           # drained.
           def decide(artifact, gate:, stage:, epic_slug:, issue_id: nil, criteria_digest: nil)
+            Epic::Stage.new(stage).ensure_parkable!(issue_id:)
             approved = super
             @queue.park(artifact_digest: artifact.digest, epic_slug:, stage:, issue_id:, criteria_digest:,
                         question: artifact.gate_question)

@@ -466,9 +466,9 @@ module Lain
       def watch_line(digest) = "lain #{(@watch_argv + [digest]).join(" ")}"
 
       # A lineage closes on a terminal message -- the actor farewell's
-      # `lifecycle: "stopped"` marker, a one-shot's `result` body, or a
-      # one-shot's `lifecycle: "failed"` -- and the closed spawn is whichever
-      # windowed digest the record's causal_parents name. Deleting the window
+      # `lifecycle: "stopped"` marker (a one-shot's completion speaks it too),
+      # or a one-shot's `lifecycle: "failed"` -- and the closed spawn is
+      # whichever windowed digest the record's causal_parents name. Deleting the window
       # entry makes a redelivered terminal a no-op, so the rename never fires
       # twice at a title that no longer matches. {StatusFeed::SpawnLifecycle}
       # is asked rather than tested inline, so {StatusFeed} can ask the same

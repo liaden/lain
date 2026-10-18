@@ -10,12 +10,9 @@ module Lain
     # `"launched"`, `"settled"`, `"stopped"`, `"failed"`. A one-shot's
     # completion speaks `"stopped"` like any other transition when its child
     # answered or was stopped, and `"failed"` when its child raised; only the
-    # one that answered carries a `"result"`. LEGACY completions carry a
-    # `"result"` and no mark, and a mark added to the writer cannot be
-    # backfilled onto journals already on disk, since
-    # `Bench::Session::MessageReplay` re-derives a historical digest from the
-    # historical body. So both shapes are read here, by name, rather than one
-    # reader growing its own copy of this test and the next growing another.
+    # one that answered carries a `"result"`. The mark is the only terminal
+    # signal: a completion with a result and no mark is not terminal, and is
+    # named on {#unrecognized}.
     #
     # Written to the shape of {Compaction::Boundary}: read once at
     # construction, frozen, and never raising -- both readers of this object
@@ -29,16 +26,20 @@ module Lain
       STOPPED = "stopped"
       FAILED = "failed"
 
+      # What {#unrecognized} names for a completion that carries a `"result"`
+      # and no `"lifecycle"` mark at all.
+      UNMARKED = :unmarked
+
       # The closed set a `"lifecycle"` mark is checked against. A value
       # outside it is never trusted as terminal OR as safely non-terminal --
       # it is named on {#unrecognized} so a caller can tell "nothing happened
       # yet" apart from "something happened that this object does not know".
       MARKS = [LAUNCHED, SETTLED, STOPPED, FAILED].freeze
 
-      # @return [String, nil] the `"lifecycle"` value the record's body
-      #   carried, when that value falls outside {MARKS}. nil when the body
-      #   carried a recognized mark, no mark at all, or no body this object
-      #   could read.
+      # @return [String, Symbol, nil] the `"lifecycle"` value the record's body
+      #   carried, when that value falls outside {MARKS}; {UNMARKED} for a
+      #   completion with a `"result"` and no mark. nil when the body carried a
+      #   recognized mark, or nothing a completion would.
       attr_reader :unrecognized
 
       # @param record [#body, #payload] a {Telemetry::Message} or a raw
@@ -66,18 +67,7 @@ module Lain
         mark = -mark if mark.is_a?(String)
         @mark = MARKS.include?(mark) ? mark : nil
         @unrecognized = mark if !mark.nil? && @mark.nil?
-        # A "result" key names a FINISHED one-shot's completion body (only
-        # {Tools::Subagent::Lineage#message} ever writes one, and a child that
-        # failed or was stopped gets {Tools::Subagent::Lineage#ended}, which
-        # writes none), so its presence is read as terminal ON ITS OWN --
-        # never conditioned on which mark, if any, rides beside it, which is
-        # what lets a legacy result-only body and a marked one answer alike.
-        # The one thing a "result" body can never mean is "settled" -- an
-        # actor's settled reply and a one-shot's completion are written by
-        # different methods and never share a key. This reading rests on
-        # convention, not on type: nothing stops a FUTURE `:message` writer
-        # from emitting its own "result" key, and whoever adds the next one
-        # should read this comment before assuming the inference still holds.
+        @unrecognized = UNMARKED if @mark.nil? && mark.nil? && body.key?("result")
         @result = body.key?("result")
         freeze
       end
@@ -89,7 +79,7 @@ module Lain
       #
       # @return [Boolean]
       def terminal?
-        @mark == STOPPED || @mark == FAILED || @result
+        @mark == STOPPED || @mark == FAILED
       end
 
       # A child that raised: its completion ends the spawn, and its head is

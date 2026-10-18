@@ -247,6 +247,21 @@ RSpec.describe Lain::StatusFeed do
       expect(published["fleet"]).to eq([])
     end
 
+    it "keeps a spawn whose completion carries no mark, and still publishes the next record" do
+      feed = described_class.new(path:)
+      launch = spawn_event("a")
+      feed << launch
+      unmarked = Lain::Event.new(kind: :message, payload_digest: "blake3:msg-unmarked",
+                                 body: { "result" => "the answer", "final" => "blake3:final" },
+                                 causal_parents: [launch.digest, "blake3:final"], from: "child", to: "parent")
+
+      feed << unmarked
+      expect(published["fleet"]).to eq([launch.digest])
+
+      feed << message_event("next", to: "human")
+      expect(published["inbox_count"]).to eq(1)
+    end
+
     it "keeps an actor that has only settled a turn -- settled rides every reply, not just the last" do
       feed = described_class.new(path:)
       launch = spawn_event("a")

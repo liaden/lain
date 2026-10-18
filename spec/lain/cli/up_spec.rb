@@ -86,7 +86,8 @@ RSpec.describe Lain::CLI::Up do
     # StatusFeed composes it with, so a fixture cannot agree with a renderer
     # that both got wrong.
     def write_state(cache_deadline:, fleet:, inbox_count:)
-      struct = { "cache_deadline" => cache_deadline, "fleet" => fleet, "inbox_count" => inbox_count }
+      struct = PublishedFeedState.build("cache_deadline" => cache_deadline, "fleet" => fleet,
+                                        "inbox_count" => inbox_count)
       File.write(state_path,
                  JSON.generate(struct.merge("hud" => Lain::StatusFeed::Reading.new(struct).hud(now: Time.now))))
     end

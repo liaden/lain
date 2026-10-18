@@ -93,9 +93,8 @@ module Lain
 
       # The boundary check a gate runs before it opens at this stage.
       #
-      # @param queue [#drained?, #approved?, #parked] the sign-off queue, asked
-      #   per earlier partition; `#parked` only once the check has refused, to
-      #   name a park that holds every issue's gate
+      # @param queue [#drained?, #approved?] the sign-off queue, asked per
+      #   earlier partition
       # @param epic_slug [#to_s] the epic being walked; nothing outside it is consulted
       # @param issue_id [String, nil] the issue whose gate is opening; nil
       #   checks every issue, the conservative reading
@@ -107,7 +106,19 @@ module Lain
         unapproved = (preceding - parked).reject { |earlier| approved?(earlier, queue, epic_slug, issue_id) }
         return self if parked.empty? && unapproved.empty?
 
-        raise StageBlocked, blocked_message(parked, unapproved, queue, epic_slug, issue_id)
+        raise StageBlocked, blocked_message(parked, unapproved, epic_slug, issue_id)
+      end
+
+      # The refusal a park runs before it reaches the queue: a park in an
+      # issue-scoped stage with no issue would hold every issue's gate.
+      #
+      # @param issue_id [String, nil] the issue the park is about
+      # @return [Stage] self
+      # @raise [Error] for an issue-scoped stage and no issue
+      def ensure_parkable!(issue_id:)
+        raise Error, "#{name} is issue-scoped -- a park there must name its issue" if issue_scoped? && issue_id.nil?
+
+        self
       end
 
       def to_s = name
@@ -120,39 +131,21 @@ module Lain
         queue.approved?(epic_slug, earlier.name, issue_id: (issue_id if earlier.issue_scoped?))
       end
 
-      def blocked_message(parked, unapproved, queue, epic_slug, issue_id)
-        reasons = [(held(parked, queue, epic_slug, issue_id) unless parked.empty?),
+      def blocked_message(parked, unapproved, epic_slug, issue_id)
+        reasons = [(held(parked) unless parked.empty?),
                    (never_approved(unapproved) unless unapproved.empty?)]
         "epic #{epic_slug.to_s.inspect} cannot open its #{name} stage#{for_issue(issue_id)} -- " \
           "#{reasons.compact.join("; ")}"
       end
 
-      def held(parked, queue, epic_slug, issue_id)
+      def held(parked)
         "#{parked.map(&:name).join(", ")} still holds sign-offs parked " \
-          "(approve or deny them before the boundary opens)#{unscoped(parked, queue, epic_slug, issue_id)}"
+          "(approve or deny them before the boundary opens)"
       end
 
       def never_approved(unapproved)
         "#{unapproved.map(&:name).join(", ")} not approved " \
           "(a stage opens only once every earlier stage carries an approved sign-off)"
-      end
-
-      # A park in an issue-scoped stage that names no issue -- written before
-      # gates named their issue -- holds EVERY issue's gate. Named, or a reader
-      # goes looking for a parked sibling that is not there. Asked of the queue
-      # only once the check has already refused.
-      def unscoped(blocked, queue, epic_slug, issue_id)
-        return "" unless issue_id
-
-        blocked.select(&:issue_scoped?)
-               .flat_map { |earlier| queue.parked(epic_slug, earlier.name, issue_id:) }
-               .reject(&:issue_id)
-               .map { |item| legacy_note(item) }
-               .join
-      end
-
-      def legacy_note(item)
-        "; #{item.artifact_digest} (#{item.stage}) names no issue, so it holds every issue's gate"
       end
 
       def for_issue(issue_id) = issue_id ? " for issue #{issue_id.to_s.inspect}" : ""

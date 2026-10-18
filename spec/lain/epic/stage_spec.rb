@@ -278,20 +278,26 @@ RSpec.describe Lain::Epic::Stage do
         .to raise_error(Lain::Epic::StageBlocked, /epic_plan/)
     end
 
-    # A park written before gates named their issue holds every issue's
-    # boundary; the refusal says which one, and why it reaches this issue.
-    it "names a park that names no issue, by digest, when it holds an issue's gate" do
-      park(epic_slug: "alpha", stage: "issue_plan", digest: "blake3:legacy")
-
-      expect { stage("implementation").ensure_open!(queue, epic_slug: "alpha", issue_id: "b") }
-        .to raise_error(Lain::Epic::StageBlocked, /blake3:legacy.*names no issue/m)
-    end
-
     it "reads a check that names no issue as every issue's" do
       park(epic_slug: "alpha", stage: "issue_plan", issue_id: "a")
 
       expect { stage("implementation").ensure_open!(queue, epic_slug: "alpha") }
         .to raise_error(Lain::Epic::StageBlocked, /issue_plan/)
+    end
+  end
+
+  describe "parking a decision" do
+    it "refuses an issue-scoped stage's park that names no issue, before the queue is asked" do
+      expect { stage("issue_plan").ensure_parkable!(issue_id: nil) }
+        .to raise_error(Lain::Error, /issue_plan.*issue/)
+    end
+
+    it "lets an issue-scoped stage park once it names its issue" do
+      expect(stage("implementation").ensure_parkable!(issue_id: "a")).to eq(stage("implementation"))
+    end
+
+    it "lets an epic-wide stage park with no issue" do
+      expect(stage("epic_plan").ensure_parkable!(issue_id: nil)).to eq(stage("epic_plan"))
     end
   end
 

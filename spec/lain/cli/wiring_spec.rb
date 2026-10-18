@@ -2339,7 +2339,7 @@ RSpec.describe Lain::CLI::Wiring do
         paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
         path = Lain::CLI::InputSocket.path(name: "wiring", paths:, cwd: Dir.pwd)
         stdin = StringIO.new("never read\n")
-        allow(status_feed).to receive(:state).and_return({})
+        allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
         wiring = described_class.new(options: { grace: 5, input: "socket:wiring" }, chronicle:, status_feed:,
                                      paths:, stdin:, tty_factory: tty_factory(dir), conductor_opener:)
         pane = Thread.new { end_the_chat_from_a_pane(path) }
@@ -2372,7 +2372,7 @@ RSpec.describe Lain::CLI::Wiring do
       Dir.mktmpdir do |dir|
         paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
         path = Lain::CLI::InputSocket.path(name: "wiring-history", paths:, cwd: Dir.pwd)
-        allow(status_feed).to receive(:state).and_return({})
+        allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
         wiring = described_class.new(options: { grace: 5, input: "socket:wiring-history" }, chronicle:, status_feed:,
                                      paths:, stdin: StringIO.new, tty_factory: tty_factory(dir), conductor_opener:)
         pane = Thread.new { type_at_you_from_a_pane(path, "quit") }
@@ -2391,7 +2391,7 @@ RSpec.describe Lain::CLI::Wiring do
       transcripts = Dir.mktmpdir do |dir|
         paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
         path = Lain::CLI::InputSocket.path(name: "wiring-echo", paths:, cwd: Dir.pwd)
-        allow(status_feed).to receive(:state).and_return({})
+        allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
         outputs = []
         factory = lambda do |channel:, **|
           Lain::Frontend::TTY.new(channel:, output: StringIO.new.tap { |io| outputs << io },
@@ -2938,7 +2938,7 @@ RSpec.describe Lain::CLI::Wiring do
       # The fleet reading the renderer takes off the feed. Stubbed here and
       # nowhere else, because this is the only block that actually composes a
       # prompt -- every other #run spec leaves the renderer unused.
-      before { allow(status_feed).to receive(:state).and_return({ "fleet" => [] }) }
+      before { allow(status_feed).to receive(:state).and_return(PublishedFeedState.build("fleet" => [])) }
 
       # Records what #run passed, and still builds a working TTY so the rest
       # of the run proceeds exactly as the specs above drive it.

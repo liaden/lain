@@ -40,11 +40,16 @@ RSpec.describe Lain::StatusFeed::SpawnLifecycle do
     end
   end
 
-  describe "a one-shot completion carrying only a result is terminal" do
-    it "is terminal" do
-      lifecycle = described_class.new(record({ "result" => "found 3 papers", "final" => "blake3:f1na" }))
+  describe "a one-shot completion carrying only a result has no mark to be terminal by" do
+    let(:lifecycle) { described_class.new(record({ "result" => "found 3 papers", "final" => "blake3:f1na" })) }
 
-      expect(lifecycle.terminal?).to be(true)
+    it "is not terminal, and reports the missing mark instead of raising" do
+      expect(lifecycle.terminal?).to be(false)
+      expect(lifecycle.unrecognized).to eq(:unmarked)
+    end
+
+    it "still finished, which is what readers of finished work ask" do
+      expect(lifecycle.finished?).to be(true)
     end
   end
 
@@ -115,17 +120,17 @@ RSpec.describe Lain::StatusFeed::SpawnLifecycle do
     end
   end
 
-  describe "a result stays terminal no matter which mark, if any, rides beside it" do
-    it "is terminal when paired with a recognized non-stopped mark" do
+  describe "a result does not make a record terminal; the mark does" do
+    it "is not terminal when paired with a recognized non-stopped mark" do
       lifecycle = described_class.new(record({ "result" => "found 3 papers", "lifecycle" => "launched" }))
 
-      expect(lifecycle.terminal?).to be(true)
+      expect(lifecycle.terminal?).to be(false)
     end
 
-    it "is terminal when paired with an unrecognized mark, and still reports it" do
+    it "is not terminal when paired with an unrecognized mark, and still reports it" do
       lifecycle = described_class.new(record({ "result" => "found 3 papers", "lifecycle" => "meandering" }))
 
-      expect(lifecycle.terminal?).to be(true)
+      expect(lifecycle.terminal?).to be(false)
       expect(lifecycle.unrecognized).to eq("meandering")
     end
   end
@@ -151,7 +156,8 @@ RSpec.describe Lain::StatusFeed::SpawnLifecycle do
     end
 
     it "reads a one-shot completion's body, not its envelope, so it is terminal" do
-      lifecycle = described_class.new(event({ "result" => "found 3 papers", "final" => "blake3:f1na" }))
+      lifecycle = described_class.new(event({ "result" => "found 3 papers", "final" => "blake3:f1na",
+                                              "lifecycle" => "stopped" }))
 
       expect(lifecycle.terminal?).to be(true)
     end
@@ -186,16 +192,16 @@ RSpec.describe Lain::StatusFeed::SpawnLifecycle do
       expect(lifecycle.unrecognized).to eq("meandering")
     end
 
-    it "reads a result paired with a recognized non-stopped mark as terminal" do
+    it "reads a result paired with a recognized non-stopped mark as not terminal" do
       lifecycle = described_class.new(event({ "result" => "found 3 papers", "lifecycle" => "launched" }))
 
-      expect(lifecycle.terminal?).to be(true)
+      expect(lifecycle.terminal?).to be(false)
     end
 
-    it "reads a result paired with an unrecognized mark as terminal, and still reports the mark" do
+    it "reads a result paired with an unrecognized mark as not terminal, and still reports the mark" do
       lifecycle = described_class.new(event({ "result" => "found 3 papers", "lifecycle" => "meandering" }))
 
-      expect(lifecycle.terminal?).to be(true)
+      expect(lifecycle.terminal?).to be(false)
       expect(lifecycle.unrecognized).to eq("meandering")
     end
   end

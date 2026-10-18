@@ -443,8 +443,8 @@ RSpec.describe Lain::Approval::SignoffQueue do
   # An issue's plan and its implementation are ONE issue's work, so a sign-off
   # parked for issue a must not hold issue b's gate shut. A question that names
   # no issue is answered for EVERY issue -- the conservative reading -- and an
-  # item that names no issue (an epic-wide stage, or a record written before
-  # issues were scoped) is seen by every issue's question for the same reason.
+  # item that names no issue (an epic-wide stage's) is seen by every issue's
+  # question for the same reason.
   describe "issue-scoped partitions" do
     def issue_park(queue, issue_id, digest: "blake3:#{issue_id}")
       park(queue, digest:, stage: "issue_plan", issue_id:)
@@ -479,11 +479,11 @@ RSpec.describe Lain::Approval::SignoffQueue do
       expect(queue.parked("alpha", "issue_plan", issue_id: "b").map(&:artifact_digest)).to eq(["blake3:b"])
     end
 
-    it "lets an item that names no issue hold every issue's question" do
+    it "lets an epic-wide item hold every issue's question" do
       queue = described_class.new
-      park(queue, stage: "issue_plan")
+      park(queue, stage: "epic_plan")
 
-      expect(queue.drained?("alpha", "issue_plan", issue_id: "b")).to be(false)
+      expect(queue.drained?("alpha", "epic_plan", issue_id: "b")).to be(false)
     end
 
     it "folds an issue's deferral and drains it only by a decision for the same issue" do

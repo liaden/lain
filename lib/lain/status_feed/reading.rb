@@ -34,10 +34,13 @@ module Lain
     # property; a periodic republish is the one fix that answers all four, and
     # it is a decision of its own rather than a line here.
     #
-    # Absence is never an error. A missing file, bytes that are not JSON, and
-    # valid JSON that is not a struct are all "nothing published yet", because
-    # every caller is drawing a prompt or a status bar and none of them may
-    # raise there.
+    # An absent PUBLICATION is never an error. A missing file, bytes that are
+    # not JSON, and valid JSON that is not a struct are all "nothing published
+    # yet", because every caller is drawing a prompt or a status bar and none
+    # of them may raise there; {#warmth} answers `:unpublished`. A struct that
+    # WAS published carries `inbox_count`, `derivation_refusal_streak` and
+    # `window_guessed` on every write, so the readers of those three fetch
+    # them and a state lacking one is refused.
     class Reading
       # The terminal's markers -- a filled circle for a cache still inside its
       # sliding TTL, a hollow one for a deadline already passed.
@@ -114,7 +117,7 @@ module Lain
       #   parsed file serves a separate process. BORROWED, not owned: a caller
       #   handing over the live struct keeps writing to it, so this object makes
       #   no immutability promise it could not keep.
-      def initialize(state = {})
+      def initialize(state)
         @state = state
       end
 
@@ -179,18 +182,14 @@ module Lain
 
       def fleet_size = Array(@state["fleet"]).size
 
-      def inbox_count = @state["inbox_count"].to_i
+      def inbox_count = @state.fetch("inbox_count").to_i
 
-      # Zero for a state written before the field existed, and for a
-      # `--no-journal --no-nvim` run where no tee is ever built: absence is
-      # healthy, and a reader deciding whether it is a STALL is doing something
-      # this object deliberately does not.
-      def derivation_refusal_streak = @state["derivation_refusal_streak"].to_i
+      # A reader deciding whether a streak is a STALL is doing something this
+      # object deliberately does not.
+      def derivation_refusal_streak = @state.fetch("derivation_refusal_streak").to_i
 
-      # Only an explicit `true` marks a guess: a state written before the field
-      # existed has nothing to say about its window, and a mark it never earned
-      # would read as a claim.
-      def window_guessed? = @state["window_guessed"] == true
+      # Only an explicit `true` marks a guess.
+      def window_guessed? = @state.fetch("window_guessed") == true
 
       # The mark a percentage carries when its denominator was a guess. A
       # guessed window is a floor somebody picked, so 61% of it can be 15% of

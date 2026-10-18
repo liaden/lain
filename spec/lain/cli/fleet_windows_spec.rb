@@ -66,7 +66,7 @@ RSpec.describe Lain::CLI::FleetWindows do
   def result_record(spawn: spawn_digest)
     Lain::Telemetry::Message.new(
       digest: "blake3:0e50111122223333", kind: :message, from: spawn, to: parent,
-      payload: { "result" => "found 3 papers", "final" => "blake3:f1na" },
+      payload: { "result" => "found 3 papers", "final" => "blake3:f1na", "lifecycle" => "stopped" },
       causal_parents: [spawn, "blake3:f1na"], correlation: spawn
     )
   end

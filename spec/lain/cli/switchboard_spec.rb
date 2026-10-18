@@ -1100,7 +1100,8 @@ RSpec.describe Lain::CLI::Switchboard do
       run_state = Lain::Frontend::PromptComposer::RunState.new(
         agent: instance_double(Lain::Agent, occupancy: 0.0, dispatching?: false,
                                             context: instance_double(Lain::Context, model: "opus")),
-        clock: Lain::RunClock.new(clock: -> { 0.0 }), status_feed: instance_double(Lain::StatusFeed, state: {}),
+        clock: Lain::RunClock.new(clock: -> { 0.0 }),
+        status_feed: instance_double(Lain::StatusFeed, state: PublishedFeedState.build),
         mode: board.mode_switch
       )
 

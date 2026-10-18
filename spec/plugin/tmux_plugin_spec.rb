@@ -77,8 +77,8 @@ RSpec.describe "plugin/tmux" do
   # wrong. Every rendered string the examples below assert is unchanged from
   # when a jq program produced it, which is the migration's own evidence.
   def write_state(cache_deadline:, fleet:, inbox_count:, dir: @dir, **extra)
-    struct = { "cache_deadline" => cache_deadline, "fleet" => fleet, "inbox_count" => inbox_count }
-             .merge(extra.transform_keys(&:to_s))
+    struct = PublishedFeedState.build({ "cache_deadline" => cache_deadline, "fleet" => fleet,
+                                        "inbox_count" => inbox_count }.merge(extra.transform_keys(&:to_s)))
     write_json(state_path(dir), JSON.generate(rendered(struct)))
   end
 

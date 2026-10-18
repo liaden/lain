@@ -18,7 +18,7 @@ require "time"
 RSpec.describe Lain::StatusFeed::Reading do
   let(:now) { Time.utc(2026, 9, 13, 12, 0, 0) }
 
-  def reading(**state) = described_class.new(state.transform_keys(&:to_s))
+  def reading(**state) = described_class.new(PublishedFeedState.build(state))
 
   describe "warmth" do
     it "reports warm while the published deadline is still ahead of the clock" do
@@ -242,9 +242,14 @@ RSpec.describe Lain::StatusFeed::Reading do
       expect(reading(inbox_count: 0).fleet_size).to eq(0)
     end
 
-    it "reads a refusal streak, and a state written before the field as zero" do
+    it "reads a refusal streak" do
       expect(reading(derivation_refusal_streak: 3).derivation_refusal_streak).to eq(3)
-      expect(reading(fleet: []).derivation_refusal_streak).to eq(0)
+    end
+
+    it "refuses a state that lacks a field every publish writes" do
+      %i[inbox_count derivation_refusal_streak window_guessed?].each do |field|
+        expect { described_class.new({}).public_send(field) }.to raise_error(KeyError, /#{field.to_s.delete("?")}/)
+      end
     end
   end
 

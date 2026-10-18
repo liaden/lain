@@ -105,8 +105,8 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
   end
 
-  def decide(policy, artifact: plan, stage: "epic_plan", epic_slug: "alpha")
-    Sync { policy.decide(artifact, gate:, stage:, epic_slug:) }
+  def decide(policy, artifact: plan, stage: "epic_plan", epic_slug: "alpha", issue_id: nil)
+    Sync { policy.decide(artifact, gate:, stage:, epic_slug:, issue_id:) }
   end
 
   # The ask_human-shaped duck the Interactive policy delegates to.
@@ -223,6 +223,13 @@ RSpec.describe Lain::Approval::Gate::Policy do
       decide(policy, stage: "research")
 
       expect(queue.parked("alpha", "research").map(&:artifact_digest)).to eq([plan.digest])
+    end
+
+    it "refuses to park an issue-scoped stage's decision that names no issue, journaling and parking nothing" do
+      expect { decide(policy, stage: "issue_plan") }.to raise_error(Lain::Error, /issue_plan.*issue/)
+
+      expect(decisions).to be_empty
+      expect(queue.to_a).to be_empty
     end
 
     it "parks the artifact's question, so the morning review reads what it is answering" do
@@ -472,7 +479,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
     it "checks the stage boundary exactly once, not once per layer" do
       counted = PolicySpecSupport::CountingQueue.new(queue)
 
-      decide(adjudicated(signoffs: counted), stage: "issue_plan")
+      decide(adjudicated(signoffs: counted), stage: "issue_plan", issue_id: "a")
 
       expect(counted.asked).to eq(%w[research epic_plan])
     end

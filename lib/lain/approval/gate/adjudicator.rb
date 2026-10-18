@@ -408,6 +408,9 @@ module Lain
         # @raise [Epic::StageBlocked] when an earlier stage of this epic still
         #   holds sign-offs parked. Both refusals happen before either spawn, so
         #   a refused gate spends no tokens and journals nothing.
+        # @raise [Lain::Error] for an issue-scoped stage and no issue_id, since
+        #   an adjudication can always defer, and a park there would hold every
+        #   issue's gate
         def call(artifact, stage:, epic_slug:, issue_id: nil, criteria_digest: nil)
           gated = admit(artifact, stage:, epic_slug:, issue_id:)
           evidence = gather(artifact, gated)
@@ -425,6 +428,7 @@ module Lain
         # The answer is exactly what {GateEvidence} is built from, so the
         # issue scope rides beside it into {#settle} rather than inside it.
         def admit(artifact, stage:, epic_slug:, issue_id:)
+          Epic::Stage.new(stage).ensure_parkable!(issue_id:)
           @boundary.ensure_open!(stage, epic_slug:, issue_id:)
           @decided.ensure_undecided!(artifact.digest)
           { artifact_digest: artifact.digest, epic_slug:, stage:, question: artifact.gate_question }

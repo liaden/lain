@@ -228,6 +228,15 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       expect(decisions.first["evidence_digest"]).to eq(Lain::Canonical.digest(evidence_text))
     end
 
+    it "refuses to park an issue-scoped stage's deferral that names no issue, journaling and parking nothing" do
+      expect { adjudicate(adjudicator(spawn_stub(verdict: hedged)), stage: "issue_plan") }
+        .to raise_error(Lain::Error, /issue_plan.*issue/)
+
+      expect(decisions).to be_empty
+      expect(evidence_records).to be_empty
+      expect(queue.to_a).to be_empty
+    end
+
     it "carries the model's hesitation as the reason, so the morning review reads what it said" do
       adjudicate(adjudicator(spawn_stub(verdict: hedged)))
 
@@ -356,7 +365,8 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     it "asks the boundary rule exactly once per decision, not once per call site" do
       counted = AdjudicatorSpecSupport::CountingQueue.new(queue)
 
-      expect(adjudicate(adjudicator(signoffs: counted), stage: "issue_plan")).to be(true)
+      expect(Sync { adjudicator(signoffs: counted).call(plan, stage: "issue_plan", epic_slug: "alpha", issue_id: "a") })
+        .to be(true)
       expect(counted.asked).to eq(%w[research epic_plan])
     end
 

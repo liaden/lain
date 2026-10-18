@@ -501,7 +501,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       instance_double(Lain::Agent, occupancy: 0.384, dispatching?: false,
                                    context: instance_double(Lain::Context, model: "opus"))
     end
-    let(:status_feed) { instance_double(Lain::StatusFeed, state: { "fleet" => %w[a b c] }) }
+    let(:status_feed) { instance_double(Lain::StatusFeed, state: PublishedFeedState.build("fleet" => %w[a b c])) }
     let(:now) { 1000.0 }
     let(:clock) { Lain::RunClock.new(clock: -> { now }) }
 
@@ -518,7 +518,8 @@ RSpec.describe Lain::Frontend::PromptComposer do
     # The HUD's mark, read from the same published struct, so the prompt line
     # and the status bar never disagree about whether the window was a guess.
     it "marks an occupancy the state feed says was measured against a guessed window" do
-      allow(status_feed).to receive(:state).and_return({ "fleet" => [], "window_guessed" => true })
+      allow(status_feed).to receive(:state).and_return(PublishedFeedState.build("fleet" => [],
+                                                                                "window_guessed" => true))
 
       expect(state["occupancy"]).to eq("~38%")
     end
@@ -553,7 +554,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
 
     it "reports nothing for a fleet nobody spawned, so the segment elides" do
-      allow(status_feed).to receive(:state).and_return({ "fleet" => [] })
+      allow(status_feed).to receive(:state).and_return(PublishedFeedState.build("fleet" => []))
 
       expect(state["fleet"]).to be_nil
     end
@@ -565,7 +566,8 @@ RSpec.describe Lain::Frontend::PromptComposer do
     # private over there, so no reader can grow its own copy of the comparison.
     describe "compaction that has stopped" do
       def with_streak(streak)
-        allow(status_feed).to receive(:state).and_return({ "fleet" => [], "derivation_refusal_streak" => streak })
+        allow(status_feed).to receive(:state)
+          .and_return(PublishedFeedState.build("fleet" => [], "derivation_refusal_streak" => streak))
         state["compaction"]
       end
 
@@ -603,11 +605,9 @@ RSpec.describe Lain::Frontend::PromptComposer do
         expect(with_streak(0)).to be_nil
       end
 
-      # A feed that has published no streak at all -- a state file written
-      # before this field existed, or a --no-journal run whose feed sees
-      # nothing. Absence reads as healthy, never as a stall.
-      it "says nothing when the feed carries no streak at all" do
-        allow(status_feed).to receive(:state).and_return({ "fleet" => [] })
+      # A fresh feed, whose streak is zero: healthy, never a stall.
+      it "says nothing when the feed has not seen a refusal" do
+        allow(status_feed).to receive(:state).and_return(PublishedFeedState.build("fleet" => []))
 
         expect(state["compaction"]).to be_nil
       end
@@ -1042,7 +1042,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
   # `( [idle $idle](dim))` group carries that literal word along with the
   # variable -- so eliding the reading is what elides the word.
   describe "the composed line while an ask_human is parked" do
-    let(:status_feed) { instance_double(Lain::StatusFeed, state: { "fleet" => [] }) }
+    let(:status_feed) { instance_double(Lain::StatusFeed, state: PublishedFeedState.build("fleet" => [])) }
     let(:clock) { Lain::RunClock.new(clock: -> { 0.0 }) }
 
     # `path:` is pinned to DEFAULT_CONFIG, as every other rendered-bytes example
@@ -1083,7 +1083,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       instance_double(Lain::Agent, occupancy: nil, dispatching?: false,
                                    context: instance_double(Lain::Context, model: "opus"))
     end
-    let(:status_feed) { instance_double(Lain::StatusFeed, state: { "fleet" => [] }) }
+    let(:status_feed) { instance_double(Lain::StatusFeed, state: PublishedFeedState.build("fleet" => [])) }
     let(:clock) { Lain::RunClock.new(clock: -> { 0.0 }) }
     # Answers neither #scope, #approval nor #layers -- the shape a badly-wired
     # collaborator would take, not a well-formed Mode.
