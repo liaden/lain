@@ -1,5 +1,7 @@
 # Scenario: a Rails blog (long-horizon, high-volume)
 
+**Round 26 is the re-check** for the round 25 fixes stated in §1's window-fill and handoff checks (c25-1 handoff only when nothing is droppable, c25-4 `context_full`).
+
 **Why this one exists:** bowling is a single small file. This scenario is the one built to reach
 **tool-result size** the small scenarios cannot, over a run that stretches across **dozens of
 turns** — so it is the natural home for the three things the small scenarios structurally cannot
@@ -268,9 +270,9 @@ driven — this is integration check 7 of the discharging chunk)*:
   ollama silently shifting the context and going on. `--num-ctx 1024` cannot drive this: the system prompt plus tools
   are about 6,540 tokens, so the prompt is refused first. Launch with `--num-ctx 8192`, no tools, and ask for every
   integer from 1 to 3000 separated by commas. **Close that chat after its one reply and announce it:** it reloads the
-  shared runner for every other chat (`method.md`, round 25). Expect 2 error lines, the first a false "model hit
-  max_tokens" (round 25, c25-4). The reply ends short of `--max-tokens` and the line reads `the reply filled the context window; raise LAIN_NUM_CTX or
-  start a shorter chat`, not `raise --max-tokens`. A cut at `--max-tokens` with room left in the window still
+  shared runner for every other chat (`method.md`, round 25). Expect 2 error lines (round 25, c25-4, fixed): `the reply filled the context window before the model finished`, then
+  `raise LAIN_NUM_CTX or start a shorter chat`. The reply ends short of `--max-tokens`, the turn's `stop_reason` is `context_full`, and
+  neither line says "max_tokens". The old first line, `model hit max_tokens before finishing`, is the finding back. A cut at `--max-tokens` with room left in the window still
   reads the `--max-tokens` line.
 - **An over-window prompt is refused, not truncated.** Lain now asks ollama not to truncate, so a
   prompt past the loaded context comes back refused with the server's own count. *Driven
@@ -322,10 +324,10 @@ driven — this is integration check 7 of the discharging chunk)*:
   `compaction_cut` after it. When the re-render could not shrink, the tail reads `Nothing older can be
   compacted yet` and must not advise compaction.
 
-  **After any earlier cut, a handoff can fire with plenty droppable** (round 25, c25-1): once any cut exists, every
-  over-window refusal goes to a handoff, even with tens of KB droppable. Read `nothing_droppable` on the
-  `compaction_decision` before each handoff; a handoff behind `nothing_droppable: false` is that finding, not the
-  documented fallback.
+  **After any earlier cut, a handoff fires only when nothing is droppable** (round 25, c25-1, fixed): the condition is the decision's
+  own `nothing_droppable`, not "a cut exists", so a session with tens of KB still droppable past its held cut compacts instead of handing off.
+  Read `nothing_droppable` on the `compaction_decision` before each handoff; a handoff behind `nothing_droppable: false` is that finding
+  back. A render that itself compacted and was still refused counts as nothing droppable, so that one hands off.
 
   **The handoff document keeps its state across generations** (round 20's RB-1: the summarizer was fed the
   previous document cut to ~200 characters, so generation 3 read "No progress made"). Drive 3 handoffs in

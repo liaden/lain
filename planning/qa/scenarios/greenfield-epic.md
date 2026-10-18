@@ -1,5 +1,7 @@
 # Scenario: a greenfield epic on the cloud arm
 
+**Round 26 is the re-check** for the round 25 fixes stated in the judge deny and "did not look" notes (k25-1, §6), the stall-timeout check (k25-3, §7) and the launch width notice (retired cloud variable).
+
 **Why this one exists:** on 2026-10-08 the user started `~/dev/frugirl` with `lain up` on
 `--provider ollama-cloud --model glm-5.3` and ran `/research-epic` in an empty directory. The run
 never reached `research.md`. A `grep` over `~/dev` (171.6 GB) froze the whole process until it was
@@ -87,7 +89,7 @@ Checks:
    model or the provider, so do not look for one. `/help` lists `research-epic`, `plan-epic`, `iterate-epic` and
    `create-epic-issues`.
 3. **A launch notice says the width.** The chat pane prints, before the first prompt:
-   `ollama-cloud runs up to 3 cloud requests at once; set LAIN_OLLAMA_CLOUD_CONCURRENCY to change
+   `ollama-cloud runs up to 3 cloud requests at once; set LAIN_PROVIDER_CONCURRENCY to change
    it. It narrows on a concurrency refusal from the server.`
    *Wrong looks like:* silence. The trial ran serialized subagents at width 1 with nothing saying
    so.
@@ -363,14 +365,17 @@ Checks:
 9. **A related directory is in a child's scope as a tree (2026-10-09 trial fixes).** With `sensitivity related: %w[<$QA>/parent/sibling]` set (§4.8),
    ask a researcher to `list_files` and then `glob` `**/*.rs` on `<$QA>/parent/sibling` itself. Neither parks as
    `outside_project`; the trial's researchers were parked on the related root and could read only single files.
-   A path beside it, `<$QA>/parent/slow`, still parks under `ask`. Under `auto` the listing goes to the judge, which denied it with no human surface (round 25, k25-1). State which approval level the step runs at.
+   A path beside it, `<$QA>/parent/slow`, still parks under `ask`. Under `auto` the listing goes to the judge; if the judge denies it, the chat shows a stamped line `the judge denied <tool>(<input>)` and the model is told `the judge refused this call` (round 25, k25-1, fixed), so a refusal is never silent. Under `--non-interactive` the model is told no human can approve it instead. State which approval level the step runs at.
 
 10. **Frugirl round 4 checks (default `auto`, relaunched without `--approval`).** Record the judge's latency
     per call and any approve that was wrong, and count the human prompts for the whole journey against
     round 3's 37. Each call the judge approves leaves one stamped transcript line, `the judge approved
     <tool>(<input>)`, and a call it left for you parks with `the judge deferred this` on its prompt and its
     `lain://approval` row; a call that names a credential or a path lain cannot name for certain (`cat .env`,
-    `ls "$HOME"`) never reaches the judge and parks unmarked. No researcher reads `/etc/passwd` or lists `/home`: each such call is refused or
+    `ls "$HOME"`) never reaches the judge and parks with a quoted note after the call saying why:
+    `the judge did not look: its paths cannot be named`, `the judge did not look: this command is barred from automatic approval`,
+    `the judge did not look: it reaches more files than the judge weighs`, or `the judge did not look: <path> is not a path it may weigh`
+    (round 25, k25-1, fixed). No researcher reads `/etc/passwd` or lists `/home`: each such call is refused or
     parks once and is then refused for that requester for the session with your reason. A deny you give on a
     `bash` call is remembered by the paths its words name, so a later `read_file` of the same path is refused from
     memory, while a deny of a command that names no path of its own (`rm -rf build`) remembers nothing. Press Shift+Tab
@@ -460,7 +465,7 @@ Checks:
     lines (30 KB or more). The run finishes: no `stalled stream` error, `research.md` exists under the epic home, and
     the turn that carried the call is in the journal. A cloud deployment's stall limit is 115s and a local
     ollama's 295s, 5 under each request timeout. **Force a stall to read the message:** launch with
-    `LAIN_STREAM_STALL_TIMEOUT=3` set by `tmux set-environment -g` before `lain up` (exported in the shell it does not reach the chat pane, round 25 k25-3) and repeat. The ask ends with `stalled stream: no bytes for N.Ns, past the 3s
+    `LAIN_STREAM_STALL_TIMEOUT=3` exported in the shell that runs `lain up` and repeat (it reaches the chat pane: `lain up` passes `LAIN_STREAM_STALL_TIMEOUT`, `LAIN_CONNECT_TIMEOUT`, `LAIN_STREAM_DEBUG` and `LAIN_ENV_PASS` on, round 25 k25-3, fixed). The ask ends with `stalled stream: no bytes for N.Ns, past the 3s
     stream_stall_timeout, with the connection still open` and a second line `set LAIN_STREAM_STALL_TIMEOUT to wait longer
     (in seconds; 0 turns the stall check off)`. Unset it again.
     *Wrong looks like:* the trial, 3 of 3 runs ending `stalled_stream` at the document write with nothing on disk, or a

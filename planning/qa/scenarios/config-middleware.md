@@ -1,5 +1,7 @@
 # Scenario: user middleware from config.rb, and the trust that gates it
 
+**Round 26 is the re-check** for the round 25 fixes stated in the refusal at step 3 (j25-3: one sentence naming every missing method).
+
 **Why this one exists:** a `middleware` table in `$XDG_CONFIG_HOME/lain/config.rb` or a project's
 `.lain/config.rb` puts the user's own Ruby around every model call, tool call, turn, repl line and
 HTTP attempt. The specs drive each seam with a double on the far side. What they cannot see is
@@ -85,8 +87,10 @@ cd "$REPO" && lain chat --provider ollama --model qwen3-coder:30b < /dev/null; e
 ```
 
 Expected: refused naming `.lain/config.rb:2`, with `has no verb :modle; known verbs: model, tool,
-turn, repl, http`. Repeat with `turn SomeClass`, where `SomeClass` is defined in the same file and is not callable. The refusal reads `has no instance #call` and
-names an anonymous module (round 25, j25-3); "neither #call nor #settle" is not what prints. Also try `http { }` (a block): each is refused at its own line. A class defined in the user file is not
+turn, repl, http`. Repeat with `turn SomeClass`, where `SomeClass` is a class with neither method (a named class prints its name; an unnamed one prints
+`an anonymous class`). The refusal reads `<name> has no instance #call or #settle`, one sentence naming both missing methods (round 25, j25-3,
+fixed); a `tool` or `repl` class lacking `#call` reads `has no instance #call`. A module is refused as
+`a middleware is a Class, not a Module: <inspect>`. Also try `http { }` (a block): `http takes a Faraday middleware class, not a block`; each is refused at its own line. A class defined in the user file is not
 visible to a project file, so naming one from there refuses as `uninitialized constant`, for the wrong reason. Remove the project file before step 4.
 
 ## 4. a tool middleware in a live cockpit runs outermost

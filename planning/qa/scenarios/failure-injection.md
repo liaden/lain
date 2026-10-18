@@ -1,5 +1,7 @@
 # Scenario: failure injection and record integrity
 
+**Round 26 is the re-check** for the round 25 fixes stated in the severed-reply note after §1b (d25-2: a cut-off reply is committed, marked and told to the model).
+
 **Why this one exists:** these probes are **deterministic and fast** — every expected outcome is a
 constant, a refusal string or an arithmetic fact rather than something a model decides — which makes
 them the cheapest real signal in the whole QA suite. Round 4 ran the lot in a few minutes and all
@@ -155,9 +157,13 @@ made the rule explicit and typed:
   Timeline, and only while that prompt is still the head. Anything else — a mid-stream sever, a
   stall, a `/stop`, a ceiling — leaves it stranded.
 
-`counts_absent` gives no refusal and no fold: an unterminated stream commits its fragment as a complete answer
-(round 25, d25-2, which needs a ruling), so there is nothing here to fold. Drive the fold from another failure
-after the request was sent: sever after the request, read the refusal, then ask something else and confirm one turn
+A severed reply gives no refusal and no fold either: an unterminated stream is committed as the assistant turn,
+marked, and the model is told (round 25, d25-2, ruled). The committed turn carries `meta` `stop_reason: "truncated"` and a final text block,
+`The reply was cut off before the model finished.` (`context_full`, with `The reply filled the context window before the model finished.`,
+for a reply that ran out of window). A `tool_use` in the cut reply never runs: the next turn answers it with an error `tool_result` saying the
+reply was cut off, the tool never ran and had no effects, and a `tool_use` whose id never arrived is dropped. Confirm all three on the
+next request (capture it as in §12). `counts_absent` is the other shape: its prose is whole and it is not marked. So there is nothing here to
+fold. Drive the fold from another failure after the request was sent: sever after the request, read the refusal, then ask something else and confirm one turn
 carries both texts. Then `/rewind 1` before a third ask and confirm the earlier prompt is left out.
 
 **Every stopped ask says why.** `run_interrupted` carries a `reason` from the closed set

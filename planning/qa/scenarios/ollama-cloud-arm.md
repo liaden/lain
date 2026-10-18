@@ -1,5 +1,7 @@
 # Scenario: somebody else's ollama
 
+**Round 26 is the re-check** for the round 25 fixes stated in §6a and §6b (j25-5 loopback width, j25-6 `provider_retry` records counted in the journal).
+
 **What it exercises:** `--provider ollama-cloud` — the hosted ollama arm added 2026-08-24. The
 encoder, decoder and wire format are **byte-identical** to the local arm (pinned by
 `spec/lain/provider/ollama_parity_spec.rb` and re-checked by hand at merge), so everything this
@@ -184,25 +186,29 @@ the headers, so a session's real plan limit is learned on a refusal.
 
 The hosted `Deployment` declares an admission width of **3** by default (it was 1 until 2026-10-08, when the
 trial's serialized subagents showed 1 was below what a paid plan allows), raised or lowered by
-`LAIN_OLLAMA_CLOUD_CONCURRENCY`. `LAIN_PROVIDER_CONCURRENCY` overrides it, and `0` there means unbounded.
-An earlier version of this section said the default was 1; a driver reading that sentence anywhere else
+`LAIN_PROVIDER_CONCURRENCY`, the one variable that sets the gate (a separate cloud-only variable was retired).
+`0` there means unbounded. A loopback `--api-base` is classed local, so with the variable unset it is held to 1 whatever the
+deployment declares; a value in the variable is the operator's choice and is honoured on loopback too. An earlier version of this section said the default was 1; a driver reading that sentence anywhere else
 (the README still does until the docs card lands) has the stale one.
 
 ### 6a. The launch says how many requests will run at once
 
 ```bash
 lain chat --provider ollama-cloud                                   # read the startup lines
-LAIN_OLLAMA_CLOUD_CONCURRENCY=1 lain chat --provider ollama-cloud
+LAIN_PROVIDER_CONCURRENCY=1 lain chat --provider ollama-cloud
 LAIN_PROVIDER_CONCURRENCY=2 lain chat --provider ollama-cloud
 LAIN_PROVIDER_CONCURRENCY=0 lain chat --provider ollama-cloud
 lain chat --provider ollama                                         # the local arm
 ```
 
-1. Default: `ollama-cloud runs up to 3 cloud requests at once; set LAIN_OLLAMA_CLOUD_CONCURRENCY to change
+1. Default: `ollama-cloud runs up to 3 cloud requests at once; set LAIN_PROVIDER_CONCURRENCY to change
    it. It narrows on a concurrency refusal from the server.`
-2. With the cloud variable at 1 the line says `up to 1`. With `LAIN_PROVIDER_CONCURRENCY=2` it says `up to 2` and
-   names **that** variable, because that one is in force. With `0` it reads `ollama-cloud runs with no limit on
+2. With `LAIN_PROVIDER_CONCURRENCY=1` the line says `up to 1 cloud request at once` (singular). With `=2` it says `up to 2 cloud requests at
+   once`. With `0` it reads `ollama-cloud runs with no limit on
    cloud requests; LAIN_PROVIDER_CONCURRENCY=0 set that.`
+   With `--api-base` on a loopback address and the variable unset or empty, the line is instead `ollama-cloud base <base> is a
+   loopback address, so it is held to 1 request, not 3; LAIN_PROVIDER_CONCURRENCY does not lift that.` (T10; round 25, j25-5). With the
+   variable set to a number on loopback, the plain width line appears and that number is honoured.
 3. The local arm prints no such line, and `OLLAMA_API_KEY`'s value appears in no startup line.
    *Wrong looks like:* a notice naming a width other than the one a fan-out then uses, or the line missing from a cockpit's
    chat pane.
@@ -218,26 +224,29 @@ Two ways to force it, and say which you used:
 - **A stub endpoint.** An https server (the arm refuses a plaintext base) that answers the first requests with
   429, the header `x-ratelimit-max-concurrent: 1`, `retry-after: 1`, and a body saying too many concurrent
   requests, then 200. Trust its certificate with `SSL_CERT_FILE`, pass `--api-base https://127.0.0.1:<port>`.
-  **A stub on `127.0.0.1` is classed local, so its width is already 1** (round 25, j25-5): items 1, 3 and 4 cannot
-  be shown with a loopback stub. Say so, or bind the stub to a non-loopback address.
+  **A stub on `127.0.0.1` is classed local, so its width is already 1 with `LAIN_PROVIDER_CONCURRENCY` unset** (round 25, j25-5; the launch
+  notice now says so, see 6a): items 1, 3 and 4 cannot be shown with a loopback stub unless you set the variable to the width you want
+  (an env value is honoured on loopback), or bind the stub to a non-loopback address. Say which you did.
   No such stub is checked in. Copy the response shape from `spec/lain/provider/ollama/retry_tap_spec.rb` (the webmock example near line 355): status 429, body `{"error":"too many concurrent requests"}`, headers `x-ratelimit-max-concurrent: 1` (the spec's refusal helper also sends `x-ratelimit-active`, `x-ratelimit-queue-limit` and `x-ratelimit-queued`), then a 200 with `{}`. The same file's `slow down` and `context length exceeded` bodies, with no concurrency header, are the other-reason 429s of item 5.
 
 Read the journal:
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
-  puts r.slice("type","endpoint","from_width","to_width","max_concurrent","active","queue_limit","queued").to_json \
+  puts r.slice("type","attempt","will_retry_in","status","endpoint","from_width","to_width","max_concurrent","active","queue_limit","queued").to_json \
     if %w[admission_narrowed provider_retry].include?(r["type"])}' "$JOURNAL"
 ```
 
 1. **One `admission_narrowed` record** with `from_width: 3`, `to_width: 1` and the header values as sent
    (`nil` where a header was absent), written once per refusal that moved the width.
 2. **The retried request is sent once by faraday-retry**, not twice: the stub's request count for that call
-   is the original plus 1 retry. The `provider_retry` record per retry that this reduction prints never appears:
-   it is Journalable and never journaled (round 25, j25-6), so count retries at the stub.
+   is the original plus 1 retry. One `provider_retry` record per retry
+   and one more when the retries are spent (its `will_retry_in` is null) are written to the journal (round 25, j25-6, fixed): count them in the journal
+   reduction above, not at the stub, and expect one record per retry the stub served, plus the final one when the retries ran out. Subagent retries land in the parent run's
+   journal too.
 3. **Narrowing never widens.** A later 429 reporting `max-concurrent: 3` leaves the width at 1 and writes no
    second record.
-4. **An explicit setting is the ceiling.** With `LAIN_OLLAMA_CLOUD_CONCURRENCY=2` and a server reporting
+4. **An explicit setting is the ceiling.** With `LAIN_PROVIDER_CONCURRENCY=2` and a server reporting
    3, the width stays 2.
 5. **A 429 for another reason is not concurrency.** A 429 whose headers carry no `max-concurrent` (or a
    context-length body) leaves the width alone and raises as before.

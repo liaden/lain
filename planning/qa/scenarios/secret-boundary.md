@@ -1,5 +1,7 @@
 # Scenario: the secret boundary, all three places
 
+**Round 26 is the re-check** for the round 25 fixes stated in §4e (g25-1: a credential reference is not masked) and §4f (a25-4: every bash result is masked).
+
 **What it exercises:** `Sensitivity::Policy` (the pre-read path gate), `Middleware::WithholdSecretPaths`
 (the listing filter), `Middleware::RedactSecretReads` and `Sensitivity::Regions` (the post-read
 content mask), `Middleware::RefuseSecretWrites`, `Escalation::Triage`'s unliftable rung, the
@@ -576,11 +578,30 @@ in the fixture and read each with `read_file`:
 | `Authorization: Bearer abcdef0123456789abcd` | the token is masked |
 | a bare `ghp_` token on its own line | masked |
 | `mkdir -p build`, `gcc -pthread main.c`, `https://example.com/path`, `password_policy: strict` | **nothing masked**: these are the controls, and a masked row here is a false positive |
-| `password: ${DB_PASS}` | masked as of round 25 (g25-1). It is no longer a control: move it out of the controls, or cite g25-1 against the code if you hold that a variable reference is not a secret |
+| `password: ${DB_PASS}`, `password: $DB_PASS`, `token = ENV.fetch("GITHUB_TOKEN")`, `password: ENV["X_PASS"]`, `#   password: Rails.application.credentials.dig(:smtp, :password),` | **nothing masked**: a whole-value reference names a secret and holds none (round 25, g25-1, fixed). Controls that stay masked: `# password: hunter2pass` (a comment holding a real value), `password: ${DB_PASS}hunter2pass`, `password: ${X:-hunter2pass}` |
 
 `mysql --help -pager` and `confirm_password: required` mask as well; those two are accepted false positives,
 not findings. Each masked read journals `read_redacted` with `regions` of 1 or more, and the §4 item 3 grep
 finds no byte of the value in the journaled request.
+
+### 4f: a bash result is masked, whoever approved the call *(a chat with a model, approval `ask`)*
+
+`RedactSecretReads` is in every guard stack and masks every `bash` result on the way out, errors included (round 25,
+a25-4, fixed). A command's output has no release: nothing parks asking for one.
+
+```bash
+# under /mode ask, ask the model to run:  echo ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789    (ghp_ plus 36 characters)
+```
+
+1. Approve it. The tool result the model sees, the journal's `tool_result` and the chat display carry `<redacted:1>` in place of the
+   token, and the result ends with `1 region was masked in this command's output; a command's output cannot be released.` No approval
+   prompt follows. The live pane may have streamed the raw bytes while it ran: that is the human's own copy.
+2. **A session secret masks even when no pattern matches it.** With `OLLAMA_API_KEY=abc123lowentropyvalue` in the launching environment,
+   `echo abc123lowentropyvalue` comes back masked. A secret-named variable whose value is under 8 bytes (`1`, `true`) is not a mask.
+3. **Clean output is untouched**: `echo hello` has no `<redacted:N>` and no trailer.
+4. Under `auto` or a rule-allowed call, the same print is withheld instead of masked (`bash output withheld: it held ...`), and the
+   command is barred from automatic approval: the retry goes to a human, and a human-approved retry is masked as in 1.
+*Wrong looks like:* the raw token in the tool result, the journal or the display; a prompt offering to release it.
 
 ## 5 — The unliftable rung, and `/mode bypass`
 

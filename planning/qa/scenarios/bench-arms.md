@@ -1,5 +1,7 @@
 # Scenario: the arm driver
 
+**Round 26 is the re-check** for the round 25 fixes stated in the refusal text, "Also confirm" and the `--confine reader` arm (l25-1 lease, T57).
+
 **What it exercises:** `lain bench arms` — the **four** orchestration arms (single-thread control,
 orchestrator-worker, dual-ledger, adaptive-router), the grader, the token ledger, and since 2026-08-18 the **cost
 column and the attribution header**: whether the report says what produced it, and whether it
@@ -42,14 +44,15 @@ consequences worth driving here, because this is where the old split bit hardest
 
 `--isolation` unset is not `none`, and `--journal` without `--isolation` refuses. The refusal now reads
 `--journal records this run's grades AND the isolation leases it takes, and nothing leases without --isolation: drop --journal, or add --isolation worktree to record both...`.
-The tool-floor sentence below is what a bare run with neither flag gets (round 25).
+The tool-floor sentence below is what a bare run with neither flag gets, and `--journal` with `--isolation none` gets it too with `none does not isolate` in place of `nothing isolates` (both sentences driven against the code in the round 25 fix run).
 
 **Round 17 could not run this scenario at all, and two corrections came out of trying.** Both
 refusals below are pre-spend, and both were *driven 2026-09-14* against the built binary:
 
 - **The arms have a tool floor, so they need a checkout to write in.** Without `--isolation
   worktree --journal PATH`, exit 1:
-  `this run's tools can write (bash, edit_file, write_file) and nothing isolates where they write, so they would act in the working tree this command was run from; add --isolation worktree --journal PATH`.
+  `this run's tools can write (bash, edit_file, write_file) and nothing isolates where they write, so they would act in the working tree this command was run from; add --isolation worktree --journal PATH. --isolation worktree holds the paths the tools name inside each arm's worktree; a shell command's reads, and an opaque command's writes, stay open; --confine reader confines a read-only command to the checkout, but an opaque command runs traced and unconfined either way`.
+  The second sentence is the honest reach of the lease (round 25, l25-1, fixed): see "Also confirm".
 - **The routing arm needs a cheap model the operator names, on any backend but Anthropic's.**
   Round 17's refusal said a local model was "no cheaper than" Claude Haiku and pointed at a Ruby
   method argument no CLI user can pass (F110). Since 2026-09-14 `--cheap-model ID` names the routing
@@ -228,9 +231,17 @@ omission is now *visible* for the first time; it is recorded, not fixed.
 
 ## Also confirm
 
-- **Nothing was written outside the worktrees** (round 25, l25-1: an arm wrote outside its worktree, because the
-  run uses an approve-all gate). Run the scenario from a repo with a sentinel file in a parent directory. After the
-  run, `git status` in the scratch repo is clean and nothing outside the worktrees changed, the sentinel included.
+- **Nothing the tools name was written outside the worktrees** (round 25, l25-1, fixed: an arm wrote outside its worktree because
+  the run used an approve-all gate; a leased arm is now held to its worktree, and a call that names a path outside it is refused with
+  `this run is leased to <worktree> and no human is attached to approve a call outside it; work inside <worktree>`). Run the scenario from a
+  repo with a sentinel file in a parent directory. After the run, `git status` in the scratch repo is clean and nothing outside the
+  worktrees changed, the sentinel included. **What this does not cover:** an opaque shell command (`sh -c`, `python3 -c`) still runs
+  and can write outside the lease, which is the limit the refusal text states; `--confine reader` confines only a read-only command.
+- **`--confine reader` is the one chat arm a bench takes** (`--confine off|reader`; `classes` is refused as a chat arm, and `--exec`,
+  `--exec-image`, `--judge-facts` and `--tripwire` are not bench flags). With it, the report's first lines carry `confine:   reader`
+  beside `isolation:` (and `reader (degraded: the box lacks bwrap and landlock)` on a box without them), and the journal's `run_arms`
+  record names it. A refused run writes no record. A read-only bash call such as `cat README.md | wc -l` runs under the reader profile; `touch made.txt`
+  still runs unconfined, in the lease. Round 26 re-checks both.
 - The **dual-ledger arm settles on its ledger rather than its grader**, and its terminal state
   distinguishes a dried-up ledger from a ceiling.
 - **No `StalledStreamError`.** This arm runs concurrent actors against a single-slot ollama, which

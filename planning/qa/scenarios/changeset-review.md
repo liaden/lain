@@ -1,5 +1,7 @@
 # Scenario: reviewing a real changeset, on a local branch
 
+**Round 26 is the re-check** for the round 25 fixes stated in item 4 (h25-10: a verdict or a second `/review` with held notes is refused).
+
 **What it exercises:** `lain review <branch>`, `Review::Source::LocalBranch`, `Review::Changeset`,
 `Delta`/`Hunk`, all three `Review::Partition` strategies, `Review::Bounds`' three ceilings,
 `Review::Verdict::Policy` (strict vs `--permissive`), the `/review` command at `you>`, and
@@ -265,10 +267,13 @@ The three checks a survey structurally cannot make:
    itself, so a note on NEW anchors in the file you can edit.
 3. **`x` marks a hunk, and a changeset has real hunks.** `cockpit-surfaces.md` §4's `x` refusal
    ("nothing on that row") is the sibling failure; here the positive case is reachable.
-4. **A verdict with held notes does not drop them.** Place a note, do not run `:LainNoteDone`, then settle the
-   review with `:LainReviewVerdict approve`. The held note must survive the verdict or the verdict must refuse
-   naming it. Round 25's h25-10: the verdict settles and drops the notes, while `/review-submit` says they are
-   journaled. That mismatch is the finding.
+4. **A verdict with held notes is refused, and nothing is dropped** (round 25, h25-10, fixed). Place a note, do not run
+   `:LainNoteDone`, then `:LainReviewVerdict approve`. It refuses `1 note not handed back -- :LainNoteDone first` (`N notes` for
+   more; a blocking note's `path:line` is appended after a colon) and the review stays open. After `:LainNoteDone`, the same verdict
+   goes through and the journal holds the annotations and the verdict. A second `/review` over an open round with held notes refuses
+   with the same sentence, and journals nothing. The `/review-submit` text says only that the verdict and the *handed-back* annotations are
+   on the journal. A verdict that settles with the note gone, or a submit text that claims a held note is journaled, is the finding back.
+   Round 26 re-checks both.
 
 Then the verdict, both policies:
 

@@ -1,5 +1,7 @@
 # Scenario: the cockpit surfaces (nvim + tmux)
 
+**Round 26 is the re-check** for the round 25 fixes stated in §0 checks 9, 16 and the `--no-nvim` approval lapse line (b25-3, b25-5, b25-8: a bare `lain input` with no chat, call-led timeout lines, Ctrl-C over a draft).
+
 **Why this one exists:** round 4 found **four** of its seven defects here — a frozen timeline, an
 approval that never renders, a refusal delivered as a Lua traceback, and a view with no placeholder.
 The surfaces are where lain's state becomes something a human can act on, and they have the least
@@ -146,9 +148,8 @@ Checks:
    is a note, not a held prompt. A line typed at a parked `[y/N]`, `human>` or `command>` is never a note. `greenfield-epic.md` §3.6 and
    §3.7 drive these.
 9. **The pane is an ordinary command.** Kill it (`tmux -L "$QA_SOCK" kill-pane -t <input>`) and the chat stays
-   alive; `lain input --name <session>` in a new pane, started in the project directory (from anywhere else it
-   waits on a socket no chat listens on, round 25, b25-3), reconnects to the same socket and is redrawn
-   with the current prompt and HUD, not left blank until something changes. The socket is
+   alive; `lain input --name <session>` in a new pane, started in the project directory, reconnects to the same socket and is redrawn
+   with the current prompt and HUD, not left blank until something changes. Started from a directory where no chat listens on the derived socket, a bare `lain input` says `no chat is listening on <socket>; input pane not adopted` and does not take the cockpit's input slot (round 25, b25-3, fixed). The socket is
    `$XDG_RUNTIME_DIR/lain/input-<project-hash>-<session>.sock` (`lain up` passes the tmux session
    name, so two cockpits on one project do not collide) and it carries **no pid**, because both
    panes derive it before either process exists. A second `lain input` on the same socket is
@@ -236,12 +237,10 @@ Checks:
     for 20 seconds or more, with no prompt parked. Type `abc` at the input row. The characters stay on the input
     row, and a header redraw (spawn a child so the row count changes) leaves `abc` where it was and redraws
     the header above it. Then each of these:
-    - **Ctrl-C discards the draft.** **FAILS as written until ruled on (round 25, b25-8).** The code disagrees with
-      this bullet: Ctrl-C over a draft clears it AND forwards SIGINT to the chat, which opens the close countdown
-      mid-ask and ends the cockpit when the ask finishes. Do not leave the countdown running (answer it with `c`),
-      and do not press Ctrl-C over a draft while an ask runs unless this is the check being driven. The intended
-      result: the input row is empty and nothing is sent, and a second Ctrl-C with nothing typed is the ordinary
-      interrupt (`--grace`, the countdown above).
+    - **Ctrl-C discards the draft.** (Round 25, b25-8, fixed by T16.) Ctrl-C over a draft clears it and sends nothing:
+      no signal frame reaches the chat, so no close countdown opens and the ask keeps running. The input row is
+      empty. A second Ctrl-C with nothing typed is the ordinary interrupt (`--grace`, the countdown above); answer
+      that countdown with `c` if you drive it. Round 26 re-checks both halves.
     - **Tab goes into the draft** as a tab character; it does not trigger completion or move focus.
     - **Ctrl-Z then `fg`** (suspend the `lain input` process, then resume it) leaves the pane working: the header
       and the draft redraw, and a line typed after the resume reaches the chat.
@@ -976,8 +975,10 @@ the displayed figure is `5:00`.) Park `echo hello` and read each surface:
    denied after ...` line after its rows in the one rendering that drops the call, and the model's tool
    result is an error carrying the same sentence: `approval denied for tool "bash": denied after 0:30 with no
    answer` (**round 23 B23-2, fixed**; the bare `approval denied for tool "bash"` is a human's `n`, so a lapse that
-   reads that way has lost its sentence). In a `--no-nvim` chat the timeout line `-- denied after 0:30 with no
-   answer` names no call (round 25, b25-5), so with 2 parked calls it cannot say which lapsed. **Wrong looks like:** the lapse said twice, said
+   reads that way has lost its sentence). In a `--no-nvim` chat the timeout line is led by the call and starts with `HH:MM:SS`:
+   `HH:MM:SS -- agent asks to run bash(...): denied after 0:30 with no answer` (round 25, b25-5, fixed), so with 2 parked calls it says which
+   lapsed. A call closed because its requester was stopped (`/stop` over a parked call) reads `closed: its requester was stopped`, never
+   `decided by abandoned`. **Wrong looks like:** the lapse said twice, said
    on one surface only, or the old wording `decided by timeout: denied`.
 3. **A deny can carry a reason, and the model reads it.** Park another call and answer with a reason:
    at a plain `[y/N]`, `n stay inside the project` (also `no, ...`, `n: ...`); at nvim, `:LainDeny stay

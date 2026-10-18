@@ -1,5 +1,7 @@
 # Scenario: bash confinement: resolution, the class table, the sandbox and the tripwire
 
+**Round 26 is the re-check** for the round 25 fixes stated in the docker note before the corrected predictions (e25-2) and the resume reading in `session-and-window.md` §9c.
+
 **What it exercises:** the three places a `bash` call is bounded, and the arms that switch them
 ([`ARCHITECTURE.md`](../../../ARCHITECTURE.md), "Bounding a bash call"). `Shell::Executable::Resolver`
 (the `exec_resolution` record), `Approval::ComposedTerm`'s class predicate, `Approval::Judged` and
@@ -255,6 +257,12 @@ pgrep -af 'lain-fence|strace -DD'       # nothing left over (a bare bwrap match 
 Record, for every section, the box's probe output from the top of this file, the model, and whether the run
 needed a re-run. A section that could not be driven on the box (no Landlock, no bwrap) is recorded as
 unreachable here, with the probe line that shows it.
+
+**Under `--exec docker` nothing resolves** (round 25, e25-2). Every stage journals `"klass":"unresolved"` with the anomaly
+`container_backend`, so the class table has nothing to trust: `--confine classes` and `reader` never let `ComposedTerm` approve a docker
+call, and under `--judge-facts facts` or `request` a judge approve of a docker `bash` call is Overruled and parks for a human. Under the
+default `--judge-facts off` a judge approve still goes through. [`subagents-and-backends.md`](subagents-and-backends.md) §4 owns the check; it
+was read from the code and its specs, not driven live.
 
 **Predictions this scenario has already had to correct, kept so nobody re-derives them:**
 

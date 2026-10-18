@@ -1,5 +1,7 @@
 # Scenario: the epic tier, end to end
 
+**Round 26 is the re-check** for the round 25 fixes stated in the stage-boundary denial check (h25-1), the red step refusals, and the retry's delete question.
+
 **What it exercises:** `lain epic status / show / queue / approve / deny / submit / add / split / merge /
 land / finish`, `/implement-epic` and the `lain://status` buffer, `lain worktrees gc`, `Epic::Home`
 (both `epics home:` values), `Epic::Stage`'s boundary rule, `Epic::Scribe` as the one write path,
@@ -489,9 +491,13 @@ The refusal names both conditions, and names the stages under each: still-parked
 never-approved stages are listed apart, because the remedies differ (answer them, versus submit
 and approve again). Then re-submit `research`, approve it, and confirm `epic_plan` opens.
 
-**Add a check: a later-stage approval cannot step over an earlier denial.** With `research` denied, park an
-`epic_plan` gate (from another route), then `lain epic approve <the epic_plan digest>`. It must refuse, naming the
-denied earlier stage. Round 25's h25-1: today it advances the epic over the denial, which is the finding.
+**A later-stage approval cannot step over an earlier denial** (round 25, h25-1, fixed). With `research` denied, park an
+`epic_plan` gate (from another route), then `lain epic approve <the epic_plan digest>`. It exits non-zero with
+`epic "<slug>" cannot open its epic_plan stage -- research not approved (a stage opens only once every earlier stage carries an approved sign-off)`
+and journals nothing: no stage transition and no decision. A digest parked in 2 partitions (research and epic_plan under one digest)
+approves in stage order, research first. `lain epic approve` that opens the epic_plan over the denial is the finding back. And with no
+interactive stdin, `lain epic submit epic_plan` over an unapproved research meets this same boundary and names it, not stdin. Round 26
+re-checks all three.
 
 **And a denied resubmission withdraws a standing approval.** Approve `research`, submit it again,
 deny it, and `epic_plan` must close again — approval is the *newest terminal decision* on the
@@ -720,6 +726,11 @@ What to watch for:
   the failing-test commit exists and that the tests in it actually fail;
 - **generated tests that already pass are refused** — if the red step reports examples ran and none
   failed, nothing is committed, because tests that pass before any work check nothing;
+- **tests that never load are not red** (round 25, fixed): a generated test file that raises on load (a syntax or constant error, so the
+  run has errors and no failed example) is refused with `<target> did not load: <first errors>; a run that errors before any example fails is
+  not red, and nothing was committed`. **A red step that wrote anything but tests is refused** the same way: `the test_engineer child also
+  wrote <paths>, and the red step may write only the tests, so nothing was committed`. A run with 1 failed example and no stray file is still
+  accepted. Round 26 re-checks all three;
 - **an actor that committed nothing opens no gate.** Round 17 found the implementation gate opening
   over the red commit alone (F111). The issue is now reported as `its actor settled having committed
   no work beyond its failing tests at <sha>, so there was no implementation to submit`, and no
@@ -752,7 +763,8 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
 - The human still decides: a red tip does not refuse the gate.
 - **The gate question carries the result (round 23 g23-3, fixed).** The implementation gate's fact line names the issue, the
   sha and `tests: 3 passed, 1 error` (failed and errors appear only above 0, `1 error` singular), `tests: 4 passed`, or
-  `tests: not run (<why>)`. The evidence is not part of the gate's address, so re-asking over the same commit is the same
+  `tests: not run (<why>)`, where a submission that recorded no run at all reads `tests: not run (no test run was recorded for this
+  submission)` (round 25, fixed) and a one-issue graph reads `1 issue`, not `1 issues`. The evidence is not part of the gate's address, so re-asking over the same commit is the same
   gate. Read the question in `lain://inbox` or the plain `human>` prompt on the red `greet` tip: it says the tests errored
   before you answer. A `/stop` during the suite reports its own reason, `the run stopped while the suite was testing this
   issue's commit, so it was left ungated and unlanded`, not an ordinary stop.
@@ -788,6 +800,9 @@ not be checked out … already used by worktree at …/retained/…`, `lain work
 retry: it must launch, and `git -C <retained path> status` must still show the uncommitted work.
 *(Driven in round 22: the retained checkout had a detached HEAD, kept its uncommitted `spec/`, and no
 worktree held the branch.)*
+
+**A retry's delete question offers only the branches that have not landed** (round 25, fixed): of a prior run's `lain/issue/<slug>/*`
+branches, one already an ancestor of `epic/<slug>` is not listed, so the question never offers to delete landed work.
 
 **A retry is a new running row, not an invisible one** (round 20's G-4: `lain://status` and `state.json`
 froze during `/implement-epic` because a failed attempt wrote no anchor, so the retry was handed attempt 1

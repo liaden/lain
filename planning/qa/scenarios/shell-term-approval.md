@@ -1,5 +1,7 @@
 # Scenario: the shell term arm, and who is allowed to decide about it
 
+**Round 26 is the re-check** for the round 25 fixes stated in "What this scenario does not cover", program identity (a25-3 parsed stages, e25-1 a shadowing user binary).
+
 **What it exercises:** `Shell::Parse` (`parse.rb:24`, the tree-sitter reading and its 4096-byte
 cap), `Shell::Verdict` (`verdict.rb:52`, the three-valued `allow`/`deny`/`abstain` and the six
 program families behind it), `Shell::Pipeline` (`pipeline.rb:65`, the argv-array runner and its
@@ -897,10 +899,13 @@ the round should run under the launch default.
 - **Whether any of it is safe.** `Shell::Verdict`'s own terminal constant says it: *"an allow claims
   the command is literal and fully understood, never that it is safe"*. Everything here is a check
   on a decision procedure, not on an outcome.
-- **Program identity.** Stale since the confinement plan's T8 and T13: `exec_resolution` now records each
-  stage's resolved path and class (round 25). The parse layer still cannot see a shim (`PATH` is inherited and
-  `execvp` honours its order), but the record can. What no section here tests is the string arm, where nearly
-  every call this model makes lands (a25-3), and the class the rule trusts (e25-1).
+- **Program identity** is owned by [`bash-confinement.md`](bash-confinement.md). Every `bash` call journals an `exec_resolution` with each
+  stage's resolved path and class. On the string arm, where nearly every call this model makes lands, the stages are read off the parse and
+  carry `"basis":"parsed"` and the `cwd` they resolved in (round 25, a25-3, fixed); a command the parse cannot read whole keeps 1 unresolved
+  entry. The class the rule trusts is checked too (round 25, e25-1, fixed): `ComposedTerm` approves a `user`-class binary (one a user can replace
+  without root) only when it shadows nothing, so a planted `head` ahead of `/usr/bin` is left to the judge or a human, with a
+  note naming `head resolved to <path> (user), shadowing /usr/bin/head`, and a user `rev` that shadows nothing is still allowed. The parse layer
+  still cannot see a shim by itself (`PATH` is inherited and `execvp` honours its order): the resolver can. Round 26 re-checks both.
 - **Aliases and shell functions.** Measured and **not a gap**: non-interactive shells have
   `expand_aliases` off, and an alias defined and used within one parse unit is not expanded
   regardless. All three spellings were driven with `alias cat='echo PWNED'` in play and each printed

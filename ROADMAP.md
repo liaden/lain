@@ -2054,13 +2054,13 @@ XDG path relative, which put machine state back inside the user's repository)
    task. Research before planning: DNS and control-plane reach under confinement, a five-arm
    compaction sweep scored on the cache, provenance labels against the approval judge, and a spike
    on a local logprob judge.
-61. **Planned (2026-10-17)**: `planning/specs/qa-round-25-fixes.md`, the QA round-25 discharge
+61. **Done (2026-10-18)**: `planning/specs/qa-round-25-fixes.md`, the QA round-25 discharge
    (`planning/qa-findings-round25-2026-10-16.md`): bench arms held to their lease, a child environment chosen by
    allowlist with `bash` output always masked, crashed ollama sessions reassembled by the wire that wrote them, a
    parked call's reason on every approval surface, user binaries trusted only when they shadow nothing, compaction
    that hands off only when nothing is droppable, Ctrl-C that discards a draft without ending the cockpit, epic stage
-   boundaries on every route, and the round's LOW to LOW-MED items with a fix in reach. 62 cards, panel-reviewed;
-   T50 to T60 wait for item 59.
+   boundaries on every route, and the round's LOW to LOW-MED items with a fix in reach. Every card landed, T50 to T60 after item 59;
+   the QA scenarios state the fixed behaviour and round 26 re-checks them.
 
 62. **Planned (2026-10-17)**: `planning/specs/idle-compaction.md`, CAC-5 made usable on the chat path: the cut is
    committed while the human is away (cold or presumed cold past the TTL, a 2-minute floor for a provider with no

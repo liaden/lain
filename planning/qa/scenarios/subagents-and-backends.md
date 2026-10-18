@@ -1,5 +1,7 @@
 # Scenario: subagents, isolation, and where a command becomes a process
 
+**Round 26 is the re-check** for the round 25 fixes stated in §4 (e25-2: a docker session's stages read `container_backend`).
+
 **What it exercises:** `Tools::Subagent` in **both** modes (`one_shot` and `actor`), the
 `Supervisor` reactor that un-refuses a model-dispatched actor, `--isolation` (`none` / `worktree`)
 and `Isolation::Worktree`'s real-`git` seams, `--exec` (`local` / `docker`) and `Exec::Docker`,
@@ -410,6 +412,15 @@ Then the backend's own behaviour:
   sentence beside an actually-clean `docker ps -a` is correct, not a finding: it reports the
   confirmation failing, not the container surviving. A leftover container **with** no such
   sentence is the finding.
+- **A docker session's `exec_resolution` cannot name the file that runs** (round 25, e25-2, fixed). The program inside the container is
+  out of lain's sight, and resolving the host's `PATH` for it would name a binary that is not the one that runs. So under `--exec docker`
+  every stage of every `bash` call journals `"klass":"unresolved"` with the anomaly `container_backend` (`the command runs inside a
+  container, where lain cannot see which file runs`), whatever the command. Read one with
+  `jq -c 'select(.type=="exec_resolution") | .stages[] | {name,klass,anomalies}' "$JOURNAL"`. The approval consequence is by arm:
+  `--confine classes` or `reader` never lets `ComposedTerm` approve a docker call (it abstains on an unresolved stage); with
+  `--judge-facts facts` or `request`, a judge approve of a docker `bash` call is Overruled and parks for a human, because the bar
+  is never empty; with the default `--judge-facts off`, a judge approve still goes through. A docker session that auto-approves
+  `cat README.md` under `facts` is the finding. (Read from the code and its specs; a live docker run was not driven for this edit.)
 - **A stopped daemon surfaces as a tool error**, named in the class doc rather than pretended away.
   Stop the daemon mid-session and confirm the model gets a legible tool error and the session
   survives. A session that dies because docker did is worse than the error. **On this box `docker`

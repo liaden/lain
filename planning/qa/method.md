@@ -1546,4 +1546,3 @@ fallback rather than redesigning mid-run.
 - **In zsh, `T="tmux -L ..."; $T` fails with `command not found`.** Use a function.
 - **A box-wide OOM can come from outside the round.** `journalctl -k` names the process that invoked the killer. Read
   it before attributing a 500 burst.
-- **Do NOT press Ctrl-C in an input pane holding a draft while an ask runs** (b25-8): it ends the cockpit.

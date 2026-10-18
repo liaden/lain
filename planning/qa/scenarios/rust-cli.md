@@ -1,5 +1,7 @@
 # Scenario: a small Rust CLI, one-shot
 
+**Round 26 is the re-check** for the round 25 fixes stated in the `exec_resolution` question (a25-3: parsed stages on the string arm).
+
 **Why this one exists:** it is the **fast smoke test**, and the only scenario whose subject is not
 Ruby. Two things follow from that, and both are the point:
 
@@ -68,8 +70,12 @@ Then tell the model the build is broken and let it fix it. What to watch:
 - **Does a second gated `bash` in the same turn still get an approval prompt?** `cargo build` then
   `cargo test` in one turn is the exact two-gated-calls shape that wedges.
 - **Does each `bash` call journal an `exec_resolution`?** On this model nearly every call is on the string arm
-  (`cd <dir> && ...`), so expect 1 unresolved stage with `klass: "unresolved"` (round 25, a25-3), not a resolved
-  path.
+  (`cd <dir> && cargo ...`). Since round 25 (a25-3, fixed) the record still lists the stages of such a call, read off the parse: `cd` is a
+  builtin and is left out, so `cd <dir> && cargo build` journals 1 stage, `cargo`, with the path it resolves to **from `<dir>`** (`cwd`), its
+  class, and `"basis":"parsed"`, which tells it from a stage the approval ladder resolved. A command the parse cannot read whole (a heredoc, a
+  `$VAR`, a glob, `export`, a NUL byte) keeps the old 1 entry with `klass: "unresolved"`. The parsed record is a journal fact only:
+  nothing approves or confines on it. Read it with
+  `jq -c 'select(.type=="exec_resolution") | .stages[] | {name,resolved,klass,basis,cwd}' "$JOURNAL"`.
 
 ## Long-running-command behaviour
 

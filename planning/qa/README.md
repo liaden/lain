@@ -168,9 +168,6 @@ that chunk `draft` and unlanded, was corrected on 2026-09-14.)
 |---|---|---|
 | [`config-middleware.md`](scenarios/config-middleware.md) | Does an untrusted `~/.config/lain/config.rb` refuse a real launch **before a session record exists**, does `lain trust --user` bind exact bytes, does a configured tool member run outermost in a live cockpit and again, on its own instance, in a spawned child, and does an `http` entry see a real streamed Ollama request as a Hash? Steps 1 to 3 need no model; steps 4 to 6 need a live local model. | cheap to minutes |
 
-Bash confinement (`--confine`, the sandboxed exec) has no scenario yet. Round 25's probe table is in
-`../qa-findings-round25-2026-10-16.md`, for plan card T32.
-
 **Added 2026-10-08**: the journey from the first real trial on the cloud arm:
 
 | Scenario | The question it answers | Cost |
@@ -335,7 +332,8 @@ stays here only while it is still in flight:
   T34 landed; T25 not). Round 24 is almost entirely fixed, both HIGHs included. **Two new HIGH:** `bench arms
   --isolation worktree` runs under an approve-all gate and an arm wrote outside its worktree (l25-1), and resuming a
   crashed ollama session commits an empty turn and reports it recovered (j25-1). The new `--confine`,
-  `--judge-facts` and `--tripwire` arms change nothing yet (a25-1).
+  `--judge-facts` and `--tripwire` arms change nothing yet (a25-1). The round 25 fix plan has since landed: the
+  scenarios now state the fixed behaviour and round 26 is their re-check.
 
 - [`../qa-findings-round24-2026-10-15.md`](../qa-findings-round24-2026-10-15.md): round 24, 18 of 21 scenarios in
   9 forks, weighted to the 4 batches since round 23. `bench-arms` ruled out by the user; `memory-and-dogfood` and
@@ -642,8 +640,9 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   inherited and uncontrolled, so a shim in a user-writable directory runs. The four rungs that
   would close it (resolve-and-record, resolve-and-constrain, verify-identity, control `PATH`) are
   costed in `../specs/chunk-shell-term-approval.md`. **Stale since 2026-10-16:** `exec_resolution` now journals
-  each stage's resolved path and class. What remains uncovered is the string arm, where nearly every call this
-  model makes lands (round 25, a25-3), and anything inside a container (e25-2).
+  each stage's resolved path and class, and since the round 25 fixes the string arm journals the stages read off the
+  parse (`"basis":"parsed"`) and a docker call journals every stage `unresolved` with the anomaly `container_backend`.
+  What remains uncovered is a command the parse cannot read whole, which keeps 1 unresolved entry.
 - **Cost and latency.** Nothing records wall-clock or tokens per act, so "the plumbing works" and
   "the plumbing is usable" are not separated. One wiring mistake once cost 84.0s against 7.5s and
   nothing here would catch the same class again.
@@ -684,7 +683,8 @@ a full directory does not read as completeness:
 
 - **Program identity on the term arm.** `shell-term-approval.md` covers arm *selection*. Since 2026-10-16
   `exec_resolution` journals each stage's resolved path and class, so the question is askable on the term arm.
-  What remains uncovered is the string arm (round 25, a25-3) and anything inside a container (e25-2).
+  The string arm is covered by the parsed stages (round 25, a25-3, fixed), and a container reads `container_backend` (e25-2,
+  fixed). What remains uncovered is a command the parse cannot read whole, which keeps 1 unresolved entry.
 
 - **`Toolset::Disclosure`, both arms.** `Upfront` vs `Deferred` (+ the `tool_search` tool) is a
   headline context-strategy axis and `Bench::DisclosureSweep` exists to compare them — but **there is

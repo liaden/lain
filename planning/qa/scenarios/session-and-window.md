@@ -1,5 +1,7 @@
 # Scenario: session start, the served window, and occupancy
 
+**Round 26 is the re-check** for the round 25 fixes stated in §6 (the `--max-tokens` refusal), §7 and §7a (`--compact-schedule`, the idle tick), §9c (a resume keeps the recorded arms).
+
 **What it exercises:** `WindowBook`, `Middleware::ResolveWindow`, `Backend::NumCtx`,
 `Backend::Endpoint`, the `provenance` tag, `compaction_decision`, `.lain/state.json`, the HUD's
 `ctx N%`, the `options` asymmetry on the ollama wire — and, since 2026-08-18, the two other things a
@@ -224,9 +226,9 @@ Round 20 confirmed this on the wire from four forks (`num_predict` 4096, `num_ba
 `truncate=false`). Round 25 reads `num_predict` 16384 on the wire now, not 4096. Every request also carries a top-level `shift=false` since round 24, so a reply that fills
 the window is cut instead of shifted.
 
-`max_tokens` is never the source of a silent zero here: a non-positive `--max_tokens` /
-`$LAIN_MAX_TOKENS` is refused at construction (`max_tokens must be positive, got 0`) before any
-request is built, so `num_predict` on the wire is never zero or absent.
+`max_tokens` is never the source of a silent zero here: a non-positive `--max-tokens` is refused at launch
+(`--max-tokens must be positive, got 0`) before any request is built, so `num_predict` on the wire is never zero or absent.
+The environment variable that used to set it was retired, and exporting one changes nothing.
 
 **Automated by** `spec/e2e/wire_contract_spec.rb`, "sends the launched options on every model call": a chat launched with `--num-batch 1024` puts `num_batch` 1024 and an integer `num_predict` in the `options` of every ollama request, a skill child's included. **Still needs a human:** the 2048 default with the knob unset, `extra={}` on another provider, the `session` and `request_sent` records' `extra`, `truncate=false` and `shift=false`.
 
@@ -252,6 +254,7 @@ run --compact-keep -1
 run --compact-keep 1.5                                       # refused: a keep is a whole number (A23-a1)
 run --compact-bytes 0                                        # refused: above 0 only (also -1)
 run --compact-cap 0
+run --compact-schedule nonesuch                              # refused: neither idle nor turn
 ```
 
 **A refused compaction flag leaves no session file behind, the same as §9.** Count the files around
@@ -266,6 +269,13 @@ Verified against the built binary 2026-08-18 (with `--prompt hi`, which the refu
 ```
 unknown part "nonesuch" in --compact-strategy "nonesuch", expected one of ["summarizing", "elide", "summarize-conversation", "elide-tools"], or several joined by "+"
 unknown part "" in --compact-strategy "elide-tools+", expected one of [...], or several joined by "+"
+```
+
+A bad `--compact-schedule` refuses at launch too, before the journal opens, so it leaves no session file
+and no backtrace. Exit **1**, one line:
+
+```
+--compact-schedule "nonesuch" is not one of idle, turn
 ```
 
 Three things to read carefully, because each is a place a driver files the wrong finding:
@@ -327,6 +337,13 @@ Two launch-level checks, both free:
   longer tell it from a choice). Then launch with `--compact-fallback none --compact-keep 4` and confirm
   exactly those two keys appear, and that `--resume` with **no** flags renders under them
   (`rails-blog.md` 1b drives it with a real handoff).
+- **The header records `compact_schedule` whenever compaction is on, typed or not.** This is the one
+  exception to the bullet above: the schedule that runs is always written (`idle` for an unflagged
+  launch, `turn` when typed so), so a reader can tell the two arms apart. Launch with `--no-compact`
+  and the key is absent. A header with no key at all predates the field, and those runs compacted on
+  the turn. `lain bench variance` refuses recordings made under different schedules, ending
+  `cannot compare runs under different compaction schedules: idle vs turn` (exit 1); a recording
+  without the key counts as `turn`.
 - **The header also records which STRATEGY ran, as `compact_strategy` — present only when
   `--compact-strategy` was typed.** Like every other compaction key now, an unflagged launch writes no key at
   all rather than a default value; a reader normalizes that absence to the eager control arm
@@ -339,6 +356,35 @@ Two launch-level checks, both free:
 
 Reaching the fallback itself needs volume and belongs to `rails-blog.md` §1b, which drives the
 handoff end to end and checks it replays byte-identically.
+
+### 7b — the idle tick prepares the cut while you are away
+
+`--compact-schedule idle` (the default) commits the compaction cut during idle time, so the next
+line pays no summarizer wait. A fresh chat ticks every 5 seconds, and a prepare runs only once the
+chat has sat idle past the provider's cache TTL, or at least 120 seconds where the provider reports none
+(ollama reports none). Drive it on ollama with a history already past `--compact-bytes`
+(`rails-blog.md` §1 builds one; a low `--compact-bytes` on a short session also reaches it). Use a model whose context window is probed: a guessed window (`:guessed` provenance, e.g. a custom ollama model) withdraws the window-approach signal, so there a prepare happens only past `--compact-bytes`, silently.
+
+1. Leave the chat at `you>` for 2 minutes. Type nothing.
+2. Read the journal. `compaction_prepared` appears with the cut it committed:
+   `jq -c 'select(.type=="compaction_prepared")' "$JOURNAL"`. Its `cache_state` is `presumed_cold`
+   (no response confirmed the cache cold), `idle_seconds` is at least 120, and `cut_digest` matches
+   the newest `compaction_cut`. The 120 holds only for a provider with no cache TTL, as ollama is; with a TTL it is just past that TTL. Exactly **1** per head: a second tick over the same head makes no
+   second record and no second summarizer call.
+3. Type a line. The reply starts with no summarizer wait, and `compaction_applied` follows with the
+   same `cut_digest`. `compaction_prepared` then `compaction_applied` is the whole story; a prepared
+   cut with no applied record means the chat ended or the head moved before a render sent it.
+4. Type a line **while** a prepare is running. The line is not lost and not a note: the reply waits
+   only for the rest of that prepare, then answers through the cut. A reply that waits for a second
+   full summarizer call is the defect.
+5. Repeat with `--compact-schedule turn`: no `compaction_prepared` ever appears, and the cut, when
+   one is warranted, commits at the ask.
+
+The window HUD and the StatusFeed show the pre-cut reading until the next reply, so `ctx N%` reads
+high after a prepare and drops on the first reply. That over-reports and hides nothing; it is not a
+finding.
+
+**Read from the code, not driven live.** This section was not run against a live chat. The 5-second tick, `idle_seconds` of at least 120 for a provider with no TTL, 1 prepare per head, and a mid-prepare line waiting only for the rest of that prepare are stated from the code and its specs. Round 26 drives it.
 
 ## 8 — The price table, and the lint that keeps it honest
 
@@ -554,8 +600,13 @@ records only the arms that are on, as `"arms":{"confine":"reader","tripwire":"ob
 a launch with every arm off writes no `arms` key at all. The arms act: `--confine` and `--tripwire` change what
 a bash call runs under and what the journal holds, so a header that names an arm is evidence the arm was built,
 but not that it ran. A box that cannot build the sandbox still records `confine: reader` in the header, with a
-`capability_degraded` record and a startup notice that bash runs unconfined. `bench variance` ignores `arms`, and
-`--resume` takes the arms from its own launch flags, not from the old header. Driving every arm is
+`capability_degraded` record and a startup notice that bash runs unconfined. `bench variance` ignores `arms`. **A `--resume` or
+`--fork` keeps the recorded arms** (round 25, a25-2, fixed), with a flag typed on the resume winning over the record: an arm the old header
+did not record is off, and a header with no `arms` key at all (every session on disk before the arms existed) resumes with every arm off,
+not with today's defaults. An arm that resumes weaker than a fresh chat's default and was not typed gets one notice, for example
+`running without --confine (off), as recorded; a fresh chat runs reader (pass --confine reader to run it)` (and the tripwire's
+equivalent); a typed flag that differs from the record gets `recorded with --confine reader; continuing with off (the current flags win)`.
+Driving every arm is
 [`bash-confinement.md`](bash-confinement.md); this section only reads the header.
 
 Verified 2026-10-17 against `06375702` on a no-nvim chat run with `--non-interactive`: the plain launch wrote the
