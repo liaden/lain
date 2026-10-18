@@ -331,7 +331,7 @@ pin; no new spec)
 - `grep -rn Dotfiles lib exe` returns a non-comment hit, or `spec/support/slow_files.rb` or
   `spec/lain/review/deletability_spec.rb` names `dotfiles_spec.rb` (neither does at grounding)
 
-### T2: Delete the spec-only landing desk and resolver          [risk: medium]
+### [x] T2: Delete the spec-only landing desk and resolver          [risk: medium]
 
 **Depends on:** none
 **Files:** modify `lib/lain/isolation/landing_queue.rb` (delete `ParentDesk` at lines 288 to about
@@ -436,7 +436,7 @@ Spec file: `spec/lain/provider/http/streaming_spec.rb`, `spec/lain/provider/anth
 - `Ollama::Transport` or `Embedder::Ollama::Transport` calls a method this card deletes (grounding:
   they use `connection`, `assign_on_data`, `FaradayHandlers.build` and `HTTP::Error` only)
 
-### T4: Fold the Anthropic HTTP mixins into their class and drop the slug registry          [risk: medium]
+### [x] T4: Fold the Anthropic HTTP mixins into their class and drop the slug registry          [risk: medium]
 
 **Depends on:** T3
 **Files:** modify `lib/lain/provider/http/providers/anthropic.rb` (inline `stream_url` and
@@ -484,7 +484,7 @@ Spec file: `spec/lain/provider/http/configuration_spec.rb`, `spec/lain/provider/
   (grounding: synthetic), or `spec/lain/provider/http/provider_spec.rb` has an example outside 30 to
   62 and 88 to 135 that reaches `Registry`
 
-### T5: Cut lain-core's daemon to the wire          [risk: high]
+### [x] T5: Cut lain-core's daemon to the wire          [risk: high]
 
 **Depends on:** none
 **Files:** delete `crates/lain-core/src/exec.rs`, `crates/lain-core/src/grep.rs`,
@@ -707,7 +707,7 @@ must stay green on the edited files
 - bash-confinement T32 has not landed (it edits `ARCHITECTURE.md`): wait
 - `docs/GLOSSARY.md:604-608` describes behaviour T5 removed (grounding: it describes the kept demux)
 
-### T9: Remove the Rust tracing scaffold and the shared journal descriptor          [risk: medium]
+### [x] T9: Remove the Rust tracing scaffold and the shared journal descriptor          [risk: medium]
 
 **Depends on:** T5
 **Files:** modify `ext/lain/src/lib.rs` (delete `build_env_filter` 56 to 66, `dup_writer` 73 to 93,
@@ -940,7 +940,7 @@ Spec file: `spec/lain/cli/backend_spec.rb`, `spec/lain/bench/rewrites_spec.rb`,
 - `spec/lain/bench/variance_spec.rb:42-44` pins a nil strategy as the control arm: that stays green,
   because the strategy default is kept
 
-### T13: Read the lifecycle mark as the only terminal signal, and scope every gate park          [risk: medium]
+### [x] T13: Read the lifecycle mark as the only terminal signal, and scope every gate park          [risk: medium]
 
 **Depends on:** none
 **Files:** modify `lib/lain/status_feed/spawn_lifecycle.rb` (`terminal?` at 92 drops `|| @result`;
@@ -1092,7 +1092,7 @@ Spec file: `spec/lain/promise_spec.rb`, `spec/lain/tools/subagent/actor_spec.rb`
   `AlreadyResolved` guard at `promise.rb:30` is the only protection: keep the guard and say so
 - any caller used `Lain::Promise#value` rather than `#await` (grounding: none; the public name is `await`)
 
-### T17: Remove the 3 spec-only names          [risk: low]
+### [x] T17: Remove the 3 spec-only names          [risk: low]
 
 **Depends on:** T9
 **Files:** modify `lib/lain/cli/env_defaults.rb` (delete `RETIRED` at 46 to 49), `lib/lain/agent.rb`
@@ -1206,3 +1206,17 @@ reads 0, and `pgrep -cf '[p]re-commit (hook-impl|run)'` reads 0):
 - T5 high review APPROVE-WITH-FIXES: test that the shipped binary refuses sleep; reword the Cargo.toml isolation-boundary comment (no card owned it); io-util moves to dev-dependencies (plan amended: production builds without it); the sleep delay pinned; lifecycle test renamed. Note for T6 and the relay: main.rs never unlinks its socket on shutdown, and an argv of vsock:5252 now binds a relative socket. The 23 grep_parity failures are T7's; tools/bash.rb:21 added to T6.
 - T2 second review APPROVE-WITH-FIXES: the re-probe drop is safe because the inputs are immutable SHAs on one thread (not the drain lock), but a stale verdict lands a wrong tree in silence, so Probed carries its tip and merge guards tip and verdict. Same implementer, no third review.
 - T4 standard review APPROVE-WITH-FIXES, all mechanical: 6 stale comments and docs, the porting-providers leak table marked as history, VENDOR.md history restored, 1 redundant example.
+- T2 stale-verdict guard in (Probed carries tip; merge refuses another tip or verdict). T2 landed `5d2dac7c`.
+- T4 landed `ca5c6da9`. T5 landed `fe4566eb` (hook clippy and cargo test green). T9 is ready, but waits on bash-confinement T32 for ARCHITECTURE.md.
+- Correction to the hold list: T9's Files do not include ARCHITECTURE.md (T8 edits it), so T9 waits only on T5. T9 started from `fe4566eb`.
+- T13 standard review APPROVE-WITH-FIXES. Ruling: refuse an issue-scoped park with no issue in the adjudicator's admit, before any spend (settle refused after 2 spawns and a journaled gate_evidence, breaking #call's contract). Plus: a rubocop line length that would fail the hook, 3 more {} fixtures in wiring_spec, an unmarked completion pinned through the real StatusFeed, stale docs, and :unmarked as a Symbol. Short second review follows.
+- T9 implemented (tracing scaffold, SharedWriter, hello, share_fd and fileno gone; 395 examples, cargo test, clippy, fmt and deny green); ROADMAP strikes handed back; standard review started.
+- T9 standard review APPROVE-WITH-FIXES, all mechanical: 1 Rust doc citation, 12 Ruby comments and spec names still citing the tracing span (outside the card's list; no in-flight overlap, so added to T9), deny.toml wording, sharper respond_to specs, reflows. ROADMAP:105 strike in the file's ~~ ~~ convention, applied by the main session at landing. Round 26 / later card: epic_queue.rb:229 and session_journals.rb:177 special-case a foreign valid-JSON line whose only named producer is gone; re-examine.
+- T13 fix round done (refusal in admit before any spend, shown red against settle; 11 items; 4848 examples green); short second review started.
+- T9 landed `781f7420` (ROADMAP:105,173 strikes carried in the card's commit; hook clippy, cargo test and ruby checks green). T17 is now ready.
+- T13 second review APPROVE (2 optional wording NITs, round 26). T13 landed `b7f24351`.
+- T17 started from `b7f24351`.
+- T17 implemented (RETIRED, BudgetExceeded alias and Prompt#variables gone; Format::variables and collect_variables cfg(test)-gated as now dead); light review started, asked whether to delete them instead.
+- T17 light review APPROVE-WITH-FIXES: delete Format::variables and collect_variables and their tests instead of cfg(test) gating (the card's 'stays for Rust tests' was wrong once the binding went). The main session verifies; no second review.
+- T17 dead chain deleted (verified: no collect_variables or fn variables left). T17 landed `fa0bf6b9`.
+- T7 started from `06375702` (bash-confinement T31 landed).
