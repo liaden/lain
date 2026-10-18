@@ -812,7 +812,9 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
     instance = described_class.new({ fork: "@abc123", journal: false, max_tokens: 16, provider: "ollama",
                                      compact: false }, resume_factory: -> { resolver })
 
-    expect { instance.backend.refuse_compaction_flags! }.not_to raise_error
+    instance.backend.refuse_compaction_flags!
+
+    expect(instance.backend.compaction).to have_attributes(keep: 0)
   end
 
   describe "the compaction schedule" do

@@ -87,10 +87,13 @@ RSpec.describe Lain::Bench::Harness::Confinement do
 
   describe "a sandbox it built" do
     it "can be primed, as a chat's can" do
+      masks = confinement.instance_variable_get(:@masks)
+      allow(masks).to receive(:prime).and_call_original
       sandbox = confinement.send(:sandbox, agent_journal)
       sandbox.wrap(Lain::Exec::Local.new, requirer: "Spec")
 
-      expect { sandbox.prime }.not_to raise_error
+      expect(sandbox.prime).to be(sandbox)
+      expect(masks).to have_received(:prime).once
     end
   end
 
