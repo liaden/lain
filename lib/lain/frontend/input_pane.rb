@@ -24,7 +24,7 @@ module Lain
     # THE HEADER IS THE CHAT'S TOO, and it arrives with the prompt. A header
     # that changes while nothing has been typed republishes the prompt, so an
     # idle `you>` shows a live HUD with no keypress; one that changes under a
-    # half-typed line waits for the next prompt, because redrawing Reline's
+    # half-typed line waits until the line is gone, because redrawing Reline's
     # prompt mid-line needs a private API and would cost the human their words.
     #
     # ITS OWN GEOMETRY IS THE ONE THING IT WATCHES RATHER THAN IS TOLD. A pane
@@ -137,6 +137,7 @@ module Lain
       def start_unconnected
         @drawn = NOTHING_DRAWN
         @reported = @client = nil
+        @held = HeldHeader.new
         @quit = @idle = @settled = @answered = @resized = @below_echo = false
         @shown = @wanted = ""
         @draft = Draft.new(keys: @keys)
@@ -358,28 +359,24 @@ module Lain
       end
 
       def prompted(task, client, frame)
+        @held.drop
         @layers.replace(Array(frame["layers"]).map(&:to_sym))
-        return reheaded(task, client, frame) if reheading?(frame)
+        return reheaded(task, client, frame) if HeldHeader.change?(@drawn, frame)
         return if drawing_already?(frame)
+        return @held.hold(frame) if @drawn["generation"] == frame["generation"] && holding?
 
         redraw(task, client, frame)
       end
 
-      # A new header under the prompt already drawn is rewritten in place, never
-      # printed again: a second print stacks a row per change. Whatever cannot be
-      # rewritten safely -- a draft in the editor, a window that moved -- waits for the next
-      # prompt, which draws whole. A header of another row count is drawn whole at once. A
-      # prompt drawn with no header has no rows to stack on, so it redraws.
-      def reheading?(frame)
-        frame["kind"] != "countdown" && @drawn["generation"] == frame["generation"] &&
-          frame["header"] != @drawn["header"] && !@drawn["header"].to_s.empty?
-      end
-
       def header_rows(frame) = frame["header"].to_s.split("\n").size
 
+      # A new header under the prompt already drawn is rewritten in place, never
+      # printed again: a second print stacks a row per change. Whatever cannot be
+      # rewritten safely is held ({HeldHeader}). A header of another row count is
+      # drawn whole at once.
       def reheaded(task, client, frame)
         header = frame["header"].to_s
-        return if editing? || @resized
+        return @held.hold(frame) if holding?
 
         if same_rows?(@drawn["header"].to_s, header)
           rewrite(header)
@@ -407,7 +404,7 @@ module Lain
         return unless moved && !@drawn.equal?(NOTHING_DRAWN) && !editing?
 
         @replaced = header_rows(@drawn)
-        redraw(task, client, @drawn)
+        redraw(task, client, @held.over(@drawn))
       end
 
       # Whatever called for it, a draw replaces the read that was open: the
@@ -423,13 +420,12 @@ module Lain
         @drawing = task.async { drawn(client, frame) }
       end
 
-      # The same prompt with a new header is redrawn only while the editor is
-      # empty: a redraw is a fresh read, and a fresh read starts from nothing.
-      def drawing_already?(frame)
-        return false unless @drawn["generation"] == frame["generation"]
+      def drawing_already?(frame) = @drawn["generation"] == frame["generation"] && frame["header"] == @drawn["header"]
 
-        frame["header"] == @drawn["header"] || editing?
-      end
+      # Whether a new header for the drawn prompt has to wait: a redraw is a
+      # fresh read, which would cost the human their words, and a window that
+      # moved is repainted whole.
+      def holding? = editing? || @resized
 
       # Whether the human has words in the editor right now. Off a terminal
       # there is no editor to have them in -- a stream's next line is its next
@@ -499,16 +495,19 @@ module Lain
         @draft = Draft.new(keys: @keys)
         @idle = @settled = false
         @drawn = NOTHING_DRAWN
+        @held.drop
       end
 
-      # The two things the pane has to notice on its own clock, neither of which
-      # anything upstream can see: whether the human has typed at the prompt it
-      # drew, and whether its own window has moved under it. The `loop` needs no
-      # break -- the fiber is stopped with the connection.
+      # What the pane has to notice on its own clock, none of which anything
+      # upstream can see: whether the human has typed at the prompt it drew,
+      # whether its own window has moved under it, and whether a header it held
+      # can be drawn now. The `loop` needs no break -- the fiber is stopped with
+      # the connection.
       def ticking(task, client)
         loop do
           touch(client)
           repainted(task, client)
+          @held.release(ready: !holding?) { |frame| prompted(task, client, frame) }
           task.sleep(@tick)
         end
       end

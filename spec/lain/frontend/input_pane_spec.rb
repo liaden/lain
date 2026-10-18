@@ -45,6 +45,8 @@ RSpec.describe Lain::Frontend::InputPane do
 
       def script(*sizes) = @queue.concat(sizes)
 
+      def looked? = @queue.empty?
+
       def winsize
         @current = @queue.shift unless @queue.empty?
         raise @current if @current.is_a?(Class)
@@ -111,6 +113,12 @@ RSpec.describe Lain::Frontend::InputPane do
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + within
     Enumerator.produce { sleep(0.005) && yield }
               .find { |answer| !answer.nil? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline }
+  end
+
+  # The idle reader turns bracketed paste on only once the terminal's mode is its own.
+  def uncooked(master)
+    paste_on = described_class::Uncooked::PASTE_ON
+    Enumerator.produce(+"") { |seen| seen << pty_read(master, 1) }.find { |seen| seen.end_with?(paste_on) }
   end
 
   it "hands its pump the approval key it was given" do
@@ -422,6 +430,51 @@ RSpec.describe Lain::Frontend::InputPane do
         .to start_with("\e[2A\r\e[J").and include("\r\e[Kfleet:1\n")
     end
 
+    it "draws a header that arrived right after a prompt drawn with none" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "" })
+      publish(chat, { "generation" => 3, "header" => "model:1s" })
+
+      expect(settles { screen.string.include?("model:1s") || nil }).to be(true)
+    end
+
+    it "draws only the newer prompt once the draft a header was held over is gone" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      settles { screen.string.include?("model:0s") || nil }
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(false)
+      Enumerator.produce { next_frame(chat, of: "touch") }.find { |touch| !touch["untouched"] }
+      publish(chat, { "generation" => 3, "header" => "model:1s" })
+      publish(chat, { "generation" => 4, "header" => "model:2s" })
+      settles { screen.string.include?("model:2s") || nil }
+      screen.truncate(0) && screen.rewind
+
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(true)
+      Enumerator.produce { next_frame(chat, of: "touch") }.find { |touch| touch["untouched"] }
+      sleep(0.1)
+
+      expect(screen.string).to eq("")
+    end
+
+    it "repaints the header it held, not the one it replaced, once a resize behind a draft can be drawn" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      settles { screen.string.include?("model:0s") || nil }
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(false)
+      Enumerator.produce { next_frame(chat, of: "touch") }.find { |touch| !touch["untouched"] }
+      window.script([6, 80], [6, 80])
+      settles { window.looked? || nil }
+      publish(chat, { "generation" => 3, "header" => "model:1s" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+      screen.truncate(0) && screen.rewind
+
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(true)
+
+      expect(settles { screen.string.include?("model:") ? screen.string : nil })
+        .to eq("\e[1A\r\e[J\r\e[Kmodel:1s\n")
+    end
+
     it "leaves a draft alone when the header changes row count" do
       chat = open_pane
       publish(chat, { "generation" => 3, "header" => "fleet:1" })
@@ -478,13 +531,16 @@ RSpec.describe Lain::Frontend::InputPane do
     after { pty.each { |io| io.close unless io.closed? } }
 
     # Frames are handled in order on the pane's one reactor, so a frame after
-    # "unpublished" that has taken effect proves the withdrawal finished: the
-    # prompt's read is stopped and the idle reader is waiting on the keyboard.
+    # "unpublished" that has taken effect proves the withdrawal was handled. It
+    # does not prove the idle reader has the terminal: that waits for the
+    # withdrawn read to give the pump's lock back, and a key typed before then
+    # meets a cooked terminal that echoes it.
     def unpublished(chat)
       publish(chat, { "generation" => 3 })
       say(chat, { "v" => "unpublished" })
       say(chat, { "v" => "context", "commands" => ["idle"] })
       expect(settles { commands == ["idle"] || nil }).to be(true)
+      uncooked(keyboard)
     end
 
     # A "touch" report for the prompt drawn before the withdrawal may already be
@@ -576,8 +632,7 @@ RSpec.describe Lain::Frontend::InputPane do
                       "header" => "fleet:1\nrow a" })
       next_frame(chat, of: "line")
       say(chat, { "v" => "unpublished", "header" => "fleet:1\nrow a" })
-      say(chat, { "v" => "context", "commands" => ["idle"] })
-      settles { commands == ["idle"] || nil }
+      settles { screen.string.scan("\r\e[Kfleet:1\nrow a\n").size == 2 || nil }
       screen.truncate(0) && screen.rewind
 
       say(chat, { "v" => "unpublished", "header" => "fleet:2\nrow b" })
@@ -636,6 +691,22 @@ RSpec.describe Lain::Frontend::InputPane do
       settles { commands == ["after"] || nil }
 
       expect(screen.string).to eq("")
+    end
+
+    it "draws a header it declined over a draft in place once the draft is gone" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "model:0s" })
+      settles { screen.string.include?("model:0s") || nil }
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(false)
+      Enumerator.produce { next_frame(chat, of: "touch") }.find { |touch| !touch["untouched"] }
+      publish(chat, { "generation" => 3, "header" => "model:1s" })
+      say(chat, { "v" => "context", "commands" => ["after"] })
+      settles { commands == ["after"] || nil }
+      screen.truncate(0) && screen.rewind
+
+      allow(Lain::Frontend::LineEditor).to receive(:untouched?).and_return(true)
+
+      expect(settles { screen.string.empty? ? nil : screen.string }).to eq("\e7\e[1A\r\e[Kmodel:1s\n\e8")
     end
 
     it "rewrites in place again once a whole redraw followed the resize" do
@@ -1131,10 +1202,23 @@ RSpec.describe Lain::Frontend::InputPane do
       keyed = described_class.new(path:, tty:, input: @pty.last, commands:, layers:, tick: 0.01, geometry:)
       @running = Thread.new { keyed.run }
       server.timeout = 5
-      server.accept.tap { |client| client.timeout = 5 }.tap do |chat|
-        publish(chat, { "generation" => 3 })
-        say(chat, { "v" => "unpublished" })
-      end
+      server.accept.tap { |client| client.timeout = 5 }.tap { |chat| withdrawn(chat) }
+    end
+
+    # A prompt published and withdrawn, and the idle reader holding the terminal.
+    def withdrawn(chat)
+      publish(chat, { "generation" => 3 })
+      say(chat, { "v" => "unpublished" })
+      uncooked(@pty.first)
+    end
+
+    # Bytes waiting on the pane's end of the terminal, by FIONREAD: none left
+    # means the idle reader has taken them into the draft, since it reads and
+    # takes with no other fiber between.
+    def waiting
+      count = [0].pack("i")
+      @pty.last.ioctl(Lain::Shell::Pipeline::FIONREAD, count)
+      count.unpack1("i")
     end
 
     # The frames up to the line sent after the Ctrl-C, so a signal frame sent for it shows.
@@ -1158,12 +1242,17 @@ RSpec.describe Lain::Frontend::InputPane do
       @pty&.each(&:close)
     end
 
+    # An open paste echoes nothing, and neither does discarding it, so the
+    # 2nd Ctrl-C, over the now empty draft, is the witness that the 1st was
+    # handled: signals reach the pane in order, through one pipe.
     it "discards a draft held mid paste on Ctrl-C and sends the chat no signal frame" do
       chat = unpublished_pane
       @pty.first.write("\e[200~qq")
-      settles { screen.string.end_with?("qq") || nil }
+      settles { waiting.zero? || nil }
 
       deliver("INT")
+      deliver("INT")
+      next_frame(chat, of: "signal")
       @pty.first.write("d\r")
 
       expect(kinds_through_line(chat)).not_to include("signal")
@@ -1173,7 +1262,6 @@ RSpec.describe Lain::Frontend::InputPane do
 
     it "interrupts on a Ctrl-C over an empty draft" do
       chat = unpublished_pane
-      settles { screen.string.include?("you> ") || nil }
 
       deliver("INT")
 

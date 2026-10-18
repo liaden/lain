@@ -425,12 +425,10 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   Added 2026-10-15, from a pre-commit run and a reviewer's run beside about 10 agents running specs (load
   13). Each passed alone, and each reads terminal bytes before a write that is still in flight lands, so a
-  red under load is timing. 2 LineEditor names from this run are retired below.
+  red under load is timing. 2 LineEditor names and 1 InputPane name from this run are retired below.
   `a plain chat's inline prompts over a real terminal a prompt the approval window decides ends its line
   with who decided it and how, and a y typed afterwards decides nothing` (passed 3 of 3 with its worker
   seed on the base commit);
-  `Lain::Frontend::InputPane when the chat says nothing is published rewrites in place again once a whole
-  redraw followed the resize`;
   and `Shift+Enter in a pane inserts a newline and submits the whole draft on Enter` (load 14, passed alone
   and 3 of 3 with its seed on the base commit).
 
@@ -440,6 +438,29 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
     repeated probing` (listed above as load-induced since 2026-09-11). The spec went with the vsock
     tier, whose listener, `Transport::Vsock` and `:vsock` tag were deleted; nothing opens an
     `AF_VSOCK` socket now, so a red under that name cannot recur.
+  - 2026-10-17: `Lain::Frontend::InputPane when the chat says nothing is published rewrites in place
+    again once a whole redraw followed the resize` (seed 25833, `Expected nil to eq
+    "\e7\e[1A\r\e[Kmodel:1s\n\e8"`), and the same race in `... while a prompt is up redraws a header
+    that grew a row over the old one at a prompt with nothing typed` and `... redraws a header that
+    lost a row over the old rows at a prompt with nothing typed`. A lib race: a header frame that
+    arrived after a redraw but before the pump opened its read was dropped, because a read not yet
+    open reads as touched. The pane now holds a declined header (`InputPane::HeldHeader`) and draws
+    it on a later tick. A probe that delays the read's open by 100ms failed all 3; they now pass.
+  - 2026-10-17: `Lain::Frontend::InputPane when the chat says nothing is published echoes a draft
+    itself, the terminal echoing nothing` (`Expected "abc\e[?2004h" not to include "abc"`), and the
+    same race in `... sends a pasted segment longer than a cooked terminal's line whole, then the
+    line typed after it` and `... rewrites the header in place below an answered approval's echo,
+    and redraws whole at the next prompt`. The spec took the `idle` frame as proof that the idle
+    reader had uncooked the terminal, but that reader first waits for the pump's lock, so a key typed
+    early was echoed by the cooked pty (and a cooked line cut the paste at 4095 bytes). The specs now
+    wait for the reader's bracketed-paste switch. A probe that delays the mode switch by 100ms
+    failed all 3; they now pass.
+  - 2026-10-17: `Lain::Frontend::InputPane a signal the human sends the pane discards a draft held
+    mid paste on Ctrl-C and sends the chat no signal frame` (`IO::TimeoutError` from `chat.gets`).
+    Its settle on an echo that an open paste never draws always timed out, and the key typed after
+    the Ctrl-C could reach the pane before the signal did and land in the paste. It now waits for
+    the reader to take the bytes, and for a 2nd Ctrl-C's signal frame, before it types. A probe
+    that delays the pane's signal handling by 100ms failed the old example and passes the new one.
   - 2026-10-16: `Lain::Frontend::LineEditor#read, and the submit predicate asking the terminal for
     Shift+Enter resets at EOF`, `... resets after an exception` and `... writes the request before
     the read and the reset after it, on a terminal` (red 6 times across seeds 63896, 48225, 9063 and
