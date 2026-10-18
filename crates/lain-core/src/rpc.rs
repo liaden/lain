@@ -36,8 +36,6 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use crate::{exec, grep};
-
 /// Incremental msgpack decode. msgpack is self-delimiting, so there is no
 /// framing to invent: try to read one value; `UnexpectedEof` means
 /// need-more-bytes, any other decode error means the stream is poisoned.
@@ -128,10 +126,10 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> Wire for T {}
 ///
 /// WHY a local trait rather than `tokio_util::net::Listener`, which is exactly
 /// this shape: it lives behind tokio-util's `net` feature, which this crate
-/// does not carry (`Cargo.toml` takes `codec` only) -- and enabling it would
-/// not be enough anyway, because `VsockListener` is a foreign type and
-/// `Listener` a foreign trait, so the orphan rule forbids the impl the vsock
-/// work needs. A local trait is implementable for anything.
+/// does not carry (`Cargo.toml` takes `codec` only), and a foreign trait
+/// cannot be implemented for a listener type another crate owns, which is
+/// what a relay transport is likely to bring. A local trait is implementable
+/// for anything.
 ///
 /// `-> impl Future + Send` rather than `async fn`: the accept future is polled
 /// inside `serve`'s, which is spawned, so the `Send` bound has to be part of
@@ -235,6 +233,7 @@ async fn respond_to(frame: Value, responses: mpsc::Sender<Value>) {
 struct Request {
     msgid: u32,
     method: String,
+    #[cfg(test)]
     params: Vec<Value>,
 }
 
@@ -266,9 +265,13 @@ impl Request {
         let Value::Array(params) = params else {
             return Err((echo, RpcError::ParamsNotArray));
         };
+        // Only the test-only `sleep` reads params; production checks their shape and drops them.
+        #[cfg(not(test))]
+        let _ = params;
         Ok(Self {
             msgid,
             method,
+            #[cfg(test)]
             params,
         })
     }
@@ -276,33 +279,23 @@ impl Request {
     async fn dispatch(self) -> Value {
         match self.method.as_str() {
             "ping" => ok_response(self.msgid, ping_result()),
-            "exec" => match run_exec(&self.params).await {
-                Ok(outcome) => ok_response(self.msgid, exec_result(outcome)),
-                Err(message) => error_response(self.msgid, message),
-            },
-            "grep" => match run_grep(&self.params).await {
-                Ok(outcome) => ok_response(self.msgid, grep_result(outcome)),
-                Err(message) => error_response(self.msgid, message),
-            },
+            #[cfg(test)]
+            "sleep" => {
+                tokio::time::sleep(sleep_duration(&self.params)).await;
+                ok_response(self.msgid, Value::Nil)
+            }
             unknown => error_response(self.msgid, RpcError::UnknownMethod(unknown.to_string())),
         }
     }
 }
 
-async fn run_exec(params: &[Value]) -> Result<exec::Outcome, String> {
-    let map = params
-        .first()
-        .ok_or("exec takes one params element, a map")?;
-    let decoded = exec::ExecParams::from_value(map).map_err(|error| error.to_string())?;
-    exec::run(decoded).await.map_err(|error| error.to_string())
-}
-
-async fn run_grep(params: &[Value]) -> Result<grep::Outcome, String> {
-    let map = params
-        .first()
-        .ok_or("grep takes one params element, a map")?;
-    let decoded = grep::GrepParams::from_value(map).map_err(|error| error.to_string())?;
-    grep::run(decoded).await.map_err(|error| error.to_string())
+/// A slow method that does nothing else, so the out-of-order completion
+/// contract stays provable with only `ping` in production. Malformed params
+/// sleep for zero rather than erroring: the tests never need that error.
+#[cfg(test)]
+fn sleep_duration(params: &[Value]) -> std::time::Duration {
+    let millis = params.first().and_then(Value::as_u64).unwrap_or(0);
+    std::time::Duration::from_millis(millis)
 }
 
 fn ok_response(msgid: u32, result: Value) -> Value {
@@ -331,38 +324,6 @@ fn ping_result() -> Value {
             Value::from(env!("CARGO_PKG_VERSION")),
         ),
         (Value::from("pid"), Value::from(std::process::id())),
-    ])
-}
-
-fn exec_result(outcome: exec::Outcome) -> Value {
-    Value::Map(vec![
-        (Value::from("stdout"), Value::Binary(outcome.stdout)),
-        (Value::from("stderr"), Value::Binary(outcome.stderr)),
-        (Value::from("exit_status"), Value::from(outcome.exit_status)),
-        (Value::from("timed_out"), Value::from(outcome.timed_out)),
-    ])
-}
-
-/// `matches` plus the `capped` flag, and every match is the three fields
-/// `Tools::Grep` already yields -- path, line number, line -- so the Ruby side
-/// swaps its transport without changing what it formats. Paths and lines are
-/// msgpack `str`, unlike exec's `bin` output: a grep result is text by
-/// construction (binary files are detected and skipped).
-fn grep_result(outcome: grep::Outcome) -> Value {
-    Value::Map(vec![
-        (
-            Value::from("matches"),
-            Value::Array(outcome.matches.into_iter().map(match_result).collect()),
-        ),
-        (Value::from("capped"), Value::from(outcome.capped)),
-    ])
-}
-
-fn match_result(found: grep::Match) -> Value {
-    Value::Map(vec![
-        (Value::from("path"), Value::from(found.path)),
-        (Value::from("line_number"), Value::from(found.line_number)),
-        (Value::from("line"), Value::from(found.line)),
     ])
 }
 
@@ -423,8 +384,7 @@ pub(crate) mod support {
     /// A listener of an unrelated concrete type, wired into the same serve
     /// loop: the compile-level proof that [`Accept`] is a seam and not a
     /// rename. TCP is the cheapest witness available -- tokio's `net` feature
-    /// is already on, so it costs no dependency, and unlike the AF_VSOCK
-    /// listener this seam exists for it needs no kernel module or hypervisor.
+    /// is already on, so it costs no dependency.
     pub(crate) async fn start_tcp_server() -> SocketAddr {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
@@ -586,76 +546,71 @@ pub(crate) mod support {
             .1
             .clone()
     }
-
-    pub(crate) fn exec_params(argv: &[&str]) -> Vec<Value> {
-        vec![exec_map(argv, &[], None)]
-    }
-
-    pub(crate) fn exec_map(
-        argv: &[&str],
-        env: &[(&str, Option<&str>)],
-        timeout_ms: Option<u64>,
-    ) -> Value {
-        let mut entries = vec![(
-            Value::from("argv"),
-            Value::Array(argv.iter().map(|arg| Value::from(*arg)).collect()),
-        )];
-        if !env.is_empty() {
-            let pairs = env
-                .iter()
-                .map(|(key, value)| (Value::from(*key), value.map_or(Value::Nil, Value::from)))
-                .collect();
-            entries.push((Value::from("env"), Value::Map(pairs)));
-        }
-        if let Some(ms) = timeout_ms {
-            entries.push((Value::from("timeout_ms"), Value::from(ms)));
-        }
-        Value::Map(entries)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::Ordering;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use rmpv::Value;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::support::{
-        RESPONSE_WAIT, TestClient, exec_params, field, raw_response_parts, request, response_parts,
+        RESPONSE_WAIT, TestClient, field, raw_response_parts, request, response_parts,
         start_flaky_server, start_server, start_tcp_server,
     };
     use super::{ACCEPT_RETRY_DELAY, Wire};
 
     /// The whole protocol surface a transport has to carry, as one value: a
-    /// ping's version and an exec's stdout. Two transports agreeing on this
-    /// pair is the differential the seam is judged by.
-    async fn ping_and_exec<C: Wire>(client: &mut TestClient<C>) -> (Value, Value) {
+    /// ping's version and the error slot of a refused method. Two transports
+    /// agreeing on this pair is the differential the seam is judged by.
+    async fn ping_and_refusal<C: Wire>(client: &mut TestClient<C>) -> (Value, Value) {
         let (msgid, error, result) = client.call(1, "ping", vec![]).await;
         assert_eq!(1, msgid);
         assert!(error.is_nil(), "unexpected ping error: {error:?}");
         let version = field(&result, "version");
 
-        let (msgid, error, result) = client
-            .call(2, "exec", exec_params(&["sh", "-c", "echo hi"]))
-            .await;
+        let (msgid, error, _) = client.call(2, "exec", vec![]).await;
         assert_eq!(2, msgid);
-        assert!(error.is_nil(), "unexpected exec error: {error:?}");
-        (version, field(&result, "stdout"))
+        (version, error)
+    }
+
+    fn millis(ms: u64) -> Vec<Value> {
+        vec![Value::from(ms)]
     }
 
     #[tokio::test]
-    async fn the_unix_path_pings_and_execs_unchanged() {
+    async fn the_unix_path_pings_and_refuses_unknown_methods() {
         let (_dir, path) = start_server().await;
         let mut client = TestClient::connect(&path).await;
         assert_eq!(
             (
                 Value::from(env!("CARGO_PKG_VERSION")),
-                Value::Binary(b"hi\n".to_vec())
+                Value::from("unknown method \"exec\"")
             ),
-            ping_and_exec(&mut client).await
+            ping_and_refusal(&mut client).await
         );
+    }
+
+    #[tokio::test]
+    async fn exec_is_refused_as_an_unknown_method_and_the_daemon_stays_up() {
+        let (_dir, path) = start_server().await;
+        let mut client = TestClient::connect(&path).await;
+        let argv = Value::Array(vec![Value::from("true")]);
+        let params = vec![Value::Map(vec![(Value::from("argv"), argv)])];
+        let (msgid, error, result) = client.call(4, "exec", params).await;
+        assert_eq!(4, msgid);
+        let message = error.as_str().expect("error is a string").to_string();
+        assert!(
+            message.contains("exec"),
+            "error names the method: {message}"
+        );
+        assert!(result.is_nil());
+
+        let (msgid, error, _) = client.call(5, "ping", vec![]).await;
+        assert_eq!(5, msgid);
+        assert!(error.is_nil(), "unexpected error: {error:?}");
     }
 
     #[tokio::test]
@@ -666,8 +621,8 @@ mod tests {
         // Same `serve`, same `serve_connection`: nothing was duplicated to
         // make TCP work, so the two answers must be indistinguishable.
         assert_eq!(
-            ping_and_exec(&mut unix).await,
-            ping_and_exec(&mut tcp).await
+            ping_and_refusal(&mut unix).await,
+            ping_and_refusal(&mut tcp).await
         );
     }
 
@@ -721,20 +676,25 @@ mod tests {
     async fn in_flight_requests_complete_out_of_order_matched_by_msgid() {
         let (_dir, path) = start_server().await;
         let mut client = TestClient::connect(&path).await;
-        client
-            .send(request(1, "exec", exec_params(&["sh", "-c", "sleep 0.3"])))
-            .await;
-        client
-            .send(request(2, "exec", exec_params(&["true"])))
-            .await;
-        let (first_msgid, first_error, _) = response_parts(client.recv().await);
-        let (second_msgid, second_error, _) = response_parts(client.recv().await);
+        let sent = Instant::now();
+        client.send(request(1, "sleep", millis(300))).await;
+        client.send(request(2, "ping", vec![])).await;
+        let (first_msgid, first_error, first_result) = response_parts(client.recv().await);
+        let (second_msgid, second_error, second_result) = response_parts(client.recv().await);
         assert!(first_error.is_nil(), "unexpected error: {first_error:?}");
         assert!(second_error.is_nil(), "unexpected error: {second_error:?}");
-        assert_eq!(2, first_msgid, "the fast command answers first");
+        assert_eq!(2, first_msgid, "the ping answers first");
         assert_eq!(
-            1, second_msgid,
-            "the slow command answers second, msgid intact"
+            Value::from(env!("CARGO_PKG_VERSION")),
+            field(&first_result, "version")
+        );
+        assert_eq!(1, second_msgid, "the sleep answers second, msgid intact");
+        assert!(second_result.is_nil());
+        // Without this a sleep that ignored its duration could still lose the race to ping.
+        assert!(
+            sent.elapsed() >= Duration::from_millis(300),
+            "the sleep answered in {:?}, before its 300ms",
+            sent.elapsed()
         );
     }
 
@@ -772,14 +732,6 @@ mod tests {
             "error names the method: {message}"
         );
 
-        // Decodable exec with invalid params (no argv): an error reply, not a close.
-        client
-            .send(request(11, "exec", vec![Value::Map(vec![])]))
-            .await;
-        let (msgid, error, _) = response_parts(client.recv().await);
-        assert_eq!(11, msgid);
-        assert!(!error.is_nil());
-
         // The reserved marker 0xc1: rmpv leniently decodes it as nil, so it
         // is a decodable-but-invalid request (error response, msgid 0), NOT
         // poison. Pinned so an rmpv strictness change shows up here.
@@ -788,7 +740,7 @@ mod tests {
         assert_eq!(0, msgid);
         assert!(!error.is_nil());
 
-        // The connection survived all five.
+        // The connection survived all four.
         let (msgid, error, _) = client.call(3, "ping", vec![]).await;
         assert_eq!(3, msgid);
         assert!(error.is_nil());
@@ -832,20 +784,18 @@ mod tests {
         }
 
         // The collision probe_msgid_shapes demonstrated: a legitimate msgid-0
-        // exec in flight beside a huge-msgid frame. The msgid-0 success must
+        // request in flight beside a huge-msgid frame. The msgid-0 success must
         // stay unambiguous -- exactly one response claims id 0.
         let huge_id = Value::from(1u64 << 40);
         client
             .send(Value::Array(vec![
                 Value::from(0),
                 huge_id.clone(),
-                Value::from("exec"),
-                Value::Array(exec_params(&["sh", "-c", "echo huge"])),
+                Value::from("sleep"),
+                Value::Array(millis(50)),
             ]))
             .await;
-        client
-            .send(request(0, "exec", exec_params(&["sh", "-c", "echo zero"])))
-            .await;
+        client.send(request(0, "sleep", millis(50))).await;
         let first = raw_response_parts(client.recv().await);
         let second = raw_response_parts(client.recv().await);
         let (huge, zero) = if first.0 == huge_id {
@@ -856,15 +806,14 @@ mod tests {
         assert_eq!(huge_id, huge.0, "no both-claim-msgid-0 collision");
         assert!(
             !huge.1.is_nil(),
-            "the huge-msgid frame errors instead of executing"
+            "the huge-msgid frame errors instead of dispatching"
         );
         assert_eq!(Value::from(0), zero.0);
         assert!(
             zero.1.is_nil(),
-            "the legitimate msgid-0 exec succeeds: {:?}",
+            "the legitimate msgid-0 sleep succeeds: {:?}",
             zero.1
         );
-        assert_eq!(Value::Binary(b"zero\n".to_vec()), field(&zero.2, "stdout"));
     }
 
     #[tokio::test]

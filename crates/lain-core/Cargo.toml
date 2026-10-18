@@ -11,14 +11,12 @@ name = "lain-core"
 path = "src/main.rs"
 
 [dependencies]
-# The async runtime the exec boundary exists for: net (UnixListener/UnixStream),
-# process (tokio::process::Command with kill_on_drop), time (server-side
-# timeout), sync (the per-connection response mpsc), io-util (read_to_end on
-# child pipes), signal (SIGTERM/SIGINT shut the runtime down so kill_on_drop
-# fires -- an unhandled fatal signal would orphan in-flight children).
-# Out-of-process by the placement rule -- an async runtime never runs inside a
-# magnus FFI call (ext/lain/CLAUDE.md).
-tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "net", "process", "time", "sync", "io-util", "signal"] }
+# The async runtime the wire runs on: net (UnixListener/UnixStream, and the
+# test-only TCP listener), time (the accept retry pause), sync (the
+# per-connection response mpsc), signal (SIGTERM/SIGINT shut the runtime
+# down through its Drop glue). Out-of-process by the placement rule -- an async runtime
+# never runs inside a magnus FFI call (ext/lain/CLAUDE.md).
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "net", "time", "sync", "signal"] }
 # `codec::{Decoder, Encoder}` + `Framed`: incremental decode over the socket.
 # msgpack is self-delimiting, so there is no framing to invent -- the Decoder
 # just retries `rmpv::decode::read_value` until the buffer holds a whole value.
@@ -28,7 +26,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 # Dynamically-typed msgpack values. The wire shape is the 4-element msgpack-RPC
 # array the Neovim client already speaks; `Value` keeps the envelope handling
-# schema-free and gives `Value::Binary` for subprocess bytes (bin, not str).
+# schema-free.
 rmpv = "1.3"
 # `BytesMut`/`Buf`/`BufMut` for the codec's receive buffer (tokio-util's codec
 # API is written in terms of it).
@@ -41,8 +39,8 @@ tracing = "0.1"
 # `nu-ansi-term` and makes the fmt layer read `NO_COLOR` to decide colour --
 # the terminal-ownership rule in `ext/lain/CLAUDE.md` ("no crate here may own,
 # drive, or interrogate a terminal ... none may read the environment to decide
-# colour"), which is workspace-wide and binds the daemon hardest: it is the
-# isolation boundary and has even less business holding a tty. `deny.toml`'s
+# colour"), which is workspace-wide and binds the daemon too: it is a separate
+# process with no business holding a tty. `deny.toml`'s
 # ban on `nu-ansi-term` is the mechanical half; `main.rs`'s `.with_ansi(false)`
 # is the stated half. Features unify across the workspace's single lock file,
 # so the ban only holds if BOTH crates opt out. `fmt` (+ its `registry`), `std` and
@@ -53,39 +51,14 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
   "std",
   "smallvec",
 ] }
-# Idiomatic std::error::Error + Display derives for the request/param/exec
-# error enums; their Display text is the RPC error string a client sees.
+# Idiomatic std::error::Error + Display derives for the request error enum;
+# its Display text is the RPC error string a client sees.
 thiserror = "2"
-# `killpg` for the timeout kill: the child is spawned as its own process-group
-# leader (ShellOut's setsid scope) and the timeout must kill the whole group.
-# Mature-crate-over-unsafe per house rule -- this crate forbids unsafe, and
-# libc's kill(2) wrapper would need an unsafe block; nix abstracts it safely.
-nix = { version = "0.31", default-features = false, features = ["signal"] }
-# AF_VSOCK listener, so the exec boundary can serve a guest across a
-# hypervisor's virtio-vsock channel with no shared filesystem and no network
-# stack -- the isolation story a Unix socket cannot tell. Same tokio 1.53 pin,
-# no feature bump. Its `VsockListener::accept` yields (VsockStream, VsockAddr),
-# structurally what `UnixListener::accept` yields, which is why rpc's `Accept`
-# trait covers both without reshaping. Trap for TCP habits: the ephemeral port
-# is VMADDR_PORT_ANY (u32::MAX), NOT 0 -- port 0 and every port under 1024 are
-# privileged and raise EACCES.
-tokio-vsock = "0.7"
-# ripgrep's own components, unbundled. The three do one job each and the split
-# is theirs, not ours: `ignore` walks a tree applying .gitignore/.ignore
-# precedence (a hierarchy of overriding matchers nobody should re-derive),
-# `grep-regex` compiles the pattern, `grep-searcher` does the line-oriented
-# read with binary detection. Out-of-process by the placement rule -- a
-# directory walk is I/O, so it can never live in `ext/lain`.
-#
-# `grep-regex` matters specifically because it is finite-automata (the `regex`
-# crate underneath): match time is linear in the subject, so a pattern that
-# would backtrack catastrophically in a PCRE-style engine cannot hang the
-# daemon. Do not substitute an engine with backreferences or lookaround for it
-# without re-earning that property.
-ignore = "0.4"
-grep-regex = "0.1"
-grep-searcher = "0.1"
 
 [dev-dependencies]
 # Tempdir-scoped test sockets and scratch files, auto-cleaned.
 tempfile = "3"
+# `process` for tests/lifecycle.rs, the only code that spawns a process: it
+# drives the real binary to observe argv and signal handling. `io-util` for the
+# tests' `AsyncReadExt`/`AsyncWriteExt`; the daemon itself never needs it.
+tokio = { version = "1.53", features = ["process", "io-util"] }
