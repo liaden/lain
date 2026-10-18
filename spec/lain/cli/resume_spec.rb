@@ -232,6 +232,29 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
+    # The refusal has to come from the selection: a door reads the recorded
+    # header to build its backend right after it, and an old header's
+    # provider would refuse first, in words that send a reader after a key.
+    context "with a session written before the header carried its format" do
+      let(:old_name) { "20260303T000000-1.ndjson" }
+
+      before do
+        write_session(old_name, [open_header(provider: "anthropic").except("format")] + turn_records(chain("old")))
+      end
+
+      it "naming it exactly refuses at the selection, naming format 1 and not the provider" do
+        expect { resume.locate(old_name) }
+          .to raise_error(described_class::Refusal) { |error|
+                expect(error.message).to include(old_name, "format 1")
+                expect(error.message).not_to include("anthropic")
+              }
+      end
+
+      it "bare --resume resumes the newest stamped session instead" do
+        expect(resume.call.file).to eq("20260202T000000-1.ndjson")
+      end
+    end
+
     it "refuses a bare --resume when only ephemerals exist, naming the directory" do
       Dir.children(paths.sessions_dir).each { |name| File.delete(File.join(paths.sessions_dir, name)) }
       write_session("20260303T000000-9.btw.ndjson", [open_header] + turn_records(chain("scratchy")))

@@ -25,6 +25,9 @@ module Lain
   # recoverable only as the LAST turn record's digest.
   module SessionRecord
     HEADER_TYPE = "session"
+    # A removed, renamed or re-meant header or record key bumps this; an added
+    # key does not, since a reader that ignores it still reads the file right.
+    FORMAT = 1
     TURN_TYPE = "turn"
     REWOUND_TYPE = "rewound"
     # Named beside the types it deliberately is NOT: a spawned chain's turn is no
@@ -66,7 +69,7 @@ module Lain
     # unrecorded writer writes no field.
     def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil, profile: {},
                compaction: {}, arms: {}, middleware: {}, writer: Liveness::Writer::UNRECORDED)
-      record = { "type" => HEADER_TYPE, "context_class" => context.class.name,
+      record = { "type" => HEADER_TYPE, "format" => FORMAT, "context_class" => context.class.name,
                  "model" => context.model, "max_tokens" => context.max_tokens,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "head" => head,
@@ -75,6 +78,13 @@ module Lain
                             section("middleware", middleware), writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
+
+    # Whether a header records the format this code reads. The resume pick and
+    # the Loader both ask this, so a file the pick answers with always loads.
+    #
+    # @param header [Hash{String=>Object}]
+    # @return [Boolean]
+    def current_format?(header) = header["format"] == FORMAT
 
     # Fields nested under one key, so a reader of the header's flat keys never
     # mistakes one for a profile field.

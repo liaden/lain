@@ -200,9 +200,18 @@ module Lain
         def of_type(type) = @by_type.fetch(type.to_s, NO_RECORDS)
 
         def header
-          @header ||= sole(HEADER_TYPE, "#{HEADER_TYPE.inspect} header records in one journal; " \
-                                        "the format is one run, one journal, one file") ||
-                      raise(Corrupt, "no #{HEADER_TYPE.inspect} header record to rebuild a context from")
+          @header ||= stamped(sole(HEADER_TYPE, "#{HEADER_TYPE.inspect} header records in one journal; " \
+                                                "the format is one run, one journal, one file") ||
+                              raise(Corrupt, "no #{HEADER_TYPE.inspect} header record to rebuild a context from"))
+        end
+
+        def stamped(header)
+          return header if SessionRecord.current_format?(header)
+
+          format = header["format"]
+          raise Corrupt, "session file predates format #{SessionRecord::FORMAT} (no format key)" if format.nil?
+
+          raise Corrupt, "session file records format #{format.inspect}; this loader reads format #{SessionRecord::FORMAT}"
         end
 
         def sole_slot_fills

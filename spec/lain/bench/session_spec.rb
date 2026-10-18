@@ -79,7 +79,7 @@ RSpec.describe Lain::Bench::Session do
       # `provider` and `compact_strategy` are deliberately NOT Context
       # constructor inputs -- the provider choice and the compaction arm both
       # live beside the context, never inside it.
-      recorded = (header.keys - %w[type context_class head tools reminders ts provider compact_strategy])
+      recorded = (header.keys - %w[type format context_class head tools reminders ts provider compact_strategy])
                  .map { |key| key == "context_pipeline" ? "pipeline_name" : key }
       # `pipeline` is a live CODE collaborator (a Combinator or ->(workspace)
       # provider), not serializable data -- like a `self.pipeline`-

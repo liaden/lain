@@ -307,7 +307,7 @@ module Lain
         # lives for both, so a third such field costs this method nothing.
         def header_record(timeline, context, toolset, workspace, optional)
           {
-            "type" => HEADER_TYPE, "context_class" => context.class.name,
+            "type" => HEADER_TYPE, "format" => SessionRecord::FORMAT, "context_class" => context.class.name,
             "model" => context.model, "max_tokens" => context.max_tokens,
             "system" => context.system, "stream" => context.stream, "extra" => context.extra,
             "head" => timeline.head_digest,

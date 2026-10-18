@@ -292,6 +292,18 @@ RSpec.describe Lain::Bench::Session::Loader do
         .to raise_error(Lain::Bench::Session::Corrupt, /header/)
     end
 
+    it "raises Corrupt naming format 1 when the header predates the format stamp" do
+      records = forge("session") { |header| header.delete("format") }
+      expect { described_class.new(records).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /predates format 1 \(no format key\)/)
+    end
+
+    it "raises Corrupt when the header names a format this loader does not read" do
+      records = forge("session") { |header| header["format"] = 2 }
+      expect { described_class.new(records).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /format 2.*format 1/)
+    end
+
     it "raises Corrupt rather than fabricating a context when no header is present" do
       expect { described_class.new([]).recording }.to raise_error(Lain::Bench::Session::Corrupt, /header/)
     end

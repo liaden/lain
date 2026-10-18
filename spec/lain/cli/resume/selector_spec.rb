@@ -41,6 +41,16 @@ RSpec.describe Lain::CLI::Resume::Selector do
                                                   policy: "signoff", latency: 3.0).to_journal.merge("ts" => at)])
   end
 
+  # A session written before the header carried its format: every key a chat
+  # writes today but that one.
+  def unstamped(name, at:)
+    write(name, [Lain::SessionRecord.header(context:, toolset:, head: nil).except("format").merge("ts" => at)])
+  end
+
+  def formatted(name, format, at:)
+    write(name, [Lain::SessionRecord.header(context:, toolset:, head: nil).merge("format" => format, "ts" => at)])
+  end
+
   def picked(input = nil) = File.basename(selector.call(input))
 
   describe "the bare pick" do
@@ -125,6 +135,68 @@ RSpec.describe Lain::CLI::Resume::Selector do
       session("20260728T080003-224.btw.ndjson", at: "2026-07-28T08:03:00Z")
 
       expect { selector.call(nil) }.to raise_error(Lain::CLI::Resume::Refusal, /, and 1 ephemeral/)
+    end
+  end
+
+  describe "a session file that predates the format stamp" do
+    it "is skipped by the bare pick for the older stamped session" do
+      session("20260727T090000-111.ndjson", at: "2026-07-27T09:00:00Z")
+      unstamped("20260728T090000-222.ndjson", at: "2026-07-28T09:00:00Z")
+
+      expect(picked).to eq("20260727T090000-111.ndjson")
+    end
+
+    it "is named by the no-sessions refusal as predating format 1" do
+      unstamped("20260728T090000-222.ndjson", at: "2026-07-28T09:00:00Z")
+
+      expect { selector.call(nil) }
+        .to raise_error(Lain::CLI::Resume::Refusal) { |error|
+              expect(error.message).to include("1 predating session format 1 (20260728T090000-222.ndjson)")
+            }
+    end
+
+    it "is refused when named exactly, saying it predates format 1" do
+      unstamped("20260728T090000-222.ndjson", at: "2026-07-28T09:00:00Z")
+
+      expect { selector.call("20260728T090000-222.ndjson") }
+        .to raise_error(Lain::CLI::Resume::Refusal, /20260728T090000-222\.ndjson predates session format 1/)
+    end
+
+    it "is refused when a prefix names it uniquely, saying the same" do
+      session("20260727T090000-111.ndjson", at: "2026-07-27T09:00:00Z")
+      unstamped("20260728T090000-222.ndjson", at: "2026-07-28T09:00:00Z")
+
+      expect { selector.call("20260728") }
+        .to raise_error(Lain::CLI::Resume::Refusal, /predates session format 1/)
+    end
+  end
+
+  describe "a session file recording another format" do
+    it "is skipped by the bare pick, whether the number differs or is a String" do
+      session("20260727T090000-111.ndjson", at: "2026-07-27T09:00:00Z")
+      formatted("20260728T090000-222.ndjson", 2, at: "2026-07-28T09:00:00Z")
+      formatted("20260729T090000-333.ndjson", "1", at: "2026-07-29T09:00:00Z")
+
+      expect(picked).to eq("20260727T090000-111.ndjson")
+    end
+
+    it "is named by the no-sessions refusal apart from an unstamped file" do
+      unstamped("20260727T090000-111.ndjson", at: "2026-07-27T09:00:00Z")
+      formatted("20260728T090000-222.ndjson", 2, at: "2026-07-28T09:00:00Z")
+
+      expect { selector.call(nil) }
+        .to raise_error(Lain::CLI::Resume::Refusal) { |error|
+              expect(error.message).to include("1 predating session format 1 (20260727T090000-111.ndjson)",
+                                               "1 recording another session format, not 1 " \
+                                               "(20260728T090000-222.ndjson)")
+            }
+    end
+
+    it "is refused when named exactly, saying which format it records" do
+      formatted("20260728T090000-222.ndjson", "1", at: "2026-07-28T09:00:00Z")
+
+      expect { selector.call("20260728T090000-222.ndjson") }
+        .to raise_error(Lain::CLI::Resume::Refusal, /20260728T090000-222\.ndjson records session format "1", not 1/)
     end
   end
 

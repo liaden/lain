@@ -11,11 +11,13 @@ module Lain
       # class past `Metrics/ClassLength` -- extract, never loosen.
       class Selector
         # Why a durable file cannot be picked, in the words the refusal uses.
-        # The first two are the SAME category -- a file the Loader could only
-        # call Corrupt -- reached by two routes, which is why they are counted
-        # apart but rejected together.
+        # All but the last are the SAME category -- a file the Loader could only
+        # call Corrupt -- reached by different routes, which is why they are
+        # reported apart but rejected together.
         EMPTY = "empty (a chat that recorded nothing)"
         HEADERLESS = "with no session header"
+        PREDATES = "predating session format #{SessionRecord::FORMAT}".freeze
+        OTHER_FORMAT = "recording another session format, not #{SessionRecord::FORMAT}".freeze
         EPHEMERAL = "ephemeral (--btw)"
 
         # "nothing wrong with it" -- {#unloadable}'s good-case key, named so the
@@ -23,9 +25,10 @@ module Lain
         # artifact.
         PICKABLE = nil
 
-        # How many headerless files the refusal names before it summarizes: they
-        # are NAMED so a reader can recognize their own file, but a week of
-        # `lain epic approve` drains would put twenty filenames in one sentence.
+        # How many unloadable files of one reason the refusal names before it
+        # summarizes: they are NAMED so a reader can recognize their own file,
+        # but a week of `lain epic approve` drains would put twenty filenames in
+        # one sentence.
         NAMED_LIMIT = 3
 
         # @param dir [String] the project's session directory
@@ -61,9 +64,8 @@ module Lain
           session_names.reject { |name| Paths.ephemeral?(name) }
         end
 
-        # The files a pick may answer with: durable, and loadable. Both skipped
-        # kinds sort NEWEST and so were what the bare pick answered with, and
-        # both the Loader could only call Corrupt.
+        # The files a pick may answer with: durable, and loadable. Every skipped
+        # kind can sort NEWEST, and the Loader could only call each one Corrupt.
         #
         # A zero-byte file is what {Journal.open} leaves behind when a chat dies
         # before its header lands. A HEADERLESS one arrives because
@@ -91,7 +93,14 @@ module Lain
         def unloadable_reason(path)
           return EMPTY if Journal.empty?(path)
 
-          headerless?(path) ? HEADERLESS : PICKABLE
+          header_reason(first_header(path))
+        end
+
+        def header_reason(header)
+          return HEADERLESS if header.nil?
+          return PICKABLE if SessionRecord.current_format?(header)
+
+          header.key?("format") ? OTHER_FORMAT : PREDATES
         end
 
         # Lazy, and it stops at the first line of a real session: the header is
@@ -104,20 +113,38 @@ module Lain
         # session, and a damaged one; hiding it from the pick would hide a
         # session the user wants to hear about, and the Loader already refuses
         # it by name. Skip what is not ours; let the Loader judge what is.
-        def headerless?(path)
-          Journal.records(File.foreach(path), type: SessionRecord::HEADER_TYPE).first.nil?
+        def headerless?(path) = first_header(path).nil?
+
+        def first_header(path)
+          Journal.records(File.foreach(path), type: SessionRecord::HEADER_TYPE).first
         rescue SystemCallError
-          true
+          nil
         end
 
         def chosen(selector)
           return newest if selector.empty?
-          # An EXACT filename stays honored, headerless included: naming a file
-          # is a choice, never an accident of sorting. Only the two CONVENIENCE
-          # picks -- bare and prefix -- filter.
-          return with_records(selector) if session_names.include?(selector)
+          # An EXACT filename skips the CONVENIENCE filters, headerless
+          # included: naming a file is a choice, never an accident of sorting.
+          # It does not skip the format check, because the door builds a
+          # backend from the header next and an old header would refuse there
+          # in a provider's words.
+          return stamped(with_records(selector)) if session_names.include?(selector)
 
-          loadable(with_records(matched(durable_names, selector)))
+          stamped(loadable(with_records(matched(durable_names, selector))))
+        end
+
+        def stamped(name)
+          header = first_header(path_of(name))
+          case header_reason(header)
+          when PREDATES
+            raise Refusal, "#{name} predates session format #{SessionRecord::FORMAT}: its header has no " \
+                           "format key, so it cannot load"
+          when OTHER_FORMAT
+            raise Refusal, "#{name} records session format #{header["format"].inspect}, not " \
+                           "#{SessionRecord::FORMAT}, so it cannot load"
+          end
+
+          name
         end
 
         # Applied after {#matched} rather than before it, so the refusal can say
@@ -145,7 +172,8 @@ module Lain
         # `to_sentence` because three reasons chained on "and" reads as one
         # run-on clause, each already carrying its own parenthetical.
         def skipped
-          phrases = [counted(EMPTY), headerless_phrase, ephemeral_phrase].compact
+          phrases = [counted(EMPTY), headerless_phrase, named(PREDATES), named(OTHER_FORMAT),
+                     ephemeral_phrase].compact
           phrases.empty? ? "" : ": skipped #{phrases.to_sentence}"
         end
 
@@ -154,8 +182,8 @@ module Lain
           "#{count} #{reason}" if count.positive?
         end
 
-        # NAMED, where the other two reasons are only counted, and it IDENTIFIES
-        # rather than advises. An earlier version said "name one exactly to load
+        # NAMED, as the format reasons are, where EMPTY and EPHEMERAL are only
+        # counted; and it IDENTIFIES rather than advises. An earlier version said "name one exactly to load
         # it anyway", which was false: the exact-name path is honored here, but
         # a headerless file then refuses at the Loader, so nothing loads either
         # way. Saying what the file probably is lets a reader recognize their
@@ -166,6 +194,11 @@ module Lain
 
           "#{names.size} #{HEADERLESS} (#{listed(names)}) -- not chat sessions; " \
             "a `lain epic approve` sign-off journal, say"
+        end
+
+        def named(reason)
+          names = unloadable.fetch(reason, [])
+          "#{names.size} #{reason} (#{listed(names)})" unless names.empty?
         end
 
         # NEWEST first, and the older end gets summarized: the file a reader is

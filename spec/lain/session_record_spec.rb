@@ -86,6 +86,19 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("turn")).to be_empty
   end
 
+  it "stamps that header with the session format" do
+    scribe
+
+    expect(of_type("session").first).to include("format" => 1)
+  end
+
+  # An added key does not bump the format: the middleware section is one.
+  it "keeps format 1 when the header carries the middleware section" do
+    described_class.new(journal:, context:, toolset:, workspace:, middleware: { "project" => "d1" })
+
+    expect(of_type("session").first).to include("format" => 1, "middleware" => { "project" => "d1" })
+  end
+
   # A reader in another process can then tell a crashed session from a quiet
   # one by asking after the process that wrote it.
   it "records the process writing the session in that header" do
@@ -929,6 +942,19 @@ RSpec.describe Lain::SessionRecord do
   # is re-committed from its own recorded content and re-journaled under its own
   # recorded timestamp; anything but a byte-for-byte match means the format
   # moved under every session already on disk.
+  # The one rule both the resume pick and the Loader ask, so a file the pick
+  # answers with is never one the Loader then refuses.
+  describe ".current_format?" do
+    it "accepts a header recording this format" do
+      expect(described_class.current_format?({ "format" => 1 })).to be(true)
+    end
+
+    it "refuses a missing key, another number, and the right number as a String" do
+      expect([{}, { "format" => 2 }, { "format" => "1" }].map { |header| described_class.current_format?(header) })
+        .to eq([false, false, false])
+    end
+  end
+
   describe ".turn, for a turn with no causal parents" do
     fixture = File.expand_path("../fixtures/sessions/variance/one.ndjson", __dir__)
 
