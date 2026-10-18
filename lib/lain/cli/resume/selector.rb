@@ -58,10 +58,12 @@ module Lain
         # The bare pick and prefix matching see only the durable record -- the
         # same view `lain sessions` lists -- so resume/fork never silently land
         # on a scratch file the listing hides, nor record a `resumed_from`
-        # naming a `.btw` file promotion later renames. The EXACT filename stays
-        # selectable above: salvaging a crashed --btw session is deliberate.
+        # naming a `.btw` file promotion later renames. They also skip a bench
+        # run set aside as failed, which `lain sessions` still lists: it holds
+        # no chat to continue. The EXACT filename stays selectable above:
+        # salvaging a crashed --btw session is deliberate.
         def durable_names
-          session_names.reject { |name| Paths.ephemeral?(name) }
+          session_names.reject { |name| Paths.ephemeral?(name) || Bench::CLI::RunRecorder.failed?(name) }
         end
 
         # The files a pick may answer with: durable, and loadable. Every skipped

@@ -50,7 +50,7 @@ RSpec.describe Lain::Bench::Session::Loader do
   # `resumed_from` merges in only when given -- absence is no key, never a nil
   # value, which is the shape a real header on disk has.
   def header(resumed_from: nil)
-    record = Lain::SessionRecord.header(context:, toolset:, workspace:, head: nil)
+    record = Lain::SessionRecord.header(context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER)
     resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
   end
 

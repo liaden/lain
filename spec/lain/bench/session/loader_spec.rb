@@ -26,10 +26,16 @@ RSpec.describe Lain::Bench::Session::Loader do
   let(:provider) { run.last }
 
   # The Loader's own input duck: the Journal.parse entries, here the raw NDJSON
-  # lines Session.load hands it from a file.
+  # lines Session.load hands it from a file the one session writer closed.
   def entries(compact_strategy: nil)
-    Lain::Bench::Session.write(journal, timeline: agent.timeline, context:, toolset:, workspace:, compact_strategy:)
+    compaction = compact_strategy.nil? ? {} : { "compact_strategy" => compact_strategy }
+    write_session(agent.timeline, toolset:, compaction:)
     journal_io.string.each_line
+  end
+
+  def write_session(timeline, toolset:, compaction: {})
+    Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, compaction:,
+                                    writer: CoreGraph::NO_WRITER).catch_up(timeline).close(reason: :exit)
   end
 
   def recording = described_class.new(entries).recording
@@ -338,11 +344,9 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
-  # The live session format's open sessions and resume chains. Built
-  # directly from {Lain::SessionRecord} and {Lain::Event::ChainWriter}, not
-  # through {Lain::Bench::Session.write} -- these shapes are the live
-  # scribe's, never the offline recorder's, which this describe's
-  # sibling blocks already cover under "bench files load unchanged".
+  # The live session format's open sessions and resume chains, built record
+  # by record from {Lain::SessionRecord} rather than through a Scribe, so each
+  # example can leave out exactly the record its shape lacks.
   describe "open sessions and resume chains" do
     def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -353,7 +357,7 @@ RSpec.describe Lain::Bench::Session::Loader do
     def roundtrip(records) = records.map { |record| JSON.parse(JSON.generate(record)) }
 
     def open_header(resumed_from: nil)
-      header = Lain::SessionRecord.header(context:, toolset:, workspace:, head: nil)
+      header = Lain::SessionRecord.header(context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER)
       resumed_from.nil? ? header : header.merge("resumed_from" => resumed_from)
     end
 
@@ -368,6 +372,21 @@ RSpec.describe Lain::Bench::Session::Loader do
 
         expect(loaded.open?).to be(true)
         expect(loaded.timeline.head_digest).to eq(chain.head_digest)
+      end
+
+      # Only a session_closed anchors a chain. The bench recorder that wrote
+      # its header after the run, head included, is gone, so a header that
+      # carries one is that recorder's file and is refused rather than read
+      # as an open session.
+      it "refuses a header that carries a head, naming the retired recorder" do
+        head = "blake3:#{"0" * 64}"
+        chain = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("hi"))
+        records = roundtrip([open_header.merge("head" => head), Lain::SessionRecord.turn(chain.head)])
+
+        expect { described_class.new(records).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to include(head, "retired", "re-record")
+          }
       end
 
       it "loads a header-only session (0 turns) flagged open with a nil head" do
@@ -428,7 +447,7 @@ RSpec.describe Lain::Bench::Session::Loader do
         roundtrip([open_header] + chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) } + [closed])
       end
 
-      it "verifies against session_closed's own head when the header head is nil, not flagged open" do
+      it "verifies against session_closed's own head, not flagged open" do
         loaded = described_class.new(closed_records(chain.head_digest)).recording
 
         expect(loaded.open?).to be(false)
@@ -780,11 +799,11 @@ RSpec.describe Lain::Bench::Session::Loader do
 
     # One recorded memory-bearing run: the live records (request_sent /
     # turn_usage, plus memory_root when run_journal is the decorator) and the
-    # session header and turn records Session.write appends.
+    # session header and turn records the Scribe writes.
     def record_memory_run(run_journal)
       agent, = record_journaled_run(memory_responses, journal: run_journal,
                                                       toolset: memory_toolset, context:, workspace:)
-      Lain::Bench::Session.write(journal, timeline: agent.timeline, context:, toolset: memory_toolset, workspace:)
+      write_session(agent.timeline, toolset: memory_toolset)
     end
 
     def parsed_records

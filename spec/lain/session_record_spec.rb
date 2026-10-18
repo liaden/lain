@@ -81,8 +81,9 @@ RSpec.describe Lain::SessionRecord::Scribe do
   it "writes the open header at construction, before any turn" do
     scribe
     expect(of_type("session").size).to eq(1)
-    expect(of_type("session").first).to include("head" => nil, "context_class" => "Lain::Context",
+    expect(of_type("session").first).to include("context_class" => "Lain::Context",
                                                 "model" => "claude-opus-4-8", "max_tokens" => 1024)
+    expect(of_type("session").first).not_to have_key("head")
     expect(of_type("turn")).to be_empty
   end
 
@@ -143,7 +144,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
   end
 
   it "writes no middleware key when none is registered" do
-    expect(Lain::SessionRecord.header(context:, toolset:, workspace:, middleware: {})).not_to have_key("middleware")
+    expect(Lain::SessionRecord.header(context:, toolset:, workspace:, middleware: {},
+                                      writer: CoreGraph::NO_WRITER)).not_to have_key("middleware")
   end
 
   it "writes no compaction key when the run recorded no section" do
@@ -411,7 +413,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     it "has a header with no anchor, no session_closed, and every turn still re-commits" do
       scribe.catch_up(timeline)
 
-      expect(of_type("session").first.fetch("head")).to be_nil
+      expect(of_type("session").first).not_to have_key("head")
       expect(of_type("session_closed")).to be_empty
       expect(of_type("run_interrupted")).to be_empty
       expect(recommit_verifies?).to be(true)
@@ -1005,7 +1007,7 @@ end
 RSpec.describe Lain::SessionRecord, ".header" do
   let(:toolset) { CoreGraph.toolset }
 
-  def header(context) = described_class.header(context:, toolset:)
+  def header(context) = described_class.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
 
   it "names the pipeline a context was built under" do
     named = Lain::CLI::ContextPipeline.named("prune+cache-breakpoints").context(model: "m", max_tokens: 8)
@@ -1017,7 +1019,14 @@ RSpec.describe Lain::SessionRecord, ".header" do
     expect(header(Lain::Context.new(model: "m", max_tokens: 8))).not_to have_key("context_pipeline")
   end
 
-  it "records no writer unless handed one" do
+  # Every writer is a process a reader may ask after, so a header that forgets
+  # to say which one is refused where it is built.
+  it "refuses to build a header that names no writer" do
+    expect { described_class.header(context: Lain::Context.new(model: "m", max_tokens: 8), toolset:) }
+      .to raise_error(ArgumentError, /writer/)
+  end
+
+  it "records no writer field for a writer that is unrecorded" do
     expect(header(Lain::Context.new(model: "m", max_tokens: 8))).not_to have_key("writer")
   end
 

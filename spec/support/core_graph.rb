@@ -50,6 +50,10 @@ module CoreGraph
   CHILD_MODEL = "child"
   CHILD_MAX_TOKENS = 128
 
+  # The writer a hand-built session header names: none, so the header's other
+  # fields are what an example pins, not the pid of whoever ran it.
+  NO_WRITER = Lain::Liveness::Writer::UNRECORDED
+
   module_function
 
   def store = Lain::Store.new

@@ -233,11 +233,10 @@ module Lain
 
         def segments = @segments ||= sliced.map { |records| Segment.new(records) }
 
-        # One per session header. A chat's file OPENS with its header, so a
-        # chain of them slices cleanly on that record; a bench recording appends
-        # its header AFTER the run it describes and is never chained, so a
-        # stream that does not open with one is a single file whatever else it
-        # holds -- which is also what a hand-written record list is.
+        # One per session header. A session file OPENS with its header, so a
+        # chain of them slices cleanly on that record; a hand-written record
+        # list need not open with one, and is then a single file whatever else
+        # it holds.
         def sliced
           return [@records] unless @records.first&.[]("type").to_s == SessionRecord::HEADER_TYPE
 

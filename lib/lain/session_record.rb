@@ -1,14 +1,11 @@
 # frozen_string_literal: true
 
 module Lain
-  # The on-disk session format, promoted out of {Bench::Session} so a LIVE chat
-  # writes a loadable session in the same bytes a recorded bench run does. TURN
-  # and HEADER field names stay byte-compatible with {Bench::Session}, so one
-  # Loader reads both; the live scribe adds four additive record types an older
-  # reader's `of_type` narrowing skips by construction.
+  # The on-disk session format: what a live chat and a `bench record` run both
+  # write, through the one {Scribe}, and what {Bench::Session::Loader} reads.
   #
-  # The header is written FIRST, with `head: nil` meaning OPEN -- a session in
-  # progress has no final anchor yet. A graceful close writes a
+  # The header is written FIRST and carries no head, since a session in progress
+  # has no final anchor yet. A graceful close writes a
   # {Telemetry::SessionClosed} carrying the real head; a SIGKILL leaves the open
   # header and no closer, which is how a reader tells the two apart.
   #
@@ -18,11 +15,10 @@ module Lain
   # Merkle chain self-verifies only its PREFIX -- so an OPEN session's torn tail
   # loads as a shorter-but-self-consistent open session, indistinguishable from a
   # process that stopped earlier. That is the deliberate price of durability
-  # before completion; {Bench::Session}'s anchored header rejects truncation only
-  # because it writes AFTER the run. A CLOSED session recovers the protection:
-  # the anchor lives in the `session_closed` record, NOT the header, and a loader
-  # verifies the rebuilt chain against it -- while an open session's head is
-  # recoverable only as the LAST turn record's digest.
+  # before completion. A CLOSED session recovers the protection: the anchor
+  # lives in the `session_closed` record, and a loader verifies the rebuilt
+  # chain against it -- while an open session's head is recoverable only as the
+  # LAST turn record's digest.
   module SessionRecord
     HEADER_TYPE = "session"
     # A removed, renamed or re-meant header or record key bumps this; an added
@@ -37,18 +33,16 @@ module Lain
 
     module_function
 
-    # Byte-compatible with {Bench::Session}'s: {Context}'s constructor inputs
-    # plus the tool schema, reminders and the head anchor. `head:` defaults to
-    # nil, the OPEN marker, because the scribe writes this before any turn
-    # commits and never rewrites it. `resumed_from:` merges in only when present
-    # -- a fresh session's header must stay byte-identical to the pre-resume
-    # format, so absence is no key, never a nil value. The context pipeline's
-    # name follows the same rule, through {.context_pipeline}.
+    # {Context}'s constructor inputs plus the tool schema and reminders. No
+    # head: the scribe writes this before any turn commits and never rewrites
+    # it, so the anchor is the closer's. `resumed_from:` merges in only when
+    # present -- a fresh session's header must stay byte-identical to the
+    # pre-resume format, so absence is no key, never a nil value. The context
+    # pipeline's name follows the same rule, through {.context_pipeline}.
     #
     # `profile:` is the run profile's fields beside `model` -- `provider`,
-    # `api_base`, `num_ctx`, `num_batch` -- the keys {Bench::Session}'s own
-    # header already spells `provider` with, so one reader reads both. It is
-    # what a resumed or forked chat defaults its backend to.
+    # `api_base`, `num_ctx`, `num_batch`. It is what a resumed or forked chat
+    # defaults its backend to.
     #
     # `compaction:` is the run's compaction section -- the arms of the
     # experiment, `--compact-fallback` among them. It is kept apart from
@@ -65,14 +59,13 @@ module Lain
     # rule: a run with none registered keeps the older header.
     #
     # `writer:` is the process writing the file ({Liveness::Writer}), so a
-    # reader elsewhere can tell a crashed session from a quiet one; an
-    # unrecorded writer writes no field.
-    def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil, profile: {},
-               compaction: {}, arms: {}, middleware: {}, writer: Liveness::Writer::UNRECORDED)
+    # reader elsewhere can tell a crashed session from a quiet one. Required,
+    # so a new caller cannot forget it; an unrecorded writer writes no field.
+    def header(context:, toolset:, writer:, workspace: Workspace.empty, resumed_from: nil, profile: {},
+               compaction: {}, arms: {}, middleware: {})
       record = { "type" => HEADER_TYPE, "format" => FORMAT, "context_class" => context.class.name,
                  "model" => context.model, "max_tokens" => context.max_tokens,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
-                 "head" => head,
                  "tools" => toolset.to_schema, "reminders" => workspace.reminders }
       record = record.merge(context_pipeline(context), profile, compaction, section("arms", arms),
                             section("middleware", middleware), writer.to_header)
@@ -97,8 +90,7 @@ module Lain
     end
 
     # The header field naming which catalog pipeline rendered the session, and
-    # no field at all when none was named. Shared with {Bench::Session}'s own
-    # header writer, because one Loader reads both and resolves this key back.
+    # no field at all when none was named; the Loader resolves this key back.
     #
     # @param context [Context]
     # @return [Hash{String => String}] empty for an unnamed pipeline
@@ -106,9 +98,8 @@ module Lain
       context.pipeline_name.nil? ? {} : { "context_pipeline" => context.pipeline_name }
     end
 
-    # The same fields {Bench::Session} writes: the body plus the render edge,
-    # which is exactly what a Loader re-commits to recompute the digest recorded
-    # beside it.
+    # The body plus the render edge, which is exactly what a Loader re-commits
+    # to recompute the digest recorded beside it.
     #
     # `causal_parents` -- the SET edge, sorted and frozen by {Event} -- rides here
     # because it is part of that content address, so a record without it cannot

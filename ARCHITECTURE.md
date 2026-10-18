@@ -1559,7 +1559,7 @@ a mutex, on its own fd, never stderr. A serialization failure is caught and repl
 with a self-describing `journal_error` record rather than tearing a line or dropping the event.
 
 `SessionRecord` (`lib/lain/session_record.rb`) defines the on-disk shape written *through* that
-journal: a `session` header written first with `head: nil` (open), then one `turn` record per
+journal: a `session` header written first with no head (open), then one `turn` record per
 committed `Event`, plus live-only record types (`Telemetry::Message`, `Telemetry::ChildTurn`,
 `SessionClosed`, `RunInterrupted`) that an older reader skips by construction. `ChildTurn` is a
 *spawned* chain's turn: a child's `ask_human` question and the subagent lineage's `final` edge

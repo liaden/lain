@@ -277,7 +277,8 @@ RSpec.describe Lain::CLI::Chronicle do
 
       chronicle.start(context:, toolset:)
 
-      expect(of_type("session").first).to include("head" => nil, "model" => "claude-opus-4-8")
+      expect(of_type("session").first).to include("model" => "claude-opus-4-8")
+      expect(of_type("session").first).not_to have_key("head")
     end
 
     it "pins the run profile it is handed into that header" do
@@ -335,7 +336,8 @@ RSpec.describe Lain::CLI::Chronicle do
       resumed = instance_double(Lain::CLI::Resume::Result, resumed_from:, written: timeline.to_a.map(&:digest))
       chronicle.start(context:, toolset:, resumed:)
 
-      expect(of_type("session").first).to include("head" => nil, "resumed_from" => resumed_from)
+      expect(of_type("session").first).to include("resumed_from" => resumed_from)
+      expect(of_type("session").first).not_to have_key("head")
 
       extended = timeline.commit(role: :assistant, content: text("hello again"))
       chronicle.catch_up(extended)

@@ -4,14 +4,14 @@ require "json"
 require "stringio"
 require "tempfile"
 
-# Session persists one run as NDJSON in the Journal's OWN format: the live run's
-# journal (request_sent from an innermost JournalRequests, turn_usage from the
-# Agent's journal:) plus one "session" header and one "turn" record per turn.
-# From those bytes alone, Session.load rebuilds everything a DryReplay baseline
-# needs -- so the determinism claim of the whole experiment survives a disk
-# round trip, and content-addressing doubles as the integrity check over the
-# CONTENT: the transport fields (stream, extra) sit outside Request#digest and
-# load unverified.
+# Session.load reads one run back from the NDJSON the Scribe writes: the live
+# run's journal (request_sent from an innermost JournalRequests, turn_usage from
+# the Agent's journal:) plus the "session" header, one "turn" record per turn
+# and the session_closed anchor. From those bytes alone it rebuilds everything a
+# DryReplay baseline needs -- so the determinism claim of the whole experiment
+# survives a disk round trip, and content-addressing doubles as the integrity
+# check over the CONTENT: the transport fields (stream, extra) sit outside
+# Request#digest and load unverified.
 RSpec.describe Lain::Bench::Session do
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
@@ -33,9 +33,10 @@ RSpec.describe Lain::Bench::Session do
   let(:agent) { run.first }
   let(:provider) { run.last }
 
-  def write_session
-    described_class.write(journal, timeline: agent.timeline, context:,
-                                   toolset:, workspace:)
+  def write_session(into: journal, under: context, compaction: {})
+    Lain::SessionRecord::Scribe.new(journal: into, context: under, toolset:, workspace:, compaction:,
+                                    writer: CoreGraph::NO_WRITER)
+                               .catch_up(agent.timeline).close(reason: :exit)
   end
 
   def load_session
@@ -46,21 +47,7 @@ RSpec.describe Lain::Bench::Session do
     journal_records(journal_io)
   end
 
-  describe ".write" do
-    before { write_session }
-
-    it "appends exactly one session header carrying the context, tools, reminders, and head anchor" do
-      expect(parsed_records.count { |record| record["type"] == "session" }).to eq(1)
-      expect(journal_io).to include_journal_record(
-        "session",
-        model: "claude-opus-4-8", max_tokens: 1024,
-        system: "be terse", stream: true, reminders: [],
-        head: agent.timeline.head_digest, context_class: "Lain::Context"
-      )
-      headers = parsed_records.select { |record| record["type"] == "session" }
-      expect(headers.first.fetch("tools")).to eq(JSON.parse(JSON.generate(toolset.to_schema)))
-    end
-
+  describe "the header" do
     # The silent failure mode of "the header captures exactly Lain::Context's
     # constructor inputs": Context grows a kwarg, the header records nothing,
     # every spec stays green, and an old recording reloads to a Context that
@@ -72,14 +59,10 @@ RSpec.describe Lain::Bench::Session do
       # the flag's word.
       named_io = StringIO.new
       named = Lain::CLI::ContextPipeline.named("default").context(model: "claude-opus-4-8", max_tokens: 1024)
-      described_class.write(Lain::Journal.new(io: named_io), timeline: agent.timeline, context: named,
-                                                             toolset:, workspace:)
+      write_session(into: Lain::Journal.new(io: named_io), under: named)
       header = journal_records(named_io).find { |record| record["type"] == "session" }
       # `ts` is the Journal's own stamp on every record, not part of the header.
-      # `provider` and `compact_strategy` are deliberately NOT Context
-      # constructor inputs -- the provider choice and the compaction arm both
-      # live beside the context, never inside it.
-      recorded = (header.keys - %w[type format context_class head tools reminders ts provider compact_strategy])
+      recorded = (header.keys - %w[type format context_class tools reminders ts])
                  .map { |key| key == "context_pipeline" ? "pipeline_name" : key }
       # `pipeline` is a live CODE collaborator (a Combinator or ->(workspace)
       # provider), not serializable data -- like a `self.pipeline`-
@@ -88,94 +71,6 @@ RSpec.describe Lain::Bench::Session do
       # it is excluded from the constructor inputs the header must carry.
       expected = Lain::Context.instance_method(:initialize).parameters.map(&:last) - %i[pipeline]
       expect(recorded.map(&:to_sym)).to match_array(expected)
-    end
-
-    # The header names its provider, as pure data beside the model --
-    # never constantized, the same idiom `context_class` already sets. The
-    # kwarg is optional so every EXISTING caller (RunRecorder, VarianceFixtures)
-    # keeps writing valid headers without threading a new argument through.
-    it "records the given provider name as data alongside the model" do
-      journal_io2 = StringIO.new
-      other_journal = Lain::Journal.new(io: journal_io2)
-      described_class.write(other_journal, timeline: agent.timeline, context:, toolset:, workspace:,
-                                           provider: "anthropic")
-      header = journal_records(journal_io2).find { |r| r["type"] == "session" }
-      expect(header.fetch("provider")).to eq("anthropic")
-      expect(header.fetch("model")).to eq("claude-opus-4-8")
-    end
-
-    # No key, never a nil value: an EXISTING caller (RunRecorder,
-    # VarianceFixtures) that has not threaded a provider name through yet must
-    # keep writing byte-identical headers, the same discipline
-    # `SessionRecord.header`'s `resumed_from` already follows.
-    it "writes no provider key at all when the caller does not supply one (old-caller compatibility)" do
-      header = parsed_records.find { |record| record["type"] == "session" }
-      expect(header).not_to have_key("provider")
-    end
-
-    # `compact_strategy` is byte-compatible with {CLI::Backend#compaction_header}'s
-    # own key, on {SessionRecord.header}'s `resumed_from` rule: an unset flag is
-    # the run's own eager control arm, not "no strategy", so absence is no key.
-    it "records the given compact_strategy name as data alongside the model" do
-      journal_io2 = StringIO.new
-      other_journal = Lain::Journal.new(io: journal_io2)
-      described_class.write(other_journal, timeline: agent.timeline, context:, toolset:, workspace:,
-                                           compact_strategy: "elide")
-      header = journal_records(journal_io2).find { |r| r["type"] == "session" }
-      expect(header.fetch("compact_strategy")).to eq("elide")
-    end
-
-    it "writes no compact_strategy key at all when the caller does not supply one (old-caller compatibility)" do
-      header = parsed_records.find { |record| record["type"] == "session" }
-      expect(header).not_to have_key("compact_strategy")
-    end
-
-    it "appends one turn record per turn, root to head, payload plus digest" do
-      turns = parsed_records.select { |record| record["type"] == "turn" }
-      expect(turns.map { |record| record.fetch("digest") }).to eq(agent.timeline.to_a.map(&:digest))
-      expect(turns.map { |record| record.fetch("role") }).to eq(%w[user assistant user assistant])
-      expect(turns.first.keys).to include("role", "content", "parent", "meta")
-    end
-  end
-
-  # This writer and SessionRecord.turn are byte-compatible twins -- one
-  # Loader reads both -- so a field one of them grows and the other does not is
-  # a live session and a recorded one silently ceasing to share a format. The
-  # keys are compared turn for turn, with and without a causal edge.
-  describe "the recorded turn record stays in lockstep with the live scribe's" do
-    let(:store) { Lain::Store.new }
-    let(:lockstep_timeline) do
-      asked = message(to: "human", body: "which dose?")
-      answered = message(to: "agent", body: "81 mg")
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: text("what is the aspirin dosing?"))
-                    .commit(role: :assistant, content: text("81 mg"),
-                            causal_parents: [asked.digest, answered.digest])
-    end
-    let(:written) do
-      io = StringIO.new
-      described_class.write(Lain::Journal.new(io:), timeline: lockstep_timeline, context:, toolset:, workspace:)
-      journal_records(io, "turn")
-    end
-
-    def text(body) = [{ "type" => "text", "text" => body }]
-
-    def message(to:, body:)
-      payload = Lain::Event::Payload.new(kind: :message, body: { "text" => body })
-      store.put(payload)
-      Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to:).tap do |event|
-        store.put(event)
-      end
-    end
-
-    it "writes exactly the keys SessionRecord.turn writes, turn for turn" do
-      expect(written.map { |record| record.keys - ["ts"] })
-        .to eq(lockstep_timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn).keys })
-    end
-
-    it "writes the same bytes as SessionRecord.turn for the turn that folded two messages" do
-      expect(JSON.generate(written.last.except("ts")))
-        .to eq(JSON.generate(Lain::SessionRecord.turn(lockstep_timeline.head)))
     end
   end
 
@@ -234,17 +129,10 @@ RSpec.describe Lain::Bench::Session do
   # member it exists to catch -- {Loader#recording} hands it a plain String
   # off `JSON.parse`, which is unfrozen until this class says otherwise.
   describe "Ractor-shareability" do
-    before do
-      described_class.write(journal, timeline: agent.timeline, context:, toolset:, workspace:,
-                                     compact_strategy: "elide")
-    end
+    before { write_session(compaction: { "compact_strategy" => "elide", "compact_schedule" => "idle" }) }
 
     it "is a frozen Recording whose non-Timeline members are Ractor-shareable" do
-      lines = journal_io.string.each_line.map do |line|
-        record = JSON.parse(line)
-        record.key?("context_class") ? JSON.generate(record.merge("compact_schedule" => "idle")) : line
-      end
-      recording = described_class.load(lines)
+      recording = load_session
       expect(recording.schedule).to eq("idle")
       expect(recording).to be_frozen
       expect(recording.timeline).to be_frozen
@@ -294,22 +182,6 @@ RSpec.describe Lain::Bench::Session do
 
       expect { described_class.load(records) }
         .to raise_error(described_class::Corrupt, /#{Regexp.escape(forged.fetch("digest"))}/)
-    end
-  end
-
-  # A Merkle chain self-verifies only its prefix: without the header's head
-  # anchor, deleting the tail turn (and its request_sent) would load as a
-  # shorter session whose dry replay is still IDENTICAL -- wrong invisibly, in
-  # the direction that flatters the experiment.
-  describe "truncation" do
-    it "raises Session::Corrupt naming the expected head when the tail turn and its request_sent are deleted" do
-      write_session
-      records = parsed_records
-      records.delete(records.reverse.find { |record| record["type"] == "turn" })
-      records.delete(records.reverse.find { |record| record["type"] == "request_sent" })
-
-      expect { described_class.load(records) }
-        .to raise_error(described_class::Corrupt, /#{Regexp.escape(agent.timeline.head_digest)}/)
     end
   end
 

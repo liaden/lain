@@ -30,7 +30,7 @@ RSpec.describe Lain::CLI::Sessions do
   # A real file stamps every record with "ts" (Journal#record does); the
   # fixture stamps the header the same way so started-at has a source.
   def header(started_at:, resumed_from: nil)
-    record = Lain::SessionRecord.header(context:, toolset:, head: nil).merge("ts" => started_at)
+    record = Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER).merge("ts" => started_at)
     resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
   end
 

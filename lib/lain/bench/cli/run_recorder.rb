@@ -9,8 +9,13 @@ module Lain
       class RunRecorder
         # What a run the provider refused leaves in place of `N.ndjson`: a
         # name {CLI#variance_report} lists apart rather than loads, since the
-        # partial file has no session header to rebuild a context from.
+        # partial file is an open session cut off part way through a run.
         FAILED = ".failed.ndjson"
+
+        # Every bench run renders each turn whole: no compaction runs between
+        # turns, so the header names the schedule
+        # {Lain::CLI::Backend#compaction_schedule} answers under `--no-compact`.
+        COMPACTION = { "compact_schedule" => "turn" }.freeze
 
         # Where the records a shared provider writes about its own round trips
         # land: the file of whichever run is recording, and nowhere between
@@ -70,10 +75,14 @@ module Lain
         #   operator's project happened to remember is not comparable with one
         #   taken a week later, so a sweep starts from the empty version unless
         #   `--memory project` says otherwise.
+        # @param profile [Hash{String=>Object}] the run profile's header fields
+        #   (`CLI::RunProfile#to_header`), so a chat resuming the file defaults
+        #   to the backend the run used
         def initialize(provider:, context:, attribution:, prompts:, tools: Harness::NO_TOOLS,
                        instrumentation: Harness::INSTRUMENTATION, current_run: CurrentRun.new,
-                       memory: Memory::ProjectStore::Null)
+                       memory: Memory::ProjectStore::Null, profile: {})
           @provider = provider
+          @profile = profile
           @context = context
           @attribution = attribution
           @prompts = prompts
@@ -84,11 +93,12 @@ module Lain
           freeze
         end
 
-        # One run, one journal, one file (Session's format contract), with
-        # JournalRequests INNERMOST so the baseline is the bytes the provider
-        # actually received. An occupied path REFUSES rather than replaces:
-        # Journal.open appends, a second header in one file would destroy both
-        # sweeps' loadability, and the existing bytes cost real money.
+        # One run, one journal, one file (Session's format contract), written
+        # through the Scribe a chat writes through, with JournalRequests
+        # INNERMOST so the baseline is the bytes the provider actually
+        # received. An occupied path REFUSES rather than replaces: Journal.open
+        # appends, a second header in one file would destroy both sweeps'
+        # loadability, and the existing bytes cost real money.
         #
         # A run whose round trip failed is renamed aside, and the caller goes
         # on to the next: one dropped connection costs that run, not the sweep.
@@ -129,10 +139,6 @@ module Lain
         # @return [Exception, nil] the failed round trip the run ended on
         def write(path)
           journal = Journal.open(path)
-          # One per session, at session start. {Session::Loader} reads by
-          # record TYPE, not file position, so leading with it reorders
-          # nothing downstream.
-          journal << @attribution
           @current_run.into(journal) { run_and_write(journal) }
           nil
         rescue StandardError, SignalException => e
@@ -146,12 +152,18 @@ module Lain
 
         # A fresh Agent per run, so no Timeline state leaks between samples.
         # Each file is a session of its own, so each carries the capabilities
-        # its context asked for and this provider could not give.
+        # its context asked for and this provider could not give. The header
+        # leads, and the attribution follows it once per session.
         def run_and_write(journal)
+          recorder = @memory.view
+          toolset = @tools.call(recorder:, journal:)
+          scribe = SessionRecord::Scribe.new(journal:, context: @context, toolset:, profile: @profile,
+                                             compaction: COMPACTION)
+          journal << @attribution
           Capability::Policy.for(:degrade, journal:).resolve(@context, @provider)
-          agent = build_agent(journal)
+          agent = build_agent(journal, recorder, toolset)
           ask_each(agent)
-          Session.write(journal, timeline: agent.timeline, context: @context, toolset: agent.toolset)
+          scribe.catch_up(agent.timeline).close(reason: :exit)
         end
 
         # A budget stop is the harness ending the run where it stood, which is
@@ -164,14 +176,14 @@ module Lain
           agent
         end
 
-        # ONE view per run, shared by the two halves that must agree about
-        # it: the `memory_write`/`memory_read` tools write into it, and
-        # {Memory::JournalMemoryRoot} pairs each turn's digest with the root it
-        # held when that turn rendered -- and writes the run's one
+        # ONE view per run, `recorder`, shared by the two halves that must
+        # agree about it: the `memory_write`/`memory_read` tools write into it,
+        # and {Memory::JournalMemoryRoot} pairs each turn's digest with the root
+        # it held when that turn rendered -- and writes the run's one
         # `memory_loaded`, so the version this run started from is part of its
-        # record. Building it here rather than inside either factory
-        # is what makes that sharing a fact of this method rather than a
-        # coincidence between two lambdas.
+        # record. {#run_and_write} building it once rather than inside either
+        # factory is what makes that sharing a fact rather than a coincidence
+        # between two lambdas.
         #
         # The worker env is {WorkerEnv.default} and NOT a parameter, which is
         # what makes the toolless default above the only honest one: giving this
@@ -181,9 +193,8 @@ module Lain
         # A recorded session with tools declared is not comparable with one
         # taken without them -- a different prompt, a different cache prefix and
         # a different task -- so which harness a run used is part of its record.
-        def build_agent(journal)
-          recorder = @memory.view
-          Agent.new(provider: @provider, toolset: @tools.call(recorder:, journal:), context: @context,
+        def build_agent(journal, recorder, toolset)
+          Agent.new(provider: @provider, toolset:, context: @context,
                     instrumentation: @instrumentation.call(journal:, recorder:, worker_env: WorkerEnv.default))
         end
       end

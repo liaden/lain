@@ -1204,7 +1204,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
   def write_session(name, api_base)
     context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
     profile = { "provider" => "ollama", "api_base" => api_base }
-    records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile:),
+    records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile:, writer: CoreGraph::NO_WRITER),
                *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
                Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
     File.write(File.join(Lain::Paths.new.sessions_dir, name), records.map do |record|
@@ -1586,8 +1586,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "a refused --isolation" do
 
   def dead_writer_header
     Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64),
-                               toolset: Lain::Toolset.new, profile: { "provider" => "ollama" })
-                       .merge(Lain::Liveness::Writer.current.with(start: "1").to_header)
+                               toolset: Lain::Toolset.new, profile: { "provider" => "ollama" },
+                               writer: Lain::Liveness::Writer.current.with(start: "1"))
   end
 
   def answered_turns

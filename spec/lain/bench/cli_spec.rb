@@ -892,6 +892,21 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    it "writes each session in the live header shape and closes it on its head" do
+      Dir.mktmpdir do |tmp|
+        path = cli.record(taskfile: write_taskfile(tmp), runs: 1, out: File.join(tmp, "sessions"),
+                          backend: backend(model: "claude-sonnet-4-6"), provider:).first
+        records = File.foreach(path).map { |line| JSON.parse(line) }
+        turns = records.select { |record| record["type"] == "turn" }
+
+        expect(records.first).to include("type" => "session", "format" => 1, "compact_schedule" => "turn",
+                                         "provider" => "anthropic", "model" => "claude-sonnet-4-6")
+        expect(records.first).to have_key("writer")
+        expect(records.first).not_to have_key("head")
+        expect(records.last).to include("type" => "session_closed", "head" => turns.last.fetch("digest"))
+      end
+    end
+
     it "asks one prompt per non-blank task file line, per run" do
       Dir.mktmpdir do |tmp|
         cli.record(taskfile: write_taskfile(tmp), runs: 2, out: File.join(tmp, "sessions"),
@@ -1225,8 +1240,27 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
-    # A killed process leaves a run with no header. It is listed, never a
-    # reason to refuse every other recording beside it.
+    # A killed process leaves a run with its header and whatever records
+    # landed before the kill, but no turns and no session_closed. It is
+    # listed, never a reason to refuse every other recording beside it.
+    it "lists a session file that was never closed as set aside rather than refusing the directory" do
+      Dir.mktmpdir do |tmp|
+        out = File.join(tmp, "sessions")
+        cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, backend: backend(model: "claude-sonnet-4-6"),
+                   provider:)
+        never_written = %w[turn session_closed]
+        killed = File.foreach(File.join(out, "2.ndjson"))
+                     .reject { |line| never_written.include?(JSON.parse(line)["type"]) }
+        File.write(File.join(out, "3.ndjson"), killed.join)
+
+        report = cli.variance_report([out])
+
+        expect(report).to start_with("Variance — 2 recordings")
+        expect(report).to match(/== Set aside ==\n.*3\.ndjson: never closed \(stopped mid-run, or still recording\)/)
+      end
+    end
+
+    # A file from before the header was written first has none at all.
     it "lists a session file with no header as set aside rather than refusing the directory" do
       Dir.mktmpdir do |tmp|
         out = File.join(tmp, "sessions")

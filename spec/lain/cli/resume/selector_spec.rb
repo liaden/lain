@@ -30,7 +30,7 @@ RSpec.describe Lain::CLI::Resume::Selector do
   # A real chat: {SessionRecord::Scribe} writes the header at construction, so
   # it is always a session file's FIRST record.
   def session(name, at:)
-    write(name, [Lain::SessionRecord.header(context:, toolset:, head: nil).merge("ts" => at)])
+    write(name, [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER).merge("ts" => at)])
   end
 
   # What `lain epic approve` leaves behind: a durable, non-ephemeral, non-empty
@@ -44,11 +44,13 @@ RSpec.describe Lain::CLI::Resume::Selector do
   # A session written before the header carried its format: every key a chat
   # writes today but that one.
   def unstamped(name, at:)
-    write(name, [Lain::SessionRecord.header(context:, toolset:, head: nil).except("format").merge("ts" => at)])
+    write(name, [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
+                                   .except("format").merge("ts" => at)])
   end
 
   def formatted(name, format, at:)
-    write(name, [Lain::SessionRecord.header(context:, toolset:, head: nil).merge("format" => format, "ts" => at)])
+    write(name, [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
+                                   .merge("format" => format, "ts" => at)])
   end
 
   def picked(input = nil) = File.basename(selector.call(input))
@@ -74,12 +76,21 @@ RSpec.describe Lain::CLI::Resume::Selector do
     # skips -- a second --resume continues the chain rather than forking it.
     it "keeps a resumed session selectable, so --resume stays idempotent" do
       session("20260727T090000-111.ndjson", at: "2026-07-27T09:00:00Z")
-      resumed = Lain::SessionRecord.header(context:, toolset:, head: nil)
+      resumed = Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
                                    .merge("ts" => "2026-07-28T09:00:00Z",
                                           "resumed_from" => { "file" => "20260727T090000-111.ndjson" })
       write("20260728T090000-222.ndjson", [resumed])
 
       expect(picked).to eq("20260728T090000-222.ndjson")
+    end
+
+    # `lain bench record` sets a run it could not finish aside under this
+    # name: a header and a partial run, never a chat to continue.
+    it "never answers with a bench run set aside as failed" do
+      session("20260727T090000-111.ndjson", at: "2026-07-27T09:00:00Z")
+      session("20260728T090000-1.failed.ndjson", at: "2026-07-28T09:00:00Z")
+
+      expect(picked).to eq("20260727T090000-111.ndjson")
     end
 
     it "refuses namedly when a drain file is the only thing in the directory" do
@@ -211,6 +222,13 @@ RSpec.describe Lain::CLI::Resume::Selector do
       expect(picked("20260728T090000-")).to eq("20260728T090000-111.ndjson")
     end
 
+    it "skips a bench run set aside as failed, so a prefix matching both answers with the session" do
+      session("20260728T090000-111.ndjson", at: "2026-07-28T09:00:00Z")
+      session("20260728T090000-222.failed.ndjson", at: "2026-07-28T09:30:00Z")
+
+      expect(picked("20260728T090000-")).to eq("20260728T090000-111.ndjson")
+    end
+
     it "is still ambiguous between two genuine sessions" do
       session("20260728T090000-111.ndjson", at: "2026-07-28T09:00:00Z")
       session("20260728T090000-222.ndjson", at: "2026-07-28T09:30:00Z")
@@ -235,6 +253,12 @@ RSpec.describe Lain::CLI::Resume::Selector do
       drain("20260728T080000-222.ndjson", at: "2026-07-28T08:00:00Z")
 
       expect(picked("20260728T080000-222.ndjson")).to eq("20260728T080000-222.ndjson")
+    end
+
+    it "stays honored for a bench run set aside as failed" do
+      session("20260728T090000-222.failed.ndjson", at: "2026-07-28T09:30:00Z")
+
+      expect(picked("20260728T090000-222.failed.ndjson")).to eq("20260728T090000-222.failed.ndjson")
     end
 
     it "still refuses a named empty file, saying exactly that" do

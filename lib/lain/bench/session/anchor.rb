@@ -3,19 +3,15 @@
 module Lain
   module Bench
     class Session
-      # Classifies and verifies a file's own anchor: OPEN, CLOSED, or the
-      # offline recorder's always-anchored shape. It looks only at the header
-      # and the `session_closed` records, never at a Timeline until {#verify} is
-      # asked to check one.
+      # Classifies and verifies a file's own anchor: OPEN or CLOSED. It looks
+      # only at the `session_closed` records, never at a Timeline until
+      # {#verify} is asked to check one.
       #
-      # An OPEN session is a live header (`head: nil`) with no closer yet -- the
-      # SIGKILL case a reader must recognize rather than reject. It verifies
-      # only its own PREFIX, the documented anti-truncation limit, because a
-      # write-first header cannot anchor a chain that does not exist yet. Every
-      # other shape is checked against its own recorded anchor: EITHER the
-      # header carries it, being written after the run, OR a `session_closed`
-      # record does, the live scribe's header being written open and never
-      # rewritten.
+      # An OPEN session has no closer yet -- the SIGKILL case a reader must
+      # recognize rather than reject. It verifies only its own PREFIX, the
+      # documented anti-truncation limit, because a write-first header cannot
+      # anchor a chain that does not exist yet. A CLOSED session is checked
+      # against the head its `session_closed` record carries.
       #
       # A `run_interrupted` record never changes this classification: it marks
       # one ASK a stop beat, not the whole session, and its own `head` is
@@ -23,17 +19,13 @@ module Lain
       # kill between the Agent's commit and the journal write. Tolerated by
       # never being consulted here at all.
       class Anchor
-        # @param header [Hash] the sole session header record
         # @param session_closed_records [Array<Hash>] every `session_closed`
         #   record in the file (0 or 1; more raises {Corrupt})
-        def initialize(header:, session_closed_records:)
-          @header = header
+        def initialize(session_closed_records:)
           @closed = sole_closed(session_closed_records)
         end
 
-        def open?
-          @header["head"].nil? && @closed.nil?
-        end
+        def open? = @closed.nil?
 
         # @return [Timeline] `chain`, unchanged
         # @raise [Corrupt] when `chain`'s rebuilt head disagrees with the
@@ -41,7 +33,7 @@ module Lain
         def verify(chain)
           return chain if open?
 
-          expected = anchor
+          expected = @closed.fetch("head")
           return chain if chain.head_digest == expected
 
           raise Corrupt, "the recorded anchor is #{expected.inspect} but the turn chain rebuilds to " \
@@ -49,13 +41,6 @@ module Lain
         end
 
         private
-
-        def anchor
-          header_head = @header["head"]
-          return header_head unless header_head.nil?
-
-          @closed.fetch("head")
-        end
 
         # A session closes once, so a second record would make "which close?"
         # an accident of file order. No record at all means still open.

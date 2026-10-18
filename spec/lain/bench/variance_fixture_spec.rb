@@ -33,6 +33,18 @@ RSpec.describe "variance session fixtures" do
         expect(recording.baseline.size).to eq(2)
       end
     end
+
+    # Written by the one session writer, under a writer fixed in code so the
+    # bytes do not carry the pid of whoever regenerated them.
+    it "each open on the live header and close on their head" do
+      paths.each do |path|
+        records = File.foreach(path).map { |line| JSON.parse(line) }
+        expect(records.first).to include("type" => "session", "format" => 1, "compact_schedule" => "turn",
+                                         "writer" => Lain::Bench::VarianceFixtures::WRITER.to_header.fetch("writer"))
+        expect(records.first).not_to have_key("head")
+        expect(records.last).to include("type" => "session_closed", "reason" => "exit")
+      end
+    end
   end
 
   describe "Variance over the committed fixtures" do

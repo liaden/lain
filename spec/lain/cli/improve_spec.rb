@@ -22,8 +22,15 @@ RSpec.describe Lain::CLI::Improve do
   def write_frustrating_session(path)
     header, *turns = File.foreach(fixture_path).map { |line| JSON.parse(line) }
     toolset = Lain::Bench::Session::RecordedToolset.new(schema: header["tools"])
-    records = Lain::Bench::Session.write([], timeline: recommitted(turns), context: recorded_context(header), toolset:)
-    File.write(path, records.map { |record| JSON.generate(record) }.join("\n"))
+    File.write(path, session_lines(recommitted(turns), recorded_context(header), toolset))
+  end
+
+  # An open session, header and turns: all this pass reads.
+  def session_lines(timeline, context, toolset)
+    records = []
+    Lain::SessionRecord::Scribe.new(journal: records, context:, toolset:, writer: CoreGraph::NO_WRITER)
+                               .catch_up(timeline)
+    records.map { |record| JSON.generate(record) }.join("\n")
   end
 
   def recommitted(turns)
@@ -323,9 +330,7 @@ RSpec.describe Lain::CLI::Improve do
 
     def write_session_echoing(path, text)
       timeline = Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => text }])
-      records = Lain::Bench::Session.write([], timeline:, context:,
-                                               toolset: Lain::Bench::Session::RecordedToolset.new(schema: []))
-      File.write(path, records.map { |record| JSON.generate(record) }.join("\n"))
+      File.write(path, session_lines(timeline, context, Lain::Bench::Session::RecordedToolset.new(schema: [])))
     end
 
     it "withholds a released credential the session echoed into a turn's text" do

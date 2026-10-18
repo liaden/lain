@@ -7,7 +7,7 @@ module Lain
     # committed nothing); `reason` names WHY the session ended -- an enum, closed
     # and loud like {ToolOutput}'s stream, so a typo fails at construction rather
     # than journaling a reason no reader expects. Its presence is what tells a
-    # loader an open session (a header with `head: nil` and no closer -- a
+    # loader an open session (a header and no closer -- a
     # SIGKILL'd process) apart from one that ended on purpose.
     SessionClosed = Data.define(:head, :reason) do
       include Journalable

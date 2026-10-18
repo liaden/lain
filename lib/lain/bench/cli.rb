@@ -59,12 +59,18 @@ module Lain
       # `project` measures recall against the real store instead.
       MEMORIES = %w[empty project].freeze
 
+      # A run SIGKILL, OOM or power loss stopped leaves its header and no
+      # closer, as does one still recording, and nothing it holds can be
+      # measured yet.
+      NEVER_CLOSED = "never closed (stopped mid-run, or still recording)"
+
       # The three-section {Variance} report over recorded session files.
       #
       # A run that measured nothing is named rather than averaged in: a
-      # recording set aside as failed, or one a killed process left with no
-      # header, has nothing to load, and a turn whose stream was cut short
-      # answers with no usage at all, which a mean would read as a free run.
+      # recording set aside as failed, one a killed process left never closed,
+      # or an older one with no header has nothing to load, and a turn whose
+      # stream was cut short answers with no usage at all, which a mean would
+      # read as a free run.
       #
       # @param sources [Array<String>] paths; a directory means every
       #   `*.ndjson` under it, in sorted filename order
@@ -393,7 +399,7 @@ module Lain
       def recorder_for(backend:, system:, memory:, **rest)
         RunRecorder.new(context: backend.context(system_override: system),
                         attribution: Telemetry::SlotFills.from(backend.slots, override: system),
-                        memory: memory_store(memory), **rest)
+                        memory: memory_store(memory), profile: backend.run_profile.to_header, **rest)
       end
 
       # `--memory`, resolved. Unset and `empty` are the same answer, which is
@@ -647,11 +653,12 @@ module Lain
       end
 
       # Why a session file is listed rather than measured, or nil when it is
-      # measured. A file with no header was never finished; the reason a
-      # failed one was set aside is recorded inside it.
+      # measured. A file with no header, or with no session_closed, was never
+      # finished; the reason a failed one was set aside is recorded inside it.
       def set_aside_reason(path, records)
         return failed_reason(records) if RunRecorder.failed?(path)
         return "no session header" if records.none? { |record| record["type"] == Session::HEADER_TYPE }
+        return NEVER_CLOSED if records.none? { |record| record["type"] == "session_closed" }
 
         "no usage recorded beside a truncated stream" if unmeasured?(records)
       end

@@ -10,7 +10,7 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
 
   def session_with(arms:)
     header = Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64),
-                                        toolset: Lain::Toolset.new, arms:)
+                                        toolset: Lain::Toolset.new, arms:, writer: CoreGraph::NO_WRITER)
     File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }
   end
 

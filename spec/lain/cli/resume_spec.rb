@@ -36,7 +36,8 @@ RSpec.describe Lain::CLI::Resume do
   # written before `provider` existed genuinely has no "provider" key at all,
   # not a nil-valued one, and the fixture must be able to say that.
   def open_header(resumed_from: nil, provider: nil, compaction: {})
-    header = Lain::SessionRecord.header(context: recorded_context, toolset:, head: nil, compaction:)
+    header = Lain::SessionRecord.header(context: recorded_context, toolset:, compaction:,
+                                        writer: CoreGraph::NO_WRITER)
     header = header.merge("resumed_from" => resumed_from) unless resumed_from.nil?
     header = header.merge("provider" => provider) unless provider.nil?
     header
@@ -116,6 +117,28 @@ RSpec.describe Lain::CLI::Resume do
       }
       loaded = Lain::Bench::Session::Loader.new(new_records, resolve: resolver).recording
       expect(loaded.timeline.to_a.map(&:digest)).to eq(agent.timeline.to_a.map(&:digest))
+    end
+  end
+
+  # `lain bench record` writes through the same Scribe a chat does, so its
+  # files are sessions a chat can continue.
+  describe "a session written by bench record" do
+    let(:recorded) do
+      Lain::Bench::CLI::RunRecorder.new(
+        provider: Lain::Provider::Mock.new(responses: [text_response("325-650 mg q4h")]),
+        context: recorded_context, attribution: Lain::Telemetry::SlotFills.new(digests: {}, fills: {}),
+        prompts: ["what is the aspirin dosing?"]
+      ).record(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"))
+    end
+
+    it "resumes closed, at the head its session_closed anchors" do
+      closed = File.foreach(recorded).map { |line| JSON.parse(line) }.last
+
+      result = resume.call(selector: "20260101T000000-1.ndjson")
+
+      expect(result.open?).to be(false)
+      expect(result.timeline.head_digest).to eq(closed.fetch("head"))
+      expect(result.timeline.to_a.map(&:role)).to eq(%w[user assistant])
     end
   end
 

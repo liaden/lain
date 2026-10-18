@@ -22,7 +22,8 @@ RSpec.describe Lain::Bench::Session::ResumeChain do
   def roundtrip(records) = records.map { |record| JSON.parse(JSON.generate(record)) }
 
   def open_header(resumed_from: nil)
-    header = Lain::SessionRecord.header(context:, toolset:, workspace: Lain::Workspace.empty, head: nil)
+    header = Lain::SessionRecord.header(context:, toolset:, workspace: Lain::Workspace.empty,
+                                        writer: CoreGraph::NO_WRITER)
     resumed_from.nil? ? header : header.merge("resumed_from" => resumed_from)
   end
 

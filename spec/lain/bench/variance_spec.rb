@@ -76,8 +76,9 @@ RSpec.describe Lain::Bench::Variance do
   def run_and_write(journal, responses, context, compact_strategy: nil)
     agent, = record_journaled_run(responses, journal:, toolset:,
                                              context:, workspace:)
-    Lain::Bench::Session.write(journal, timeline: agent.timeline, context:,
-                                        toolset:, workspace:, compact_strategy:)
+    compaction = compact_strategy.nil? ? {} : { "compact_strategy" => compact_strategy }
+    Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, compaction:, writer: CoreGraph::NO_WRITER)
+                               .catch_up(agent.timeline).close(reason: :exit)
   end
 
   def named(pipeline)

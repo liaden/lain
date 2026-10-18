@@ -287,7 +287,8 @@ RSpec.describe Lain::CLI::Command::Btw, "the side chat's backend" do
   end
   let(:session_path) do
     context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
-    records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile: { "provider" => "ollama" }),
+    records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile: { "provider" => "ollama" },
+                                          writer: CoreGraph::NO_WRITER),
                *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
                Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
     File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson").tap do |path|

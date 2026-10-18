@@ -296,7 +296,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       stranded = Lain::Timeline.empty(store: Lain::Store.new)
                                .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
                                .commit(role: :assistant, content: tool_response(*calls).content)
-      [Lain::SessionRecord.header(context:, toolset:, head: nil),
+      [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER),
        *stranded.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
        Lain::Telemetry::SessionClosed.new(head: stranded.head_digest, reason: :exit).to_journal]
     end

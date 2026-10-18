@@ -16,14 +16,17 @@ module Lain
     #
     # Byte-reproducibility is the design constraint everything here serves: a
     # FIXED clock (the only nondeterministic input a Journal stamps), a fixed
-    # model, scripted responses, and content-addressed digests derived from
-    # those bytes alone. All dosing content is synthetic bench data, not
+    # writer (the header otherwise names whichever process regenerated it), a
+    # fixed model, scripted responses, and content-addressed digests derived
+    # from those bytes alone. All dosing content is synthetic bench data, not
     # medical guidance.
     module VarianceFixtures
       CLOCK = -> { "1970-01-01T00:00:00Z" }
       MODEL = "claude-sonnet-4-6"
       TASK = "what is the aspirin dosing?"
       FILES = %w[one two three].freeze
+      # On no host a reader runs on, so a watch reads its liveness as unknown.
+      WRITER = Liveness::Writer.new(pid: 1, start: "0", host: "variance-fixture")
 
       # The one scripted capability: echoes a synthetic dosing line so the
       # tool_result bytes are a pure function of the scripted tool_use input.
@@ -105,19 +108,21 @@ module Lain
           path
         end
 
-        # The same wiring a real bench run uses (JournalRequests INNERMOST, the
-        # Agent's own journal:), so the fixture bytes exercise exactly the
-        # records Session.load rebuilds a Recording from. It deliberately keeps
-        # its own copy of the spec suite's mock-recording idiom: committed
-        # fixture bytes must not couple to spec/support helpers.
+        # The same wiring a real bench run uses (the Scribe, JournalRequests
+        # INNERMOST, the Agent's own journal:), so the fixture bytes exercise
+        # exactly the records Session.load rebuilds a Recording from. It
+        # deliberately keeps its own copy of the spec suite's mock-recording
+        # idiom: committed fixture bytes must not couple to spec/support helpers.
         def record(journal, responses)
           toolset = Toolset.new([DosingLookup.new])
           context = Context.new(model: MODEL, max_tokens: 1024, system: "be terse")
+          scribe = SessionRecord::Scribe.new(journal:, context:, toolset:, writer: WRITER,
+                                             compaction: CLI::RunRecorder::COMPACTION)
           agent = Agent.new(provider: Provider::Mock.new(responses:),
                             toolset:, context:, journal:,
                             model_middleware: journaling_stack(journal))
           agent.ask(TASK)
-          Session.write(journal, timeline: agent.timeline, context:, toolset:)
+          scribe.catch_up(agent.timeline).close(reason: :exit)
         end
 
         def journaling_stack(journal)

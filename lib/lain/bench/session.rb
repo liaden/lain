@@ -2,13 +2,10 @@
 
 module Lain
   module Bench
-    # One run persisted as NDJSON in the Journal's OWN format: the live run's
-    # journal already carries request_sent / turn_usage / capability_degraded
-    # lines, and {Session.write} appends what those cannot express -- one
-    # "session" header (the Context, tool schema, and reminders in effect) and
-    # one "turn" record per committed turn. {Session.load} then rebuilds a
-    # {Recording} from the bytes alone, re-deriving each turn's content address
-    # so the file's own digests are its integrity check.
+    # One session file, read back: the NDJSON {SessionRecord::Scribe} writes
+    # for a live chat and for a `bench record` run alike. {Session.load}
+    # rebuilds a {Recording} from the bytes alone, re-deriving each turn's
+    # content address so the file's own digests are its integrity check.
     #
     # The header captures exactly {Lain::Context}'s constructor inputs, a
     # catalog pipeline by its recorded name, so a loaded Recording rebuilds the
@@ -22,24 +19,20 @@ module Lain
     #
     # Concatenation is outside the format: a second "session" header in one
     # stream raises {Corrupt} rather than guessing which run is meant. The
-    # header's `head` anchor is what rejects truncation and cross-run splices
-    # through the turn chain -- a Merkle chain self-verifies only its PREFIX,
-    # so without the anchor a deleted tail would load as a shorter session that
-    # still replays identically. Stated honestly: a baseline substituted
-    # WHOLESALE from a same-shape foreign run is self-consistent record by
-    # record, so it stays detectable only as non-identity under dry replay,
-    # never at load time. Likewise the transport fields sit outside the content
-    # address and load unverified, since {Request#digest} deliberately excludes
-    # them -- the integrity envelope covers content, not transport.
+    # `session_closed` record's `head` is what rejects truncation and cross-run
+    # splices through the turn chain -- a Merkle chain self-verifies only its
+    # PREFIX, so without the anchor a deleted tail would load as a shorter
+    # session that still replays identically. Stated honestly: a baseline
+    # substituted WHOLESALE from a same-shape foreign run is self-consistent
+    # record by record, so it stays detectable only as non-identity under dry
+    # replay, never at load time. Likewise the transport fields sit outside the
+    # content address and load unverified, since {Request#digest} deliberately
+    # excludes them -- the integrity envelope covers content, not transport.
     #
     # == Open sessions and resume chains
     #
-    # {SessionRecord}'s live format can leave a header's `head` nil -- an OPEN
-    # session still running, or one a SIGKILL just stopped -- rather than this
-    # class's own header, which is always anchored because it is written AFTER
-    # the run. A nil header `head` verifies against a `session_closed` record's
-    # OWN `head` when one is present, since the header itself is never rewritten
-    # at close; with neither anchor, {Loader} loads the prefix
+    # A file with no `session_closed` is OPEN -- a session still running, or
+    # one a SIGKILL just stopped. {Loader} loads its prefix
     # UNVERIFIED-but-self-consistent, and {Recording#open?} names which shape a
     # caller got.
     #
@@ -55,13 +48,12 @@ module Lain
     class Session
       # A session file whose records no longer cohere: a turn or request_sent
       # whose content re-derives to a different digest than the one recorded
-      # under it, a turn chain whose rebuilt head misses the header's anchor,
-      # or a journal with no session header to rebuild a Context from (or with
-      # more than one). Extended for the live session format's open sessions
-      # and resume chains: a `resumed_from` head that does not match the
-      # prior file's own rebuilt head, a `message` record whose envelope no
-      # longer re-derives to its recorded digest, or more than one
-      # `session_closed` closer in one file.
+      # under it, a turn chain whose rebuilt head misses the `session_closed`
+      # anchor, more than one `session_closed` closer in one file, or a
+      # journal with no session header to rebuild a Context from (or with more
+      # than one). Also a `resumed_from` head that does not match the prior
+      # file's own rebuilt head, or a `message` record whose envelope no
+      # longer re-derives to its recorded digest.
       class Corrupt < Error; end
 
       HEADER_TYPE = "session"
@@ -251,31 +243,6 @@ module Lain
       end
 
       class << self
-        # Append the session header and one turn record per turn (root to
-        # head) to the run's existing journal.
-        #
-        # @param journal [#<<] the run's Journal, already carrying its live records
-        # @param timeline [Lain::Timeline] the recorded final DAG
-        # @param context [Lain::Context] the context the run rendered under
-        # @param toolset [#to_schema] the toolset in effect at record time
-        # @param workspace [Lain::Workspace] the workspace in effect at record time
-        # @param provider [String, nil] the provider name the run dispatched
-        #   through, recorded as pure data beside the model and never
-        #   constantized. Optional so an existing caller that has not threaded
-        #   one through yet still writes a valid header.
-        # @param compact_strategy [String, nil] the `--compact-strategy` name
-        #   the run collapsed spans under, byte-compatible with
-        #   {CLI::Backend#compaction_header}'s own key. Optional on the same
-        #   rule as `provider`: an unset flag means the eager control arm, not
-        #   "no strategy", so an existing caller writes no key at all.
-        # @return [#<<] the journal
-        def write(journal, timeline:, context:, toolset:, workspace: Workspace.empty, provider: nil,
-                  compact_strategy: nil)
-          journal << header_record(timeline, context, toolset, workspace, optional_fields(provider, compact_strategy))
-          timeline.to_a.each { |turn| journal << turn_record(turn) }
-          journal
-        end
-
         # Rebuild a {Recording} from a session file's bytes.
         #
         # @param source [String, Enumerable<Hash, String>] a String is a PATH
@@ -293,49 +260,6 @@ module Lain
 
         def entries(source)
           source.is_a?(String) ? File.foreach(source) : source
-        end
-
-        # `head` anchors the whole turn chain. `provider` and `compact_strategy`
-        # ride beside `model` rather than inside `context` because neither is
-        # genuinely one of {Context}'s constructor inputs: the choice of
-        # backend, the compaction arm and the render pipeline are separate
-        # concerns that only happen to be pinned by the same header.
-        #
-        # Bundled into ONE trailing Hash, not two more positional parameters:
-        # `header_record` sits at the class's `Metrics/ParameterLists` cap with
-        # five, and {#optional_fields} is where "merges in only when given"
-        # lives for both, so a third such field costs this method nothing.
-        def header_record(timeline, context, toolset, workspace, optional)
-          {
-            "type" => HEADER_TYPE, "format" => SessionRecord::FORMAT, "context_class" => context.class.name,
-            "model" => context.model, "max_tokens" => context.max_tokens,
-            "system" => context.system, "stream" => context.stream, "extra" => context.extra,
-            "head" => timeline.head_digest,
-            "tools" => toolset.to_schema, "reminders" => workspace.reminders
-          }.merge(SessionRecord.context_pipeline(context)).merge(optional)
-        end
-
-        # {SessionRecord.header}'s `resumed_from` idiom, generalized past
-        # `provider` alone: an existing caller that has not threaded a
-        # provider or a compact_strategy through must keep writing
-        # byte-identical headers, so either's absence is NO KEY, never a nil
-        # value -- proven by the committed variance fixtures' own
-        # byte-identity regeneration spec.
-        def optional_fields(provider, compact_strategy)
-          fields = {}
-          fields["provider"] = provider unless provider.nil?
-          fields["compact_strategy"] = compact_strategy unless compact_strategy.nil?
-          fields
-        end
-
-        # Delegated rather than duplicated. This WAS a byte-compatible twin of
-        # {SessionRecord.turn}, kept in step by hand -- and it fell out of step
-        # exactly once, when {Event} grew `causal_parents` and neither writer
-        # followed. One Loader reads both formats, so "byte-compatible" is a
-        # requirement, not a coincidence. The header stays its own method
-        # because it genuinely differs, by `provider`.
-        def turn_record(turn)
-          SessionRecord.turn(turn)
         end
       end
     end

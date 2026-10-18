@@ -31,7 +31,7 @@ RSpec.describe Lain::CLI::ForkPoint do
   end
 
   def session_records(timeline)
-    header = Lain::SessionRecord.header(context:, toolset:, head: nil)
+    header = Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
     closer = Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal
     [header] + timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) } + [closer]
   end
@@ -109,7 +109,7 @@ RSpec.describe Lain::CLI::ForkPoint do
     # Fix round (probe 3c): a hand-edited or foreign turn record without a
     # "digest" key refuses namedly, never a raw KeyError backtrace.
     it "refuses a malformed turn record missing its digest, naming the file" do
-      records = [Lain::SessionRecord.header(context:, toolset:, head: nil),
+      records = [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER),
                  { "type" => "turn", "role" => "user", "content" => text("x") }]
       File.write(File.join(paths.sessions_dir, "20260104T000000-1.ndjson"),
                  "#{records.map { |record| JSON.generate(record) }.join("\n")}\n")

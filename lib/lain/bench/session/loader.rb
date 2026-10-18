@@ -10,9 +10,11 @@ module Lain
       # recorded content and the chain's own parent, and a disagreement with
       # the recorded digest -- edited content, a reordered chain -- raises
       # {Corrupt} instead of loading quietly wrong. The rebuilt head must then
-      # match the header's anchor (a Merkle chain self-verifies only its
-      # prefix, so truncating the tail would otherwise pass), and every
-      # request_sent record must rebuild to its own recorded digest.
+      # match the head its `session_closed` record anchors (a Merkle chain
+      # self-verifies only its prefix, so truncating the tail would otherwise
+      # pass); a recording with no `session_closed` is open, verified only as
+      # far as its prefix. Every request_sent record must rebuild to its own
+      # recorded digest.
       class Loader
         # Rebuilds the recorded run's Context under the pipeline its header
         # names, re-resolved from the catalog, and under the default when it
@@ -206,12 +208,22 @@ module Lain
         end
 
         def stamped(header)
-          return header if SessionRecord.current_format?(header)
+          return unanchored(header) if SessionRecord.current_format?(header)
 
           format = header["format"]
           raise Corrupt, "session file predates format #{SessionRecord::FORMAT} (no format key)" if format.nil?
 
           raise Corrupt, "session file records format #{format.inspect}; this loader reads format #{SessionRecord::FORMAT}"
+        end
+
+        # Only the retired bench recorder wrote a header after its run, head
+        # and all, and its files are not this format's whatever their stamp.
+        def unanchored(header)
+          head = header["head"]
+          return header if head.nil?
+
+          raise Corrupt, "the session header carries a head (#{RequiredKeys.shown(head)}), which only the retired " \
+                         "bench recorder wrote; re-record the session"
         end
 
         def sole_slot_fills
@@ -278,7 +290,7 @@ module Lain
         # Memoized like {#header}, since both are asked more than once per
         # {#recording}.
         def anchor
-          @anchor ||= Anchor.new(header:, session_closed_records: of_type("session_closed"))
+          @anchor ||= Anchor.new(session_closed_records: of_type("session_closed"))
         end
 
         def open? = anchor.open?

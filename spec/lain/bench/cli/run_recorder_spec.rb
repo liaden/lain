@@ -39,6 +39,36 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
 
   def types_in(path) = File.foreach(path).map { |line| JSON.parse(line)["type"] }
 
+  # The live chat's own format from the first byte, so a run killed part way
+  # leaves an open session rather than a file with no header.
+  describe "the session file" do
+    def written_by(recorder)
+      Dir.mktmpdir { |tmp| records_in(recorder.record(File.join(tmp, "1.ndjson"))) }
+    end
+
+    let(:written) { written_by(run_recorder) }
+
+    it "opens with the live header: format 1, this process as its writer, the turn schedule and no head" do
+      expect(written.first).to include({ "type" => "session", "format" => 1, "compact_schedule" => "turn" }
+                                         .merge(Lain::Liveness::Writer.current.to_header))
+      expect(written.first).not_to have_key("head")
+    end
+
+    it "closes on the head the run committed" do
+      turns = written.select { |record| record["type"] == "turn" }
+
+      expect(written.last).to include("type" => "session_closed", "reason" => "exit",
+                                      "head" => turns.last.fetch("digest"))
+    end
+
+    it "writes the run profile it was handed into the header" do
+      recorder = described_class.new(provider:, context:, attribution:, prompts: ["hi"],
+                                     profile: { "provider" => "ollama", "num_ctx" => 8192 })
+
+      expect(written_by(recorder).first).to include("provider" => "ollama", "num_ctx" => 8192)
+    end
+  end
+
   # One provider serves every run, so what it writes has to follow the run
   # that is recording rather than whichever journal it was built with.
   describe "the provider's own records" do
@@ -112,7 +142,8 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
         expect(said).to eq("#{File.join(tmp, "1.failed.ndjson")} " \
                            "(set aside: Lain::Provider::Ollama::APIError: connection refused)")
         expect(Dir.children(tmp)).to eq(["1.failed.ndjson"])
-        expect(types_in(File.join(tmp, "1.failed.ndjson"))).not_to include("session")
+        expect(types_in(File.join(tmp, "1.failed.ndjson"))).to include("session")
+        expect(types_in(File.join(tmp, "1.failed.ndjson"))).not_to include("session_closed")
       end
     end
 

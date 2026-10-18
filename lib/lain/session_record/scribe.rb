@@ -165,7 +165,7 @@ module Lain
         # is the only question asked of it -- unlike {WrittenChain}, where the
         # ORDER is the claim.
         @spawned = Set.new
-        @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:, profile:,
+        @journal << SessionRecord.header(context:, toolset:, workspace:, resumed_from:, profile:,
                                          compaction:, arms:, middleware:, writer:)
       end
 
