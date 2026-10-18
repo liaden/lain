@@ -366,7 +366,9 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   Added 2026-10-06, wall-clock examples red under a load average of about 12 (agents running specs
   beside a suite) and green alone each time: `Lain::Tools::WebFetch an HTML page comes back as
-  readable text refuses a page of more nodes than the walk budget quickly, naming raw` (red twice);
+  readable text refuses a page of more nodes than the walk budget quickly, naming raw` (red twice,
+  and again on 2026-10-18 at 3.06s against its 3s bound in a pre-commit suite beside 2 reviewers, green
+  alone in 0.79s and green in a full suite on the base and on the card);
   and `a chat whose terminal is gone ends at its prompt once the terminal is closed`.
 
   Added 2026-10-09, red once (watchdog STUCK at 30s) in a pre-commit suite under a load of about
