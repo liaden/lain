@@ -1290,7 +1290,7 @@ Spec file: `spec/lain/approval/judged_spec.rb`, `spec/lain/shell/executable_spec
 **Stop and report if:**
 - `judged_spec.rb:99-104` (the abstain record's shape) changes for an ordinary defer.
 
-### T29: Add the user's request to the judge prompt, as its own arm          [risk: medium]
+### [x] T29: Add the user's request to the judge prompt, as its own arm          [risk: medium]
 
 **Depends on:** T28
 **Files:** `lib/lain/approval/judge.rb`, `lib/lain/approval/judged.rb`, `spec/lain/approval/judge_spec.rb`, `spec/lain/approval/judged_spec.rb`
@@ -1319,7 +1319,7 @@ Spec file: `spec/lain/approval/judge_spec.rb`, `spec/lain/approval/judged_spec.r
 - The human's last line is not reachable from the context at judge time without a new collaborator through `Switchboard`: report the path before adding one.
 - `judgeable?` (`judged.rb:185-193`) lets any of the research's 6 secret reads through on this tree (`.env`, `master.key`, a vault password file, a symlink to env secrets, `.env.local`, an ssh key).
 
-### T30: Record what the tripwire would have stopped          [risk: high]
+### [x] T30: Record what the tripwire would have stopped          [risk: high]
 
 **Depends on:** T3, T4, T12, T14, T23, T25
 **Files:** `lib/lain/tripwire.rb` (new), `lib/lain/tripwire/ledger.rb` (new), `lib/lain/tripwire/signal.rb` (new), `lib/lain/telemetry/tripwire.rb` (new), `lib/lain/cli/wiring.rb`, `spec/lain/tripwire/ledger_spec.rb` (new), `spec/lain/cli/wiring_spec.rb`
@@ -1379,7 +1379,7 @@ Lain::Telemetry::Tripwire = Data.define(:requester, :signal, :weight, :score, :s
 - `spec/journal_routing_discipline_spec.rb` objects to the `tripwire` kind.
 - A ledger fault is lost: T33 journals an observer's error; check it lands.
 
-### T31: Turn the safe arms on by default          [risk: medium]
+### [x] T31: Turn the safe arms on by default          [risk: medium]
 
 **Depends on:** T14, T16, T26, T30
 **Files:** `lib/lain/cli/arms.rb`, `spec/lain/cli/arms_spec.rb`, `spec/lain/cli/wiring/toolset_build_spec.rb`
@@ -1408,7 +1408,7 @@ Spec file: `spec/lain/cli/arms_spec.rb`
 ### T32: Document confinement and its QA scenarios          [risk: low]
 
 **Depends on:** T31
-**Files:** `ARCHITECTURE.md`, `planning/qa/scenarios/secret-boundary.md`, `planning/qa/scenarios/bash-confinement.md` (new), `planning/qa/README.md`
+**Files:** `ARCHITECTURE.md`, `planning/qa/scenarios/secret-boundary.md`, `planning/qa/scenarios/bash-confinement.md` (new), `planning/qa/README.md`, `planning/qa/scenarios/session-and-window.md` (section 9c: the new chat defaults and the bench's off default; added by the T31 review)
 **Reuse:** the research report's Design section; `planning/qa/scenarios/` format
 **Shared-file wiring:** `ROADMAP.md` item 59 marked done
 **Reachable from:** n/a (docs)
