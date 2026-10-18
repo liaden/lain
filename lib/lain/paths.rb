@@ -168,7 +168,7 @@ module Lain
     # from, not a second copy of it.
     NVIM_PLUGIN_ROOT = Shipped::NVIM_PLUGIN_ROOT
 
-    # `nvim_plugin_root:` is injectable, mirroring {Core::Child}'s `binary:`, so
+    # `nvim_plugin_root:` is injectable so
     # a spec can point at a path that does not exist without disturbing the real
     # gem tree.
     def initialize(env: ENV, nvim_plugin_root: NVIM_PLUGIN_ROOT)

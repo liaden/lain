@@ -45,11 +45,11 @@ cargo test && cargo clippy --all-targets -- -D warnings
 pre-commit run --all-files     # what the git hook runs
 ```
 
-Eight tiers are excluded by default; gated in `spec/support/tags.rb` and its two `ollama_*_tag.rb` siblings:
+Eight tiers are excluded by default (`:api_integration`, `:spike`, `:services`, `:core`, `:live`, `:slow`, `:ollama`, `:ollama_cloud`); gated in `spec/support/tags.rb` and its two `ollama_*_tag.rb` siblings:
 
 ```bash
 LAIN_INTEGRATION=1 ANTHROPIC_API_KEY=sk-... bundle exec rspec   # :api_integration -- costs money
-bundle exec rake core:build && bundle exec rspec --tag core     # :core -- needs the daemon
+bundle exec rake core:build && bundle exec rspec --tag core     # :core -- the one real-binary wire seam; needs the built lain-core
 ```
 
 Spec git reads a spec-owned global config (`spec/support/isolated_git_config.rb`); a lib site that

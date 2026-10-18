@@ -1120,6 +1120,11 @@ XDG path relative, which put machine state back inside the user's repository)
    RPCs against a real daemon over AF_VSOCK, and `spec/lain/core/grep_parity_spec.rb` still pins a
    parity claim over the Unix socket. What no example covers any more is `Exec::Core` — the Ruby
    backend — or a `Tool::Result` rendering over vsock. The removed code is in `git log`.
+   **Note, 2026-10-17:** the vsock tier is deleted too: `spec/lain/core/transport/vsock_spec.rb`,
+   `spec/support/vsock_daemon.rb` and the `:vsock` tag, with `Exec::Core`, `Core::Child` and
+   `spec/lain/core/grep_parity_spec.rb` (named above) and the daemon's `exec` and `grep` RPCs. What
+   pins the wire now is `Core::Client` over `Transport::Mock`, plus 1 `:core` example that drives the
+   real `lain-core` binary through handshake, `ping` and a refused `exec`.
 
 19. **✅ Landed — planned 2026-07-28, panel-reviewed** —
    `planning/specs/chunk-bench-arms-subcommand.md`: a **live door for the arm comparison**. Split
@@ -1443,7 +1448,7 @@ XDG path relative, which put machine state back inside the user's repository)
    is an `Approval::Queue` **surface**, not a middleware oracle; a denied read is **loud**; and
    `[[approval.allow]]` is honoured only from a **consented** root. `Approval::Remembered`'s read
    side is unblocked; `Remembered::Persister` and `Approval::Risk` stay dead, as scoped. The typed
-   egress tool and Landlock confinement in `crates/lain-core` remain **deferred**.
+   egress tool remains **deferred**; Landlock confinement landed in `crates/lain-fence` instead of `crates/lain-core`.
 
 30. **✅ Landed (survey B12 part two open) — planned 2026-08-07, panel-reviewed — `/survey`: reviewing a corpus, in two chunks.**
    `planning/specs/chunk-partition-strategy.md` (4 cards, 3 waves) then

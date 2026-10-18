@@ -17,10 +17,9 @@ module Lain
     #   backend has a shape for one. No shell is started, so a disagreement
     #   between that parser and a real shell degrades to a broken command
     #   rather than an attacker-chosen one. A backend that answers
-    #   `#takes_term?` with false -- {Exec::Docker} handed a pipe,
-    #   {Exec::Core} handed anything -- is given the model's own string, which
-    #   is the only arm it ever had for that command. What still never happens
-    #   is a term JOINED back into a string: that would hand `sh -c` a command
+    #   `#takes_term?` with false -- {Exec::Docker} handed a pipe --
+    #   is given the model's own string, which is the only arm it ever had for
+    #   that command. What still never happens is a term JOINED back into a string: that would hand `sh -c` a command
     #   this tool composed, and the term path exists to keep one away from it.
     #
     #   NAME WHAT THE FALLBACK TRADES AWAY. "No string is composed" and "no

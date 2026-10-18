@@ -53,13 +53,13 @@ module Lain
       # rather than grow into a bignum it would refuse.
       MSGID_LIMIT = 2**32
 
-      # Startup is always bounded, as with {Child::CONNECT_BUDGET}; only
-      # settled, versioned {#call}s may wait indefinitely.
+      # Startup is always bounded; only settled, versioned {#call}s may wait
+      # indefinitely.
       HANDSHAKE_BUDGET = 2.0
 
-      # The transport is injected rather than built here: {Child} spawns a local
-      # daemon, another may attach to one across a hypervisor boundary, and this
-      # class owns bytes either way. Must run inside an Async reactor -- the
+      # The transport is injected rather than built here: one may spawn a local
+      # daemon, another attach to one, and this class owns bytes either way. Must run inside
+      # an Async reactor -- the
       # reader fiber parents itself to the current task, and the caller owns
       # getting {#stop} called before that task ends.
       def self.start(transport:, version: PROTOCOL_VERSION, handshake_budget: HANDSHAKE_BUDGET)
@@ -136,8 +136,8 @@ module Lain
 
       # Shutting OUR read half EOFs the reader loop; only then close the socket,
       # so the reader never reads a closed IO. This is what makes the wait
-      # terminate for a transport that owns no process: {Child#stop} TERMs its
-      # daemon and the dropped connection EOFs us for free, but a transport that
+      # terminate for a transport that owns no process: one that spawned a daemon
+      # TERMs it and the dropped connection EOFs us for free, but a transport that
       # merely ATTACHED has nothing to kill, and relying on the far end to hang
       # up would park this fiber forever. It is also what keeps "#stop must EOF
       # the wire" off the {Transport} contract.
@@ -223,7 +223,7 @@ module Lain
       end
 
       # Releasing the transport rather than merely observing matters for one
-      # that owns a process: {Child#stop} is TERM-then-reap, and a bare reap here
+      # that owns a process: its #stop is TERM-then-reap, and a bare reap here
       # once assumed the child was already dead, so a daemon that closed the
       # socket while staying alive parked this fiber in wait2 forever. A
       # transport that only attaches forces no exit and simply reports.

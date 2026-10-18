@@ -20,8 +20,8 @@ module Lain
     # would cost every boot for a tier-1 tool's lookup that may never run.
     module Shipped
       # This file sits at `lib/lain/paths/shipped.rb`, so three levels up from
-      # `__dir__` is the repo/gem root -- the same root {Core::Child::BINARY}
-      # and {NVIM_PLUGIN_ROOT} each reached independently, at their own depth.
+      # `__dir__` is the repo/gem root -- the same root {NVIM_PLUGIN_ROOT} and
+      # the rest reached independently, at their own depth.
       GEM_ROOT = File.expand_path("../../..", __dir__)
 
       # Where `cargo build` writes when `CARGO_TARGET_DIR` names nothing. A

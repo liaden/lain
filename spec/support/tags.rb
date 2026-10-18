@@ -202,12 +202,12 @@ RSpec.configure do |config|
   config.filter_run_excluding(:services) unless SERVICES_ENABLED
 end
 
-# :core specs drive the REAL compiled lain-core daemon over its Unix socket
-# (spec/lain/core/client_spec.rb). They cost no money and touch no network, but
-# they need the compiled binary, so they are excluded by default. Unlike the
-# env-gated tags above, the way in is the tag itself: a command-line `--tag core`
-# takes priority over this config-level exclusion (rspec-core 3.13, verified),
-# so no LAIN_* variable is needed:
+# The one :core spec drives the REAL compiled lain-core daemon over its Unix
+# socket (spec/lain/core/client_spec.rb): the wire seam. It costs no money and
+# touches no network, but it needs the compiled binary, so it is excluded by
+# default. Unlike the env-gated tags above, the way in is the tag itself: a
+# command-line `--tag core` takes priority over this config-level exclusion
+# (rspec-core 3.13, verified), so no LAIN_* variable is needed:
 #
 #     bundle exec rake core:build && bundle exec rspec --tag core
 #
@@ -218,36 +218,9 @@ RSpec.configure do |config|
   config.filter_run_excluding(:core)
 
   config.before(:each, :core) do
-    unless File.executable?(Lain::Core::Child::BINARY)
-      skip("lain-core binary not built -- run `bundle exec rake core:build` to run :core specs")
-    end
-  end
-end
-
-# :vsock specs drive the REAL compiled lain-core daemon over AF_VSOCK. They cost
-# no money and touch no network beyond the kernel's loopback vsock transport, but
-# they need BOTH a host that can bind AF_VSOCK and the compiled binary, so they
-# are excluded by default. The way in is the tag itself, exactly as for :core:
-#
-#     bundle exec rake core:build && bundle exec rspec --tag vsock
-#
-# :vsock examples carry ONLY that tag, never :core as well. A command-line --tag
-# lifts the config-level exclusion for the tag it names and no other, so an
-# example tagged `:vsock, :core` would stay excluded under `--tag vsock` -- and the
-# run would pass GREEN having executed nothing. That failure is silent, which is
-# why it is spelled out here.
-#
-# When opted in but a precondition is missing, an example SKIPS (never fails),
-# mirroring :core -- and the message names WHICH precondition, because "no vsock"
-# and "no binary" have completely different fixes.
-RSpec.configure do |config|
-  config.filter_run_excluding(:vsock)
-
-  config.before(:each, :vsock) do
-    skip("host cannot bind AF_VSOCK -- the kernel's vsock_loopback transport is unavailable") unless
-      VsockAvailability.available?
-    unless File.executable?(Lain::Core::Child::BINARY)
-      skip("lain-core binary not built -- run `bundle exec rake core:build` to run :vsock specs")
+    unless File.executable?(CoreDaemon::BINARY)
+      skip("lain-core binary not built at #{CoreDaemon::BINARY} -- run `bundle exec rake core:build` " \
+           "to run the wire seam")
     end
   end
 end

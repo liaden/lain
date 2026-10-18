@@ -57,12 +57,11 @@ module Lain
       # is not in that rescue's reach, so a `CoercionError < ArgumentError` would have bypassed it.
       class CoercionError < Lain::Error; end
 
-      # `Integer(value, 10)` for strings, matching the two existing call sites this file
-      # generalizes (`lib/lain/core/transport/vsock.rb`'s `#decimal`,
-      # `lib/lain/review/source/local_branch.rb`'s `#count`): a bare `Integer(value)` reads a
+      # `Integer(value, 10)` for strings, matching the existing call site this file
+      # generalizes (`lib/lain/review/source/local_branch.rb`'s `#count`): a bare `Integer(value)` reads a
       # leading-zero string as OCTAL when no base is given -- measured, `Integer("010")` is `8`,
       # not `10`, and silently. A zero-padded port, exit code, or ID out of JSON, config, or argv
-      # would be silently reinterpreted; explicit base 10 is what those two call sites already do
+      # would be silently reinterpreted; explicit base 10 is what that call site already does
       # to avoid exactly that.
       #
       # Non-integral Numerics (`Float`, `BigDecimal`, `Rational`) are refused rather than

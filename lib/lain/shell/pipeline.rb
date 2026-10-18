@@ -432,10 +432,9 @@ module Lain
         # Each stage leads its own session, and so its own group ({SETSID}),
         # which is what lets a timeout kill the command's own descendants rather
         # than just the stage. `in:` is `/dev/null` because the first stage would
-        # otherwise inherit lain's stdin and read the human's keystrokes, and
-        # `crates/lain-core/src/exec.rs:202` sets `Stdio::null()`, so every arm
-        # agrees. The redirect happens in the spawned child at the descriptor, so
-        # nothing reopens this process's own stdin, whose offset a regular file
+        # otherwise inherit lain's stdin and read the human's keystrokes. The
+        # redirect happens in the spawned child at the descriptor, so nothing
+        # reopens this process's own stdin, whose offset a regular file
         # shares with every child holding it. `close_others:` because a
         # descriptor this process holds without close-on-exec -- inherited from
         # whatever launched lain, or opened by native code -- would otherwise

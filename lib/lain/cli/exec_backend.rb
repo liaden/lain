@@ -38,13 +38,6 @@ module Lain
 
       # The backends `--exec` selects between, in the order help text lists
       # them: the in-process baseline first, since it is the default.
-      #
-      # {Exec::Core} is a real backend of this seam and is deliberately NOT
-      # here. It needs a STARTED {Lain::Core::Client} and the Async reactor
-      # holding it, neither of which a flag can hand over -- so a caller that
-      # wants it constructs the client and the tool explicitly instead. An
-      # unresolvable name refused by name beats one resolved into a backend
-      # that dies at its first command.
       BACKENDS = %w[local docker].freeze
 
       # An unset flag arrives as nil and falls through to this constant rather

@@ -75,8 +75,7 @@ module Lain
       # The stdin of a run given no input: `/dev/null`, never a pipe and never
       # inherited. Inherited, the child would read the human's keystrokes; a
       # pipe, even an empty one, changes what some tools do -- rg searches its
-      # stdin instead of the directory. `crates/lain-core/src/exec.rs` sets
-      # `Stdio::null()` for the same reason.
+      # stdin instead of the directory.
       module Unfed
         def self.redirection = { in: File::NULL }
         def self.close_read = nil

@@ -76,14 +76,14 @@ end
 # each tool's summary block still lands intact at its end.
 multitask check: %i[pspec rubocop]
 
-# The out-of-process exec daemon the :core-tagged specs drive. A plain `cargo
-# build` (not rb_sys -- lain-core is a standalone workspace binary, no Ruby
-# linkage) into the workspace target dir, which is exactly where
-# Lain::Core::Child::BINARY looks.
+# The lain-core binary the one :core-tagged wire-seam spec drives. A plain
+# `cargo build` (not rb_sys -- lain-core is a standalone workspace binary, no
+# Ruby linkage) into the workspace target dir, which is exactly where
+# spec/support/core_daemon.rb looks.
 #
 #     bundle exec rake core:build && bundle exec rspec --tag core
 namespace :core do
-  desc "Compile the lain-core exec daemon for the :core-tagged specs"
+  desc "Compile the lain-core binary for the :core-tagged wire-seam spec"
   task :build do
     sh "cargo build -p lain-core"
   end

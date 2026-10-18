@@ -6,7 +6,7 @@ require "socket"
 # Why a real container run may not happen here, in the operator's own words.
 # Three separate preconditions with three different fixes, so the skip names
 # WHICH one is missing rather than saying "no docker" for all of them --
-# spec/support/tags.rb's :core and :vsock blocks are the shape.
+# spec/support/tags.rb's :core block is the shape.
 #
 # The image is required to be PRESENT LOCALLY on purpose: a :seam spec touches
 # no network, and letting `docker run` pull would make the first run of this
@@ -458,8 +458,7 @@ RSpec.describe Lain::Exec::Docker do
     # Matching a Regexp against a String tagged UTF-8 that is not valid UTF-8
     # RAISES. Not reachable through the default prober -- `Shell::Pipeline`
     # hands back ASCII-8BIT -- but reachable the moment `exec:` is something
-    # that decodes, `Exec::Core` over msgpack being the one already in the
-    # tree. Named `podman` on purpose: the fallback is what protects the
+    # that decodes. Named `podman` on purpose: the fallback is what protects the
     # command, not a lucky non-match.
     it "keeps today's behaviour when the client answers bytes that are not valid UTF-8" do
       broken = (+"podman \xC3(").force_encoding(Encoding::UTF_8)
@@ -660,7 +659,7 @@ RSpec.describe Lain::Exec::Docker do
     # A container takes ONE argv and a pipe needs a shell. Joining the stages
     # back into a string is the one thing this must not do -- it would hand
     # `sh -c` the very command the term path exists to keep away from it
-    # (Shell::Verdict's own rule, and {Exec::Core} refuses for it too).
+    # (Shell::Verdict's own rule).
     it "refuses a piped term loudly rather than joining it back into a shell string" do
       expect { run(command: Lain::Shell::Term.of(%w[grep -r foo .], %w[wc -l])) }
         .to raise_error(Lain::Exec::Unsupported, /one argv|pipe/i)

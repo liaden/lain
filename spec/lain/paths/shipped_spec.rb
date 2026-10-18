@@ -47,9 +47,9 @@ RSpec.describe Lain::Paths::Shipped do
     end
 
     # The one path here that is NOT a shipped file: a build output, present
-    # only after `rake core:build`. Distinguishing it from the rest is the
+    # only after a cargo build. Distinguishing it from the rest is the
     # point of the previous example, not an oversight in this one.
-    it "computes the daemon's build target beside the gem root, whether or not a build has run" do
+    it "computes the cargo build target beside the gem root, whether or not a build has run" do
       expect(described_class::CARGO_WORKSPACE_TARGET).to eq(File.join(gem_root, "target"))
     end
   end
@@ -81,20 +81,6 @@ RSpec.describe Lain::Paths::Shipped do
 
     it "is the workspace target when nothing names one" do
       expect(described_class.cargo_target(env: {})).to eq(described_class::CARGO_WORKSPACE_TARGET)
-    end
-  end
-
-  describe "the daemon binary path honours a configured target directory" do
-    it "resolves inside CARGO_TARGET_DIR when the environment names one" do
-      configured = "/tmp/lain-shipped-spec-configured-target"
-
-      expect(Lain::Core::Child.binary(env: { "CARGO_TARGET_DIR" => configured }))
-        .to eq(File.join(configured, "debug", "lain-core"))
-    end
-
-    it "falls back to Shipped::CARGO_WORKSPACE_TARGET when nothing names one" do
-      expect(Lain::Core::Child.binary(env: {}))
-        .to eq(File.join(described_class::CARGO_WORKSPACE_TARGET, "debug", "lain-core"))
     end
   end
 end

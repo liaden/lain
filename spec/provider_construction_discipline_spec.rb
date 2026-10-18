@@ -248,9 +248,8 @@ module ProviderConstruction
     # `::Lain::Provider::Ollama`).
     #
     # A one-segment path is accepted only inside `lain/provider/`, and the
-    # narrowness is load-bearing rather than lazy: `core/transport/vsock.rb`
-    # raises `Unreachable.new(far_end, e)`, which is that transport's own error
-    # and not the provider. The same qualifier rule is what keeps
+    # narrowness is load-bearing rather than lazy: the
+    # qualifier rule is what keeps
     # `Forge::Journaled` and `Epic::Home::Journaled` -- two unrelated classes
     # sharing a name -- out of the decorator rule. The
     # cost is that a bare `Ollama.new` written outside `lain/provider/` would be
@@ -749,10 +748,9 @@ RSpec.describe "provider construction discipline" do
     end
 
     it "ignores an unrelated class that merely shares a provider's name" do
-      # `Vsock` raises its own `Unreachable`, and three separate classes in lib/
-      # are called `Journaled`. Requiring the `Provider::` qualifier is what
-      # keeps all four out of this scan.
-      source = "raise Unreachable.new(far_end, e)\nForge::Journaled.new(github, journal:)\n"
+      # Three separate classes in lib/ are called `Journaled`. Requiring the `Provider::` qualifier is what
+      # keeps them all out of this scan.
+      source = "Forge::Journaled.new(github, journal:)\n"
 
       expect(scan(source)).to be_empty
     end

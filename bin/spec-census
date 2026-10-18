@@ -526,7 +526,6 @@ module SpecCensus
         spec/lain/mode/posture_spec.rb:113,117
         spec/lain/skill/shipped_skills_spec.rb:85
         spec/lain/sensitivity/regions_spec.rb:384,388,397,537
-        spec/lain/core/child_spec.rb:103
         spec/lain/frontend/completion_spec.rb:191
         spec/lain/review/keying_spec.rb:86
         spec/lain/tools/write_file_spec.rb:38

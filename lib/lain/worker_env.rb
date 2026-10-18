@@ -58,8 +58,8 @@ module Lain
     end
 
     # The ONE cwd-resolution rule every exec arm shares (Exec::Local in
-    # process, Exec::Core across the daemon boundary), extracted so the
-    # transports cannot drift: a relative model-supplied path lands under this
+    # process, Exec::Docker in a container), extracted so the
+    # arms cannot drift: a relative model-supplied path lands under this
     # cwd, an absolute one is honored as given, and absent a path this cwd is it.
     def resolve(path)
       path ? File.expand_path(path, cwd) : cwd

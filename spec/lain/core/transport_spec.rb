@@ -1,22 +1,14 @@
 # frozen_string_literal: true
 
 require "async"
-require "fileutils"
 require "msgpack"
 require "socket"
-require "tmpdir"
 
-# The provisioning half of the exec boundary, as a CONTRACT rather than a
-# hierarchy: #start hands back a connected socket, #stop describes the
-# termination. Child is the incumbent implementation (it spawns a daemon);
-# Transport::Mock is the attaching shape -- it provisions nothing, so a client
-# built over it has no process to TERM and must terminate on its own read side.
+# The provisioning half of the wire, as a CONTRACT rather than a hierarchy:
+# #start hands back a connected socket, #stop describes the termination.
+# Transport::Mock provisions nothing, so a client built over it has no process
+# to TERM and must terminate on its own read side.
 RSpec.describe Lain::Core::Transport do
-  let(:runtime_base) { Dir.mktmpdir("lain-core-transport") }
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime_base }) }
-
-  after { FileUtils.rm_rf(runtime_base) }
-
   # A connected pair standing in for the wire: `ours` goes to the client
   # through the transport, `peer` is where a spec plays daemon (or hangs up).
   #
@@ -68,12 +60,11 @@ RSpec.describe Lain::Core::Transport do
   end
 
   describe "the contract" do
-    # With no base class to inherit, this is the repo's only guard against the
-    # two implementations drifting apart, so it pins ARITY as well as the names:
-    # a transport that grew a required argument would satisfy `include` and
-    # still break every call site.
-    it "is two nullary messages, satisfied by the incumbent Child and by Mock alike" do
-      [Lain::Core::Child, Lain::Core::Transport::Mock].each do |implementation|
+    # With no base class to inherit, this pins ARITY as well as the names: a
+    # transport that grew a required argument would satisfy `include` and still
+    # break every call site.
+    it "is two nullary messages, satisfied by Mock and by the spec daemon alike" do
+      [Lain::Core::Transport::Mock, CoreDaemon].each do |implementation|
         expect(implementation.instance_method(:start).arity).to eq(0)
         expect(implementation.instance_method(:stop).arity).to eq(0)
       end
@@ -89,7 +80,6 @@ RSpec.describe Lain::Core::Transport do
 
     it "does not carry #pid: the caller holds the transport and asks it directly" do
       expect(Lain::Core::Client.instance_methods).not_to include(:pid)
-      expect(Lain::Core::Child.instance_methods).to include(:pid)
     end
   end
 
@@ -162,9 +152,9 @@ RSpec.describe Lain::Core::Transport do
 
     it "reaches the operator, so two transports' deaths read differently" do
       spawned = death_message("pid 4242 exit status 7")
-      attached = death_message("vsock peer at cid 1 port 5252 hung up")
+      attached = death_message("attached peer hung up")
       expect(spawned).to include("pid 4242 exit status 7")
-      expect(attached).to include("vsock peer at cid 1 port 5252 hung up")
+      expect(attached).to include("attached peer hung up")
       expect(spawned).not_to eq(attached)
     end
   end
@@ -187,24 +177,6 @@ RSpec.describe Lain::Core::Transport do
         # whose collapse EOFs the reader into #perish.
         expect(transport.stops).to eq(2)
       end
-    end
-  end
-
-  # Scenario: the incumbent transport is unchanged
-  describe "the incumbent transport", :core do
-    it "spawns, handshakes, execs and stops exactly as before when injected as the transport" do
-      child = Lain::Core::Child.new(paths:, binary: Lain::Core::Child::BINARY)
-      Sync do
-        client = Lain::Core::Client.start(transport: child)
-        begin
-          expect(client.call("ping").fetch("version")).to eq(Lain::Core::Client::PROTOCOL_VERSION)
-          expect(client.call("exec", [{ "argv" => %w[echo hi] }]).fetch("stdout")).to eq("hi\n")
-        ensure
-          client.stop
-        end
-      end
-      expect(child.pid).to be_a(Integer)
-      expect { Process.kill(0, child.pid) }.to raise_error(Errno::ESRCH)
     end
   end
 end

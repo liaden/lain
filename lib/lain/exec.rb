@@ -2,7 +2,7 @@
 
 module Lain
   # How a command becomes a process -- {Local} in process through
-  # {Shell::Pipeline}, {Core} out of process through the lain-core daemon.
+  # {Shell::Pipeline}, {Docker} inside a container.
   # Naming the seam is what gives {FRAMEWORK_ENV} one home: lain runs
   # under `bundle exec`, so every child inherits BUNDLE_GEMFILE, BUNDLER_SETUP,
   # RUBYOPT and the rest, naming LAIN's OWN toolchain, and a model asking for
@@ -23,11 +23,11 @@ module Lain
   # Two carve-outs a caller holding a term has to know about:
   #
   # * **Not every backend takes both shapes**, so every backend also answers
-  #   `#takes_term?(term)` and a caller ASKS BEFORE IT OFFERS. {Core} takes no
-  #   term at all -- the wire has one command shape; {Docker} takes a one-stage
-  #   term and no piped one -- a container takes one argv; {Local} takes any.
+  #   `#takes_term?(term)` and a caller ASKS BEFORE IT OFFERS. {Docker} takes
+  #   a one-stage term and no piped one -- a container takes one argv; {Local}
+  #   takes any.
   #
-  #   THE PREDICATE TAKES THE TERM, not nothing. The three answers differ by
+  #   THE PREDICATE TAKES THE TERM, not nothing. The two answers differ by
   #   SHAPE and not merely by backend, so an argument-less question could not
   #   express {Docker} at all. Each backend derives its {Unsupported} refusal
   #   from its own answer rather than restating the rule, which is what makes a
@@ -43,9 +43,6 @@ module Lain
   #   term arm's no-shell property for whatever confinement the backend has --
   #   {Docker} runs the string as `sh -c` INSIDE the container -- which
   #   {Tools::Bash} states at the allow bullet in its own class doc.
-  # * **A backend can fail to enforce its own deadline**, a different fact from
-  #   a command that hit one. {Unenforced} says which, and IS a {Timeout}, so the
-  #   single `rescue Exec::Timeout` this contract advertises still holds.
   #
   # A BACKEND IS NOT A SANDBOX. Crossing a process, a socket or a container
   # boundary adds no confinement of its own -- the child runs on our uid, and
@@ -53,21 +50,15 @@ module Lain
   # nil value, which {ChildEnv} writes for every inherited name it withholds.
   # Real safety is the tool's `#requires_approval?` plus Middleware::Gate.
   module Exec
-    # The command outlived its deadline and was killed. One type wrapping
-    # {Shell::Pipeline::Timeout} and the daemon's server-side kill, so a caller
-    # writes one rescue rather than one per transport. The message carries
-    # whatever the command said before it died, as far as the backend retained
-    # it: neither source discards the pre-kill capture, and neither does this.
+    # The command outlived its deadline and was killed. {Local} wraps
+    # {Shell::Pipeline::Timeout} in this, and {Docker} and {Sandboxed} reach it
+    # through the exec they delegate to, so a caller writes one rescue whatever
+    # the backend. The message carries whatever the command said before it died:
+    # the pre-kill capture is never discarded.
     class Timeout < Lain::Error; end
 
-    # The backend never learned whether the command finished: its OWN deadline
-    # passed with no answer from whatever it delegates to. A {Timeout}, so a
-    # caller needing only "no result, and the clock is why" treats it as one; a
-    # subclass, because a caller that cares can say which happened.
-    class Unenforced < Timeout; end
-
-    # The backend has no shape for what it was handed -- {Core} given a TERM,
-    # {Docker} given a PIPED one. Not a caller's bug and not a model's input;
+    # The backend has no shape for what it was handed -- {Docker} given a PIPED
+    # term. Not a caller's bug and not a model's input;
     # the carve-out above is the account.
     class Unsupported < Lain::Error; end
 

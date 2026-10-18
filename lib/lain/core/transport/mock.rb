@@ -16,7 +16,7 @@ module Lain
         # What {#stop} reports when a spec does not care. Deliberately not a
         # `Process::Status` -- the contract's return is "something that
         # describes the termination", and pinning a Status here would smuggle
-        # {Child}'s process-owning shape back into the minimum.
+        # a process-owning shape back into the minimum.
         DEFAULT_TERMINATION = "mock transport released"
 
         # @param socket [IO] connected already; the builder keeps ownership of

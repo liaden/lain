@@ -410,15 +410,14 @@ RSpec/VerifiedDoubles:
     - "spec/lain/journal_spec.rb"
     - "spec/lain/repl_delivery_spec.rb"
 
-# Every one of these stubs a class the spec never constructs: Socket#connect built
-# inside Vsock#start, Faraday::Retry::Middleware#sleep built inside Faraday's stack,
+# Every one of these stubs a class the spec never constructs:
+# Faraday::Retry::Middleware#sleep built inside Faraday's stack
 # and File#fsync built inside the WAL. There is no seam to inject through without
 # reshaping production code to suit a test, so any_instance is the honest tool here.
 # The cop stays on, because reaching for it against one of OUR classes is the real
 # smell it catches -- that is a collaborator wanting injection.
 RSpec/AnyInstance:
   Exclude:
-    - "spec/lain/core/transport/vsock_spec.rb"
     - "spec/lain/provider/anthropic_spec.rb"
     - "spec/lain/provider/bedrock_spec.rb"
     - "spec/lain/provider/response_wal_spec.rb"
