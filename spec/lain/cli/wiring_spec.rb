@@ -2,6 +2,7 @@
 
 require "async"
 require "json"
+require "rubygems/package"
 require "stringio"
 require "tmpdir"
 
@@ -607,34 +608,70 @@ RSpec.describe Lain::CLI::Wiring do
                               paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
         end
 
-        # A stand-in client, so the launch probe passes on a box with no docker.
+        let(:image_id) { "d529dd0c6e5597ac7e4a3e2dea65c3fcc6173f4cae713c409265c1dd9914a11b" }
+
+        def image_tar
+          File.join(@home, "image.tar").tap do |tar|
+            File.binwrite(tar, StringIO.new(+"", "w+b").tap do |io|
+              Gem::Package::TarWriter.new(io) do |w|
+                w.mkdir("bin/", 0o755)
+                w.add_file_simple("bin/busybox", 0o755, 0) { nil }
+                %w[cat uname].each { w.add_symlink("bin/#{_1}", "/bin/busybox", 0o777) }
+              end
+            end.string)
+          end
+        end
+
+        # A stand-in client serving a small image, so the launch probe passes on a box with no docker.
         def client_dir
           File.join(@home, "client").tap do |dir|
             FileUtils.mkdir_p(dir)
-            File.write(File.join(dir, "docker"), "#!/bin/sh\n")
+            File.write(File.join(dir, "docker"), <<~SH)
+              #!/bin/sh
+              case "$1" in
+                image) printf '%s\n["PATH=/bin"]\nnull\n' #{image_id} ;;
+                export) cp #{image_tar} "$3" ;;
+              esac
+            SH
             File.chmod(0o755, File.join(dir, "docker"))
           end
         end
 
-        it "resolves cat unresolved, for the container, naming no host file" do
-          board = board_on_path("#{client_dir}:/usr/bin", docked)
+        def docked_on_path(wiring = docked)
+          path = "#{client_dir}:/usr/bin"
+          with_env("PATH" => path) { yield board_on_path(path, wiring) }
+        end
+
+        def stage_of(board, *argv)
           worker_env = Lain::WorkerEnv.new(cwd: @root, env: { "PATH" => "/usr/bin" })
-          stage = board.toolset.fetch("bash").instance_variable_get(:@resolver).for(worker_env)
-                       .call(Lain::Shell::Term.of(%w[cat README.md])).sole
-
-          expect(stage.to_journal).to include("klass" => "unresolved", "anomalies" => ["container_backend"],
-                                              "resolved" => nil, "realpath" => nil)
+          board.toolset.fetch("bash").instance_variable_get(:@resolver).for(worker_env)
+               .call(Lain::Shell::Term.of(argv)).sole
         end
 
-        it "leaves cat README.md to the rest of the ladder" do
-          ruling = board_on_path("#{client_dir}:/usr/bin", docked).policy_switch.rule(bash_of("cat README.md"), nil)
+        it "resolves cat to the image's file, class system" do
+          stage = docked_on_path { stage_of(_1, "cat", "README.md") }
 
-          expect(ruling&.rule).not_to eq("composed_term")
+          expect(stage.to_journal).to include("klass" => "system", "anomalies" => [], "resolved" => "/bin/cat")
         end
 
-        # Every stage is unresolved, so the bar is never empty: the project
-        # mount is writable inside the container, and a human rules.
-        it "parks a judge approve for a human under --judge-facts facts, overruled by what lain resolved" do
+        it "resolves a project script on the host, class project" do
+          FileUtils.mkdir_p(File.join(@root, "bin"))
+          File.write(File.join(@root, "bin", "check"), "#!/bin/sh\n")
+          File.chmod(0o755, File.join(@root, "bin", "check"))
+
+          stage = docked_on_path { stage_of(_1, "bin/check") }
+
+          expect(stage.to_journal).to include("klass" => "project", "resolved" => File.join(@root, "bin", "check"))
+        end
+
+        it "approves cat README.md in the rules rung, naming the image's file" do
+          ruling = docked_on_path { _1.policy_switch.rule(bash_of("cat README.md"), nil) }
+
+          expect(ruling).to have_attributes(verdict: :allow, rule: "composed_term")
+          expect(ruling.reason).to include("/bin/cat")
+        end
+
+        it "applies a judge approve of an image program under --judge-facts facts, parking nothing" do
           approving = Struct.new(:prompts) do
             def never_parking = self
             def call(_role, _mode, _prompt) = Lain::Tool::Result.ok("approve")
@@ -642,20 +679,19 @@ RSpec.describe Lain::CLI::Wiring do
           allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
             original.call(**kwargs, judge: Lain::Approval::Judge.new(role_spawn: approving))
           end
-          judged = described_class.new(options: { grace: 5, approval: "auto", confine: "classes", exec: "docker",
+          judged = described_class.new(options: { grace: 5, approval: "auto", confine: "off", exec: "docker",
                                                   judge_facts: "facts" },
                                        chronicle:, status_feed:, project: throwaway_project(@root),
                                        paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
-          board = board_on_path("#{client_dir}:/usr/bin", judged)
 
-          notes = Sync do |task|
-            call = task.async { board.policy_switch.call(bash_of("cat README.md"), nil) }
-            task.with_timeout(1) { board.approvals.dequeue }.notes
-          ensure
-            call&.stop
+          board, ruling, stage = docked_on_path(judged) do |built|
+            ruled = Sync { |task| task.with_timeout(5) { built.policy_switch.rule(bash_of("uname -a"), nil) } }
+            [built, ruled, stage_of(built, "uname", "-a")]
           end
 
-          expect(notes).to include(Lain::Approval::Judged::OVERRULED, include("inside a container"))
+          expect(stage.to_journal).to include("klass" => "system", "anomalies" => [], "resolved" => "/bin/uname")
+          expect([ruling.verdict, ruling.rung]).to eq([:allow, "auto"])
+          expect(board.approvals.to_a).to be_empty
         end
       end
     end

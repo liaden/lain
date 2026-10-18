@@ -98,10 +98,14 @@ module Lain
         freeze
       end
 
-      attr_reader :project
+      # @!attribute [r] project
+      #   @return [String]
+      # @!attribute [r] image
+      #   @return [Image] what each call pins its tag to
+      attr_reader :project, :image
 
       # @return [String] the tag this backend was asked to run
-      def image = @image.tag
+      def tag = @image.tag
 
       # A container takes ONE argv, so the answer is about the TERM's shape and
       # not about this backend -- which is why the seam's predicate is asked
@@ -162,6 +166,37 @@ module Lain
         raise
       end
 
+      # A link is resolved here because the container cannot follow one to a directory it was never given.
+      #
+      # @param cwd [String] where the command runs
+      # @return [String] the directory the container works in: the cwd's realpath, or the cwd when it has none
+      def workdir(cwd)
+        File.realpath(cwd)
+      rescue SystemCallError
+        cwd
+      end
+
+      # @param cwd [String] where the command runs
+      # @return [Array<String>] the host paths mounted at themselves for a command run there
+      def mount_points(cwd)
+        dir = workdir(cwd)
+        inside_project?(dir) ? [@project] : [@project, dir]
+      end
+
+      # An explicit nil from the {ChildEnv} is the REMOVAL lever, and here
+      # removal is the absence of a NAME: a container inherits nothing, so a
+      # variable exists only where it is named -- {Local}'s opposite, whose
+      # child inherits this process's env and needs the nil sent. The scrub stays in the
+      # chain so the two rules cannot come to disagree about a name only one of
+      # them knows.
+      #
+      # @param env [Hash] the caller's overrides, before the framework scrub
+      # @return [Hash] the name => value map that crosses, which is BOTH the
+      #   client's override map and, by its keys, the argv's `--env` names
+      def crossing(env)
+        @child_env.call(env).select { |name, value| !value.nil? && crosses?(name) }
+      end
+
       private
 
       # WHY the client's own death is not the container's: {Local}'s TERM/KILL
@@ -183,7 +218,7 @@ module Lain
       # run: the run's deadline is the inner backend's to enforce, and the
       # questions asked before it are capped by it.
       def argv(command, cwd, names, timeout, container_name)
-        RUN + ["--name", container_name] + @user_mapping.flags(timeout) + mounts(cwd) + ["--workdir", cwd] +
+        RUN + ["--name", container_name] + @user_mapping.flags(timeout) + mounts(cwd) + ["--workdir", workdir(cwd)] +
           envs(names) + [@image.reference(timeout)] + entrypoint(command)
       end
 
@@ -191,24 +226,9 @@ module Lain
         mount_points(cwd).flat_map { |path| ["--volume", "#{path}:#{path}"] }
       end
 
-      def mount_points(cwd) = inside_project?(cwd) ? [@project] : [@project, cwd]
-
       # A lexical prefix is not containment: `/srv/project-notes` is a sibling
       # of `/srv/project`, not a child of it.
       def inside_project?(path) = path == @project || path.start_with?("#{@project}/")
-
-      # An explicit nil from the {ChildEnv} is the REMOVAL lever, and here
-      # removal is the absence of a NAME: a container inherits nothing, so a
-      # variable exists only where it is named -- {Local}'s opposite, whose
-      # child inherits this process's env and needs the nil sent. The scrub stays in the
-      # chain so the two rules cannot come to disagree about a name only one of
-      # them knows.
-      #
-      # @return [Hash] the name => value map that crosses, which is BOTH the
-      #   client's override map and, by its keys, the argv's `--env` names
-      def crossing(env)
-        @child_env.call(env).select { |name, value| !value.nil? && crosses?(name) }
-      end
 
       def crosses?(name) = CROSSES.match?(name) || @child_env.passes?(name)
 

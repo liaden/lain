@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "rubygems/package"
+require "stringio"
 
 # The one seam that turns `--exec <name>` into an execution backend. Every
 # example here runs with NO docker on the box: availability is decided from an
@@ -101,17 +103,17 @@ RSpec.describe Lain::CLI::ExecBackend do
 
   describe "the docker backend it builds" do
     it "carries the image it was given" do
-      expect(resolve("docker", path: docker_on_path, image: "ruby:3.4-slim").image).to eq("ruby:3.4-slim")
+      expect(resolve("docker", path: docker_on_path, image: "ruby:3.4-slim").tag).to eq("ruby:3.4-slim")
     end
 
     it "falls back to the backend's own default image when none is named" do
-      expect(resolve("docker", path: docker_on_path).image).to eq(Lain::Exec::Docker::DEFAULT_IMAGE)
+      expect(resolve("docker", path: docker_on_path).tag).to eq(Lain::Exec::Docker::DEFAULT_IMAGE)
     end
 
     # Thor hands an unset --exec-image through as nil, and a nil image would
     # reach `docker run` as a missing argument rather than as a default.
     it "treats an explicitly nil image as none given" do
-      expect(resolve("docker", path: docker_on_path, image: nil).image).to eq(Lain::Exec::Docker::DEFAULT_IMAGE)
+      expect(resolve("docker", path: docker_on_path, image: nil).tag).to eq(Lain::Exec::Docker::DEFAULT_IMAGE)
     end
 
     it "mounts the project it was resolved for, not the directory the resolver ran in" do
@@ -145,9 +147,61 @@ RSpec.describe Lain::CLI::ExecBackend do
 
     def backend_for(name, path: empty_path) = described_class.new(name, path:, root: "/srv/app")
 
-    it "names no host file for a docker backend, whose programs run in the container" do
-      expect(backend_for("docker", path: docker_on_path).resolver(fresh:))
-        .to equal(Lain::Shell::Executable::Resolver::CONTAINER)
+    it "resolves a docker backend's programs from its image" do
+      expect(backend_for("docker", path: docker_on_path).resolver(fresh:)).to be_a(Lain::Exec::Docker::Resolver)
+    end
+
+    # A real client process on PATH, so the backend, its Image and the resolver are the ones a launch builds.
+    it "resolves an image program through the client the launch found, journalling the listing" do
+      id = "d529dd0c6e5597ac7e4a3e2dea65c3fcc6173f4cae713c409265c1dd9914a11b"
+      root = File.dirname(@bin)
+      tar = File.join(root, "image.tar")
+      File.binwrite(tar, StringIO.new(+"", "w+b").tap do |io|
+        Gem::Package::TarWriter.new(io) do |w|
+          w.mkdir("bin/", 0o755)
+          w.add_file_simple("bin/busybox", 0o755, 0) { nil }
+          w.add_symlink("bin/uname", "/bin/busybox", 0o777)
+        end
+      end.string)
+      File.write(File.join(docker_on_path, "docker"), <<~SH)
+        #!/bin/sh
+        case "$1" in
+          image) printf '%s\n["PATH=/bin"]\nnull\n' #{id} ;;
+          export) cp #{tar} "$3" ;;
+        esac
+      SH
+      journal = []
+      paths = Lain::Paths.new(env: { "HOME" => root, "XDG_CACHE_HOME" => File.join(root, "cache") })
+      built = described_class.new("docker", path: @bin, root:, journal:, paths:)
+
+      stage = with_env("PATH" => "#{@bin}:#{ENV.fetch("PATH")}") do
+        built.resolver(fresh:).for(Lain::WorkerEnv.new(cwd: root, env: {}))
+             .call(Lain::Shell::Term.of(%w[uname -a])).sole
+      end
+
+      expect(stage).to have_attributes(resolved: "/bin/uname", klass: :system, anomalies: [])
+      expect(journal.sole).to have_attributes(id:, listed: true)
+    end
+
+    it "tells the launch's notice when the client cannot export the image" do
+      File.write(File.join(docker_on_path, "docker"), <<~SH)
+        #!/bin/sh
+        case "$1" in
+          image) printf '%s\n["PATH=/bin"]\nnull\n' #{"d" * 64} ;;
+          export) echo 'daemon gone' >&2; exit 1 ;;
+        esac
+      SH
+      root = File.dirname(@bin)
+      notices = []
+      paths = Lain::Paths.new(env: { "HOME" => root, "XDG_CACHE_HOME" => File.join(root, "cache") })
+      built = described_class.launch({ exec: "docker" }, env_pass: [], root:, path: @bin, paths:,
+                                                         notice: ->(text) { notices << text })
+
+      with_env("PATH" => "#{@bin}:#{ENV.fetch("PATH")}") do
+        built.resolver(fresh:).for(Lain::WorkerEnv.new(cwd: root, env: {})).call(Lain::Shell::Term.of(%w[ls]))
+      end
+
+      expect(notices.sole).to include("docker export exited 1: daemon gone")
     end
 
     it "resolves on the host for the local backend and for no flag" do
@@ -170,7 +224,7 @@ RSpec.describe Lain::CLI::ExecBackend do
       built = described_class.launch({ exec: "docker", exec_image: "img:1" }, env_pass: %w[DATABASE_URL],
                                                                               root: "/srv/app", path: docker_on_path)
 
-      expect(built.backend).to be_a(Lain::Exec::Docker).and have_attributes(image: "img:1")
+      expect(built.backend).to be_a(Lain::Exec::Docker).and have_attributes(tag: "img:1")
       expect(built.child_env.passes?("DATABASE_URL")).to be(true)
     end
 

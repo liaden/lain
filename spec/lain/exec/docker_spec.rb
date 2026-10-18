@@ -306,6 +306,11 @@ RSpec.describe Lain::Exec::Docker do
     let(:id_a) { "a" * 64 }
     let(:id_b) { "b" * 64 }
 
+    it "holds the Image it pins, which answers the tag it was given" do
+      expect(backend.image).to be_a(Lain::Exec::Docker::Image).and have_attributes(tag: "img:1")
+      expect(backend.tag).to eq("img:1")
+    end
+
     def inner_answering_inspects_in_turn(*inspections)
       Class.new do
         attr_reader :argvs
@@ -435,6 +440,26 @@ RSpec.describe Lain::Exec::Docker do
       run
 
       expect(flag_values("--user")).to eq(["1000:1000"])
+    end
+
+    # The container cannot follow a host link to a directory it was never given, so it works where the link lands.
+    it "mounts and works in the realpath of a symlinked cwd outside the project" do
+      Dir.mktmpdir("lain-docker-linked-cwd") do |dir|
+        real = File.join(File.realpath(dir), "elsewhere")
+        FileUtils.mkdir_p(real)
+        File.symlink(real, File.join(dir, "link"))
+
+        run(cwd: File.join(dir, "link"))
+
+        expect(flag_values("--volume")).to eq(["/srv/project:/srv/project", "#{real}:#{real}"])
+        expect(flag_values("--workdir")).to eq([real])
+        expect(backend.mount_points(File.join(dir, "link"))).to eq(["/srv/project", real])
+      end
+    end
+
+    it "answers the paths it mounts for a cwd, so a resolver can read them as the host's" do
+      expect([backend.mount_points("/srv/project/lib"), backend.mount_points("/tmp/elsewhere")])
+        .to eq([["/srv/project"], ["/srv/project", "/tmp/elsewhere"]])
     end
   end
 
@@ -729,6 +754,15 @@ RSpec.describe Lain::Exec::Docker do
       run(cwd: "/tmp/elsewhere")
 
       expect(inner.cwd).to eq(project)
+    end
+
+    it "answers what crosses for an env, the same map a run hands the client" do
+      lent = { "LAIN_LENT" => "on loan", "PATH" => "/lent/bin", "HOME" => "/home/tara" }
+      crossing = backend.crossing(lent)
+      run(env: lent)
+
+      expect(crossing).to include("LAIN_LENT" => "on loan").and(eq(inner.env))
+      expect(crossing.keys).not_to include("PATH", "HOME")
     end
   end
 

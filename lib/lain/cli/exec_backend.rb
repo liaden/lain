@@ -121,11 +121,12 @@ module Lain
       # What a stage of a command run through this backend resolves to.
       #
       # @param fresh [#fresh?] whether a path changed during this lineage
-      # @return [#for] {Shell::Executable::Resolver::CONTAINER} for docker, else a host resolver
+      # @return [#for] a resolver over the image for docker, else a host resolver
       def resolver(fresh:)
-        return Shell::Executable::Resolver::CONTAINER if backend_name == "docker"
+        return Shell::Executable::Resolver.new(root: @root, fresh:) unless backend_name == "docker"
 
-        Shell::Executable::Resolver.new(root: @root, fresh:)
+        Exec::Docker::Resolver.new(docker: backend, root: @root, fresh:, journal: @journal, paths: @paths,
+                                   notice: @notice)
       end
 
       private
