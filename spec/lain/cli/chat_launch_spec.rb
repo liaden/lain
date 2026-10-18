@@ -1256,6 +1256,88 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
     expect(seen.fetch(:backend).run_profile.api_base).to eq("http://127.0.0.1:11500")
   end
 
+  describe "the arms a resumed or forked chat runs" do
+    def write_armed(arms)
+      write_session("20260101T000000-1.ndjson", "http://127.0.0.1:11500")
+      path = File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson")
+      header, *rest = File.readlines(path)
+      armed = JSON.parse(header).merge("arms" => arms)
+      File.write(path, [JSON.generate(armed), "\n", *rest].join)
+    end
+
+    def armed_launch(options)
+      project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+      wiring_factory = lambda do |**kwargs|
+        Lain::CLI::Wiring.new(**kwargs).tap { |wiring| allow(wiring).to receive(:run) }
+      end
+      described_class.new({ journal: false, max_tokens: 16, **options },
+                          profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "anthropic"),
+                          wiring_factory:, project_factory: -> { project },
+                          gc_schedule_factory: ->(**) { -> {} }).tap { |chat| chat.call { |_notice| nil } }
+    end
+
+    def resumed_notices(chat)
+      notices = nil
+      expect(chat.wiring).to have_received(:run) { |resumed:, **| notices = resumed.notices }
+      notices
+    end
+
+    it "keeps the recorded arms when no arm flag is typed, and notices nothing at or above the defaults" do
+      write_armed("confine" => "reader", "judge_facts" => "facts", "tripwire" => "observe")
+
+      chat = armed_launch(resume: "")
+
+      expect(chat.wiring.arms).to eq(Lain::CLI::Arms.new(confine: :reader, judge_facts: :facts, tripwire: :observe))
+      expect(resumed_notices(chat)).to be_empty
+    end
+
+    it "keeps an old header's every-arm-off rather than the launch defaults, and says what a fresh chat runs" do
+      write_armed({})
+
+      chat = armed_launch(fork: "@#{head_prefix}")
+
+      expect(chat.wiring.arms).to eq(Lain::CLI::Arms::OFF)
+      expect(resumed_notices(chat))
+        .to eq(["running without --confine (off), as recorded; a fresh chat runs reader " \
+                "(pass --confine reader to run it)",
+                "running without --tripwire (off), as recorded; a fresh chat runs observe " \
+                "(pass --tripwire observe to run it)"])
+    end
+
+    it "says so for a kept arm weaker than the default, and nothing for one the human typed" do
+      write_armed("confine" => "classes")
+
+      notices = resumed_notices(armed_launch(resume: "", tripwire: "off"))
+
+      expect(notices).to eq(["running with --confine classes, as recorded; a fresh chat runs reader " \
+                             "(pass --confine reader to run it)"])
+    end
+
+    it "runs a typed arm over the recording and names it in a notice" do
+      write_armed("confine" => "reader", "tripwire" => "observe")
+
+      chat = armed_launch(resume: "", confine: "off")
+
+      expect(chat.wiring.arms).to have_attributes(confine: :off, tripwire: :observe)
+      expect(resumed_notices(chat)).to eq(["recorded with --confine reader; continuing with off " \
+                                           "(the current flags win)"])
+    end
+
+    it "runs a typed arm over a forked recording and names it in a notice" do
+      write_armed("confine" => "reader", "tripwire" => "observe")
+
+      chat = armed_launch(fork: "@#{head_prefix}", confine: "off")
+
+      expect(chat.wiring.arms).to have_attributes(confine: :off, tripwire: :observe)
+      expect(resumed_notices(chat)).to eq(["recorded with --confine reader; continuing with off " \
+                                           "(the current flags win)"])
+    end
+
+    it "runs the launch defaults on a fresh chat" do
+      expect(armed_launch({}).wiring.arms).to eq(Lain::CLI::Arms.from({}))
+    end
+  end
+
   it "runs the session selector exactly once per launch, through either door" do
     write_session("20260101T000000-1.ndjson", "http://127.0.0.1:11500")
     selections = 0

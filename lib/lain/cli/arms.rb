@@ -17,33 +17,66 @@ module Lain
       CONFINE = %i[off classes reader].freeze
       JUDGE_FACTS = %i[off facts request].freeze
       TRIPWIRE = %i[off observe].freeze
+      # Each arm's values, weakest first.
+      SETS = { confine: CONFINE, judge_facts: JUDGE_FACTS, tripwire: TRIPWIRE }.freeze
 
-      # @param options [Hash] the parsed chat flags; an unset arm takes its default
-      # @option options [String, nil] :confine one of {CONFINE}; reader when unset
+      # @param options [Hash] the parsed chat flags; an unset arm takes its value from `over`
+      # @param over [Arms] what an unset arm runs: the launch defaults, a
+      #   resumed session's recorded arms, or {UNSET} to keep only what was
+      #   typed. Positional, because callers pass the flags as a braceless
+      #   hash, which Ruby would read as keywords.
+      # @option options [String, nil] :confine one of {CONFINE}
       # @option options [String, nil] :judge_facts one of {JUDGE_FACTS}
-      # @option options [String, nil] :tripwire one of {TRIPWIRE}; observe when unset
+      # @option options [String, nil] :tripwire one of {TRIPWIRE}
       # @return [Arms]
       # @raise [Unknown] on a value outside an arm's set
-      def self.from(options)
-        new(confine: pick(options[:confine], CONFINE, "--confine", :reader),
-            judge_facts: pick(options[:judge_facts], JUDGE_FACTS, "--judge-facts", :off),
-            tripwire: pick(options[:tripwire], TRIPWIRE, "--tripwire", :observe))
+      def self.from(options, over = DEFAULT) = resolve(options, over) { |arm| "unknown #{flag(arm)} value" }
+
+      # An arm the header left out was off, because {#to_header} writes only
+      # the arms that are on; a header older than the arms reads as every arm off.
+      #
+      # @param header [Hash] a session header record
+      # @return [Arms]
+      # @raise [Unknown] on a recorded value outside an arm's set
+      def self.from_header(header)
+        resolve(header.fetch("arms", {}).transform_keys(&:to_sym), OFF) { |arm| "the session header records #{arm}" }
       end
 
-      def self.pick(value, allowed, flag, default)
+      # @param arm [Symbol] one of {SETS}' keys
+      # @return [String] the chat flag that sets it
+      def self.flag(arm) = "--#{arm.to_s.tr("_", "-")}"
+
+      def self.resolve(values, over)
+        new(**SETS.to_h { |arm, allowed| [arm, pick(values[arm], allowed, over.public_send(arm)) { yield arm }] })
+      end
+      private_class_method :resolve
+
+      def self.pick(value, allowed, default)
         return default if value.nil?
         return value.to_sym if allowed.map(&:to_s).include?(value.to_s)
 
-        raise Unknown, "unknown #{flag} value #{value.to_s.inspect}, expected one of #{allowed.join(", ")}"
+        raise Unknown, "#{yield} #{value.to_s.inspect}, expected one of #{allowed.join(", ")}"
       end
       private_class_method :pick
 
       # @return [Hash{String=>String}] the arms that are on; empty when none is,
       #   so a run with every arm off writes a header byte-identical to one
-      #   written before the arms existed
-      def to_header = to_h.reject { |_, value| value == :off }.to_h { |arm, value| [arm.to_s, value.to_s] }
+      #   written before the arms existed. An unset arm is dropped too, so a
+      #   typed-only view ({UNSET} laid under the flags) cannot write an empty value.
+      def to_header
+        to_h.reject { |_, value| value.nil? || value == :off }.to_h { |arm, value| [arm.to_s, value.to_s] }
+      end
+
+      # @param other [Arms]
+      # @return [Array<Symbol>] the arms set weaker here than in `other`
+      def weaker_than(other)
+        SETS.select { |arm, set| set.index(public_send(arm)) < set.index(other.public_send(arm)) }.keys
+      end
 
       OFF = new(confine: :off, judge_facts: :off, tripwire: :off)
+      DEFAULT = new(confine: :reader, judge_facts: :off, tripwire: :observe)
+      # No arm typed: laid under the flags, it keeps only what the human typed.
+      UNSET = new(confine: nil, judge_facts: nil, tripwire: nil)
     end
   end
 end

@@ -237,6 +237,13 @@ module Lain
       # the arm its recording ran with unless a flag says otherwise.
       def compaction = @compaction ||= @typed_compaction.over(CompactionProfile.from_header(recorded_header))
 
+      # The bench arms, resolved the way {#compaction} is: what was typed over
+      # what the resumed or forked header recorded, and over the launch
+      # defaults for a fresh chat, which has no recording to keep.
+      #
+      # @return [Arms]
+      def arms = @arms ||= Arms.from(@options, recorded_arms)
+
       def environment
         related = Config.sensitivity(root: project.root).related
         Prompt::Environment.current(project:, related:)
@@ -374,11 +381,12 @@ module Lain
       def resumed_run(backend)
         if @options[:fork]
           return resume.fork_at(fork_point, profile:, model: backend.context.model,
-                                            compaction: @typed_compaction)
+                                            compaction: @typed_compaction, arms: typed_arms)
         end
 
         @options[:resume] &&
-          resume.resume_at(resumed_path, profile:, model: backend.context.model, compaction: @typed_compaction)
+          resume.resume_at(resumed_path, profile:, model: backend.context.model, compaction: @typed_compaction,
+                                         arms: typed_arms)
       end
 
       # Only the header, so a pre-flight may read it too: a recorded profile
@@ -393,6 +401,10 @@ module Lain
                                {}
                              end
       end
+
+      def typed_arms = Arms.from(@options, Arms::UNSET)
+
+      def recorded_arms = @options[:fork] || @options[:resume] ? Arms.from_header(recorded_header) : Arms::DEFAULT
 
       # A pre-flight leaves a selector's refusal -- nothing to resume, an
       # ambiguous or unmatched name -- to the pane that reports it, as it always
@@ -421,7 +433,7 @@ module Lain
       # Instance state, because the ensure in #call closes the wiring's
       # conductor.
       def converse(backend:, resumed:, &notice)
-        @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:, project:)
+        @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:, project:, arms:)
         @wiring.run(backend:, resumed:, nvim: nvim_views, &notice)
       end
     end

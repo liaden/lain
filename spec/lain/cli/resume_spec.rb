@@ -1063,6 +1063,29 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
+  describe "the arms notice" do
+    let(:two) { chain("hi", "yo") }
+    let(:off) { Lain::CLI::Arms::OFF }
+
+    before do
+      write_session("20260101T000000-1.ndjson",
+                    [open_header.merge("arms" => { "confine" => "reader" }), *turn_records(two),
+                     closed_record(two.head_digest)])
+    end
+
+    it "names an arm a resume will run differently from the recording" do
+      notices = resume.resume_at(resume.locate(""), arms: off).notices
+
+      expect(notices).to eq(["recorded with --confine reader; continuing with off (the current flags win)"])
+    end
+
+    it "names it for a fork too" do
+      point = resume.fork_point("@#{two.head_digest.delete_prefix("blake3:")[0, 12]}")
+
+      expect(resume.fork_at(point, arms: off).notices.join).to include("recorded with --confine reader")
+    end
+  end
+
   # A header written before this field existed carries no "provider" key
   # at all -- resume must still proceed (never a refusal), naming the gap.
   describe "a header recorded with no provider field (old-caller compatibility)" do

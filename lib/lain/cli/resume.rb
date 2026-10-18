@@ -21,7 +21,7 @@ module Lain
 
       # What the current run resolved, carried together to the one place it is
       # compared against the recording.
-      Mismatch = Data.define(:profile, :model, :compaction)
+      Mismatch = Data.define(:profile, :model, :compaction, :arms)
 
       # WHICH door a human came through and WHICH file they named -- the two
       # facts every refusal needs. As two bare Strings riding seven frames as
@@ -126,8 +126,9 @@ module Lain
       end
 
       # {#resume_at} over a fresh {#locate}.
-      def call(selector: nil, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET)
-        resume_at(locate(selector), profile:, model:, compaction:)
+      def call(selector: nil, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET,
+               arms: nil)
+        resume_at(locate(selector), profile:, model:, compaction:, arms:)
       end
 
       # @param path [String] the session {#locate} selected
@@ -137,15 +138,19 @@ module Lain
       #   compared against the recording for the mismatch notice
       # @param compaction [CompactionProfile] the compaction flags the human
       #   TYPED, compared against the recorded arm
+      # @param arms [Arms, nil] the bench arms the human typed, an unset arm
+      #   nil, compared against the recorded ones; nil compares nothing
       # @return [Result]
       # @raise [Refusal]
-      def resume_at(path, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET)
-        rebuild(path, Mismatch.new(profile:, model:, compaction:))
+      def resume_at(path, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET,
+                    arms: nil)
+        rebuild(path, Mismatch.new(profile:, model:, compaction:, arms:))
       end
 
       # {#fork_at} over a fresh {#fork_point}.
-      def fork(selector:, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET)
-        fork_at(fork_point(selector), profile:, model:, compaction:)
+      def fork(selector:, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET,
+               arms: nil)
+        fork_at(fork_point(selector), profile:, model:, compaction:, arms:)
       end
 
       # Fork mode: the new run starts at a recorded turn instead of the parent's
@@ -161,12 +166,14 @@ module Lain
       # @param profile [RunProfile] as {#resume_at}'s, against the forked file's header
       # @param model [String, nil] as {#resume_at}'s, against the forked recording
       # @param compaction [CompactionProfile] as {#resume_at}'s
+      # @param arms [Arms, nil] as {#resume_at}'s
       # @return [Result] whose `resumed_from` names `{file, fork digest}`
       # @raise [Refusal]
-      def fork_at(point, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET)
+      def fork_at(point, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET,
+                  arms: nil)
         recording = load_recording(point.path)
         forked = recording.timeline.checkout(point.digest)
-        fork_result(point, recording, forked, Mismatch.new(profile:, model:, compaction:))
+        fork_result(point, recording, forked, Mismatch.new(profile:, model:, compaction:, arms:))
       # The MissingObject arm is DEFENSIVE and kept deliberately: it is not
       # reachable from any journal we can construct, and the last time that was
       # believed it was false. The property lives in two classes a door cannot

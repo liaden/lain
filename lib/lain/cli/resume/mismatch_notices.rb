@@ -42,9 +42,11 @@ module Lain
         #   which fields the human typed
         # @param model [String, nil] the model the current run resolved
         # @param compaction [CompactionProfile] the compaction flags the human typed
+        # @param arms [Arms, nil] the bench arms the human typed, an unset arm
+        #   nil; nil when the caller resolves no arms, so nothing is compared
         # @return [Array<String>] one notice per disagreement, model first
-        def call(profile:, model:, compaction: CompactionProfile::UNSET)
-          [model_notice(model), *typed_notices(profile), *compaction_notices(compaction)].compact
+        def call(profile:, model:, compaction: CompactionProfile::UNSET, arms: nil)
+          [model_notice(model), *typed_notices(profile), *compaction_notices(compaction), *arm_notices(arms)].compact
         end
 
         private
@@ -78,6 +80,38 @@ module Lain
             theirs = recorded.public_send(field)
             continuing("--#{flag.to_s.tr("_", "-")}", theirs, ours) unless ours.nil? || theirs.nil? || ours == theirs
           end
+        end
+
+        # A typed arm is the same loud-and-continue notice as any field. An
+        # untyped one keeps the recording, and is named only when that is
+        # weaker than a fresh chat's default, which every session recorded
+        # before the defaults moved is.
+        def arm_notices(typed)
+          return [] if typed.nil?
+
+          recorded = Arms.from_header(header)
+          weaker = recorded.weaker_than(Arms::DEFAULT)
+          Arms::SETS.keys.filter_map do |arm|
+            arm_notice(arm, typed.public_send(arm), recorded.public_send(arm), kept_weaker: weaker.include?(arm))
+          end
+        end
+
+        def arm_notice(arm, ours, theirs, kept_weaker:)
+          return kept_notice(arm, theirs) if ours.nil? && kept_weaker
+          return if ours.nil? || ours == theirs
+
+          "recorded #{as_recorded(arm, theirs)}; continuing with #{ours} (the current flags win)"
+        end
+
+        def kept_notice(arm, recorded)
+          default = Arms::DEFAULT.public_send(arm)
+          "running #{as_recorded(arm, recorded)}, as recorded; a fresh chat runs #{default} " \
+            "(pass #{Arms.flag(arm)} #{default} to run it)"
+        end
+
+        # A header writes only the arms that are on, so an off arm was never recorded as off.
+        def as_recorded(arm, value)
+          value == :off ? "without #{Arms.flag(arm)} (off)" : "with #{Arms.flag(arm)} #{value}"
         end
 
         def unrecorded_notice(profile)

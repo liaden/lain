@@ -252,6 +252,8 @@ module Lain
       # @param conductor_opener [#call] #run's Conductor seam
       # @param stdin [IO] what an attended chat's {Frontend::StdinPump} reads;
       #   a spec hands in the lines its human types
+      # @param arms [Arms] the bench arms the run runs; {ChatLaunch} lays the
+      #   typed flags over a resumed session's recorded arms
       # @option options [String] :prompt the first question, seeded from --prompt
       # @option options [Numeric] :grace seconds a first Ctrl-C grants a run
       # @option options [String] :isolation the backend a fleet leases workers from
@@ -259,9 +261,9 @@ module Lain
                      project: Project::Resolver.default_project,
                      tty_factory: Lain::Frontend::TTY.public_method(:new),
                      conductor_opener: Lain::CLI::Conductor.public_method(:open),
-                     stdin: Lain::Frontend::StdinPump.process_input)
+                     stdin: Lain::Frontend::StdinPump.process_input, arms: CLI::Arms.from(options))
         @options = options
-        @arms = CLI::Arms.from(options)
+        @arms = arms
         @chronicle = chronicle
         @status_feed = status_feed
         @run_clock = run_clock
