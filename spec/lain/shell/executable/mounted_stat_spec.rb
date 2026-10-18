@@ -12,7 +12,8 @@ RSpec.describe Lain::Shell::Executable::MountedStat do
   let(:image) do
     Lain::Shell::Executable::ListedStat.new(
       "/usr" => entry("directory"), "/usr/bin" => entry("directory"),
-      "/usr/bin/ruby" => entry("file"), "/usr/bin/ls" => entry("file")
+      "/usr/bin/ruby" => entry("file"), "/usr/bin/ls" => entry("file"),
+      "/usr/bin/rb" => entry("symlink", link: "ruby")
     )
   end
   let(:stat) { described_class.new(mounts: [root], image:) }
@@ -65,6 +66,24 @@ RSpec.describe Lain::Shell::Executable::MountedStat do
     it "adds the component toward a mount to the image's names" do
       expect(described_class.new(mounts: ["/usr/lib/x"], image:).children("/usr")).to eq(%w[bin lib])
     end
+  end
+
+  it "answers lstat from the image for a path that leaves the mount through dot-dot" do
+    climbing = "#{root}#{"/.." * root.count("/")}/usr/bin/ls"
+
+    expect(stat.lstat(climbing)).to eq(image.lstat("/usr/bin/ls"))
+  end
+
+  it "answers lstat from the image for a path under a host link out of the mount" do
+    File.symlink("/usr/bin", "#{root}/up")
+
+    expect(stat.lstat("#{root}/up/ls")).to eq(image.lstat("/usr/bin/ls"))
+  end
+
+  it "answers readlink from the image for a link under a host link out of the mount" do
+    File.symlink("/usr/bin", "#{root}/up")
+
+    expect(stat.readlink("#{root}/up/rb")).to eq("ruby")
   end
 
   it "lands a link out of the mount in the image" do

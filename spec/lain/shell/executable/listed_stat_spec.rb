@@ -24,6 +24,37 @@ RSpec.describe Lain::Shell::Executable::ListedStat do
   end
   let(:stat) { described_class.new(entries) }
 
+  context "with a link whose target climbs through dot-dot" do
+    let(:climbing) do
+      described_class.new(
+        "/bin" => entry("directory"), "/bin/busybox" => entry("file"), "/usr" => entry("directory"),
+        "/usr/local" => entry("directory"), "/usr/local/bin" => entry("directory"),
+        "/usr/local/bin/uname" => entry("symlink", link: "../../../bin/busybox")
+      )
+    end
+
+    it "answers lstat for the path the kernel would reach" do
+      expect(climbing.lstat("/usr/local/bin/../../../bin/busybox")).to eq(entry("file"))
+    end
+
+    it "resolves the program on a PATH that holds the link" do
+      resolver = Lain::Shell::Executable::Resolver.new(root: "/srv/project", fresh: Lain::Shell::Executable::Resolver::NeverFresh,
+                                                       stat: climbing, host_env: { "PATH" => "/usr/local/bin" })
+
+      executable = resolver.for(Lain::WorkerEnv.new(cwd: "/", env: {})).call(Lain::Shell::Term.of(%w[uname])).sole
+
+      expect(executable).to have_attributes(resolved: "/usr/local/bin/uname", realpath: "/bin/busybox", klass: :system)
+    end
+  end
+
+  it "answers lstat for a path ending in dot-dot as the directory it names" do
+    expect(stat.lstat("/usr/bin/..")).to eq(entries.fetch("/usr"))
+  end
+
+  it "answers lstat and readlink through a symlinked parent" do
+    expect([stat.lstat("/bin/ls"), stat.readlink("/bin/awk")]).to eq([entry("file"), "/etc/alternatives/awk"])
+  end
+
   it "resolves a link chain" do
     expect(stat.realpath("/usr/bin/awk")).to eq("/usr/bin/mawk")
   end

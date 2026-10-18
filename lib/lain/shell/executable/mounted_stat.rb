@@ -16,19 +16,16 @@ module Lain
           @host = host
         end
 
+        # The parent is resolved first, as the kernel does, so a path that leaves a mount through `..` or a
+        # symlinked parent is answered by the side it lands on.
+        #
         # @param path [String]
         # @return [File::Stat, ListedStat::Entry] the link itself, not its target
-        def lstat(path)
-          side(path).lstat(path)
-        rescue Errno::ENOENT
-          raise unless above_mount?(path)
-
-          @host.lstat(path)
-        end
+        def lstat(path) = resolved_lstat(located(path))
 
         # @param path [String]
         # @return [String] the link's target, as written
-        def readlink(path) = side(path).readlink(path)
+        def readlink(path) = resolved_readlink(located(path))
 
         # @param path [String]
         # @return [String] the realpath, or the path as given when it cannot be resolved
@@ -57,6 +54,28 @@ module Lain
         def writable?(path) = absent_is_false { settled(path) { |side, real| side.writable?(real) } }
 
         private
+
+        def resolved_lstat(path)
+          side(path).lstat(path)
+        rescue Errno::ENOENT
+          raise unless above_mount?(path)
+
+          @host.lstat(path)
+        end
+
+        def resolved_readlink(path)
+          side(path).readlink(path)
+        rescue Errno::ENOENT
+          raise unless above_mount?(path)
+
+          @host.readlink(path)
+        end
+
+        # The walk hands over a path it has already resolved, which needs no second walk.
+        def link_at(parts)
+          full = "/#{parts.join("/")}"
+          resolved_readlink(full) if resolved_lstat(full).symlink?
+        end
 
         def side(path) = mounted?(path) ? @host : @image
 

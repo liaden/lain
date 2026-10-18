@@ -29,6 +29,14 @@ module Lain
 
         private
 
+        # Where the kernel's lstat lands: the parent resolved, the last name kept unless it is `.` or `..`.
+        def located(path)
+          dir, base = File.split(path)
+          return realpath(path) if dir == path || %w[. ..].include?(base)
+
+          File.join(realpath(dir), base)
+        end
+
         def components(path) = path.split("/")
 
         # Appends or pops a plain name onto +resolved+; returns a link's target without moving.
