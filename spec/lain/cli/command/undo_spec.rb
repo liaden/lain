@@ -2,7 +2,7 @@
 
 require "tmpdir"
 
-# Parks on an `Async::Variable` nobody resolves, announcing on another that it
+# Parks on an `Async::Promise` nobody resolves, announcing on another that it
 # has entered, so a spec can tear a turn while a tool is genuinely running.
 module UndoSpecSupport
   class Parking < Lain::Tool
@@ -585,8 +585,8 @@ RSpec.describe Lain::CLI::Command::Undo do
   # hands them to the snapshot.
   describe "a turn's own writes, through the tools and the delivery", :seam do
     let(:scope) { :write_set }
-    let(:entered) { Async::Variable.new }
-    let(:release) { Async::Variable.new }
+    let(:entered) { Async::Promise.new }
+    let(:release) { Async::Promise.new }
 
     def text(body) = Lain::Response.new(content: [{ "type" => "text", "text" => body }], stop_reason: :end_turn)
 

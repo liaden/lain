@@ -210,7 +210,7 @@ module Lain
       # than drawn to ask a question whose answer cannot count.
       #
       # The race is between two things that both end at {Pending#decide}:
-      # `Async::Variable#resolve` signals EVERY parked waiter and a waiter
+      # `Async::Promise#resolve` signals EVERY parked waiter and a waiter
       # arriving after resolution returns at once. Releasing the READ never
       # releases the PENDING.
       #

@@ -1484,12 +1484,12 @@ RSpec.describe Lain::Review::Handover do
   # THE ANSWERED RAIL RUNS ON THE RPC THREAD, inside the human's `:w`, while the
   # call that opened the review is parked on a fiber in the reactor. Every other
   # editor answer in this tree leaves through a QUEUE for that reason --
-  # `QuestionView`'s doc says a promise "must be resolved on the reactor thread"
-  # -- and a verdict cannot: its return value is the editor's answer, so it has
+  # `QuestionView`'s doc says its answer leaves through a rail -- and a verdict
+  # cannot: its return value is the editor's answer, so it has
   # to settle synchronously and wake the parked fiber from where it stands.
   #
-  # Measured rather than assumed. `Async::Variable`'s condition is a
-  # `Thread::Queue` in async 2.42.0 (it holds no fibers of its own), so a
+  # Measured rather than assumed. `Async::Promise` guards its state
+  # with a Mutex and ConditionVariable, which the fiber scheduler hooks, so a
   # cross-thread resolve reaches a parked fiber through the scheduler exactly as
   # a same-thread one does. This is the example that would go red if that ever
   # stopped being true -- which is the only reason the rail is direct.

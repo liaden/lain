@@ -11,7 +11,7 @@
 # The Provider is `Provider::Mock` because a live model is not the seam under
 # test (that tier is `:api_integration`); every other collaborator is production.
 module ToolCancellationSeam
-  # Parks on an `Async::Variable` nobody resolves, announcing on another that it
+  # Parks on an `Async::Promise` nobody resolves, announcing on another that it
   # has entered. Two variables rather than a flag and a sleep: the driver must
   # cancel while this fiber is INSIDE the await, and a poll-and-hope makes the
   # difference between the two cancellation notices a timing race.
@@ -35,8 +35,8 @@ module ToolCancellationSeam
 end
 
 RSpec.describe "a tool run torn by a real interrupt", :seam do
-  let(:entered) { Async::Variable.new }
-  let(:release) { Async::Variable.new }
+  let(:entered) { Async::Promise.new }
+  let(:release) { Async::Promise.new }
   let(:parking) { ToolCancellationSeam::Parking.new(entered:, release:) }
   let(:toolset) { Lain::Toolset.new([EchoTool.new, parking]) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
@@ -339,7 +339,7 @@ module ToolCancellationGateSeam
 
     def perform(_input, _context)
       @entered.resolve(true)
-      Async::Variable.new.wait
+      Async::Promise.new.wait
     end
   end
 
@@ -352,7 +352,7 @@ module ToolCancellationGateSeam
 
     def rule(_effect, _context)
       @entered.resolve(true)
-      Async::Variable.new.wait if @park
+      Async::Promise.new.wait if @park
       Lain::Approval::Escalation::Ruling.allow(rung: "test", because: "test")
     end
   end
@@ -360,7 +360,7 @@ end
 
 RSpec.describe "a run stopped on either side of the approval gate", :seam do
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
-  let(:entered) { Async::Variable.new }
+  let(:entered) { Async::Promise.new }
   let(:journal) { [] }
 
   def runner_over(toolset, policy)
@@ -394,7 +394,7 @@ RSpec.describe "a run stopped on either side of the approval gate", :seam do
   end
 
   it "lists an approved call cancelled inside the tool under running" do
-    policy = ToolCancellationGateSeam::Policy.new(Async::Variable.new, park: false)
+    policy = ToolCancellationGateSeam::Policy.new(Async::Promise.new, park: false)
     block = stopped_run(ToolCancellationGateSeam::Slow.new(entered), policy)
 
     expect(block["content"]).to eq(Lain::Tool::Cancellation::NOTICES.fetch(:was_running))

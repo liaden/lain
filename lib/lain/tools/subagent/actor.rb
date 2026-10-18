@@ -2,7 +2,7 @@
 
 require "async"
 require "async/notification"
-require "async/variable"
+require "async/promise"
 
 module Lain
   module Tools
@@ -70,7 +70,7 @@ module Lain
           @registration = registration
           @answer = answer
           @park = Async::Notification.new
-          @ready = Async::Variable.new
+          @ready = Async::Promise.new
           @stopped = false
         end
 
@@ -98,7 +98,7 @@ module Lain
         # checks against the lease it was adopted into.
         def session = @agent.session
 
-        # An `Async::Variable` is a resolved-once future, so this is race-free
+        # An `Async::Promise` is a resolved-once future, so this is race-free
         # whether or not the fiber has already finished that turn -- and it
         # resolves on FAILURE too, so a child that raised mid-turn surfaces here
         # as that error rather than parking a caller forever.
@@ -173,9 +173,8 @@ module Lain
         # must -- and resolving only on the StandardError path would leave a
         # cancellation mid-turn parking a later `settle` forever.
         #
-        # The `resolved?` guard is load-bearing, not defensive:
-        # `Async::Variable#resolve` raises FrozenError on a second call, so the
-        # happy path's `resolve(true)` would otherwise blow up in this ensure.
+        # The ensure's `resolve(false)` is a no-op after the happy path's
+        # `resolve(true)`, because `Async::Promise#resolve` keeps the first value.
         def run(prompt)
           process(prompt)
           @ready.resolve(true)
@@ -183,7 +182,7 @@ module Lain
         rescue StandardError => e
           @failure = e
         ensure
-          @ready.resolve(false) unless @ready.resolved?
+          @ready.resolve(false)
         end
 
         # The child Agent runs to settle over its fresh-root Timeline, and its

@@ -44,6 +44,41 @@ RSpec.describe Lain::Tools::Subagent::Actor do
     end
   end
 
+  describe "#settle" do
+    let(:gate) { Lain::Promise.new }
+    let(:blocked_provider) do
+      gate = self.gate
+      Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |request, **opts|
+          gate.await
+          super(request, **opts)
+        end
+      end.new(responses: [text_response("actor ready")])
+    end
+    let(:tool) do
+      CoreGraph.subagent(provider: blocked_provider, parent:, journal: session_file, observer: scribe, mode: :actor)
+    end
+
+    it "parks each waiting fiber until the child signals ready, then resumes it exactly once" do
+      Sync do |task|
+        supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+        actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
+        resumed = []
+        waiters = Array.new(2) { |i| task.async { resumed << [i, actor.settle] } }
+        task.yield
+
+        expect(resumed).to be_empty
+        gate.resolve(:go)
+        waiters.each(&:wait)
+
+        expect(resumed.map(&:first).sort).to eq([0, 1])
+        expect(resumed.map(&:last)).to all(be(actor))
+      ensure
+        supervisor&.stop
+      end
+    end
+  end
+
   # The actor keeps its adoption ordinal for twins on the same work, and names
   # the work beside it, so its address is derived from what it was given as a
   # one-shot's is.

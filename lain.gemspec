@@ -48,10 +48,12 @@ Gem::Specification.new do |spec|
   # ${IFS}. Safety comes from structured tools, the approval gate, and OS
   # confinement, never from a format validator.
   spec.add_dependency "activemodel", "~> 8.0"
+  spec.add_dependency "activesupport", "~> 8.0"
   # The agent loop runs inside a reactor (5-0.3): structured cancellation and fiber
   # parking for ask_human promises and within-turn subagent fan-out. Promoted from the
   # spike-only dev group once adoption landed, exactly as the spike note promised.
-  spec.add_dependency "async", "~> 2.34"
+  spec.add_dependency "async", "~> 2.35", ">= 2.35.1"
+  spec.add_dependency "concurrent-ruby", "~> 1.3"
   # `anthropic` (the official SDK) and `aws-sdk-core` are deliberately NOT runtime
   # dependencies -- see the `:test` group in the Gemfile.
   #

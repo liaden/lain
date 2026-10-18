@@ -58,10 +58,9 @@ module Lain
       # lock, because a notice is not state and this object must not hold a lock
       # across somebody's terminal.
       #
-      # It never resolves a promise. {Lain::Promise} wraps an `Async::Variable`
-      # and must be resolved on the reactor thread, so the answer leaves through
-      # an injected rail -- a queue push, popped by the same consumer that serves
-      # every other editor command.
+      # It never resolves a promise: the answer leaves through an injected rail
+      # -- a queue push, popped by the same consumer that serves every other
+      # editor command.
       class QuestionView
         # Like {Compose::BUFFER}, absent from the runtime's BUFFERS set
         # (00_constants.lua): it is created when a set is opened, so a session

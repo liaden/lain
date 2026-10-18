@@ -384,10 +384,10 @@ RSpec.describe Lain::Frontend::Neovim::QuestionView do
     end
   end
 
-  # {Lain::Promise} wraps an Async::Variable and must be resolved on the reactor
-  # thread; this object runs on the RPC thread. So the answer leaves here the
-  # way every other editor command does -- pushed onto a rail somebody else pops
-  # -- and this object never resolves anything itself.
+  # {Lain::Promise} is resolved by the reactor's consumer; this object runs on
+  # the RPC thread. So the answer leaves here the way every other editor command
+  # does -- pushed onto a rail somebody else pops -- and this object never
+  # resolves anything itself.
   describe "the hand-off off the RPC thread" do
     let(:rail) { Thread::Queue.new }
     let(:submit) { ->(digest, answers) { rail.push([digest, answers, Thread.current]) } }
