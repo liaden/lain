@@ -417,8 +417,14 @@ RSpec.describe Lain::CLI::Wiring do
                                                         "tripwire" => "observe" })
       end
 
+      it "holds the 2 safe arms when no arm flag is typed" do
+        plain = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+
+        expect(header_of(plain)).to include("arms" => { "confine" => "reader", "tripwire" => "observe" })
+      end
+
       it "holds no arms key when every arm is off" do
-        off = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+        off = described_class.new(options: { grace: 5, confine: "off", tripwire: "off" }, chronicle:, status_feed:)
 
         expect(header_of(off)).not_to have_key("arms")
       end

@@ -359,10 +359,14 @@ RSpec.describe "lain bench arms" do
       expect(kwargs).to include(system: "be terse", isolation: "none")
     end
 
-    it "hands the entry point the arms it was started with, all off when no arm flag is given" do
+    it "records confine off and tripwire off when no arm flag is given" do
       run("arms", "suite/tasks.yml")
-      expect(kwargs.fetch(:arms)).to eq(Lain::CLI::Arms::OFF)
 
+      expect(kwargs.fetch(:arms)).to have_attributes(confine: :off, tripwire: :off)
+      expect(kwargs.fetch(:arms).to_header).to eq({})
+    end
+
+    it "hands the entry point the arms it was started with" do
       run("arms", "suite/tasks.yml", "--confine", "reader")
       expect(kwargs.fetch(:arms)).to eq(Lain::CLI::Arms::OFF.with(confine: :reader))
     end

@@ -196,7 +196,7 @@ module Lain
         #   {BaseTools} so every bash tool, a child's included, names its stages by it
         # @param arms [Lain::CLI::Arms] the bench arms the run was started with
         # @param fence [String] the lain-fence binary, read once for the probe and the launcher alike
-        # @param probe [Lain::Confine::Probe] what the box offers; runs nothing until `--confine reader` asks
+        # @param probe [Lain::Confine::Probe] what the box offers; runs nothing unless confine is reader (the default)
         # @option options [String] :exec the transport the `exec:` default
         #   resolves, with `:exec_image` the only other keys this class reads.
         #   `--auto-approve` is not among them: it seeds the mode's layer on

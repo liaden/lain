@@ -1089,14 +1089,14 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
   end
 
-  describe "a reader run built by the real Wiring, on this box's real probe", :seam do
+  describe "a plain run built by the real Wiring, on this box's real probe", :seam do
     let(:base) { File.realpath(Dir.mktmpdir("sandbox-seam")) }
     let(:project_root) { File.join(base, "repo") }
     let(:io) { StringIO.new }
     let(:recording) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "seam.ndjson") }
     let(:wiring) do
       project = Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag)
-      Lain::CLI::Wiring.new(options: { grace: 5, approval: "auto", confine: "reader" }, chronicle: recording,
+      Lain::CLI::Wiring.new(options: { grace: 5, approval: "auto" }, chronicle: recording,
                             status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                             paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(base, "s"),
                                                           "HOME" => File.join(base, "h") }),

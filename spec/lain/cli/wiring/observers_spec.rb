@@ -117,5 +117,30 @@ RSpec.describe Lain::CLI::Wiring::Observers do
     it "says nothing for a fresh chat" do
       expect(described_class.register(chronicle:, paths:, resumed: nil, arms:).notices).to be_empty
     end
+
+    describe "when the bash sandbox is built" do
+      def sandbox_on(runner)
+        probe = Lain::Confine::Probe.new(fence: "/srv/lain-fence", journal: chronicle.durable_journal, runner:,
+                                         ptrace_scope: -> { "0" })
+        Lain::Confine::Sandbox.new(root: @state, home: @state, masks: Lain::Confine::MaskList.new(root: @state,
+                                                                                                  policy: -> {}),
+                                   probe:, fence: "/srv/lain-fence", journal: chronicle.durable_journal)
+                              .wrap(Lain::Exec::Local.new, requirer: "spec")
+      end
+
+      it "says once that bash runs unconfined, naming what the box lacks" do
+        observers = described_class.register(chronicle:, paths:, resumed: nil, arms:)
+        sandbox_on(->(_argv) { ["", false] })
+
+        expect(observers.notices).to contain_exactly(match(/lacks bwrap and landlock.*bash runs unconfined/))
+      end
+
+      it "says nothing when the box offers every layer" do
+        observers = described_class.register(chronicle:, paths:, resumed: nil, arms:)
+        sandbox_on(->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] })
+
+        expect(observers.notices).to be_empty
+      end
+    end
   end
 end

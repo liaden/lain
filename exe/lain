@@ -757,13 +757,13 @@ class LainCLI < Thor
             "(default #{Lain::Exec::Docker::DEFAULT_IMAGE}, which carries `sh` and little else -- name " \
             "your project's own)".freeze
 
-    ARM_CONFINE = "Bench arm: how far bash is confined (#{Lain::CLI::Arms::CONFINE.join(", ")}; default off)".freeze
+    ARM_CONFINE = "Bash confinement (#{Lain::CLI::Arms::CONFINE.join(", ")}; default reader)".freeze
     BENCH_CONFINE = "How far bash is confined in each arm (#{Lain::Bench::CLI::CONFINES.join(", ")}; default off). " \
                     "reader runs a read-only command in the sandbox a chat's is; any other command runs " \
                     "traced and unconfined".freeze
     ARM_JUDGE_FACTS = "Bench arm: what the auto judge is told about a command " \
                       "(#{Lain::CLI::Arms::JUDGE_FACTS.join(", ")}; default off)".freeze
-    ARM_TRIPWIRE = "Bench arm: binary identity tripwire (#{Lain::CLI::Arms::TRIPWIRE.join(", ")}; default off)".freeze
+    ARM_TRIPWIRE = "Binary identity tripwire (#{Lain::CLI::Arms::TRIPWIRE.join(", ")}; default observe)".freeze
 
     # @param thor [Class] the Thor class to declare on
     # @return [void]
@@ -907,7 +907,8 @@ class LainCLI < Thor
         Lain::Bench::CLI.new.arms_report(fixture_path: fixture, backend: model_backend, journal:,
                                          system: options[:system], isolation: options[:isolation],
                                          cheap_model: options[:cheap_model], memory: options[:memory],
-                                         arms: Lain::CLI::Arms.from(confine: options[:confine]))
+                                         arms: Lain::CLI::Arms.from(confine: options[:confine] || "off",
+                                                                    tripwire: "off"))
       end
     ensure
       # Closing is what discards a journal this run created and never wrote to,

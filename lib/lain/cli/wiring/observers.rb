@@ -8,6 +8,29 @@ module Lain
       class Observers
         DEGRADED_NOTICE = "write records could not be read, so every user or project binary counts as changed this " \
                           "session and goes to the judge or to you; resume from an intact session to restore it"
+
+        # Remembers why the bash sandbox could not be built: the header still says
+        # `confine: reader`, so the human must hear that bash runs unconfined.
+        class Unconfined
+          def initialize
+            @because = nil
+          end
+
+          # @param event [Hash, #to_journal] a journal record
+          # @return [self]
+          def <<(event)
+            @because ||= event.provider if sandbox_degraded?(event)
+            self
+          end
+
+          # @return [Array<String>]
+          def notices = @because ? ["the bash sandbox could not be built (#{@because}), so bash runs unconfined"] : []
+
+          private
+
+          def sandbox_degraded?(event) = event.is_a?(Telemetry::CapabilityDegraded) && event.capability == :sandbox
+        end
+
         # @param chronicle [#observe, #durable_journal] registers each observer on every journal the chat
         #   writes, and takes the reason a lineage could not be read
         # @param paths [Paths] resolves the sessions directory a resume chains through
@@ -37,21 +60,22 @@ module Lain
         attr_reader :fresh
 
         # @param fresh [Shell::Executable::Fresh]
-        def initialize(fresh:)
+        # @param unconfined [Unconfined] hears the sandbox degrade while the toolset is built
+        def initialize(fresh:, unconfined: Unconfined.new)
           @fresh = fresh
+          @unconfined = unconfined
         end
 
-        # What the human should be told about the lineage, said once at startup.
+        # What the human should be told about the lineage and the sandbox, said once at startup.
         #
         # @return [Array<String>]
-        def notices
-          @fresh.degraded? ? [DEGRADED_NOTICE] : []
-        end
+        def notices = [*(DEGRADED_NOTICE if @fresh.degraded?), *@unconfined.notices]
 
         # @param chronicle [#observe]
         # @return [self]
         def register(chronicle)
           chronicle.observe(@fresh)
+          chronicle.observe(@unconfined)
           self
         end
       end
