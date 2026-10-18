@@ -302,6 +302,89 @@ RSpec.describe Lain::Exec::Docker do
     end
   end
 
+  describe "which image it runs" do
+    let(:id_a) { "a" * 64 }
+    let(:id_b) { "b" * 64 }
+
+    def inner_answering_inspects_in_turn(*inspections)
+      Class.new do
+        attr_reader :argvs
+
+        define_method(:initialize) { @argvs = [] }
+
+        define_method(:call) do |command:, **|
+          @argvs << command.stages.first.argv
+          return inspections.shift if command.words[1] == "image"
+
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+      end.new
+    end
+
+    def inspected(id) = Lain::Exec::Capture.new(exit_status: 0, stdout: "#{id}\nnull\nnull\n", stderr: "")
+
+    def missing = Lain::Exec::Capture.new(exit_status: 125, stdout: "", stderr: "Error: image not known")
+
+    def runs(inner) = inner.argvs.select { _1[1] == "run" }
+
+    def run_on(inner, times: 1)
+      backend = described_class.new(project:, exec: inner, prober: ->(_timeout) {})
+      times.times { backend.call(command: "true", cwd: project, env: {}, timeout: 30) }
+    end
+
+    it "runs the ID the client's inspect names, in place of the tag" do
+      inner = inner_answering_inspects_in_turn(inspected(id_a))
+      run_on(inner)
+
+      expect(runs(inner).first.last(4)).to eq([id_a, "sh", "-c", "true"])
+      expect(runs(inner).first).not_to include(described_class::DEFAULT_IMAGE)
+    end
+
+    it "inspects again for every command, so a rebuilt tag takes effect on the next one" do
+      inner = inner_answering_inspects_in_turn(inspected(id_a), inspected(id_b))
+      run_on(inner, times: 2)
+
+      expect(runs(inner).map { _1[-4] }).to eq([id_a, id_b])
+    end
+
+    # The approved `docker run` pulls by tag as it always has; asking which
+    # image a tag names must not download one.
+    it "runs a missing image by its tag and asks for no pull" do
+      inner = inner_answering_inspects_in_turn(missing)
+      run_on(inner)
+
+      expect(runs(inner).first[-4]).to eq(described_class::DEFAULT_IMAGE)
+      expect(inner.argvs.flatten).not_to include("pull")
+    end
+
+    it "does not trust an ID that is not one" do
+      inner = inner_answering_inspects_in_turn(inspected("not-an-id"))
+      run_on(inner)
+
+      expect(runs(inner).first[-4]).to eq(described_class::DEFAULT_IMAGE)
+    end
+
+    # Through the production construction path: a resolver that builds a
+    # backend at launch must not shell out to the client to do it.
+    it "spawns nothing while the exec backend builds it, and inspects on the first command" do
+      Dir.mktmpdir("lain-docker-image") do |dir|
+        bin = File.realpath(dir)
+        log = File.join(bin, "invocations")
+        File.write(File.join(bin, "docker"), "#!/bin/sh\nfor last; do :; done\necho \"$1 $2 $last\" >> #{log}\n")
+        File.chmod(0o755, File.join(bin, "docker"))
+
+        with_env("PATH" => "#{bin}:#{ENV.fetch("PATH")}") do
+          backend = Lain::CLI::ExecBackend.resolve("docker", path: bin, root: bin)
+          expect(File.exist?(log)).to be(false)
+
+          backend.call(command: "true", cwd: bin, env: {}, timeout: 10)
+        end
+
+        expect(File.readlines(log, chomp: true)).to include("image inspect #{described_class::DEFAULT_IMAGE}")
+      end
+    end
+  end
+
   describe "what the container can see" do
     it "mounts the project at its own path, so the paths in a command mean the same thing" do
       run
@@ -757,6 +840,8 @@ RSpec.describe Lain::Exec::Docker do
 
         define_method(:call) do |command:, timeout:, **|
           argv = command.stages.first.argv
+          return Lain::Exec::Capture.new(exit_status: 125, stdout: "", stderr: "") if argv[1] == "image"
+
           @commands << { argv:, timeout: }
           outer.cleanup_answer(argv, kill:, remove:)
         end
@@ -766,7 +851,7 @@ RSpec.describe Lain::Exec::Docker do
     # `prober:` is stubbed rather than left to the default: {UserMapping}
     # asks the SAME `exec:` its own `docker --version`, which would otherwise
     # be a fourth command in `inner.commands` ahead of the three this section
-    # is about.
+    # is about. The image inspect goes unrecorded above for the same reason.
     def backend_with(kill: :ok, remove: :ok)
       inner = timing_out_inner(kill:, remove:)
       [Lain::Exec::Docker.new(project:, exec: inner, prober: ->(_timeout) {}), inner]
@@ -827,6 +912,8 @@ RSpec.describe Lain::Exec::Docker do
       inner = timing_out_inner
       stop = Async::Stop.new
       inner.define_singleton_method(:call) do |command:, **|
+        return Lain::Exec::Capture.new(exit_status: 125, stdout: "", stderr: "") if command.words[1] == "image"
+
         @commands << { argv: command.stages.first.argv }
         raise stop if command.words[1] == "run"
 

@@ -64,7 +64,8 @@ module Lain
       # for those names: a name it passes crosses as written.
       CROSSES = /\A(?:LANG\z|LC_[A-Z]+\z|TZ\z|TERM\z|NO_COLOR\z|CI\z|LAIN_)/
 
-      # @param image [String] what `docker run` starts from
+      # @param image [String] the tag `docker run` starts from; each call runs
+      #   the ID {Image} finds for it, or the tag when there is none
       # @param project [String] the directory mounted at its own path, and the
       #   directory the CLIENT is run from. REQUIRED, with no `Dir.pwd` default,
       #   because this value is MOUNTED: a root taken from the working directory
@@ -87,7 +88,7 @@ module Lain
       #   the probe and a unit example spawns nothing.
       def initialize(project:, image: DEFAULT_IMAGE, child_env: ChildEnv::DEFAULT, exec: Local.new(child_env:),
                      user: "#{Process.uid}:#{Process.gid}", prober: Prober.new(exec:, cwd: project))
-        @image = image
+        @image = Image.new(tag: image, exec:, cwd: project)
         @project = project
         @child_env = child_env
         @exec = exec
@@ -97,7 +98,10 @@ module Lain
         freeze
       end
 
-      attr_reader :image, :project
+      attr_reader :project
+
+      # @return [String] the tag this backend was asked to run
+      def image = @image.tag
 
       # A container takes ONE argv, so the answer is about the TERM's shape and
       # not about this backend -- which is why the seam's predicate is asked
@@ -175,12 +179,12 @@ module Lain
         "#{message}\ncontainer #{name} may still be running -- cleanup could not confirm it stopped"
       end
 
-      # `timeout` reaches here for the probe and NOT for the run: the run's
-      # deadline is the inner backend's to enforce, but the question asked
-      # before it is spent from the same budget.
+      # `timeout` reaches here for the probe and the inspect and NOT for the
+      # run: the run's deadline is the inner backend's to enforce, and the
+      # questions asked before it are capped by it.
       def argv(command, cwd, names, timeout, container_name)
         RUN + ["--name", container_name] + @user_mapping.flags(timeout) + mounts(cwd) + ["--workdir", cwd] +
-          envs(names) + [@image] + entrypoint(command)
+          envs(names) + [@image.reference(timeout)] + entrypoint(command)
       end
 
       def mounts(cwd)
