@@ -4,6 +4,11 @@ module Lain
   class Sensitivity
     # The environment values a command's output is masked for wherever they
     # recur, because no detector stands behind them.
+    #
+    # A passed variable lists only the regions {Regions.detect} finds in its
+    # value, never the value whole: a DSN gives its password, which a pipeline
+    # can cut out of the URL where the output detector no longer sees a URL,
+    # while `RAILS_ENV=development` lists nothing and "development" stays legible.
     class Literals
       # Higher than the floor {Rows::Row} seeks a recurrence at, because an
       # environment value has no detector behind it: a 6 or 7 byte value such
@@ -19,11 +24,20 @@ module Lain
         @lent = lent
       end
 
-      # @return [Array<String>] the unique secret-named values of at least {FLOOR} bytes
+      # @return [Array<String>] the unique secret-named values, and regions of
+      #   passed values, of at least {FLOOR} bytes
       def to_a
-        [@child_env.environment, @lent].flat_map(&:to_a).filter_map do |name, value|
-          value if Exec::ChildEnv::SECRET.match?(name) && value.to_s.bytesize >= FLOOR
-        end.uniq.freeze
+        variables = [@child_env.environment, @lent].flat_map(&:to_a)
+        (named(variables) + detected(variables)).select { _1.bytesize >= FLOOR }.uniq.freeze
+      end
+
+      private
+
+      def named(variables) = variables.filter_map { |name, value| value.to_s if Exec::ChildEnv::SECRET.match?(name) }
+
+      def detected(variables)
+        variables.select { |name, _| @child_env.passes?(name) }
+                 .flat_map { |_, value| Regions.detect(value.to_s).map(&:bytes) }
       end
     end
   end
