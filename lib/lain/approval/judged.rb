@@ -263,12 +263,24 @@ module Lain
 
       # A path in the requester's own checkout is where it works, not outside it.
       def place_for(effect, context)
-        root = @policy.root || ::Lain::Sensitivity::Policy.base_of(context)
+        root = own_tree(context) || @policy.root || ::Lain::Sensitivity::Policy.base_of(context)
         cwd = ::Lain::Session.cwd_of(context)
-        held = [root, ::Lain::Sensitivity::Policy.base_of(context)]
         Judge::Place.new(root:, cwd:, requester: Queue.requester_for(context),
-                         outside: named_paths(effect, context, cwd).reject { within?(held, _1) },
-                         facts: facts_for(effect, context), request: @request.call(context))
+                         outside: outside(effect, context, cwd, [root, ::Lain::Sensitivity::Policy.base_of(context)]),
+                         facts: facts_for(effect, context), request: @request.call(context),
+                         human_checkout: (@policy.root unless root == @policy.root))
+      end
+
+      # A leased child or a plan-scope spike works in its own checkout, so the
+      # judge is told that checkout as the project root.
+      def own_tree(context) = ::Lain::Sensitivity::Policy.checkout_of(context)
+
+      # The human's checkout is read-only to a session in its own tree, as its
+      # confined policy keeps the project root, so only a write there is outside.
+      def outside(effect, context, cwd, held)
+        readable = [*held, *@policy.root]
+        named_paths(effect, context, cwd).reject { |path, written| within?(written ? held : readable, path) }
+                                         .map(&:first).uniq
       end
 
       def facts_for(effect, context)
@@ -279,11 +291,22 @@ module Lain
         @facts.call(command, cwd, tool_use_id: effect.tool_use_id)
       end
 
+      # @return [Array<Array(String, Boolean)>] each path, and whether the call writes it
       def named_paths(effect, context, cwd)
         field = named_by_field(effect)
         base = field && Queue.resolved(field, cwd)
-        [base, glob_root(effect, base || cwd), *named_in(effect, context).paths.map(&:resolved)].compact.uniq
+        runs_in = command_cwd(effect, context)
+        named = named_in(effect, context).paths.reject { guessed_here?(_1, runs_in) }
+        [[base, writes_field?(effect)], [glob_root(effect, base || cwd), false],
+         *named.map { [_1.resolved, _1.written] }].reject { _1.first.nil? }
       end
+
+      # A path-taking tool not known to only read counts as writing, so a new one fails closed; bash's field is its cwd.
+      def writes_field?(effect) = effect.name != BASH && !::Lain::Sensitivity::Policy::READ_TOOLS.include?(effect.name)
+
+      # A cut of an unknown program's flag that lands under the cwd, like `ame`
+      # from `-name`, is almost never a file; an absolute one may well be.
+      def guessed_here?(path, runs_in) = path.guess && within?([runs_in], path.resolved)
 
       def glob_root(effect, base)
         pattern = effect.input.is_a?(Hash) && (effect.input["pattern"] || effect.input[:pattern])

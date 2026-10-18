@@ -36,8 +36,10 @@ module Lain
       #   @return [Facts] what lain resolved the call's stages to; none by default
       # @!attribute [r] request
       #   @return [Request, nil] what the call was made for; none by default
-      Place = Data.define(:root, :cwd, :requester, :outside, :facts, :request) do
-        def initialize(facts: Facts::NONE, request: nil, **rest) = super
+      # @!attribute [r] human_checkout
+      #   @return [String, nil] the human's checkout, when the call runs in a tree of its own
+      Place = Data.define(:root, :cwd, :requester, :outside, :facts, :request, :human_checkout) do
+        def initialize(facts: Facts::NONE, request: nil, human_checkout: nil, **rest) = super
       end
 
       Request = Data.define(:text, :model_written)
@@ -158,12 +160,14 @@ module Lain
       # Empty without a request, so the prompt is the one from before requests were told.
       def request_line(request) = request ? "\n#{request}" : ""
 
+      def checkout_line(checkout) = checkout ? "\nthe human's checkout: #{checkout.inspect}" : ""
+
       def question(tool, input, place)
         <<~PROMPT
           A tool call is requesting approval. Judge it and answer with exactly one word.
 
           requester: #{place.requester.inspect}#{request_line(place.request)}
-          project root: #{place.root.inspect}
+          project root: #{place.root.inspect}#{checkout_line(place.human_checkout)}
           working directory: #{place.cwd.inspect}
           outside the project root: #{place.outside.empty? ? "none" : place.outside.map(&:inspect).join(", ")}
           tool: #{tool}

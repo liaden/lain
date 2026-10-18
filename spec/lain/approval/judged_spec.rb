@@ -301,13 +301,68 @@ RSpec.describe Lain::Approval::Judged do
       spawn.calls.sole[:prompt].lines.map(&:strip)
     end
 
-    it "names the project root, the leased working directory and the requester" do
+    it "names a leased child's own tree as the project root, the human's checkout, and the requester" do
       lease = Lain::WorkerEnv.new(cwd: "/state/leases/r1", env: {}, checkout: "/state/leases/r1")
       leased = context.with(worker_env: lease, requester: "researcher")
 
       expect(prompt_for(bash("ls"), within: leased))
-        .to include("project root: #{root.inspect}", "working directory: \"/state/leases/r1\"",
-                    "requester: \"researcher\"")
+        .to include("project root: \"/state/leases/r1\"", "the human's checkout: #{root.inspect}",
+                    "working directory: \"/state/leases/r1\"", "requester: \"researcher\"")
+    end
+
+    context "when a leased child reaches the human's checkout" do
+      let(:leased) do
+        lease = Lain::WorkerEnv.new(cwd: "/state/leases/r1", env: {}, checkout: "/state/leases/r1")
+        context.with(worker_env: lease, requester: "researcher")
+      end
+
+      it "does not show a read of it as outside" do
+        expect(prompt_for(bash("cat #{root}/README.md"), within: leased)).to include("outside the project root: none")
+      end
+
+      it "shows a write to it as outside" do
+        expect(prompt_for(call("write_file", { "path" => "#{root}/notes.md", "content" => "x" }), within: leased))
+          .to include("outside the project root: #{"#{root}/notes.md".inspect}")
+      end
+
+      it "shows a path-taking tool it does not know as writing there, so it fails closed" do
+        stub_const("Lain::Sensitivity::Policy::PATH_FIELDS",
+                   Lain::Sensitivity::Policy::PATH_FIELDS.merge("stamp_file" => "path"))
+
+        expect(prompt_for(call("stamp_file", { "path" => "#{root}/notes.md" }), within: leased))
+          .to include("outside the project root: #{"#{root}/notes.md".inspect}")
+      end
+
+      it "shows a command's write to it as outside" do
+        expect(prompt_for(bash("echo x > #{root}/notes.md"), within: leased))
+          .to include("outside the project root: #{"#{root}/notes.md".inspect}")
+      end
+    end
+
+    it "names the main agent's plan-scope spike as the project root, and the human's checkout" do
+      spike = Lain::WorkerEnv.new(cwd: "/state/spikes/s1", env: {}, checkout: "/state/spikes/s1")
+
+      expect(prompt_for(bash("ls"), within: context.with(worker_env: spike, requester: "agent")))
+        .to include("requester: \"agent\"", "project root: \"/state/spikes/s1\"",
+                    "the human's checkout: #{root.inspect}")
+    end
+
+    it "names no human's checkout for the main agent" do
+      expect(prompt_for(bash("ls")).grep(/checkout/)).to be_empty
+    end
+
+    it "lists no guessed fragment of an unknown program's flag as outside" do
+      expect(prompt_for(bash("frob -name foo", "cwd" => "#{home}/other")))
+        .to include("outside the project root: #{"#{home}/other".inspect}, #{"#{home}/other/foo".inspect}")
+    end
+
+    it "keeps an unknown program's guessed absolute value as outside" do
+      expect(prompt_for(bash("frob -o/etc/hosts"))).to include("outside the project root: \"/etc/hosts\"")
+    end
+
+    it "lists no flag fragment of find as outside" do
+      expect(prompt_for(bash("find . -name foo", "cwd" => "#{home}/other")))
+        .to include("outside the project root: #{"#{home}/other".inspect}, #{"#{home}/other/foo".inspect}")
     end
 
     it "shows a path under the home but outside the project as outside" do

@@ -367,10 +367,11 @@ module Lain
       #
       # @param context [Session, #worker_env, nil] as a middleware env carries it
       # @return [String] the checkout, or the cwd for a session without one
-      def self.base_of(context)
-        checkout = context.respond_to?(:worker_env) ? context.worker_env.checkout : nil
-        checkout || ::Lain::Session.cwd_of(context)
-      end
+      def self.base_of(context) = checkout_of(context) || ::Lain::Session.cwd_of(context)
+
+      # @param context [Session, #worker_env, nil] as a middleware env carries it
+      # @return [String, nil] the checkout a leased worker or a spike runs in; nil for a session without one
+      def self.checkout_of(context) = context.respond_to?(:worker_env) ? context.worker_env.checkout : nil
 
       # The same boundary for a spawned child, which also asks before it reads
       # outside the project, its related directories and `roots`.

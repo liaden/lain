@@ -72,6 +72,24 @@ RSpec.describe Lain::Approval::Judge do
                   'outside the project root: "/home/u/.cargo/registry"')
   end
 
+  describe "the human's checkout" do
+    def prompt_lines(where)
+      spawn = answering("defer")
+      described_class.new(role_spawn: spawn).call(tool: "bash", input: { "command" => "ls" }, place: where)
+      spawn.calls.sole[:prompt].lines.map(&:chomp)
+    end
+
+    it "is named on its own line after the project root of a child working in its own tree" do
+      lines = prompt_lines(place(root: "/wt", cwd: "/wt", human_checkout: "/p"))
+
+      expect(lines.each_cons(2)).to include(['project root: "/wt"', 'the human\'s checkout: "/p"'])
+    end
+
+    it "is not named when the call runs in the human's checkout" do
+      expect(prompt_lines(place).grep(/checkout/)).to be_empty
+    end
+  end
+
   it "has a role text that does not ask the judge to weigh an intent it is never given" do
     text = Dir.mktmpdir { |root| Lain::Prompt::Slots.load(root:).render_role(described_class::ROLE) }
 
