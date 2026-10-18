@@ -471,10 +471,9 @@ RSpec.describe Lain::Journal do
       end
     end
 
-    # The fd can be shared with the Rust tracing subscriber, which dups it and
-    # writes spans we never see. Zero-byte means the FILE is empty, not that
-    # this Journal happened not to write.
-    it "keeps a file another writer on the shared fd landed bytes in" do
+    # Another writer on the same file lands bytes we never see. Zero-byte
+    # means the FILE is empty, not that this Journal happened not to write.
+    it "keeps a file another writer landed bytes in" do
       Dir.mktmpdir do |dir|
         path = File.join(dir, "s.ndjson")
         journal = described_class.open(path)
@@ -528,40 +527,6 @@ RSpec.describe Lain::Journal do
       File.write(path, "")
 
       File.open(path, "ab") { |io| described_class.new(io:, path:, owns_io: false).close }
-
-      expect(File).to exist(path)
-    end
-
-    # #share_fd exists precisely so the Rust tracing subscriber can dup the
-    # descriptor (ext/lain's dup_writer) and interleave its spans. Once the
-    # number is handed out, another writer may land bytes after our close --
-    # onto an unlinked inode, invisibly, if we still removed the file.
-    it "keeps a file whose descriptor was handed to another writer through #share_fd" do
-      path = path_for("p3.ndjson")
-      journal = described_class.open(path)
-      # A real dup(2), which is what ext/lain's dup_writer does. `autoclose:
-      # false` on the wrapper because that fd belongs to the Journal -- letting
-      # GC close it would yank a descriptor out from under another example.
-      dup = IO.for_fd(journal.share_fd, autoclose: false).dup
-      dup.sync = true
-
-      journal.close
-      dup.write(%({"type":"rust_span"}\n))
-      dup.close
-
-      expect(File).to exist(path)
-      expect(File.read(path)).to include("rust_span")
-    end
-
-    # #fileno stays conservative: a descriptor that leaves the object may be
-    # written through whatever the caller meant by asking, so the disarm must
-    # not be something a caller has to remember to opt into.
-    it "keeps a file whose descriptor merely left through #fileno too" do
-      path = path_for("p3b.ndjson")
-      journal = described_class.open(path)
-
-      journal.fileno
-      journal.close
 
       expect(File).to exist(path)
     end
@@ -688,7 +653,7 @@ RSpec.describe Lain::Journal do
 
   # The ONE duck every Journal reader speaks (Oracle::Recorded, Ledger::Index):
   # a record is a Hash or one NDJSON line, and anything else answers nil so the
-  # reader can skip lines that belong to other writers on a shared fd.
+  # reader can skip lines that belong to other writers.
   describe ".parse" do
     it "passes a Hash through with its TOP-LEVEL keys string-keyed" do
       expect(described_class.parse({ type: "turn_usage", digest: "d" }))
@@ -745,17 +710,9 @@ RSpec.describe Lain::Journal do
     end
   end
 
-  describe "#fileno" do
-    it "is nil for a StringIO with no descriptor" do
-      expect(journal.fileno).to be_nil
-    end
-
-    it "exposes the descriptor of a real file, for handing to Rust tracing" do
-      Dir.mktmpdir do |dir|
-        journal = described_class.open(File.join(dir, "s.ndjson"))
-        expect(journal.fileno).to be_a(Integer)
-        journal.close
-      end
+  describe "its descriptor" do
+    it "does not respond to fileno or share_fd" do
+      expect(journal).not_to respond_to(:fileno, :share_fd)
     end
   end
 end

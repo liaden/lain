@@ -26,9 +26,9 @@ module Lain
     #    metacharacters is a name, not a pattern: `Dir.glob` finds nothing under
     #    a `$XDG_STATE_HOME` containing `[`, and finds it silently.
     # 3. Parsed through {Journal.parse}, never `JSON.parse` directly, so a
-    #    foreign line -- a Rust `tracing` span sharing the fd -- is skipped
+    #    foreign line -- one touched by another writer -- is skipped
     #    rather than raised on. A line that parses to nothing is not foreign:
-    #    spans are whole JSON lines, so it is DAMAGE, and {Refuse} (the
+    #    a foreign record is a whole JSON line, so it is DAMAGE, and {Refuse} (the
     #    default) refuses it when a sign-off could rest on it. See {Torn}. So
     #    is a whole record shaped like a sign-off under another type. See
     #    {Misfiled}.
@@ -174,8 +174,8 @@ module Lain
       # "nothing is outstanding", a garbled line could BE the deferral.
       #
       # `unreadable` counts lines {Journal.parse} could make nothing of -- not
-      # foreign records. A Rust tracing span is valid JSON and simply is not
-      # ours; counting it would cry wolf on every session that shared its fd.
+      # foreign records. Another writer's JSON line is valid and simply is
+      # not ours; counting it would cry wolf on every session it touched.
       # `misfiled` names, one per record, the type each {Misfiled} record
       # wore: those parsed, so they are not unreadable, and a reader told
       # "could not be parsed" would hunt for torn bytes that are not there.

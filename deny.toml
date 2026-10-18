@@ -56,7 +56,7 @@ highlight = "all"
 # `env::var("NO_COLOR")` (`fmt_layer.rs:743`) -- the environment read this whole
 # list exists to keep out of the process Ruby does not own. Banning the crate
 # therefore bans the feature by proxy: a `default-features = true` regression in
-# either Cargo.toml fails `cargo deny` instead of silently re-arming it.
+# `crates/lain-core/Cargo.toml` fails `cargo deny` instead of silently re-arming it.
 deny = [
     { crate = "crossterm", reason = "owns the terminal; Ruby does" },
     { crate = "termion", reason = "owns the terminal; Ruby does" },

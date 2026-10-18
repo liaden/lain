@@ -112,9 +112,8 @@ module Lain
 
         private
 
-        # {Journal.records}' skip-foreign-bytes contract is sound -- the fd
-        # can be shared with Rust tracing spans -- but applied
-        # to lain's OWN torn record it left a damaged session looking intact:
+        # {Journal.records}' skip-foreign-bytes contract is sound -- a file may be
+        # touched by another writer -- but applied to lain's OWN torn record it left a damaged session looking intact:
         # same header, same status, one turn short under an unmoved head digest.
         # This reports the skip instead of preventing it, so the row stops lying
         # by omission. Blank when nothing was skipped, so an intact session

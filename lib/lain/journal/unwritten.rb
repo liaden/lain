@@ -14,14 +14,6 @@ module Lain
       #   `.open` ran -- means there is nothing this object could ever remove.
       def initialize(path)
         @path = path
-        @shared = false
-      end
-
-      # The descriptor has left the Journal ({Journal#share_fd}), so another
-      # writer may land bytes after our close. Retires the discard for good --
-      # those writes would go to an inode we had already unlinked, invisibly.
-      def shared!
-        @shared = true
       end
 
       # The inode to judge, stat'd through the caller's fd WHILE IT IS STILL
@@ -33,7 +25,7 @@ module Lain
       # inode before it returns. An unsynced fd would report 0 for a file with a
       # record in it, and this would delete it.
       def inode(io)
-        return nil if @path.nil? || @shared || !io.respond_to?(:stat)
+        return nil if @path.nil? || !io.respond_to?(:stat)
 
         io.stat
       rescue IOError, SystemCallError

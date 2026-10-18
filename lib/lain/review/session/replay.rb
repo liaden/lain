@@ -13,8 +13,8 @@ module Lain
       # distinction is the whole of what a reader can rely on. A guard here only
       # ever sees a record {Journal.parse} already turned into a Hash;
       # {Journal.records} answers nil for a line that is not JSON at all and
-      # filters it away, which is its CONTRACT rather than a lapse -- the fd is
-      # shared with Rust tracing spans. A `hunk_marked` line torn by a crash is
+      # filters it away, which is its CONTRACT rather than a lapse -- a file may
+      # be torn by a crash or touched by another writer. A `hunk_marked` line torn by a crash is
       # therefore never seen by the guard below: it is simply gone, and that hunk
       # quietly reads unreviewed again.
       #
@@ -48,7 +48,7 @@ module Lain
         # proved it by deleting the filter with every example still green. What it
         # actually buys: the round has to be found by POSITION, `#rindex` needs an
         # Array, and `.to_a` on an unfiltered lazy walk would materialize every
-        # Rust tracing span in a long session's journal. A bound on what is held,
+        # foreign line in a long session's journal. A bound on what is held,
         # not a correctness guard.
         TYPES = [ChangesetOpened::JOURNAL_TYPE, CorpusExtended::JOURNAL_TYPE, HunkMarked::JOURNAL_TYPE,
                  AnnotationPlaced::JOURNAL_TYPE, ReviewVerdict::JOURNAL_TYPE, ChangesetClosed::JOURNAL_TYPE].freeze

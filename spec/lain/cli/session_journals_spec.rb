@@ -89,7 +89,7 @@ RSpec.describe Lain::CLI::SessionJournals do
 
   # Clause 3
   describe "lines that are not our records" do
-    it "skips a foreign JSON object (a Rust tracing span sharing the fd) without raising" do
+    it "skips a foreign JSON object (another writer's line) without raising" do
       write("20260728T090000-1.ndjson",
             [JSON.generate("ts" => "2026-07-28T09:00:00Z", "level" => "INFO", "target" => "lain_core"),
              record(type: "gate_decision", at: "2026-07-28T09:00:01Z", id: "a")])
@@ -174,8 +174,8 @@ RSpec.describe Lain::CLI::SessionJournals do
   end
 
   # A torn line is damage, never somebody else's bytes: the only other writer
-  # the skip contract names is a Rust tracing span, and a span is a whole JSON
-  # line. So a fold that skipped a torn `gate_decision` folded a decision
+  # the skip contract names is another process, and its line is a whole JSON
+  # object. So a fold that skipped a torn `gate_decision` folded a decision
   # nobody made -- a lost deferral reads as drained, and drained opens the next
   # stage.
   describe "a torn line" do

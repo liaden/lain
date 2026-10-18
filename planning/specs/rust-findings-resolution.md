@@ -58,7 +58,8 @@ session; Explore verification of the Ruby-side surfaces.
 - **`CanonError::message()` is called from `lib.rs:309`** — T3 must keep a `message()`
   surface (delegating to `Display`) to avoid editing `lib.rs` from wave 1's parallel card.
 - **`Lain.hello` is load-bearing** (`spec/lain/seams/journal_tracing_seam_spec.rb`) — no
-  card deletes it.
+  card deletes it. (2026-10-17: `Lain.hello`, `Lain::Ext.init_tracing` and that seam spec are
+  gone; the tracing scaffold had no caller.)
 - **Docs-vs-code disagreement**: `dag.rs`'s own doc claims walks happen "in a single locked
   read"; `rewind` re-locks per step (F.5). Code loses; T4 fixes the code to match the doc.
 

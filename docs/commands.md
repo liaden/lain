@@ -292,8 +292,8 @@ List this project's recorded sessions, newest first. Offline.
 `--all` includes ephemeral `--btw` sessions, which are hidden by default.
 
 A row ending in `N lines unparsed` names a session with unparseable lines in its journal
-(`Journal.records` skips them rather than raising, since the fd can be shared with Rust tracing
-spans). Nothing wrong can be *built* on the gap -- forking such a session refuses precisely,
+(`Journal.records` skips them rather than raising, since a crash can tear
+the last line or another writer can leave bytes in it). Nothing wrong can be *built* on the gap -- forking such a session refuses precisely,
 naming the record index and both digests -- but the count is real: treat it as a reason to
 inspect the file, not as noise to ignore.
 

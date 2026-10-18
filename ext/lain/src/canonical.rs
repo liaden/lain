@@ -10,7 +10,7 @@
 //! because that step needs `magnus` types. Everything here is plain Rust with no
 //! `magnus` in its signatures, so `cargo test` exercises the serialization and
 //! hashing laws without an embedded Ruby VM -- the same split as `blake3_hex`
-//! and `build_env_filter`.
+//! and `validate_put`.
 //!
 //! Numbers are the one place byte-identity cannot be re-derived safely in Rust:
 //! Ruby's JSON float formatting is neither `Float#to_s` nor Rust's shortest-float

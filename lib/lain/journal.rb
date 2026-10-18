@@ -15,9 +15,7 @@ module Lain
   # included -- in a single `write` under a monitor, with the fd in sync mode.
   # Building the bytes before taking the lock keeps the critical section short,
   # apart from the observers {#observe} runs inside it; writing them as one
-  # buffer means a line is never torn, the same discipline the Rust
-  # `SharedWriter` follows so Ruby events and Rust `tracing` spans can share one
-  # fd and still parse line by line. The fd is the Journal's own -- a file
+  # buffer means a line is never torn. The fd is the Journal's own -- a file
   # under {Paths#sessions_dir} by default, a StringIO in specs -- and NEVER stderr.
   #
   # A value that cannot be encoded would otherwise tear a line or swallow an
@@ -26,9 +24,7 @@ module Lain
   # on a Journal line, and the failure is in the record rather than lost.
   #
   # A Journal built with an injected IO does not own it and never closes it.
-  # {Journal.open} owns the file it opened and closes it on {#close}. This mirrors
-  # the Rust side, which `dup`s the fd precisely so dropping one writer never
-  # closes the other's descriptor.
+  # {Journal.open} owns the file it opened and closes it on {#close}.
   class Journal
     class Closed < Error; end
 
@@ -72,10 +68,9 @@ module Lain
     end
 
     # O_CREAT|O_EXCL answers the fd only if this call brought the file into
-    # existence. Append mode for the same reason the fallback uses "ab": a shared
-    # fd (ours plus a dup handed to Rust tracing) writes atomically at
-    # end-of-file, never overwriting the other's bytes. O_EXCL also refuses to
-    # create THROUGH a symlink, which is what keeps the unwritten-file cleanup
+    # existence. Append mode for the same reason the fallback uses "ab": every write
+    # lands atomically at end-of-file, never overwriting another writer's bytes.
+    # O_EXCL also refuses to create THROUGH a symlink, which is what keeps the unwritten-file cleanup
     # from ever facing a link whose target it measured and whose pointer it
     # would remove.
     def self.create(path)
@@ -138,10 +133,11 @@ module Lain
     end
 
     # The ONE walk every Journal reader shares. Skipping is the contract, not a
-    # convenience: the Journal's own lines always parse, but its fd can be shared
-    # with other writers (Rust tracing spans), so a reader skips what {.parse}
-    # answers nil for rather than raising over somebody else's bytes. Lazy, so
-    # `records(File.foreach(path))` streams the file without materializing it.
+    # convenience: the Journal's own lines always parse, but a file may have been
+    # touched by another writer or torn by a crash, so a reader skips what
+    # {.parse} answers nil for rather than raising over somebody else's bytes.
+    # Lazy, so `records(File.foreach(path))` streams the file without
+    # materializing it.
     #
     # @param entries [Enumerable<Hash, String>]
     # @param type [String, Symbol, nil] keep only records of this type, when given
@@ -226,30 +222,6 @@ module Lain
       self
     end
 
-    # Hand this Journal's descriptor to another writer -- the Rust tracing
-    # subscriber dups it (`dup_writer` in ext/lain) so its spans merge into this
-    # same NDJSON stream. nil for an IO with no descriptor.
-    #
-    # Sharing is a COMMITMENT, and naming it is why this method exists: the
-    # receiver may land bytes long after we stop looking, so a shared Journal
-    # retires the empty-file cleanup for good. Those writes would otherwise go to
-    # an inode we had already unlinked, invisibly. Asking for the number and
-    # asking to share are the same act, but only one of them says so, and the
-    # cleanup policy has to turn on a decision a caller made deliberately.
-    #
-    # @return [Integer, nil]
-    def share_fd
-      @monitor.synchronize { @unwritten.shared! }
-      descriptor
-    end
-
-    # Conservatively an alias for {#share_fd}: a descriptor that leaves this object
-    # may be written through whatever the caller meant, so the disarm cannot be
-    # something a caller has to remember. New callers say {#share_fd}.
-    #
-    # @return [Integer, nil]
-    def fileno = share_fd
-
     # @return [Boolean]
     def closed?
       @monitor.synchronize { @closed }
@@ -310,12 +282,6 @@ module Lain
     def entry_type(entry)
       named = entry.is_a?(Hash) ? entry["type"] || entry[:type] : nil
       (named || entry.class.name).to_s
-    end
-
-    def descriptor
-      @io.respond_to?(:fileno) ? @io.fileno : nil
-    rescue IOError
-      nil
     end
 
     # A serialization failure never escapes and never yields a partial line: it

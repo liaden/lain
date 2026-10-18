@@ -469,8 +469,8 @@ RSpec.describe Lain::CLI::EpicQueue do
       expect(queue.listing).to include(digest_a).and include("1 line could not be parsed")
     end
 
-    # A Rust tracing span sharing the fd is valid JSON and simply is not ours.
-    # Warning about it would cry wolf on every session that shared its journal.
+    # Another writer's JSON line is valid and simply is not ours. Warning about
+    # it would cry wolf on every session it touched.
     it "stays quiet about a foreign JSON record" do
       write_journal("20260728T060000-100.ndjson",
                     [{ "ts" => "2026-07-28T06:00:00.000000Z", "level" => "INFO", "target" => "lain_core" }])

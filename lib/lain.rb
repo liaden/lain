@@ -6,10 +6,10 @@ require "zeitwerk"
 # orchestration tactics are swappable, observable, and comparable.
 module Lain
   # The compiled extension's own namespace. THIS line defines it and magnus
-  # reopens it to hang `init_tracing` on, so between here and the `require
+  # reopens it to hang its functions on, so between here and the `require
   # "lain/lain"` below `loader.setup` there is a window where `Lain::Ext` is
   # defined and empty. Nothing tests `defined?(Lain::Ext)` for the extension's
-  # presence, and nothing may start to: `Lain::Ext.respond_to?(:init_tracing)`
+  # presence, and nothing may start to: `Lain::Ext.respond_to?(:blake3_hex)`
   # is the question that survives the window.
   module Ext; end
 
@@ -85,7 +85,7 @@ loader = Lain::LOADER
 loader.inflector.inflect(Lain::LOADER_INFLECTIONS)
 loader.setup
 
-# The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
+# The compiled Rust extension. Defines the functions and classes under Lain::Ext.
 #
 # BELOW `loader.setup`, because magnus's init asks for `Lain::Error` as it runs:
 # the autoloads have to be registered by then for that name to resolve at all.

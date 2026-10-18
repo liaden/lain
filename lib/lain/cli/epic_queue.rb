@@ -226,7 +226,7 @@ module Lain
       # rides along on every rendering -- a listing with items can be missing
       # one just as easily as an empty one can.
       #
-      # A FOREIGN record does not count: a Rust `tracing` span is valid JSON and
+      # A FOREIGN record does not count: another writer's JSON line is valid and
       # simply is not ours, so counting it would cry wolf on every shared
       # journal.
       def unparsed_warning(counts)

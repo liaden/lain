@@ -102,7 +102,7 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
 - **M0–M1 — housekeeping + the spine.** `[built]` `Canonical`, content-addressed `Timeline`
   (meet-semilattice property-tested), provider-neutral value objects, `Tool`/`Toolset`,
   `Effect`/`Handler`/`Middleware`, `Provider`, pure `Context#render`,
-  `Agent`/`Budget`/`ToolRunner`, `Channel`/`Sink`, `ext/lain` tracing.
+  `Agent`/`Budget`/`ToolRunner`, `Channel`/`Sink`, ~~`ext/lain` tracing~~ (struck 2026-10-17: scaffold removed, no caller).
 - **M1b–M3b — hands, observability, test infra, transport fork.** `[built]`: tools
   (`read_file`/`list_files`/`bash`), `Handler::Approving` + TTY, the NDJSON `Journal` + cost
   accounting, `spec/support` + VCR, and the RubyLLM transport fork with `AnthropicRaw`.
@@ -170,7 +170,7 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 - Per-turn usage and dollar cost, **aggregated over unique digests**. ~~`Handler::Recorded`~~
   (deleted 2026-09-14: it replayed a record nothing wrote; the tool phase keeps 2 interpreters,
   `Live` and `Mock`). Channel
-  split to drop-oldest for the frontend. Rust `tracing` spans merge into the same stream.
+  split to drop-oldest for the frontend. ~~Rust `tracing` spans merge into the same stream.~~ (struck 2026-10-17: the scaffold was removed; nothing emitted spans.)
 - **Prioritization:** token cost is the **80%-of-variance performance proxy** (Anthropic) — invest
   here; it de-risks every later experiment. *Measurement lands before the seams.*
 - **Fold-in:**

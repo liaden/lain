@@ -1179,8 +1179,8 @@ RSpec.describe Lain::Review::Session do
     end
   end
 
-  # The Journal's fd is shared -- Rust tracing spans land on it -- so a foreign
-  # line is the expected case, not an exotic one, and nothing in this suite fed
+  # A journal file may be torn by a crash or touched by another writer, so a
+  # foreign line is the expected case, not an exotic one, and nothing in this suite fed
   # the fold one until a review panel's own probe did.
   describe "records this fold did not write" do
     def foreign_lines

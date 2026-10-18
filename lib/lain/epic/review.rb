@@ -260,8 +260,8 @@ module Lain
       # only: see {Unpromised} for why no promise comes back with it.
       #
       # It fails OPEN, and a caller must know that. {Journal.records} skips any
-      # line it cannot parse -- its fd is shared with Rust tracing spans, so
-      # skipping foreign bytes is its contract rather than a lapse -- and a
+      # line it cannot parse -- a file may be torn by a crash or touched by
+      # another writer, so skipping foreign bytes is its contract rather than a lapse -- and a
       # `review_opened` torn by a crash is therefore simply gone, the baton LOST,
       # and lain will happily regenerate a file a human is mid-edit in. So
       # `open?(path) == false` is not proof that nobody is holding the file; it

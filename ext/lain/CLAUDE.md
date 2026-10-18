@@ -23,11 +23,11 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
 `.git/hooks` is shared. There is no "I'll format it later."
 
 > ⚠️ **`cargo test` never compiles the magnus surface, so a green `cargo test` is not a
-> building crate.** Every `ffi` module here is `#[cfg(not(test))]` — `lib.rs:242`,
+> building crate.** Every `ffi` module here is `#[cfg(not(test))]` — `lib.rs`'s `mod ffi`,
 > `prompt.rs:1447`, `fuzzy.rs:304`, `astgrep.rs:356`, `treesitter.rs:430` — and there is no
 > `tests/` directory and no doctest target, so under `--cfg test` the entire FFI layer is
-> absent from the build graph. `lib.rs:236` explains *why* the modules are gated (a magnus
-> item needs an embedded Ruby VM that `cargo test` has no way to start) but never says what
+> absent from the build graph. The comment above `lib.rs`'s `mod ffi` explains *why* the modules
+> are gated (a magnus item needs an embedded Ruby VM that `cargo test` has no way to start) but never says what
 > it costs you.
 >
 > What it costs: change a pure module's public shape and `cargo test` will pass while the
@@ -47,8 +47,8 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
 - **Stable channel only. No `#![feature]`.** A subagent has already shipped `#![feature]` here
   and it does not build. If you reach for a nightly feature, the design is wrong.
 - **No `forbid(unsafe_code)` here.** That rule is `crates/lain-core`'s
-  (`crates/lain-core/src/main.rs:13`), not this crate's. `ext/lain` has 10 `unsafe` blocks and
-  they are FFI-boundary calls in magnus's own unsafe API plus `libc::dup` — they cannot be
+  (`crates/lain-core/src/main.rs:13`), not this crate's. `ext/lain` has 11 `unsafe {` blocks (`grep -rc 'unsafe {' ext/lain/src`)
+  and they are FFI-boundary calls in magnus's own unsafe API — they cannot be
   removed, and forbidding them would not compile. Every one carries a `SAFETY:` comment; that is
   the standard here. The root `CLAUDE.md`'s "NO `unsafe` in lain's Rust" means *do not hand-roll
   new unsafe* — reach for a crate — not that the existing FFI boundary is a defect.
@@ -68,11 +68,10 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
   warns, so a doc comment can quietly rot. Use plain backticks for private items.
 - **Output discipline is a crate-root `deny`.** `clippy::print_stdout` and `clippy::print_stderr`
   are hard errors. This is not fussiness: the Journal is NDJSON, it is the experiment record, and
-  one stray line makes `JSON.parse` fail on that line. We learned it the hard way — the subscriber
-  wrote to stderr and Bundler interleaved a plain-text warning into it. Diagnostics go through
-  `tracing`, whose writer is a caller-supplied fd.
-- **Pin every dependency.** `cargo deny` bans wildcards. `libc` is pinned at `0.2` for exactly
-  this reason, and it is here solely for `dup(2)`.
+  one stray line makes `JSON.parse` fail on that line. We learned it the hard way — a subscriber
+  wrote to stderr and Bundler interleaved a plain-text warning into it. This crate emits no
+  diagnostics of its own; an error crosses the boundary as a Ruby exception.
+- **Pin every dependency.** `cargo deny` bans wildcards.
 - **No crate here may own, drive, or interrogate a terminal — and none may read the
   environment to decide colour.** `NO_COLOR`, `FORCE_COLOR`, `TERM` and `isatty` are properties
   of the stream **Ruby** owns. Ruby resolves them and passes the answer across the boundary as
@@ -91,23 +90,10 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
   their attribution lives (today: starship's prompt-format grammar, ISC).
 - **`cargo fmt` before you commit**, not after the hook rejects you.
 
-## The two invariants that cost real debugging
-
-**1. The fd is `dup`'d, and we own only the dup.** `init_tracing` takes a caller-supplied fd and
-calls `libc::dup` before `File::from_raw_fd`. Dropping the Rust side must never close the
-descriptor Ruby still owns. Cloning `SharedWriter` is an `Arc` bump — never another `dup`, or
-every event leaks an fd.
-
-**2. `SharedWriter::write_all` is overridden deliberately.** The default implementation loops over
-`write`, re-acquiring the mutex per partial write. stderr is usually a pipe or a tty, where
-partial writes genuinely happen, so two `tracing` spans could interleave and tear a single NDJSON
-line in half. The override holds the lock across the whole buffer. **Do not "simplify" it away** —
-it looks redundant and is not, which is why the comment above it says so.
-
 ## Testing shape
 
 Keep the logic in **plain Rust functions with no `magnus` types in their signatures**, and put the
-FFI surface in a separate module. `build_env_filter` and `dup_writer` are the pattern: they are
+FFI surface in a separate module. `validate_put` and `classify_num` are the pattern: they are
 unit-testable without an embedded Ruby VM, which is why `cargo test` runs at all. A function that
 takes a `Ruby` or returns a `magnus::Error` cannot be tested in `cargo test`; push the decision out
 of it and test the decision.

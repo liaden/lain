@@ -206,7 +206,7 @@ RSpec.describe Lain::CLI::Sessions do
     end
 
     # Journal.records' skip-foreign-bytes contract (journal.rb:131-136)
-    # is sound -- the fd can be shared with Rust tracing spans -- but applied to
+    # is sound -- a file may be touched by another writer -- but applied to
     # lain's OWN torn record it left a damaged session looking intact: the same
     # header, the same "open"/"closed" status, just one turn short under an
     # unmoved head digest. These three examples are the acceptance criteria
