@@ -120,6 +120,14 @@ RSpec.describe Lain::Provider::AnthropicWire do
       expect(response.stop_reason).to eq(:end_turn)
     end
 
+    it "records the window stop as context_full" do
+      blocks = [{ "type" => "text", "text" => "cut" }]
+
+      response = includer.new.respond(assembled(content: blocks, stop_reason: "model_context_window_exceeded"))
+
+      expect(response.stop_reason).to eq(:context_full)
+    end
+
     # Belt-and-suspenders on Response#tool_uses: a String input must never
     # reach the Timeline. Both hand-written copies carried this; the shared one
     # keeps it.

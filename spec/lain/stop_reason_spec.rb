@@ -47,6 +47,11 @@ RSpec.describe Lain::StopReason do
       expect(described_class.normalize("context_full")).to eq(:unknown)
     end
 
+    it "reads Anthropic's beta window stop as a full context" do
+      expect(described_class.normalize("model_context_window_exceeded")).to eq(:context_full)
+      expect(described_class.normalize(:model_context_window_exceeded)).to eq(:context_full)
+    end
+
     it "does not let a wire value spell its way into a machine-only reason" do
       expect(described_class.normalize("malformed")).to eq(:unknown)
       expect(described_class.normalize(:malformed)).to eq(:unknown)

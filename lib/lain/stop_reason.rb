@@ -6,10 +6,11 @@ module Lain
   #
   # `KNOWN` is the WIRE vocabulary: exactly the values Anthropic's non-beta
   # `StopReason` enum can produce, verified against anthropic-1.55.0. What is
-  # NOT there matters: `:model_context_window_exceeded` and `:compaction` exist
-  # only on the Beta enum, so coding against them on the non-beta path waits
-  # for an event that never arrives, while `:stop_sequence` does occur and is
-  # easy to forget.
+  # NOT there matters: `:compaction` exists only on the Beta enum, so coding
+  # against it on the non-beta path waits for an event that never arrives, while
+  # `:stop_sequence` does occur and is easy to forget. The Beta-only
+  # `:model_context_window_exceeded` is the one such name {.normalize} reads, as
+  # `:context_full`.
   #
   # `ALL` is the MACHINE vocabulary. It adds `:unknown`, which CLOSES the wire's
   # open enum before the machine ever sees a reason, and `:malformed`, which no
@@ -23,13 +24,13 @@ module Lain
   # no terminal frame carries no stop reason on the wire, so the provider that
   # read the missing frame says it rather than letting it normalize to `:unknown`.
   #
-  # `:context_full` is machine-only too: ollama says `length` for a spent ceiling and
+  # `:context_full` has two sources: ollama says `length` for a spent ceiling and
   # for a filled window alike, and only the provider that knows the ceiling it sent
-  # can tell them apart.
+  # can tell them apart; Anthropic names the window stop itself.
   #
   # So two entry points. {.normalize} reads a WIRE value and can only ever
-  # answer from `KNOWN` or `:unknown`, so no provider string spells its way into
-  # a machine-only reason. {.admit} is what {Response} runs: a Symbol already in
+  # answer from `KNOWN`, `:unknown`, or the one `WIRE_ALIASES` entry, so no provider
+  # string spells its way into another machine-only reason. {.admit} is what {Response} runs: a Symbol already in
   # `ALL` is a reason something typed and passes through; anything else --
   # every String among it, since `ALL` holds only Symbols -- is still a wire
   # value. The residual gap is exactly one value: an SDK that
@@ -51,9 +52,12 @@ module Lain
     KNOWN = [END_TURN, TOOL_USE, MAX_TOKENS, STOP_SEQUENCE, PAUSE_TURN, REFUSAL].freeze
     ALL = (KNOWN + [UNKNOWN, MALFORMED, TRUNCATED, CONTEXT_FULL]).freeze
 
+    # Beta-only on the wire, so absent from KNOWN.
+    WIRE_ALIASES = { model_context_window_exceeded: CONTEXT_FULL }.freeze
+
     def self.normalize(value)
       symbol = value&.to_sym
-      KNOWN.include?(symbol) ? symbol : UNKNOWN
+      WIRE_ALIASES.fetch(symbol) { KNOWN.include?(symbol) ? symbol : UNKNOWN }
     end
 
     def self.admit(value)
