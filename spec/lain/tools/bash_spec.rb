@@ -1453,6 +1453,54 @@ RSpec.describe Lain::Tools::Bash do
       expect(resolutions.fetch(0).stages.map { |stage| stage["klass"] }).to eq(["unresolved"])
     end
 
+    %w[echo printf test pwd kill true false].each do |name|
+      it "marks #{name} as a builtin the shell runs on the string arm, not the file PATH finds" do
+        backend = Class.new do
+          define_method(:takes_term?) { |_term| false }
+          define_method(:child_env) { Lain::Exec::ChildEnv::DEFAULT }
+          define_method(:call) { |**| Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "") }
+        end.new
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: ENV.to_h))
+
+        described_class.new(exec: backend, journal:, resolver:)
+                       .call({ command: "#{name} a | tr a b" },
+                             Lain::Tool::Invocation.new(tool_use_id: "tu_s", context: session, channel:))
+
+        stages = resolutions.fetch(0).stages
+        expect(stages.first).to include("name" => name, "resolved" => nil, "builtin" => true)
+        expect(stages.last).to include("resolved" => end_with("/tr"))
+        expect(stages.last).not_to have_key("builtin")
+      end
+    end
+
+    it "keeps the parsed marker on a builtin stage of an abstained command" do
+      run("cd . && echo a", env: {})
+
+      expect(resolutions.fetch(0).stages.first)
+        .to include("name" => "echo", "resolved" => nil, "builtin" => true, "basis" => "parsed")
+    end
+
+    it "keeps an absolute-path echo resolved to its file on the string arm" do
+      backend = Class.new do
+        define_method(:takes_term?) { |_term| false }
+        define_method(:child_env) { Lain::Exec::ChildEnv::DEFAULT }
+        define_method(:call) { |**| Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "") }
+      end.new
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: ENV.to_h))
+
+      described_class.new(exec: backend, journal:, resolver:)
+                     .call({ command: "/bin/echo a | tr a b" },
+                           Lain::Tool::Invocation.new(tool_use_id: "tu_a", context: session, channel:))
+
+      expect(resolutions.fetch(0).stages.first).to include("name" => "/bin/echo", "resolved" => end_with("/echo"))
+    end
+
+    it "still names the binary PATH found for echo on the term arm" do
+      run("echo a", env: {})
+
+      expect(resolutions.fetch(0).stages.first).to include("name" => "echo", "resolved" => end_with("/echo"))
+    end
+
     it "journals unresolved stages under the default resolver" do
       described_class.new(journal:).call({ command: "ls -la | wc -l" }, invocation)
 

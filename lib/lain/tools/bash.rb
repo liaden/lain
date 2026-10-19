@@ -52,6 +52,9 @@ module Lain
     # which checks only that `timeout` is a sane number.
     class Bash < Tool
       DEFAULT_TIMEOUT = 120
+      # Shell::Verdict::SHELL_BUILTINS omits names that also have a binary, but the shell runs these itself.
+      SHELL_RUNS_ITSELF = %w[echo printf test pwd kill true false].freeze
+      private_constant :SHELL_RUNS_ITSELF
       MAX_TIMEOUT = 600
 
       # A command's output is a WHOLE ARTIFACT in {Tool::Bounds}' sense -- its
@@ -281,7 +284,7 @@ module Lain
         arm = arm_for(decision)
         journal_arm(decision, arm, invocation)
         options = runtime(input, invocation)
-        stages = journal_resolution(input.command, decision, invocation, options[:cwd])
+        stages = journal_resolution(input.command, decision, invocation, options[:cwd], arm)
         confinement = confinement_for(stages, invocation, options[:cwd])
         capture = run_journalling_writes(input.command, options[:cwd], invocation) do
           executed(on_arm(arm, input.command, decision), confinement, options)
@@ -329,20 +332,26 @@ module Lain
       # Written before the exec, so a call that times out still leaves the account.
       # Resolved where the command runs, since a relative PATH entry and a build
       # tool's run files are read from there.
-      def journal_resolution(command, decision, invocation, cwd)
+      def journal_resolution(command, decision, invocation, cwd, arm)
         worker_env = session_of(invocation).worker_env.with(cwd:)
         stages = resolve(command, decision, worker_env)
         journal_record(Telemetry::ExecResolution.new(tool_use_id: invocation.tool_use_id,
-                                                     stages: recorded(command, decision, stages, worker_env)))
+                                                     stages: recorded(command, decision, stages, worker_env, arm)))
         stages
       end
 
       # A parsed stage is a guess at what the shell will run, so it is
       # journalled and never handed to the confinement, which grants and
       # refuses by what a stage resolved to.
-      def recorded(command, decision, stages, worker_env)
+      def recorded(command, decision, stages, worker_env, arm)
         parsed = Parsed.new(resolver: @resolver, worker_env:).journal(command) unless decision.allow?
-        parsed || stages.map(&:to_journal)
+        entries = parsed || stages.map(&:to_journal)
+        arm == :string ? entries.map { shell_answered(_1) } : entries
+      end
+
+      # A shell given the string runs these itself, so the file PATH finds did not run.
+      def shell_answered(entry)
+        SHELL_RUNS_ITSELF.include?(entry["name"]) ? entry.merge("resolved" => nil, "builtin" => true) : entry
       end
 
       # A context no ladder ruled through gets the ruling that allowed nothing.
