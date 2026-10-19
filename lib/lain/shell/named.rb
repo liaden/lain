@@ -151,7 +151,7 @@ module Lain
             --file --directory --use-compress-program --info-script --new-volume-script --files-from
             --exclude-from --to-command
           ]],
-          "git" => ["co", %w[--output --output-directory --git-dir --namespace --work-tree]],
+          "git" => ["Cco", %w[--output --output-directory --git-dir --namespace --work-tree]],
           "bundle" => ["", %w[--path --gemfile --jobs --retry --without --with]],
           "sort" => ["oTSkt", %w[--output --temporary-directory --buffer-size --key --field-separator]],
           "curl" => ["o", %w[--output]], "wget" => ["OP", %w[--output-document --directory-prefix]],
@@ -438,6 +438,17 @@ module Lain
           end
         end
 
+        # A read-only git's one `-C`, written before the subcommand, names the
+        # directory it runs in, so its stage can be read from there.
+        #
+        # @return [Integer, nil] the word, among those after the program, that holds the directory
+        def git_directory
+          return unless @command == "git" && !@untrusted && GIT_READ_ONLY.include?(word(operands.first))
+
+          found = @argv.values("C", [])
+          found.first if found.one? && found.first < operands.first && directory_option?(found.first)
+        end
+
         private
 
         def word(index) = index ? @argv.words[index].to_s : ""
@@ -501,11 +512,20 @@ module Lain
         end
 
         def changes_directory?
-          @argv.options.any? do |index|
-            option = word(index)
-            (DIRECTORY_LONG.include?(option.partition("=").first) && !own_flag?(option)) ||
-              (!option.start_with?("--") && @argv.cluster(index).count(directory_letters).positive?)
-          end
+          entered = git_directory
+          own = entered && (@argv.option?(entered) ? entered : entered - 1)
+          @argv.options.any? { _1 != own && moves?(_1) }
+        end
+
+        def moves?(index)
+          option = word(index)
+          (DIRECTORY_LONG.include?(option.partition("=").first) && !own_flag?(option)) ||
+            (!option.start_with?("--") && @argv.cluster(index).count(directory_letters).positive?)
+        end
+
+        # `-C` itself, not a cluster that happens to end in the letter.
+        def directory_option?(value)
+          @argv.option?(value) ? word(value).start_with?("-C") : word(value - 1) == "-C"
         end
 
         def own_flag?(option) = !@untrusted && OWN_FLAG.fetch(@command, []).include?(option)
@@ -778,9 +798,32 @@ module Lain
         end
 
         def stage_paths(stage, words, program)
-          named = [*program_path(words), *word_paths(words, program), *rev_paths(program), *implied_paths(program),
-                   *redirect_paths(stage)]
+          named = [*program_path(words), *program_paths(words, program), *redirect_paths(stage)]
           program.untrusted? ? named.map { possibly_written(_1) } : named
+        end
+
+        def program_paths(words, program)
+          index = program.git_directory
+          return within_directory(words, program) if index.nil?
+
+          entered = word_paths(words, program, only: index).map { _1.is_a?(Path) ? _1.with(directory: true) : _1 }
+          return [:opaque] unless entered.one? && entered.first.is_a?(Path) && entered.first.pattern.nil?
+
+          [*entered, *in_directory(entered.first.resolved) { within_directory(words, program, except: index) }]
+        end
+
+        def within_directory(words, program, except: nil)
+          [*word_paths(words, program, except:), *rev_paths(program), *implied_paths(program)]
+        end
+
+        # Every later `..` is unsafe there, as after a `cd`.
+        def in_directory(directory)
+          before = [@dir, @moved]
+          @dir = directory
+          @moved = true
+          yield
+        ensure
+          @dir, @moved = before
         end
 
         def possibly_written(found) = found.is_a?(Path) ? found.with(written: true) : found
@@ -814,10 +857,11 @@ module Lain
           path(words.raws.first, literal, written: false) if literal.text.include?("/")
         end
 
-        def word_paths(words, program)
+        def word_paths(words, program, only: nil, except: nil)
           written = program.written
           roots = program.roots
-          words.raws.drop(1).each_with_index.flat_map do |raw, index|
+          chosen(words, only, except).flat_map do |index|
+            raw = words.raws[index + 1]
             literal = words.literals[index + 1]
             if literal.nil?
               [:opaque]
@@ -828,6 +872,10 @@ module Lain
                                           assignment: program.assignments?)
             end
           end
+        end
+
+        def chosen(words, only, except)
+          words.raws.drop(1).each_index.select { (only.nil? || _1 == only) && _1 != except }
         end
 
         # Where the program's value letters are not known, an attached value

@@ -368,7 +368,52 @@ RSpec.describe Lain::Shell::Named do
 
   describe "a -C option" do
     it "makes its stage opaque" do
-      expect(named("git -C ../other log")).to be_opaque
+      expect(named("git -C ../other commit -m x")).to be_opaque
+    end
+
+    describe "of a read-only git" do
+      def directories(command) = named(command).paths.select(&:directory).map(&:resolved)
+
+      it "names its directory instead of turning opaque" do
+        ["git -C sibling log 2>&1", "git -Csibling log", "git -C sibling status"].each do |command|
+          result = named(command)
+          expect(result).not_to be_opaque, command
+          expect(directories(command)).to eq(%w[/p/sibling]), command
+        end
+      end
+
+      it "names a directory outside the working one as the directory it runs in" do
+        expect(directories("git -C /outside log")).to eq(%w[/outside])
+        expect(directories("git -C ../other log")).to eq(%w[/other])
+      end
+
+      it "resolves the rest of the command against that directory" do
+        expect(resolved("git -C sibling grep x -- .env")).to include("/p/sibling/.env")
+        expect(resolved("git -C sibling grep x -- .env")).not_to include("/p/.env")
+        expect(named("git -C sibling diff").paths.filter_map(&:pattern)).to eq(%w[/p/sibling/**])
+        expect(named("git -C sibling show HEAD:.env").paths.filter_map(&:pattern)).to include("/p/sibling/**/.env")
+      end
+
+      it "reads a global option before it as a path, not as the subcommand" do
+        result = named("git --git-dir=/etc -C a log")
+        expect(result).not_to be_opaque
+        expect(result.paths.map(&:resolved)).to include("/etc", "/p/a")
+      end
+
+      it "keeps a redirect in the directory the command was given" do
+        expect(resolved("git -C sibling log > out")).to include("/p/out")
+      end
+
+      it "stays opaque for a writing subcommand" do
+        ["git -C sibling commit -m x", "git -C sibling checkout .", "git -C sibling add -A",
+         "git -C sibling clone url", "git -C sibling"].each { expect(named(_1)).to be_opaque, _1 }
+      end
+
+      it "stays opaque when the directory is not one literal, or another option also moves" do
+        ["git -C $D log", "git -C sibling -C other log", "git -C a --work-tree=/etc log",
+         "git -C sibling -c core.pager=x log", "git -c core.pager=x -C sibling log",
+         "git -C sibling log -C", "git log -C sibling"].each { expect(named(_1)).to be_opaque, _1 }
+      end
     end
 
     it "makes an attached -C opaque too" do

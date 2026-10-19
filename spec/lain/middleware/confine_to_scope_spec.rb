@@ -207,12 +207,19 @@ RSpec.describe Lain::Middleware::ConfineToScope do
       expect(bash("cat #{File.join(@checkout, "a.rb")}").content).to eq("ran")
     end
 
+    it "holds a read-only git -C to the lease, and lets one inside it through" do
+      result = bash("git -C #{@checkout} log")
+
+      expect(result).to have_attributes(is_error: true, content: include(@spike, @checkout.inspect))
+      expect(bash("git -C sub log 2>&1").content).to eq("ran")
+    end
+
     it "leaves an opaque command to the approval ladder" do
       expect(bash("cd $D && ls").content).to eq("ran")
     end
 
     it "refuses a write named outside the lease before the command turns opaque" do
-      ["cd - && ls", "git -C sub log"].each do |tail|
+      ["cd - && ls", "git -C sub commit -m x"].each do |tail|
         result = bash("echo x > #{File.join(@checkout, "f")} && #{tail}")
 
         expect(result).to have_attributes(is_error: true, content: include(File.join(@checkout, "f"))), tail
