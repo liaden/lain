@@ -1273,7 +1273,7 @@ RSpec.describe Lain::StatusFeed do
       prompt = Lain::Frontend::PromptComposer::RunState.new(agent:, clock: Lain::RunClock.new, status_feed: feed)
 
       expect(published["occupancy"]).to eq(7_079.fdiv(32_768))
-      expect(prompt.to_h["occupancy"]).to eq("#{(published["occupancy"] * 100).round}%")
+      expect(prompt.to_h["occupancy"]).to eq("#{Lain::StatusFeed::Reading.percent(published["occupancy"])}%")
     end
 
     # The same guard where the two readers do NOT hold the same model string,
@@ -1304,7 +1304,7 @@ RSpec.describe Lain::StatusFeed do
       prompt = Lain::Frontend::PromptComposer::RunState.new(agent:, clock: Lain::RunClock.new, status_feed: feed)
 
       expect(published["occupancy"]).to eq(7_079.fdiv(32_768))
-      expect(prompt.to_h["occupancy"]).to eq("#{(published["occupancy"] * 100).round}%")
+      expect(prompt.to_h["occupancy"]).to eq("#{Lain::StatusFeed::Reading.percent(published["occupancy"])}%")
     end
 
     # A defect that PRE-DATES the run_tokens field and was live on main: an

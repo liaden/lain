@@ -73,6 +73,13 @@ module Lain
 
       GUESS = "~"
 
+      # Floor, so a window 99.5% full never reads as the full one the clamp
+      # means; every surface that prints occupancy goes through here.
+      #
+      # @param ratio [Numeric] used tokens over the window; may exceed 1.0
+      # @return [Integer] 0..100
+      def self.percent(ratio) = (ratio * FULL_PERCENT).floor.clamp(0, FULL_PERCENT)
+
       # How many fleet rows a header carries under the HUD line. Two, and the
       # arithmetic is `lain up`'s: the input pane is six rows, and the HUD, the
       # rows, the "+N more" and the prompt all live in them -- with a third row
@@ -245,7 +252,7 @@ module Lain
       # silent, which is what distinguishes a fresh session from a measured one.
       def occupancy
         ratio = @state["occupancy"]
-        ratio && " ctx:#{guess_mark}#{[(ratio * FULL_PERCENT).floor, FULL_PERCENT].min}%"
+        ratio && " ctx:#{guess_mark}#{self.class.percent(ratio)}%"
       end
 
       # `run:` and both halves are load-bearing. "usage:" would read as the

@@ -304,13 +304,6 @@ module Lain
         MINUTE = 60
         HOUR = 3600
 
-        # Past this a reading says nothing a human wants at a prompt. A ratio
-        # over 1.0 is ORDINARY rather than a bug: a model no book carries and no
-        # server reports on divides by {ContextWindow::CONSERVATIVE_FALLBACK},
-        # which is deliberately small so compaction fires early. "412%" is noise
-        # either way, and {CLI::Up::Hud} clamps for the same reason.
-        FULL = 1.0
-
         # @param agent [#occupancy, #context, #dispatching?] the LIVE agent, so
         #   a /model switch shows at the next prompt rather than at the next run,
         #   and so a dispatch in flight can silence a reading that would lie
@@ -353,7 +346,7 @@ module Lain
         # cannot disagree about it.
         def occupancy
           ratio = @agent.occupancy
-          ratio && "#{reading.guess_mark}#{(ratio.clamp(0.0, FULL) * 100).round}%"
+          ratio && "#{reading.guess_mark}#{Lain::StatusFeed::Reading.percent(ratio)}%"
         rescue ContextWindow::UnknownModel, ArgumentError
           nil
         end

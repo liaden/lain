@@ -515,6 +515,12 @@ RSpec.describe Lain::Frontend::PromptComposer do
       expect(state["occupancy"]).to eq("38%")
     end
 
+    it "floors a window 99.5% full to 99%, as the status line does" do
+      allow(agent).to receive(:occupancy).and_return(0.995)
+
+      expect(state["occupancy"]).to eq("99%")
+    end
+
     # The HUD's mark, read from the same published struct, so the prompt line
     # and the status bar never disagree about whether the window was a guess.
     it "marks an occupancy the state feed says was measured against a guessed window" do

@@ -127,6 +127,20 @@ RSpec.describe Lain::StatusFeed::Reading do
     # id -- with a conservative 8,192, so a real 32k local window publishes 4.0.
     # The published number stays honest; the bar is where nonsense gets trimmed,
     # because a pegged 100% reads as "full", which a human can act on.
+    it "floors 99.5% full to 99 rather than rounding up to a full window" do
+      expect(hud(**warm(occupancy: 0.995))).to eq("🔥 fleet:2 inbox:3 ctx:99% ")
+    end
+
+    it "reads a ratio of 3.7 as 100%" do
+      expect(hud(**warm(occupancy: 3.7))).to eq("🔥 fleet:2 inbox:3 ctx:100% ")
+    end
+
+    describe ".percent" do
+      it "floors and clamps to 0..100" do
+        expect([0.995, 3.7, 0.384, -0.2].map { |r| described_class.percent(r) }).to eq([99, 100, 38, 0])
+      end
+    end
+
     it "clamps the occupancy percentage at 100" do
       expect(hud(**warm(occupancy: 2.44))).to eq("🔥 fleet:2 inbox:3 ctx:100% ")
     end
