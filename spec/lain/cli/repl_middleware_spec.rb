@@ -16,7 +16,7 @@ class ReplMiddlewareStubRoleSpawn
   # Mirrors {Lain::Skill::RoleSpawn#call}, whose `model:` carries a skill's
   # declared model to the spawn -- defaulted here so a caller that names none
   # reads the same as one that cannot.
-  def call(role, context, prompt, model: Lain::Tools::Subagent::ModelChoice::Null)
+  def call(role, context, prompt, model: Lain::Tools::Subagent::ModelChoice::Null, **)
     @calls << [role, context, prompt, model]
     Lain::Tool::Result.ok("child said hi")
   end

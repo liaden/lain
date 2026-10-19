@@ -8,20 +8,22 @@ require "tmpdir"
 # path -- the real seam raises Role::Catalog::Unknown BEFORE any spawn, and the
 # dispatch lets that Lain::Error propagate exactly as Malformed.
 class SkillDispatchFakeRoleSpawn
-  attr_reader :calls, :models
+  attr_reader :calls, :models, :skills
 
   def initialize(answer: "the child's final answer", raises: nil)
     @answer = answer
     @raises = raises
     @calls = []
     @models = []
+    @skills = []
   end
 
   # The model choice rides its own list rather than the tuple, so what a skill
   # declared is asserted without restating the routing every other example pins.
-  def call(role, context, prompt, model: Lain::Tools::Subagent::ModelChoice::Null)
+  def call(role, context, prompt, model: Lain::Tools::Subagent::ModelChoice::Null, skill: nil)
     @calls << [role, context, prompt]
     @models << model
+    @skills << skill
     raise @raises if @raises
 
     Lain::Tool::Result.ok(@answer)
@@ -168,6 +170,15 @@ RSpec.describe Lain::Middleware::SkillDispatch do
   end
 
   describe "a role-bound invocation spawns through the RoleSpawn seam" do
+    it "hands the seam the skill it runs, so the child can be named by it" do
+      fake = SkillDispatchFakeRoleSpawn.new
+      with_dispatch(shipped: create_plan, role_spawn: fake) do |dispatch|
+        run(dispatch, "@researcher/create-plan go")
+
+        expect(fake.skills).to eq(["create-plan"])
+      end
+    end
+
     it "routes @role/skill to the seam with an :inherit context and the scaffold+args prompt, no downstream turn" do
       fake = SkillDispatchFakeRoleSpawn.new
       with_dispatch(shipped: create_plan, role_spawn: fake) do |dispatch|

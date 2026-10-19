@@ -152,7 +152,7 @@ module Lain
           # warning in the chat pane. A call whose note failed is not retried;
           # lain://approval lists it regardless.
           def announce(pending)
-            @notice.call(stamp(format(NOTE, preamble: pending.outstanding.preamble, requester: pending.requester,
+            @notice.call(stamp(format(NOTE, preamble: pending.outstanding.preamble, requester: pending.label,
                                             tool: pending.tool, input: pending.input.inspect,
                                             buffer: Frontend::Neovim::ApprovalView::BUFFER, window: pending.window_face,
                                             notes: said(pending))))
@@ -164,7 +164,7 @@ module Lain
           # clock denies a call, so the denial is said here as well as in the
           # approval list. A call whose [y/N] prompt drew already ended that line with the lapse.
           def lapse(pending)
-            @notice.call(stamp(format(LAPSED, requester: pending.requester, tool: pending.tool,
+            @notice.call(stamp(format(LAPSED, requester: pending.label, tool: pending.tool,
                                               input: pending.input.inspect, lapse: pending.closure)))
           rescue StandardError => e
             report(e)

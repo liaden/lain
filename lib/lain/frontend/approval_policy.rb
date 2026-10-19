@@ -146,7 +146,7 @@ module Lain
         def decided_elsewhere? = @pending.decided?
 
         def call
-          format(CALL, preamble: @pending.outstanding.preamble, requester: @pending.requester, tool: @pending.tool,
+          format(CALL, preamble: @pending.outstanding.preamble, requester: @pending.label, tool: @pending.tool,
                        input: @pending.input.inspect)
         end
 
@@ -289,7 +289,7 @@ module Lain
       # string a turn produced. The real question still ENDS the rendering, which
       # is the property the escaped path above relies on.
       def prompt_for(pending)
-        "#{pending.outstanding.preamble}#{landing(pending)}#{pending.requester} " \
+        "#{pending.outstanding.preamble}#{landing(pending)}#{pending.label} " \
           "asks (auto-denies in #{pending.window_face}#{judged(pending)}): " \
           "approve #{pending.tool}(#{pending.input.inspect})? [y/N] "
       end

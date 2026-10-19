@@ -509,7 +509,7 @@ module Lain
         end
 
         # Names the call because the row it described is gone from the list.
-        def lapse_note(pending) = "! #{pending.requester}  #{call_of(pending)}  -- #{pending.closure}"
+        def lapse_note(pending) = "! #{pending.label}  #{call_of(pending)}  -- #{pending.closure}"
 
         # One entry per LINE, the pending it belongs to -- what {ListView}
         # resolves a cursor through, and never sent across the wire itself.
@@ -570,7 +570,7 @@ module Lain
         # wraps into many rows still runs `.inspect` on its input once.
         def summary_for(pending, call)
           deadline = "#{pending.remaining_face} left, denies at #{pending.fires_at_face}"
-          "#{pending.requester}  #{pending.outstanding.preamble}#{judged(pending)}#{call}  #{deadline}".lstrip
+          "#{pending.label}  #{pending.outstanding.preamble}#{judged(pending)}#{call}  #{deadline}".lstrip
         end
 
         def judged(pending)

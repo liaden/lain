@@ -161,6 +161,17 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(rpc.last[:rows]).to eq(0)
     end
 
+    it "names a skill child by its label in the note a lapsed row leaves" do
+      child = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
+      gated(timeout: 0.2, requesters: [child]) do |queue|
+        spun_until { queue.none? }
+        view.sweep(queue)
+      end
+
+      said = rpc.posts.flat_map { |post| post[:lines] }.grep(/denied after 0:01 with no answer/)
+      expect(said.first).to start_with("! dev (gherkin-tests)")
+    end
+
     it "says a call closed because its requester was stopped, once, naming the call" do
       gated(timeout: 60) do |queue|
         queue.first.deny(surface: Lain::Approval::Queue::ABANDONED_SURFACE)
@@ -533,6 +544,12 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
       it "says so on its row, inspected on one line" do
         expect(row_of(noted)).to include('("cat is /x/\\e[2K\\nforged") bash(')
+      end
+
+      it "names a skill child by its label on its row" do
+        child = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
+
+        expect(row_of(asked_by(child))).to include("dev (gherkin-tests)")
       end
 
       it "leaves a call with no note unmarked" do

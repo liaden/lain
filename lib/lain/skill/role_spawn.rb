@@ -84,8 +84,11 @@ module Lain
       # the same for all three. A caller that names none passes nothing --
       # {Tools::Subagent::ModelChoice::Null} is the default, so no branch here
       # or below asks whether a model was chosen.
-      def call(role_name, context_mode, prompt, model: Tools::Subagent::ModelChoice::Null)
-        build_subagent(Role::Catalog.fetch(role_name), context_mode, model).run(prompt)
+      #
+      # `skill` is the skill whose scaffold the child was spawned to run, shown
+      # beside its role wherever the child is named to a human.
+      def call(role_name, context_mode, prompt, model: Tools::Subagent::ModelChoice::Null, skill: nil)
+        build_subagent(Role::Catalog.fetch(role_name), context_mode, model, skill).run(prompt)
       end
 
       # This spawn, lending its children an environment the caller already
@@ -129,18 +132,19 @@ module Lain
       # Everything the CALL decides: the role's policy, persona and child name,
       # plus the model this one child was bound to. The seam, union and ceiling
       # this instance already held.
-      def build_subagent(role, context_mode, model)
+      def build_subagent(role, context_mode, model, skill)
         place = placed(role)
+        who = Requester.new(name: role.name.to_s, role: role.name.to_s, skill:)
         Tools::Subagent.new(
-          seam: named_for(role, place.seam), toolset: @toolset, policy: role.spawn_policy(prefix: context_mode),
+          seam: named_for(who, place.seam), toolset: @toolset, policy: role.spawn_policy(prefix: context_mode),
           persona: Role::Persona.new(role:, slots: @slots), model:, budget: role.budget,
-          max_depth: @max_depth, name: role.name.to_s, compaction: @compaction, kept: place.kept
+          max_depth: @max_depth, name: role.name.to_s, announces_as: who, compaction: @compaction, kept: place.kept
         )
       end
 
       # The judge and the journal are told the child's own role, not whoever
       # spawned it.
-      def named_for(role, seam) = seam.with(tool_middleware: seam.tool_middleware.with(requester: role.name.to_s))
+      def named_for(who, seam) = seam.with(tool_middleware: seam.tool_middleware.with(requester: who))
 
       def unplaceable = @placed.to_h { |name, _| [name, Unplaceable.new(name)] }
 

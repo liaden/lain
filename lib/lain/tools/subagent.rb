@@ -84,7 +84,8 @@ module Lain
       # puts a question to them, and defaults to `name` because for most spawns
       # they are the same word. A separate keyword rather than a rename: `name`
       # is the model-facing tool name, so renaming it would change the rendered
-      # schema bytes.
+      # schema bytes. It may be a {Requester}, whose role and skill then reach
+      # the fleet row beside the name.
       #
       # `compaction` is the {ParentView} a child reads its parent's held cuts
       # through. It is not copied by {#descend}: a grandchild's parent is the
@@ -99,11 +100,11 @@ module Lain
                      answer: ANSWER, compaction: ParentView::None, kept: Unkept, **spawn_over)
         super()
         @seam = Seam.resolve(seam, **spawn_over)
-        @announces_as = announces_as
+        @announces_as = Requester.of(announces_as)
         @answer = answer
         @kept = kept
-        @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, model:, name: announces_as,
-                                    compaction:)
+        @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, model:,
+                                    name: @announces_as.label, compaction:)
         seed_config(max_depth, name, mode, log)
       end
 
@@ -319,7 +320,7 @@ module Lain
       # the child's writes land in and the spawn a watcher addresses it by.
       def reporting(spawn, prompt, worker)
         Progress.new(spawn: spawn.digest, tee: telemetry)
-                .dispatched(role: @announces_as, task: prompt, worker:)
+                .dispatched(role: @announces_as.to_s, task: prompt, worker:)
       end
 
       # The answer, with what the lease's handback owes the parent folded in,

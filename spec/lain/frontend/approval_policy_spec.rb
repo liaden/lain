@@ -92,6 +92,25 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(seen.stamped).to start_with("13:14:01 agent asks")
   end
 
+  it "names a skill child by its label in the line a closed prompt leaves behind" do
+    labelled = Lain::Approval::Queue::Pending.new(effect:, requester: "dev", label: "dev (gherkin-tests)",
+                                                  clock: -> { 0.0 }, timeout: 300)
+    asked = described_class::Asked.new("approve? ", labelled)
+    labelled.deny(surface: Lain::Approval::Queue::TIMEOUT_SURFACE)
+    closing = []
+    asked.closed { |note| closing << note }
+
+    expect(closing.first).to start_with("-- dev (gherkin-tests) asks to run bash(")
+  end
+
+  it "names a skill child by its label in the prompt" do
+    labelled = Lain::Approval::Queue::Pending.new(effect:, requester: "dev", label: "dev (gherkin-tests)",
+                                                  clock: -> { 0.0 }, timeout: 300)
+    policy_for("n\n").decide(labelled)
+
+    expect(output.string).to include("dev (gherkin-tests) asks (auto-denies in 5:00")
+  end
+
   it "stamps the prompt the standalone reader prints" do
     described_class.new(output:, input: StringIO.new("n\n"), pastel: Pastel.new(enabled: false),
                         wall_clock: -> { Time.new(2026, 10, 8, 13, 14, 1) }).decide(pending)

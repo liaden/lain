@@ -82,16 +82,22 @@ RSpec.describe Lain::Skill::RoleSpawn do
 
   describe "the requester a role's child asks under" do
     let(:asked) { [] }
+    let(:identities) { [] }
     let(:policy) do
       Class.new do
-        def initialize(asked) = @asked = asked
+        def initialize(asked, identities)
+          @asked = asked
+          @identities = identities
+        end
+
         def call(effect, context) = rule(effect, context).allow?
 
         def rule(_effect, context)
           @asked << context.requester
+          @identities << context.identity.to_s
           Lain::Approval::Escalation::Ruling.deny(rung: "spec", because: "not here")
         end
-      end.new(asked)
+      end.new(asked, identities)
     end
     let(:inputs) do
       Lain::CLI::ToolGuard::Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: nil,
@@ -113,6 +119,22 @@ RSpec.describe Lain::Skill::RoleSpawn do
       seam(provider:, tool_middleware: spawned).call(:dev, :fresh, "go")
 
       expect(asked).to eq(["dev"])
+    end
+
+    it "names the skill a role's child runs under beside its role, keyed on the role alone" do
+      provider = mock(tool_response(["b1", "bash", { "command" => "make" }]), text_response("done"))
+
+      seam(provider:, tool_middleware: spawned).call(:dev, :fresh, "go", skill: "gherkin-tests")
+
+      expect([asked, identities]).to eq([["dev"], ["dev (gherkin-tests)"]])
+    end
+
+    it "says the role once when no skill ran it" do
+      provider = mock(tool_response(["b1", "bash", { "command" => "make" }]), text_response("done"))
+
+      seam(provider:, tool_middleware: spawned).call(:dev, :fresh, "go")
+
+      expect(identities).to eq(["dev"])
     end
 
     it "renames a Detached builder" do
@@ -578,7 +600,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     it "names each never-parking child by its own role" do
       named = []
       parked = Class.new do
-        define_method(:with) { |requester:| (named << requester) && self }
+        define_method(:with) { |requester:| (named << requester.key) && self }
         def call(worker_env, **) = ToolRegistry::UNGUARDED.call(worker_env)
       end.new
       guard = ->(worker_env, **) { ToolRegistry::UNGUARDED.call(worker_env) }

@@ -3983,6 +3983,16 @@ RSpec.describe Lain::Tools::Subagent do
       expect(rows.first["turns"]).to be_positive
     end
 
+    it "starts a skill child's row with its role and the skill it runs" do
+      who = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
+      tool = build_subagent(provider: mock(text_response("done")), announces_as: who,
+                            observer: tee, telemetry: feed)
+
+      tool.run("write the scenarios")
+
+      expect(rows.map { |row| row["role"] }).to eq(["dev (gherkin-tests)"])
+    end
+
     # The row is keyed on the spawn digest, which is the address a watcher
     # names -- so the tree and the roster cannot come to disagree about which
     # child they are describing.

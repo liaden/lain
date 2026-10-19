@@ -94,10 +94,10 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # spies, the conductor, and the journal carry the rest of the evidence.
   # `with_timeout` bounds the whole thing so a fan-out that spawned no
   # answerer AND no clock fails in words rather than hanging the suite.
-  def fan_out(attached: nil, secret: nil)
+  def fan_out(attached: nil, secret: nil, context: nil)
     Sync do |task|
       watched = surfaces(attached:, secret:).watch(task)
-      gated = task.async { queue.call(effect, nil) }
+      gated = task.async { queue.call(effect, context) }
       { verdict: task.with_timeout(2) { gated.wait }, watched: }
     ensure
       watched&.each { |surface| surface&.stop }
@@ -213,6 +213,13 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(notes).to contain_exactly(a_string_including("! agent asks to run bash(", "ls", "/approve"))
     end
 
+    it "names a skill child by its label in the announcement" do
+      child = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
+      fan_out(attached: editor, context: Lain::Approval::PolicySwitch::Requested.new(nil, child))
+
+      expect(notes).to contain_exactly(a_string_including("! dev (gherkin-tests) asks to run bash("))
+    end
+
     it "says in the announcement how long the call has before it auto-denies" do
       fan_out(attached: editor)
 
@@ -258,6 +265,19 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
 
       expect(output.string.scan("denied after 0:01 with no answer").size).to eq(1)
       expect(output.string.lines.grep(/denied after/).join).to include("bash(")
+    end
+
+    it "names a skill child by its label when the clock denies its call" do
+      child = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        asked = Lain::Approval::PolicySwitch::Requested.new(nil, child)
+        task.with_timeout(2) { task.async { queue.call(effect, asked) }.wait }
+        task.sleep(0.2)
+        watched.each(&:stop)
+      end
+
+      expect(output.string.lines.grep(/denied after/).join).to include("! dev (gherkin-tests) asks to run bash(")
     end
 
     it "says nothing of the lapse for a call whose prompt drew, leaving that line to the prompt" do

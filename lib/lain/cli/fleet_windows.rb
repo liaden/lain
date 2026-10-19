@@ -358,6 +358,7 @@ module Lain
       # @return [self]
       def <<(event)
         turn_boundary if boundary?(event)
+        observe_progress(event) if event.is_a?(Telemetry::ChildProgress)
         observe(event) if event.respond_to?(:kind)
         self
       end
@@ -402,6 +403,7 @@ module Lain
       def start_ledgers
         @seen = Set.new
         @windows = {}
+        @unnamed = Set.new
         @overflow = []
         @unverified = []
         @opened = 0
@@ -448,13 +450,36 @@ module Lain
       # The two members that DO dedup are the ones that repeat across every
       # window, and they are frozen in {#initialize} instead.
       def open_window(record, digest)
-        name = "#{window_role(record)}-#{short(digest)}".freeze
+        role = @role_for.call(record)
+        @unnamed << digest unless role
+        name = window_name(window_role(role || FALLBACK_ROLE), digest)
         command = PaneCommand.call(*@watch_argv, digest).freeze
         @windows[digest] = name
         @opened += 1
         @pump.enqueue(Pump::Open.new(command:, name:, session: @session, cwd: @cwd))
         @unverified << Pump::Check.new(target: window_target(name), digest:, window: name, command:)
       end
+
+      # The spawn record names no role, so a window opened without a role seam
+      # carries the fallback until the child's progress record, which follows
+      # it, says what it is. A window the seam named is left as it was.
+      def observe_progress(record)
+        window = @windows[record.spawn]
+        return unless window && record.role && @unnamed.delete?(record.spawn)
+
+        role = window_role(record.role.split(" (", 2).first)
+        rename_window(record.spawn, window, window_name(role, record.spawn))
+      end
+
+      def rename_window(digest, from, name)
+        @windows[digest] = name
+        @pump.enqueue(Pump::Mark.new(target: window_target(from), title: name))
+        @unverified = @unverified.map { |check| check.digest == digest ? retargeted(check, name) : check }
+      end
+
+      def retargeted(check, name) = check.with(target: window_target(name), window: name)
+
+      def window_name(role, digest) = "#{role}-#{short(digest)}".freeze
 
       def hold_back(record, digest)
         @overflow << { "digest" => digest, "role" => @role_for.call(record), "watch" => watch_line(digest) }
@@ -523,13 +548,11 @@ module Lain
         @unverified = []
       end
 
-      def role_of(record) = @role_for.call(record) || FALLBACK_ROLE
-
       # Allowlisted to [A-Za-z0-9 _-] because tmux format-expands `new-window
       # -n` names (a role spelling `#{pane_pid}` would render as a PID in the
       # status line), and `.` / `:` are pane/window separators inside the
       # `=name` rename target -- either silently swallows the done marker.
-      def window_role(record) = role_of(record).gsub(/[^A-Za-z0-9 _-]/, "-")
+      def window_role(role) = role.gsub(/[^A-Za-z0-9 _-]/, "-")
 
       # "blake3:5aaa1111…" -> "5aaa1111": the algorithm prefix earns nothing
       # in a status line; the watch COMMAND keeps the full digest.

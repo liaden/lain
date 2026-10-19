@@ -525,6 +525,30 @@ RSpec.describe Lain::Approval::Queue do
       expect(pending_records.map { |record| record.fetch("requester") }).to eq(%w[researcher agent])
     end
 
+    it "keeps the key on the record and the label a surface shows on the pending" do
+      child = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
+      Sync do |task|
+        run = task.async { queue.call(tool_call, asked_by(child)) }
+        @pending = queue.dequeue
+        @pending.approve(surface: "spec")
+        run.wait
+      end
+
+      expect([@pending.requester, @pending.label]).to eq(["dev", "dev (gherkin-tests)"])
+      expect(pending_records).to contain_exactly(a_hash_including("requester" => "dev"))
+    end
+
+    it "labels a context that names nobody as the queue's own requester" do
+      Sync do |task|
+        run = task.async { queue.call(tool_call, nil) }
+        @pending = queue.dequeue
+        @pending.approve(surface: "spec")
+        run.wait
+      end
+
+      expect(@pending.label).to eq("agent")
+    end
+
     it "carries the queue's default requester when the context names nobody" do
       parked(nil)
 
@@ -1269,7 +1293,7 @@ RSpec.describe Lain::Approval::Queue do
     # collaborator here has one) fails right here.
     it "takes no ledger, so `decide` has nothing to release into" do
       expect(described_class::Pending.instance_method(:initialize).parameters)
-        .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key timeout],
+        .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key label], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
                 %i[key judge_deferred], %i[key notes]])
     end

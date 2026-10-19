@@ -124,7 +124,7 @@ module Lain
       # {Malformed} does.
       def report_role_bound(env, invocation)
         result = @role_spawn.call(invocation.role, invocation.context, expand(invocation),
-                                  model: declared_model(invocation))
+                                  model: declared_model(invocation), skill: invocation.skill)
         short_circuit(env, result.content)
       end
 

@@ -34,21 +34,25 @@ module Lain
       # rung must DUCK-TYPE on the context and never type-test it. A context
       # nobody wrapped names nobody, which is the parent's own turn.
       class Requested < SimpleDelegator
-        # @return [String] the asking requester's name, the key a remembered denial is held under
-        attr_reader :requester
+        # @return [Requester] who is asking, with the label and skill a surface shows
+        attr_reader :identity
 
         # @return [String, nil] the task the asking child was spawned with, in its parent model's words
         attr_reader :task
 
         # @param context [Object] the context the policy seam already threads
-        # @param requester [Requester, String] who is asking, kept by name only; anything but a bare word is
-        #   refused here by {Requester}'s rule, at the one place it cannot be degraded away
+        # @param requester [Requester, String] who is asking; anything but a bare word is refused here by
+        #   {Requester}'s rule, at the one place it cannot be degraded away
         # @param task [String, nil] the task the asking child was spawned with
         def initialize(context, requester, task: nil)
-          @requester = Requester.of(requester).key
+          @identity = Requester.of(requester)
           super(context)
           @task = task && -task.to_s
         end
+
+        # @return [String] the asking requester's name, the key a remembered denial is held under and the
+        #   journal edge
+        def requester = identity.key
       end
 
       attr_reader :current

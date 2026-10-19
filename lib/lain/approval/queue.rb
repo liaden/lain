@@ -127,8 +127,11 @@ module Lain
       # Single-shot, first-answer-wins -- two surfaces racing over one pending
       # is normal operation, so the loser's answer is a quiet no-op here and NOT
       # the coordination bug {Promise::AlreadyResolved} names.
+      #
+      # `label` is for display only; `requester` is the key a denial is held
+      # under and what the journal keeps.
       class Pending
-        attr_reader :requester, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd,
+        attr_reader :requester, :label, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd,
                     :within, :timeout, :reason
 
         # Defaulting here is NOT the ledger's no-default rule bent: a defaulted
@@ -151,9 +154,9 @@ module Lain
         # judging that path lands it where the gate did; absent, it is the
         # process's, as for a call made with no session. `within` is where the
         # gate counted directory names from, see {Sensitivity::Policy.base_of}.
-        def initialize(effect:, requester:, clock:, timeout: DEFAULT_TIMEOUT, outstanding: Outstanding::NONE,
-                       humans_only: false, cwd: ::Lain::Session.cwd_of(nil), within: cwd, wall: -> { Time.now },
-                       judge_deferred: false, notes: [])
+        def initialize(effect:, requester:, clock:, label: requester, timeout: DEFAULT_TIMEOUT,
+                       outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
+                       within: cwd, wall: -> { Time.now }, judge_deferred: false, notes: [])
           @timeout = timeout
           @judge_deferred = judge_deferred == true
           @notes = notes.map { -_1.to_s }.freeze
@@ -161,15 +164,21 @@ module Lain
           @humans_only = humans_only == true
           @cwd = cwd
           @within = within
-          @tool = effect.name
-          @tool_use_id = effect.tool_use_id
-          @input = effect.input
+          take(effect)
           @outstanding = outstanding || Outstanding::NONE
           @requester = requester
+          @label = label
           @clock = clock
           @asked_at = clock.call
           @promise = Promise.new
         end
+
+        def take(effect)
+          @tool = effect.name
+          @tool_use_id = effect.tool_use_id
+          @input = effect.input
+        end
+        private :take
 
         # Answers whether THIS answer won; a later answer returns false and
         # changes nothing. Latency is stamped decision-side, so it measures how
@@ -388,6 +397,15 @@ module Lain
         context.respond_to?(:requester) ? context.requester : fallback
       end
 
+      # The role and skill a surface shows beside the name; {.requester_for} is the key.
+      #
+      # @param context [Object, nil] the context a call is judged in
+      # @param fallback [String] who is asking when the context names nobody
+      # @return [String]
+      def self.label_for(context, fallback = REQUESTER)
+        context.respond_to?(:identity) ? context.identity.to_s : fallback
+      end
+
       # Where a call's path lands, spelled one way for both the recording and
       # the lookup; nil for a path no tool could resolve either.
       #
@@ -483,7 +501,8 @@ module Lain
       # lock-freedom rests on `<<` and `enqueue` staying straight-line with no
       # yield point between them.
       def admit(effect, context, outstanding)
-        pending = Pending.new(effect:, requester: Queue.requester_for(context, @requester), clock: @clock,
+        pending = Pending.new(effect:, requester: Queue.requester_for(context, @requester),
+                              label: Queue.label_for(context, @requester), clock: @clock,
                               timeout: @timeout, wall: @wall, outstanding:, humans_only: Escalation.barred?(context),
                               judge_deferred: context.respond_to?(:judge_deferred?) && context.judge_deferred?,
                               notes: context.respond_to?(:parked_because) ? context.parked_because : [],

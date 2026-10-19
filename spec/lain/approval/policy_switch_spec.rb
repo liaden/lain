@@ -173,6 +173,13 @@ RSpec.describe Lain::Approval::PolicySwitch do
       expect(wrapped("researcher").requester).to eq("researcher")
     end
 
+    it "keeps a Requester whole behind the name, so the label a surface shows survives" do
+      child = Lain::Requester.new(name: "researcher", role: "researcher", skill: "gherkin-tests")
+      asked = wrapped(child)
+
+      expect([asked.requester, asked.identity.to_s]).to eq(["researcher", "researcher (gherkin-tests)"])
+    end
+
     it "carries the task the child was spawned with, and none when it was given none" do
       tasked = described_class.new(session, "researcher", task: "find the flaky spec")
 

@@ -118,6 +118,59 @@ RSpec.describe Lain::CLI::FleetWindows do
     end
   end
 
+  # The :spawn names no role, so a window opened on it can only carry the
+  # fallback; the role arrives on the child's progress record, which follows.
+  describe "a window named from the child's progress record" do
+    let(:nameless) { described_class.new(surface:, notice: notices, spawner:) }
+
+    def progress(role, spawn: spawn_digest)
+      Lain::Telemetry::ChildProgress.new(spawn:, turns: 0, role:, task_line: "go")
+    end
+
+    it "renames the fallback window for the role the child announces" do
+      nameless << spawn_record
+      nameless << progress("researcher")
+      nameless.drain_pending
+
+      expect(rename_argvs).to eq([["tmux", "rename-window", "-t", "=subagent-5aaa1111", "researcher-5aaa1111"]])
+    end
+
+    it "names the window for the role alone when a skill runs it" do
+      nameless << spawn_record
+      nameless << progress("test_engineer (gherkin-tests)")
+      nameless.drain_pending
+
+      expect(rename_argvs.map(&:last)).to eq(["test_engineer-5aaa1111"])
+    end
+
+    it "marks the renamed window done under its new name" do
+      nameless << spawn_record
+      nameless << progress("researcher")
+      nameless << farewell_record
+      nameless.drain_pending
+
+      expect(rename_argvs.last).to eq(["tmux", "rename-window", "-t", "=researcher-5aaa1111",
+                                       "researcher-5aaa1111 [done]"])
+    end
+
+    it "renames nothing for a progress record that only counts turns, or for a spawn it never windowed" do
+      nameless << spawn_record
+      nameless << Lain::Telemetry::ChildProgress.new(spawn: spawn_digest, turns: 1, head:)
+      nameless << progress("researcher", spawn: "blake3:6bbb111122223333")
+      nameless.drain_pending
+
+      expect(rename_argvs).to be_empty
+    end
+
+    it "leaves a window the role seam already named alone" do
+      fleet << spawn_record
+      fleet << progress("researcher")
+      fleet.drain_pending
+
+      expect(rename_argvs).to be_empty
+    end
+  end
+
   describe "window per actor" do
     it "names the window for its role plus the digest short form, running lain watch on the full digest" do
       fleet << spawn_record

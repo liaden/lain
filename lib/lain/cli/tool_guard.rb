@@ -338,7 +338,7 @@ module Lain
       # @param chronicle [CLI::Chronicle] as on {.stack}
       # @param board [CLI::Switchboard] as on {.stack}
       # @param worker_env [WorkerEnv] the environment the child runs in
-      # @param requester [String] who a human is told is asking
+      # @param requester [Requester, String] who a human is told is asking
       # @param task [String, nil] what the child was spawned to do
       # @return [Middleware::Stack]
       def child_stack(chronicle, board, worker_env, requester:, task: nil)
@@ -412,6 +412,7 @@ module Lain
       # any builder is also held to.
       def layered(chronicle, inputs, roots, policy, requester: nil, held: [])
         journal = chronicle.instrumentation.journal
+        requester &&= Requester.of(requester).key
         Middleware::Gate.closes!(
           Middleware::Stack.new([*configured(inputs), Middleware::ConfineToScope.new(scope: inputs.scope), *held,
                                  Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
