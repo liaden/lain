@@ -77,6 +77,7 @@ module Lain
       GUARDED_TOOLS = Set["read_file"].freeze
 
       COMMAND_TOOLS = Set["bash"].freeze
+      OUTPUT_TRAILER = "%<count>d %<noun>s masked in this command's output; a command's output cannot be released."
 
       # A row is a partial view, so its regions are masked and never parked: a park per
       # matched file would turn one search into a queue of prompts, and
@@ -287,14 +288,20 @@ module Lain
       end
 
       def printed(carried, result)
-        output = Output.new(result.text, secrets: session_secrets(carried.fetch(:context)))
-        return carried unless output.masked?
+        mask = ::Lain::Sensitivity::TextMask.new(secrets: session_secrets(carried.fetch(:context)))
+        text, count = mask.call(result.text)
+        return carried unless count.positive?
 
-        masked = carried.merge(result: Tool::Result.new(content: output.to_s, is_error: result.error?))
+        masked = carried.merge(result: Tool::Result.new(content: with_trailer(text, count), is_error: result.error?))
         record(Telemetry::CommandRedacted) do
-          Telemetry::CommandRedacted.new(tool_use_id: carried.fetch(:effect).tool_use_id, regions: output.count)
+          Telemetry::CommandRedacted.new(tool_use_id: carried.fetch(:effect).tool_use_id, regions: count)
         end
         masked
+      end
+
+      def with_trailer(text, count)
+        lead = text.end_with?("\n") ? text : "#{text}\n"
+        lead + format(OUTPUT_TRAILER, count:, noun: count == 1 ? "region was" : "regions were")
       end
 
       def session_secrets(context)
@@ -738,40 +745,6 @@ module Lain
         def resolved(label) = Session.normalize_path(label, cwd: @anchor)
 
         def file?(path) = @directory ? File.file?(path) : path == @base
-      end
-
-      # One command's output as one {Rows::Row}, so a region and every
-      # recurrence of it, raw or escaped, mask alike. A secret-named value
-      # joins as a {Literal}, found only by its recurrences.
-      class Output
-        TRAILER = "%<count>d %<noun>s masked in this command's output; a command's output cannot be released."
-
-        Literal = Data.define(:bytes)
-
-        # Matches no detected region, so only its recurrences mask.
-        class Literal
-          def digest = nil
-        end
-
-        # @param text [String] the command's output
-        # @param secrets [Array<String>] values masked wherever they appear
-        def initialize(text, secrets:)
-          row = Rows::Row.new(prefix: "", text:, path: nil, regions: ::Lain::Sensitivity::Regions.detect(text))
-          @text, @count = row.masked(row.regions + secrets.map { Literal.new(bytes: _1) }, (1..).each)
-          freeze
-        end
-
-        # @return [Integer] how many spans were masked
-        attr_reader :count
-
-        # @return [Boolean] whether anything was masked
-        def masked? = @count.positive?
-
-        # @return [String] the masked output, then the trailer saying how much was masked
-        def to_s
-          lead = @text.end_with?("\n") ? @text : "#{@text}\n"
-          lead + format(TRAILER, count: @count, noun: @count == 1 ? "region was" : "regions were")
-        end
       end
     end
   end
