@@ -912,7 +912,7 @@ three places, and each answers a different question. All three read one `Shell::
    A lineage that cannot be read answers every path fresh. Every bash call
    journals an `exec_resolution` record before it runs, whatever the arms, and the child env drops
    `LD_PRELOAD`, `LD_AUDIT`, `BASH_FUNC_*` and `CDPATH` (`Exec::ChildEnv`) so an exported function never
-   reaches the shell. `LD_LIBRARY_PATH` stays: the child Ruby needs it for OpenSSL.
+   reaches the shell. `LD_LIBRARY_PATH` is dropped too, and passed only by name (`LAIN_ENV_PASS`).
 
    Under `--exec docker` the file that runs is in the image, so `Exec::Docker::Resolver` answers from the
    image's own files. Every call asks `docker image inspect` for the ID, `Config.Env` and `Config.Entrypoint`

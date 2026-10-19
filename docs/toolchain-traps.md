@@ -79,7 +79,9 @@ along with two more Ractor crashes (#22075, #22084).
 
 The installed 4.0.6 was configured against Homebrew's OpenSSL (3.6) but has no
 RPATH, so at runtime it resolves the system `libcrypto.so.3` (3.0.13) and dies with
-`version OPENSSL_3.4.0 not found`. The `LD_LIBRARY_PATH` export in `CLAUDE.md`'s toolchain block is the workaround. The fix is to
+`version OPENSSL_3.4.0 not found`. The `LD_LIBRARY_PATH` export in `CLAUDE.md`'s toolchain block is the workaround for lain itself.
+Bash children no longer inherit it; only on a machine whose children need it, also export
+`LAIN_ENV_PASS=LD_LIBRARY_PATH`. The fix is to
 rebuild against the system OpenSSL, which is what the runtime linker picks anyway:
 
 ```bash

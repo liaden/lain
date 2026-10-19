@@ -27,6 +27,7 @@ eval "$(mise env -s bash ruby@4.0.6)"
 export LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib   # OpenSSL; see toolchain-traps
 export TMPDIR="$HOME/tmp/lain"                          # same filesystem as the repo, required
 export LAIN_SPEC_WORKERS=12                             # .envrc is gitignored; a worktree gets none
+# export LAIN_ENV_PASS=LD_LIBRARY_PATH                  # only where a bash child's Ruby needs it; this box does not
 ```
 
 ```bash

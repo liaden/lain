@@ -50,8 +50,8 @@ module Lain
       RUN = [CLI, "run", "--rm", "--quiet", "--init"].freeze
 
       # An ALLOWLIST, because a denylist is the wrong shape for an unbounded
-      # problem: the ten-name one this replaced missed `LD_LIBRARY_PATH` (this
-      # repo's OWN required export), `GEM_HOME`, `RUBYLIB`, `TMPDIR`,
+      # problem: the ten-name one this replaced missed `LD_LIBRARY_PATH`,
+      # `GEM_HOME`, `RUBYLIB`, `TMPDIR`,
       # `XDG_RUNTIME_DIR` and `SSH_AUTH_SOCK`, every one a HOST path absent
       # inside the container. {Exec.child_env} keeps `GEM_*` DELIBERATELY so the
       # child finds its gems; that is a host fact and it reverses here, which is

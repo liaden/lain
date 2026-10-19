@@ -74,7 +74,8 @@ module Lain
     # command names, so the paths an approval rung read off it would be wrong.
     SHELL_ENV = /\ACDPATH\z/
 
-    # LD_LIBRARY_PATH is deliberately NOT here: the child Ruby needs it for OpenSSL.
+    # A host library path changes which libraries every child binary loads,
+    # so a child gets it only when LAIN_ENV_PASS names it.
     LOADER_ENV = /\A(?:LD_PRELOAD|LD_AUDIT)\z/
 
     # An exported bash function replaces a command the approval rungs named.

@@ -26,7 +26,7 @@ module Lain
       # rootless daemon; {Docker}'s own client runs through {Local} and needs
       # them, and {Docker::CROSSES} keeps them out of the container.
       KEEP = /\A(?:PATH|HOME|USER|LOGNAME|SHELL|PWD|TMPDIR|LANG|LC_[A-Z]+|TZ|TERM|COLORTERM|NO_COLOR|CI|
-                 GIT_CONFIG_(?:GLOBAL|NOSYSTEM)|LD_LIBRARY_PATH|GEM_[A-Z_]+|MISE_[A-Z_]+|CARGO_HOME|RUSTUP_HOME|
+                 GIT_CONFIG_(?:GLOBAL|NOSYSTEM)|GEM_[A-Z_]+|MISE_[A-Z_]+|CARGO_HOME|RUSTUP_HOME|
                  XDG_[A-Z_]+|SSL_CERT_(?:FILE|DIR)|LAIN_[A-Z_]+|
                  DOCKER_(?:HOST|CONTEXT|CONFIG|CERT_PATH|TLS_VERIFY)|CONTAINER_(?:HOST|CONNECTION))\z/x
 

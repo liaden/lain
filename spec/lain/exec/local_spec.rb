@@ -212,10 +212,18 @@ RSpec.describe Lain::Exec::Local do
       end
     end
 
-    it "keeps LD_LIBRARY_PATH, because the child Ruby needs OpenSSL" do
+    it "withholds LD_LIBRARY_PATH from the child" do
       with_env("LD_LIBRARY_PATH" => "/tmp/lain-libs") do
-        expect(run("env").stdout).to include("LD_LIBRARY_PATH=/tmp/lain-libs\n")
+        expect(run("printenv LD_LIBRARY_PATH").stdout).to eq("")
       end
+    end
+
+    it "lends LD_LIBRARY_PATH when LAIN_ENV_PASS names it" do
+      env = { "LD_LIBRARY_PATH" => "/tmp/lain-libs", "LAIN_ENV_PASS" => "LD_LIBRARY_PATH" }
+      passing = described_class.new(child_env: Lain::Exec::ChildEnv.from(env))
+
+      expect(passing.call(command: "printenv LD_LIBRARY_PATH", cwd: Dir.pwd, env:, timeout: 10).stdout)
+        .to eq("/tmp/lain-libs\n")
     end
 
     it "keeps GEM_HOME, because the child still has to find its gems" do

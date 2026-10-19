@@ -40,11 +40,18 @@ RSpec.describe Lain::Exec::ChildEnv do
 
     it "keeps the toolchain, each with its value" do
       toolchain = { "PATH" => "/usr/bin", "HOME" => "/home/u", "LANG" => "C.UTF-8", "TERM" => "xterm",
-                    "TMPDIR" => "/home/u/tmp", "LD_LIBRARY_PATH" => "/opt/lib", "GEM_HOME" => "/home/u/gems",
+                    "TMPDIR" => "/home/u/tmp", "GEM_HOME" => "/home/u/gems",
                     "MISE_SHELL" => "zsh", "MISE_DATA_DIR" => "/home/u/.mise", "CARGO_HOME" => "/home/u/.cargo" }
       kept = described_class.new(env: toolchain)
 
       expect(kept.call(toolchain)).to eq(toolchain)
+    end
+
+    it "withholds LD_LIBRARY_PATH unless it is passed by name" do
+      env = { "LD_LIBRARY_PATH" => "/opt/lib" }
+
+      expect(described_class.new(env:).call(env)).to eq("LD_LIBRARY_PATH" => nil)
+      expect(described_class.new(pass: %w[LD_LIBRARY_PATH], env:).call(env)).to eq(env)
     end
 
     it "keeps the isolated git config the specs set" do
