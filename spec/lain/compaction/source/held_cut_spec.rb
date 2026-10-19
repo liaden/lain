@@ -154,6 +154,41 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
       expect(on(line).seam.collapses).to eq(cut.collapses)
     end
 
+    describe "#kept" do
+      def round(id, body)
+        [["assistant", [{ "type" => "tool_use", "id" => id, "name" => "read", "input" => {} }]],
+         ["user", [{ "type" => "tool_result", "tool_use_id" => id, "content" => body }]]]
+      end
+
+      def asking
+        [["user", [block(1)]], ["assistant", [block(2)]], ["user", [{ "type" => "text", "text" => "the ask" }]],
+         *round("call-1", "answered"), *round("call-2", "unanswered")]
+          .inject(Lain::Timeline.empty) { |line, (role, content)| line.commit(role:, content:) }
+      end
+
+      def texts(messages) = messages.map { |message| message["content"].first.values_at("text", "content").compact }
+
+      it "is the ask and the round nothing has answered yet" do
+        kept = on(asking).kept(pins: Lain::Context::PinnedMessages::NONE)
+
+        expect(texts(kept)).to eq([["the ask"], [], ["unanswered"]])
+      end
+
+      it "keeps a pinned turn in its place" do
+        messages = on(asking).walk.messages
+        pins = Lain::Context::PinnedMessages.new([messages.first], candidates: messages)
+
+        expect(texts(on(asking).kept(pins:)).first).to eq([block(1)["text"]])
+      end
+
+      it "is empty when there is nothing left to hand off" do
+        line = asking
+        hand_off(line)
+
+        expect(on(line).kept(pins: Lain::Context::PinnedMessages::NONE)).to be_empty
+      end
+    end
+
     describe "#holds_newest?" do
       it "is false with no cut on the chain" do
         expect(on(timeline(6))).not_to be_holds_newest

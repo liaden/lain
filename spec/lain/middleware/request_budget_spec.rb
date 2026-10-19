@@ -217,6 +217,42 @@ RSpec.describe Lain::Middleware::RequestBudget do
 
       expect(records.first).to include("spawn" => nil)
     end
+
+    # A handoff keeps the round nothing has answered yet whole, and a rewind
+    # past it withdraws the reads the ask still wants, so when that round
+    # alone outgrows the context the one move left is to read less at once.
+    describe "when the newest tool round alone outgrows the context" do
+      def round(body)
+        Lain::Request.new(model:, max_tokens: 64, system: "be terse", messages: [
+                            { "role" => "user", "content" => [{ "type" => "text", "text" => "read them. " * 200 }] },
+                            { "role" => "assistant",
+                              "content" => [{ "type" => "tool_use", "id" => "call-1", "name" => "read_file",
+                                              "input" => { "path" => "app.rb" } }] },
+                            { "role" => "user",
+                              "content" => [{ "type" => "tool_result", "tool_use_id" => "call-1",
+                                              "content" => body }] }
+                          ])
+      end
+
+      let(:message) { refused(round("x" * 113_614), prompt_tokens: 86_685, window_tokens: 32_768).message }
+
+      it "says what the round alone comes to and how to read less of it" do
+        expect(message).to include(". The newest tool round alone is about 85000 tokens; read fewer files at " \
+                                   "once or use offset and limit.")
+      end
+
+      it "offers none of the moves that cannot shrink the round" do
+        expect(message).not_to include("/rewind", "/unpin", "compaction")
+        expect(message.lines.size).to eq(1)
+      end
+
+      it "keeps the usual moves when the round would fit by itself" do
+        fitting = refused(round("x" * 10_000), prompt_tokens: 34_000, window_tokens: 32_768).message
+
+        expect(fitting).to include("/rewind", "/unpin", "narrower")
+        expect(fitting).not_to include("newest tool round")
+      end
+    end
   end
 
   # The same middleware in front of a spawned child, where both halves of the

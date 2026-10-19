@@ -186,6 +186,20 @@ module Lain
                                                          pins: at_indices(pins.indices_in(@walk.messages))))
         end
 
+        # What a handoff keeps verbatim whatever its document says: the ask,
+        # the pins and the round nothing has answered yet, in chain order.
+        # Empty when there is nothing to hand off, so no handoff is declined
+        # that was never going to run.
+        #
+        # @param pins [Context::PinnedMessages] this turn's pins
+        # @return [Array<Hash>] projected messages
+        def kept(pins:)
+          handed = handoff_ranges(pins).flat_map(&:to_a).to_set
+          return NOTHING if handed.empty?
+
+          @walk.messages.reject.with_index { |_, index| handed.include?(index) }
+        end
+
         # The state the newest held handoff cut wrote, exactly as it recorded
         # it: the next handoff must carry it whole, and reading it back into
         # fields would lose whatever an older writer put there.

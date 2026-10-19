@@ -137,6 +137,12 @@ module Lain
         LARGER_CONTEXT = "; the system prompt and tools alone come to about %<fixed>d tokens, so start with a " \
                          "larger --num-ctx"
 
+        # Said instead of the moves when the round nothing has answered yet
+        # outgrows the context by itself: a handoff keeps that round whole, and
+        # a rewind past it takes back the reads the ask still wants.
+        OVERSIZED_ROUND = ". The newest tool round alone is about %<round>d tokens; read fewer files at once or use " \
+                          "offset and limit"
+
         # @param compaction [#droppable?] the run's per-turn Context source
         def initialize(compaction: Agent::PipelineSource::Null)
           @compaction = compaction
@@ -150,12 +156,35 @@ module Lain
         def spawn = nil
 
         def moves(error, request)
-          moves = @compaction.handed_off? ? HANDED_OFF : MOVES.fetch(@compaction.droppable?)
+          moves = room_moves(error, request)
           fixed = fixed_tokens(error, request)
           fixed < error.window_tokens ? "#{moves}." : "#{moves}#{format(LARGER_CONTEXT, fixed:)}."
         end
 
         private
+
+        def room_moves(error, request)
+          round = round_tokens(error, request)
+          return format(OVERSIZED_ROUND, round: round.round(-3)) if round >= error.window_tokens
+
+          @compaction.handed_off? ? HANDED_OFF : MOVES.fetch(@compaction.droppable?)
+        end
+
+        # Over the messages alone, the base {Compaction::Source#handoff} measures its kept
+        # set on: that set adds the ask and the pins to this round, and the screen
+        # rounds this round to the nearest 1000, so the two figures differ by both.
+        def round_tokens(error, request)
+          round = request.messages.last(2)
+          return 0 unless tool_round?(round)
+
+          error.prompt_tokens * Canonical.dump(round).bytesize / Canonical.dump(request.messages).bytesize
+        end
+
+        def tool_round?(round)
+          round.size == 2 && round.zip(%w[tool_use tool_result]).all? do |message, type|
+            Array(message["content"]).any? { |block| block.is_a?(Hash) && block["type"] == type }
+          end
+        end
 
         # The share of the provider's exact count the system prompt and the
         # tool schemas account for, by their share of the request's canonical

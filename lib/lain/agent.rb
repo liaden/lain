@@ -744,7 +744,7 @@ module Lain
 
     def retry_refused(refused, stands_on, on_stream_started, render, spent)
       accounting.observe_refusal(prompt_tokens: refused.error.prompt_tokens, head: stands_on)
-      room = room_after(spent)
+      room = room_after(spent, refused.error)
       raise refused.error unless room
 
       attempt(stands_on, on_stream_started, render, spent: [*spent, room], refused:)
@@ -754,16 +754,20 @@ module Lain
     # ordinary compaction has nothing left to offer, so the two never both
     # answer. The compaction retry is only ever the first retry: once a
     # handoff has replaced the history there is nothing older for it to drop.
-    def room_after(spent)
-      return :handoff if !spent.include?(:handoff) && handed_off
+    def room_after(spent, refusal)
+      return :handoff if !spent.include?(:handoff) && handed_off(refusal)
 
       :compaction if spent.empty? && @instrumentation.pipeline_source.droppable?
     end
 
     # Asks the run's compaction source for room and answers whether it made
     # any. Past tense and no `?`, because this COMMITS: a handoff cut lands
-    # here, and a predicate name would read as a question about state.
-    def handed_off = @instrumentation.pipeline_source.handoff(timeline: @timeline, session: @session)
+    # here, and a predicate name would read as a question about state. The
+    # refusal goes with the ask, because whether a handoff can help at all is
+    # measured against the count it carries.
+    def handed_off(refusal)
+      @instrumentation.pipeline_source.handoff(timeline: @timeline, session: @session, refusal:)
+    end
 
     # Composing the Workspace with the session's live reminders per render keeps
     # same-args-same-bytes; the args simply now vary with session state. Session

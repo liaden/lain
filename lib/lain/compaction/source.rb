@@ -55,6 +55,14 @@ module Lain
       # measurement. {Scheduler} journals the richer accounting, but only when
       # it compacts.
       #
+      # `handoff` is `"declined"`, and `kept_tokens` the reason, on the one
+      # decision written after a refusal rather than before a render: the
+      # handoff fallback would have kept that many of the refused count's
+      # tokens verbatim, at least the window, so its summarizer call could buy
+      # nothing. Both are nil on every other decision. That one carries the
+      # refusal's own figures and counts no summaries, because the render
+      # before it already journaled its own and a tally sums every decision.
+      #
       # `would_not_shrink` names the one refusal a reader could not otherwise
       # tell from a plain defer: the signals fired, the scheduler said now, and
       # the rewrite would not have made the prompt smaller. Not `would_inflate`
@@ -108,8 +116,10 @@ module Lain
       CompactionDecision = Data.define(:compacted, :signals, :head_bytes,
                                        :summary_hits, :summary_misses, :misses_all_size_declined, :cold,
                                        :would_not_shrink, :window_tokens, :used_tokens, :provenance,
-                                       :nothing_droppable) do
+                                       :nothing_droppable, :handoff, :kept_tokens) do
         include Telemetry::Journalable
+
+        def initialize(handoff: nil, kept_tokens: nil, **) = super
       end
 
       # Null Object for the summary store: a run with no oracle wired takes a
@@ -362,6 +372,16 @@ module Lain
           @rendering = nil
         end
 
+        # Journaled and nothing else: a decline after a refusal says nothing
+        # about what the next render could drop, or about a stall.
+        #
+        # @param decision [CompactionDecision] the declined handoff's
+        # @return [self]
+        def handoff_declined(decision)
+          @journal << decision
+          self
+        end
+
         # Keyed to the chain's head so a render of another chain on a shared Source cannot take it.
         #
         # @param head_digest [String, nil] the head of the chain the handoff covered
@@ -595,14 +615,27 @@ module Lain
       # that by answering an empty plan, so this asks every time and a later
       # ask whose new turns are what overflowed still gets one.
       #
+      # The handoff keeps the ask, its pins and the unanswered round verbatim,
+      # so when those alone come to the refused window it declines before the
+      # summarizer is asked: the document could only be written beside them.
+      #
       # @param timeline [Timeline] the chain the refused render stood on
       # @param session [Session] the run's, which records the cut
+      # @param refusal [Lain::WindowExceeded] the refusal that asked, whose
+      #   exact count and window the kept set is measured against
       # @return [Boolean] whether a handoff cut committed on THIS call
-      def handoff(timeline:, session:)
+      def handoff(timeline:, session:, refusal:)
         held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
         return false if droppable?
 
-        committed = @fallback.call(held_cut, pins: session_pinned(held_cut.walk, session))
+        pins = session_pinned(held_cut.walk, session)
+        kept = kept_tokens(held_cut, pins, refusal)
+        if kept >= refusal.window_tokens
+          @reporting.handoff_declined(declined(held_cut, pins, refusal, kept))
+          return false
+        end
+
+        committed = @fallback.call(held_cut, pins:)
         # Latched, never assigned: a later attempt that could make no room does
         # not unsay a handoff that really happened. The history it replaced is
         # still replaced, and the refusal's words have to go on saying so.
@@ -654,6 +687,26 @@ module Lain
       end
 
       private
+
+      HANDOFF_DECLINED = "declined"
+      private_constant :HANDOFF_DECLINED
+
+      # The kept messages' byte share of what the refused render sent, applied
+      # to the provider's exact count: proportional and so approximate, which
+      # is enough to tell a set several windows wide from one that fits.
+      def kept_tokens(held_cut, pins, refusal)
+        kept = Canonical.dump(held_cut.kept(pins:)).bytesize
+        refusal.prompt_tokens * kept / Canonical.dump(held_cut.messages).bytesize
+      end
+
+      def declined(held_cut, pins, refusal, kept_tokens)
+        head = Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:)
+        CompactionDecision.new(compacted: false, signals: [], head_bytes: head.bytesize, summary_hits: 0,
+                               summary_misses: 0, misses_all_size_declined: false, cold: @cold.cold?,
+                               would_not_shrink: false, window_tokens: refusal.window_tokens,
+                               used_tokens: refusal.prompt_tokens, provenance: ContextWindow::PROBED,
+                               nothing_droppable: head.empty?, handoff: HANDOFF_DECLINED, kept_tokens:)
+      end
 
       def prepared_cut(base:, timeline:, usage:, session:)
         before = session.compaction_cuts.last

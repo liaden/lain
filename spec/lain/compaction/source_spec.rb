@@ -2880,9 +2880,15 @@ RSpec.describe Lain::Compaction::Source do
         end
     end
 
+    # A refusal whose kept set fits on every chain here but the oversized one
+    # below, so the handoff these examples are about is never declined.
+    def refusal(prompt_tokens: 9_000, window_tokens: 8_192)
+      Lain::Middleware::RequestBudget::OverWindow.new("refused", prompt_tokens:, window_tokens:, source: "ollama")
+    end
+
     def refused_render(built, line)
       context_for(built, line)
-      built.handoff(timeline: line, session:)
+      built.handoff(timeline: line, session:, refusal:)
     end
 
     def replacement_text(messages)
@@ -3154,7 +3160,7 @@ RSpec.describe Lain::Compaction::Source do
         line = timeline
         built = source
 
-        expect(built.handoff(timeline: line, session:)).to be(false)
+        expect(built.handoff(timeline: line, session:, refusal:)).to be(false)
         expect(cuts).to be_empty
       end
     end
@@ -3259,7 +3265,7 @@ RSpec.describe Lain::Compaction::Source do
         grown = grow(timeline(12), 6)
         context_for(built, grown)
 
-        expect(built.handoff(timeline: grown, session:)).to be(false)
+        expect(built.handoff(timeline: grown, session:, refusal:)).to be(false)
         expect(cuts.map { |record| record["kind"] }).to eq(["advance"])
         expect(oracle.asks).to be_empty
       end
@@ -3272,7 +3278,7 @@ RSpec.describe Lain::Compaction::Source do
         complete_a_step(session, 2)
         context_for(built, grown)
 
-        expect(built.handoff(timeline: grown, session:)).to be(true)
+        expect(built.handoff(timeline: grown, session:, refusal:)).to be(true)
       end
 
       describe "after a cut prepared while the human was away" do
@@ -3289,7 +3295,7 @@ RSpec.describe Lain::Compaction::Source do
           grown = grow(line, 6)
           context_for(built, grown)
 
-          expect(built.handoff(timeline: grown, session:)).to be(false)
+          expect(built.handoff(timeline: grown, session:, refusal:)).to be(false)
           expect(cuts.map { |record| record["kind"] }).to eq(["advance"])
         end
       end
@@ -3355,7 +3361,7 @@ RSpec.describe Lain::Compaction::Source do
         context_for(built, line)
         allow(session).to receive(:record_compaction_cut).and_raise(IOError, "no space left on device")
 
-        expect { built.handoff(timeline: line, session:) }.to raise_error(IOError, /no space left/)
+        expect { built.handoff(timeline: line, session:, refusal:) }.to raise_error(IOError, /no space left/)
       end
 
       it "lets a raise from the range computation through" do
@@ -3364,7 +3370,7 @@ RSpec.describe Lain::Compaction::Source do
         context_for(built, line)
         allow(Lain::IntervalPartition).to receive(:covering).and_raise(NoMethodError, "undefined method for nil")
 
-        expect { built.handoff(timeline: line, session:) }.to raise_error(NoMethodError)
+        expect { built.handoff(timeline: line, session:, refusal:) }.to raise_error(NoMethodError)
       end
     end
 
@@ -3383,6 +3389,96 @@ RSpec.describe Lain::Compaction::Source do
       refused_render(built, timeline)
 
       expect(records.map { |record| record["type"] }).not_to include("memory_write", "memory_root")
+    end
+
+    # A handoff keeps the ask and its unanswered round whole, so when those
+    # alone overflow the window the document cannot make room, and writing it
+    # would only spend a summarizer call before the same refusal.
+    describe "when what the handoff must keep already overflows the window" do
+      def refusal(prompt_tokens:, window_tokens: 32_768)
+        Lain::Middleware::RequestBudget::OverWindow.new("refused", prompt_tokens:, window_tokens:, source: "ollama")
+      end
+
+      # The round 26 shape: one completed round of history, then a tool round of
+      # 113,614 result bytes nothing has answered yet.
+      def oversized_round
+        [["user", [block(1)]],
+         ["assistant", [{ "type" => "tool_use", "id" => "call-2", "name" => "read", "input" => { "n" => 2 } }]],
+         ["user", [{ "type" => "tool_result", "tool_use_id" => "call-2", "content" => tool_body(2) }]],
+         ["assistant", [{ "type" => "tool_use", "id" => "call-4", "name" => "read", "input" => { "n" => 4 } }]],
+         ["user", [{ "type" => "tool_result", "tool_use_id" => "call-4", "content" => "x" * 113_614 }]]]
+          .inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (role, content)|
+            line.commit(role:, content:)
+          end
+      end
+
+      def refused_at(built, line, prompt_tokens)
+        context_for(built, line)
+        built.handoff(timeline: line, session:, refusal: refusal(prompt_tokens:))
+      end
+
+      it "asks no summarizer, commits no cut, and answers that it made no room" do
+        line = oversized_round
+        built = handing_off
+
+        expect(refused_at(built, line, 86_685)).to be(false)
+        expect(oracle.asks).to be_empty
+        expect(cuts).to be_empty
+        expect(built.handed_off?).to be(false)
+      end
+
+      it "keeps the history, so the next render sends the same turns" do
+        line = oversized_round
+        built = handing_off
+        refused_at(built, line, 86_685)
+
+        expect(render(context_for(built, line), line).messages.size).to eq(line.to_a.size)
+      end
+
+      it "records the decline and the kept set's share of the refused count" do
+        line = oversized_round
+        built = handing_off
+        refused_at(built, line, 86_685)
+
+        expect(decisions.last).to include("handoff" => "declined", "compacted" => false)
+        expect(decisions.last["kept_tokens"]).to be_within(1_000).of(85_000)
+      end
+
+      it "records nothing of a handoff on an ordinary decision" do
+        context_for(handing_off, oversized_round)
+
+        expect(decisions.last).to include("handoff" => nil, "kept_tokens" => nil)
+      end
+
+      it "declines on a chain this source has not rendered yet" do
+        line = oversized_round
+        built = handing_off
+
+        expect(built.handoff(timeline: line, session:, refusal: refusal(prompt_tokens: 86_685))).to be(false)
+        expect(decisions.last).to include("handoff" => "declined", "used_tokens" => 86_685,
+                                          "window_tokens" => 32_768)
+      end
+
+      # The render before it already journaled its own hits and misses, and a
+      # tally sums every decision, so a copy of them would count them twice.
+      it "counts no summary hits or misses of its own" do
+        line = tool_timeline
+        built = handing_off(keep_last: 2, need: build_need(byte_threshold: 100), hard_cap: 100)
+        context_for(built, line)
+        built.handoff(timeline: line, session:, refusal: refusal(prompt_tokens: 1_000_000))
+
+        expect(decisions.first["summary_misses"]).to eq(1)
+        expect(decisions.last).to include("handoff" => "declined", "summary_hits" => 0, "summary_misses" => 0,
+                                          "misses_all_size_declined" => false)
+      end
+
+      it "still hands off when the kept set fits, though the whole prompt did not" do
+        line = asking_timeline
+        built = handing_off
+
+        expect(refused_at(built, line, 40_000)).to be(true)
+        expect(cuts.map { |record| record["kind"] }).to eq(["handoff"])
+      end
     end
   end
 

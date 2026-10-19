@@ -427,6 +427,10 @@ other cut — one record of `kind: handoff`, the document positioned where the r
 began and the later ranges collapsing to empty content — and replayed like one, so `--resume`
 renders what the live run sent. `--compact-fallback` chooses between it and `Fallback::None`, and
 a chain that has handed off does not regain the `keep_last` tail by advancing past it.
+A handoff declines without its summarizer call when what it must keep (the ask, an unanswered tool round
+and the pins) already comes to the refused window, by its byte share of the provider's exact count; that
+decision is journaled again with `handoff: "declined"` and `kept_tokens`, and the refusal then says how large
+the newest tool round alone is.
 
 The summarizer sees every turn in its range that no held cut covers. That set is read off the held
 cuts' spans, not off the newest cut's position, because a strategy may leave a lone human turn

@@ -175,6 +175,51 @@ module HandoffSeam
   end
 end
 
+module HandoffSeam
+  # Reads one file larger than the whole window, so the round it answers can
+  # never fit beside a document or without one.
+  class BigRead < Lain::Tool
+    BYTES = 113_614
+
+    def name = "big_read"
+    def description = "Reads one large file."
+    def input_schema = { type: :object, properties: {} }
+    def perform(_input, _context) = Lain::Tool::Result.ok("x" * BYTES)
+  end
+
+  # Answers the opening exchange, reads the large file when asked to, and
+  # refuses every render carrying that read at the round 26 figures.
+  class OversizedRound < Recorded
+    def initialize = super(refusing: false)
+
+    def complete(request)
+      @requests << request
+      text = Lain::Canonical.dump(request.messages)
+      return summary if text.include?("no longer fits its context window")
+      raise round_refusal if text.include?("x" * 1_000)
+
+      text.include?("read it") ? read : settled
+    end
+
+    private
+
+    def round_refusal
+      Refusal.new("request (86685 tokens) exceeds the available context size",
+                  prompt_tokens: 86_685, window_tokens: 32_768, source: "ollama")
+    end
+
+    def read
+      Lain::Response.new(content: [{ "type" => "tool_use", "id" => "call-1", "name" => "big_read", "input" => {} }],
+                         stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2))
+    end
+
+    def settled
+      Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }], stop_reason: :end_turn,
+                         usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2))
+    end
+  end
+end
+
 RSpec.describe "a handoff when no cut can make room", :seam do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
@@ -471,6 +516,25 @@ RSpec.describe "a handoff when no cut can make room", :seam do
         expect(of_type("compaction_cut").drop(advances).map { |cut| cut["kind"] }.last).to eq("handoff")
         expect(of_type("compaction_cut").map { |cut| cut["kind"] }).not_to include("collapse")
       end
+    end
+  end
+
+  # The handoff keeps the unanswered round whole, so a round larger than the
+  # window by itself is one no document can make room beside.
+  describe "a tool round too big for the window by itself" do
+    let(:provider) { HandoffSeam::OversizedRound.new }
+    let(:toolset) { Lain::Toolset.new([HandoffSeam::BigRead.new]) }
+
+    it "declines the handoff, asks no summarizer, and words the refusal by the round" do
+      chat = agent(handing_off)
+      chat.ask("hello")
+
+      expect { chat.ask("read it") }
+        .to raise_error(Lain::Middleware::RequestBudget::OverWindow,
+                        /newest tool round alone is about \d+ tokens; read fewer files at once/)
+      expect(of_type("compaction_cut")).to be_empty
+      expect(of_type("oracle_answer") + of_type("oracle_failed")).to be_empty
+      expect(of_type("compaction_decision").last).to include("handoff" => "declined", "used_tokens" => 86_685)
     end
   end
 
