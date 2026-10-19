@@ -439,8 +439,15 @@ module Lain
                                      "buffer is set to expandtab, shiftwidth=2)"
           end
 
+          refuse_free_text_stray!(number, text) if @question.free_text?
+
           raise MalformedDocument, "line #{number}: #{text.inspect} is neither an option line nor a comment " \
                                    "(a comment is indented two spaces; an option line reads `- [ ] `id` label`)"
+        end
+
+        def refuse_free_text_stray!(number, text)
+          raise MalformedDocument, "line #{number}: #{text.inspect} is not indented -- write your answer on a " \
+                                   "line indented two spaces below the question"
         end
       end
     end

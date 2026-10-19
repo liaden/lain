@@ -367,6 +367,15 @@ RSpec.describe Lain::Question::Document do
         .to raise_error(Lain::Question::MalformedDocument, /line 5.*"stray".*neither an option line nor a comment/m)
     end
 
+    it "tells a free-text question's stray line to indent its answer, without the option grammar" do
+      stray = document.sub("Anything else?\n", "Anything else?\n\nblue\n")
+
+      expect { parse(stray) }.to raise_error(
+        Lain::Question::MalformedDocument,
+        a_string_matching(/"blue".*indented two spaces below the question/m).and(satisfy { |m| !m.include?("option") })
+      )
+    end
+
     # Both halves of `refuse_stray!` are pinned on a phrase only that half says.
     # They were not: both messages carried "two spaces", so collapsing the tab
     # branch into the generic one survived the whole suite. An assertion both
