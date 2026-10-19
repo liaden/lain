@@ -284,9 +284,10 @@ module Lain
       #
       # @param head [String, nil]
       # @param reason [Symbol] one of {Telemetry::RunInterrupted::REASONS}
+      # @param status [Integer, nil] the HTTP status a rejected request earned
       # @return [self]
-      def interrupted(reason:, head: @written.head)
-        record = Telemetry::RunInterrupted.new(head:, reason:)
+      def interrupted(reason:, head: @written.head, status: nil)
+        record = Telemetry::RunInterrupted.new(head:, reason:, status:)
         @journal << record
         @live << record
         self

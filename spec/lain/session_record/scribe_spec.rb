@@ -404,6 +404,14 @@ RSpec.describe Lain::SessionRecord::Scribe do
       expect(live).to eq([Lain::Telemetry::RunInterrupted.new(head: line.head_digest, reason: :stopped)])
     end
 
+    it "tells the status a rejected run carried" do
+      scribe.catch_up(line)
+
+      scribe.interrupted(reason: :rejected, status: 404)
+
+      expect(live.first.status).to eq(404)
+    end
+
     it "keeps telling it nothing else: turns stay record data" do
       scribe.catch_up(line)
 

@@ -12,13 +12,20 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
     expect(described_class.new(head: nil, reason: :torn)).to be_deeply_frozen
   end
 
+  it "carries the status a rejected request earned, and leaves it off a record that has none" do
+    expect(described_class.new(head: nil, reason: :rejected, status: 404).to_journal)
+      .to include("reason" => :rejected, "status" => 404)
+    expect(described_class.new(head: nil, reason: :torn).to_journal).not_to have_key("status")
+    expect(described_class.new(head: nil, reason: :torn).status).to be_nil
+  end
+
   # Its own enum, NOT {SessionClosed}'s. That one has nowhere to put a
   # provider stall, and its `:exit`/`:salvaged` describe how a SESSION ended,
   # which no interrupted run can be. The overlap is exactly
   # {CLI::Conductor::INTERRUPT_REASONS}, the two a signal-driven close carries.
   it "pins its own reason enum, distinct from a session's" do
     expect(described_class::REASONS)
-      .to eq(%i[interrupted grace_expired stopped ceiling over_window transport stalled_stream torn])
+      .to eq(%i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn])
     expect(described_class::REASONS).not_to eq(Lain::Telemetry::SessionClosed::REASONS)
     expect(described_class::REASONS).to include(*Lain::CLI::Conductor::INTERRUPT_REASONS)
   end
@@ -27,7 +34,7 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
     expect { described_class.new(head: nil, reason: :nonsense) }
       .to raise_error(ArgumentError,
                       "reason must be one of [:interrupted, :grace_expired, :stopped, :ceiling, :over_window, " \
-                      ":transport, :stalled_stream, :torn], " \
+                      ":transport, :rejected, :stalled_stream, :torn], " \
                       "got :nonsense")
   end
 
@@ -35,7 +42,7 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
     expect { described_class.new(head: nil, reason: nil) }
       .to raise_error(ArgumentError,
                       "reason must be one of [:interrupted, :grace_expired, :stopped, :ceiling, :over_window, " \
-                      ":transport, :stalled_stream, :torn], " \
+                      ":transport, :rejected, :stalled_stream, :torn], " \
                       "got nil")
   end
 

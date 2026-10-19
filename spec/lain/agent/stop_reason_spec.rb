@@ -69,7 +69,28 @@ RSpec.describe Lain::Agent::StopReason do
     # The request's own fault -- a bad key, a model the server does not have --
     # fails the same way every time, which no transport does.
     it "does not name a status the request itself earned" do
-      expect(described_class.for(status_error(401))).to eq(:torn)
+      expect(described_class.for(status_error(401))).not_to eq(:transport)
+    end
+  end
+
+  describe "a request the provider rejected by its own status" do
+    it "names a bad key and a model the server does not have" do
+      expect(described_class.for(status_error(401))).to eq(:rejected)
+      expect(described_class.for(status_error(404))).to eq(:rejected)
+    end
+
+    it "leaves a momentary or server-side status to the transport" do
+      expect([408, 429, 503].map { |status| described_class.for(status_error(status)) }).to all(eq(:transport))
+    end
+  end
+
+  describe ".status" do
+    it "answers the status a rejected request earned" do
+      expect(described_class.status(status_error(404))).to eq(404)
+    end
+
+    it "answers nothing for a failure that carries no status" do
+      expect(described_class.status(Lain::Error.new("x"))).to be_nil
     end
   end
 

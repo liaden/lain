@@ -227,6 +227,12 @@ RSpec.describe Lain::CLI::Repl::Ask do
       expect(chronicle).to have_received(:interrupted).with(head: "sha-head", reason: :stalled_stream)
     end
 
+    it "journals the status of a request the provider rejected" do
+      ask.settle(Lain::Provider::Ollama::APIStatusError.new("model not found", status: 404))
+
+      expect(chronicle).to have_received(:interrupted).with(head: "sha-head", reason: :rejected, status: 404)
+    end
+
     it "follows a stall's error with the variable that waits longer" do
       ask.settle(wrapped_stall)
 

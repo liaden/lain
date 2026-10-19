@@ -665,6 +665,12 @@ RSpec.describe Lain::CLI::Chronicle do
         .to eq(%w[session turn rewound run_interrupted])
     end
 
+    it "journals the status a rejected request earned beside its reason" do
+      chronicle.interrupted(head: timeline.head_digest, reason: :rejected, status: 404)
+
+      expect(of_type("run_interrupted").first).to include("reason" => "rejected", "status" => 404)
+    end
+
     it "catch_up journals the render chain; interrupted and close record the stop and the anchor" do
       chronicle.catch_up(timeline)
       chronicle.interrupted(head: timeline.head_digest, reason: :grace_expired)
@@ -826,6 +832,16 @@ RSpec.describe Lain::CLI::Chronicle do
                                                          landing: folded.head_digest),
                              Lain::Telemetry::RunInterrupted.new(head: timeline.head_digest, reason: :stopped)])
         expect(tee_records).to be_empty
+      end
+
+      it "tells the views the status a rejected request earned" do
+        views = []
+        null.wrap_tee(views)
+
+        null.interrupted(head: timeline.head_digest, reason: :rejected, status: 404)
+
+        expect(views).to eq([Lain::Telemetry::RunInterrupted.new(head: timeline.head_digest, reason: :rejected,
+                                                                 status: 404)])
       end
     end
 

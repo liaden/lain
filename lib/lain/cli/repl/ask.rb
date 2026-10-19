@@ -116,7 +116,8 @@ module Lain
         def record_interruption(error)
           @unfold.call if error.is_a?(Lain::Withdrawal) && error.withdrawn?
           @chronicle.catch_up(@agent.timeline)
-          @chronicle.interrupted(head: @agent.timeline.head_digest, reason: Agent::StopReason.for(error))
+          stop = { reason: Agent::StopReason.for(error), status: Agent::StopReason.status(error) }.compact
+          @chronicle.interrupted(head: @agent.timeline.head_digest, **stop)
         end
 
         # The Agent is about to send a turn cut from the stranded turn's parent.

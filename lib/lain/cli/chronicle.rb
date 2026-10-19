@@ -81,8 +81,8 @@ module Lain
           self
         end
 
-        def interrupted(head:, reason:)
-          @live << Telemetry::RunInterrupted.new(head:, reason:)
+        def interrupted(head:, reason:, status: nil)
+          @live << Telemetry::RunInterrupted.new(head:, reason:, status:)
           self
         end
 
@@ -399,9 +399,10 @@ module Lain
       #
       # @param head [String, nil] the last committed turn the torn run ran from
       # @param reason [Symbol] one of {Telemetry::RunInterrupted::REASONS}
+      # @param status [Integer, nil] the HTTP status a rejected request earned
       # @return [self]
-      def interrupted(head:, reason:)
-        scribe.interrupted(head:, reason:)
+      def interrupted(head:, reason:, status: nil)
+        scribe.interrupted(head:, reason:, status:)
         self
       end
 

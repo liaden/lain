@@ -12,14 +12,17 @@ module Lain
     # The order is part of the answer. A stop wins wherever it sits in the
     # causes, because an interrupt can unwind through any other failure. A stall
     # is asked before the transport, because a stall reaches an ask wrapped in
-    # the provider's own APIError and survives only as its cause.
+    # the provider's own APIError and survives only as its cause. A status is
+    # asked after the transport, which has already taken the momentary and
+    # server-side ones, so the statuses left are the request's own fault.
     module StopReason
       RULES = {
         stopped: ->(chain) { chain.any?(Lain::Stopped) },
         ceiling: ->(chain) { chain.first.is_a?(Budget::Exceeded) },
         over_window: ->(chain) { chain.first.is_a?(WindowExceeded) },
         stalled_stream: ->(chain) { chain.any?(Provider::HTTP::Streaming::StalledStreamError) },
-        transport: ->(chain) { StopReason.transport?(chain.first) }
+        transport: ->(chain) { StopReason.transport?(chain.first) },
+        rejected: ->(chain) { chain.first.is_a?(Provider::ErrorWrapping::Status) }
       }.freeze
 
       TORN = [:torn].freeze
@@ -30,6 +33,14 @@ module Lain
       def self.for(error)
         chain = Enumerator.produce(error, &:cause).take_while(&:itself)
         RULES.find(-> { TORN }) { |_reason, applies| applies.call(chain) }.first
+      end
+
+      # Only {CLI::Repl::Ask} reads it: the one other caller, Conductor#stopped, is handed a
+      # {Lain::Stopped}, which never carries a status.
+      # @param error [Exception]
+      # @return [Integer, nil] the HTTP status the provider answered, if it did
+      def self.status(error)
+        error.status if error.is_a?(Provider::ErrorWrapping::Status)
       end
 
       # The two client statuses that fail for the moment rather than for the

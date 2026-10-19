@@ -625,10 +625,10 @@ the harness's own typed reasons for a *stopped ask* are below.
 ### Why an ask stopped, and what happens to the prompt
 
 `Agent::StopReason` (`lib/lain/agent/stop_reason.rb`) classifies whatever the ask raised against
-its whole cause chain and answers one of `stopped`, `ceiling`, `over_window`, `stalled_stream`
-and `transport`, defaulting to `torn` when nothing matches. That symbol is what
-`Telemetry::RunInterrupted` records, over the closed
-`REASONS = %i[interrupted grace_expired stopped ceiling over_window transport stalled_stream torn]`
+its whole cause chain and answers one of `stopped`, `ceiling`, `over_window`, `stalled_stream`,
+`transport` and `rejected` (a status the request itself earned, kept beside it as `status`),
+defaulting to `torn` when nothing matches. That symbol is what `Telemetry::RunInterrupted` records, over the closed
+`REASONS = %i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn]`
 — the first two come from Ctrl-C and the shutdown window rather than from an ask. It is a
 different enum from `Lain::StopReason`, which is the model's own wire-level stop.
 

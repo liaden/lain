@@ -11,12 +11,15 @@ module Lain
     # human interrupted, a fleet the shutdown window closed on, and a stream the
     # model stopped feeding all leave the identical hole, and only the first two
     # are anybody's decision.
-    RunInterrupted = Data.define(:head, :reason) do
+    RunInterrupted = Data.define(:head, :reason, :status) do
       include Journalable
 
-      def initialize(head:, reason: :torn)
-        super(head: head&.dup&.freeze, reason: self.class.reason!(reason))
+      def initialize(head:, reason: :torn, status: nil)
+        super(head: head&.dup&.freeze, reason: self.class.reason!(reason), status:)
       end
+
+      # Left off when nil, so a record with no status is the line it always was.
+      def to_journal = super.compact
     end
 
     class RunInterrupted
@@ -30,12 +33,12 @@ module Lain
       # `:salvaged` is a later process's verdict on a file -- while it has
       # nowhere to put a stall. The overlap is intended.
       #
-      # The middle five are what {Agent::StopReason} reads off the error an
+      # The middle six are what {Agent::StopReason} reads off the error an
       # ask ended with. `:torn` is the honest residue and the default, because
       # it is the only thing every stopped run is known to have in common: a
       # record built with no classification says the unclassified thing rather
       # than borrowing a narrower one it cannot support.
-      REASONS = %i[interrupted grace_expired stopped ceiling over_window transport stalled_stream torn].freeze
+      REASONS = %i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn].freeze
 
       # Mirrors {SessionClosed.reason!}, nil-tolerance included: a guard that
       # refuses differently from its sibling is one a reader has to check
