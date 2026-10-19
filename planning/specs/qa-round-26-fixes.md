@@ -2688,8 +2688,9 @@ Spec file: `spec/lain/review/critique_spec.rb`, `spec/lain/oracle/handoff_spec.r
 
 ### T89: Set the output ceiling per model, with `--max-tokens` as an override          [risk: high]
 
-**Depends on:** T58, T63
-**Files:** `lib/lain/output_ceiling.rb` (new), `spec/lain/output_ceiling_spec.rb` (new), `lib/lain/cli/backend.rb`, `lib/lain/cli/backend/ceiling.rb`, `lib/lain/session_record.rb`, `spec/lain/cli/backend_spec.rb`, `spec/lain/session_record_spec.rb`, `spec/lain/cli/chat_flags_spec.rb`, `spec/lain/cli_spec.rb`
+**Depends on:** T58, T63, T61 (added at execution: both edit `compaction/source.rb`)
+**Files:** `lib/lain/output_ceiling.rb` (new), `spec/lain/output_ceiling_spec.rb` (new), `lib/lain/cli/backend.rb`, `lib/lain/cli/backend/ceiling.rb`, `lib/lain/session_record.rb`, `spec/lain/cli/backend_spec.rb`, `spec/lain/session_record_spec.rb`, `spec/lain/cli/chat_flags_spec.rb`, `spec/lain/cli_spec.rb`, `lib/lain/compaction/source.rb`, `spec/lain/compaction/source_spec.rb` (added at execution)
+**Added at execution (from T87's review):** `Compaction::Source#need_for` (`source.rb:771-775`) passes `reply_ceiling:` (the chat's ceiling) to `Need#check`, so an authoritative 32,768 window triggers `ApproachingWindow` at 28,672; a `source_spec` example pins it. A guessed window already withdraws the trigger there.
 **Reuse:** `ContextWindow`'s shipped table and its served-window lookup, `Backend#max_tokens` (`backend.rb:761`), `Ceiling`'s refusal of non-positive values
 **Shared-file wiring:** `exe/lain:421` and `:465-468`: `--max-tokens` defaults to unset (auto) instead of 16,384; `docs/commands.md`: the ceiling comes from the model, and `--max-tokens` overrides it. The card applies the `exe/lain` diff in its own worktree, so `chat_flags_spec.rb:161-164` and `cli_spec.rb:1132,1152` (which pin 16,384) run against it, and hands the diff back
 **Reachable from:** `exe/lain` `chat` -> `CLI::ChatLaunch` -> `Backend#max_tokens` -> `Context.new(max_tokens:)` (`backend.rb:391`); children inherit it (`context.rb:168-170`)
@@ -2949,3 +2950,12 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   The suite cannot run beside other tests (shared `TMPDIR`); each worktree gets its own `TMPDIR` under `~/tmp/lain/`.
   A worktree has no `lib/lain/lain.so`; it is copied from the main checkout at cut. Paths needing user approval:
   none known.
+- 09:20 T1, T20, T36, T58, T25, T26, T27, T21, T4, T87 started, cut from `359852e1`.
+- 09:25 T79, T50 started, cut from `359852e1`.
+- 09:28 T58 plan-gap: scenario 3's resume notice is built only in `cli/resume/mismatch_notices.rb`; its Files gain that file and `spec/lain/cli/resume/mismatch_notices_spec.rb`.
+- 09:35 T87 review: `Need#check(reply_ceiling:)` has no production caller and no card owned it. Ruled: T89 owns the `Source#need_for` wiring (Files and Depends widened, T61 added for `source.rb`); T87 lands as written.
+- 09:40 T50 ruling (main session): the read side matches the union of the old assignment rule and the new compound-literal rule under the old reason name; the write side and Discretion use the new rule alone. Prose quoting `DATABASE_PASSWORD=hunter2` is masked on read, as a credential-shaped line should be.
+- 09:41 T21 landed `9511397e`.
+- 09:44 T22, T23, T3, T7, T8, T9, T10, T11, T12, T13, T17, T18, T60, T64 started, cut from `9511397e`; T66, T78 cut, waiting on a free agent slot (the harness allows 20).
+- 09:45 T60 plan-gap: the preamble and heading are constants in `oracle/handoff.rb`; Files gain it, `spec/lain/seams/handoff_spec.rb` and `spec/lain/compaction/source_spec.rb`.
+- 09:45 T22 plan-gap: nothing in its Files knows the arm or task to stamp. Ruled: widen to `telemetry/sandbox.rb` (nil-defaulted `arm`, `task`), `bench/spawn_seam.rb` and the arm driver path, stamping where the arm is known.
