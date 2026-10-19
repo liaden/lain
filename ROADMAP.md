@@ -2085,6 +2085,14 @@ XDG path relative, which put machine state back inside the user's repository)
    backend and child environment per launch, the entropy test and the literal choice as named units. 15 cards, panel-reviewed.
    Follow-ups left open: an ADO.NET `Password=pw;Database=x` value is not masked when `pw` is printed alone; only pass-listed
    names are scanned, not `KEEP` names or lent values under other names; `Config` readers build their own `Paths` over `ENV`.
+65. **Planned (2026-10-19)**: `planning/specs/qa-round-26-fixes.md`, the QA round-26 discharge
+   (`planning/qa-findings-round26-2026-10-18.md`): Ctrl-C over a typed line clears it in the pane and in a plain chat,
+   a leased run with no human refuses a bash command it cannot read, bash output masked on the live display, failing
+   tests never offered or accepted as an implementation, compound credential names refused and `memory_read` masked,
+   `--no-compact` recorded and honoured on resume, an orphaned verify killed by the next suite-lock holder, every
+   acting agent named with its role and skill, and `max_tokens` split into a per-model output ceiling and one reply
+   reserve, which a per-round tool-result budget, a handoff that declines when it cannot help and an opt-in stub arm
+   build on. 93 cards, panel-reviewed.
 
 ## Map of the documents
 
