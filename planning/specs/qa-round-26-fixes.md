@@ -1,6 +1,6 @@
 # QA round 26 fixes: a Ctrl-C that only clears, a lease that refuses what it cannot read, and records that agree with the screen
 
-status: in-progress (panel-reviewed 2026-10-19)
+status: done (2026-10-19; 92 of 93 cards landed, T94 deferred to round 27)
 commit-mode: orchestrator-commits
 language: ruby (1 card edits nvim Lua: T11)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -2959,3 +2959,164 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 09:44 T22, T23, T3, T7, T8, T9, T10, T11, T12, T13, T17, T18, T60, T64 started, cut from `9511397e`; T66, T78 cut, waiting on a free agent slot (the harness allows 20).
 - 09:45 T60 plan-gap: the preamble and heading are constants in `oracle/handoff.rb`; Files gain it, `spec/lain/seams/handoff_spec.rb` and `spec/lain/compaction/source_spec.rb`.
 - 09:45 T22 plan-gap: nothing in its Files knows the arm or task to stamp. Ruled: widen to `telemetry/sandbox.rb` (nil-defaulted `arm`, `task`), `bench/spawn_seam.rb` and the arm driver path, stamping where the arm is known.
+- 09:48 T23 plan-gap: the run journal never reached `LiveArms.build`; the main session added `journal:` at the `bench/cli.rb` call as T23's wiring (T22 also edits that file; it rebases by patch).
+- 09:49 T64 plan-gap: `RunInterrupted` had no status member; ruled: add a nil-defaulted `status`, set where the record is built (Files widened to that site and any reader that rebuilds it).
+- 09:50 T36 landed `a1c764fb` (first attempt's suite was green at 25,405 examples; the commit failed only because the main session wrote the plan file while the hook ran).
+- 09:54 T87 landed `63a81455`.
+- 09:57 T4 landed `ba845208`.
+- 09:59 T26 landed `a68e65d7`. The main session probed: with `LD_LIBRARY_PATH` unset, Ruby loads OpenSSL and lain on this box, so the CLAUDE.md line is a commented example.
+- 10:02 T27 landed `21ded367`.
+- 10:20 T20 review: the opaque refusal also refuses in-lease commands `Shell::Named` cannot read: `FOO=1 rspec`, `env FOO=1 rspec`, `timeout 60 rspec`, `npm test`, `bundle --version`, `git -C sub status`, `echo $HOME`, `cd lib; ls`. Within the l26-1 ruling, so T20 lands; raised with the user as a follow-up on `Shell::Named` (env prefix and `timeout` wrappers). A leased refusal's tmpdir path can be masked by `RedactSecretReads`; production lease paths scan clean, follow-up for round 27.
+- 10:04 T28 plan-gap: `TextMask::Stream` held a partial line until finish (a progress bar showed nothing), and one Stream cannot serve stdout and stderr. Ruled: widen to `text_mask.rb` (cut at \r and past about 4 KiB outside a key block; 2 Streams sharing 1 numbering per command) and the 3 spec files whose Exec doubles break.
+- 10:10 T13 review: `cli/command/introspect.rb:158` prints occupancy raw (`370.0%` for 3.7); left as a debug view, a follow-up for round 27.
+- 10:35 T22 review: nothing reads a `run_arms` record; the loader takes arms from the header. Ruled: T22 keeps `"opaque" => "refused"` as informational; T59 (Files already hold `bench/session/loader.rb` and `bench/variance.rb`) gains the reader, refusing to pool runs whose `run_arms` opaque value differs or is missing.
+- 10:35 T42 review: the epic status vocabulary has no `ABANDONED` constant (`Epic::STORED_STATUSES`); literals in `epic_finish.rb` and `cli/epic.rb` follow the pattern. Follow-up for round 27.
+- 10:35 T19: other `Spike` git failures still double the "plan scope could not" prefix. Follow-up for round 27.
+- 10:18 T19 deviation: `cli/switchboard.rb` and its spec untouched; the doubled sentence came from `Spike`'s own message, and `plan_scope_spike_spec` pins it said once.
+- 10:19 T72 plan-gap: production never set the retry path; Files widened to both providers' `retry_tap.rb`.
+- 10:19 T32 plan-gap: the docker decision lives at `cli/wiring/toolset_build.rb:326`; Files widened to it and its spec.
+- 10:19 T34 plan-gap: an unmeasured compaction delta was indistinguishable from a real 0 inside `Compare`; Files widened to `compare/compaction_tally.rb` and its spec.
+- 10:22 T80 plan-gap: `lain land drain` builds its own verifier in `merge_coordinator/drain.rb:45` and its notices reach `drain.log` only through `CLI::Land#drain`. Ruled: T80's Files gain both; T80 is stacked on unlanded T79, T78 and T82; T81 now waits on T80 for `drain.rb`.
+- 10:23 T37 review: `Factory::RedOnly` judges red by net diff, `Epic::RedCommit#only?` by subject; a red commit amended to hold an implementation passes the driver and is refused at land. Ruled: keep the subject judge; follow-up for round 27.
+- 10:29 T38 review: `RedCommit#only?` failed open when the epic branch was missing; T38 widened to `epic/red_commit.rb` to judge the tip's subject then. T59 gains the run_arms opaque reader (see T22 ruling).
+- 10:32 T50 review REQUEST-CHANGES: the bare-value regexp backtracked quadratically and broke the call rule. Ruled: keep the old "dotenv assignment" reason name for real .env lines so journal counts do not shift.
+- 10:36 T28 ruling: past about 1 MiB of live output the display stops with 1 note line; the recorded result keeps its bound and masking (masking every live byte made a 200 MB flood 30 times slower).
+- 10:36 T30 plan-gap: `ToolGuard::Inputs` is built only in `Switchboard#initialize`; Files widened to `cli/switchboard.rb` and its spec.
+- 10:38 T25 landing red: 2 failures in `frontend/neovim/runtime/62_approval_spec.rb` (an Agent double lacking `preparing?`); a real failure, returned to the implementer.
+- 10:48 T13 landing red on `agent_spec` "holding no file descriptor of its own" (seed 40169): passed alone and 3 of 3 with the seed on base and card; recorded in `docs/toolchain-traps.md` (`f5633d04`), re-landed.
+- 10:49 T80 ruling: when the recorded leader is gone, signal the group if /proc shows members with that pgrp and the lain-verify- TMPDIR marker. T1 widened to `frontend/line_editor.rb` for the multiline clear.
+- 10:54 T53 REQUEST-CHANGES: a NUL or non-String grep path now raises in the middleware; a symlink to a gated file leaks rows (predates the card, round 27).
+- 10:55 T30: Files widened to `spec/lain/approval/escalation_spec.rb`, which pins the shell verdict sentence the card rewords.
+- 11:05 T65: Files widened to `spec/lain/telemetry/run_interrupted_spec.rb`; a malformed reply journals `run_interrupted` beside `malformed_response`, kept.
+- 11:05 T28 ruling: the record's `command_redacted` numbering follows arrival order across stdout and stderr, as the live display does.
+- 11:05 T50 ruling: the read side's new reason name "credential literal assignment" is signed off; old names stay stable.
+- 11:05 T41 review: `HomedGuard` rebuilds roots per decision; a restore example was asked for.
+- 11:06 T28 ruling revised: matching the record's numbering to arrival order needs `tool/result.rb` or a new Capture field; deferred to round 27. Live and recorded copies are each fully masked; only the placeholder numbers can differ when both streams carry secrets.
+- 11:12 T51 ruling: mask memory_read's body as written; the read-side dotenv rule also masks token_count = 123456 and blake3 digests (same as bash output today). Narrowing the rule to whole name segments is a round 27 follow-up.
+- 11:13 T70 REQUEST-CHANGES: the switched-model re-ask fired on the prior model's usage; ruled: Agent#occupancy withholds usage another model earned (agent.rb widened).
+- 11:23 T70 note: a resumed session switched with /model before its first reply still passes the old usage (`@replied_as` nil); round 27.
+- 11:26 T1 second review REQUEST-CHANGES (TERM=dumb swallowed an empty Ctrl-C); the user ruled a fix and a third review.
+- 11:37 T89 rulings: widened to `context.rb` (a ceiling slot read at render, so /model moves an untyped ceiling); the header records ceiling and source at launch from Backend; older Anthropic models that 400 past the window keep 16,384.
+- 11:39 T51 ruling revised after review: a masked memory item written back loses the masked values for good. Now: blake3 lineage digests stay unmasked in memory bodies, and a memory_write carrying a <redacted:N> placeholder is refused.
+- 11:42 T20 landing red on 2 flakes (the known agent fd example, and `Supervisor` drain bound, recorded `7c59499e`); re-landed.
+- 11:59 T1 approved after the third review; follow-up for round 27: a Ctrl-C right after Enter can meet a stale accepted line (a prompt-scoped StdinPump#typed?).
+- 12:33 T51 second review REQUEST-CHANGES (the model rewrote a masked item without its values). User ruling: refuse a memory_write that supersedes an item read masked this session; third review.
+- 12:34 T89: reply reserve capped at half the window (a 4,096 window fired ApproachingWindow every turn); claude-3-5-sonnet gets 8,192.
+- 13:00 T51 third review: a resumed session rewrote a masked item; user ruled to journal masked memory reads and rebuild on resume, then land after a short check.
+- 13:15 T89 review: T88 must land before T89 (an untyped ollama ceiling equal to the window made /critique refuse); T88 is in the current queue, T89 queues after it.
+- 13:27 T71 landing red: pane_command_spec counts every LAIN_ name and T71 names the retired LAIN_OLLAMA_CLOUD_CONCURRENCY; real failure, returned.
+- 13:47 T2 approved; round 27: the status line prints twice after a cancelled countdown (predates T2).
+- 14:07 T33 landing red: child_worktree_approval_spec 2 examples (seed 14657), fails alone: the refusal now comes from the output mask, not the shell verdict. Returned to implementer. queue9 started without it.
+- 14:08 T29 approved after spec-only review fixes.
+- 14:09 T14 review APPROVE-WITH-FIXES (2 naming nits, mechanical); fixes sent. Commit msg to note notices now follow the tty factory.
+- 14:10 T6 review APPROVE-WITH-FIXES; ruled: Files gain stdin_pump.rb, pass prompt kind (answer:) instead of [y/N] match, covers human>. Second review after (substantive).
+- 14:12 T33 landing fix: shell_denial skips :configured so the shell rung refuses it; second review started.
+- 14:13 T49 landing red: 3 examples (worktrees gc, bench arms --cheap-model, bench record) lose the trailing newline; fail alone. Returned. queue10 started (T29 appended).
+- 14:13 T6 fixes in (answer: kind passed; Reline row-1 echo accepted residual); second review started.
+- 14:16 T49 landing fix: render(newline: true) default restored, only show passes false; approved, mechanical. Re-queued.
+- 14:17 T6 approved on second review.
+- 14:18 T14 approved; fix 1 skipped (ClassLength 304/302), fix 2 applied.
+- 14:18 T15 started, stacked on T1 T2 T30 T14.
+- 14:21 T33 approved on second review. T15 stop: render_question is a separate, dead surface: left untouched (round 27: delete it); MAIN_AGENT and Queue::REQUESTER collapse to Requester.main; Files widened to any of Gate, RememberedDenials, Sensitivity or toolset_build that hard-code the main name.
+- 14:34 T80 approved on second review (docs re-wrap done by coordinator). T15 done: no widening needed; review next (high, opus).
+- 14:35 T81, T83, T84 started stacked on T80; T45 stacked on T41.
+- 14:38 T83 done; docs wiring applied; review (low) started.
+- 14:43 T81 done; review (medium) started.
+- 14:43 T84 done (verifier.rb widened, accepted); review (low) started.
+- 14:43 T83 approved.
+- 14:44 T84 review APPROVE-WITH-FIXES: spec-only speedup + docstring; sent, no second review needed.
+- 14:46 T62 found stopped and untracked (stop: new span moves the collapse record). Ruled: accept the new span if replay reads recorded digests, proven by a spec; else stop. Resumed.
+- 14:47 T84 approved after mechanical fixes.
+- 14:48 T62 resume done: replay reads recorded spans; review (medium) started.
+- 14:52 T81 fixes in, second review. T45 done; exe/lain wiring applied (render_failing) and docs; review (medium).
+- 15:00 T81 2nd review: a raise from ancestor? wedges the queue. User ruled: skip the supersede check on a git error and log it with the worker id; coordinator checks, no third panel.
+- 15:00 T15 review APPROVE-WITH-FIXES: 6 mechanical fixes plus role/skill check; Requested storing the Requester deferred to T16 (add to T16 brief). No second review unless the fixes grow.
+- 15:03 T81 approved after the user-ruling fix (coordinator-checked diff, no third panel).
+- 15:05 T62 review APPROVE-WITH-FIXES (mechanical); source_spec.rb named in commit msg.
+- 15:05 T15 approved after mechanical fixes (greenfield-epic.md scenario also updated).
+- 15:06 T16 started, stacked on T1 T2 T30 T14 T15; Files widened to policy_switch.rb (T15 review carry-over).
+- 15:08 T62 approved after mechanical fixes.
+- 15:08 queue11 chained after queue10: T62 T49 T33 T80 T83 T84 T81 T6 T14 T15 (does not start if queue10 STOPs).
+- 15:08 queue11 first chain matched its own pgrep and started T62 beside queue10; stopped before any commit (T69 landed 15:05, T62 applied 15:08), T62 unstaged, rechained on queue10's pid.
+- 15:09 T45 approved; finding 1 (no-remote after not-finished) accepted as is; WHY comment on render_failing added by coordinator.
+- 15:19 T16 partial: prompt half needs Pending label + 4 surfaces + skill_dispatch wiring. Ruled: Files widened to skill_dispatch.rb, approval/queue.rb, approval_policy.rb, repl/approval_surfaces.rb, neovim/approval_view.rb (no open card on them).
+- 15:32 queue10 STOP at T65: offload_spec sibling-fiber count 6/15, a documented flake; green alone, green with seed 57244 on base and on card; repeat recorded (29626dbe), round 27 card. queue12 started: T65 .. T45 (26 cards).
+- 15:44 T16 widened work done; review (medium) started.
+- 15:53 T16 review APPROVE-WITH-FIXES: 3 unpinned prompt sites (spec-only), doc nit; sent, no second review.
+- 15:54 T86, T57, T75 started, stacked on T1 T2 T30 T14 T15 T16.
+- 15:58 T16 approved after spec-only fixes.
+- 16:00 T75 done; review (medium) started.
+- 16:03 T75 approved; comment trimmed by coordinator; judge now reads the live checkout (uncommitted state included), accepted for a read-only judge.
+- 16:06 T57 done but tool_guard_spec pins the old phrase; Files widened to tool_guard_spec.rb.
+- 16:09 T57 widened fix in; review (medium) started.
+- 16:11 T86 done; review (medium) started.
+- 16:12 T57 review APPROVE-WITH-FIXES (1 spec pin, doc line, cosmetic); sent, no second review.
+- 16:13 T86 review APPROVE-WITH-FIXES: name in actor mode now refused loudly (coordinator ruling over silently dropped), 3 nits; coordinator checks the diff, no second panel. Round 27: two named children share one asker name.
+- 16:15 T57 approved after mechanical fixes.
+- 16:16 T86 approved after fixes (coordinator-checked actor-mode refusal).
+- 16:16 T76 started, stacked on T16 stack + T86.
+- 16:26 T76 done; review (low) started.
+- 16:29 T76 review APPROVE-WITH-FIXES: path parsed from exception text; ruled Scratch#acquire raises with the path and errno reason (Files widened to Scratch). Coordinator checks the diff.
+- 16:30 T46 started, stacked on T45.
+- 16:30 T93 started, stacked on T1 T2 T30 T14 T15 T89.
+- 16:33 T76 approved after the Scratch fix (coordinator-checked).
+- 16:34 queue12 STOP at T89: critique_spec 'a response reserve that leaves no room' expects 4096-token reserve, gets 2048 (T88 pinned it before T89 split ceiling and reserve); fails alone. T89 returned. queue13 started: T29 .. T76 (17 cards).
+- 16:34 T89 worktree gained 'stack base: T88' (coordinator commit) so its landing patch stays T89-only.
+- 16:37 T89 landing fix: critique_spec now expects the 2048 reply reserve (T88 pin was stale under T89's split); approved, coordinator-checked diff.
+- 16:39 T46 done (Run gained slug:); review (low) started.
+- 16:42 T46 approved.
+- 16:55 T93 done; exe/lain wiring in worktree, docs row added by coordinator; review (medium) started.
+- 16:59 T93 review APPROVE-WITH-FIXES (pin bench arms default; spec only).
+- 17:02 T94 started (opus), stacked on T93 chain.
+- 17:02 T93 approved.
+- 17:03 queue13 STOP at T80: run_clock_spec 'MONOTONIC is the only place in lib/ that names the monotonic clock primitive' (2 examples), deterministic; T80 returned; T81 T83 T84 held (stacked on T80). queue14: T6 T14 T15 T16 T57 T75 T86 T76 T89 T93 T45 T46.
+- 17:40 T94 stopped (stub must ride a cut); user skeptical the sketch honours the algebra; opus design review spawned.
+- 17:40 T80 landing fix (StaleGroup takes RunClock::MONOTONIC); approved. queue15 chained on queue14 pid 349956: T80 T83 T84 T81.
+- 17:40 queue14 landed T6 T14 T15 T16 T57; STOP at T75: judged_approval_spec 'tells the judge the project's working directory' gets the process cwd; fails alone. T75 returned. queue16: T86 T76 T89 T93 T45 T46 T80 T83 T84 T81.
+- 17:46 T94 DEFERRED to round 27 (user ruling): design review REQUEST-CHANGES (cut sketch breaks floor, keep_last, replay at the round, withheld reads); render-time mask recommended. Notes: r26logs/t94-design-review.md. T90 must not document --round-stub.
+- 17:49 T75 landing fix: RoleSpawn worker_env: from the session (toolset_build.rb widened); asked to read it at spawn time, not at build.
+- 17:50 T75: worker_env now a callable, but Judge#initialize builds never_parking once (judge.rb:118); Files widened to judge.rb; asked for a lazy cwd.
+- 17:53 T75 landing fix approved: lazy InPlace backend asks the chat's worker_env per acquire; Judge and adjudicator both covered.
+- 18:13 queue16 landed T86 T76 T89; STOP at T93: e2e wire_contract cassette stale because the window round budget is 0 bytes in an 8192 window (every result withheld); real defect from T92 formula + T93 default. Also shift_enter_newline_spec 'hands the next program a plain CR' red in suite, green alone (watch on re-land). T93 returned for measurement. queue17: T45 T46 T80 T83 T84 T81 T75.
+- 18:16 T93 measured: ReplyReserve floor 4096 = half of 8192 window; room -1631. Ruled: RoundBudget.window subtracts min(reserve, window/8); Files widened to tool/round_budget.rb; e2e must pass unrecorded.
+- 18:21 T93 landing fix in (window policy reserve capped at window/8; e2e passes unrecorded); approved; queue18 chained on queue17 pid.
+- 18:22 T90 started, stacked on the last 7 unlanded cards.
+- 18:31 T90 done; ROADMAP 65 Done (T94 deferred), ARCHITECTURE realpath applied by coordinator; method.md left (it is right; CLAUDE.md's LD_LIBRARY_PATH export points at a missing dir: round 27); review (low) started.
+- 18:32 T90 approved; rails-blog.md handoff heading fixed by coordinator.
+- 18:32 queue19 chained: T90 after every running queue.
+
+- 18:43 T90 landed `fd2ee224`, the last card. 92 of 93 landed; T94 deferred.
+- Close-out, 18:44 to 19:10, on a quiet box. `bundle exec rake pspec`: 25,909 examples, 0 failures, 13 pending,
+  against 25,393 at the base `23ebc111` (516 more, none lost). `pre-commit run --all-files`: every hook passed.
+  `bin/zeitwerk-census --check` and `bin/comment-census --check-tickets`: clean. `bin/spec-census --check`: assertions
+  186 over the ceiling of 184 at the base and at the tip alike, so no card raised it. `bin/lint-gherkin-docs` on this
+  plan: clean. No test, editor or tmux process was left behind. Every card worktree and `card/r26-*` branch is
+  removed; `git worktree list` is `main` alone, as at the start.
+
+### T94, deferred (user ruling 2026-10-19)
+
+The stub cannot edit a committed turn in place, so T94 stopped on its first stop condition. A design review of the
+cut-based sketch found it keeps the lossless DAG, the cached prefix and tool pairing, and breaks the rest: the floor
+jumps to the tip (`held_cut.rb:136`, `derivation.rb:330`), the keep_last exemption latches for good
+(`held_cut.rb:389`, `derivation.rb:449-450`), a resume at the round raises (`cli/resume.rb:337`), a handoff can no
+longer follow it (`held_cut.rb:307,200`), and `ReadSet#withhold` acts only on open rounds (`session.rb:976-990`).
+The round 27 card should be a render-time mask instead: a journaled record per stubbed result keyed by the delivering
+turn's digest and `tool_use_id` (and its bytes, since Ollama reuses ids), applied last over the rendered context like
+the inbox; a `ReadSet` transition that withholds a delivered read until re-read; `HeldCut#kept` measuring the masked
+messages; and a `:stub` room after `:handoff` in `Agent#room_after`. The stub text needs the paired call's gist,
+since `Oracle::Handoff.gist` of a result names only the call id (`oracle/handoff.rb:262`).
+
+### Round 27 follow-ups noted during the run
+
+- `Shell::Named` opacity for env prefixes and `timeout`; T28 placeholder numbering across stdout and stderr.
+- A symlink to `.env` leaking grep rows; the dotenv rule masking `token_count`.
+- `StdinPump#typed?(prompt)` for a stale line after Enter; the status line printed twice after a cancelled countdown.
+- A resumed `/model` before the first reply; `arm_sweep`'s 1-task check; other rerunnable readers.
+- `Epic::ABANDONED`; the spike's doubled prefix; introspect's raw occupancy; an amended red commit.
+- `TTY#render_question` has no caller in `lib/`: delete it.
+- Two named children running at once still ask under one asker name.
+- `Lain::Tool::Offload keeps a sibling fiber running while the work never gives up the lock between threads` went red
+  a second time (a wall-clock count starved by load): make it a card.
+- CLAUDE.md's `LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib` names a directory this box does not have; OpenSSL
+  loads without it, as `planning/qa/method.md` already says.
+- The manual pass in Integration checks is still owed.
