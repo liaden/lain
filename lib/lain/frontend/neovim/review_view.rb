@@ -199,7 +199,7 @@ module Lain
         # will never name a hunk and a binary file will never have one, where a
         # surveyed file has none only until somebody opens it. Told "there is
         # nothing here", a human stops looking.
-        UNREAD = "#{NAME} line %<line>d names %<path>s, which nothing has read -- open it with <CR> first".freeze
+        UNREAD = "#{NAME} line %<line>d names %<path>s, nothing has read it -- <CR> opens it".freeze
 
         # No hunk keys: every row that is not a file, and the frozen singleton
         # they all share rather than an Array each.
@@ -367,7 +367,7 @@ module Lain
           refusal = @changesets.open(row.path, row.line)
           return unopened(refusal) unless refusal.nil?
 
-          Opened.new(path: row.path, line: row.line, report: "opened #{row.path}:#{row.line}")
+          Opened.new(path: row.path, line: row.line, report: "opened #{displayed_path(row.path)}:#{row.line}")
         end
 
         def unopened(report) = Opened.new(path: nil, line: nil, report:)
@@ -388,11 +388,15 @@ module Lain
         # `== false` rather than a negation: `read` is nil for every row that is
         # not a file at all (and `row` itself is nil for a line naming none),
         # and all of those keep {NO_HUNK}.
-        def unmarkable(row, line) = row&.read == false ? format(UNREAD, path: row.path, line:) : format(NO_HUNK, line)
+        def unmarkable(row, line)
+          return format(NO_HUNK, line) unless row&.read == false
+
+          format(UNREAD, path: displayed_path(row.path), line:)
+        end
 
         def unmarked(report) = Marked.new(hunk_keys: NO_KEYS, report:)
 
-        def naming(row, keys) = "#{keys.size} hunk(s) of #{row.path}"
+        def naming(row, keys) = "#{keys.size} hunk(s) of #{displayed_path(row.path)}"
 
         # Newest first, bounded, and stamped with a generation that never
         # repeats -- a stamp that repeated would name two different files on one

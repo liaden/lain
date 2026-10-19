@@ -197,6 +197,16 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
       expect(opener.calls).to eq([["../../../etc/foo/bar.rb", 1]])
     end
 
+    it "names the row as it is drawn when x refuses an unread row, and still opens by the climbing path" do
+      rendered = view.render(changeset(files: [unread_entry(path: "../tmp/a.rb")]), scope: :cumulative)
+
+      report = view.marks(1, generation: rendered.generation).report
+      view.open(1, generation: rendered.generation)
+
+      expect(report).to include("names tmp/a.rb,")
+      expect(opener.calls).to eq([["../tmp/a.rb", 1]])
+    end
+
     it "leaves an in-project path exactly as it was drawn before" do
       rendered = view.render(changeset(files: [file_entry(path: "lib/a.rb")]), scope: :cumulative)
 
