@@ -152,6 +152,40 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect(described_class.new.read("> ")).to eq("one\ntwo\nthree")
     end
 
+    describe "the prompt on the rows of a pasted block" do
+      def prompts_drawn_for(prompt, rows, answer:)
+        drawn = nil
+        allow(Reline).to receive(:readmultiline) do
+          drawn = Reline.prompt_proc&.call(Array.new(rows, "x"))
+          "pasted"
+        end
+        described_class.new.read(prompt, answer:)
+        drawn
+      end
+
+      it "draws an approval prompt once and leaves the pasted rows bare" do
+        expect(prompts_drawn_for("approve? [y/N] ", 2, answer: true)).to eq(["approve? [y/N] ", ""])
+      end
+
+      it "draws a human> prompt on row 1 only" do
+        expect(prompts_drawn_for("human> ", 3, answer: true)).to eq(["human> ", "", ""])
+      end
+
+      it "keeps the prompt on every row when the read answers nothing" do
+        expect(prompts_drawn_for("you> ", 2, answer: false)).to be_nil
+      end
+
+      it "puts Reline's own prompt proc back after the read" do
+        original = ->(_lines) { [] }
+        Reline.prompt_proc = original
+        prompts_drawn_for("approve? [y/N] ", 2, answer: true)
+
+        expect(Reline.prompt_proc).to be(original)
+      ensure
+        Reline.prompt_proc = nil
+      end
+    end
+
     describe "asking the terminal for Shift+Enter" do
       let(:request) { "\e[>4;1m" }
       let(:reset) { "\e[>4;0m" }

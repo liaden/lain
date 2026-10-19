@@ -407,7 +407,7 @@ module Lain
         @screen.drawing(-> { @rail.open?(draw.prompt) }) do
           composed = @screen.compose(draw.prompt.text)
           @typeahead.type_back(typed_back)
-          @editor.read(composed)
+          @editor.read(composed, answer: draw.prompt.answer?)
         end
       end
 

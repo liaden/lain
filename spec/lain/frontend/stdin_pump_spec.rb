@@ -174,6 +174,18 @@ RSpec.describe Lain::Frontend::StdinPump do
       expect(Reline).to have_received(:readmultiline).with("> ", true)
     end
 
+    it "draws an answer's prompt once and a you> prompt on every row" do
+      drawn = []
+      allow(Reline).to receive(:readmultiline) do
+        drawn << Reline.prompt_proc&.call(%w[a b])
+        "n"
+      end
+
+      pumped(terminal) { [rail.read(:you, "you> "), rail.read(:human, "human> ")] }
+
+      expect(drawn).to eq([nil, ["human> ", ""]])
+    end
+
     it "delivers a backslash-continued message as one line" do
       allow(Reline).to receive(:readmultiline).and_return("first \\\nsecond")
 

@@ -222,9 +222,11 @@ module Lain
         @warned_about_vi = false
       end
 
+      # @param prompt [String] the composed prompt line
+      # @param answer [Boolean] whether the prompt asks a question, so a pasted block draws it once
       # @return [String, nil] the message with continuation markers removed, or
       #   nil at EOF (Ctrl-D / closed input)
-      def read(prompt)
+      def read(prompt, answer: false)
         configure
         # Installed for the duration of THIS read and taken down after, because
         # a read is the only window a key action can fire in. Installed
@@ -232,7 +234,7 @@ module Lain
         # first one's notifier.
         self.class.registry.reporting_to(@notify) do
           reporting_shift_enter do
-            buffer = ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) }
+            buffer = reading(prompt, answer:) { ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) } }
             buffer && accept(buffer)
           end
         end
@@ -263,6 +265,16 @@ module Lain
       def accept(buffer)
         warn_about_vi_command_mode unless submit?(buffer)
         join_continuations(buffer)
+      end
+
+      # Reline draws its prompt on every row of a multi-line buffer; a block
+      # pasted at an approval would then read as several questions.
+      def reading(prompt, answer:)
+        previous = ::Reline.prompt_proc
+        ::Reline.prompt_proc = ->(rows) { [prompt, *[""] * (rows.size - 1)] } if answer
+        yield
+      ensure
+        ::Reline.prompt_proc = previous
       end
 
       def reporting_shift_enter
