@@ -1,6 +1,6 @@
 # QA round 26 fixes: a Ctrl-C that only clears, a lease that refuses what it cannot read, and records that agree with the screen
 
-status: draft (panel-reviewed 2026-10-19)
+status: in-progress (panel-reviewed 2026-10-19)
 commit-mode: orchestrator-commits
 language: ruby (1 card edits nvim Lua: T11)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -2938,3 +2938,14 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
     reports `RESERVE_OVER` for a diff that fits.
 
 ## Execution log
+
+- 2026-10-19 start. Base `main` at `23ebc111` (QA round 26 documents committed first, per Preflight 2, on the
+  user's answer). `git worktree list`: only `/home/tara/dev/lain 23ebc111 [main]`. `git status --porcelain lib spec`
+  empty. Grounding still true: `6054ba1d..23ebc111` touches only `planning/`.
+- Hook checks (`.pre-commit-config.yaml`), as commands an agent runs on its own paths: `bundle exec rubocop <paths>`;
+  `bundle exec yard-lint <path>` per changed Ruby file; `bundle exec rspec <spec paths>`; `bin/lint-gherkin-docs
+  <plan>` for plan docs; trailing whitespace and end-of-file on every file. The hook's `ruby-checks` runs
+  `rake compile check`, which is the full `pspec` plus `rubocop`, so a commit is the full-suite run (about 60s to 90s).
+  The suite cannot run beside other tests (shared `TMPDIR`); each worktree gets its own `TMPDIR` under `~/tmp/lain/`.
+  A worktree has no `lib/lain/lain.so`; it is copied from the main checkout at cut. Paths needing user approval:
+  none known.
