@@ -563,7 +563,8 @@ builds it for a chat's agent (`.stack`), for each of that chat's children (`Tool
 builder the spawn seam carries, reading the parent's board when the child is built), and for a run
 with no chat (`.detached`, whose gate approves deliberately: nobody is at a surface to answer; a child
 leased a checkout, a bench arm under `--isolation worktree`, is held to it instead, and a call its path
-policy gates outside the lease is refused, saying no human is attached). The
+policy gates outside the lease is refused, saying no human is attached; a leased child with no chat also refuses any bash command
+whose paths cannot be read, though a script's own writes (`ruby x.rb`) are still not confined). The
 layers, in order: the members a user's `config.rb` registered (see below), `ConfineToScope`,
 `RefuseSecretWrites`, `RedactSecretReads`, `WithholdSecretPaths`, `GuardTestLayout`,
 `WithholdAutomaticOutput`, then `Sensitivity`, then `Gate`. `Middleware::Gate.closes!` refuses any stack

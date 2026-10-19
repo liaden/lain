@@ -1301,6 +1301,67 @@ RSpec.describe Lain::CLI::ToolGuard do
     it "approves a read inside the lease" do
       expect(policy.call(read_call("/work/wt/lib/x.rb"), context)).to be(true)
     end
+
+    def bash_call(command) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { command: })
+
+    it "refuses a command whose paths cannot be read, saying what to do instead" do
+      ["cd /outside && for f in $(find . -name '*.rb'); do mv t \"$f\"; done", "cd /outside; rm x",
+       "ruby -e 'File.write(\"/outside/x\", 1)'", "find . | xargs rm", "sh -c 'rm x'"].each do |command|
+        ruling = policy.rule(bash_call(command), context)
+
+        expect(ruling).to have_attributes(deny?: true, final?: true, rung: "lease"), command
+        expect(ruling.told).to eq(
+          "this run is leased to /work/wt and no human is attached, so a command whose paths cannot be read is " \
+          "refused (a loop, $(...), cd then ;, sh -c, ruby -e, xargs); write a script in /work/wt and run it, " \
+          "or send the steps as separate calls"
+        ), command
+      end
+    end
+
+    it "approves a plain command inside the lease" do
+      expect(policy.rule(bash_call("bundle exec rspec spec/x_spec.rb"), context)).to have_attributes(allow?: true)
+    end
+
+    def opaque_refusal?(ruling) = ruling.deny? && ruling.told.include?("paths cannot be read")
+
+    it "refuses a command whose cwd cannot be resolved" do
+      [5, "/work/wt/a\0b"].each do |cwd|
+        call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls", "cwd" => cwd })
+
+        expect(opaque_refusal?(policy.rule(call, context))).to be(true), cwd.inspect
+      end
+    end
+
+    it "resolves the command where the calling session runs" do
+      relative = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "wt", env: {}, checkout: "/work/wt"))
+
+      expect(opaque_refusal?(policy.rule(bash_call("ls"), relative))).to be(true)
+    end
+
+    it "leaves a command field on a tool other than bash to the lease's rule" do
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "task", input: { "command" => "sh -c 'rm x'" })
+
+      expect(policy.rule(call, context)).to have_attributes(allow?: true)
+    end
+
+    def leased_bash(command, home:, lease:)
+      sensitivity = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: lease), home:)
+      inputs = described_class.detached(journal:).guard_inputs.with(sensitivity:)
+      worker_env = Lain::WorkerEnv.new(cwd: lease, env: {}, checkout: lease)
+      stack = described_class.leased(chronicle, inputs, worker_env)
+      Sync do
+        dispatch_call("bash", { "command" => command }, toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
+                                                        layers: stack.to_a, context: Lain::Session.new(worker_env:),
+                                                        handler: Lain::Effect::Handler::Mock.new(default: "ran"))
+      end
+    end
+
+    it "reads a `~` as the run's home through the leased stack" do
+      Dir.mktmpdir do |lease|
+        expect(leased_bash("cat ~/notes.txt", home: "/home/tester", lease: File.realpath(lease)))
+          .to have_attributes(is_error: false, content: "ran")
+      end
+    end
   end
 
   # The production stack over a real board, a real ladder, a real queue and a

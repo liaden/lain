@@ -217,8 +217,8 @@ RSpec.describe Lain::Bench::Harness do
 
     def leased = Lain::WorkerEnv.new(cwd: @lease, env: {}, checkout: @lease)
 
-    def acted(tool, input)
-      stack = described_class::INSTRUMENTATION.call(journal:, recorder:, worker_env: leased).tool_middleware
+    def acted(tool, input, through: described_class::INSTRUMENTATION)
+      stack = through.call(journal:, recorder:, worker_env: leased).tool_middleware
       effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: tool.name, input:)
       stack.call({ effect:, tool:, context: Lain::Session.new(worker_env: leased) }) do |inner|
         invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: inner.fetch(:context))
@@ -247,6 +247,30 @@ RSpec.describe Lain::Bench::Harness do
       refused = acted(Lain::Tools::ReadFile.new, { "path" => "/etc/hosts" })
 
       expect(refused).to have_attributes(is_error: true, content: include(@lease, "no human"))
+    end
+
+    # `--confine reader`'s guard, over a box whose probe answers without running anything.
+    def reader
+      project = Lain::Project.new(root: @lease, cwd: @lease, kind: :project, detected_by: :flag)
+      paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@tmp, "state"), "HOME" => File.join(@tmp, "home") })
+      box = ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] }
+      probe = ->(journal:, fence:) { Lain::Confine::Probe.new(fence:, journal:, runner: box, ptrace_scope: -> { "0" }) }
+      described_class::Confinement.new(project:, paths:, journal: Lain::Channel.new, probe:).instrumentation
+    end
+
+    it "refuses an opaque loop under both confinements, and nothing outside the worktree changes" do
+      outside = File.join(@tmp, "outside").tap { FileUtils.mkdir_p(_1) }
+      File.write(File.join(outside, "a.rb"), "kept\n")
+      File.write(File.join(outside, "t"), "moved\n")
+      command = "cd #{outside} && for f in $(find . -name '*.rb'); do mv t \"$f\"; done"
+
+      [described_class::INSTRUMENTATION, reader].each do |through|
+        refused = acted(Lain::Tools::Bash.new, { "command" => command }, through:)
+
+        # The lease is left out: RedactSecretReads can mask a long temporary path in a bash result.
+        expect(refused).to have_attributes(is_error: true, content: include("leased to", "paths cannot be read"))
+      end
+      expect(File.read(File.join(outside, "a.rb"))).to eq("kept\n")
     end
 
     it "runs a write inside the worktree and a bash ls with no approval asked" do

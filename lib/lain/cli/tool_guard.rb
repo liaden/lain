@@ -236,19 +236,29 @@ module Lain
       # the lease's path policy gates is refused. The gate cannot say which
       # axis gated a call, so this asks the path policy the same question.
       # Final, because no human is attached to lift it.
+      #
+      # A command whose paths cannot be read is refused too: the lease's hold
+      # checks only the paths a command names, and a loop, an expansion or an
+      # inline script names none, so nothing else stands between it and a
+      # write outside the lease.
       class LeasedPolicy
         RUNG = "lease"
         ALLOW = Middleware::Gate::ApproveAll.new.freeze
         LEASED_READ = "this run is leased to %<lease>s and no human is attached to approve a call outside it; " \
                       "work inside %<lease>s"
+        LEASED_OPAQUE = "this run is leased to %<lease>s and no human is attached, so a command whose paths " \
+                        "cannot be read is refused (a loop, $(...), cd then ;, sh -c, ruby -e, xargs); write a " \
+                        "script in %<lease>s and run it, or send the steps as separate calls"
 
         # @param sensitivity [#gates?] the path policy the run's gate asks
         # @param lease [String] the checkout the run was leased
         # @param allow [#rule] who rules a call inside the lease; approves it by default
-        def initialize(sensitivity:, lease:, allow: ALLOW)
+        # @param home [String, nil] what a `~` in a command names; with none, such a command is unreadable
+        def initialize(sensitivity:, lease:, allow: ALLOW, home: nil)
           @sensitivity = sensitivity
           @lease = lease
           @allow = allow
+          @home = home
           freeze
         end
 
@@ -256,13 +266,34 @@ module Lain
 
         # @return [Approval::Escalation::Ruling]
         def rule(effect, context)
-          return @allow.rule(effect, context) unless outside?(effect, context)
+          wording = refusal(effect, context)
+          return @allow.rule(effect, context) unless wording
 
-          because = format(LEASED_READ, lease: @lease)
-          Approval::Escalation::Ruling.deny(rung: RUNG, because:, final: true)
+          Approval::Escalation::Ruling.deny(rung: RUNG, because: format(wording, lease: @lease), final: true)
         end
 
         private
+
+        def refusal(effect, context)
+          return LEASED_READ if outside?(effect, context)
+
+          LEASED_OPAQUE if unreadable?(effect, context)
+        end
+
+        def unreadable?(effect, context)
+          return false unless effect.tool_call? && effect.name == "bash"
+
+          command = effect.input["command"] || effect.input[:command]
+          ::Lain::Shell::Named.of(command.to_s, cwd: where(effect, context), home: @home).opaque?
+        end
+
+        # As the tool resolves it; one that cannot resolve leaves the command unreadable.
+        def where(effect, context)
+          session = context.respond_to?(:worker_env) ? context : ::Lain::Session::Null.instance
+          session.worker_env.resolve(effect.input["cwd"] || effect.input[:cwd])
+        rescue TypeError, ArgumentError
+          nil
+        end
 
         def outside?(effect, context)
           @sensitivity.gates?(effect, cwd: ::Lain::Session.cwd_of(context),
@@ -354,7 +385,7 @@ module Lain
       def leased(chronicle, inputs, worker_env, requester: nil, task: nil)
         held = confined(inputs, worker_env)
         policy = LeasedPolicy.new(sensitivity: held.sensitivity, lease: worker_env.checkout,
-                                  allow: inputs.policy_for.call(worker_env))
+                                  allow: inputs.policy_for.call(worker_env), home: inputs.sensitivity.home)
         layered(chronicle, held, inputs.test_layout.roots_for(worker_env), named(policy, requester, task:),
                 requester:, held: held_for(worker_env, home: inputs.sensitivity.home))
       end
