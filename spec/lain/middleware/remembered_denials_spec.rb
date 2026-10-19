@@ -50,10 +50,18 @@ RSpec.describe Lain::Middleware::RememberedDenials do
       expect(result).to have_attributes(is_error: true)
     end
 
-    it "says only the gate's words when the human gave none" do
+    it "says a human denied it earlier this session when the human gave no reason" do
       remembering("agent", "/home/joel", "")
 
-      expect(through(lists("/home/joel")).first.content).to eq('approval denied for tool "list_files"')
+      expect(through(lists("/home/joel")).first.content)
+        .to eq('approval denied for tool "list_files": a human denied this path earlier this session')
+    end
+
+    it "says a human denied the call earlier this session for a repeated call" do
+      allow(queue).to receive(:denied_call).and_return("")
+
+      expect(through(lists("/home/joel/x")).first.content)
+        .to eq('approval denied for tool "list_files": a human denied this call earlier this session')
     end
   end
 

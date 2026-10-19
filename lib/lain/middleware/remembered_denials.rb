@@ -58,8 +58,8 @@ module Lain
         return downstream(env, &app) unless reason
 
         record(effect, reason, because, requester_of(env[:context]))
-        env.merge(result: Tool::Result.error([format(@denial, name: effect.name.inspect), reason.presence]
-                                               .compact.join(": ")))
+        said = reason.presence || "#{because} this session"
+        env.merge(result: Tool::Result.error("#{format(@denial, name: effect.name.inspect)}: #{said}"))
       end
 
       private
