@@ -1349,6 +1349,10 @@ module Lain
       # target and these criteria, is carried forward while its tests still
       # fail -- with or without the earlier run's work above it.
       class IssueTests
+        # Only presets with one lockfile name; a command adapter has none.
+        LOCKFILES = { "rspec" => "Gemfile.lock" }.freeze
+        private_constant :LOCKFILES
+
         # What the step left: the generation's record, the failing run, the
         # commit holding the tests, and whether an earlier run made that commit.
         Red = Data.define(:record, :run, :sha, :carried) do
@@ -1464,9 +1468,10 @@ module Lain
                        "example fails is not red, and nothing was committed"
         end
 
-        # The red commit holds the tests alone.
+        # The red commit holds the tests alone. Running the suite is how the
+        # step proves red, and Bundler rewrites a tracked lock while it does.
         def stray!(changed)
-          changed -= changed.select { |path| tests_tree?(path) }
+          changed -= changed.select { |path| tests_tree?(path) || path == LOCKFILES[@layout.preset.name] }
           return if changed.empty?
 
           raise Error, "the test_engineer child also wrote #{changed.join(", ")}, and the red step may write " \

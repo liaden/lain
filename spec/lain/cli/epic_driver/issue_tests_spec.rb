@@ -276,6 +276,20 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     expect(step(both).record.target).to eq(target)
   end
 
+  it "lets the run rewrite the tracked Gemfile.lock and keeps it out of the red commit" do
+    File.write(File.join(held, "Gemfile.lock"), "GEM\n")
+    git(held, "add", "--", "Gemfile.lock")
+    git(held, "commit", "--no-verify", "-q", "-m", "lock")
+    provider = mock(tool_response(["w1", "write_file", { "path" => target, "content" => red }]),
+                    tool_response(["b1", "bash", { "command" => "printf 'CHECKSUMS\\n' >> Gemfile.lock" }]),
+                    text_response("wrote the spec"))
+    FileUtils.mkdir_p(File.dirname(File.join(held, target)))
+
+    sha = step(provider).sha
+
+    expect(git(held, "show", "--name-only", "--format=", sha)).to eq(target)
+  end
+
   it "refuses a deleted tracked file" do
     provider = mock(tool_response(["w1", "write_file", { "path" => target, "content" => red }]),
                     tool_response(["b1", "bash", { "command" => "rm app/models/order.rb" }]),
