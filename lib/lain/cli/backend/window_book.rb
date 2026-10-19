@@ -188,6 +188,7 @@ module Lain
             @vouched = {}
             @switched = {}
             @asked = {}
+            @asked_serving = {}
             @turn = 0
           end
 
@@ -198,7 +199,9 @@ module Lain
           def resolve(model) = book_for(model).resolve(model)
 
           # @return [ContextWindow::Occupancy, ContextWindow::Occupancy::None]
-          def occupancy(used_tokens, model:) = book_for(model).occupancy(used_tokens, model:)
+          def occupancy(used_tokens, model:)
+            book_for(model, serving: used_tokens.to_i.positive?).occupancy(used_tokens, model:)
+          end
 
           # Ask again, if asking could still help.
           #
@@ -241,7 +244,9 @@ module Lain
 
           private
 
-          def book_for(model) = @vouched.fetch(model.to_s) { own?(model) ? @book : switched_book(model.to_s) }
+          def book_for(model, serving: false)
+            @vouched.fetch(model.to_s) { own?(model) ? @book : switched_book(model.to_s, serving:) }
+          end
 
           def own?(model)
             own = @source.model
@@ -252,18 +257,24 @@ module Lain
           # so it is probed under its own name rather than read from the launch
           # model's book. `/api/ps` lists only resident runners and the first
           # probe lands before the new model has served anything, so a guess is
-          # not kept: it is re-asked once per turn, within {REASK_LIMIT}.
-          def switched_book(model)
+          # not kept: it is re-asked once per turn, within {REASK_LIMIT}, and once
+          # more when a read reports tokens, because the runner exists by then
+          # and waiting for the next turn would show the guess for a whole one.
+          def switched_book(model, serving:)
             held = @switched[model]
-            return held if held && (held.resolve(model).authoritative? || !ask_again?(model))
+            return held if held && (held.resolve(model).authoritative? || !ask_again?(model, serving:))
 
             @asked[model] = @turn
+            @asked_serving[model] = true if serving
             lookup = @source.lookup(model:)
             @charged += 1 if lookup.costly?
             @switched[model] = lookup.book
           end
 
-          def ask_again?(model) = @asked[model] != @turn && @charged < REASK_LIMIT
+          def ask_again?(model, serving:)
+            within_budget = @charged < REASK_LIMIT
+            within_budget && (@asked[model] != @turn || (serving && !@asked_serving[model]))
+          end
 
           # Two independent reasons not to ask, and they answer different
           # questions: {#settled?} is "a better answer is not possible",

@@ -1070,6 +1070,21 @@ RSpec.describe Lain::Agent do
       expect(a.occupancy(context_window: Lain::ContextWindow.new(windows: { "opus" => 8192 }))).to eq(0.25)
     end
 
+    context "with a /model switch made" do
+      let(:switch) { Lain::Context::ModelSwitch.new("qwen3:4b", journal: Lain::Journal.new(io: StringIO.new)) }
+      let(:context) { CoreGraph.context(model: "qwen3:4b").with_model(switch) }
+
+      it "withholds the usage an earlier model earned until the new model replies" do
+        a = agent([spent(4096), spent(2048)])
+        a.ask("hi")
+        switch.switch("qwen3-coder:30b", surface: "tty")
+
+        expect(a.occupancy).to be_nil
+        a.ask("again")
+        expect(a.occupancy).to eq(0.25)
+      end
+    end
+
     context "with a model the default book does not carry" do
       let(:context) { CoreGraph.context(model: "qwen3:4b") }
 

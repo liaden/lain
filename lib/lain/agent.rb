@@ -362,7 +362,7 @@ module Lain
     #   measures as Infinity or NaN rather than as a reading. Unreachable
     #   through {ContextWindow.default}; a caller passing its own book owns it.
     def occupancy(context_window: @context_window)
-      context_window.occupancy(accounting.last_turn_usage(on: @timeline), model: context.model).ratio
+      context_window.occupancy(own_usage, model: context.model).ratio
     end
 
     # Time travel: the loop can be resumed from any earlier turn, which is what
@@ -642,11 +642,19 @@ module Lain
     # spawn, a question -- cite it, and a process killed between two of these
     # writes must leave no citation of a turn the file lacks.
     def account(response)
+      @replied_as = context.model
       @instrumentation.turn_middleware.settle(@timeline)
       @budget.check_tokens!(accounting.observe(response, digest: @timeline.head_digest))
     rescue StandardError => e
       answer_errored
       raise e
+    end
+
+    # Usage an earlier model earned says nothing about a model `/model` has
+    # just switched to, and the window book reads a positive count as proof the
+    # new runner has served.
+    def own_usage
+      accounting.last_turn_usage(on: @timeline) if @replied_as.nil? || @replied_as == context.model
     end
 
     # Whatever stops the repair -- an unpairable call, a store refusing this

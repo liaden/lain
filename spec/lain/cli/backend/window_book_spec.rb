@@ -595,6 +595,48 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
         expect(provider).to have_received(:window_probe).with("qwen3:4b").twice
       end
 
+      def costly_live_none_resident
+        provider = instance_double(Lain::Provider::Ollama)
+        allow(provider).to receive(:window_probe).with("qwen3-coder:30b").and_return(probe.resident(32_768))
+        allow(provider).to receive(:window_probe).with("qwen3:4b").and_return(probe::NONE_RESIDENT)
+        backend = instance_double(Lain::CLI::Backend, model: "qwen3-coder:30b", num_ctx: nil, provider:, cloud?: false)
+        [described_class.new(source: Lain::CLI::Backend::WindowBook.new(backend:)), provider]
+      end
+
+      it "asks again once the switched model has served, within the same turn" do
+        provider = instance_double(Lain::Provider::Ollama)
+        allow(provider).to receive(:window_probe).with("qwen3-coder:30b").and_return(probe.resident(32_768))
+        allow(provider).to receive(:window_probe).with("qwen3:4b")
+                                                 .and_return(probe::NONE_RESIDENT, probe.resident(21_432))
+        backend = instance_double(Lain::CLI::Backend, model: "qwen3-coder:30b", num_ctx: nil, provider:, cloud?: false)
+        live = described_class.new(source: Lain::CLI::Backend::WindowBook.new(backend:))
+
+        live.reresolve.resolve("qwen3:4b")
+        occupancy = live.occupancy(4_296, model: "qwen3:4b")
+
+        expect(occupancy.ratio).to be_within(0.001).of(0.2)
+        expect(live.resolve("qwen3:4b")).to be_authoritative
+      end
+
+      it "does not spend the serving ask on a read that reports no usage" do
+        live, provider = costly_live_none_resident
+
+        live.reresolve.resolve("qwen3:4b")
+        live.occupancy(nil, model: "qwen3:4b")
+        live.occupancy(4_296, model: "qwen3:4b")
+
+        expect(provider).to have_received(:window_probe).with("qwen3:4b").twice
+      end
+
+      it "asks once after serving, not once per read" do
+        live, provider = costly_live_none_resident
+
+        live.reresolve.resolve("qwen3:4b")
+        3.times { live.occupancy(4_296, model: "qwen3:4b") }
+
+        expect(provider).to have_received(:window_probe).with("qwen3:4b").twice
+      end
+
       describe "over a timed lookup" do
         def costly_live(launch:, switched:)
           provider = instance_double(Lain::Provider::Ollama)
