@@ -471,7 +471,19 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
     it "says a loopback base is held to 1 request, not the declared width" do
       tier = cloud(api_base: "https://127.0.0.1:9443")
       notice = with_env(provider_key => nil, "OLLAMA_API_KEY" => "sk-ollama-test") { tier.startup_notices.first }
-      expect(notice).to include("loopback").and include("held to 1 request, not 3")
+      expect(notice).to include("loopback").and include("held to 1 request")
+      expect(notice).to include("set #{provider_key} to override it")
+    end
+
+    it "says a retired variable is ignored and names its replacement" do
+      notices = notices_with("LAIN_OLLAMA_CLOUD_CONCURRENCY" => "4")
+      expect(notices).to include(
+        a_string_matching(/LAIN_OLLAMA_CLOUD_CONCURRENCY.*retired.*ignored.*#{provider_key}/)
+      )
+    end
+
+    it "says nothing of the retired variable when it is unset" do
+      expect(notices_with("LAIN_OLLAMA_CLOUD_CONCURRENCY" => nil).join).not_to include("retired")
     end
 
     %w[2 5].each do |value|

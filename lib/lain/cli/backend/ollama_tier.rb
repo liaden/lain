@@ -130,6 +130,7 @@ module Lain
 
         API_KEY_ENV_KEY = Provider::Ollama::Deployment::API_KEY_ENV_KEY
         ADMISSION_ENV_KEY = Provider::Admission::ENV_KEY
+        RETIRED_ADMISSION_ENV_KEY = "LAIN_OLLAMA_CLOUD_CONCURRENCY"
 
         # NOT the local default `qwen3:4b`, which does not exist on the cloud at
         # all, so inheriting it would make a bare `--provider ollama-cloud` a
@@ -172,7 +173,7 @@ module Lain
         def startup_notices
           return [] unless cloud?
 
-          [width_notice(gate.width)]
+          [width_notice(gate.width), *retired_notice]
         end
 
         # @param channel [Lain::Channel] where retries and stalls are narrated
@@ -225,8 +226,14 @@ module Lain
         end
 
         def loopback_notice(held)
-          "ollama-cloud base #{endpoint} is a loopback address, so it is held to #{held} request, " \
-            "not #{declared_width}; #{ADMISSION_ENV_KEY} does not lift that."
+          "ollama-cloud base #{endpoint} is a loopback address, so it is held to #{held} request; " \
+            "set #{ADMISSION_ENV_KEY} to override it."
+        end
+
+        def retired_notice
+          return [] if ENV.fetch(RETIRED_ADMISSION_ENV_KEY, "").empty?
+
+          ["#{RETIRED_ADMISSION_ENV_KEY} was retired and is ignored; use #{ADMISSION_ENV_KEY}."]
         end
 
         def width_notice(width)

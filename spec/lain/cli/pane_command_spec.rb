@@ -231,7 +231,10 @@ RSpec.describe Lain::CLI::PaneCommand do
 
       # Not variables a pane should carry: suite controls named in comments, the
       # Neovim command string LAIN_START, and the pre-flight flag PaneCommand scrubs.
-      let(:excluded) { %w[LAIN_INTEGRATION LAIN_LIVE LAIN_NVIM LAIN_START LAIN_PREFLIGHT] }
+      # LAIN_OLLAMA_CLOUD_CONCURRENCY is retired: lain only warns about it, never forwards it to a pane.
+      let(:excluded) do
+        %w[LAIN_INTEGRATION LAIN_LIVE LAIN_NVIM LAIN_START LAIN_PREFLIGHT LAIN_OLLAMA_CLOUD_CONCURRENCY]
+      end
 
       it "exports the stream stall remedy" do
         expect(described_class.runtime_exports({ "LAIN_STREAM_STALL_TIMEOUT" => "600" }))
