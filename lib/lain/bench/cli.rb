@@ -47,6 +47,9 @@ module Lain
       # The `--confine` values a bench arm takes; a chat's `classes` would change nothing here.
       CONFINES = %w[off reader].freeze
 
+      # Informational until a reader exists: nothing yet compares it, so variance still pools across it.
+      OPAQUE_REFUSED = { "opaque" => "refused" }.freeze
+
       WORKTREE_REACH = "--isolation worktree holds the paths the tools name inside each arm's worktree; a shell " \
                        "command's reads, and an opaque command's writes, stay open; --confine reader confines a " \
                        "read-only command to the checkout, but an opaque command runs traced and unconfined " \
@@ -531,7 +534,7 @@ module Lain
         run = journal || Channel::Null.instance
         Harness::Confinement.new(project: project || Lain::Project::Resolver.default_project,
                                  paths: paths || Lain::Paths.new, journal: run, probe:)
-                            .tap { run << Telemetry::RunArms.new(arms: arms.to_header) }
+                            .tap { run << Telemetry::RunArms.new(arms: arms.to_header.merge(OPAQUE_REFUSED)) }
       end
 
       def seam_for(backend, memory, confinement, spawn_options)

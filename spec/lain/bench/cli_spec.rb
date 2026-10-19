@@ -627,7 +627,7 @@ RSpec.describe Lain::Bench::CLI do
       report(reader)
 
       expect(journal.events.grep(Lain::Telemetry::RunArms))
-        .to eq([Lain::Telemetry::RunArms.new(arms: { "confine" => "reader" })])
+        .to eq([Lain::Telemetry::RunArms.new(arms: { "confine" => "reader", "opaque" => "refused" })])
     end
 
     it "writes no record when the run is refused before it starts" do
@@ -673,6 +673,12 @@ RSpec.describe Lain::Bench::CLI do
       expect(execs.uniq).to eq([nil])
       expect(text).not_to include("confine:")
       expect(journal.events.grep(Lain::Telemetry::RunArms)).to be_empty
+    end
+
+    it "writes no sandbox record to the run journal with every arm off" do
+      report(Lain::CLI::Arms::OFF)
+
+      expect(journal.events.grep(Lain::Telemetry::Sandbox)).to be_empty
     end
 
     it "refuses an arm that is on but is not reader, before anything is paid for" do

@@ -677,6 +677,32 @@ RSpec.describe Lain::Arm::Driver do
     end
   end
 
+  describe "#report — sandbox records on the run journal" do
+    let(:journal) { Lain::Channel.new }
+    let(:sandboxed_seam) do
+      lambda do |journal:, **opts|
+        journal << Lain::Telemetry::Sandbox.new(tool_use_id: "tu_1", profile: :reader, trace: false, refused: [])
+        spawn_seam.call(journal:, **opts)
+      end
+    end
+
+    def sandbox_records = journal.drain.grep(Lain::Telemetry::Sandbox)
+
+    it "copies each sandbox record there, stamped with the arm and the task" do
+      described_class.new(arms, tasks:, spawn_seam: sandboxed_seam, grader:, journal:).report
+
+      expect(sandbox_records.map { [_1.arm, _1.task] }).to eq(
+        arms.flat_map { |arm| tasks.map { |task| [arm.name, Lain::Canonical.digest(task)] } }
+      )
+    end
+
+    it "journals nothing extra for a seam that records no sandbox use" do
+      described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
+
+      expect(sandbox_records).to be_empty
+    end
+  end
+
   # THE BENCH'S HEADLINE METRIC ON THE EXPERIMENT RECORD. Every other column
   # the Driver folds is recoverable from the journal already -- usage and
   # payments ride the arms' own records -- while the GRADE, the one number the

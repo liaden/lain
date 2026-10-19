@@ -106,6 +106,33 @@ module Lain
       end
       private_constant :ArmJournal
 
+      # The arm drains its own journal to price, so the stamped copy for the run journal is made here.
+      SandboxCopy = Class.new(SimpleDelegator) do
+        def initialize(journal, run:, arm:, task:)
+          super(journal)
+          @run = run
+          @arm = arm
+          @task = task
+        end
+
+        def <<(record)
+          @run << record.with(arm: @arm, task: @task) if record.is_a?(Telemetry::Sandbox)
+          __getobj__ << record
+          self
+        end
+      end
+      private_constant :SandboxCopy
+
+      # Hands each spawn a {SandboxCopy} of the journal the arm gave it.
+      CopyingSeam = Data.define(:seam, :run, :arm, :task) do
+        # @param journal [#<<] the arm's own journal
+        # @param options [Hash] passed to the seam unchanged
+        # @option options [Object] :worker_env the lease's environment, among the seam's other keywords
+        # @return [Lain::Agent]
+        def call(journal:, **options) = seam.call(journal: SandboxCopy.new(journal, run:, arm:, task:), **options)
+      end
+      private_constant :CopyingSeam
+
       TaskFailure = Data.define(:index, :reason)
       private_constant :TaskFailure
 
@@ -235,7 +262,8 @@ module Lain
       end
 
       def run_task(arm, task, number, grader)
-        arm.run(task, spawn_seam: @spawn_seam, isolation: @isolation, grader:)
+        seam = CopyingSeam.new(@spawn_seam, @journal, arm.name, Canonical.digest(task))
+        arm.run(task, spawn_seam: seam, isolation: @isolation, grader:)
       rescue Agent::Budget::Exceeded => e
         journal_failure(arm, task, number, "at the ceiling", e)
         TaskFailure.new(index: number, reason: CEILING_REASON)
