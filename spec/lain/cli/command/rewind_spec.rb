@@ -285,11 +285,31 @@ RSpec.describe Lain::CLI::Command::Rewind do
         journaled = journal_io.string.dup
 
         expect { command.call("1", parked_env) }.to raise_error(described_class::Refusal) do |error|
-          expect(error.message).to include("ask_human", "tu_ask").and match(/nothing moved/i)
+          expect(error.message).to include("this turn's 1 tool call is still in flight (ask_human)")
+            .and match(/nothing moved/i)
+          expect(error.message).not_to include("parked", "tu_ask")
           expect(error.message).to start_with("/rewind 1 ")
         end
         expect(parked_agent.timeline.head_digest).to eq(head)
         expect(journal_io.string).to eq(journaled)
+      end
+    end
+
+    context "with several calls in the turn" do
+      let(:provider) do
+        Lain::Provider::Mock.new(responses: [text_response("one"),
+                                             tool_response(["tu_a", "echo", { "text" => "a" }],
+                                                           ["tu_b", "echo", { "text" => "b" }],
+                                                           ["tu_ask", "ask_human", { "question" => "which db?" }]),
+                                             text_response("settled")])
+      end
+
+      it "counts the calls and lists their names" do
+        while_parked do
+          expect { command.call("1", parked_env) }.to raise_error(described_class::Refusal) { |error|
+            expect(error.message).to include("this turn's 3 tool calls are still in flight (echo, echo, ask_human)")
+          }
+        end
       end
     end
 

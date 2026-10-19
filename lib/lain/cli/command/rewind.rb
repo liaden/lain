@@ -101,16 +101,17 @@ module Lain
         end
 
         def in_flight(typed, timeline)
-          "#{typed} refused: #{parked(timeline)} is still in flight, and settling it would commit " \
+          "#{typed} refused: #{parked(timeline)}, and settling it would commit " \
             "its turns over a rewound head. Nothing moved -- answer or stop it, then rewind."
         end
 
         def parked(timeline)
           head = timeline.head
-          return "a run" unless Event.pending_tool_use?(head)
+          return "a run is still in flight" unless Event.pending_tool_use?(head)
 
-          calls = head.content.grep(Hash).select { |block| block["type"] == "tool_use" }
-          "the parked #{calls.map { |use| "#{use["name"]} (#{use["id"]})" }.join(", ")} call"
+          names = head.content.grep(Hash).select { |block| block["type"] == "tool_use" }.map { |use| use["name"] }
+          noun = names.one? ? "call is" : "calls are"
+          "this turn's #{names.size} tool #{noun} still in flight (#{names.join(", ")})"
         end
 
         # The signed match is deliberate: "-1" must reach the RANGE refusal, not
