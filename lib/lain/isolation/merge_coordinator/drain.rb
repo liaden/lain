@@ -45,7 +45,8 @@ module Lain
           new(lock: home.drain_lock, branch:, spool: Spool.new(home), isolation:,
               journal: -> { ::Lain::Journal.open(journal_path) },
               verify: Verifier.from(isolation, paths:, shell_out_factory:, notice:),
-              queue_for: queues(root, branch, isolation, paths, shell_out_factory))
+              queue_for: queues(root, branch, isolation, paths, shell_out_factory),
+              git: Checkout.new(root, shell_out_factory:), notice:)
         end
 
         def self.queues(root, branch, isolation, paths, shell_out_factory)
@@ -64,12 +65,15 @@ module Lain
         # @param journal [#call] opens the journal each `landing_batch` goes to
         # @param verify [#call] `call(candidate)` answering a {LandingQueue::Verification}
         # @param queue_for [#call] `call(journal:, verify:)` answering a fresh {LandingQueue}
+        # @param git [Checkout] asked whether a queued commit is an ancestor of a later entry's
         # @param clock [#call] monotonic seconds, which time the verifies
         # @param wall_clock [#call] the Time a batch starts, which entries' waits are measured to
         # @param sleeper [#call] waits between tries while another process holds the lock
         # @param interval [Numeric] seconds between those tries, {FileLock}'s own default
-        def initialize(lock:, branch:, spool:, isolation:, journal:, verify:, queue_for:, clock: RunClock::MONOTONIC,
-                       wall_clock: -> { Time.now }, sleeper: Kernel.method(:sleep), interval: 0.05)
+        # @param notice [#call] told when git cannot say whether an entry is superseded
+        def initialize(lock:, branch:, spool:, isolation:, journal:, verify:, queue_for:, git:,
+                       clock: RunClock::MONOTONIC, wall_clock: -> { Time.now },
+                       sleeper: Kernel.method(:sleep), interval: 0.05, notice: ParentLock::Silent)
           @lock = lock
           @branch = branch
           @spool = spool
@@ -77,6 +81,8 @@ module Lain
           @journal = journal
           @verify = verify
           @queue_for = queue_for
+          @git = git
+          @notice = notice
           @clock = clock
           @wall_clock = wall_clock
           @sleeper = sleeper
@@ -114,7 +120,37 @@ module Lain
 
         # One worker id per batch: a second entry for the same worker is the
         # same work moved on, and lands against what the first one left.
-        def next_batch = @spool.pending.uniq { |entry| entry.worker.id }.first(@isolation.batch_cap)
+        def next_batch
+          waiting = @spool.pending
+          superseded = superseded_by(waiting)
+          superseded.each { |entry, later| decline_superseded(entry, later) }
+          (waiting - superseded.keys).uniq { |entry| entry.worker.id }.first(@isolation.batch_cap)
+        end
+
+        # Landing an amended branch's abandoned commits too would land work its owner discarded.
+        def superseded_by(waiting)
+          waiting.each_with_index.filter_map do |entry, index|
+            later = waiting.drop(index + 1).reverse.find { |each| each.worker.id == entry.worker.id }
+            [entry, later] if later && !continues?(entry, later)
+          end.to_h
+        end
+
+        # A git error leaves the pair as it was before supersession was checked, since
+        # declining a valid entry on a guess loses work.
+        def continues?(entry, later)
+          shell = @git.run("merge-base", "--is-ancestor", entry.worker.sha, later.worker.sha)
+          return shell.exitstatus.eql?(0) if [0, 1].include?(shell.exitstatus)
+
+          @notice.call("worker #{entry.worker.id}: cannot tell whether entry #{entry.id} is superseded by " \
+                       "entry #{later.id}, landing both: #{shell.stderr.strip}")
+          true
+        end
+
+        def decline_superseded(entry, later)
+          report = WorkerHandoff::Report.new(kind: :declined, ref: entry.worker.ref, sha: entry.worker.sha,
+                                             detail: "superseded by entry #{later.id}")
+          @spool.complete(entry.id, Spool::Result.new(id: entry.id, report:, verification: nil, batch: nil))
+        end
 
         def land(entries, journal, number)
           started = @wall_clock.call.to_f

@@ -170,6 +170,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
 
       described_class.new(lock: home.drain_lock, branch: "main", spool:, isolation:, journal: -> { journal },
                           verify: Lain::Isolation::Verifier.from(isolation, paths:), queue_for:,
+                          git: Lain::Isolation::Checkout.new(@repo),
                           wall_clock: -> { Time.at(0) }).call
 
       expect(journal.grep(Lain::Telemetry::LandingBatch).first.queue_wait_s).to eq(key(w1) => 0.0)
@@ -301,6 +302,87 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
       expect(entries.map { |entry| spool.result(entry.id).batch }).to eq([1, 2])
       expect(batch_records.map { |record| record["worker_keys"] }).to eq([[key(w1)], [key(w1)]])
       expect([on_branch?(w1.sha), on_branch?(again.sha)]).to eq([true, true])
+    end
+  end
+
+  describe "two entries for one amended worker" do
+    it "declines the earlier entry as superseded and lands only the later one" do
+      configure(verify: passing)
+      first = worker("w1")
+      amended = worker("w1", from: git("rev-parse", "main"), file: "w1-amended")
+      entries = [first, amended].map { |each| spool.enqueue(each) }
+
+      drain.call
+
+      expect(spool.result(entries.first.id).report)
+        .to have_attributes(kind: :declined, detail: "superseded by entry #{entries.last.id}")
+      expect(spool.result(entries.last.id).report.kind).to eq(:merged)
+      expect([on_branch?(first.sha), on_branch?(amended.sha)]).to eq([false, true])
+      expect(batch_records.map { |record| record["worker_keys"] }).to eq([[key(first)]])
+    end
+  end
+
+  describe "an amended worker enqueued after a continuation" do
+    it "declines both earlier entries, judged against the last one" do
+      configure(verify: passing)
+      base = git("rev-parse", "main")
+      first = worker("w1")
+      continued = worker("w1", from: first.sha, file: "w1-more")
+      amended = worker("w1", from: base, file: "w1-amended")
+      entries = [first, continued, amended].map { |each| spool.enqueue(each) }
+
+      drain.call
+
+      expect(entries.map { |entry| spool.result(entry.id).report.kind }).to eq(%i[declined declined merged])
+      expect(entries.first(2).map { |entry| spool.result(entry.id).report.detail })
+        .to all(eq("superseded by entry #{entries.last.id}"))
+      expect([first, continued, amended].map { |each| on_branch?(each.sha) }).to eq([false, false, true])
+    end
+  end
+
+  describe "a git failure while telling whether an entry is superseded" do
+    def drainer(git:, notice:)
+      isolation = Lain::Config::Isolation.from({ "verify" => passing }, path: nil)
+      base = Lain::Isolation::WorkingBranch.new("main", repo_root: @repo, git: Lain::Isolation::Checkout.new(@repo))
+      queue_for = lambda do |journal:, verify:|
+        Lain::Isolation::LandingQueue.candidate(root: @repo, base:, journal:, isolation:, paths:, verify:,
+                                                lock: described_class::AlreadyHeld)
+      end
+      journal = []
+      journal.define_singleton_method(:close) { nil }
+      described_class.new(lock: home.drain_lock, branch: "main", spool:, isolation:, journal: -> { journal },
+                          verify: Lain::Isolation::Verifier.from(isolation, paths:), queue_for:, git:, notice:)
+    end
+
+    def failing_for(sha)
+      real = Lain::Isolation::Checkout.new(@repo)
+      broken = instance_double(Lain::Shell::Out, exitstatus: 128, stderr: "fatal: bad object")
+      Object.new.tap do |git|
+        git.define_singleton_method(:run) { |*args| args.include?(sha) ? broken : real.run(*args) }
+      end
+    end
+
+    it "says so naming the worker and both entries, and lands both as before" do
+      configure(verify: passing)
+      first = worker("w1")
+      entries = [first, worker("w1", file: "w1-b")].map { |each| spool.enqueue(each) }
+      notices = []
+
+      drainer(git: failing_for(first.sha), notice: notices.method(:<<)).call
+
+      expect(entries.map { |entry| spool.result(entry.id).report.kind }).to eq(%i[merged merged])
+      expect(notices).to contain_exactly(a_string_including("w1", entries.first.id, entries.last.id, "bad object"))
+    end
+
+    it "still supersedes an unrelated pair in the same drain" do
+      configure(verify: passing)
+      broken = worker("w1")
+      pairs = [broken, worker("w1", file: "w1-b"), worker("w2"), worker("w2", file: "w2-b")]
+      entries = pairs.map { |each| spool.enqueue(each) }
+
+      drainer(git: failing_for(broken.sha), notice: ->(_) {}).call
+
+      expect(entries.map { |entry| spool.result(entry.id).report.kind }).to eq(%i[merged merged declined merged])
     end
   end
 
