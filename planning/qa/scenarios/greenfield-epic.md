@@ -27,7 +27,9 @@ HUD's in-flight segment, the stall limit on a long tool call, the transcript's e
 files-written line, notes typed mid-run, `lain://epic` and `lain epic show`, and the cockpit's nvim,
 tmux and transcript behavior under a real user config.
 
-**Cost:** spends real cloud quota. Budget about 150 completions for the whole journey (round 23 counted about 147; round 25 spent about 75 cloud completions, 60 of them §6.3's researcher), most of them
+**Round 26 re-checks:** k25-1 fixed (a judge deny is stamped `HH:MM:SS the judge denied ...` and the child is told why), k25-3 fixed, k25-4 not fixed, B23-1 fixed.
+
+**Cost:** spends real cloud quota. Budget about 150 completions for the whole journey (round 23 counted about 147; round 25 spent about 75 cloud completions, 60 of them §6.3's researcher; round 26 spent about 160, about 102 of them the 2 researchers, so a fork driving it needs the scenario alone and may still need a resume at 200 turns), most of them
 the `/research-epic` interview and its two researchers. Sections 1, 2 and 7 cost nothing or one
 completion each and can be run alone. Run it on the free plan only if you want to see the width
 narrow (§6.6); the default width is 3 and a free plan allows 1.
@@ -169,7 +171,7 @@ Checks, in the cockpit from §1:
 6. **The transcript echoes your side (2026-10-09 trial fixes).** Type `say hi` in the input pane. The chat pane shows
    `HH:MM:SS you> say hi` before the reply. A slash command (`/status`) echoes too. A pasted prompt of 3 lines
    shows its first row after `you> ` and the other 2 indented under it, aligned to the text. A prompt a skill
-   or `/goal` made, and a line that was held and then dispatched, are not echoed (nobody typed them at `you>`).
+   or `/goal` made is not echoed (nobody typed it at `you>`). A held line is echoed when it dispatches (`8273a631`).
    Repeat on a `--no-nvim` plain chat with no input pane: **no** `you>` line is echoed, since the terminal shows it.
    *Wrong looks like:* a transcript of replies with no sign of what asked for them, or each prompt echoed twice.
 7. **A mid-run note reaches the agent (2026-10-09 trial fixes).** Send a prompt that makes the model run at least 3 tool
@@ -338,6 +340,7 @@ Checks:
    them.
    *Wrong looks like:* `loop ran 60 iterations, ceiling is 60` and nothing else. The trial lost 51
    turns of research that way, twice.
+   Ask for all 60 files; 40 finishes at about 42 iterations. Set §4.8's `related` config before this section, or every read of the sibling repo goes to the judge and is denied.
    If the model finishes before the ceiling, tighten the ask (more files, no batching) and repeat
    once; if it still finishes, record the iteration count and mark the check not reached.
 4. **The child failed, honestly.** Its lifecycle record says `failed` with the ceiling class, not
@@ -357,15 +360,15 @@ Checks:
    ceiling stop's report (check 3) quotes that text under `Its last text block:`. No extra model request is sent
    after the ceiling. A child whose ceiling is 5 or less gets the warning on its first request.
    *Wrong looks like:* the trial's empty handback, a warning in every request, or one after the ceiling.
-8. **A child's writes are reported under its role (2026-10-09 trial fixes).** Ask for a `dev` child to write one file (`write 1
-   line to notes.txt in the project`). When its round settles the chat pane shows one stamped line, `HH:MM:SS dev wrote
+8. **A child's writes are reported under its role (2026-10-09 trial fixes).** The chat's `subagent` tool has no role and spawns a researcher; ask it to write 1 line (`write 1
+   line to notes.txt in the project`). When its round settles the chat pane shows one stamped line, `HH:MM:SS researcher wrote
    notes.txt`; several files in one round are 1 line, `dev wrote 4 files: a, b, c (+1 more)`. A researcher that only reads
    prints nothing. Known gap: a child in its own worktree reports a path relative to that worktree without naming
    it, so the line reads as if it were your checkout; record it rather than failing.
 9. **A related directory is in a child's scope as a tree (2026-10-09 trial fixes).** With `sensitivity related: %w[<$QA>/parent/sibling]` set (§4.8),
    ask a researcher to `list_files` and then `glob` `**/*.rs` on `<$QA>/parent/sibling` itself. Neither parks as
    `outside_project`; the trial's researchers were parked on the related root and could read only single files.
-   A path beside it, `<$QA>/parent/slow`, still parks under `ask`. Under `auto` the listing goes to the judge; if the judge denies it, the chat shows a stamped line `the judge denied <tool>(<input>)` and the model is told `the judge refused this call` (round 25, k25-1, fixed), so a refusal is never silent. Under `--non-interactive` the model is told no human can approve it instead. State which approval level the step runs at.
+   A path beside it, `<$QA>/parent/slow`, still parks under `ask`. Under `auto` the listing goes to the judge; if the judge denies it, the chat shows a stamped line `the judge denied <tool>(<input>)` and the model is told `the judge refused this call` (round 25, k25-1, fixed), so a refusal is never silent. A judge that times out (30 s, `reason: fault`) parks the call with no note, so the human cannot tell a failed judge from no judge (round 26, k26-8). Under `--non-interactive` the model is told no human can approve it instead. State which approval level the step runs at.
 
 10. **Frugirl round 4 checks (default `auto`, relaunched without `--approval`).** Record the judge's latency
     per call and any approve that was wrong, and count the human prompts for the whole journey against
@@ -414,6 +417,7 @@ Checks:
    review rail with the sentence on screen and the buffer left modified; it never raises a hit-enter prompt, so nvim stays
    responsive (`nvim --server "$S" --remote-expr 1` answers at once after the refusal). The same holds for a compose write
    that could not reach lain.
+   Round 26 (k26-3): the free-text question's hint row does not exist (the extmark carries no `virt_text`), and a column-0 answer is refused with option-line grammar.
    *Wrong looks like:* a refusal that says only "cannot be edited". The refusal now says where
    answers belong.
 3. **A typed reply at `/inbox` also answers the set**, as prose, and the model's next turn says it
@@ -462,7 +466,7 @@ Checks:
 
 11. **A long `epic_write` is not a stall (2026-10-09 trial fixes).** Ollama sends a tool call's arguments whole, after a silence
     that grows with their size (about 20s for 13 KB in a measurement). Ask the model to `epic_write` a `research` of about 300
-    lines (30 KB or more). The run finishes: no `stalled stream` error, `research.md` exists under the epic home, and
+    lines (30 KB or more). With the default `--max-tokens 16384`, glm-5.3's 30 KB write plus thinking hits the cap; launch with `-- --max-tokens 32768` for the unforced leg. The run finishes: no `stalled stream` error, `research.md` exists under the epic home, and
     the turn that carried the call is in the journal. A cloud deployment's stall limit is 115s and a local
     ollama's 295s, 5 under each request timeout. **Force a stall to read the message:** launch with
     `LAIN_STREAM_STALL_TIMEOUT=3` exported in the shell that runs `lain up` and repeat (it reaches the chat pane: `lain up` passes `LAIN_STREAM_STALL_TIMEOUT`, `LAIN_CONNECT_TIMEOUT`, `LAIN_STREAM_DEBUG` and `LAIN_ENV_PASS` on, round 25 k25-3, fixed). The ask ends with `stalled stream: no bytes for N.Ns, past the 3s
@@ -478,7 +482,7 @@ Checks:
     `markdown`), and **your cursor stays in the window you were in**. It is not in the 8 primed buffers of
     `cockpit-surfaces.md` §1. Have the model write it again: the buffer refreshes in place. Close its window
     (`:close` in it) and write again: the buffer refreshes **and no window reopens**; `:buffer lain://epic/<slug>/research.md`
-    brings it back. From a shell, `lain epic show` prints the same bytes, `lain epic show epic` names the missing
+    brings it back. From a shell, `lain epic show` prints the same text (it adds a trailing newline, k26-10), `lain epic show epic` names the missing
     `epic.md` and the home, and `lain epic show notes` lists `research`, `epic`, `issues/ID` and `plans/ID`.
     *Wrong looks like:* a document nobody can read without knowing the XDG path, a window that grabs focus mid-typing, or one
     that reopens at every rewrite.

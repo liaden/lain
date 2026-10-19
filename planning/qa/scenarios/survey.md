@@ -77,7 +77,7 @@ the same file. *Driven 2026-09-14*, the one-shot side: from a sibling directory,
 `lain survey <abs>/cs/changeset/lib` headlined `surveying <abs>/cs/changeset/lib at cumulative scope:
 1 file` and listed `[ ] cs/changeset/lib/tally.rb`; run from inside the repository as
 `lain survey lib` it listed `[ ] lib/tally.rb`. Survey the same absolute path with `/survey` from
-the same cwd and confirm the rows read identically. *(Prediction, not yet driven: the `/survey` side
+the same cwd and confirm the rows read identically. b25-10 is still unfixed in round 26: the sidebar strips a leading `../` that the refusal keeps, so check the sidebar naming against the refusal text. *(Prediction, not yet driven: the `/survey` side
 needs the cockpit.)*
 
 ## 2. The ceilings, at a size no round has driven
@@ -94,13 +94,13 @@ with `git ls-files --cached --others --exclude-standard` before trusting a count
 
 | target | files | lines | |
 |---|---:|---:|---|
-| `lib` | ~983 | ~201,000 | **over both** — 742/161,963 (r11), 748 (r14), 749 / 152,909 (r15), 778 / 163,904 (r17), **983 / 201,112 (2026-10-16)**; RE-COUNT, never copy |
+| `lib` | 995 | 202,121 | **over both** — 742/161,963 (r11), 748 (r14), 749 / 152,909 (r15), 778 / 163,904 (r17), 983 / 201,112 (2026-10-16), **995 / 202,121 (2026-10-18)**; RE-COUNT, never copy |
 | `lib/lain/frontend` | 56 | 14,199 | fits (r17) |
 | `lib/lain/review` | 39 | 8,520 | fits (r17) |
 | `lib/lain/survey` | 9 | 1,274 | fits (r17) |
 
 Round 17 timed the `lib` refusal at 1,668 ms against a do-nothing `lain help` at 1,451 ms — the
-comparative form `method.md` prescribes, and a refusal that still does not walk the tree.
+comparative form `method.md` prescribes, and a refusal that still does not walk the tree. Round 26 measured the refusal at 321 ms with no walk, and `--unbounded` at about 5 s for 995 rows at 113 MB.
 
 ```
 you> /survey ./lib
@@ -125,7 +125,7 @@ time and what the sidebar does, and file the usability half separately from any 
 holding more entries than that) ends, and refuses naming the bound and the root, rather than surveying part of
 the tree. It must return within seconds with a clean `lain:` line and no backtrace; a walk that never ends or
 grows in memory is the bound lost. Where a root of `/` is surveyed under a small bound, no row's path starts
-with a `/`.
+with a `/`. Round 26: `/survey /` refuses in 1 s with `error: more than 20000 entries under /, so it is too large to survey`.
 
 **Do not drive `--unbounded` before the plain refusal.** The refusal is the check; lifting it first
 spends the only chance to read it firing honestly.
@@ -295,6 +295,8 @@ four rounds old and a metered arm is a second reason to defer it again.
 
 Open a row, place a note (`<leader>Ln`), **hand it back with `<leader>LN` (`:LainNoteDone`)**, then
 `<leader>Lt` on the anchored line. Type a question below the conversation and `:w`.
+
+The note kinds are `blocker`, `note` and `question`; any other word refuses by name (round 26).
 
 **The hand-back is load-bearing and was missing from this document until round 11 (F66).**
 `:LainNote` draws a marker locally and NOTHING reaches Ruby — no journal record, no thread anchor —

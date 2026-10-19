@@ -30,7 +30,7 @@ suffix, which is where the random ids a driver sees come from), while one whose 
 process is somebody else's lease and is refused. Keep one isolated run per project anyway (it keeps
 `git worktree list` readable), and **do** drive the collision: start a second run with the same worker key
 while the first is alive and expect the refusal naming the path and the holder; then kill the first hard
-and expect the second to take the path after moving the leftover aside.
+and expect the second to take the path after moving the leftover aside. The worker path is a hash of the worker id resolved against the PROCESS cwd (i26-3), so drive the collision from the project root. A library harness `Lain::Isolation::Worktree.new(root:, repo_root:, base: WorkingBranch.checked_out(...)).acquire("dev-spawn.N")` run from the project gives `worker dev-spawn.N: worktree path ... is held: leased by live process <pid> on <host>`.
 
 **And the chat's `subagent` tool is ONE-SHOT only** (round 17): actor mode is wired for the epic
 orchestrator alone, so every check below that needs a model-dispatched actor — §3's adoption,
@@ -110,9 +110,8 @@ completion must cite its spawn among its `causal_parents`. A dangling edge is `f
 spawn's body carries `task`, a digest of its prompt, beside `prefix`, `posture`, `only` and
 `spawned_from`. Round 17 journaled two identical `message kind=spawn` records for two different
 prompts in one turn (F97), and `--windows` and `lain watch` collapsed the twins. Ask for two
-subagents with different prompts in one message and confirm two distinct spawn digests. **Two spawns
-of an IDENTICAL prompt from one head still share one address, by decision** (the discharging chunk's
-Open decision 5) — do not file that. *(Prediction, not yet driven.)*
+subagents with different prompts in one message and confirm two distinct spawn digests. Two spawns
+of an identical prompt get their own addresses since `4e0eacf4`: the k-th twin's spawn carries `adoption: k` (driven round 26: 2 in 1 turn, and 3 sequential `@dev[/qa]` spawns with `adoption` 2 and 3).
 
 **A child that fails, is stopped, or is refused a lease leaves a record that retires it**, new in
 round 18. Before it, only a child that finished wrote a completion, so a crashed one left a
@@ -137,17 +136,16 @@ Three things to drive:
    `lifecycle`. The fleet count in the HUD must come back down.
 3. **A lease refused before the spawn leaves neither record.** The lease is taken *before* the
    `:spawn` is written, so a refusal there must not leave a spawn with no child — that ordering
-   is the fix, and a lone `:spawn` from a refused lease is the old bug.
+   is the fix, and a lone `:spawn` from a refused lease is the old bug. Drive it by making the scratch directory unwritable (`chmod 0555 $XDG_STATE_HOME/lain/research/<hash>/scratch`). Round 26: 0 spawn records, and the tool result is a raw `Permission denied @ dir_s_mkdir` (i26-4).
 4. **A one-shot child whose only output was a prose tool call fails rather than answering.** Ask
    for a subagent whose model responds with a bare tool-call envelope instead of an answer: the
    completion carries `lifecycle: failed`, `error: Lain::Tools::Subagent::MalformedAnswer`, and no
    `result` key; the parent's tool call comes back `malformed response from model: a tool call
    written as prose, not an answer (see its malformed_response journal record)`, not delivered as though it were the child's findings.
-   No stand-in endpoint is needed: `MalformedAnswer` happened live 7 times in round 25.
+   `MalformedAnswer` happened live 7 times in round 25 and twice in round 26.
    **Live on ollama 0.34.4 with qwen3-coder this child was unreachable** (round 22; round 25 reached it): ollama's parser
    answers 500 or cuts the stream before lain sees a prose envelope. The decoder now also strips
-   tool-call markup from a reply, so a stripped one is the other thing to look for. Drive this item
-   with a stand-in endpoint that emits the envelope, and say so.
+   tool-call markup from a reply, so a stripped one is the other thing to look for.
 
 ### 2b: A researcher's ceiling, and what a ceiling stop hands back *(2026-10-08 trial fixes)*
 
@@ -250,7 +248,7 @@ directory so the check is a `find`.
    its working directory (its segment 0 says `Working directory: stated after your role instructions`, byte for byte
    the same for every sibling, so 2 researchers still share the cached prefix). Its first message names the lease and
    the project's path, so it reads a project file by absolute path. The main agent's system text still names the
-   launch directory. A researcher that `cd`s or `ls`es the human's checkout believing it is home is the finding.
+   launch directory. A researcher that `cd`s or `ls`es the human's checkout believing it is home is the finding. The journal holds no request bodies; read them through a body-dumping proxy and `--api-base`.
 
 A write that cannot land is itself journaled, as `ending_not_recorded` naming the spawn and which
 record was lost, rather than dropped silently.
@@ -297,6 +295,7 @@ What to check, in order:
    actor without a running Supervisor — and it emits no event, so a driver reading only the journal
    cannot tell a refusal from a spawn that never happened. Read the `tool_result`: an adopted launch
    carries **the actor's address (its `:spawn` digest), the stable name a caller tells it by**.
+   Round 26 re-confirmed in the code that `mode: :actor` is set only in `epic_subagent` (`cli/wiring/toolset_build.rb:289`).
 2. **`git worktree list` while the dispatch is live, and again once it settles.** Empty before,
    one checkout while the actor (or a plain one-shot spawn) holds its lease, empty again after
    release — that appear/disappear pair is the whole of what "actually leased" means to a driver
@@ -310,7 +309,7 @@ What to check, in order:
    concrete backend, exactly **once**. A doubled lease record is the second-wrap bug, and it corrupts
    lease accounting silently. Confirm one acquire/release pair per dispatch, and that an ordinary
    one-shot `subagent` call the model made on its own — not only the adopted actor above — leaves the
-   same pair, since both paths now lease from the one resolved backend.
+   same pair, since both paths now lease from the one resolved backend. Under `--isolation worktree` the judge leases its own git worktree per judged call (round 26, i26-2).
 4. **A nested spawn's checkout lands at a THIRD path.** Have the actor spawn a grandchild subagent
    and read `git worktree list` again: the grandchild's lease must be its own entry, distinct from
    both the human's own working tree and the parent actor's checkout — a grandchild sharing either
@@ -353,7 +352,7 @@ the design: nothing a worker made is thrown away unasked.
 not retry an issue because the retained dirty lease still had `lain/issue/<slug>/<id>` checked out
 (F99). A retained or moved-aside checkout now anchors its HEAD and **detaches** it; the files stay.
 Check `git -C <retained path> symbolic-ref -q HEAD` exits non-zero and `git switch <that branch>`
-works in a fresh worktree. And gc no longer calls a fresh checkout "landed" just because its HEAD is
+works in a fresh worktree. A clean checkout whose holder is dead is reaped (`...no longer the process that took it; clean, and a branch reaches its HEAD`). The `nothing has landed since it was cut` keep applies only while its holder is not abandoned. And gc no longer calls a fresh checkout "landed" just because its HEAD is
 reachable from `main`: a checkout still at the commit lain cut it at is kept as `nothing has landed
 since it was cut; retained until <date>`. *(Prediction, not yet driven: strings read from
 `isolation/gc.rb`.)*
@@ -399,7 +398,7 @@ Then the backend's own behaviour:
   the image's entrypoint will not) and a `--name` of the shape `lain-<pid>-<entropy>-<n>`, and a
   timeout runs `docker kill` then `docker rm -f` against that name under a **5-second cleanup
   budget of its own**, separate from the command's timeout, so a black-holed daemon cannot turn a
-  bounded timeout into an unbounded hang.
+  bounded timeout into an unbounded hang. *(Driven round 26: `trap "" TERM; sleep 600` with `timeout 5`, a container named `lain-<pid>-<entropy>-1`, clean afterwards.)*
 
   ```bash
   docker ps -a --format '{{.Names}}' | grep '^lain-' || echo "clean"
@@ -427,7 +426,7 @@ Then the backend's own behaviour:
   `reader` never lets `ComposedTerm` approve a docker call; with `--judge-facts facts` or `request`, a judge approve is Overruled and
   parks for a human; with the default `--judge-facts off`, a judge approve still goes through. On a listed image, `cat README.md` can be
   approved by `ComposedTerm` under `classes`.
-  (Read from the code and its specs; a live docker run was not driven for this edit.)
+  (Read from the code and its specs. The plain case was driven round 26: alpine `bash` unresolved with exit 127, ubuntu `/usr/bin/bash` system.)
 - **A stopped daemon surfaces as a tool error**, named in the class doc rather than pretended away.
   Stop the daemon mid-session and confirm the model gets a legible tool error and the session
   survives. A session that dies because docker did is worse than the error. **On this box `docker`
@@ -456,7 +455,7 @@ session: `lain watch bfc36418ae69 --session <file>` rendered
 `[blake3:bfc36418ae69 spawn] fresh/schema spawned from blake3:ff9ca1f05f4a` and its completion, the
 same as the full digest. **A no-match names the file it searched**: `lain watch zzzz --session
 <file>` → `no spawn matched selector "zzzz" in <file's basename>`, exit 1. The `in <file>` refusal comes only
-from a closed session (round 25).
+from a closed session (round 25). `lain watch` with stdout redirected to a file prints nothing until it exits (i26-5).
 
 **A finished child is told apart from a killed one.** `lain watch` renders an answered one-shot's
 completion as `(done)` and a stopped one as `(stopped)`, though both journal `lifecycle: stopped`;
@@ -502,7 +501,7 @@ Then, inside tmux, spawn two subagents and check:
   by an index. Two concurrent spawns of **different** prompts must now open **two** windows — round
   17's F97 opened one for both — and the HUD's `fleet` should count two until each completes (an
   observation, not a check, per §2b item 6).
-  *(The two-window half is a prediction, not yet driven.)*
+  *(The two-window half was driven round 26: 2 windows appear about 3 s after the spawn records, titles gain `[done]` or `[failed]`, and a closed window does not stop its child.)*
 - **the window opens while the child runs, not at chat exit** (2026-10-08: a spawn seen from a thread with no
   reactor task was queued and its window appeared only when the chat closed). Give the child a task that takes
   30 seconds or more and poll `tmux -L "$QA_SOCK" list-windows -t lain-qa -F '#{window_name}'`: a `subagent-<digest8>` window

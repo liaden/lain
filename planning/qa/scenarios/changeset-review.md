@@ -101,10 +101,10 @@ repository cannot review a branch without `--base` (round 17's V2). The two entr
 differently, and a round should drive both:
 
 - **`/review <branch>` names the way out** since 2026-09-14 — `… -- this repository has no default
-  base to review a branch against; name one with --base <ref>`. *(Prediction, not yet driven: a
-  headless chat refuses `/review` for having no editor before it resolves any ref, so this needs the
+  base to review a branch against; name one with --base <ref>`. *(Driven round 26: the
+  cockpit wording names `--base <ref>`. A headless chat refuses `/review` for having no editor before it resolves any ref, so this needs the
   cockpit.)*
-- **`lain review <branch>` still does not.** *Driven 2026-09-14* in a `git init -b master`
+- **`lain review <branch>` still does not.** *Driven 2026-09-14, and again round 26 (`lain review feature` in a `master` repo says `base ref "main" does not resolve` with no `--base` hint)* in a `git init -b master`
   repository: `base ref "main" does not resolve to a commit in <repo>`, exit 1, no mention of
   `--base`. That is the one-shot's wording today, not a regression; file it as V2's remainder if a
   round wants it changed.
@@ -259,7 +259,7 @@ The three checks a survey structurally cannot make:
 
 1. **The OLD window holds the base revision's bytes**, not an empty buffer. A survey has no old side,
    so `<C-w>l` reaching a blank pane passes unnoticed there and is a defect here.
-2. **`:LainNote` on the OLD side anchors to `(side, revision, path, line)` with `side` naming the
+2. **`:LainNote` takes a kind first: `:LainNote note <text>`, `blocker`, or `question`.** **`:LainNote` on the OLD side anchors to `(side, revision, path, line)` with `side` naming the
    old revision.** Place one on the OLD side and one on the NEW side of the same file at the same
    line number, and confirm the two notes are distinct and come back distinct. Round 7's §4b
    findings (F30–F39) are all on the note rail and **none of them were driven against two sides**. Notes come
@@ -273,7 +273,7 @@ The three checks a survey structurally cannot make:
    goes through and the journal holds the annotations and the verdict. A second `/review` over an open round with held notes refuses
    with the same sentence, and journals nothing. The `/review-submit` text says only that the verdict and the *handed-back* annotations are
    on the journal. A verdict that settles with the note gone, or a submit text that claims a held note is journaled, is the finding back.
-   Round 26 re-checks both.
+   Round 26 re-checks both: a verdict with 3 notes held refuses `3 notes not handed back -- :LainNoteDone first: config/app.env:2` (h25-10 fixed); a second `/review` with notes held refuses the same way (h25-9 fixed).
 
 Then the verdict, both policies:
 

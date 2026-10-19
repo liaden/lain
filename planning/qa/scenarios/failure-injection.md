@@ -157,6 +157,8 @@ made the rule explicit and typed:
   Timeline, and only while that prompt is still the head. Anything else — a mid-stream sever, a
   stall, a `/stop`, a ceiling — leaves it stranded.
 
+A cut-off reply (unterminated stream, or `context_full`) ends the ask with an `error:` line and writes 0 `run_interrupted` records; the turn's `meta.stop_reason` (`truncated`, `context_full`) is the record (round 26, d26-3).
+
 A severed reply gives no refusal and no fold either: an unterminated stream is committed as the assistant turn,
 marked, and the model is told (round 25, d25-2, ruled). The committed turn carries `meta` `stop_reason: "truncated"` and a final text block,
 `The reply was cut off before the model finished.` (`context_full`, with `The reply filled the context window before the model finished.`,
@@ -253,6 +255,10 @@ the good direction — `--resume` is equally clean and carries its own `cannot r
 
 A bad digest **prefix** must also refuse by name: `no turn matching "<prefix>" recorded in <session>`.
 
+### A crashed session, salvaged from the response log
+
+Round 26: j25-1 is fixed. A crashed copy of a real session (journal cut after `request_sent`, WAL kept, writer pid dead) resumes with `recovered turn blake3:...` equal to the original's digest; an empty complete frame is refused: `the response log held no answer (a complete ollama-ndjson frame of N bytes: it reassembled to no content)`. A header without `wire` is refused as corrupt.
+
 ### Every door, not just `--fork`
 
 **A damaged journal must refuse by name from all four doors, and one of them used to die with a raw
@@ -320,6 +326,8 @@ operator's model server untouched — which matters on a shared machine.
 control run against the real endpoint in the same session**, because the whole finding is the gap
 between them (this is how a 1.9s control vs >400s hang was found; a bare "kill the server" would
 almost certainly not have).
+
+`bench record` honours `--num-batch` / `LAIN_NUM_BATCH` (round 26), so it no longer re-keys the shared runner.
 
 ## 5 — An unreachable endpoint
 
@@ -394,6 +402,8 @@ a blackhole endpoint for the child), then `kill -HUP <pid>` in one run and `kill
 then `session_closed`, and the spawn's lease is released (the journal holds an `isolation_lease kind: kept` record for it: a researcher child now gets a `Scratch` lease that is `kept`, not a worktree, so there is no `locked` worktree to look for).
 **Catches E-3 returning:** the HUP run with a `:spawn` record and no completion, or a lease still held
 after the process is gone.
+
+HUP and TERM both open the 60 s countdown first; the ending lands at `grace_expired`, with the completion message and the kept lease journaled (round 26).
 
 ## 7 — The iteration ceiling
 
@@ -479,7 +489,7 @@ cd $QA/project
 # 60-byte lines, so both files are line-structured (a one-long-line file takes a DIFFERENT
 # refusal path -- see below) and their sizes are exactly the ones quoted in the messages.
 ruby -e 'File.open("big.txt","w"){ |f| 50_000.times { f.write("x"*59 + "\n") } }'   # 3,000,000 bytes
-ruby -e 'File.open("mid.rb","w"){  |f|  5_000.times { f.write("# " + "x"*57 + "\n") } }'   # 300,000 bytes
+ruby -e 'File.open("mid.rb","w"){  |f|  5_000.times { |i| f.write("# %04d " % i + "x"*52 + "\n") } }'   # 300,000 bytes
 ```
 
 Re-verified 2026-09-12 against the built library — these are the exact strings, and **the size, the
@@ -508,6 +518,8 @@ the command's output (exit status: 1) is 200000 bytes, over the ceiling of 16384
 **Round 23: the live ceiling is 16384 on all three, and windows add up, so the `big.txt`/`mid.rb` difference below no longer
 holds.** Any line-structured file over the ceiling, 3 MB and 300 KB alike, is offered the windowed advice; the live
 distinction is `one.json` against `lines.json` (below). Treat the paragraph that follows as history.
+
+`read_file`'s windowed advice is the same for a 3 MB file as for a 36 KB one ("a limit of about 201 lines fits one window") and never says how many windows are needed; the model followed it 25 windows to the ceiling, 75 calls across 3 asks (round 26, d26-2).
 
 **The difference between those first two was the whole design and was worth reading twice.** The
 smaller file is offered a *full-cover window* — advice that leads somewhere — because a window
@@ -538,9 +550,7 @@ Five more things to check, because each is a way the shape can be right and the 
   Losing it turns a refusal into a second failure the model cannot diagnose. Ask for a command that
   prints past the ceiling *and* fails — `head -c 200000 /dev/zero | tr '\0' x; exit 1` is enough,
   and being gated it also puts one more approval through the surface.
-- **Both `bash` arms refuse byte-identically.** The bound sits in the shared renderer, so the Ruby
-  arm and the `lain-core` daemon arm must produce the same string; if the round has a core build
-  (`rake core:build`), drive one oversized command through each.
+- `Exec::Core` and the daemon lifecycle were removed on 2026-10-17 (`6c25ea68`), so there is 1 arm to check.
 - **The decision precedes the read.** An oversized file must be refused from its size, not read and
   then measured. Watch for a multi-second pause or a memory spike before the refusal — either means
   the file was materialised first, which is the memory half of the claim failing quietly.
@@ -627,7 +637,7 @@ this order:
    the smallest local window instead (§8). A read the tool admits can still overrun the window in
    aggregate, and the refusal above is what catches it — but a single 300 KB read no longer gets
    past the tool at all.
-5. `edit_file` on `mid.rb` again → **must be permitted**.
+5. `edit_file` on `mid.rb` again → **must be permitted**. `mid.rb`'s lines are numbered (`# 0000 xxx…`) on purpose: 5,000 identical lines made every `edit_file` ambiguous (`old_string occurs 5000 times`), so the edit must name a unique line such as `# 0042 `.
 
 **Step 5 is the deadlock guard and the reason this sequence exists.** If a full-cover window did not
 complete the read set, every file over the tool ceiling would be permanently uneditable and the
@@ -653,6 +663,7 @@ flips to true on the last one without any single call having covered the whole f
 merged per **file identity** (device, inode, size, mtime), not per path, and they must be
 contiguous — leave a gap of one line in the middle and the file must stay incomplete. A gap that
 still completes is the serious finding here: it means `edit_file` will clobber lines nobody saw.
+A 600-line `win.rb` read as 1-250, 251-500, 501-600 reads `[true, false]`; a gapped twin reads `[false, true]` (round 26).
 
 **7. A read counts only while the turn that delivered it is on the chain.** `/rewind` past the
 turn whose `tool_result` carried the read and the file must go back to unread — `edit_file`

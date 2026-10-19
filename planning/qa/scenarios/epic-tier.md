@@ -250,8 +250,9 @@ printf 'epics gates: "deferred"
 `gate` must be a table, got String: "deferred"
 ```
 
-**Every unknown key is reported in one pass**, not just the first: put two typos in and check both are
-named (`has no stages "reserch", "epic_pln"`). **A bare `epics gate: :deferred` is refused too**
+**Every unknown key is reported in one pass**, not just the first: put two typos in the table form
+(`epics gates: {reserch: ..., epic_pln: ...}`) and check both are named (`has no stages "reserch", "epic_pln"`); the block form
+stops at the first bad `gate` line (round 26, h26-10). **A bare `epics gate: :deferred` is refused too**
 (`` `epics` has no keys "gate"; known keys: home, gates, width ``): `gate` is a line inside the `epics`
 block, not a keyword.
 
@@ -432,6 +433,8 @@ anything is one that has stopped adjudicating. Drive it a second time against a 
 ambiguous artifact (a `research.md` holding one sentence and no acceptance criteria) and confirm it
 parks rather than approving.
 
+Under the default `epics home: :xdg` the evidence researcher cannot read the artifact it adjudicates (its read is outside the project and a judge-spawned child cannot ask), so `gate_evidence` reads the unparked sentence and the gate parks every time (round 26, h26-4).
+
 **A human's deny is a deny, even over a deferral (round 23 g23-1, fixed).** `lain epic submit` reads the decision it just
 made, not the queue: with an earlier submit of the same artifact left parked (`policy: deferred`), a later `n` prints
 `denied`, and so does the `epic_submit` tool result a model reads. Before, the queue's old row made the command print
@@ -494,10 +497,10 @@ and approve again). Then re-submit `research`, approve it, and confirm `epic_pla
 **A later-stage approval cannot step over an earlier denial** (round 25, h25-1, fixed). With `research` denied, park an
 `epic_plan` gate (from another route), then `lain epic approve <the epic_plan digest>`. It exits non-zero with
 `epic "<slug>" cannot open its epic_plan stage -- research not approved (a stage opens only once every earlier stage carries an approved sign-off)`
-and journals nothing: no stage transition and no decision. A digest parked in 2 partitions (research and epic_plan under one digest)
-approves in stage order, research first. `lain epic approve` that opens the epic_plan over the denial is the finding back. And with no
+and journals nothing: no stage transition and no decision. The artifact digest composes the stage, so research and epic_plan never share one; the
+old clause about one digest parked in 2 partitions is not reachable (round 26). `lain epic approve` that opens the epic_plan over the denial is the finding back. And with no
 interactive stdin, `lain epic submit epic_plan` over an unapproved research meets this same boundary and names it, not stdin. Round 26
-re-checks all three.
+re-checks all three. After a denial withdraws research's approval, `status` still says `stage epic_plan` (h26-6).
 
 **And a denied resubmission withdraws a standing approval.** Approve `research`, submit it again,
 deny it, and `epic_plan` must close again — approval is the *newest terminal decision* on the
@@ -675,7 +678,7 @@ Drive each refusal — every one names the plan path:
 - **a subject under no declared source root** — refused, naming the roots;
 - **an unknown `Level:`**, refused, naming the levels `tests` declares.
 
-A subject that does not exist yet is **fine** — a test written before its class is the normal case.
+A subject that does not exist yet is **fine** — a test written before its class is the normal case. Except that a subject that does not exist yet makes `RSpec.describe Subject` raise on load, which the red step refuses as `did not load` (round 26, h26-3, awaiting a ruling); until that is ruled on, stub the subject on the epic branch.
 
 ### 10b — startable means `in_flight`
 
@@ -713,7 +716,7 @@ What to watch for:
   worktree, naming the worktree, before any approval is asked. Drive it: have a worker `write_file` an
   absolute path in the human's checkout and run `cd <checkout> && ls`; both are refused, even under `bypass`,
   and the file does not exist. The ENV-1 probe can be driven through the issue's plan text (round 25): write the
-  `cd <checkout> && ls` step into the plan the worker is given, since this model never types it unprompted. A script or build tool the rules do not know, and a command whose paths cannot be
+  `cd <checkout> && ls` step into the plan the worker is given, since this model never types it unprompted. Round 26 wrote that step into the plan and the model never typed it, the 2nd round undriven. A script or build tool the rules do not know, and a command whose paths cannot be
   named (an expansion such as `$D`), are left to the approval ladder, so this is a guard on named writes and not
   a sandbox. Nothing reaches `epic/<slug>` before that issue's implementation gate;
 - **each worker is told its own place.** The first request of an issue's orchestrator, test engineer and dev
@@ -730,7 +733,7 @@ What to watch for:
   run has errors and no failed example) is refused with `<target> did not load: <first errors>; a run that errors before any example fails is
   not red, and nothing was committed`. **A red step that wrote anything but tests is refused** the same way: `the test_engineer child also
   wrote <paths>, and the red step may write only the tests, so nothing was committed`. A run with 1 failed example and no stray file is still
-  accepted. Round 26 re-checks all three;
+  accepted. Round 26 re-checks all three. Under Bundler 4, commit a lockfile that already has `CHECKSUMS`, or the red step refuses `Gemfile.lock` as a stray write (round 26, h26-2);
 - **an actor that committed nothing opens no gate.** Round 17 found the implementation gate opening
   over the red commit alone (F111). The issue is now reported as `its actor settled having committed
   no work beyond its failing tests at <sha>, so there was no implementation to submit`, and no
@@ -802,7 +805,7 @@ retry: it must launch, and `git -C <retained path> status` must still show the u
 worktree held the branch.)*
 
 **A retry's delete question offers only the branches that have not landed** (round 25, fixed): of a prior run's `lain/issue/<slug>/*`
-branches, one already an ancestor of `epic/<slug>` is not listed, so the question never offers to delete landed work.
+branches, one already an ancestor of `epic/<slug>` is not listed, so the question never offers to delete landed work. A retry reuses the stale issue branch when the epic branch moved (h26-7).
 
 **A retry is a new running row, not an invisible one** (round 20's G-4: `lain://status` and `state.json`
 froze during `/implement-epic` because a failed attempt wrote no anchor, so the retry was handed attempt 1
@@ -861,6 +864,8 @@ sha. Drive both: a hand-committed fix with no driver run gets the first; an anch
 second. And `epic submit implementation --digest` with a value that is not a commit in the repository (a wrong sha, a
 word) is refused: `the implementation digest <x> is not a commit in <root>`.
 
+An issue whose actor committed nothing but its failing tests names its red anchor in `land`'s refusal as the sha to approve; never approve that sha. Round 26 followed the hint and landed failing tests on `main` (h26-1). An epic with an abandoned issue can never finish; the remedy names `land`, which refuses (h26-5).
+
 `lain epic land` takes an **issue id, never a commit**. The SHA argument is gone: the commit it
 lands is the one anchored when the implementation gate approved it — found, not named. So confirm
 there is no way to type a commit at it, and that an issue whose implementation was never approved
@@ -886,7 +891,7 @@ lain epic finish
 
 Takes an epic whose every issue is done to `main` as one pull request, then deletes its remote
 branch. Check that a re-run over an already-`MERGED` PR reads as done rather than opening a second,
-and that moving the `epic/<slug>` tip and finishing again is treated as a **new** finish.
+and that moving the `epic/<slug>` tip and finishing again is treated as a **new** finish. `lain epic finish` with no remote prints `inconsistent_journal ... gh auth login` and exits 0; `submit` exits 0 on `denied` and `deferred` (h26-8).
 
 ### 12b: `lain epic finish --local`, for a repository with no remote *(2026-10-08 trial fixes)*
 
@@ -1019,6 +1024,6 @@ Drive the refusals, each naming the key and what would have been legal: `isolati
 (`` `isolation` retain_days: 0 is not a whole number of days, at least 1 ``), `rebase_retries: -1`
 (`... is not a whole number of retries, at least 0`), `diff_algorithm: :foo` (`... is not one of
 histogram, patience, minimal, myers`), `conflict_style: :zdiff`, and an unknown key (`` has no keys
-"bogus"; known keys: retain_days, rebase_retries, diff_algorithm, conflict_style ``). Every reader
+"bogus"; known keys: retain_days, rebase_retries, diff_algorithm, conflict_style, verifier, verify, verify_timeout, verify_keep, batch_cap, rebuild_cap, check, lint, lint_files, check_retries ``). Every reader
 refuses the same file (§13a), so drive them through `lain epic` or `lain worktrees gc` and `lain chat`
 and read the same line. Then set `rebase_retries: 0` and confirm worker self-sync is genuinely off.

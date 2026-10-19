@@ -274,14 +274,14 @@ Four properties to drive, all free:
   | `shell exclude: ["cu rl"]` | `<path>:N: `shell` exclude can never match an unquoted command: "cu rl"` |
   | `shell exclude: ["cu rl"], excluded: %w[curl]` | `<path>:N: `shell` has no keys "excluded"; known keys: exclude; exclude can never match an unquoted command: "cu rl"`: **both** problems in one pass |
   | two `shell` lines | `<path>:2: `shell` declares shell twice` |
-  | `shel exclude: %w[curl]` | `<path>:N: has no verb :shel; known verbs: epics, approval, isolation, sensitivity, shell, search, tests, middleware` |
+  | `shel exclude: %w[curl]` | `<path>:N: has no verb :shel; known verbs: epics, approval, isolation, sensitivity, shell, search, tests, middleware, env` |
 
   A malformed `shell` verb **raises** rather than being dropped, because the exclusion
   restricts and dropping it fails open. **A file that will not load refuses the launch, before
   a session file is written**, so there is no startup notice to look for: launch with
   `shell exclude: %w[curl` (an unclosed array), then `lain trust --yes`, and expect exit 1, a
   refusal naming `<path>/.lain/config.rb` and the line, and **no session file** under
-  `$QA/xdg/state/lain`. Before `lain trust` the same launch is refused as untrusted, naming
+  `$QA/xdg/state/lain`. The refusal names `<path>:1: syntax errors found` and prints a caret display of the line (round 26). Before `lain trust` the same launch is refused as untrusted, naming
   `lain trust <root>`. *This is the check that catches H-3 (round 20) coming back*: a launch
   that starts with the exclusions "not in force" and says so only in a notice is the defect.
   Also drive `raise "boom"` on line 2 (`<path>:2: boom`, exit 1) and `lain up -- --epic demo`
@@ -328,6 +328,8 @@ Four properties to drive, all free:
 
   A human's denial at a prompt keeps the old sentence; only a rung that cannot be lifted says so.
 
+  A project's `shell exclude: %w[curl]` does not reach `web_fetch`, and the refusal steered the model to `web_fetch`, which ran with no escalation record under `ask` (round 26, e26-1).
+
 ## 3 — a deny moves the command onto the *string* arm *(free — `/ruby`)*
 
 The counterintuitive one, and the reason §0 exists. `#arm_for` is
@@ -372,10 +374,9 @@ disqualifying flag, no aliasing segment, confined to the project root, and — a
 ```
 you> /ruby Lain::Approval::ComposedTerm::PROGRAMS.keys
 ```
-→ `["cat", "head", "tail", "wc", "nl", "grep", "sort", "cut", "tr", "rev"]`
+→ 13 programs: `cat head tail wc nl grep sort cut tr rev` plus `ls`, `pwd` and `which` (round 26). `echo` is not on it. `ls`, `pwd` and `which` still answer to their own listing predicates, and `VERSION_PROBES` is `rustc cargo rustup dx adb go gcc clang cmake`.
 
-**Ten programs, and `echo` is not on it** — it reaches `allow` at the verdict (§1) and is not
-auto-approved. **`ls` is approved by its own predicates, not by this table**: `ls`, `pwd` and `which`,
+`echo` reaches `allow` at the verdict (§1) and is not auto-approved. The same predicates approve `ls`, `pwd` and `which`,
 and `rustc`, `cargo`, `rustup`, `dx`, `adb`, `go`, `gcc`, `clang` and `cmake` with exactly `--version`,
 are approved when every word is ordinary and under the root (`Approval::ComposedTerm::VERSION_PROBES`). A
 rustup proxy is refused beside a `rust-toolchain` file, and an `ls` that would list a name `list_files` withholds
@@ -497,9 +498,10 @@ Expected for the approved call:
 
 - an `escalation` record with `"rung": "rules"`, `"verdict": "allow"`,
   `"authority": "automatic"`, and reason
-  `composed_term: every stage is a bare allowlisted reader over ordinary words: cat, head`;
+  `composed_term: every stage is a bare allowlisted reader over ordinary words: cat at /usr/bin/cat (system), head at /usr/bin/head (system)` (round 26: the reason names the resolved binaries);
 - **no `approval_pending` record for that `tool_use_id`** — nobody was asked;
-- one `shell_arm` record for it, `"verdict":"allow","arm":"term"` (§6).
+- one `shell_arm` record for it, `"verdict":"allow","arm":"term"` (§6);
+- the approved call also writes a `sandbox profile:"reader"` record and an `exec_record` (round 26).
 
 *Driven 2026-09-14* in a `--no-nvim` chat on a scratch git tree: exactly those three records —
 `escalation rung=triage verdict=abstain`, `escalation rung=rules verdict=allow
@@ -630,6 +632,8 @@ Then, in a cockpit started `--exec docker` (default image `alpine:latest`), ask 
   error;
 - its `shell_arm` record reads **`"verdict":"allow","arm":"string"`**.
 
+Round 26: under docker, `cat README.md | head -20` is approved by `composed_term` with nobody asked (stages resolved from the image: `cat at /bin/cat (system)`), and the pipe takes the string arm. Expect podman's banner in stderr.
+
 **That divergence is the record's whole point and is not a finding.** An allowed *pipe*
 under docker falls back to the model's own string and runs as `["sh","-c",command]` *inside*
 the container: contained, but the term arm's no-shell property is gone on that path. A
@@ -696,6 +700,20 @@ above plus these, every one refused before any connection:
 | `http://[::]/` | `… is the blocked unspecified address ::` |
 | `gopher://x/` | `web_fetch: unsupported scheme "gopher" (only http/https)` |
 | `http://user@127.0.0.1/` | `… is in the blocked loopback range 127.0.0.0/8` — userinfo does not hide the host |
+
+Round 26 drove these rows, each refused by name (match the string the binary prints for the wording):
+
+| range | named as |
+|---|---|
+| 203.0.113.0/24, 198.51.100.0/24, 192.0.2.0/24 | `documentation` |
+| 192.88.99.0/24 | `6to4 relay` |
+| 2001:db8::/32 | `documentation` |
+| 64:ff9b::/96 | `NAT64` |
+| 2002::/16 | `6to4` |
+| ::/96 | `IPv4-compatible IPv6` |
+| 100::/64 | `discard` |
+| 2001::/32 | `Teredo` |
+| ff00::/8 | `multicast` |
 
 Each `…` is `web_fetch: host "<the host as written>"`. **The spelling is `multicast`**, as the
 binary printed it; match the string, not the word you expect.
@@ -790,6 +808,8 @@ identical reduction over a **local** session's journal and say plainly that you 
 instrument is the same and free, and only the representativeness of the distribution is
 bought. Do not report a local number as the paid one.
 
+Round 26 had no Anthropic key. A local reduction over the round's driver-chosen commands read term arm 17 of 21 (81%); not representative and not the paid number.
+
 ## What this scenario does not cover
 
 - **The approval surfaces.** Whether a parked call *renders*, what `lain://approval` shows,
@@ -807,9 +827,7 @@ bought. Do not report a local number as the paid one.
   (resolve-and-record, resolve-and-constrain, verify-identity, control `PATH`) are named in
   the chunk plan and built by nothing yet. **A shim on `PATH` running instead of the real
   `cat` is documented scope today, not a finding.**
-- **`Exec::Core` and the lain-core daemon.** `--exec` refuses `core` by name and no shipped
-  tool constructs the backend, so no chat path reaches `Exec::Core#takes_term?`
-  (`exec/core.rb:42`, permanently `false`). Spec-covered; not drivable from a cockpit.
+- **`Exec::Core` and the lain-core daemon.** Removed (`6c25ea68`); nothing to cover.
 - **An agent with no chat to ask.** An agent in a run with no chat — a bench arm, `lain improve`,
   `lain consolidate`, or a child one of them spawns — whose stack `CLI::ToolGuard.detached` builds
   with a gate over `Middleware::Gate::ApproveAll`, is the one arm that reaches the tool with no

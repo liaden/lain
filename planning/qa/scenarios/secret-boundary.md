@@ -233,6 +233,8 @@ sensitivity gated: %w[*]       # LEGAL: under gated/denied a wildcard can only e
 sensitivity exempt: %w[/fixtures/]   # names a directory, and an exemption lifts one file
 ```
 
+`Config::Builder.evaluate` alone loads `exempt: %w[/fixtures]` (a real directory), `related:` naming a file, and `related:` naming the home or an ancestor of it. Each refuses at launch, by name, with no session file (round 26). Check these with a real launch, not the evaluator.
+
 **Two more `exempt` refusals, both round 17's F128, and the count moved.** `exempt: %w[.*]` loaded and
 ungated every dot-named credential while only `*`, `**` and `~/` were refused, and `~/**` loaded
 and lifted nothing. An exemption may now lift **at most one** built-in gated entry, and a home-anchored
@@ -407,6 +409,8 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["t
   puts [r["tool_use_id"], r["path"], r["regions"], r["requester"], r["surface"]].join("\t")}' "$JOURNAL"
 ```
 
+Round 26 (g26-4): after an approved release only `read_released` is written; a `read_redacted` record with `released >= 1` does not appear, so §4 item 2 cannot be confirmed from a `read_redacted` line after a release.
+
 Five fields, and what each is for:
 
 - `tool_use_id` — the releasing call, so the release joins to the read rather than to a timestamp.
@@ -453,7 +457,7 @@ Expected, all of it:
 1. The row reads `settings.yml:2:  token: <redacted:1>`, and the result ends with 1 trailer line: how many rows were
    masked, that `read_file` on the file asks for their release, and that a multi-line secret (a PEM body) cannot be
    detected one line at a time and is not masked here. Nothing parks, no prompt appears.
-2. `ast_search` over the same file masks its captured values the same way. A target that is a single file labels the
+2. `ast_search` over the same file masks its captured values the same way. `ast_search` has no yaml (`unknown language :yaml, expected one of [:ruby, :rust, :python, :typescript, :javascript]`); plant the token in a `.rb` file for this item. A target that is a single file labels the
    row with the model's own spelling and masks the same.
 3. The journal gets `search_redacted` (counts and the path, never bytes), **not** `read_redacted`:
 
@@ -468,12 +472,12 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
 5. **Resume.** `--resume` the session and `grep` again: the row is masked again, and the file is not in the masked
    read-set, so a `write_file` to it is not refused on the strength of the old grep.
 6. Grep the journaled request for the token body: 0 hits. A released region (approve a `read_file` release first)
-   shows in a later grep row raw, counted under `released`.
+   shows in a later grep row raw, counted under `released`. Round 26 found only `read_released` is written after an approved release, never a `search_redacted` record with `released >= 1` (g26-4).
 7. Known gap, not a finding: a relative single-file `grep` or `ast_search` target (`config/settings.yml`) comes back
    `1 match withheld (malformed)`. It predates round 23 and fails closed, so do not file it as new; use a directory target
    for the masking check.
 8. A secret path is still withheld, not masked: `ast_search` over `.env` or `secrets/prod` returns no row for it and
-   the withheld trailer (round 23 fixed `ast_search` skipping the path filter).
+   the withheld trailer (round 23 fixed `ast_search` skipping the path filter). A gated single-file target such as `ast_search .env` parks first, and after an approve returns `2 matches withheld (credential)` (round 26, g26-1). Only a directory target withholds without a park.
 
 9. **The docent route (round 23 G-1's worst case, fixed).** A diff docent child holds the same stack, so after a human
    *denies* a `read_file` release for a file the child's later `grep` over it returns the row masked
@@ -601,6 +605,8 @@ a25-4, fixed). A command's output has no release: nothing parks asking for one.
 3. **Clean output is untouched**: `echo hello` has no `<redacted:N>` and no trailer.
 4. Under `auto` or a rule-allowed call, the same print is withheld instead of masked (`bash output withheld: it held ...`), and the
    command is barred from automatic approval: the retry goes to a human, and a human-approved retry is masked as in 1.
+Round 26 confirmed the live display shows what the masker hid, for 7 shapes, under `ask` too: the chat pane and `lain://journal`. The record (journal, WAL, requests) holds 0. Documented at `withhold_automatic_output.rb:35`; whether the display should be masked is awaiting a ruling (a26-3).
+
 *Wrong looks like:* the raw token in the tool result, the journal or the display; a prompt offering to release it.
 
 ### 4g: a passed environment value is masked where it recurs *(a chat with a model, approval `ask`)*
@@ -816,8 +822,7 @@ innocent explanations — "that path is not classified protected", "the absolute
 home-anchored rule" — are not ruled out, and a finding that has not ruled them out is not a finding.
 
 **Round 20's A-3: the withheld-output refusal says how a human gets asked.** Still under `/mode bypass`, ask
-for `cat config/master.key` (a gated file, so `ComposedTerm` abstains and `bypass` runs it through the
-remainder) or any command whose automatically approved output holds a credential. The `tool_result` must
+plant a credential-shaped line in `config/master.key` and ask for `cat config/master.key`. A file whose content holds no detectable region runs and returns raw under `bypass`, by design. Or use any command whose automatically approved output holds a credential. The `tool_result` must
 name **`/mode ask`**: `... If approval is bypass, no approval is possible, so a human must first switch to
 /mode ask.` A refusal that says only "a human must approve" is A-3 back, because under `bypass` there is no
 queue for a human to approve on. Retype the same command: it must refuse again, finally, with the same
@@ -840,7 +845,14 @@ you> remember, under id `aws`, the line: AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAM
 you> remember, under id `plain`, the line: foo: bar
 ```
 
-Round 17: the first refused as `aws access key id`, the second wrote. The write side is gated on a
+Round 17: the first refused as `aws access key id`, the second wrote.
+
+| `memory_write` content | expected |
+|---|---|
+| `AWS_SECRET_ACCESS_KEY=<value>`, `DB_PASSWORD=`, `GITHUB_TOKEN=`, `OPENAI_API_KEY=`, `STRIPE_SECRET=`, `export SLACK_TOKEN=` | each must refuse |
+
+Round 26 found all 6 write, `memory_read` returns them raw in a fresh session, and `memory_loaded` journals them into every new session file (g26-2, i26-1).
+ The write side is gated on a
 credential **name** or an issuer-fixed prefix — deliberately narrower than the content side, which
 adds bare assignment shapes. So `foo: bar` must **not** be refused, and the named-credential form
 must be. Drive both; a write side widened to the content side's table starts refusing the user's own
@@ -868,6 +880,8 @@ below at `ask`, with `P` and the fixture as above:
 | `cat < <P>`, `cat <P> > out` | refused as final: the redirect target is a named path |
 | `true && cat <P>`, `true; cat <P>` | refused as final |
 | `cd ~/.ssh && cat id_qa` | refused as final: a `cd` joined by `&&` binds the next stage, and a bare word outside the project that lands on a denied file refuses |
+
+In a live chat the model stops sending later spellings after the first refusal. Read the table through `Lain::Shell::Named.of(cmd, cwd:, home:)` with each `resolved` path classified, or use a new session per spelling (round 26).
 | `cat link` where `link` points at the key | refused as final, naming where it lands |
 | `cat $HOME/.ssh/id_qa`, `${HOME}` | **defeats the check**: variable expansion makes the command opaque |
 | `cat ~/.ssh/id_*`, `cat ~/.ssh/{id_qa,other}` | **defeats the check**: a glob names only its fixed directory, and a brace makes the command opaque |
@@ -1111,3 +1125,5 @@ Driven 2026-10-17. With the mask: `stdout="rc=1\nhello readme\n"` and `stderr="c
 the rest of the project still readable. The control prints `TOKEN=planted-not-a-real-secret`, which is why the
 first result means anything. A masked file that still prints is the defect. Whether the real
 `MaskList` finds the right files in a real project is not driven here.
+
+A confined child's `bash cat /etc/passwd` parks for a human while its `read_file /etc/passwd` is refused with the home advice (`sensitivity/policy.rb:239-240`); a human-approved call runs `traced`, so `reader` would not hide the file (round 26, k26-9/g26-3).

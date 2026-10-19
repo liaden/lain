@@ -242,8 +242,10 @@ Checks:
       empty. A second Ctrl-C with nothing typed is the ordinary interrupt (`--grace`, the countdown above); answer
       that countdown with `c` if you drive it. Round 26 re-checks both halves.
     - **Tab goes into the draft** as a tab character; it does not trigger completion or move focus.
-    - **Ctrl-Z then `fg`** (suspend the `lain input` process, then resume it) leaves the pane working: the header
-      and the draft redraw, and a line typed after the resume reaches the chat.
+    - **Ctrl-Z** in a cockpit input pane does not stop the process (it is exec'd with no shell, so there is no `fg`);
+      check only that the pane keeps working.
+    - **Ctrl-C over a line typed at a drawn `you>` and at `command>`:** the line must clear and nothing be forwarded.
+      Round 26 found both end the cockpit (b26-1); only a draft typed while no prompt is drawn clears safely.
     - **A pasted multi-line draft is sent as one line.** Paste 3 lines in one go, then press Enter: the chat receives
       one line holding all 3, not 3 prompts. A bracketed paste and a plain one both do this.
     - **A very long line is sent whole.** A draft of more than 4,095 bytes arrives complete, with no cut and no
@@ -869,8 +871,8 @@ ran on. *Driven 2026-09-14* in a `--no-nvim` chat (the same prompt class `/appro
     agent asks: approve bash({"command" => "ls -la"})? [y/N]
 
 no `approval_decision` until the window closed, and the held `/status` ran at the next `you>`. A
-`/`-line recorded as a `tty` denial is round 17's shape back. *(Prediction, not yet driven: the same
-line at the `[y/N]` `/approve` draws inside a cockpit.)*
+`/`-line recorded as a `tty` denial is round 17's shape back. Driven round 26: held, the prompt redrawn, no decision.
+When `/approve` drew the `[y/N]` and it times out, the lapse is said twice in the chat pane (round 26, b26-2). A held paste in `--no-nvim` is drawn onto the `[y/N]` row, so a `y` shows at an approval nobody gave (b26-4).
 
 **The `notify` layer rings the terminal on an arrival, and nothing else runs.** Its lighter is
 `BELL`. While it stands, a question, approval or review arrival writes **one** BEL byte (`\a`) to
@@ -997,7 +999,7 @@ the displayed figure is `5:00`.) Park `echo hello` and read each surface:
 5. **Status lines carry the time they happened.** The held line, the approval arrival, a dropped
    prompt and the closing line of a decided one each start with `HH:MM:SS`; the drawn `[y/N]` is stamped at
    the moment it is drawn, which is later than its arrival when another prompt was ahead of it. Assistant
-   prose is not stamped. A question arrival's tmux bell message is also not stamped (only the printed line is);
+   prose is not stamped. **B23-1 (approval timestamps) was fixed in round 26**: the arrival reads `HH:MM:SS ! agent asks ...` and the lapse `HH:MM:SS ... denied after 0:30 with no answer`. A question arrival's tmux bell message is also not stamped (only the printed line is);
    record it if you see otherwise.
 6. **The question buffer says where answers go.** Open a question (`ask_human` with an options question and
    a free-text one) in `lain://question`. A virtual row `answer here, indented 2 spaces` shows under a
@@ -1385,8 +1387,7 @@ What is worth checking:
     `--approval ask` must show `ASK` from the first prompt, and `--approval bypass` `BYPASS`.
   - **The approval key and `:LainMode` move the lighter at once.** Press Shift+Tab: `ASK` appears (or
     disappears) in the HUD within one refresh, in the input pane (even mid-run, with no prompt open) and, at a plain
-    chat's prompt, in its redrawn header, and the status feed's mode agrees. `:LainMode` does not
-    redraw an open terminal prompt header (known gap); the next prompt shows it. `:LainMode bypass` in nvim shows `BYPASS`; `:LainMode nosuch` refuses
+    chat's prompt, in its redrawn header, and the status feed's mode agrees. `:LainMode ask` redraws an idle header at once. `:LainMode bypass` in nvim shows `BYPASS`; `:LainMode nosuch` refuses
     in the editor and changes nothing.
 
 ## 8 — Fold state on the approval and inbox rows
@@ -1421,7 +1422,7 @@ drivable now**: round 17 found the house model emits parallel tool calls, so two
 without a fixture.
 
 1. Force two gated calls so two rows exist in `lain://approval` (§5's three-call recipe works;
-   answer one to leave two, or just read both before answering either).
+   answer one to leave two, or just read both before answering either). Two rows at once is still unreached with this model, which serialises even parallel-safe reads. Drive it with a scripted vehicle (a replayed or stand-in provider turn carrying 3 parallel gated calls), not the live model.
 2. **This step's expectation was a prediction, and round 9 measured the opposite -- the RECORD row
    is OPEN at rest and the TRAILER is what folds closed.** Measured against two separate pendings,
    identically:

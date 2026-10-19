@@ -49,6 +49,8 @@ export PATH="$QA/gems/bin:$PATH"
 gem install rails --no-document          # 32 gems, ~3 min; writes only under $QA
 ```
 
+Rails 8.1.4 is already installed in mise ruby 4.0.6 (2026-10-18). `bundle config set --local path vendor/bundle` then `bundle install` (29 s) keeps the app's gems in the sandbox, with no `GEM_HOME` anywhere; lain's `Gemfile.lock` sha was unchanged.
+
 **Then put `GEM_HOME` and the `PATH` entry into `$QA/env.sh` itself, BEFORE the tmux server is
 started.** This is the step that is easy to miss and silent when missed: `PaneCommand::PANE_ENV` is
 an eleven-name `LAIN_*` allowlist, so a `GEM_HOME` exported in the shell that runs `lain up` does
@@ -137,7 +139,7 @@ launch, by name, before the session file is opened**, and so does a bad `--compa
 refusal, not an ask.
 
 **Why the tool results must be large, measured rather than assumed.** The elide half writes a
-per-message attestation of about **170 bytes**: role, a 12 character digest, byte count (it was about 230
+per-message attestation of about **134 bytes** (round 26: mean over 170 attestations, max 265): role, a 12 character digest, byte count (it was about 230
 with the full 71 character digest, so the break-even below was measured against the longer one and now sits lower:
 re-measure it). Over `"ok"`-sized tool results the attestation is *bigger than what it replaced*, so `shrinks?` is
 **false on every turn**; it turned true around **2 KB** of tool result with the old attestation. The driver is the elide half, not the oracle half.
@@ -171,7 +173,7 @@ rounds (or a first-turn `/pin`) left it nothing to collapse and the journal read
 `summary_hits 0` on 42 decisions while the head grew from 2 B to 95 KB. Now the head holds only the claimed turns. Drive
 it: `--compact-bytes 1500 --compact-keep 2 --compact-strategy summarize-conversation`, `/pin` the first prompt's digest,
 ask questions that each produce a few KB of conversation, and expect a compaction once a claimable run exists, with the
-pin surviving it. `/unpin` is no longer the way out. When the window still fills with nothing the strategy can claim
+pin surviving it. Say 'plain text only, no tools, no questions' in every ask: this model calls `ask_human` after an essay and wanders into epic skills. It may issue all reads as 1 parallel round, which reaches a handoff (c26-3) instead of the stall line. `/unpin` is no longer the way out. When the window still fills with nothing the strategy can claim
 (all tool rounds, under `summarize-conversation` alone), the decision's stall line names the strategy and, only when the
 wider arm would claim what it left, the pair: `but summarize-conversation claims none of the droppable turns` ... `use
 --compact-strategy elide-tools+summarize-conversation, which claims tool rounds and conversation both, or start a new
@@ -301,6 +303,8 @@ driven — this is integration check 7 of the discharging chunk)*:
   the run's own ask) — a child's over-window refusal in a session with subagents is expected, not
   the parent's.
 
+- **Idle compaction (`--compact-schedule idle`, the default).** After 120 s idle on ollama with a signal pending, expect `compaction_prepared` (`idle_seconds` 120 or more), then on the next ask `compaction_applied` and no `oracle_answer` before `request_sent`. Recipe: `--compact-bytes 6000 --compact-keep 2`, 2 long prose replies, wait. Typing during the prepare's summary holds the ask until it lands (c26-4).
+
 - **When no cut can make room, one handoff answers the ask.** This is the fallback round 18 added,
   and `rails-blog` is the scenario long enough to reach it. It fires only after the provider has
   refused a prompt whole **and** the source is stuck — nothing droppable, or the refused render
@@ -314,6 +318,8 @@ driven — this is integration check 7 of the discharging chunk)*:
      collapsing to empty content rather than to a second summary;
   4. what survives beside it is exactly the current ask, an unanswered `tool_use`/`tool_result`
      pair if there was one, and the pins — nothing else.
+
+  After a handoff, send a one-word ask and check it gets a one-word answer: round 26 saw the state document's `Next step` restart the old goal (c26-1). And a handoff can fire when the kept set alone overflows, losing the history while the ask is still refused (c26-3).
 
   **The handoff also fires when the only droppable content is ONE lone conversational turn** (round 20's
   RB-3). `summarize-conversation` proposes nothing for a run of 1, so the source used to read as stuck
@@ -473,6 +479,8 @@ Four things to check, and three of them are about honesty rather than arithmetic
 
   A waste figure that jumps by roughly a whole prefix at the switch is the metric inflating, which
   is the single most likely defect in this analyzer.
+
+  `/model qwen3:4b` and back costs every other fork on the box a runner swap of about 100 s; announce it. After the switch the window read `8192 guessed` against about 22k served (c25-7, unfixed round 26).
 
 Two more, both expected rather than wrong: a local model is **unpriced**, so the dollars are absent
 and the report says `dollar figures exclude qwen3-coder:30b -- no price recorded` rather than

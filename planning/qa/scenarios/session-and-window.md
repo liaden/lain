@@ -125,6 +125,7 @@ is that regression returning.
 
 `--num-ctx N` alone resolves a served window **with no server involved**, so it should give an
 honest denominator with nothing resident. That is the operator lever; it is otherwise untested.
+With no server, `--num-ctx N` resolves the window to N with provenance `guessed`, so it authorises no window signal until a probe lands (a26-4).
 
 ## 4 — The three readers must agree
 
@@ -339,8 +340,7 @@ Two launch-level checks, both free:
   (`rails-blog.md` 1b drives it with a real handoff).
 - **The header records `compact_schedule` whenever compaction is on, typed or not.** This is the one
   exception to the bullet above: the schedule that runs is always written (`idle` for an unflagged
-  launch, `turn` when typed so), so a reader can tell the two arms apart. Launch with `--no-compact`
-  and the key is absent. A header with no key at all predates the field, and those runs compacted on
+  launch, `turn` when typed so), so a reader can tell the two arms apart. `--no-compact` writes `compact_schedule: "turn"` (`UNCOMPACTED_SCHEDULE`), so its header is identical to `--compact-schedule turn`'s, and an untyped resume runs with compaction on (round 26, a26-2). A header with no key at all predates the field, and those runs compacted on
   the turn. `lain bench variance` refuses recordings made under different schedules, ending
   `cannot compare runs under different compaction schedules: idle vs turn` (exit 1); a recording
   without the key counts as `turn`.
@@ -367,9 +367,8 @@ chat has sat idle past the provider's cache TTL, or at least 120 seconds where t
 
 1. Leave the chat at `you>` for 2 minutes. Type nothing.
 2. Read the journal. `compaction_prepared` appears with the cut it committed:
-   `jq -c 'select(.type=="compaction_prepared")' "$JOURNAL"`. Its `cache_state` is `presumed_cold`
-   (no response confirmed the cache cold), `idle_seconds` is at least 120, and `cut_digest` matches
-   the newest `compaction_cut`. The 120 holds only for a provider with no cache TTL, as ollama is; with a TTL it is just past that TTL. Exactly **1** per head: a second tick over the same head makes no
+   `jq -c 'select(.type=="compaction_prepared")' "$JOURNAL"`. Its `cache_state` is `cold` after a turn
+   journaled `cache_cold_confirmed`, and `presumed_cold` only when none did. `idle_seconds` is at least 120. `cut_digest` is the cut's content address (the `parent` a later cut names), not the `compaction_cut` record's `digest` field, which is the source turn. The 120 holds only for a provider with no cache TTL, as ollama is; with a TTL it is just past that TTL. Exactly **1** per head: a second tick over the same head makes no
    second record and no second summarizer call.
 3. Type a line. The reply starts with no summarizer wait, and `compaction_applied` follows with the
    same `cut_digest`. `compaction_prepared` then `compaction_applied` is the whole story; a prepared
@@ -384,7 +383,7 @@ The window HUD and the StatusFeed show the pre-cut reading until the next reply,
 high after a prepare and drops on the first reply. That over-reports and hides nothing; it is not a
 finding.
 
-**Read from the code, not driven live.** This section was not run against a live chat. The 5-second tick, `idle_seconds` of at least 120 for a provider with no TTL, 1 prepare per head, and a mid-prepare line waiting only for the rest of that prepare are stated from the code and its specs. Round 26 drives it.
+Step 4 needs a prepare that actually takes a summary. A head of tool rounds is elided with no summarizer call (`(elided -- no summary was taken)`), so a prepare takes milliseconds and there is nothing to type into. Build the head from asks with no tools. Typing during a real prepare's summary holds the ask until it lands, with no sign on screen (round 26, c26-4). Steps 1, 2, 3 and 5 were driven on 2026-10-18, with a prepare at `idle_seconds` 123.
 
 ## 8 — The price table, and the lint that keeps it honest
 
@@ -606,6 +605,7 @@ did not record is off, and a header with no `arms` key at all (every session on 
 not with today's defaults. An arm that resumes weaker than a fresh chat's default and was not typed gets one notice, for example
 `running without --confine (off), as recorded; a fresh chat runs reader (pass --confine reader to run it)` (and the tripwire's
 equivalent); a typed flag that differs from the record gets `recorded with --confine reader; continuing with off (the current flags win)`.
+The safe arms are on by default since 2026-10-17 (`06375702`): a `composed_term`-approved `cat` journals `sandbox profile:"reader"` and an `exec_record` through `lain-fence`, and a human-approved call runs `traced` (driven round 26). `--api-base` is silently ignored under `--provider anthropic` (a26-1).
 Driving every arm is
 [`bash-confinement.md`](bash-confinement.md); this section only reads the header.
 

@@ -105,7 +105,7 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
    `CLOUD_WINDOWS` rather than trusting this figure, since the table moves.
 2. **A size-tagged row is found from its bare name**: `--model gemma4:31b` reads 256,000, `published`.
 3. **The longest key wins**: `--model glm-5.3-flash` resolves to the `glm-5.3-flash:cloud` row, not
-   the `glm-5.3` one.
+   the `glm-5.3` one. The number cannot tell them apart, because both rows are 1,000,000 today: read `ContextWindow.cloud.send(:cloud_key, "glm-5.3-flash")`, or pick a pair whose rows differ.
 4. **A name in no row still guesses**: a made-up name reads `8192`, `guessed`.
 5. **The lookup is cloud-arm only.** The same bare names on the local arm (`--provider ollama --model
    gpt-oss:20b`) stay `guessed` unless the resident model reports its own window, because a local tag that
@@ -132,7 +132,7 @@ and `deepseek-v4-pro:preview-cloud`) whose `/api/show` answers "was retired at �
 gone, so:
 
 - **Do not trust a row count written in this document.** It said **21** until round 20 counted **24** in
-  the table. Read it: `/ruby Lain::ContextWindow::CLOUD_WINDOWS.size` (19 on 2026-09-30) and enumerate
+  the table. Read it: `/ruby Lain::ContextWindow::CLOUD_WINDOWS.size` (19 on 2026-10-18, all live on `/api/show`, none over-claiming) and enumerate
   `.keys`. A stale count here is a scenario defect.
 - **Every shipped key must be live.** With `LAIN_OLLAMA_CLOUD=1` and `OLLAMA_API_KEY`, send each key to
   `/api/show` (the opt-in `spec/integration/provider/ollama_cloud_spec.rb` tier does exactly this); **none
@@ -176,6 +176,10 @@ invisible to a frame **count**. Read the bytes.
 **Expected and normal:** a *failed* round trip leaves one empty aborted frame per attempt — four
 for a retried 500. That is the retry envelope working, not corruption.
 
+To drive salvage with no spend, cut a completed cloud session's journal after its last `request_sent`, keep its WAL, make sure the writer named in the header is dead (a live writer skips salvage: `still open in process N`), then `--resume`. The recovered turn's digest must equal the original's (round 26, j25-1 fixed). Control: SIGKILL mid-stream gives `did not finish before the crash (N bytes recovered); not recovered`.
+
+An HTTP 404 from `/api/chat` is journaled `run_interrupted reason: torn` (j26-2); the retired `LAIN_OLLAMA_CLOUD_CONCURRENCY` is ignored without a word (j26-5).
+
 ## 6. Width, the launch notice and the 429 *(§6a costs nothing; §6b costs real quota or needs a stub)*
 
 The plan's grounding took "1 / 3 / 10 concurrent models" from the pricing page. **The wire says
@@ -207,7 +211,7 @@ lain chat --provider ollama                                         # the local 
    once`. With `0` it reads `ollama-cloud runs with no limit on
    cloud requests; LAIN_PROVIDER_CONCURRENCY=0 set that.`
    With `--api-base` on a loopback address and the variable unset or empty, the line is instead `ollama-cloud base <base> is a
-   loopback address, so it is held to 1 request, not 3; LAIN_PROVIDER_CONCURRENCY does not lift that.` (T10; round 25, j25-5). With the
+   loopback address, so it is held to 1 request, not 3; LAIN_PROVIDER_CONCURRENCY does not lift that.` The line names the held width; round 26 found its last clause false (j26-1): a set `LAIN_PROVIDER_CONCURRENCY` is honoured on loopback. With the
    variable set to a number on loopback, the plain width line appears and that number is honoured.
 3. The local arm prints no such line, and `OLLAMA_API_KEY`'s value appears in no startup line.
    *Wrong looks like:* a notice naming a width other than the one a fan-out then uses, or the line missing from a cockpit's
@@ -227,7 +231,8 @@ Two ways to force it, and say which you used:
   **A stub on `127.0.0.1` is classed local, so its width is already 1 with `LAIN_PROVIDER_CONCURRENCY` unset** (round 25, j25-5; the launch
   notice now says so, see 6a): items 1, 3 and 4 cannot be shown with a loopback stub unless you set the variable to the width you want
   (an env value is honoured on loopback), or bind the stub to a non-loopback address. Say which you did.
-  No such stub is checked in. Copy the response shape from `spec/lain/provider/ollama/retry_tap_spec.rb` (the webmock example near line 355): status 429, body `{"error":"too many concurrent requests"}`, headers `x-ratelimit-max-concurrent: 1` (the spec's refusal helper also sends `x-ratelimit-active`, `x-ratelimit-queue-limit` and `x-ratelimit-queued`), then a 200 with `{}`. The same file's `slow down` and `context length exceeded` bodies, with no concurrency header, are the other-reason 429s of item 5.
+  No such stub is checked in. Run `--prompt 'Reply ok.' --model glm-5.3` against the stub with a dummy `OLLAMA_API_KEY`, so the real key never leaves the box. A working stub is at `~/tmp/lain-qa-2026-10-18-j/records/stub/stub.rb` (TLS, a plan file of `c<N>`, `slow` and `ok` steps). Restart it per item so its request counter resets.
+  Otherwise copy the response shape from `spec/lain/provider/ollama/retry_tap_spec.rb` (the webmock example near line 355): status 429, body `{"error":"too many concurrent requests"}`, headers `x-ratelimit-max-concurrent: 1` (the spec's refusal helper also sends `x-ratelimit-active`, `x-ratelimit-queue-limit` and `x-ratelimit-queued`), then a 200 with `{}`. The same file's `slow down` and `context length exceeded` bodies, with no concurrency header, are the other-reason 429s of item 5.
 
 Read the journal:
 

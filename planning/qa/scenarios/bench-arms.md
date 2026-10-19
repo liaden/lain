@@ -203,8 +203,7 @@ Three things this is checking, and the first is the one that actually broke:
 **`lain bench variance` degrades the same way since 2026-09-14.** Round 17 found it refusing every
 local recording that had turns (`no price for model "qwen3-coder:30b"; configure a fallback to
 degrade`, exit 1), while this report degraded only its cost section (F109). Its cost row now reads
-`not priced` with the ledger's reason and the rest of the comparison renders. *(Prediction, not yet
-driven: needs two `lain bench record` recordings of a local model.)*
+`not priced` with the ledger's reason and the rest of the comparison renders. Driven round 26: `cost (USD): not priced`, the rest renders. `compaction cost delta 0.000000` and `cache write tokens 0.0` print beside it where 'not measured' belongs (l26-5).
 
 **A failed recording is set aside, and the remaining runs continue** — round 18's answer to a
 run whose round trip dies partway through. The file is renamed to `<stem>.failed.ndjson` (hard
@@ -225,6 +224,8 @@ reason is in the report rather than only in the filename. A variance report that
 the failed run, or that refuses whole because one run died, is the finding. Ctrl-C during a
 recording takes the same path.
 
+Driven round 26. Each run makes 4 attempts, so a single RST is retried away; sever every attempt of the target run. `sever.rb` with a `seq:pass,rst,rst,rst,rst,pass,pass` mode file (`~/tmp/lain-qa-2026-10-18-l/records/sever.rb`) gives exactly 1 `.failed.ndjson`. Variance then reports 2 recordings with a `== Set aside ==` reason, exit 0. With 1 survivor it refuses (exit 1) and lists both set-aside files.
+
 To see real figures, run one small sweep against a priced model — and note what the number excludes:
 **LLM-judge tokens are not on the arms' ledgers**, so a rubric-graded run's cost omits the judge. That
 omission is now *visible* for the first time; it is recorded, not fixed.
@@ -237,13 +238,15 @@ omission is now *visible* for the first time; it is recorded, not fixed.
   repo with a sentinel file in a parent directory. After the run, `git status` in the scratch repo is clean and nothing outside the
   worktrees changed, the sentinel included. **What this does not cover:** an opaque shell command (`sh -c`, `python3 -c`) still runs
   and can write outside the lease, which is the limit the refusal text states; `--confine reader` confines only a read-only command.
+  Round 26: named paths are refused by the lease (absolute `write_file`, parsed `cd <outside> && touch`, outside `read_file` and `list_files`), but an opaque `cd <outside> && for f in $(find ...); do ...; done` from an arm wrote the parent sentinel and a tracked file in the launch repo (l26-1). Seed the launch repo with a tracked `.rb` and check `git status` there, not only the parent.
 - **`--confine reader` is the one chat arm a bench takes** (`--confine off|reader`; `classes` is refused as a chat arm, and `--exec`,
   `--exec-image`, `--judge-facts` and `--tripwire` are not bench flags). With it, the report's first lines carry `confine:   reader`
   beside `isolation:` (and `reader (degraded: the box lacks bwrap and landlock)` on a box without them), and the journal's `run_arms`
-  record names it. A refused run writes no record. A read-only bash call such as `cat README.md | wc -l` runs under the reader profile; `touch made.txt`
-  still runs unconfined, in the lease. Round 26 re-checks both.
+  record names it. A refused run writes no record. No bench journal records the profile. Prove it from outside: sample `ps` for `lain-fence` during a slow allowlisted read (`sort big.txt | wc -l` on a 13 MB file). Round 26 saw only `strace -DD` (traced) and an outside `cat` that ran (l26-2).
 - The **dual-ledger arm settles on its ledger rather than its grader**, and its terminal state
-  distinguishes a dried-up ledger from a ceiling.
+  distinguishes a dried-up ledger from a ceiling. This is not readable from a bench run: no `ledger_transition` reaches the run journal (l26-4).
+- A fixture needs 2 or more tasks with distinct prompts; 1 task crashes with a raw `ArgumentError` after journaling (l26-3), and identical prompts refuse.
+- `grade_record` carries `arm` since round 26's re-check, and a partial row reads `6 of 8` with the surviving grades folded (l25-2 fixed).
 - **No `StalledStreamError`.** This arm runs concurrent actors against a single-slot ollama, which
   is the shape that has killed sessions elsewhere. It has not fired here in two rounds — the
   requests are 1.4–2.1s each, so no stream goes 30s silent — so if it *does* fire, that is a

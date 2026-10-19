@@ -174,6 +174,14 @@ that chunk `draft` and unlanded, was corrected on 2026-09-14.)
 |---|---|---|
 | [`greenfield-epic.md`](scenarios/greenfield-epic.md) | Can a person start in an empty directory (`lain up <dir> --create` on `--provider ollama-cloud`), interview, research and reach an approved research gate through `epic_write` and `epic_submit` **without the process freezing on a search above the project, the HUD guessing its window, a researcher losing its work at the ceiling, or an approval auto-denying unseen**? Each section names the failure it was written for. | quota, about 150 completions (round 23 spent 147; §6.3 alone spends a 60-iteration ceiling) |
 
+**Added 2026-10-17 (first driven 2026-10-18, round 26)**: the merge coordinator, `lain land enqueue / wait / status / drain` and the drainer's lock and batching:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`merge-coordinator.md`](scenarios/merge-coordinator.md) | Does exactly 1 drainer land a branch, with 1 verify per batch, moving the branch only by fast-forward to a commit verify passed, and does `lain land wait` tell the truth about every outcome? Round 26's first drive answered yes, and corrected 9 of its predictions. | minutes, no model except §7 |
+
+It is deterministic apart from §7, so it joins the cheap deterministic set on the standing rule below.
+
 ## Automated by `spec/e2e`
 
 Since 2026-10-03, `spec/e2e/` runs this checkout's real `exe/lain` (a plain chat, and a `lain up` cockpit with tmux and nvim) against a stand-in for ollama that replays recorded turns, or plays scripted ones, in `rake pspec` and the commit hook. Each section it drives carries an **Automated by** line naming the spec and its examples, and a **Still needs a human** half. That line is the list: this table only says where to look. A full round skips the automated half and always drives the human half; a round the user scopes to a named scenario or section drives it whole.
@@ -237,7 +245,7 @@ read. The set, with the date each joined:
 
 `failure-injection` and `session-and-window` from the start; `repl-commands` and `epic-tier` since
 2026-08-23; `survey` since 2026-08-25; `shell-terms` since 2026-08-26; `prompt-slots-and-roles` and
-`shell-term-approval` since 2026-08-27.
+`shell-term-approval` since 2026-08-27; `merge-coordinator` since 2026-10-18.
 
 Running one of these early costs almost nothing and catches a broken bench before a subject session
 is spent on it.
@@ -327,13 +335,19 @@ discharged, and git history is the archive: `git log --diff-filter=D --stat -- p
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
 
+- [`../qa-findings-round26-2026-10-18.md`](../qa-findings-round26-2026-10-18.md): round 26, a full round over all 22
+  scenarios in 13 forks, against `6054ba1d` (249 commits past round 25). Round 25 is almost entirely fixed, both HIGHs
+  included on the routes filed. **One new HIGH:** Ctrl-C over a line typed at a drawn prompt still ends the cockpit
+  (b26-1). **Two MED-HIGH:** `lain epic land`'s refusal points at the test-only red commit and following it put failing
+  tests on `main` (h26-1), and a bench arm still escapes its lease through an opaque `$(find ...)` loop (l26-1). A
+  credential line stored in memory spreads into every new session file (g26-2, i26-1).
+
 - [`../qa-findings-round25-2026-10-16.md`](../qa-findings-round25-2026-10-16.md): round 25, a full round over all 21
   scenarios in 12 forks, weighted to the round-24 fix batch and the bash confinement plan (T1 to T23, T26, T33 and
   T34 landed; T25 not). Round 24 is almost entirely fixed, both HIGHs included. **Two new HIGH:** `bench arms
   --isolation worktree` runs under an approve-all gate and an arm wrote outside its worktree (l25-1), and resuming a
   crashed ollama session commits an empty turn and reports it recovered (j25-1). The new `--confine`,
-  `--judge-facts` and `--tripwire` arms change nothing yet (a25-1). The round 25 fix plan has since landed: the
-  scenarios now state the fixed behaviour and round 26 is their re-check.
+  `--judge-facts` and `--tripwire` arms change nothing yet (a25-1). Round 26 re-checked it.
 
 - [`../qa-findings-round24-2026-10-15.md`](../qa-findings-round24-2026-10-15.md): round 24, 18 of 21 scenarios in
   9 forks, weighted to the 4 batches since round 23. `bench-arms` ruled out by the user; `memory-and-dogfood` and
@@ -633,7 +647,8 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   resolved backend, and round 17 watched a lease appear in `git worktree list` and disappear. What
   round 17 established besides is that the chat's `subagent` tool is **one-shot only** — actor mode
   is wired for the epic orchestrator alone — so §3's actor, nested-spawn-at-a-third-path and
-  depth-cap checks have no chat path to reach them.
+  depth-cap checks have no chat path to reach them. Round 26 re-confirmed in the code that `mode: :actor` is set only
+  in `epic_subagent` (`cli/wiring/toolset_build.rb:289`).
 - **Program identity on the term arm — uncovered by construction, not by omission.** `shell-terms`
   (2026-08-26) drives everything the approval rule *does* check about a program; what nothing
   checks is whether the binary `execvp` finds is the program the allowlist vouched for. `PATH` is
@@ -643,6 +658,7 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   each stage's resolved path and class, and since the round 25 fixes the string arm journals the stages read off the
   parse (`"basis":"parsed"`) and a docker call journals every stage `unresolved` with the anomaly `container_backend`.
   What remains uncovered is a command the parse cannot read whole, which keeps 1 unresolved entry.
+  Round 26 found `exec_resolution` names `/usr/bin/echo` for a shell builtin on the string arm (f26-4).
 - **Cost and latency.** Nothing records wall-clock or tokens per act, so "the plumbing works" and
   "the plumbing is usable" are not separated. One wiring mistake once cost 84.0s against 7.5s and
   nothing here would catch the same class again.
@@ -685,6 +701,7 @@ a full directory does not read as completeness:
   `exec_resolution` journals each stage's resolved path and class, so the question is askable on the term arm.
   The string arm is covered by the parsed stages (round 25, a25-3, fixed), and a container reads `container_backend` (e25-2,
   fixed). What remains uncovered is a command the parse cannot read whole, which keeps 1 unresolved entry.
+  Round 26 found `exec_resolution` names `/usr/bin/echo` for a shell builtin on the string arm (f26-4).
 
 - **`Toolset::Disclosure`, both arms.** `Upfront` vs `Deferred` (+ the `tool_search` tool) is a
   headline context-strategy axis and `Bench::DisclosureSweep` exists to compare them — but **there is
@@ -696,10 +713,8 @@ a full directory does not read as completeness:
   `protected_patterns` are composed by no live pipeline path a flag selects. `Context::Recall` is
   explicitly opt-in and unwired — see `memory-and-dogfood.md`'s note, which exists so the next round
   does not go looking for it.
-- **`Exec::Core` and the `lain-core` daemon.** Refused by name from `--exec` **by design** (it needs
-  a started client and the reactor holding it), so it is unreachable from any chat. The `:core`-tagged
-  specs cover it; what is missing is a human at the gate, which needs a `bundle exec ruby` harness
-  rather than a scenario.
+- **`Exec::Core` and the `lain-core` daemon.** Removed on 2026-10-17 (`6c25ea68`, `fe4566eb`; `lain-core` is kept as a
+  wire seed only), so there is nothing to drive.
 - **The forge half of the review tier.** `Source::GithubPr`, `lain epic land`'s promote/merge path,
   and `/review-submit` actually posting all need github.com. `changeset-review.md` and `epic-tier.md`
   drive the **boundary** — that a local-branch review refuses to post, and that `land` refuses before

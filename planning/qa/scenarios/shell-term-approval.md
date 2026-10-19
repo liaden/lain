@@ -267,8 +267,8 @@ $QA/drive.sh '/ruby Lain::Shell::Verdict.new.call("cat README.md | head -20").re
 | `cat ~/.ssh/id_rsa` | abstain | `words a shell would expand: "~/.ssh/id_rsa"` |
 | `cat *.pem` | abstain | `words a shell would expand: "*.pem"` |
 | `echo a && echo b` | **allow** (round 25) | a 2-pipeline term, run in order, each only if the one before succeeded |
-| `ls; rm -rf /tmp/x` | abstain | `joined by something other than pipes and &&: stages=2 joins=0 ...` |
-| a two-line command (newline between) | abstain | the same: `joined by something other than pipes and &&: stages=2 joins=0 ...` |
+| `ls; rm -rf /tmp/x` | abstain | `combinators no argv can express: ";"; the stages are joined by something other than pipes ...` |
+| a two-line command (newline between) | abstain | `joined by something other than pipes and &&: stages=2 joins=0 ...`; the line prints `stages=2 joins=0 separators=0` (both fields print) |
 | `exit 3` | abstain (since `159a5ea0`) | `shell builtins, which only a shell can run` |
 | `rm x $` | abstain | `bytes nothing accounted for, at offsets: "5"` |
 | `""` | abstain | `there is no command to run` |
@@ -280,7 +280,7 @@ Every abstention reason is prefixed `not fully understood -- `, and every allow'
 **The newline row is the one to drive deliberately.** tree-sitter-bash lexes a newline as
 whitespace, so there is **no separator node for it** — the abstention comes from *counting*
 (the stage count against the joins), not from reading. Type a real two-line command at `you>` and confirm the
-`joins=0` in the reason (it read `separators=0` before round 25). If that arithmetic ever stops firing, `Open3.pipeline` is handed
+`joins=0` in the reason (`separators=0` is not pre-round-25 wording: both fields print). If that arithmetic ever stops firing, `Open3.pipeline` is handed
 `[["echo","hi"],["rm","-rf","/tmp/x"]]` and runs `echo hi | rm -rf /tmp/x`. That is the highest-value
 single check in this document.
 
@@ -290,7 +290,7 @@ single check in this document.
 $QA/drive.sh '/ruby Lain::Shell::Verdict::PROGRAM_RUNNERS.include?("git")' 6 30 >/dev/null; $QA/peek.sh 6
 ```
 
-Must be `true`; `PROGRAM_RUNNERS` has **95** entries as measured in round 25 (it was 92). `git` sits in the option-directed
+Must be `true`; `PROGRAM_RUNNERS` has **95** entries, held in round 26 (round 25 measured it, and it was 92 before). `git` sits in the option-directed
 family for a reason recorded on the constant: `-c core.fsmonitor=id`, `-c include.path=…` and
 `-c alias.x=!sh` all execute, and `git status --short` is structurally indistinguishable from
 `ls -la`.
@@ -403,7 +403,7 @@ corrections round 15 had to make to this snippet — the member is **`exit_statu
 `Pipeline#call` requires **`env:` and `timeout:`**:
 
 ```bash
-$QA/drive.sh '/ruby Lain::Shell::Pipeline.new.call([["cat","README.md"],["tee","out.txt"]], cwd: Dir.pwd, env: {}, timeout: 10, capture: Lain::Exec::Capture::Bounded.new(ceiling: 16384)).to_h.reject{|k,_| k==:stdout}.inspect' 6 30 >/dev/null; $QA/peek.sh 6
+$QA/drive.sh '/ruby Lain::Shell::Pipeline.new.call(Lain::Shell::Term.of(["cat","README.md"],["tee","out.txt"]), cwd: Dir.pwd, env: {}, timeout: 10, capture: Lain::Exec::Capture::Bounded.new(ceiling: 16384)).to_h.reject{|k,_| k==:stdout}.inspect' 6 30 >/dev/null; $QA/peek.sh 6
 ```
 
 **`capture:` is a required keyword too** (round 22): without it the call raises, so pass
@@ -412,7 +412,7 @@ beside `exit_status` and `stderr`, so the reduced hash prints those two as well.
 
 Measured round 15, verbatim:
 `{exit_status: 126, stderr: "lain: tee: not permitted downstream of a pipe\n"}`, `out.txt` absent,
-`STDIN_SAFE.include?("tee")` false, `STDIN_SAFE.size` **46**.
+`STDIN_SAFE.include?("tee")` false, `STDIN_SAFE.size` **46**, held in round 26 (still without `tee`).
 
 **Note the asymmetry deliberately, because it is a limit and not a bug:** `refused_downstream`
 applies to `@term.drop(1)` only. Stage 0's argv is nobody's business here — `curl -o FILE`,
@@ -467,7 +467,7 @@ An `abstain` that a human then denies keeps the old `approval denied for tool "b
 The `deny`/`abstain` split on `.netrc` is `PATHLIKE` (`escalation.rb`, `%r{/|\A~}`) and it is
 deliberate, with the reasoning in the comment above it. A bare word whose resolved path is denied and lies
 outside the project root is refused, though: `cd /etc && cat shadow` refuses, `cat shadow` in the project
-only abstains. **The model controls the `./`.** Note
+only abstains. **The model controls the `./`.** The constructed rung has no project root, so a bare protected name in the cwd reads as outside and denies (`cat .netrc`); production abstains and parks. Note
 which of the three reasons that comment gives for the downgrade being safe: the first is *"the call
 still reaches a human because Triage downgrades every allow anyway"* — a premise **T9 destroys**,
 which is why §7's negative control matters more than its positive one.
@@ -713,8 +713,7 @@ refusal and not the bytes. The **retry** must reach a human: the same command ty
 abstains at the rules rung and parks, where before it would have been
 auto-approved a second time. **Which reason the rules rung gives depends on the level** (round 22): under
 `ask`, when the content predicate already refuses the file (an `API_KEY=` line it can read), the retry's rules
-reason is `no rule had an opinion`, because nothing needed to bar it; `barred` appears under `bypass`, where the
-bar is what keeps the command off the queue. Do not file `no rule had an opinion` under `ask` as a missing bar. And the pending it parks on carries `"humans_only": true`, under
+reason is `no rule had an opinion`, because nothing needed to bar it; under `bypass` the rules rung reads `no rule had an opinion` and the bar is named at rung `bypass`: `approval is bypass, and this command is barred from automatic approval; switch to /mode ask to approve it`, `final: true`. A 40 ms clean/dirty flipper got the auto-approve and the withhold on the first try; a 3 ms one was dirty at the check and parked (round 26). Do not file `no rule had an opinion` under `ask` as a missing bar. And the pending it parks on carries `"humans_only": true`, under
 `/mode bypass` there is no queue, so the same command gets a *final* deny naming `/mode ask` as the
 way out (§11).
 
@@ -864,11 +863,12 @@ Five things, then stop:
 4. **A rung above still refuses.** Drive the triage rung under `bypass`: `cat` an absolute path
    inside the fixture's protected set (§4's probe) and read the deny. Under `bypass` there is no
    queue to fall back to, so this is a refusal with no way to approve it, and the message says so.
-   A call that runs here is the serious finding in this section.
+   A call that runs here is the serious finding in this section. Round 26 found the refusal wording better but still saying "no approval is possible while approval is bypass; do not re-send it; no approval will lift this, so do not re-send the same command in another form": "no approval will lift this" is false (a human in `ask` can), and "do not re-send" appears twice (f25-3).
 5. **The arm was still chosen.** `Tools::Bash` picks its arm from the verdict regardless of the
-   approval level, so §0's oracle must still read `exit status: 127`, and the
-   `Telemetry::ShellArm` record on this `tool_use_id` must read `"verdict":"allow","arm":"term"`
-   (`shell-terms.md` §6 drives that record on its own).
+   approval level. Drive an allowed command no rule approves (`make -f nosuch.mk`): it reaches rung
+   `bypass` and its `shell_arm` reads `"verdict":"allow","arm":"term"` (`shell-terms.md` §6 drives that
+   record on its own). `exit 3` abstains since `159a5ea0` (string arm, status 3), and a remembered deny from
+   an earlier `exit 3` answers it before any other rung.
 
 **What wrong looks like:** `exit status: 3` here. That would mean the approval level changed which
 *arm* executes, which nothing is supposed to do — the ladder decides whether a human is asked, and

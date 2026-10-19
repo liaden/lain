@@ -403,7 +403,7 @@ which reader is open before you type:
 |---|---|---|
 | idle | `you>` | the next prompt |
 | cockpit, a call or a question parked on the dispatching line | `command>` | a `/`-command runs; **prose is held** (`held as your next prompt: <text>`) and dispatched after the line settles — never an answer |
-| `--no-nvim`, a call parked | `<requester> asks: approve …? [y/N]` | **the answer** — a bare Enter denies — **unless it starts with `/`**: a `/`-line is never a decision; it is held (`held as your next prompt: /status`) and the same `[y/N]` is drawn again, empty |
+| `--no-nvim`, a call parked | `<requester> asks: approve …? [y/N]` | `y` or `n` is **the answer**; any other line, prose or a `/`-command, is held (`held as your next prompt: <text>`, then `a y or n answers the approval`) and the `[y/N]` is drawn again |
 | `--no-nvim`, a question parked | `human>` | a registered `/`-command runs; anything else is **the answer** |
 | cockpit, after `/approve` | the `[y/N]` `/approve` drew | the answer, as `--no-nvim` |
 
@@ -421,8 +421,9 @@ on). It is now held for `you>` and the prompt is drawn again, empty. *Driven 202
     held as your next prompt: /status
     agent asks: approve bash({"command" => "ls -la"})? [y/N]
 
-with **no** `approval_decision` journaled. Prose (`n`, `y`, or anything else not starting with `/`)
-is still read as the answer. And **while a goal drives and no prompt is drawn at all**, a whole line
+with **no** `approval_decision` journaled. That was the 2026-09-14 drive. **Round 26 (fork d) found prose is no
+longer read as the answer either:** it is shown `held as your next prompt: <text>` followed by `a y or n answers the
+approval`, and only `y` or `n` answers. And **while a goal drives and no prompt is drawn at all**, a whole line
 typed into the pane is held the same way and runs before the next iteration — so a `/goal off` typed
 mid-drive is how a goal is stopped from the terminal (`repl-commands.md` §7).
 
@@ -445,9 +446,9 @@ every parked call whole and address the buffer's own window rather than a window
 
 **And do not type at all while an approval is drawn -- the Enter IS the answer, and it denies.**
 The rule above bounds how many times you send; this one bounds *when*. At a drawn `[y/N]` prompt —
-every parked call in a `--no-nvim` chat, and the one `/approve` drew in a cockpit — the newline a
-driver sends to submit its next PROMPT is consumed as the approval's answer, and the default is
-**deny**. (In a cockpit's `command>` state a stray prompt is held instead, which costs a mis-ordered
+every parked call in a `--no-nvim` chat, and the one `/approve` drew in a cockpit — a bare
+Enter is consumed as the approval's answer, and the default is **deny**. (Since round 26 a PROSE line sent there is
+held, not read as a denial, but it still voids the probe it lands in.) (In a cockpit's `command>` state a stray prompt is held instead, which costs a mis-ordered
 prompt rather than a denial — still a probe to discard.) Round 6 lost a `bash` call that way and then spent three turns watching the
 model recover from a denial nobody intended -- which reads exactly like a model failure and is the
 driver's. **The rule governs HAND-TYPED sends too, not only `drive.sh` ones** -- round 7 sent a
@@ -1546,3 +1547,54 @@ fallback rather than redesigning mid-run.
 - **In zsh, `T="tmux -L ..."; $T` fails with `command not found`.** Use a function.
 - **A box-wide OOM can come from outside the round.** `journalctl -k` names the process that invoked the killer. Read
   it before attributing a 500 burst.
+
+## Round 26 (2026-10-18): what 13 forks taught the process
+
+- **4 forks at once held again on this box.** `greenfield-epic` alone still hit the 200-turn limit once and had to be
+  resumed.
+- **A planted secret shows raw in pane captures and `lain://journal` dumps even under `ask`** (findings a26-3), not
+  only under `bypass`. Grep only the session file, the WAL and the request dumps for a planted value, and never paste a
+  pane capture holding one.
+- **`--api-base` does not redirect `--provider anthropic`** (a26-1): a probe that relies on it reaches the real API.
+- **`/model <other>` and back, like a `--num-ctx` probe, costs every other fork a runner swap of about 100 s.**
+  Announce it and keep it to 1 reply.
+- **A background gatekeeper outlives its cockpit and answers the next cockpit's calls.** Kill it with the cockpit, and
+  resolve panes from `@lain_input_pane` on every call; a helper with hard-coded pane ids (`%3`) hangs against a second
+  cockpit.
+- **`tmux list-panes` order is not creation order**: `tail -1` once picked and killed the input pane. Address panes by
+  `@lain_input_pane` and `@lain_chat_pane`.
+- **2 cockpits in 1 sandbox make `nv.sh` and `drive.sh` refuse as ambiguous.** Use 1 cockpit per sandbox.
+- **`tmux set-environment -g` does not reach a new `lain up` cockpit's chat.** Put variables on the window's command
+  line with `env`.
+- **`systemctl --user set-property` (the round 24 memory cap) needs `XDG_RUNTIME_DIR=/run/user/1000`.** Under `env.sh`
+  it fails with `Failed to connect to user scope bus`.
+- **`isolation.sh` passes vacuously for a plain chat typed into a pane's zsh**: it reads the zsh's environ (5 of 5)
+  while the chat started from it had no `TMPDIR` (4 of 5), because the profile hook resets it. Put `TMPDIR=$QA/tmp` on
+  the `env` launch line and check the chat's own pid.
+- **Put `: "${QA_SOCK:?}"` in every helper**, including one that sources only a `j*.env` file and not `env.sh`; one ran
+  `tmux -L` with no socket.
+- **Samplers that read `state.json` must name the project's own `status/<hash>/state.json`.** With 2 projects in a
+  sandbox, `ls | head -1` picks the wrong one.
+- **Shell functions such as `T` do not reach `timeout bash -c`**; use the full `tmux -L` there. In zsh, `r` and `gd`
+  are a builtin and an alias, so do not name helpers `r()` or `gd()`; `set -- $args` does not split; glob qualifiers
+  such as `(N)` are off in this harness.
+- **A listener started with `( ... & )` inside a `| grep` pipeline keeps the pipe open and hangs the Bash call.** Start
+  it with `setsid nohup ... < /dev/null` and kill it by the pid `ss -ltnp` names.
+- **To use the cloud key without printing it or loading the whole `.envrc`**:
+  `export OLLAMA_API_KEY="$(direnv exec /home/tara/dev/lain printenv OLLAMA_API_KEY)"` inside a launcher script.
+- **In a plain chat an `@role[/skill]` prompt journals no user turn**, so a wait on `end_turn` never fires; wait on
+  `isolation_lease ... kept`.
+- **Run library harnesses that touch per-worker paths from the project directory**: `Paths#project_hash` resolves its
+  argument against the cwd (i26-3).
+- **A one-shot `@dev[/qa]` child parked on its own `ask_human` holds a live worktree lease indefinitely.** It is the
+  cheap vehicle for crash and collision legs (round 21's note, confirmed on worktree).
+- **To observe a sandbox profile in a bench run, sample `ps -eo pid,ppid,args` every 0.05 s** during a command that
+  takes at least 0.5 s; no bench journal records the profile.
+- **`answer.sh` prints `(no approvals pending)` after answering**, which reads like a no-op; it is the post-answer
+  state. `reply.sh` prints `focus failed` whenever `lain://inbox` is not in the current tab; `:sbuffer lain://inbox`,
+  `:1`, `:LainReply` works.
+- **A gatekeeper regex test string containing the text `rm` is refused by the agent harness's own safety check.** Test
+  with other text.
+- **The price lint marker is 2026-08-18**, so `bin/lint-price-freshness` fails pre-commit from 2026-11-17.
+- **Ctrl-C over a line typed at a drawn `you>` or `command>` ends the cockpit until b26-1 is fixed.** Do not use it to
+  clear a line.

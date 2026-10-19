@@ -233,6 +233,10 @@ judge's text still holds the environment block. Delete the fixtures and confirm 
 file, or a judge whose first request carries the project's text, is the finding. Known gap: the journal's slot-fill record is taken from the unsealed render, so it can list the project's system fill
 as applied although the judge never saw it; trust the captured request, not that record. Round 26 re-checks both.
 
+Round 26: the judge's system text (2,385 bytes, read through a body-dumping proxy) holds the environment block and not the project's `system.md`; d25-1 is fixed. The main and researcher requests do carry it.
+
+Known wording nit (d26-7): the `evidence_researcher.md` refusal says it "decides approvals"; it informs them.
+
 ## 6 — the 4096-token cache floor *(the one paid step — 2 completions, real Anthropic quota)*
 
 The free two-thirds of this section first:
@@ -245,8 +249,8 @@ $QA/drive.sh '/ruby Lain::CacheProfile::ANTHROPIC.min_prefix_tokens' 8 30 >/dev/
 573 bytes is ~143 tokens at the ~4-bytes-per-token estimate this project uses elsewhere
 (`Lain::ProxyBytes::BYTES_PER_TOKEN`), but the template is only half of what is cached.
 **Anthropic's cached prefix is the tools block plus the system prompt**, so the free half must
-count the tools block too: 23,272 bytes of tool schemas over 23 tools in round 25 (22,726 in round 23, 19,619 in round 22; the figure moves with the toolset, so re-measure each round rather than quoting it), which is about
-5,800 tokens and so ABOVE the 4096-token floor `CacheProfile::ANTHROPIC.min_prefix_tokens` reports.
+count the tools block too: the tools block is 23 tools, 23,642 bytes on the ollama wire (round 26; 23,272 in round 25, 22,726 in round 23, 19,619 in round 22; the figure moves with the toolset, so re-measure each round rather than quoting it), which is about
+5,900 tokens and so ABOVE the 4096-token floor `CacheProfile::ANTHROPIC.min_prefix_tokens` reports.
 573 bytes of template alone does not show the request is under the floor. Measure the tools
 block (the request's `tools` serialised, from the journal's request record) beside the template
 before predicting a zero, and treat a non-zero `cache_creation_input_tokens` as possible.

@@ -93,6 +93,8 @@ Expected refusal, naming the subject, the size and the ceiling, and offering **t
 moves**: "write less — keep the body to what a later read actually needs" and "split it across
 several ids, one subject each, so the manifest can point at the right one".
 
+Drive the boundary through the library (`Tools::MemoryWrite.new(recorder: Memory::Recorder.new, author: Memory::Author.chat).call(...)`), because the model will not emit a body of an exact size. Round 26: `memory_write` accepts `AWS_SECRET_ACCESS_KEY=`, `DB_PASSWORD=`, `GITHUB_TOKEN=` and kin, because the credential pattern's `\b` never fires inside an identifier (g26-2); plant one with a fake value and count hits in a fresh session's file.
+
 **Then the check that says the pair is really matched:** the write's ceiling being no higher than
 the read's makes the read's ceiling *unreachable through the toolset*, which is what lets it be
 described as a runaway guard. Confirm there is no accepted write that produces a refused read. If a
@@ -134,7 +136,7 @@ Two properties, and the second is the one a casual read misses:
 
 The Agent stays memory-blind by construction: it never sees `Memory::Index` or the `Recorder`, only
 a journal that happens to also remember the root. Nothing outside can verify that directly; what it
-CAN verify is the consequence — **no `memory_*` record carries an item body**. Grep the journal for
+CAN verify is the consequence — no `memory_root` record carries an item body; `memory_loaded` carries them all by design, which is how a stored credential reaches every new session file (round 26, i26-1). Grep the journal for
 one of the bodies written above and confirm it appears only in the tool call and result, never in a
 telemetry record.
 
@@ -272,6 +274,8 @@ Three properties on the fresh chat:
    not be conflated: the first is the *store* fold this session read, the second is the live
    index's content address at one turn. A round that expects them to be equal has misread both.
 
+Round 26: the clerk wrote 13 items from 1 `qa` lineage, mostly whole file contents, and every later chat in the project then wandered into `memory_read`; expect a polluted manifest to change later scenarios in the same project.
+
 **Every item names its author, and lain sets it, not the model** (round 20's E-2: memory rows recorded no
 provenance, so the clerk's paraphrase read as the human's word). `memory_read` puts an `author:` line above
 the body:
@@ -326,7 +330,7 @@ lain improvements --project .                       # a path, resolved the same 
 lain improvements --kind nonsense                   # must refuse, naming the four kinds
 ```
 
-**Automated by** `spec/e2e/session_passes_spec.rb`, "runs #{pass} on the model and num_batch the session header recorded" (run once for improve): with no flags typed, `lain improve` over a recorded session exits 0 and sends every model call on the header's model and `num_batch`. **Still needs a human:** `--dry-run`, the `stored N notes` count against the file, every `lain improvements` filter, the cross-project read, the honest-empty path, and whether the notes are any good.
+**Automated by** `spec/e2e/session_passes_spec.rb`, "runs #{pass} on the model and num_batch the session header recorded" (run once for improve): with no flags typed, `lain improve` over a recorded session exits 0 and sends every model call on the header's model and `num_batch`. **Still needs a human:** `--dry-run`, the `stored N notes` count against the file (round 26: a `lain improve` that hits its ceiling exits 1 with `stopped at the ceiling, stored N notes`, 27 notes, matching `wc -l`), every `lain improvements` filter, the cross-project read, the honest-empty path, and whether the notes are any good.
 
 The four kinds are `knob`, `bug`, `missing-feature`, `doc`. **Check the two `--project` spellings
 resolve to the same set** — a hash and a path that disagree means one of them is not being resolved

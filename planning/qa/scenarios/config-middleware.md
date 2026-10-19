@@ -87,7 +87,7 @@ cd "$REPO" && lain chat --provider ollama --model qwen3-coder:30b < /dev/null; e
 ```
 
 Expected: refused naming `.lain/config.rb:2`, with `has no verb :modle; known verbs: model, tool,
-turn, repl, http`. Repeat with `turn SomeClass`, where `SomeClass` is a class with neither method (a named class prints its name; an unnamed one prints
+turn, repl, http`. Repeat with `turn SomeClass`, where `SomeClass` is a class with neither method (a named class prints as `#<Class:0x…>::<Name>`, because classes defined in the `instance_eval`'d builder live under its singleton class (round 26, j26-4); an unnamed one prints
 `an anonymous class`). The refusal reads `<name> has no instance #call or #settle`, one sentence naming both missing methods (round 25, j25-3,
 fixed); a `tool` or `repl` class lacking `#call` reads `has no instance #call`. A module is refused as
 `a middleware is a Class, not a Module: <inspect>`. Also try `http { }` (a block): `http takes a Faraday middleware class, not a block`; each is refused at its own line. A class defined in the user file is not
@@ -106,6 +106,8 @@ shows as a `tool_use`. Then ask it to read a file the `sensitivity` table denies
 `sensitivity denied: %w[secret.txt]` in a trusted project config): the trace **still has a line for
 that call**, because configured middleware runs ahead of lain's guards, and the model's result is
 the refusal, never the file. The trace is a record of calls offered, not calls allowed.
+
+Also read the session journal's header: it carries `"middleware":{"user":<digest>,"project":<digest>}`, matching the trust mark file names, and the key is absent when nothing is registered (round 26, j25-2 fixed).
 
 ## 5. a subagent gets its own instance
 
