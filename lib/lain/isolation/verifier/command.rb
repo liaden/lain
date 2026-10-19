@@ -20,13 +20,16 @@ module Lain
         # @param shell_out_factory [#call] builds the subprocess runner
         # @param stale_group [StaleGroup] marks this verify's group on the lock
         #   line, and stops one a dead holder left
-        def initialize(argv, timeout:, lock:, shell_out_factory:, stale_group: StaleGroup.new)
+        # @param notice [#call] told, in words, who holds the suite lock when the wait for it runs long
+        def initialize(argv, timeout:, lock:, shell_out_factory:, stale_group: StaleGroup.new,
+                       notice: ParentLock::Silent)
           @argv = argv
           @spelt = "`#{Shellwords.join(argv)}`"
           @timeout = timeout
           @lock = lock
           @shell_out_factory = shell_out_factory
           @stale_group = stale_group
+          @notice = notice
         end
 
         # @param candidate [Candidate]
@@ -36,7 +39,7 @@ module Lain
           checkout = File.expand_path(candidate.path)
           return verification(candidate, :failed, "#{checkout} is not a directory") unless File.directory?(checkout)
 
-          @lock.hold(reclaim: @stale_group) { |note| attempted(candidate, checkout, note) }
+          @lock.hold(notice: @notice, reclaim: @stale_group) { |note| attempted(candidate, checkout, note) }
         end
 
         private

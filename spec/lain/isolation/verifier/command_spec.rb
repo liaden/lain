@@ -143,6 +143,26 @@ RSpec.describe Lain::Isolation::Verifier::Command, :seam do
     expect(verification.outcome).to eq(:passed)
   end
 
+  it "says once, through its notice, who holds the suite lock when the wait outlasts the patience" do
+    release = Queue.new
+    held = Queue.new
+    FileUtils.mkdir_p(File.dirname(suite_lock))
+    lock = Lain::FileLock.new(suite_lock, label: "the suite lock", patience: 0.1)
+    holder = Thread.new { lock.hold { (held << true) && release.pop } }
+    held.pop
+    command = described_class.new(%w[true], timeout: 5, lock:, notice: notices.method(:<<),
+                                            shell_out_factory: Lain::Shell::Out.public_method(:new))
+    verifying = Thread.new { command.call(candidate) }
+
+    wait_until(timeout: 2, reason: "the waiting verify to say who holds the suite lock") { !notices.empty? }
+    release << true
+    holder.join
+    verification = verifying.value
+
+    said = /\Awaiting on pid=#{Process.pid} command=.* for the suite lock \(#{Regexp.escape(suite_lock)}\)\z/
+    expect([verification.outcome, notices]).to match([:passed, [said]])
+  end
+
   describe "a verify group left by a holder that died" do
     let(:probe) { Lain::Liveness::Probe.new }
     let(:member) { File.join(@dir, "member.pid") }

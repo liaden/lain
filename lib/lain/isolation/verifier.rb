@@ -12,14 +12,15 @@ module Lain
           return Skipped if isolation.verify.empty?
 
           Command.new(isolation.verify, timeout: isolation.verify_timeout, lock: SuiteLock.for(paths:),
-                                        shell_out_factory:, stale_group: StaleGroup.new(notice:))
+                                        shell_out_factory:, stale_group: StaleGroup.new(notice:), notice:)
         end
       }.freeze
 
       # @param isolation [Config::Isolation] names the strategy and its settings
       # @param paths [Lain::Paths] where the suite lock lives
       # @param shell_out_factory [#call] builds the subprocess runner
-      # @param notice [#call] told, in words, what a strategy did about a run a dead process left behind
+      # @param notice [#call] told, in words, what a strategy did about a run a dead process left behind,
+      #   or who it waits on
       # @param strategies [Hash{String=>#call}] strategy builders by name
       # @return [#call] `call(candidate)` answering a {LandingQueue::Verification}
       # @raise [KeyError] for a strategy name no builder is registered under
