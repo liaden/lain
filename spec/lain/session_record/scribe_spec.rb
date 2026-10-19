@@ -271,6 +271,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
     # only turn that can consume the row a human sees. The transcript still may
     # not route; the edges alone do.
     describe "a child turn's consumption edges" do
+      let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee, live: sink) }
+
       let(:question) do
         Lain::Event::ChainWriter.new(observer: ->(event) { scribe.call(event) })
                                 .put(parent, kind: :message, from: "child", to: "human",
@@ -292,6 +294,14 @@ RSpec.describe Lain::SessionRecord::Scribe do
         expect(sink.map(&:journal_type)).to eq(%w[message questions_consumed])
         expect(sink.last.digests).to eq([asked.digest])
         expect(of_type(Lain::SessionRecord::CHILD_TURN_TYPE).size).to eq(1)
+      end
+
+      # The asking tool already journals the retirement when its wait ends, so
+      # a second copy from the turn would count one answer twice.
+      it "leaves the consumption out of the file, which the asking tool writes once" do
+        scribe.call(child_answering([question.digest]))
+
+        expect(of_type("questions_consumed")).to be_empty
       end
 
       it "publishes nothing for an ordinary child turn that cites nothing" do
@@ -319,15 +329,14 @@ RSpec.describe Lain::SessionRecord::Scribe do
         expect(sink.grep(Lain::Telemetry::ChildTurn)).to be_empty
       end
 
-      # A review probe, kept as a spec. The tee write is the first thing in
+      # A review probe, kept as a spec. The live write is the first thing in
       # {Lain::SessionRecord::Scribe#child_turn} that can reach a live sink, and
       # a live sink raises for real -- a StatusFeed that cannot write its state
-      # file, a FleetWindows whose tmux call fails. {Lain::CLI::JournalTee} lands
-      # the journal leg FIRST and re-raises anything but a closed queue, so both
-      # records are on disk when the failure surfaces; the redelivery that
-      # follows must add neither, which it only does if `@spawned` was armed
-      # before the write rather than after it.
-      it "arms its once-per-digest guard before the tee, so a raising sink cannot duplicate the turn" do
+      # file, a FleetWindows whose tmux call fails. The turn record is on disk
+      # when the failure surfaces; the redelivery that follows must not add it
+      # again, which it only does if `@spawned` was armed before the write
+      # rather than after it.
+      it "arms its once-per-digest guard before the live write, so a raising sink cannot duplicate the turn" do
         asked = question
         turn = child_answering([asked.digest])
         deaf = Class.new do
@@ -336,13 +345,12 @@ RSpec.describe Lain::SessionRecord::Scribe do
           end
         end.new
         scribe = described_class.new(journal:, context:, toolset:, workspace:,
-                                     message_journal: Lain::CLI::JournalTee.new(journal, deaf))
+                                     live: deaf)
 
         expect { scribe.call(turn) }.to raise_error(IOError)
         expect { scribe.call(turn) }.not_to raise_error
 
         expect(of_type(Lain::SessionRecord::CHILD_TURN_TYPE).size).to eq(1)
-        expect(of_type("questions_consumed").size).to eq(1)
       end
 
       # The parent's own answering turn reaches the surfaces as a

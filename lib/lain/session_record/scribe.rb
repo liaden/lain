@@ -132,12 +132,9 @@ module Lain
       #   so the file still gets each record exactly once. Defaults to the
       #   journal itself; turn records never route -- they are record data,
       #   not live-view telemetry -- and that holds for the {Telemetry::ChildTurn}
-      #   records {#call} promotes as much as for {#catch_up}'s own. What DOES
-      #   route off a spawned turn is which questions it consumed, as a
-      #   {Telemetry::QuestionsConsumed} -- and that record IS redundant in the
-      #   file, carrying edges the ChildTurn beside it already holds for the same
-      #   digest. It earns its place on the WIRE, not in the record; the
-      #   duplicated bytes are the accepted price of not routing the wide one.
+      #   records {#call} promotes as much as for {#catch_up}'s own. What a spawned
+      #   turn consumed goes to `live` as a {Telemetry::QuestionsConsumed}, and
+      #   never to the file, whose one copy is {Tools::AskHuman#retired}.
       # @param live [#<<] the live views ALONE, told each record that moves the
       #   head -- a rewind, a fold's retreat, a stopped run -- once the journal
       #   has it and the written chain has moved with it. A second leg rather
@@ -336,24 +333,24 @@ module Lain
         consumption(event)
       end
 
-      # The consumption edges of a spawned turn, promoted onto the tee alone --
+      # The consumption edges of a spawned turn, told to the live views alone --
       # the live inbox surfaces retire off these, and nothing else of the turn
-      # is theirs to see. Silent for a turn citing nothing, which is every
-      # ordinary child turn, so the tee pays only where there is something to
-      # retire.
+      # is theirs to see. Never the file: the asking tool journals the same
+      # retirement when its wait ends, so a copy here would write it twice.
+      # Silent for a turn citing nothing, which is every ordinary child turn,
+      # so the views pay only where there is something to retire.
       #
       # IT RUNS LAST, AFTER THE GUARD IS ARMED, and that ordering is the whole
-      # reason this is a method rather than two lines inline. `@message_journal`
-      # is a {CLI::JournalTee} in production, which swallows only
-      # `ClosedQueueError` -- a {StatusFeed} that cannot write its state file or
-      # a `FleetWindows` whose tmux call fails raises straight through here. Arm
+      # reason this is a method rather than two lines inline. A live view can
+      # raise -- a {StatusFeed} that cannot write its state file or a
+      # `FleetWindows` whose tmux call fails. Arm
       # first and such a raise costs at most a stale inbox row; arm after and the
       # next delivery of the same event re-writes the child's whole transcript,
       # which is the multiplication {#child_turn}'s guard exists to prevent.
       def consumption(event)
         return if event.causal_parents.empty?
 
-        @message_journal << Telemetry::QuestionsConsumed.from_event(event)
+        @live << Telemetry::QuestionsConsumed.from_event(event)
       end
 
       def recorded_turn?(digest) = @written.include?(digest) || @spawned.include?(digest)
