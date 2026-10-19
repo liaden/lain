@@ -280,6 +280,25 @@ RSpec.describe Lain::Shell::Out do
     end
   end
 
+  describe "on_spawn" do
+    it "hands the callback the pid of the group leader, once, while the child still runs" do
+      seen = []
+      described_class.new("sh", "-c", "sleep 0.2").run_command(on_spawn: lambda { |pid|
+        seen << [pid, Process.getpgid(pid)]
+      })
+
+      expect(seen.size).to eq(1)
+      expect(seen.first.first).to eq(seen.first.last)
+    end
+
+    it "still waits for the command and answers itself" do
+      shell = described_class.new("sh", "-c", "printf out; exit 2")
+
+      expect(shell.run_command(on_spawn: ->(_pid) {})).to be(shell)
+      expect([shell.stdout, shell.exitstatus]).to eq(["out", 2])
+    end
+  end
+
   describe "a child killed by a signal" do
     it "reports a nil exit status" do
       expect(described_class.new("sh", "-c", "kill -TERM $$").run_command.exitstatus).to be_nil

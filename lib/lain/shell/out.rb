@@ -185,13 +185,16 @@ module Lain
       # blocks and no rescue, and the spawn defers interrupts, so no kill can
       # land between the child existing and this method holding its pid.
       #
+      # @param on_spawn [#call] given the child's pid, which is also its
+      #   process group id, once, after the spawn and before the wait
       # @return [self] so `run_command.stdout` chains
       # @raise [Timeout] when the child outlives its bound
-      def run_command
+      def run_command(on_spawn: ->(_pid) {})
         pid = nil
         pipes = Pipes.new
         feed = Feed.for(@input)
         Thread.handle_interrupt(Object => :never) { pid = spawn(pipes, feed) }
+        on_spawn.call(pid)
         @exitstatus = collect(pid, pipes.readers(@stdout, @stderr), feed)
         pid = nil
         self
