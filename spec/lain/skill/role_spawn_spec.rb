@@ -155,6 +155,40 @@ RSpec.describe Lain::Skill::RoleSpawn do
 
       expect(journal_records(journal_io, "escalation").map { |ruling| ruling["requester"] }).to eq(%w[dev])
     end
+
+    it "leases no checkout for a never-parking child, whatever backend the run wired" do
+      leased = []
+      backend = Class.new do
+        define_method(:acquire) do |worker_id|
+          leased << worker_id
+          Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, on_release: -> {})
+        end
+      end.new
+      guard = Lain::CLI::ToolGuard.detached(journal: Lain::Channel::Null.instance)
+
+      result = Sync do
+        seam(provider: mock(text_response("ruled")), tool_middleware: guard,
+             isolation: Lain::Isolation::Leases.new(backend:)).never_parking.call(:dev, :fresh, "go")
+      end
+
+      expect([result.content, leased]).to eq(["ruled", []])
+    end
+
+    it "runs a never-parking child in the directory current when it spawns, not when the seam was built" do
+      seen = []
+      builder = ToolRegistry.builder { |env, **| ToolRegistry::UNGUARDED.call(env).tap { seen << env.cwd } }
+
+      Dir.mktmpdir do |first|
+        Dir.mktmpdir do |second|
+          current = Lain::WorkerEnv.default.with(cwd: File.realpath(first))
+          spawn = seam(provider: mock(text_response("ruled")), tool_middleware: builder, worker_env: -> { current })
+          current = Lain::WorkerEnv.default.with(cwd: File.realpath(second))
+          spawn.never_parking.call(:dev, :fresh, "go")
+
+          expect(seen).to eq([File.realpath(second)])
+        end
+      end
+    end
   end
 
   # ---- The child runs under its role's iteration ceiling ---------------------

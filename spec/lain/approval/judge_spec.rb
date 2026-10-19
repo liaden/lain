@@ -259,4 +259,27 @@ RSpec.describe Lain::Approval::Judge do
     expect(verdict(hung, timeout: 0.05)).to eq(:fault)
     expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 1
   end
+
+  it "runs its child where the chat stands when it rules, not where the chat stood when the judge was built" do
+    seen = []
+    builder = ToolRegistry.builder { |env, **| ToolRegistry::UNGUARDED.call(env).tap { seen << env.cwd } }
+    Dir.mktmpdir do |first|
+      Dir.mktmpdir do |second|
+        current = Lain::WorkerEnv.default.with(cwd: File.realpath(first))
+        spawn = Lain::Skill::RoleSpawn.new(
+          provider: Lain::Provider::Mock.new(responses: [text_response("APPROVE")]),
+          context_factory: -> { Lain::Context.new(model: "judge-model", max_tokens: 64) },
+          toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new,
+                                      Lain::Tools::Grep.new]),
+          parent: Lain::Timeline.empty(store: Lain::Store.new), slots: Lain::Prompt::Slots.load(root: first),
+          tool_middleware: builder, worker_env: -> { current }
+        )
+        judge = described_class.new(role_spawn: spawn)
+        current = Lain::WorkerEnv.default.with(cwd: File.realpath(second))
+
+        expect([judge.call(tool: "bash", input: { "command" => "ls" }, place:),
+                seen]).to eq([:approve, [File.realpath(second)]])
+      end
+    end
+  end
 end

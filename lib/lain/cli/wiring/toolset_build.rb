@@ -227,6 +227,7 @@ module Lain
           @switchboard = switchboard
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:,
                              isolation:, handback:, middleware:, display:)
+          @session = session
           @parent_view = parent_view(backend, session)
         end
 
@@ -417,7 +418,8 @@ module Lain
         # its kept lease either.
         def role_spawn_seam(base)
           placed = { RESEARCHER => Lain::Skill::RoleSpawn::Placed.new(seam: researcher_seam, kept: research_leases) }
-          Lain::Skill::RoleSpawn.new(seam:, toolset: base, slots: library.slots, compaction: @parent_view, placed:)
+          Lain::Skill::RoleSpawn.new(seam:, toolset: base, slots: library.slots, compaction: @parent_view, placed:,
+                                     worker_env: -> { @session.worker_env })
         end
 
         # The chat's held cuts, read by a child at its spawn, over a Source of

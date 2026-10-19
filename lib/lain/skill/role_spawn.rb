@@ -27,6 +27,14 @@ module Lain
       # announcing the role, and the {Tools::Subagent::Kept} that leases it.
       Placed = Data.define(:seam, :kept)
 
+      # A backend that cuts no checkout and asks where to run at each acquire,
+      # because a never-parking copy is built once (a judge holds it for the
+      # run) while the chat's directory can move between rulings.
+      InPlace = Data.define(:worker_env) do
+        def acquire(_worker_id = nil) = Isolation::Lease.new(worker_env: worker_env.call)
+      end
+      private_constant :InPlace
+
       # A placed role spawned where its lease cannot hold it.
       class Refused < Error; end
 
@@ -62,11 +70,14 @@ module Lain
       #   it builds reads its parent's held cuts through
       # @param placed [Hash{Symbol => Placed}] by role name, the roles whose
       #   children each work in a kept directory of their own
+      # @param worker_env [#call] answers, at each spawn, the {WorkerEnv} a
+      #   never-parking child runs in: the chat's own, which a scope change moves
       # @param spawn_over [Hash] the loose seam members, when no seam is given
       def initialize(toolset:, slots:, seam: nil, max_depth: 1, compaction: Tools::Subagent::ParentView::None,
-                     placed: {}, **spawn_over)
+                     placed: {}, worker_env: WorkerEnv.method(:default), **spawn_over)
         @seam = Tools::Subagent::Seam.resolve(seam, **spawn_over)
         @placed = placed
+        @worker_env = worker_env
         @toolset = toolset
         @slots = slots
         @max_depth = max_depth
@@ -104,22 +115,26 @@ module Lain
       # @raise [Isolation::Leases::Lane::Refused] when git would not accept the name
       def within(worker_env, lane: nil)
         self.class.new(seam: @seam.with(isolation: lent(worker_env, lane)), toolset: @toolset, slots: @slots,
-                       max_depth: @max_depth, compaction: @compaction, placed: @placed)
+                       max_depth: @max_depth, compaction: @compaction, placed: @placed, worker_env: @worker_env)
       end
 
       # This spawn, its children built through the seam guard's never-parking
       # copy ({CLI::ToolGuard::NeverParking}): what an approval judge spawns
       # through, because it waits on the child with the judged call parked.
-      # It reads no parent's cuts: a judge spawns :fresh. A placed role
-      # refuses here.
+      # It reads no parent's cuts: a judge spawns :fresh. It leases no
+      # checkout, because a read-only child has nothing to keep apart. A
+      # placed role refuses here.
       #
       # @return [RoleSpawn]
       def never_parking
-        self.class.new(seam: @seam.with(tool_middleware: @seam.tool_middleware.never_parking), toolset: @toolset,
-                       slots: @slots, max_depth: @max_depth, placed: unplaceable)
+        self.class.new(seam: @seam.with(tool_middleware: @seam.tool_middleware.never_parking, isolation: unleased),
+                       toolset: @toolset, slots: @slots, max_depth: @max_depth, placed: unplaceable,
+                       worker_env: @worker_env)
       end
 
       private
+
+      def unleased = Isolation::Leases.new(backend: InPlace.new(@worker_env), lane: @seam.isolation.lane)
 
       # The caller's own lane travels with the lease it lends, so a lent
       # child's spawn says which issue it served rather than reading as the
