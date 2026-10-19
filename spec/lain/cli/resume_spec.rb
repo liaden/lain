@@ -1100,6 +1100,28 @@ RSpec.describe Lain::CLI::Resume do
         .to include("recorded with --compact-schedule turn")
     end
 
+    context "with a --no-compact recording" do
+      before do
+        write_closed("20260101T000000-2.ndjson", chain("hi", "yo"), provider: "ollama",
+                                                                    compaction: { "compact" => false,
+                                                                                  "compact_schedule" => "turn" })
+      end
+
+      it "says an untyped resume keeps running without compaction" do
+        expect(resume.call(compaction: typed).notices)
+          .to eq(["running without compaction, as recorded (pass --compact to compact)"])
+      end
+
+      it "names the change a typed --compact makes" do
+        expect(resume.call(compaction: typed(compact: true)).notices)
+          .to eq(["recorded with --no-compact; continuing with --compact (the current flags win)"])
+      end
+
+      it "stays silent under a typed --no-compact, which agrees" do
+        expect(resume.call(compaction: typed(compact: false)).notices).to be_empty
+      end
+    end
+
     it "answers an empty header for a session file that is gone" do
       expect(resume.recorded_header("/nope/none.ndjson")).to eq({})
     end

@@ -817,6 +817,32 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
     expect(instance.backend.compaction).to have_attributes(keep: 0)
   end
 
+  describe "a resume of a --no-compact recording" do
+    def resumed_backend(typed)
+      resolver = instance_double(Lain::CLI::Resume, locate: "/sessions/parent.ndjson",
+                                                    recorded_header: { "compact" => false,
+                                                                       "compact_schedule" => "turn" })
+      described_class.new({ resume: "", journal: false, max_tokens: 16, provider: "ollama", **typed },
+                          resume_factory: -> { resolver }).backend
+    end
+
+    it "keeps compaction off when no compaction flag is typed, and records it off again" do
+      backend = resumed_backend({})
+
+      expect(backend.compaction?).to be(false)
+      expect(backend.pipeline_source(cache_profile: Lain::CacheProfile::ANTHROPIC))
+        .to be(Lain::Agent::PipelineSource::Null)
+      expect(backend.compaction_header).to eq("compact" => false, "compact_schedule" => "turn")
+    end
+
+    it "compacts under a typed --compact on the default schedule, not the turn an off run records" do
+      backend = resumed_backend({ compact: true })
+
+      expect(backend.compaction?).to be(true)
+      expect(backend.compaction_header).to eq("compact_schedule" => "idle")
+    end
+  end
+
   describe "the compaction schedule" do
     def schedule_for(typed, recorded)
       point = Lain::CLI::ForkPoint::Point.new(path: "/sessions/parent.ndjson", digest: "blake3:abc123")

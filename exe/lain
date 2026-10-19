@@ -1018,9 +1018,9 @@ class LainCLI < Thor
       summarizer(thor)
     end
 
-    # ON by default: a working harness default, not an opt-in arm.
+    # No Thor default: an untyped run still compacts, but only a typed value may override what a resume recorded.
     def self.history(thor)
-      thor.method_option :compact, type: :boolean, default: true,
+      thor.method_option :compact, type: :boolean,
                                    desc: "Summarize the history's head as it grows; --no-compact opts out"
       thor.method_option :compact_bytes, type: :numeric,
                                          desc: "Droppable-head bytes above which a compaction is warranted " \

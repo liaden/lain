@@ -1730,8 +1730,22 @@ RSpec.describe Lain::CLI::Backend do
             backend = compacting_backend(compact: false, **typed)
 
             expect(backend.compaction_schedule).to eq("turn")
-            expect(backend.compaction_header).to include("compact_schedule" => "turn")
+            expect(backend.compaction_header).to include("compact" => false, "compact_schedule" => "turn")
           end
+        end
+
+        it "writes no compact key when compaction is on, typed or not" do
+          expect(compacting_backend.compaction_header).not_to have_key("compact")
+          expect(compacting_backend(compact: true).compaction_header).not_to have_key("compact")
+        end
+
+        it "runs no compaction when the profile handed in recorded --no-compact, whatever the options say" do
+          recorded = Lain::CLI::CompactionProfile.from_header({ "compact" => false })
+          backend = described_class.new({ provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64,
+                                          compact: true }, compaction: recorded, root: Dir.pwd)
+
+          expect(backend.compaction?).to be(false)
+          expect(backend.pipeline_source(cache_profile: profile, journal:)).to be(Lain::Agent::PipelineSource::Null)
         end
 
         it "still ignores a typed schedule under --no-compact" do

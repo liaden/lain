@@ -57,6 +57,9 @@ module Lain
     # recorded none writes no key -- except `compact_schedule`, which is always
     # written so the Loader can require it: {UNCOMPACTED_SCHEDULE} for an empty
     # section, while a section without one is a writer that forgot it, and raises.
+    # A run with compaction off records `"compact": false` because a resume
+    # must keep it off; a compacting run writes no such key, so its header stays
+    # the one it always was.
     #
     # `arms:` is the bench arms that are on (`CLI::Arms#to_header`); an empty
     # hash writes no key, so a run with every arm off keeps the older header.

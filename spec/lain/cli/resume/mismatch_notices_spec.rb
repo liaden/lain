@@ -51,6 +51,45 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
     expect(notices(session_with(arms: at_defaults("judge_facts" => "facts")), typed)).to be_empty
   end
 
+  describe "the compaction notice" do
+    def session_compacting(compaction)
+      header = Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64),
+                                          toolset: Lain::Toolset.new, compaction:, writer: CoreGraph::NO_WRITER)
+      File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }
+    end
+
+    def compaction_notices(path, typed)
+      described_class.new(path:).call(profile: Lain::CLI::RunProfile::UNRECORDED, model: nil,
+                                      compaction: Lain::CLI::CompactionProfile.typed(typed))
+    end
+
+    let(:off) { session_compacting({ "compact" => false, "compact_schedule" => "turn" }) }
+
+    it "says an untyped run keeps a recording that ran without compaction" do
+      expect(compaction_notices(off, {}))
+        .to eq(["running without compaction, as recorded (pass --compact to compact)"])
+    end
+
+    it "names a typed --compact over it" do
+      expect(compaction_notices(off, { compact: true }))
+        .to eq(["recorded with --no-compact; continuing with --compact (the current flags win)"])
+    end
+
+    it "names a typed --no-compact over a recording that compacted" do
+      expect(compaction_notices(session_compacting({ "compact_schedule" => "idle" }), { compact: false }))
+        .to eq(["recorded with --compact; continuing with --no-compact (the current flags win)"])
+    end
+
+    it "stays silent for a recording that compacted" do
+      expect(compaction_notices(session_compacting({ "compact_schedule" => "idle" }), {})).to be_empty
+    end
+
+    it "says nothing about compaction a caller did not pass" do
+      expect(described_class.new(path: off).call(profile: Lain::CLI::RunProfile::UNRECORDED, model: nil))
+        .to be_empty
+    end
+  end
+
   it "says nothing about arms a caller did not pass" do
     path = session_with(arms: {})
 

@@ -555,9 +555,9 @@ module Lain
       # instances would mean every fire landed where no render reads.
       def eager = @eager ||= Oracle::Eager.new(oracle: summary_oracle)
 
-      # @return [Boolean] whether this run compacts at all; on unless
-      #   `--no-compact` turned it off
-      def compaction? = @options.fetch(:compact, true)
+      # @return [Boolean] whether this run compacts at all; on unless the
+      #   profile holds `--no-compact`, typed or recorded
+      def compaction? = @compaction.compacts?
 
       # @return [CompactionProfile] the arm this run was handed; an unset field
       #   falls to this class's DEFAULT_* constants where it is read
@@ -601,9 +601,11 @@ module Lain
       # The compaction section of the session header: the arm this run was handed, said
       # or inherited, so a resume can render under it and a bench can group runs by it. Only a
       # set field is written, except the schedule that runs, which is always
-      # written, "turn" under --no-compact. Any other unset flag is not "the default", it is the
-      # absence a later resume must be able to tell from a choice; an unset
-      # `compact_strategy` in particular is the run's own eager tool-result
+      # written ("turn" under --no-compact) because the Loader requires it. An on
+      # switch is left out because an untyped run is on, so a compacting header
+      # stays the one it always was. Any other unset flag is not "the default",
+      # it is the absence a later resume must be able to tell from a choice; an
+      # unset `compact_strategy` in particular is the run's own eager tool-result
       # tier, the comparability axis's CONTROL arm, which a reader normalizes
       # from the absence.
       #

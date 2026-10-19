@@ -1077,8 +1077,12 @@ RSpec.describe Lain::SessionRecord, ".header" do
       expect(launched_header({})).not_to have_key("context_pipeline")
     end
 
-    it "records the turn schedule for a chat launched with --no-compact" do
-      expect(launched_header(compact: false)).to include("compact_schedule" => "turn")
+    it "records --no-compact and the turn schedule for a chat launched with it" do
+      expect(launched_header(compact: false)).to include("compact" => false, "compact_schedule" => "turn")
+    end
+
+    it "writes no compact key for a chat launched without a compaction flag" do
+      expect(launched_header({})).not_to have_key("compact")
     end
 
     # The argv goes through the exe's own flag band and profile resolution, so

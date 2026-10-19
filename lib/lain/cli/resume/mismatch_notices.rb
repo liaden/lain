@@ -41,11 +41,12 @@ module Lain
         # @param profile [RunProfile] what the current run resolved, carrying
         #   which fields the human typed
         # @param model [String, nil] the model the current run resolved
-        # @param compaction [CompactionProfile] the compaction flags the human typed
+        # @param compaction [CompactionProfile, nil] the compaction flags the human
+        #   typed; nil when the caller compacts nothing, so nothing is compared
         # @param arms [Arms, nil] the bench arms the human typed, an unset arm
         #   nil; nil when the caller resolves no arms, so nothing is compared
         # @return [Array<String>] one notice per disagreement, model first
-        def call(profile:, model:, compaction: CompactionProfile::UNSET, arms: nil)
+        def call(profile:, model:, compaction: nil, arms: nil)
           [model_notice(model), *typed_notices(profile), *compaction_notices(compaction), *arm_notices(arms)].compact
         end
 
@@ -74,13 +75,33 @@ module Lain
         end
 
         def compaction_notices(compaction)
+          return [] if compaction.nil?
+
           recorded = CompactionProfile.from_header(header)
-          CompactionProfile::FLAGS.filter_map do |field, flag|
+          [*switch_notice(compaction, recorded), *typed_compaction_notices(compaction, recorded)]
+        end
+
+        def typed_compaction_notices(compaction, recorded)
+          CompactionProfile::FLAGS.except(:compact).filter_map do |field, flag|
             ours = compaction.public_send(field)
             theirs = recorded.public_send(field)
             continuing("--#{flag.to_s.tr("_", "-")}", theirs, ours) unless ours.nil? || theirs.nil? || ours == theirs
           end
         end
+
+        # An untyped switch keeps the recording's, and a run that silently stops
+        # compacting looks like a broken one, so the kept "off" is named. An
+        # unrecorded switch is on, so a typed --no-compact over it is a change.
+        def switch_notice(compaction, recorded)
+          if compaction.compact.nil?
+            "running without compaction, as recorded (pass --compact to compact)" unless recorded.compacts?
+          elsif compaction.compact != recorded.compacts?
+            "recorded with #{switch_flag(recorded.compacts?)}; continuing with " \
+              "#{switch_flag(compaction.compact)} (the current flags win)"
+          end
+        end
+
+        def switch_flag(compacts) = compacts ? "--compact" : "--no-compact"
 
         # A typed arm is the same loud-and-continue notice as any field. An
         # untyped one keeps the recording, and is named only when that is

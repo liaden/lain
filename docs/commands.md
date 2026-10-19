@@ -60,7 +60,7 @@ tiers work.
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--compact` / `--no-compact` | on | Summarize the history's head as it grows. |
+| `--compact` / `--no-compact` | on | Summarize the history's head as it grows. Recorded in the session header only when off; an untyped `--resume` keeps the recorded choice. |
 | `--compact-bytes` | `262144` | Claimed bytes above which a compaction is warranted: the droppable head narrowed to the turns `--compact-strategy` can collapse, pins excluded. Roughly 64k tokens. |
 | `--compact-cap` | `1048576` | Claimed bytes that force a compaction even while the prompt cache is warm. Measured as `--compact-bytes` is, so turns the strategy would leave standing never trip it. |
 | `--compact-keep` | `20` | Trailing messages a compaction leaves verbatim. About the last 10 exchanges. |

@@ -13,7 +13,21 @@ RSpec.describe Lain::CLI::CompactionProfile do
     end
 
     it "is entirely unset for the options a chat with no compaction flag parses to" do
-      expect(described_class.typed({ compact: true })).to eq(described_class::UNSET)
+      expect(described_class.typed({})).to eq(described_class::UNSET)
+    end
+
+    # Through the chat command's own flags: a Thor default here would type
+    # --compact on every run and override every recorded --no-compact.
+    it "is unset for --compact when chat is launched with no compaction flag" do
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse([])
+
+      expect(described_class.typed(options)).to have_attributes(compact: nil)
+    end
+
+    it "reads --compact and --no-compact as typed choices" do
+      expect(described_class.typed({ compact: false })).to have_attributes(compact: false)
+      expect(described_class.typed({ compact: true })).to have_attributes(compact: true)
     end
   end
 
@@ -38,6 +52,15 @@ RSpec.describe Lain::CLI::CompactionProfile do
       expect(described_class.from_header({ "provider" => "ollama" })).to have_attributes(schedule: nil)
     end
 
+    it "reads a recorded --no-compact" do
+      expect(described_class.from_header({ "compact" => false })).to have_attributes(compact: false)
+    end
+
+    it "reads no schedule from a --no-compact header, whose turn is only what an off run writes" do
+      expect(described_class.from_header({ "compact" => false, "compact_schedule" => "turn" }))
+        .to have_attributes(schedule: nil)
+    end
+
     it "is unset for no header at all" do
       expect(described_class.from_header({})).to eq(described_class::UNSET)
     end
@@ -50,6 +73,13 @@ RSpec.describe Lain::CLI::CompactionProfile do
       expect(described_class::UNSET.over(recorded)).to eq(recorded)
     end
 
+    it "keeps a recorded --no-compact nobody typed over, and lets a typed --compact win" do
+      off = described_class.from_header({ "compact" => false })
+
+      expect(described_class::UNSET.over(off)).to have_attributes(compact: false)
+      expect(described_class.typed({ compact: true }).over(off)).to have_attributes(compact: true)
+    end
+
     it "lets a typed field win over the recorded one, field by field" do
       resolved = described_class.typed({ compact_keep: 8 }).over(recorded)
 
@@ -60,6 +90,11 @@ RSpec.describe Lain::CLI::CompactionProfile do
   describe "#to_header" do
     it "carries only the fields that are set" do
       expect(described_class.typed({ compact_keep: 8 }).to_header).to eq("compact_keep" => 8)
+    end
+
+    it "records --no-compact, and writes nothing for --compact, which is what an untyped run does" do
+      expect(described_class.typed({ compact: false }).to_header).to eq("compact" => false)
+      expect(described_class.typed({ compact: true }).to_header).to eq({})
     end
 
     it "is empty when nothing is set" do
