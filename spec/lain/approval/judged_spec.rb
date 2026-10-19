@@ -250,6 +250,17 @@ RSpec.describe Lain::Approval::Judged do
                                         "faulted" => true)
   end
 
+  it "tells the parked row the judge could not be asked, without the exception text" do
+    hung = spawn_answering { sleep 5 }
+
+    ruled(rung(hung, timeout: 0.05), bash) do |pending|
+      expect(pending.notes).to eq(["the judge could not be asked (it timed out or failed)"])
+      pending.deny(surface: "human_spec")
+    end
+
+    expect(escalations.sole["note"]).to be_nil
+  end
+
   it "parks a judge's error result as a fault" do
     spawn = spawn_answering { Lain::Tool::Result.error("approve") }
 

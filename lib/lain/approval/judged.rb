@@ -36,6 +36,7 @@ module Lain
       BAR = "bar"
       OVERRULED = "the judge approved this, but what lain resolved the command to bars an automatic approval"
       FAULT = "fault"
+      FAULT_NOTE = "the judge could not be asked (it timed out or failed)"
       UNJUDGEABLE = "unjudgeable"
       BASH = "bash"
       CALL = "%<tool>s(%<input>s)"
@@ -237,7 +238,8 @@ module Lain
       # Marked faulted so the ladder suppresses an automatic allow from below,
       # as it would had the judge been a rung of its own.
       def faulted(effect, context, cause)
-        handed_down(effect, context, Escalation::Ruling.fault(rung: NAME, because: FAULT), error: cause)
+        handed_down(effect, Escalation::Noted.new(context, FAULT_NOTE),
+                    Escalation::Ruling.fault(rung: NAME, because: FAULT), error: cause)
           .with(fault: true)
       end
 
