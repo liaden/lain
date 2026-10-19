@@ -41,11 +41,24 @@ module Lain
       # separate from this one on purpose.
       NAME = "subagent"
 
-      # Just the task. Prefix strategy, attenuation posture and `only`-set are
+      # The task, and an optional name. Prefix strategy, attenuation posture and `only`-set are
       # construction-time config, so what a subagent may do is never a per-call
       # decision the model negotiates.
       class Input < Tool::Input
         include Tasked
+
+        NAME_LIMIT = 24
+
+        # Checked by hand rather than `format:`, which would put the Ruby-only
+        # `\A..\z` anchors into the schema as a JSON Schema pattern.
+        field :name, :string, description: "A short bare word the human sees in place of your role label when this " \
+                                           "child asks to run something. Optional; one-shot spawns only."
+        validates :name, length: { maximum: NAME_LIMIT }, allow_nil: true
+        validates_each(:name, allow_nil: true) do |input, attribute, value|
+          unless Requester::NAME.match?(value)
+            input.errors.add(attribute, "must be one bare word of letters, digits, _ or -")
+          end
+        end
       end
 
       input_model Input
@@ -232,9 +245,9 @@ module Lain
       # and touches no Store.
       def perform(input, _invocation)
         return depth_exceeded if @max_depth <= 0
-        return adopt_actor(input.prompt) if @mode == :actor
+        return adopt_actor(input) if @mode == :actor
 
-        spawn_one_shot(input.prompt, lease: kept_lease(input))
+        spawn_one_shot(input.prompt, lease: kept_lease(input), builder: builder_for(input.name))
       end
 
       private
@@ -242,8 +255,11 @@ module Lain
       # The Supervisor runs {#launch_actor} under its own reactor task, so the
       # fiber persists past this dispatch. The result carries the actor's
       # address -- its :spawn digest, the stable name a caller tells it by.
-      def adopt_actor(prompt)
+      def adopt_actor(input)
+        invalid!("a name applies only to a one-shot spawn") if input.name
         return actor_refused unless supervisor.running?
+
+        prompt = input.prompt
 
         # The supervisor acquires this worker's isolation lease and hands its
         # WorkerEnv down, so the actor's child resolves cwd/env against it.
@@ -276,14 +292,23 @@ module Lain
       # same scope: under plan, a child's writes land in the spike. Read here,
       # where every one-shot spawn passes -- a tool call, a role skill, a
       # fan-out -- and once, so the lease and the session agree.
-      def spawn_one_shot(prompt, on_stream_started: nil, lease: @kept.lease_for(nil))
+      def spawn_one_shot(prompt, on_stream_started: nil, lease: @kept.lease_for(nil), builder: @builder)
         # Per spawn, not per tool, so a fan-out's record shows WHICH spawns
         # ran un-cacheable.
         policy.prefix.journal_floor(journal)
         scope = @seam.scope.current
         Lineage::OneShot.new(lineage, parent_timeline, consumed: telemetry, journal:).recording do |record|
-          Tool::Result.ok(finished(record, leased(record, prompt, scope:, lease:, on_stream_started:)).text)
+          Tool::Result.ok(finished(record, leased(record, prompt, scope:, lease:, on_stream_started:, builder:)).text)
         end
+      end
+
+      # The key a remembered denial is held under stays the wired one: a name
+      # the model picks for itself must not buy a fresh slate of denials.
+      def builder_for(label)
+        return @builder if label.nil?
+
+        who = Requester.new(name: @announces_as.name, label:, role: @announces_as.name, skill: @announces_as.skill)
+        @builder.named(who)
       end
 
       # The input is checked before any record is written, so a refused
@@ -296,11 +321,11 @@ module Lain
 
       # A child the scope did not lend to -- one its caller lent a checkout of
       # its own -- keeps that checkout, so its session is not the scope's.
-      def leased(record, prompt, scope:, lease:, on_stream_started:)
+      def leased(record, prompt, scope:, lease:, on_stream_started:, builder:)
         scope, lent = lending(scope, lease)
         lent.hold(@name, journal:) do |worker_env, sync, worker|
           progress = reporting(record.spawned(prompt), prompt, worker)
-          child = build_child(record.parent, worker_env, scope, progress:, task: prompt)
+          child = build_child(record.parent, worker_env, scope, progress:, task: prompt, builder:)
           run_child(record.built(child), prompt, sync, on_stream_started:)
         end
       end
@@ -384,8 +409,9 @@ module Lain
         raise MalformedAnswer, failure.message
       end
 
-      def build_child(parent, worker_env, scope = @seam.scope.current, progress: Progress::Null, task: nil)
-        @builder.build(parent, ceiling: @max_depth - 1, worker_env:, scope:, progress:, task:)
+      def build_child(parent, worker_env, scope = @seam.scope.current, progress: Progress::Null, task: nil,
+                      builder: @builder)
+        builder.build(parent, ceiling: @max_depth - 1, worker_env:, scope:, progress:, task:)
       end
 
       # {Lineage} writes the :spawn and :message events; the causal-edge and
@@ -1447,6 +1473,13 @@ module Lain
           @model = model
           @name = name
           @compaction = compaction
+        end
+
+        # This builder, its children's approvals asked as `requester`.
+        def named(requester)
+          self.class.new(seam: @seam.with(tool_middleware: @seam.tool_middleware.with(requester:)), toolset: @toolset,
+                         policy: @policy, budget: @budget, persona: @persona, model: @model, name: @name,
+                         compaction: @compaction)
         end
 
         # Every copy gets the spawn wiring verbatim, the seam's observer and

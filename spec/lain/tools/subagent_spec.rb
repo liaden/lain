@@ -324,6 +324,67 @@ RSpec.describe Lain::Tools::Subagent do
 
   # Retiring an actor rebases its work first, and a conflict is put to the
   # actor itself -- which only an actor holding a shell could act on.
+  describe "a name the model gives its child" do
+    # Answers `with(requester:)` as a chat's guard builder does, and keeps who each child was named for.
+    let(:namer) do
+      Class.new do
+        attr_reader :named
+
+        def initialize = @named = []
+        def call(worker_env, **) = ToolRegistry::UNGUARDED.call(worker_env)
+        def never_parking = self
+
+        def with(requester:)
+          @named << requester
+          self
+        end
+      end.new
+    end
+
+    it "offers an optional name no longer than 24 characters, in the schema the model sees" do
+      schema = build_subagent(provider: mock(text_response)).input_schema
+
+      expect(schema["properties"]["name"]).to include("type" => "string", "maxLength" => 24)
+      expect(schema["required"]).to eq(["prompt"])
+    end
+
+    it "names the child's requester by it, keeping the wired name as the denial key" do
+      tool = build_subagent(provider: mock(text_response("done")), tool_middleware: namer)
+
+      tool.call({ "prompt" => "go", "name" => "parser-check" }, invocation)
+
+      expect(namer.named.map { |who| [who.name, who.label, who.to_s] })
+        .to eq([["subagent", "parser-check", "parser-check (subagent)"]])
+    end
+
+    it "leaves the requester as wired when the model names none" do
+      tool = build_subagent(provider: mock(text_response("done")), tool_middleware: namer)
+
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(namer.named).to be_empty
+    end
+
+    it "refuses a name on an actor-mode call rather than dropping it" do
+      tool = build_subagent(provider: mock(text_response("done")), mode: :actor)
+
+      expect { tool.call({ "prompt" => "go", "name" => "parser-check" }, invocation) }
+        .to raise_error(Lain::Tool::InvalidInput, /only to a one-shot spawn/)
+    end
+
+    ["x\n! agent asks", "two words", "", "a" * 25, "run(rm)"].each do |name|
+      it "refuses the name #{name.inspect} before any child is spawned" do
+        provider = mock(text_response("done"))
+        tool = build_subagent(provider:, tool_middleware: namer)
+
+        expect { tool.call({ "prompt" => "go", "name" => name }, invocation) }
+          .to raise_error(Lain::Tool::InvalidInput, /Name/)
+        expect(provider.requests).to be_empty
+        expect(namer.named).to be_empty
+      end
+    end
+  end
+
   describe "the worker a launched actor offers its self-sync" do
     def actor_over(provider, tools)
       build_subagent(provider:, policy: spawn_policy(only: []), toolset: Lain::Toolset.new(tools), mode: :actor)
@@ -2088,8 +2149,8 @@ RSpec.describe Lain::Tools::Subagent do
       end
 
       it "offers extends in its schema, where a spawner with none does not" do
-        expect(kept_tool.input_schema["properties"].keys).to eq(%w[prompt extends])
-        expect(build_subagent(provider: mock).input_schema["properties"].keys).to eq(%w[prompt])
+        expect(kept_tool.input_schema["properties"].keys).to eq(%w[prompt name extends])
+        expect(build_subagent(provider: mock).input_schema["properties"].keys).to eq(%w[prompt name])
       end
 
       it "runs the child in a fresh scratch directory it confines it to, leasing nothing of the run's" do

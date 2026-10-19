@@ -528,6 +528,23 @@ RSpec.describe "Subagent gating" do
         .to include("is_error" => true, "content" => %(approval denied for tool "read_file"))
     end
 
+    # ---- Scenario: a named child shows its name -----------------------------
+
+    it "shows a named child's approval prompt by its name while the denial key stays the wired one" do
+      read = { "path" => "/home/tester/project/.env" }
+      _, toolset = wired(scripted("read_file", read))
+
+      asked = Sync do |task|
+        call = task.async { toolset.fetch("subagent").call({ "prompt" => "go", "name" => "parser-check" }, invocation) }
+        pending = task.with_timeout(1) { board.approvals.dequeue }
+        pending.deny(surface: "spec")
+        call.wait
+        pending
+      end
+
+      expect([asked.requester, asked.label]).to eq(["researcher", "parser-check (researcher)"])
+    end
+
     # ---- Scenario: parent and child stacks come from one builder -------------
 
     it "hands the parent and a really spawned child the same layers, the gate last, over the one board" do
