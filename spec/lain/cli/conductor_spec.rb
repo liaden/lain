@@ -1080,6 +1080,43 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
+  # A Ctrl-C at a plain chat's `you>` over a typed line takes the line back,
+  # as the input pane does, and only over an empty one ends the chat.
+  describe "a Ctrl-C at an idle you>" do
+    # The human, on a thread of their own as an idle prompt is read with no
+    # reactor under it: Ctrl-C at the first you>, then a line at the next.
+    def interrupted_at_you(conductor, name = :sigint)
+      human = Thread.new { interrupting(conductor, name) }
+      conductor.read_prompt("you> ").tap { human.join }
+    end
+
+    def interrupting(conductor, name)
+      sleep(0.002) until rail.published.kind == :you
+      first = rail.published.generation
+      rail << Lain::Frontend::Intake::Signal.new(name:)
+      sleep(0.002) until conductor.closed? || rail.published.generation > first
+      rail << typed("hello", rail.published) unless conductor.closed?
+    end
+
+    it "clears a typed line and draws you> again, and the chat lives" do
+      conductor = described_class.new(tty:, chronicle:, signals: Lain::CLI::Signals.new, rail:, typed: -> { true })
+
+      expect([interrupted_at_you(conductor), conductor.closed?]).to eq(["hello", false])
+    end
+
+    it "ends the chat on a SIGTERM even over a typed line" do
+      conductor = described_class.new(tty:, chronicle:, signals: Lain::CLI::Signals.new, rail:, typed: -> { true })
+
+      expect([interrupted_at_you(conductor, :sigterm), conductor.closed?]).to eq([nil, true])
+    end
+
+    it "ends the chat over an empty line" do
+      conductor = described_class.open(tty:, chronicle:, rail:)
+
+      expect([interrupted_at_you(conductor), conductor.closed?]).to eq([nil, true])
+    end
+  end
+
   # A countdown that expires closes the session, and the reads it moved aside
   # must not come back: a `[y/N]` drawn after the close is a question on a
   # screen the chat has finished with, and nobody is left to answer it.

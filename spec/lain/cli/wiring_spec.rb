@@ -2873,6 +2873,23 @@ RSpec.describe Lain::CLI::Wiring do
       expect(seen).to eq([run_clock])
     end
 
+    # Whether a Ctrl-C at `you>` clears a typed line or ends the chat is the
+    # line editor's to say, so the conductor asks it rather than a stand-in.
+    it "has the conductor it opens ask the line editor whether a line is typed" do
+      seen = []
+      opener = ->(**kwargs) { Lain::CLI::Conductor.open(**kwargs).tap { seen << kwargs[:typed] } }
+      allow(Lain::Frontend::LineEditor).to receive(:typed?).and_return(true, false)
+
+      Dir.mktmpdir do |dir|
+        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, tty_factory: tty_factory(dir),
+                                     stdin: StringIO.new("quit\n"), conductor_opener: opener)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+      end
+
+      expect([seen.first.call, seen.first.call]).to eq([true, false])
+    end
+
     # {Lain::CLI::Wiring#goal_journal} (wiring.rb:334) resolves the standing-goal
     # driver's destination through {Lain::CLI::Chronicle#record_journal}. Nothing
     # asserted it: replacing the resolution with a fresh /dev/null Journal left

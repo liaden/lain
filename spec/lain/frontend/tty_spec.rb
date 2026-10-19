@@ -1057,6 +1057,32 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  # A read stopped over typed words leaves them on the screen with no line end,
+  # so whatever the next prompt draws first -- its status line -- would join them.
+  describe "a prompt drawn after a read stopped over typed words" do
+    def stopped_then_drawn(plain)
+      Sync do |task|
+        stopped = task.async { plain.drawing(-> { false }) { output.print("you> half").then { task.sleep } } }
+        task.yield
+        stopped.stop
+        plain.drawing(-> { false }) { output.print("STATUS\r\nyou> ") }
+      end
+      output.string
+    end
+
+    it "starts on a row of its own" do
+      allow(Lain::Frontend::LineEditor).to receive(:typed?).and_return(true)
+
+      expect(stopped_then_drawn(described_class.new(channel:, output:))).to eq("you> half\r\nSTATUS\r\nyou> ")
+    end
+
+    it "draws over the stopped prompt's row when nothing was typed there" do
+      allow(Lain::Frontend::LineEditor).to receive(:typed?).and_return(false)
+
+      expect(stopped_then_drawn(described_class.new(channel:, output:))).to eq("you> halfSTATUS\r\nyou> ")
+    end
+  end
+
   # The TTY-only drain surface. Lists what is pending (sender and age) and
   # reads ONE answer; the resolution itself stays with the caller's block --
   # AskHuman#reply is the Repl's seam, never the TTY's.

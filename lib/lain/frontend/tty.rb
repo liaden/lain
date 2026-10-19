@@ -1041,19 +1041,25 @@ module Lain
           @dropped = 0
           @drawn = UNDRAWN
           @row_open = false
+          @typed_over = false
         end
 
         # A read that returns has ended its own row. One stopped under a prompt
         # withdrawn with no closing words has not, so the notes it held start a
-        # row of their own.
+        # row of their own -- and so does the next prompt, when words typed at
+        # the stopped one are still on that row. An empty one is drawn over.
         def drawing(open)
+          end_typed_row
           @guard.synchronize do
             @drawn = Drawn.new(open, Fiber.current)
             @row_open = true
           end
           yield.tap { @guard.synchronize { @row_open = false } }
         ensure
-          @guard.synchronize { @drawn = UNDRAWN }
+          @guard.synchronize do
+            @drawn = UNDRAWN
+            @typed_over = @row_open && LineEditor.typed?
+          end
           flush
         end
 
@@ -1084,6 +1090,13 @@ module Lain
         private
 
         def holding? = !@drawn.reader.equal?(Fiber.current) && @drawn.open.call
+
+        # Written as the next prompt opens rather than as the stopped one
+        # unwinds, where a write could wait on the lock with the stop climbing.
+        def end_typed_row
+          typed = @guard.synchronize { (@typed_over && @row_open).tap { @typed_over = false } }
+          @writer.writing { @output.print("\r\n") } if typed
+        end
 
         def hold(print)
           @held.push(print)
