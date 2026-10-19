@@ -2,13 +2,15 @@
 
 module Lain
   module CLI
-    Arms = Data.define(:confine, :judge_facts, :tripwire)
+    Arms = Data.define(:confine, :judge_facts, :tripwire, :round_budget)
 
     # The bench arms a run is started with, parsed from the chat flags once so
     # every consumer reads one answer. The reader sandbox and the observe-only
     # tripwire are on unless a flag turns them off: neither refuses a call the
     # ladder would allow, and the sandbox degrades loudly where the kernel lacks
     # a layer. Judge facts stay off because they change what the judge decides.
+    # The round budget is on: it withholds only what a round's results could not
+    # fit in the window anyway.
     class Arms
       # A flag value outside an arm's set, loud and naming the allowed values. It
       # subclasses {Lain::Error} so the exe maps it to a clean Thor::Error.
@@ -17,8 +19,9 @@ module Lain
       CONFINE = %i[off classes reader].freeze
       JUDGE_FACTS = %i[off facts request].freeze
       TRIPWIRE = %i[off observe].freeze
+      ROUND_BUDGET = %i[off static window].freeze
       # Each arm's values, weakest first.
-      SETS = { confine: CONFINE, judge_facts: JUDGE_FACTS, tripwire: TRIPWIRE }.freeze
+      SETS = { confine: CONFINE, judge_facts: JUDGE_FACTS, tripwire: TRIPWIRE, round_budget: ROUND_BUDGET }.freeze
 
       # @param options [Hash] the parsed chat flags; an unset arm takes its value from `over`
       # @param over [Arms] what an unset arm runs: the launch defaults, a
@@ -28,6 +31,7 @@ module Lain
       # @option options [String, nil] :confine one of {CONFINE}
       # @option options [String, nil] :judge_facts one of {JUDGE_FACTS}
       # @option options [String, nil] :tripwire one of {TRIPWIRE}
+      # @option options [String, nil] :round_budget one of {ROUND_BUDGET}
       # @return [Arms]
       # @raise [Unknown] on a value outside an arm's set
       def self.from(options, over = DEFAULT) = resolve(options, over) { |arm| "unknown #{flag(arm)} value" }
@@ -67,16 +71,25 @@ module Lain
         to_h.reject { |_, value| value.nil? || value == :off }.to_h { |arm, value| [arm.to_s, value.to_s] }
       end
 
+      # @return [Tool::RoundBudget] the policy an Agent holds for this arm
+      def round_budget_policy
+        case round_budget
+        when :window then Tool::RoundBudget.window
+        when :static then Tool::RoundBudget.static
+        else Tool::RoundBudget::NONE
+        end
+      end
+
       # @param other [Arms]
       # @return [Array<Symbol>] the arms set weaker here than in `other`
       def weaker_than(other)
         SETS.select { |arm, set| set.index(public_send(arm)) < set.index(other.public_send(arm)) }.keys
       end
 
-      OFF = new(confine: :off, judge_facts: :off, tripwire: :off)
-      DEFAULT = new(confine: :reader, judge_facts: :off, tripwire: :observe)
+      OFF = new(confine: :off, judge_facts: :off, tripwire: :off, round_budget: :off)
+      DEFAULT = new(confine: :reader, judge_facts: :off, tripwire: :observe, round_budget: :window)
       # No arm typed: laid under the flags, it keeps only what the human typed.
-      UNSET = new(confine: nil, judge_facts: nil, tripwire: nil)
+      UNSET = new(confine: nil, judge_facts: nil, tripwire: nil, round_budget: nil)
     end
   end
 end

@@ -281,7 +281,8 @@ RSpec.describe Lain::CLI::Command::Fork, "the child's backend" do
     context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
     profile = { "provider" => "ollama", "api_base" => recorded_base, "num_batch" => 2048 }
     records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile:, writer: CoreGraph::NO_WRITER,
-                                          arms: { "confine" => "reader", "tripwire" => "observe" }),
+                                          arms: { "confine" => "reader", "tripwire" => "observe",
+                                                  "round_budget" => "window" }),
                *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
                Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
     File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson").tap do |path|

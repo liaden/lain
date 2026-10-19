@@ -777,6 +777,8 @@ class LainCLI < Thor
     ARM_JUDGE_FACTS = "Bench arm: what the auto judge is told about a command " \
                       "(#{Lain::CLI::Arms::JUDGE_FACTS.join(", ")}; default off)".freeze
     ARM_TRIPWIRE = "Binary identity tripwire (#{Lain::CLI::Arms::TRIPWIRE.join(", ")}; default observe)".freeze
+    ARM_ROUND_BUDGET = "What one tool round's results may cost together " \
+                       "(#{Lain::CLI::Arms::ROUND_BUDGET.join(", ")}; default window)".freeze
 
     # @param thor [Class] the Thor class to declare on
     # @return [void]
@@ -786,6 +788,7 @@ class LainCLI < Thor
       thor.method_option :confine, type: :string, banner: "ARM", desc: ARM_CONFINE
       thor.method_option :judge_facts, type: :string, banner: "ARM", desc: ARM_JUDGE_FACTS
       thor.method_option :tripwire, type: :string, banner: "ARM", desc: ARM_TRIPWIRE
+      thor.method_option :round_budget, type: :string, banner: "ARM", desc: ARM_ROUND_BUDGET
     end
 
     # The launch-time half of the flag, in a module method rather than inline in
@@ -923,7 +926,7 @@ class LainCLI < Thor
                                          system: options[:system], isolation: options[:isolation],
                                          cheap_model: options[:cheap_model], memory: options[:memory],
                                          arms: Lain::CLI::Arms.from(confine: options[:confine] || "off",
-                                                                    tripwire: "off"))
+                                                                    tripwire: "off", round_budget: "off"))
       end
     ensure
       # Closing is what discards a journal this run created and never wrote to,

@@ -46,7 +46,8 @@ module Lain
       # @return [RoundBudget]
       def self.window
         new(:window) do |window:, usage:, reserve:|
-          room = window - usage.total_input_tokens - usage.output_tokens - reserve
+          # The reply reserve's 4096 floor is half of a small window, which would starve every round.
+          room = window - usage.total_input_tokens - usage.output_tokens - [reserve, window / 8].min
           Limit.new(bytes: [(room * BYTES_PER_TOKEN).floor, 0].max, scope: "window #{window} tokens")
         end
       end

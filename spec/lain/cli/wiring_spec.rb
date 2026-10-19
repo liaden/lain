@@ -415,17 +415,19 @@ RSpec.describe Lain::CLI::Wiring do
 
       it "holds the arms that are on" do
         expect(header_of(armed)).to include("arms" => { "confine" => "reader", "judge_facts" => "facts",
-                                                        "tripwire" => "observe" })
+                                                        "tripwire" => "observe", "round_budget" => "window" })
       end
 
-      it "holds the 2 safe arms when no arm flag is typed" do
+      it "holds the 3 default-on arms when no arm flag is typed" do
         plain = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
 
-        expect(header_of(plain)).to include("arms" => { "confine" => "reader", "tripwire" => "observe" })
+        expect(header_of(plain))
+          .to include("arms" => { "confine" => "reader", "tripwire" => "observe", "round_budget" => "window" })
       end
 
       it "holds no arms key when every arm is off" do
-        off = described_class.new(options: { grace: 5, confine: "off", tripwire: "off" }, chronicle:, status_feed:)
+        off = described_class.new(options: { grace: 5, confine: "off", tripwire: "off", round_budget: "off" },
+                                  chronicle:, status_feed:)
 
         expect(header_of(off)).not_to have_key("arms")
       end
@@ -2473,6 +2475,38 @@ RSpec.describe Lain::CLI::Wiring do
         wiring.conductor.close(reason: :exit)
         wiring
       end
+    end
+
+    # Two identical results are the smallest round every real budget changes,
+    # and the record it writes names the policy; no budget writes none.
+    def round_budget_basis(options:)
+      budgets = []
+      allow(Lain::Agent).to receive(:new).and_wrap_original do |original, *args, **kwargs, &block|
+        budgets << kwargs[:round_budget]
+        original.call(*args, **kwargs, &block)
+      end
+      run_wiring(options: { grace: 5 }.merge(options))
+      basis_of_two_equal_results(budgets.first)
+    end
+
+    def basis_of_two_equal_results(budget)
+      room = { window: 32_768, usage: Lain::Usage.new(input_tokens: 100, output_tokens: 10), reserve: 4_096, head: "h" }
+      tool = Struct.new(:name) { def rerunnable? = true }.new("read_file")
+      calls = %w[a b].map { |id| Lain::Tool::RoundBudget::Call.new(id:, tool:) }
+      blocks = calls.map { |call| { "type" => "tool_result", "tool_use_id" => call.id, "content" => "x" * 400 } }
+      [].tap { |bases| budget.for { room }.call(blocks, calls) { |record| bases << record.basis } }
+    end
+
+    it "gives a plain chat's main agent the window round budget" do
+      expect(round_budget_basis(options: {})).to eq(["window"])
+    end
+
+    it "gives the main agent the static round budget when asked" do
+      expect(round_budget_basis(options: { round_budget: "static" })).to eq(["static"])
+    end
+
+    it "gives the main agent no round budget when told off" do
+      expect(round_budget_basis(options: { round_budget: "off" })).to eq([])
     end
 
     # The epic driver's supervisor, retirement and landing queue all journal

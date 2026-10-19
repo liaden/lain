@@ -290,7 +290,7 @@ RSpec.describe Lain::CLI::Chronicle do
     end
 
     it "pins the bench arms it is handed into that header" do
-      arms = Lain::CLI::Arms.new(confine: :reader, judge_facts: :off, tripwire: :off)
+      arms = Lain::CLI::Arms.new(confine: :reader, judge_facts: :off, tripwire: :off, round_budget: :off)
       chronicle.start(context:, toolset:, arms:)
 
       expect(of_type("session").first).to include("arms" => { "confine" => "reader" })

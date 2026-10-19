@@ -136,11 +136,32 @@ RSpec.describe Lain::Tool::RoundBudget do
 
   it "takes the last turn's output and the reply reserve out of the window before converting to bytes" do
     usage = Lain::Usage.new(input_tokens: 2_000, output_tokens: 1_000)
-    budget = described_class.window.for { { window: 10_000, usage:, reserve: 3_000 } }
+    budget = described_class.window.for { { window: 20_000, usage:, reserve: 2_000 } }
 
-    _, records = bounded(budget, [result("tu_1", "a" * 6_000)], [call("tu_1")])
+    _, records = bounded(budget, [result("tu_1", "a" * 25_000)], [call("tu_1")])
 
-    expect(records.first.budget).to eq(5_240)
+    expect(records.first.budget).to eq(19_650)
+  end
+
+  it "leaves a small window room for a small result despite the reply reserve's floor" do
+    usage = Lain::Usage.new(input_tokens: 5_084, output_tokens: 643)
+    budget = described_class.window.for { { window: 8_192, usage:, reserve: 4_096 } }
+
+    blocks = [result("tu_1", "a" * 60)]
+
+    delivered, = bounded(budget, blocks, [call("tu_1")])
+
+    expect(delivered).to eq(blocks)
+  end
+
+  it "holds back the whole reserve on a large window" do
+    usage = Lain::Usage.new(input_tokens: 5_000, output_tokens: 1_000)
+    budget = described_class.window.for { { window: 200_000, usage:, reserve: 4_096 } }
+
+    _, records = bounded(budget, [result("tu_1", "a" * 100), result("tu_2", "a" * 100)],
+                         [call("tu_1"), call("tu_2")])
+
+    expect(records.first.budget).to eq(((200_000 - 6_000 - 4_096) * 1.31).floor)
   end
 
   it "never answers a budget below nothing when the last turn already overfilled the window" do

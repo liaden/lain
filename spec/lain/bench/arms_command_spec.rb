@@ -366,6 +366,13 @@ RSpec.describe "lain bench arms" do
       expect(kwargs.fetch(:arms).to_header).to eq({})
     end
 
+    it "runs its agents with no round budget, so the run_arms record holds none" do
+      run("arms", "suite/tasks.yml")
+
+      expect(kwargs.fetch(:arms).round_budget).to eq(:off)
+      expect(kwargs.fetch(:arms).to_header).not_to have_key("round_budget")
+    end
+
     it "hands the entry point the arms it was started with" do
       run("arms", "suite/tasks.yml", "--confine", "reader")
       expect(kwargs.fetch(:arms)).to eq(Lain::CLI::Arms::OFF.with(confine: :reader))

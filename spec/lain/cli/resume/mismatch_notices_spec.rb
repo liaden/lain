@@ -20,7 +20,7 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
 
   def typed(**values) = Lain::CLI::Arms::UNSET.with(**values)
 
-  def at_defaults(**arms) = { "confine" => "reader", "tripwire" => "observe" }.merge(arms)
+  def at_defaults(**arms) = { "confine" => "reader", "tripwire" => "observe", "round_budget" => "window" }.merge(arms)
 
   it "names a typed arm that differs from the recording" do
     path = session_with(arms: at_defaults)
@@ -43,7 +43,9 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
       .to eq(["running with --confine classes, as recorded; a fresh chat runs reader " \
               "(pass --confine reader to run it)",
               "running without --tripwire (off), as recorded; a fresh chat runs observe " \
-              "(pass --tripwire observe to run it)"])
+              "(pass --tripwire observe to run it)",
+              "running without --round-budget (off), as recorded; a fresh chat runs window " \
+              "(pass --round-budget window to run it)"])
   end
 
   it "stays silent when a typed arm agrees, or an untyped one keeps a recording at or above the default" do
