@@ -59,6 +59,8 @@ module Lain
       # says the same words at the terminal and exits 0 regardless.
       def exit_status = outcome.exit_status
 
+      PREPARING = "finishing a compaction summary before your prompt runs"
+
       # Hoisted out of {#render_missing_response} so that method stays the one
       # line it reads as.
       MIDDLEWARE_BREACH = "repl middleware short-circuited without setting :response"
@@ -305,6 +307,7 @@ module Lain
       # for the note to join.
       def middleware_turn(text)
         @heard.remember(text)
+        @tty.render_note(PREPARING) if @agent.preparing?
         settle_line(supervise_line(text))
         nil
       ensure

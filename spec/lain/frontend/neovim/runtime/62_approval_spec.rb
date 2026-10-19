@@ -237,7 +237,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     let(:conductor) do
       instance_double(Lain::CLI::Conductor, closed?: false, counting_down?: false, prompting?: false, take_held: nil)
     end
-    let(:agent) { instance_double(Lain::Agent, timeline: nil) }
+    let(:agent) { instance_double(Lain::Agent, timeline: nil, preparing?: false) }
     # `dispatch` YIELDS: a registry that swallowed the line would skip the model
     # turn. `serves_replies?` is the second half of the command surface's duck.
     let(:commands) do

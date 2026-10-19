@@ -312,11 +312,15 @@ module Lain
       return false if @dispatch_lock.mon_owned? || !@dispatch_lock.try_enter
 
       begin
-        preparable? && @instrumentation.pipeline_source.prepare(**render_inputs)
+        preparable? && summarizing { @instrumentation.pipeline_source.prepare(**render_inputs) }
       ensure
         @dispatch_lock.exit
       end
     end
+
+    # Is an idle prepare holding the lock RIGHT NOW? Lets a line typed meanwhile
+    # say it is waiting on the summary rather than on a hung chat.
+    def preparing? = @preparing
 
     # Is a model call or a tool running RIGHT NOW? Narrower than
     # {#dispatching?}: a run whose final reply has committed still holds the
@@ -550,6 +554,14 @@ module Lain
       @budget = budget
       @iterations = 0
       @dispatch_lock = Monitor.new
+      @preparing = false
+    end
+
+    def summarizing
+      @preparing = true
+      yield
+    ensure
+      @preparing = false
     end
 
     def replied?

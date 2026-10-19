@@ -1942,6 +1942,31 @@ RSpec.describe Lain::Agent do
       expect(a.prepare_idle).to be(true)
     end
 
+    describe "#preparing?" do
+      it "is true only while a prepare runs, and false again after the source raises" do
+        readings = []
+        a = nil
+        source = A1PipelineSources::Preparing.new(during: -> { readings << a.preparing? })
+        a = preparing_agent(source)
+        readings << a.preparing?
+
+        a.prepare_idle
+
+        expect(readings).to eq([false, true])
+        expect(a.preparing?).to be(false)
+        failing = Object.new.tap { |o| o.define_singleton_method(:prepare) { |**| raise "summarizer down" } }
+        a = preparing_agent(failing)
+        expect { a.prepare_idle }.to raise_error("summarizer down")
+        expect(a.preparing?).to be(false)
+      end
+
+      it "is false while an ordinary run holds the lock" do
+        a = preparing_agent(A1PipelineSources::Preparing.new)
+
+        expect(a.dispatch_lock.synchronize { a.preparing? }).to be(false)
+      end
+    end
+
     describe "while a prepare is in flight" do
       it "reports the agent dispatching, to it and to every command that asks InFlight" do
         readings = []

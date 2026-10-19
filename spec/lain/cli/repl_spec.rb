@@ -412,7 +412,7 @@ RSpec.describe Lain::CLI::Repl do
 
     def repl_over_middleware(middleware, output:, dir:)
       Lain::CLI::Repl.new(
-        agent: instance_double(Lain::Agent, timeline: nil), middleware:, attended: false,
+        agent: instance_double(Lain::Agent, timeline: nil, preparing?: false), middleware:, attended: false,
         commands: falls_through, chronicle: Lain::CLI::Chronicle::Null.new,
         tty: Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
                                      history_path: File.join(dir, "history")),
@@ -2203,6 +2203,40 @@ RSpec.describe Lain::CLI::Repl do
 
     def carries?(request, text) = JSON.generate(request.messages).include?("<mailbox>\\nhuman | #{text}\\n</mailbox>")
 
+    it "says the prompt waits on an idle compaction summary, once, and runs it after the summary lands" do
+      gate = Queue.new
+      source = Class.new do
+        define_method(:prepare) { |**| gate.pop && true }
+        def context_for(base:, **) = base
+      end.new
+      provider = Lain::Provider::Mock.new(responses: [text_response("answered")])
+      agent = Lain::Agent.new(provider:, toolset: Lain::Toolset.new([]), context:, mailbox:, pipeline_source: source)
+      idle = Thread.new { agent.prepare_idle }
+      Thread.pass until agent.preparing?
+      releaser = Thread.new do
+        Thread.pass until out.string.include?("finishing a compaction summary before your prompt runs")
+        gate.push(:summary)
+      end
+      queued = ["tell me"]
+      conductor.define_singleton_method(:read_prompt) { |*| queued.shift }
+
+      described_class.new(agent:, tty:, replies:, commands: passing_through, conductor:, notes:,
+                          middleware: Lain::Middleware::Stack.new, chronicle: Lain::CLI::Chronicle::Null.new)
+                     .run(nvim: nil, store: nil, session: nil)
+      [idle, releaser].each { |thread| thread.join(5) }
+
+      expect(out.string.scan("finishing a compaction summary before your prompt runs").size).to eq(1)
+      expect(out.string).to include("answered")
+      expect(idle.value).to be(true)
+    end
+
+    it "says nothing of a compaction summary when no idle prepare is running" do
+      converse(Lain::Provider::Mock.new(responses: [text_response("answered")]), asks: ["tell me"])
+
+      expect(out.string).to include("answered")
+      expect(out.string).not_to include(described_class::PREPARING)
+    end
+
     it "says the note, folds it into the next request, and holds nothing as the next prompt" do
       typing = EchoTool.new
       notes_at = method(:typed)
@@ -2303,7 +2337,8 @@ RSpec.describe Lain::CLI::Repl do
 
     def repl_hearing(conductor, attended: false)
       described_class.new(
-        agent: instance_double(Lain::Agent, timeline: nil), middleware: answered, attended:, commands:,
+        agent: instance_double(Lain::Agent, timeline: nil, preparing?: false),
+        middleware: answered, attended:, commands:,
         chronicle: Lain::CLI::Chronicle::Null.new, heard:, conductor:,
         tty: Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: StringIO.new, input: StringIO.new,
                                      history_path: File.join(@dir, "history")),
