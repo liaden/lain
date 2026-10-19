@@ -88,6 +88,19 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     [sha, ref]
   end
 
+  def red_worker(id)
+    git("switch", "-q", "--detach", tip)
+    path = "spec/unit/models/order_spec.rb"
+    FileUtils.mkdir_p(File.join(@repo, File.dirname(path)))
+    File.write(File.join(@repo, path), "RSpec.describe Order do\nend\n")
+    git("add", path)
+    git("commit", "-q", "-m", Lain::Epic::RedCommit.subject(path, "c0ffee"))
+    sha = git("rev-parse", "HEAD")
+    git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.1").ref, sha)
+    git("switch", "-q", "epic/demo")
+    sha
+  end
+
   def approve(issue_id, sha)
     digest = Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
     decisions << Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage: "implementation",
@@ -382,6 +395,41 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       worker("ab", "README" => "ab's work\n")
 
       expect { landing.anchored("a") }.to raise_error(Lain::Approval::Gate::NotApproved, /no worker commit is anchored/)
+    end
+
+    it "refuses when only the failing-test commit is anchored, naming no sha to approve" do
+      sha = red_worker("greet")
+
+      expect { landing.anchored("greet") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+        expect(error.message).to include("only the failing-test commit is anchored for issue greet; re-run the issue")
+        expect(error.message).not_to include(sha, "epic submit")
+      }
+    end
+
+    it "refuses a failing-test commit an implementation gate approved, and moves nothing to done" do
+      sha = red_worker("greet")
+      approve("greet", sha)
+
+      expect { landing.anchored("greet") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+        expect(error.message).to include("only the failing-test commit is anchored for issue greet")
+        expect(error.message).not_to include(sha)
+      }
+      expect { landing.call("greet", sha:, ref: "refs/lain/worker/x") }
+        .to raise_error(Lain::Approval::Gate::NotApproved,
+                        /#{sha} holds only issue greet's failing tests; re-run the issue/)
+      expect(contains?(sha)).to be(false)
+      expect(transitions).to be_empty
+    end
+
+    it "refuses a named failing-test commit no gate approved, offering no approval of it" do
+      sha = red_worker("greet")
+
+      expect { landing.call("greet", sha:, ref: "refs/lain/worker/x") }
+        .to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+          expect(error.message).to include("#{sha} holds only issue greet's failing tests; re-run the issue")
+          expect(error.message).not_to include("epic submit")
+        }
+      expect(contains?(sha)).to be(false)
     end
 
     it "refuses two different approved commits for one issue, naming both" do

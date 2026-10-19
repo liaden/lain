@@ -82,7 +82,7 @@ module Lain
         @scribe = scribe
         @queue = queue
         @landings = Landings.new(landings, epic_slug:)
-        @commits, @placement = inspecting(File.expand_path(repo_root), layout, base, shell_out_factory)
+        @commits, @placement, @red = inspecting(File.expand_path(repo_root), layout, base, shell_out_factory)
       end
 
       # @return [Result]
@@ -145,8 +145,9 @@ module Lain
       private
 
       def inspecting(root, layout, base, shell_out_factory)
-        [Commits.new(git: Isolation::Checkout.new(root, shell_out_factory:), base:),
-         Placement.new(repo_root: root, layout:, base:, shell_out_factory:)]
+        git = Isolation::Checkout.new(root, shell_out_factory:)
+        [Commits.new(git:, base:), Placement.new(repo_root: root, layout:, base:, shell_out_factory:),
+         Epic::RedCommit.new(git:, base: base.ref)]
       end
 
       def ready!(issue_id)
@@ -156,12 +157,16 @@ module Lain
         @plan.call(issue_id)
       end
 
-      def approved?(issue_id, sha)
+      # A gate that approved the red step's commit approved no implementation.
+      def approved?(issue_id, sha) = gate_approved?(issue_id, sha) && !@red.only?(sha)
+
+      def gate_approved?(issue_id, sha)
         @approvals.approved?(Epic::Submission.implementation(slug: @epic_slug, issue_id:, digest: sha).digest, issue_id)
       end
 
       def approved!(issue_id, sha)
-        return if approved?(issue_id, sha)
+        raise Approval::Gate::NotApproved, "#{sha} #{failing_tests(issue_id)}" if @red.only?(sha)
+        return if gate_approved?(issue_id, sha)
 
         raise Approval::Gate::NotApproved, "issue #{issue_id}'s implementation gate has not approved #{sha}, so " \
                                            "nothing landed -- #{approve(issue_id, sha)}"
@@ -226,7 +231,17 @@ module Lain
 
       def missing_approval(issue_id, candidates)
         shas = candidates.select { |_, ref| anchored_for?(issue_id, ref) }.map(&:first).uniq
-        shas.empty? ? unanchored(issue_id) : unapproved(issue_id, shas)
+        return unanchored(issue_id) if shas.empty?
+
+        implementations = shas.reject { |sha| @red.only?(sha) }
+        implementations.empty? ? failing_tests_only(issue_id) : unapproved(issue_id, implementations)
+      end
+
+      def failing_tests(issue_id) = "holds only issue #{issue_id}'s failing tests; re-run the issue -- nothing landed"
+
+      def failing_tests_only(issue_id)
+        "only the failing-test commit is anchored for issue #{issue_id}; re-run the issue through the epic driver " \
+          "to anchor its implementation -- nothing landed"
       end
 
       def unanchored(issue_id)

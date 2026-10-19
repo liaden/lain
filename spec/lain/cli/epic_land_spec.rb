@@ -83,6 +83,19 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
     sha
   end
 
+  def red_worker(id)
+    git("switch", "-q", "--detach", tip)
+    path = "spec/unit/models/order_spec.rb"
+    FileUtils.mkdir_p(File.join(root, File.dirname(path)))
+    File.write(File.join(root, path), "RSpec.describe Order do\nend\n")
+    git("add", path)
+    git("commit", "-q", "-m", Lain::Epic::RedCommit.subject(path, "c0ffee"))
+    sha = git("rev-parse", "HEAD")
+    git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.1").ref, sha)
+    git("switch", "-q", "epic/demo")
+    sha
+  end
+
   # --- the gate's records ----------------------------------------------------
 
   def session(*records, name: "fixture.ndjson", at: "2026-01-01T00:00:00Z")
@@ -258,6 +271,21 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       }
       expect(tip).to eq(before)
       expect(%w[b c].map { |id| progress.status(id) }).to all(eq("in_flight"))
+    end
+
+    it "refuses a red-only anchor, approved or not, naming no sha and moving nothing to done" do
+      sha = red_worker("a")
+      session(plan_approval("a"))
+      before = tip
+
+      expect { command.land("a", "demo") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+        expect(error.message).to include("only the failing-test commit is anchored for issue a; re-run the issue")
+        expect(error.message).not_to include(sha)
+      }
+      session(implementation_approval("a", sha))
+      expect { command.land("a", "demo") }.to raise_error(Lain::Approval::Gate::NotApproved, /failing-test commit/)
+      expect(tip).to eq(before)
+      expect(progress.status("a")).to eq("in_flight")
     end
 
     it "refuses an issue whose plan is not approved as it stands now" do
