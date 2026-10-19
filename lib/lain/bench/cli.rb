@@ -473,7 +473,13 @@ module Lain
       def preflighted_suite(fixture_path, isolation:, journal:)
         lease_options(isolation:, journal:)
         Lain::CLI::IsolationBackend.known!(isolation) unless isolation.nil?
-        ArmTasks.new(fixture_path:).load!
+        at_least_two!(ArmTasks.new(fixture_path:).load!)
+      end
+
+      def at_least_two!(suite)
+        raise Refusal, "an arm fixture needs at least 2 tasks" if suite.count < 2
+
+        suite
       end
 
       # Named once, so the commands that can offer it quote one sentence and the
@@ -608,9 +614,10 @@ module Lain
       end
 
       def checked_path(source)
-        raise Refusal, "no session file at #{source}" unless File.file?(source)
+        return source if File.file?(source)
 
-        source
+        raise Refusal, "no session file at #{source}; bench variance takes session file paths, not ids " \
+                       "(lain sessions lists them)"
       end
 
       # Corrupt's own message names a digest, but only this layer still holds

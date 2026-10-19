@@ -257,6 +257,13 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
+  describe "#variance_report given a session id" do
+    it "refuses saying it takes session file paths and that lain sessions lists them" do
+      expect { cli.variance_report(%w[abc123]) }
+        .to raise_error(described_class::Refusal, /takes session file paths.*lain sessions/m)
+    end
+  end
+
   describe "#sweep_report" do
     it "returns the five-arm retrieval report as a String, without printing" do
       report = nil

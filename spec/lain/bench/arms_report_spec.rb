@@ -527,6 +527,20 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    it "refuses a 1-task suite in words, before any arm runs or record is written" do
+      Dir.mktmpdir("lain-arm-tasks") do |dir|
+        path = write_fixture(dir, ["only one"])
+        journal = Lain::Channel.new
+
+        expect do
+          cli.arms_report(fixture_path: path, backend:, provider:, tools: toolless, isolation: "none", journal:)
+        end
+          .to raise_error(described_class::Refusal, "an arm fixture needs at least 2 tasks")
+        expect(provider.call_count).to eq(0)
+        expect(journal.drain).to be_empty
+      end
+    end
+
     it "accepts a suite whose prompts are all distinct" do
       Dir.mktmpdir("lain-arm-tasks") do |dir|
         path = write_fixture(dir, ["do the thing", "do the other thing"])
