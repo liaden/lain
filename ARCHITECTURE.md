@@ -419,7 +419,8 @@ prompt, and a prompt that sits before the first held range stays verbatim until 
 (`WindowExceeded`) *and* the source is stuck — nothing droppable, or the refused render already
 held the newest cut. It spends exactly one summarizer call, through `Oracle::Handoff`
 (`lib/lain/oracle/handoff.rb`), whose schema is five required strings: `goal`, `progress`,
-`files_and_decisions`, `open_todos`, `next_step`. The rendered state document replaces everything
+`files_and_decisions`, `open_todos`, `next_step`, the last rendered under "Where the work stood" so
+the document defers to the human's newest message. The rendered state document replaces everything
 before the current ask and **keeps three things**: the ask itself, an unanswered `tool_use` /
 `tool_result` pair (the Messages API refuses a split pair), and the pins. It is recorded like any
 other cut — one record of `kind: handoff`, the document positioned where the replaced history

@@ -248,7 +248,7 @@ RSpec.describe "a handoff when no cut can make room", :seam do
       chat.ask("so what is left to do?")
 
       sent = rendered_text(provider.requests.last)
-      expect(sent).to include("Goal", "Progress", "Files and decisions", "Open todos", "Next step")
+      expect(sent).to include("Goal", "Progress", "Files and decisions", "Open todos", "Where the work stood")
       expect(sent).to include("finish the parser")
       expect(sent).not_to include(HandoffSeam::MARKER)
     end

@@ -47,7 +47,7 @@ RSpec.describe Lain::Oracle::Handoff do
       document = described_class.document(definition.answer(answer).await)
 
       expect(document).to include("Goal").and include("Progress").and include("Files and decisions")
-        .and include("Open todos").and include("Next step")
+        .and include("Open todos").and include("Where the work stood")
     end
 
     it "carries every answered field's text" do

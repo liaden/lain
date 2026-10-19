@@ -2998,7 +2998,7 @@ RSpec.describe Lain::Compaction::Source do
       messages = render(context_for(built, line), line).messages
 
       expect(replacement_text(messages))
-        .to include("Goal", "Progress", "Files and decisions", "Open todos", "Next step")
+        .to include("Goal", "Progress", "Files and decisions", "Open todos", "Where the work stood")
     end
 
     # The whole point of the fallback: the ask survives it. Its turn is

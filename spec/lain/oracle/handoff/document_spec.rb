@@ -24,7 +24,13 @@ RSpec.describe Lain::Oracle::Handoff::Document do
       text = described_class.from_answer(fields).to_s
 
       expect(text).to start_with(Lain::Oracle::Handoff::PREAMBLE)
-      expect(text).to include("## Goal\n\nship the parser").and include("## Next step\n\nwrite parser.rb")
+      expect(text).to include("## Goal\n\nship the parser").and include("## Where the work stood\n\nwrite parser.rb")
+    end
+
+    it "defers to the human's newest message" do
+      text = described_class.from_answer(fields).to_s
+
+      expect(text).to match(/newest message.*precedence/i).and match(/only if.*ask/i)
     end
   end
 end

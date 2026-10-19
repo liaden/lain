@@ -115,13 +115,14 @@ module Lain
       # the progress toward it.
       HEADINGS = { "goal" => "Goal", "progress" => "Progress",
                    "files_and_decisions" => "Files and decisions",
-                   "open_todos" => "Open todos", "next_step" => "Next step" }.freeze
+                   "open_todos" => "Open todos", "next_step" => "Where the work stood" }.freeze
 
       # The document's first line, and it is not decoration: a model handed
       # five headings with no frame reads them as a note it wrote to itself and
       # goes on to ask about turns that no longer exist.
       PREAMBLE = "The conversation before this point no longer fit the context window and was replaced by " \
-                 "this state document. The turns it covers are gone; work from what follows."
+                 "this state document. The turns it covers are gone; work from what follows. The human's " \
+                 "newest message takes precedence over this document: resume the work below only if asked."
 
       # THE LAST LINE IS NOT DECORATION, for {Summarize::TEMPLATE}'s reason: a
       # provider that ignores the structured-output format constraint answers a
