@@ -364,7 +364,7 @@ module Lain
         #   and be refused identically, which is the loop this exists to break
         def message(subject:, size:, narrower:)
           measured = Bounds.ceiling(size)
-          "#{subject} is #{measured} #{unit}, over the ceiling of #{limit} -- #{instead(narrower)}"
+          "#{subject} is #{measured} #{unit}, over the ceiling of #{limit} #{unit} -- #{instead(narrower)}"
         end
 
         # The refusal for a caller that stopped producing the artifact once it

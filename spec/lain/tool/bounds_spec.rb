@@ -99,6 +99,12 @@ RSpec.describe Lain::Tool::Bounds do
       expect(refusal.content).to include("262144")
     end
 
+    it "names the unit of the ceiling it is over" do
+      refusal = bound.refusal(subject: "big.rb", size: 5_242_880, narrower:)
+
+      expect(refusal.content).to include("over the ceiling of 262144 bytes")
+    end
+
     it "names the subject that was refused" do
       refusal = bound.refusal(subject: "big.rb", size: 5_242_880, narrower:)
 

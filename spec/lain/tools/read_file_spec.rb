@@ -862,6 +862,24 @@ RSpec.describe Lain::Tools::ReadFile do
                                         "offset and limit", "windows that together cover every line")
     end
 
+    it "names how many windows cover a 3 MB file and puts grep and a structural read ahead of them" do
+      path = write("big.txt", "#{"x" * 59}\n" * 50_000)
+
+      content = tool.call(path:).content
+
+      expect(content).to include("over the ceiling of 16384 bytes", "about 184 windows of 16384 bytes")
+      expect(content.index("grep it")).to be < content.index("read it in pieces")
+    end
+
+    it "keeps the windows first when a handful of them cover the file" do
+      path = write("mid.txt", "#{"x" * 59}\n" * 500)
+
+      content = tool.call(path:).content
+
+      expect(content).to include("about 2 windows of 16384 bytes")
+      expect(content.index("read it in pieces")).to be < content.index("grep it")
+    end
+
     it "refuses the same file read through one window that covers it" do
       path = write("service.rb", "  def call = nil # #{"x" * 40}\n" * (30 * 1024 / 60))
 

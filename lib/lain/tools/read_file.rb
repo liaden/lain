@@ -567,7 +567,7 @@ module Lain
       # @param size [Integer] `File.size`, measured before any open
       # @return [Refused]
       def self.too_large(path, size)
-        Refused.new(result: BOUND.refusal(subject: path, size:, narrower: narrower_for(path)))
+        Refused.new(result: BOUND.refusal(subject: path, size:, narrower: narrower_for(path, size)))
       end
 
       # Two answers. Windows are unfollowable for a file that IS one line,
@@ -580,13 +580,27 @@ module Lain
       # turns the byte ceiling into lines, which is what `limit` counts.
       #
       # @param path [String] the resolved path, already known to be over {BOUND}
+      # @param size [Integer] `File.size` of it
       # @return [Array<String>] the actions that would work on this file
-      def self.narrower_for(path)
+      def self.narrower_for(path, size)
         block = File.open(path, "rb") { |file| first_separated(file, LINE_LIMIT)&.then { Sample.of(_1) } }
         return LONG_LINE_NARROWER if block.nil?
         return UNCOVERABLE_NARROWER if uncoverable?(path)
 
-        [WINDOWS, *block.advice, *STRUCTURAL]
+        windows = [windows_sentence(size), *block.advice]
+        many_windows?(size) ? [*STRUCTURAL, *windows] : [*windows, *STRUCTURAL]
+      end
+
+      # Past this many windows a read-through costs more than finding the part
+      # that matters first.
+      MANY_WINDOWS = 20
+
+      def self.window_count(size) = size.fdiv(BOUND.limit).ceil
+
+      def self.many_windows?(size) = window_count(size) > MANY_WINDOWS
+
+      def self.windows_sentence(size)
+        "#{WINDOWS}; this file takes about #{window_count(size)} windows of #{BOUND.limit} bytes"
       end
 
       # A line past the first is the one no window covers, so no windows are
