@@ -33,6 +33,9 @@ module Lain
         freeze
       end
 
+      # @return [ChildEnv] what a child inherits and is lent
+      attr_reader :child_env
+
       # Both arms are this backend's own, so its answer does not depend on the
       # term. It is still ASKED about one, because the contract's question is
       # about a shape rather than about a backend: {Docker} takes a one-stage

@@ -226,6 +226,12 @@ RSpec.describe Lain::Exec::Local do
         .to eq("/tmp/lain-libs\n")
     end
 
+    it "answers the child environment it applies, so a masker reads the same values" do
+      child_env = Lain::Exec::ChildEnv.new(pass: %w[LAIN_PROBE])
+
+      expect(described_class.new(child_env:).child_env).to be(child_env)
+    end
+
     it "keeps GEM_HOME, because the child still has to find its gems" do
       with_env("GEM_HOME" => "/tmp/lain-t1-gems") do
         expect(run(%(sh -c 'echo "[$GEM_HOME]"')).stdout).to include("[/tmp/lain-t1-gems]")

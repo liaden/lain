@@ -61,6 +61,9 @@ module Lain
       # @return [Boolean] the inner exec's answer, since it runs the term
       def takes_term?(term) = @inner.takes_term?(term)
 
+      # @return [ChildEnv] the inner exec's, since its child is the one that runs
+      def child_env = @inner.child_env
+
       # @param command [String, Shell::Term]
       # @param cwd [String]
       # @param env [Hash]

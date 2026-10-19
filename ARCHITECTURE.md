@@ -1043,6 +1043,9 @@ lower, upper and a digit, 3.5 bits per character, or hex at 3.0. Nothing under 8
 detector reads whole (`Password=pw;Database=x`) lists that run, so the password printed alone is not masked, and a
 passed name that is not hinted gets no relaxed bar. Only passed names are scanned, never the kept ones. A masked
 result journals `command_redacted` with a count of regions, never their bytes.
+The live display gets the same mask: `Tools::Bash` feeds each output stream through a
+`Sensitivity::TextMask::Stream` over those literals, both streams drawing on 1 numbering, so the chat
+pane and `lain://journal` never carry the raw bytes; past about 1 MiB the live display stops with a note.
 
 A spawned child is also confined by path: `ToolGuard.working` wraps the board's policy in `Sensitivity::Policy::Confined`
 with the child's roots (the project root, the `related` directories and the worker's own checkout), so a read tool

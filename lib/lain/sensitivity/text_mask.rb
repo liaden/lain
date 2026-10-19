@@ -26,8 +26,10 @@ module Lain
       # @return [Array(String, Integer)] the masked text and how many spans were masked
       def call(text) = mask(text, (1..).each)
 
+      # @param ordinals [Enumerator] the placeholder numbering; shared, it numbers
+      #   several streams of one command as one
       # @return [Stream] a masker for output that arrives in pieces
-      def stream = Stream.new(self)
+      def stream(ordinals: (1..).each) = Stream.new(self, ordinals:)
 
       # @api private
       # @param text [String]
@@ -39,13 +41,20 @@ module Lain
       end
 
       # Output arriving in pieces, masked with one numbering across all of them.
-      # A line is shown only once complete, and a private-key block only once
-      # its END line has arrived, because the tail of a key is not a secret
-      # a line-wise detector can see.
+      # A line is shown once it ends at a newline or a carriage return, and a
+      # private-key block only once its END line has arrived, because the tail
+      # of a key is not a secret a line-wise detector can see.
+      #
+      # A line still open past {PARTIAL_CAP} is shown up to its last space or
+      # tab, so a progress bar or a long unbroken line is not held until exit,
+      # and a token, which holds neither, is masked whole.
       class Stream
         # Roughly what a held block may grow to (one chunk past it) before it is
         # masked unfinished; an endless BEGIN must not hold the display forever.
         HOLD_CAP = 256 * 1024
+        PARTIAL_CAP = 4 * 1024
+        LINE_END = /[\n\r]/n
+        BLANK = /[ \t]/n
         KEY_BEGIN = /^-----BEGIN [A-Z ]*KEY-----/n
         KEY_END = /-----END [^\n]*\n/n
         SUNK = /\A.*?-----END [^\n]*\n/mn
@@ -53,9 +62,11 @@ module Lain
         # @return [Integer] how many spans have been masked so far
         attr_reader :count
 
-        def initialize(mask)
+        # @param mask [TextMask]
+        # @param ordinals [Enumerator] the placeholder numbering
+        def initialize(mask, ordinals:)
           @mask = mask
-          @ordinals = (1..).each
+          @ordinals = ordinals
           @pending = String.new(encoding: Encoding::BINARY)
           @count = 0
           @sunk = false
@@ -65,14 +76,23 @@ module Lain
         # @return [String] the masked text safe to show now
         def <<(chunk)
           @pending << chunk.b
-          cut = @pending.rindex("\n")
-          cut ? take(cut + 1, final: false) : +""
+          cut = @pending.rindex(LINE_END)
+          return take(cut + 1, final: false) if cut
+          return +"" if @pending.bytesize <= PARTIAL_CAP
+
+          take(partial_cut, final: false)
         end
 
         # @return [String] the rest, masked whole; never raw
         def finish = take(@pending.bytesize, final: true)
 
         private
+
+        # A held key block is taken whole, so it answers to {HOLD_CAP} alone.
+        def partial_cut
+          blank = @pending.rindex(BLANK) unless @pending.match?(KEY_BEGIN)
+          blank&.positive? ? blank + 1 : @pending.bytesize
+        end
 
         def take(length, final:)
           text = settled(@pending.slice!(0, length))

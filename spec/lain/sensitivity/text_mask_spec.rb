@@ -75,6 +75,40 @@ RSpec.describe Lain::Sensitivity::TextMask do
       expect(stream.count).to eq(2)
     end
 
+    it "emits each carriage-return progress frame once the next one begins" do
+      stream = mask.stream
+      frames = Array.new(5) { |step| "\r#{step * 20}% [#{"=" * step}]" }
+
+      expect(frames.map { stream << _1 } + [stream.finish])
+        .to eq(["\r", "0% []\r", "20% [=]\r", "40% [==]\r", "60% [===]\r", "80% [====]"])
+    end
+
+    it "emits a partial line once it passes the partial cap" do
+      expect((mask.stream << ("x" * 400_000)).bytesize).to eq(400_000)
+    end
+
+    it "cuts a partial line at its last space, so a token there is masked whole" do
+      stream = mask.stream
+      words = "word " * 1000
+
+      expect([stream << "#{words}A_TOKEN=#{secret}", stream.finish]).to eq([words, "A_TOKEN=#{placeholder(1)}"])
+    end
+
+    it "holds a key block past the partial cap, under its own hold cap" do
+      stream = mask.stream
+      held = [stream << "-----BEGIN PRIVATE KEY-----\n", stream << ("A" * 10_000)]
+
+      expect([held, stream.finish]).to eq([["", ""], placeholder(1)])
+    end
+
+    it "draws placeholders from a numbering it shares with another stream" do
+      ordinals = (1..).each
+      stdout, stderr = Array.new(2) { mask.stream(ordinals:) }
+
+      expect([stdout << "A_TOKEN=#{secret}\n", stderr << "B_TOKEN=#{other}\n", stdout << "C_TOKEN=#{other}\n"])
+        .to eq(["A_TOKEN=#{placeholder(1)}\n", "B_TOKEN=#{placeholder(2)}\n", "C_TOKEN=#{placeholder(3)}\n"])
+    end
+
     it "keeps counting across chunks" do
       stream = mask.stream
       streamed(stream, ["A_TOKEN=#{secret}\n", "B_TOKEN=#{other}\n"])

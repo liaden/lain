@@ -17,6 +17,7 @@ RSpec.describe Lain::Tools::Bash do
   def timing_out(report)
     Class.new do
       define_method(:takes_term?) { |_term| true }
+      define_method(:child_env) { Lain::Exec::ChildEnv::DEFAULT }
       define_method(:call) { |**| raise Lain::Exec::Timeout, report }
     end.new
   end
@@ -126,6 +127,112 @@ RSpec.describe Lain::Tools::Bash do
       expect(stderr_events).not_to be_empty
       expect(stderr_events).to all(have_attributes(tool_use_id: "tu_xyz"))
       expect(stderr_events.map(&:bytes).join).to include("to_err")
+    end
+  end
+
+  describe "masked live streaming" do
+    let(:token) { "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5" }
+    let(:environment) { ENV.to_h.merge("FOO" => token) }
+    let(:masked_tool) do
+      child_env = Lain::Exec::ChildEnv.new(pass: %w[FOO], env: environment)
+      described_class.new(exec: Lain::Exec::Local.new(child_env:))
+    end
+
+    def placeholder(ordinal) = format(Lain::Sensitivity::Regions::PLACEHOLDER, ordinal)
+
+    def run_masked(command, timeout: 10)
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: environment))
+      masked_tool.call({ command:, timeout: }, Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session,
+                                                                          channel:))
+    end
+
+    def shown(stream = nil) = channel.events.select { stream.nil? || _1.stream == stream }.map(&:bytes)
+
+    def runs_of(text) = (0..(text.bytesize - 8)).map { text.byteslice(_1, 8) }
+
+    it "masks a passed value before it reaches the live channel" do
+      run_masked("printenv FOO")
+
+      expect(shown(:stdout).join).to eq("#{placeholder(1)}\n")
+    end
+
+    it "masks a value the session lends that the launch's environment never held" do
+      lent = environment.merge("LENT_TOKEN" => "hunterhunterhunter")
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: lent))
+      masked_tool.call({ command: "printenv LENT_TOKEN" },
+                       Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session, channel:))
+
+      expect(shown(:stdout).join).to eq("#{placeholder(1)}\n")
+    end
+
+    it "numbers stdout and stderr from one count, each on its own stream" do
+      run_masked(%(sh -c 'printf "%s\\n" "$FOO"; printf "%s\\n" "$FOO" 1>&2'))
+
+      expect([shown(:stdout).join, shown(:stderr).join].sort)
+        .to eq(["#{placeholder(1)}\n", "#{placeholder(2)}\n"])
+    end
+
+    it "masks a token split across two writes a second apart" do
+      run_masked(%(sh -c 'printf "#{token[0, 20]}"; sleep 1; printf "#{token[20..]}\\n"'))
+
+      expect(shown).to all(satisfy { |bytes| runs_of(token).none? { bytes.include?(_1) } })
+    end
+
+    it "shows no line of a private key split across two writes" do
+      Dir.mktmpdir do |dir|
+        key = OpenSSL::PKey::RSA.new(1024).to_pem
+        File.write(File.join(dir, "key.pem"), key)
+        half = key.bytesize / 2
+        run_masked(%(sh -c 'head -c #{half} #{dir}/key.pem; sleep 1; tail -c +#{half + 1} #{dir}/key.pem'))
+
+        expect(shown).to all(satisfy { |bytes| key.lines[1..-2].none? { bytes.include?(_1.chomp) } })
+      end
+    end
+
+    it "shows a line before the command ends" do
+      arrived = {}
+      timing = Object.new.tap do |observer|
+        observer.define_singleton_method(:<<) { |event| arrived[event.bytes] ||= Lain::RunClock::MONOTONIC.call }
+      end
+      channel.observe(timing)
+      run_masked(%(sh -c 'echo a; sleep 2; echo b'))
+      ended = Lain::RunClock::MONOTONIC.call
+
+      expect(ended - arrived.fetch("a\n")).to be > 1
+    end
+
+    it "masks an unterminated key at exit rather than flushing it raw" do
+      Dir.mktmpdir do |dir|
+        body = Array.new(1000) { |line| "#{format("%06d", line)}#{"Q" * 64}\n" }.join
+        File.write(File.join(dir, "held.txt"), "-----BEGIN PRIVATE KEY-----\n#{body}")
+        run_masked("cat #{dir}/held.txt")
+
+        expect(shown.join).to eq(placeholder(1))
+      end
+    end
+
+    it "shows what a timed-out command left unterminated, masked" do
+      run_masked(%(sh -c 'printf "partial $FOO"; sleep 5'), timeout: 1)
+
+      expect(shown(:stdout).join).to eq("partial #{placeholder(1)}")
+    end
+
+    it "stops the live display at its cap with one note, showing no byte printed past it" do
+      cap = described_class::MaskedSink::CAP
+      run_masked(%(sh -c 'head -c #{cap} /dev/zero | tr "\\0" a; head -c #{cap} /dev/zero | tr "\\0" Z'))
+      note = described_class::MaskedSink::NOTE
+
+      expect([shown(:stdout).join.count("Z"), shown(:stdout).count { _1.include?(note) }, shown(:stdout).last])
+        .to match([0, 1, end_with(note)])
+    end
+
+    it "streams an output past the bound masked, and still refuses it to the model" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "big.txt"), "#{"#{"a" * 99}\n" * 200}#{token}\n")
+        result = run_masked("cat #{dir}/big.txt")
+
+        expect([shown.join.include?(token), result.content]).to match([false, include("20041 bytes")])
+      end
     end
   end
 
@@ -674,19 +781,17 @@ RSpec.describe Lain::Tools::Bash do
       # A real backend whose every capture, and every timeout report, is kept,
       # so an example reads how much of a flood was held without measuring memory.
       def keeping(backend)
-        Class.new do
+        Class.new(SimpleDelegator) do
           attr_reader :captures, :reports
 
           def initialize(backend)
-            @backend = backend
+            super
             @captures = []
             @reports = []
           end
 
-          def takes_term?(term) = @backend.takes_term?(term)
-
           def call(**)
-            @backend.call(**).tap { |capture| @captures << capture }
+            __getobj__.call(**).tap { |capture| @captures << capture }
           rescue Lain::Exec::Timeout => e
             @reports << e.message
             raise
@@ -912,6 +1017,8 @@ RSpec.describe Lain::Tools::Bash do
     it "records the allow even where the backend had no shape for the term" do
       string_only = Class.new do
         def takes_term?(_term) = false
+
+        def child_env = Lain::Exec::ChildEnv::DEFAULT
         def call(command:, **) = Lain::Exec::Capture.new(exit_status: 0, stdout: command.to_s, stderr: "")
       end.new
 
@@ -1244,6 +1351,7 @@ RSpec.describe Lain::Tools::Bash do
       events = journal.events
       backend = Class.new do
         define_method(:takes_term?) { |_term| true }
+        define_method(:child_env) { Lain::Exec::ChildEnv::DEFAULT }
         define_method(:call) do |**|
           seen = events.grep(Lain::Telemetry::ExecResolution).size
           Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
@@ -1263,6 +1371,7 @@ RSpec.describe Lain::Tools::Bash do
         seen_cwds = cwds
         Class.new do
           define_method(:takes_term?) { |_term| true }
+          define_method(:child_env) { Lain::Exec::ChildEnv::DEFAULT }
           define_method(:call) do |confinement:, cwd:, **|
             seen << confinement
             seen_cwds << cwd
@@ -1392,6 +1501,7 @@ RSpec.describe Lain::Tools::Bash do
         requests = []
         backend = Class.new do
           define_method(:takes_term?) { |_term| true }
+          define_method(:child_env) { Lain::Exec::ChildEnv::DEFAULT }
           define_method(:call) do |command:, confinement:, **|
             requests << [command, confinement]
             Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")

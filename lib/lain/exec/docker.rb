@@ -102,7 +102,9 @@ module Lain
       #   @return [String]
       # @!attribute [r] image
       #   @return [Image] what each call pins its tag to
-      attr_reader :project, :image
+      # @!attribute [r] child_env
+      #   @return [ChildEnv] what decides which names cross into the container
+      attr_reader :project, :image, :child_env
 
       # @return [String] the tag this backend was asked to run
       def tag = @image.tag

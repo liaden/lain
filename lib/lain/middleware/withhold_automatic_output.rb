@@ -33,8 +33,8 @@ module Lain
     # a human, and they must not be loosened on the strength of this layer.
     #
     # Nor does it cover the live display. `bash` streams its output to the
-    # human's own pane as it runs, before the result reaches this layer; the
-    # human is the authority here, and what is withheld is the model's copy
+    # human's own pane as it runs, before the result reaches this layer, masked
+    # there by {Tools::Bash} itself; what is withheld here is the model's copy
     # and the record's.
     #
     # == How it learns who approved the call

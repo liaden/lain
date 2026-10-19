@@ -1173,6 +1173,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       seen = requests
       Class.new do
         define_method(:takes_term?) { |_term| true }
+        define_method(:child_env) { Lain::Exec::ChildEnv::DEFAULT }
         define_method(:call) do |confinement:, **|
           seen << confinement
           Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")

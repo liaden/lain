@@ -67,8 +67,8 @@ module Lain
     # whoever approved the call and nothing parks. The detector misses a secret
     # with no recognisable shape, so the value of every secret-named variable in
     # the process environment is masked wherever it appears too. The live pane
-    # still streams the raw bytes as the command runs: that copy is the human's,
-    # and what is masked is the model's and the record's.
+    # is masked for the same secrets by {Tools::Bash} as the command runs, so
+    # the channel the pane and `lain://journal` read never carries them raw.
     class RedactSecretReads < Base
       # Exact membership, {RefuseSecretWrites::GUARDED_TOOLS}' rule: a tool that
       # returns file bytes under some other name is unguarded by design until it
