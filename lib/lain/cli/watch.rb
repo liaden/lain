@@ -24,7 +24,8 @@ module Lain
 
       # @param selector [String] a prefix of the watched spawn's event digest
       # @param sink [#puts] the IO-shaped sink duck ({Sink::IOAdapter}'s
-      #   surface); the exe hands the terminal in, specs hand a StringIO
+      #   surface); the exe hands the terminal in, specs hand a StringIO. A
+      #   sink that also answers `flush` is flushed after every line.
       # @param path [String, nil] the session file to tail; nil follows this
       #   project's newest recorded session
       # @param paths [Paths] resolves this project's session directory when
@@ -60,6 +61,9 @@ module Lain
         announce_wait(path)
         closed = File.open(path, "r") { |io| follow(io) }
         conclude(path, closed)
+      rescue Errno::EPIPE
+        # `lain watch | head -1`: the reader leaving is how this watch ends.
+        0
       end
 
       private
@@ -73,7 +77,7 @@ module Lain
       def announce_wait(path)
         return unless Journal.empty?(path)
 
-        @sink.puts("waiting for records in #{path}")
+        say("waiting for records in #{path}")
       end
 
       # The tail as composition: {Tail} yields only COMPLETE lines,
@@ -94,7 +98,7 @@ module Lain
       def wait_for_more
         unless @filter.anchored? || @noticed
           @noticed = true
-          @sink.puts("no spawn matched selector #{@selector.inspect} yet (still watching)")
+          say("no spawn matched selector #{@selector.inspect} yet (still watching)")
         end
         @sleeper.call(POLL_SECONDS)
       end
@@ -109,7 +113,7 @@ module Lain
       end
 
       def render(record)
-        @view.lines(record).each { |line| @sink.puts(line) }
+        @view.lines(record).each { |line| say(line) }
       end
 
       # Each verdict spoken AND returned: an unmatched selector must never end
@@ -118,14 +122,21 @@ module Lain
         file = File.basename(path)
         verdicts = [("#{file}: its writer ended without closing the session" unless closed),
                     ("no spawn matched selector #{@selector.inspect} in #{file}" unless @filter.anchored?)].compact
-        verdicts.each { |line| @sink.puts(line) }
+        verdicts.each { |line| say(line) }
         verdicts.empty? ? 0 : 1
       end
 
       # The one loud diagnostic for an ambiguous selector ({LineageFilter}'s
       # `on_shadowed` seam): the later matching spawn is named, then ignored.
       def shadowed(digest)
-        @sink.puts("selector also matches #{digest}; watching #{@filter.anchor} only")
+        say("selector also matches #{digest}; watching #{@filter.anchor} only")
+      end
+
+      # A file or pipe sink is block-buffered, so without the flush a watch
+      # redirected to a file shows nothing until the process exits.
+      def say(line)
+        @sink.puts(line)
+        @sink.flush if @sink.respond_to?(:flush)
       end
 
       def journal_path

@@ -240,6 +240,52 @@ RSpec.describe Lain::CLI::Watch do
     end
   end
 
+  describe "writing to a file sink" do
+    it "has each line in the file before watch exits" do
+      path = write_journal(opening_records + traffic_records)
+      out_path = File.join(@state_home, "watch.out")
+      seen_at_poll = nil
+      sleeper = lambda do |_seconds|
+        seen_at_poll = File.read(out_path)
+        append_journal(path, [closed_record])
+      end
+
+      File.open(out_path, "w") do |sink|
+        sink.sync = false
+        described_class.new(selector:, path:, sink:, paths:, sleeper:).run
+      end
+
+      expect(seen_at_poll).to include("S found 3 papers")
+    end
+  end
+
+  describe "a sink that cannot be flushed" do
+    it "still receives every line" do
+      lines = []
+      sink = Object.new
+      sink.define_singleton_method(:puts) { |line| lines << line }
+      path = write_journal(opening_records + traffic_records + [closed_record])
+
+      described_class.new(selector:, path:, sink:, paths:).run
+
+      expect(lines.join("\n")).to include("S found 3 papers")
+    end
+  end
+
+  describe "a reader that leaves" do
+    it "ends the watch quietly with status 0" do
+      path = write_journal(opening_records + traffic_records + [closed_record])
+      reader, sink = IO.pipe
+      reader.close
+
+      status = described_class.new(selector:, path:, sink:, paths:).run
+
+      expect(status).to eq(0)
+    ensure
+      sink&.close unless sink&.closed?
+    end
+  end
+
   # A writer's line can be torn at the tail: IO#gets at EOF returns the
   # written half WITHOUT a newline. A tailer that consumes it desyncs -- both
   # halves fail parse separately and the record is silently lost.
