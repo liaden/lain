@@ -80,8 +80,8 @@ module Lain
                   "published table knows."
 
       RESERVE_OVER = "/critique refused before spawning anything: a %<response>d-token response reserve " \
-                     "(max_tokens) and %<overhead>d tokens of instructions, role prelude and tool schemas leave " \
-                     "no room for a chunk in %<model>s's %<window>d-token window -- lower --max-tokens, or run " \
+                     "and %<overhead>d tokens of instructions, role prelude and tool schemas leave " \
+                     "no room for a chunk in %<model>s's %<window>d-token window -- run " \
                      "against a model with a larger window"
 
       FILE_OVER = "/critique refused before spawning anything: %<path>s alone estimates %<estimate>d tokens, " \
@@ -227,7 +227,7 @@ module Lain
       class Budget
         # @param window [#resolve] the run's window book
         # @param model [String] the child's model
-        # @param max_tokens [Integer] the response the child may write
+        # @param max_tokens [Integer] the child's output cap, of which only a {ReplyReserve} is held back
         # @param prelude [String] the role's rendered system prompt
         # @return [Budget]
         # @raise [Refused] for a window only a guess stands behind
@@ -238,7 +238,7 @@ module Lain
                                              window: resolution.window_tokens)
           end
 
-          response_tokens = Integer(max_tokens)
+          response_tokens = ReplyReserve.for(window: resolution.window_tokens, ceiling: Integer(max_tokens)).tokens
           new(model: -model.to_s, window_tokens: resolution.window_tokens, response_tokens:,
               reserved_tokens: response_tokens + Critique.tokens(prelude) + SCHEMA_RESERVE_TOKENS)
         end

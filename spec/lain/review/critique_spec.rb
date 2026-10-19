@@ -303,15 +303,23 @@ RSpec.describe Lain::Review::Critique do
 
   describe "a response reserve that leaves no room" do
     it "refuses naming the reserve and the window before any file is blamed" do
-      big = CritiqueSpecSpawn.new(context: Lain::Context.new(model: "critic-model", max_tokens: 32_768))
+      big = CritiqueSpecSpawn.new(context: Lain::Context.new(model: "critic-model", max_tokens: 16_384))
 
-      expect { critique(changeset_of({ "lib/a.rb" => 4 }), spawn: big).call }
+      expect { critique(changeset_of({ "lib/a.rb" => 4 }), window: window(4_096), spawn: big).call }
         .to raise_error(described_class::Refused) { |error|
-          expect(error.message).to include("max_tokens", "32768")
+          expect(error.message).to include("4096-token response reserve")
           expect(error.message).not_to include("lib/a.rb")
         }
       expect(big.calls).to be_empty
       expect(checkouts.held).to be_empty
+    end
+
+    it "reserves 4,096, not the whole 16,384 cap, on a 32,768 window" do
+      big = CritiqueSpecSpawn.new(context: Lain::Context.new(model: "critic-model", max_tokens: 16_384))
+
+      critique(changeset_of({ "lib/a.rb" => 600 }), spawn: big).call
+
+      expect(big.calls).not_to be_empty
     end
   end
 

@@ -393,6 +393,10 @@ RSpec.describe Lain::Oracle::Handoff do
         expect(described_class.budget_for(served_window)).to eq(39_907)
       end
 
+      it "pins the reserve at the summarizer's own cap" do
+        expect(described_class::RESERVED_TOKENS).to eq(1_280 + 1_024)
+      end
+
       # A window smaller than the reserve buys no room at all, which is a
       # budget of zero rather than a negative one.
       it "answers zero for a window the reserve alone exhausts" do
