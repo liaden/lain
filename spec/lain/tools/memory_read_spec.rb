@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 RSpec.describe Lain::Tools::MemoryRead do
   subject(:tool) { described_class.new(index:) }
 
@@ -44,6 +46,59 @@ RSpec.describe Lain::Tools::MemoryRead do
     expect(schema["properties"].keys).to eq(["id"])
     expect(schema["properties"]["id"]).to include("type" => "string")
     expect(schema["required"]).to eq(["id"])
+  end
+
+  describe "the clerk's read, in a lain consolidate pass" do
+    let(:session) do
+      RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_a", "subagent", { "prompt" => "investigate the login bug" }]),
+                           text_response("orchestrated")],
+        child_responses: [text_response("the token TTL was zero")]
+      ).run
+    end
+    let(:lineages) { Lain::Bench::Session::Lineages.of(Lain::Bench::Session.load(session.lines)).to_a }
+    let(:spawn) { lineages.first.spawn.digest }
+
+    # The clerk reads only its own items, so the item is the lineage's clerk's.
+    def clerk_read(body)
+      item = Lain::Memory::Item.new(id: "note", description: "d", body:, author: Lain::Memory::Author.clerk(spawn:))
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_r", "memory_read", { "id" => "note" }]),
+                                                      text_response("done")])
+      consolidate(provider, Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty.write(item)))
+      provider.requests.last.messages.flat_map { Array(_1["content"]).grep(Hash) }
+              .find { _1["type"] == "tool_result" }.fetch("content")
+    end
+
+    def consolidate(provider, recorder)
+      Dir.mktmpdir do |root|
+        Lain::Consolidation.new(provider:, recorder:, context: Lain::Context.new(model: "clerk-model", max_tokens: 256),
+                                slots: Lain::Prompt::Slots.load(root:), journal: []).call(lineages)
+      end
+    end
+
+    it "sees a stored credential masked, and its own lineage digest whole" do
+      content = clerk_read("spawn #{spawn}: login bug\nDB_PASSWORD=hunter2pass\n")
+
+      expect(content)
+        .to start_with("author: clerk (spawn #{spawn})\nspawn #{spawn}: login bug\nDB_PASSWORD=<redacted:1>\n")
+      expect(content).not_to include("hunter2pass")
+    end
+
+    it "sees a clean body unchanged" do
+      expect(clerk_read("the build uses rake pspec")).to eq("author: clerk (spawn #{spawn})\nthe build uses rake pspec")
+    end
+
+    it "cannot rewrite an item it read masked" do
+      item = Lain::Memory::Item.new(id: "note", description: "d", body: "token_count = 123456\n",
+                                    author: Lain::Memory::Author.clerk(spawn:))
+      recorder = Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty.write(item))
+      rewrite = { "id" => "note", "description" => "d", "body" => "token_count = 1\n" }
+      consolidate(Lain::Provider::Mock.new(responses: [tool_response(["tu_r", "memory_read", { "id" => "note" }]),
+                                                       tool_response(["tu_w", "memory_write", rewrite]),
+                                                       text_response("done")]), recorder)
+
+      expect(recorder.fetch("note").body).to eq("token_count = 123456\n")
+    end
   end
 
   # The same tier-1 contract this tool states in its own docstring ("never a

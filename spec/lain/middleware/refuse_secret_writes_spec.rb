@@ -183,6 +183,63 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
   # A regex hit means "this looks like a credential"; an oracle decline
   # means "this is not worth remembering". They used to journal under the same
   # grammar, which recorded a judgment call as a security finding.
+  describe "a memory body that holds a masked placeholder" do
+    def write_back(body, name: "memory_write")
+      run(tool_call(name:, input: { "id" => "cache-note", "description" => "d", "body" => body }))
+    end
+
+    it "is refused, telling the model the item was read masked and to leave it or write a new item" do
+      env, called = write_back("cache note: token_count = <redacted:2>")
+
+      expect(called).to be(false)
+      expect(env.fetch(:result)).to have_attributes(is_error: true)
+      expect(env.fetch(:result).content).to include("read masked", "leave it, or write a new item")
+      expect(env.fetch(:result).content).not_to include("without the masked values")
+      expect(journal.events.first.pattern).to eq(described_class::MASKED_DECLINE)
+      expect(described_class).to be_decline(described_class::MASKED_DECLINE)
+    end
+
+    it "lets a body that only mentions the word redacted through" do
+      _, called = write_back("the redacted:1 form is how a masked region reads")
+
+      expect(called).to be(true)
+    end
+
+    # The notes are append-only, so a placeholder there replaces nothing.
+    it "lets an improvement_write holding a placeholder through" do
+      _, called = run(tool_call(name: "improvement_write", input: { "note" => "saw <redacted:1> in a read" }))
+
+      expect(called).to be(true)
+    end
+  end
+
+  describe "a memory item read masked this session" do
+    let(:session) { Lain::Session.new.record_masked_memory("cache-note") }
+
+    def rewrite(id, body)
+      effect = tool_call(input: { "id" => id, "description" => "d", "body" => body })
+      called = false
+      env = middleware.call({ effect:, context: session }) { |inner| (called = true) && inner }
+      [env, called]
+    end
+
+    it "refuses a rewrite with no placeholder, saying to leave it or write a new item" do
+      env, called = rewrite("cache-note", "token_count = 1")
+
+      expect(called).to be(false)
+      expect(env.fetch(:result)).to have_attributes(is_error: true)
+      expect(env.fetch(:result).content)
+        .to include("read masked this session", "cannot be rewritten from that read", "leave it, or write a new item")
+      expect(journal.events.first.pattern).to eq(described_class::MASKED_DECLINE)
+    end
+
+    it "lets a write to another id through" do
+      _, called = rewrite("fresh-note", "token_count = 1")
+
+      expect(called).to be(true)
+    end
+  end
+
   describe "an oracle's decline is not a credential match" do
     let(:declining) do
       always = Class.new do

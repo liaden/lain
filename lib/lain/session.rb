@@ -280,6 +280,21 @@ module Lain
       @reads.masked?(normalize(path))
     end
 
+    # A memory item read with bytes masked must not be rewritten from that read,
+    # for {#record_masked_read}'s reason. Not journaled, so a resumed session may
+    # rewrite it.
+    #
+    # @param id [String] the memory item's id
+    # @return [self]
+    def record_masked_memory(id)
+      masked_memories << id
+      self
+    end
+
+    # @param id [String]
+    # @return [Boolean] whether this session read memory item `id` with bytes masked
+    def masked_memory?(id) = masked_memories.include?(id)
+
     # Sorted, so a consumer cannot vary with the order reads arrived.
     # Deliberately WIDER than {#read?}: a partially read path was still read,
     # and so was one read on a chain since rewound away.
@@ -755,6 +770,8 @@ module Lain
 
     private
 
+    def masked_memories = @masked_memories ||= Set.new
+
     def start_todos
       @todo_reminder = nil
       @todo_items = []
@@ -1056,6 +1073,8 @@ module Lain
       # @return [self]
       def record_masked_read(_path) = self
 
+      def record_masked_memory(_id) = self
+
       # Takes the real one's `wrote:` and holds nothing of it.
       #
       # @return [self]
@@ -1111,6 +1130,8 @@ module Lain
 
       # @return [false]
       def masked_read?(_path) = false
+
+      def masked_memory?(_id) = false
 
       # @return [false]
       def written?(_path) = false

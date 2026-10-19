@@ -1046,6 +1046,19 @@ is not masked there. The journal records each masked file as `search_redacted`, 
 folds every `read_redacted` into the masked read-set, and a search reads no file whole. `ast_search` rows
 under a secret path are withheld by `WithholdSecretPaths`, as `grep` rows are.
 
+A `memory_read` result is masked by the same step, body only, with no release: the author line is lain's own and
+the body goes through the region detector plus the session's secret literals (`Sensitivity::TextMask`), nothing
+parks, and a trailer says the item cannot be released. A whole `blake3:<64 hex>` token is lain's own lineage
+digest and stays unmasked. The clerk's read goes through the same mask. The session remembers each item it read
+masked, and `RefuseSecretWrites` refuses any `memory_write` to that id for the rest of the session, placeholder
+or not, so a masked read cannot overwrite the real values; a new item holding a `<redacted:N>` placeholder is
+refused too. Both refusals are journaled as `decline:masked read`. `improvement_write` is append-only and not
+checked. Each masked memory read journals `memory_masked` (the item id and a region count, never bytes), and
+`SessionRecord::Replay` folds it back beside `read_redacted`, so a resumed or forked session refuses the rewrite
+too. The journaled
+`memory_loaded` copy stays raw, because masking it would move the item digests every `memory_root` check and
+replay reads.
+
 A `bash` result is masked by the same step, with no release. `Sensitivity::Literals` is where a literal is chosen:
 the values of secret-named variables, plus, for each variable `env pass:` hands the command, the regions
 `Sensitivity::Regions` finds in its value (a DSN gives its password, so the password is masked printed alone while

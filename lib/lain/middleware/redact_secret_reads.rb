@@ -69,6 +69,16 @@ module Lain
     # the process environment is masked wherever it appears too. The live pane
     # is masked for the same secrets by {Tools::Bash} as the command runs, so
     # the channel the pane and `lain://journal` read never carries them raw.
+    #
+    # == A memory item's body masks on every read, with no release
+    #
+    # A stored body names no file to key a release on, and its reader may be the
+    # clerk, which no human watches, so it is masked as a command's output is.
+    # The author line is lain's own and is left whole, as is a cited lineage
+    # digest. The session remembers each item read masked, and
+    # {RefuseSecretWrites} refuses to rewrite it from that read; a
+    # {Telemetry::MemoryMasked} record carries that across a resume. The journaled `memory_loaded` copy stays
+    # raw: masking it would move the item digests every resume checks.
     class RedactSecretReads < Base
       # Exact membership, {RefuseSecretWrites::GUARDED_TOOLS}' rule: a tool that
       # returns file bytes under some other name is unguarded by design until it
@@ -84,7 +94,11 @@ module Lain
       # `read_file` stays the way to ask.
       ROW_TOOLS = Set["grep", "ast_search"].freeze
 
-      SCANNED_TOOLS = [GUARDED_TOOLS, ROW_TOOLS, COMMAND_TOOLS].freeze
+      MEMORY_TOOLS = Set["memory_read"].freeze
+      MEMORY_TRAILER = "%<count>d %<noun>s masked in this memory item; a memory item cannot be released."
+      LINEAGE_DIGEST = /((?<![[:alnum:]:])blake3:\h{64}(?![[:alnum:]]))/
+
+      SCANNED_TOOLS = [GUARDED_TOOLS, ROW_TOOLS, COMMAND_TOOLS, MEMORY_TOOLS].freeze
 
       # The provider content-block key this can read. Anything else in an Array
       # result is bytes this detector cannot see -- see {Scan}.
@@ -256,6 +270,7 @@ module Lain
         # A failed read carries a message, never file bytes, so there is nothing
         # here to mask and no read to record.
         return carried if result.error?
+        return recalled(carried, effect, result) if MEMORY_TOOLS.include?(effect.name)
         return searched(carried, effect, result) if ROW_TOOLS.include?(effect.name)
 
         adjudicate(carried, effect, result)
@@ -288,8 +303,7 @@ module Lain
       end
 
       def printed(carried, result)
-        mask = ::Lain::Sensitivity::TextMask.new(secrets: session_secrets(carried.fetch(:context)))
-        text, count = mask.call(result.text)
+        text, count = text_mask(carried).call(result.text)
         return carried unless count.positive?
 
         masked = carried.merge(result: Tool::Result.new(content: with_trailer(text, count), is_error: result.error?))
@@ -299,9 +313,34 @@ module Lain
         masked
       end
 
-      def with_trailer(text, count)
+      def recalled(carried, effect, result)
+        author, body = result.text.split("\n", 2)
+        text, count = recalled_body(text_mask(carried), body.to_s)
+        return carried unless count.positive?
+
+        (carried.fetch(:context) || Session::Null.instance).record_masked_memory(effect.input["id"])
+        record(Telemetry::MemoryMasked) do
+          Telemetry::MemoryMasked.new(tool_use_id: effect.tool_use_id, id: effect.input["id"], regions: count)
+        end
+        carried.merge(result: Tool::Result.ok("#{author}\n#{with_trailer(text, count, MEMORY_TRAILER)}"))
+      end
+
+      # A lineage digest is the evidence a clerk is asked to cite, and the
+      # entropy detector would take it for a token, so the text around each one
+      # is masked and the digest is kept, with one numbering across the pieces.
+      def recalled_body(mask, body)
+        ordinals = (1..).each
+        body.split(LINEAGE_DIGEST).each_slice(2).inject(["", 0]) do |(text, count), (piece, digest)|
+          masked, spans = mask.mask(piece, ordinals)
+          [text + masked + digest.to_s, count + spans]
+        end
+      end
+
+      def text_mask(carried) = ::Lain::Sensitivity::TextMask.new(secrets: session_secrets(carried.fetch(:context)))
+
+      def with_trailer(text, count, trailer = OUTPUT_TRAILER)
         lead = text.end_with?("\n") ? text : "#{text}\n"
-        lead + format(OUTPUT_TRAILER, count:, noun: count == 1 ? "region was" : "regions were")
+        lead + format(trailer, count:, noun: count == 1 ? "region was" : "regions were")
       end
 
       def session_secrets(context)

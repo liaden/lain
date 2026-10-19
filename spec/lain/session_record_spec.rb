@@ -881,6 +881,36 @@ RSpec.describe Lain::SessionRecord::Replay do
         end
       end
 
+      # A memory item read masked before the resume must not be rewritten after
+      # it, though the resumed model never reads it again.
+      it "refuses a memory_write to an item read masked before the resume" do
+        index = Lain::Memory::Index.empty.write(
+          Lain::Memory::Item.new(id: "db-creds", description: "d", body: "DB_PASSWORD=hunter2pass\n")
+        )
+        reader = Lain::Middleware::RedactSecretReads.new(ledger: Lain::Sensitivity::Ledger.new, journal:,
+                                                         queue: Lain::Middleware::RedactSecretReads::Unqueued.instance)
+        read = Lain::Effect::ToolCall.new(tool_use_id: "tu_r", name: "memory_read", input: { "id" => "db-creds" })
+        reader.call({ effect: read, context: Lain::Session.new(journal:) }) do |inner|
+          inner.merge(result: Lain::Tools::MemoryRead.new(index:).call(inner.fetch(:effect).input))
+        end
+
+        emptied = { "id" => "db-creds", "description" => "d", "body" => "DB_PASSWORD=" }
+        rewrite = Lain::Effect::ToolCall.new(tool_use_id: "tu_w", name: "memory_write", input: emptied)
+        refused = Lain::Middleware::RefuseSecretWrites.new.call({ effect: rewrite, context: replayed_session }) do
+          raise "the rewrite reached the store"
+        end
+
+        expect(refused.fetch(:result)).to have_attributes(is_error: true, content: /read masked this session/)
+      end
+
+      it "replays a memory_masked record alone, for its id only" do
+        fresh = described_class.new([{ "type" => "memory_masked", "tool_use_id" => "t", "id" => "db-creds",
+                                       "regions" => 1 }]).session
+
+        expect(fresh.masked_memory?("db-creds")).to be(true)
+        expect(fresh.masked_memory?("other")).to be(false)
+      end
+
       # A record with no span says nothing about how much of the file was seen,
       # and guessing a whole read is the unsafe direction: it is refused as the
       # corrupt record it is, which a resume turns into "cannot resume".

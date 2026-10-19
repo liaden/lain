@@ -1427,6 +1427,125 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     end
   end
 
+  describe "a memory_read result" do
+    let(:credential) { "deploy notes\nDB_PASSWORD=hunter2pass\n" }
+
+    def stored(body) = Lain::Memory::Index.empty.write(Lain::Memory::Item.new(id: "note", description: "d", body:))
+
+    def recall(body)
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_mem", name: "memory_read", input: { "id" => "note" })
+      Sync { dispatch(call, tool: Lain::Tools::MemoryRead.new(index: stored(body))) }.fetch(:result)
+    end
+
+    it "masks a stored credential, keeps the author line, says it cannot be released, and parks nothing" do
+      result = recall(credential)
+
+      expect(result).to have_attributes(is_error: false)
+      expect(result.content).to start_with("author: chat\ndeploy notes\nDB_PASSWORD=<redacted:1>\n")
+      expect(result.content.lines.last)
+        .to eq("1 region was masked in this memory item; a memory item cannot be released.")
+      expect(result.content).not_to include("hunter2pass")
+      expect(queue.to_a).to be_empty
+    end
+
+    it "returns a clean body byte for byte" do
+      clean = "the build uses rake pspec"
+
+      expect(recall(clean)).to eq(Lain::Tool::Result.ok("author: chat\n#{clean}"))
+    end
+
+    # A known false positive, accepted: bash output masks it the same way. A
+    # detector that narrows it turns this red on purpose.
+    it "masks a substantial value under a name holding a credential word, as bash output does" do
+      expect(recall("token_count = 123456").content).to start_with("author: chat\ntoken_count = <redacted:1>")
+    end
+
+    it "leaves a whole lineage digest unmasked, as lain's own content address" do
+      digest = "blake3:#{OpenSSL::Digest::SHA256.hexdigest("a spawn")}"
+
+      expect(recall("Lineage spawn: #{digest}")).to eq(Lain::Tool::Result.ok("author: chat\nLineage spawn: #{digest}"))
+    end
+
+    it "masks credentials on both sides of a lineage digest with 1 numbering across the pieces" do
+      digest = "blake3:#{OpenSSL::Digest::SHA256.hexdigest("a spawn")}"
+
+      expect(recall("API_KEY=#{api_key}\nspawn #{digest}\nDB_PASSWORD=hunter2pass\n").content)
+        .to start_with("author: chat\nAPI_KEY=<redacted:1>\nspawn #{digest}\nDB_PASSWORD=<redacted:2>\n")
+    end
+
+    it "masks a 65-character hex token that only borrows the digest prefix" do
+      forged = "blake3:#{OpenSSL::Digest::SHA256.hexdigest("x")}a"
+
+      expect(recall("cite #{forged}").content).to start_with("author: chat\ncite blake3:<redacted:1>")
+    end
+
+    it "remembers on the session which item was read masked, and only that one" do
+      recall(credential)
+
+      expect(session.masked_memory?("note")).to be(true)
+      expect(session.masked_memory?("other")).to be(false)
+    end
+
+    it "does not record a clean read as masked" do
+      recall("the build uses rake pspec")
+
+      expect(session.masked_memory?("note")).to be(false)
+      expect(journal.grep(Lain::Telemetry::MemoryMasked)).to be_empty
+    end
+
+    it "journals the masked read by memory id and count, never the bytes" do
+      recall(credential)
+
+      expect(journal.grep(Lain::Telemetry::MemoryMasked))
+        .to contain_exactly(have_attributes(tool_use_id: "tu_mem", id: "note", regions: 1))
+    end
+
+    describe "through a chat's guard stack" do
+      let(:chronicle) do
+        instance_double(Lain::CLI::Chronicle, record_journal: queue_journal,
+                                              instrumentation: Lain::Agent::Instrumentation.new(journal: queue_journal))
+      end
+      let(:recorder) { Lain::Memory::Recorder.new(index: stored(credential)) }
+      let(:toolset) do
+        Lain::Toolset.new([Lain::Tools::MemoryRead.new(index: recorder),
+                           Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat)])
+      end
+
+      def board
+        paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_STATE_HOME" => File.join(dir, "state") })
+        project = Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :git)
+        Lain::CLI::Wiring::BoardBuild.for(
+          chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m", toolset:, project:, paths:,
+          verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:)
+        ).bind_session(session)
+      end
+
+      def recall_in_chat
+        layers = Lain::CLI::ToolGuard.stack(chronicle, board).to_a
+        dispatch_call("memory_read", { "id" => "note" }, toolset:, layers:, context: session)
+      end
+
+      it "masks the stored credential for a fresh chat's model" do
+        result = Sync { |task| task.with_timeout(10) { recall_in_chat } }
+
+        expect(result.content).to start_with("author: chat\ndeploy notes\nDB_PASSWORD=<redacted:1>\n")
+        expect(result.content).not_to include("hunter2pass")
+      end
+
+      it "refuses to rewrite the item from that read, with no placeholder in the new body" do
+        layers = Lain::CLI::ToolGuard.stack(chronicle, board).to_a
+        input = { "id" => "note", "description" => "d", "body" => "deploy notes\nDB_PASSWORD=\n" }
+        result = Sync do |task|
+          task.with_timeout(10) { recall_in_chat }
+          dispatch_call("memory_write", input, toolset:, layers:, context: session)
+        end
+
+        expect(result).to have_attributes(is_error: true, content: /read masked this session/)
+        expect(recorder.fetch("note").body).to eq(credential)
+      end
+    end
+  end
+
   describe "the absolute-path contract the ledger enforces" do
     it "resolves a relative path against the reading worker's cwd, never the process's" do
       write("notes.txt", one_secret)

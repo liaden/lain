@@ -35,6 +35,7 @@ module Lain
       SESSION_READ_TYPE = "session_read"
       SESSION_READ_WITHHELD_TYPE = "session_read_withheld"
       READ_REDACTED_TYPE = "read_redacted"
+      MEMORY_MASKED_TYPE = "memory_masked"
       SESSION_PIN_TYPE = "session_pin"
       TODO_SNAPSHOT_TYPE = "todo_snapshot"
       COMPACTION_CUT_TYPE = "compaction_cut"
@@ -121,6 +122,7 @@ module Lain
         # resumes as the parent's. It fails closed -- the parent is refused a
         # write over a file the child saw masked.
         redactions.each { |record| fresh.record_masked_read(record.fetch("path")) }
+        masked_memories.each { |record| fresh.record_masked_memory(record.fetch("id")) }
       end
 
       def restore_read(fresh, record)
@@ -193,6 +195,12 @@ module Lain
       # or after its own `session_read` lands on the same state.
       def redactions
         Journal.records(@records, type: READ_REDACTED_TYPE)
+      end
+
+      # {#redactions}' reason, for a memory item: the read is not replayed, so
+      # without this a resumed model could rewrite an item it saw masked.
+      def masked_memories
+        Journal.records(@records, type: MEMORY_MASKED_TYPE)
       end
 
       # Every field is fetched, and the span is rebuilt through the writer's

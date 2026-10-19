@@ -66,6 +66,17 @@ module Lain
       DECLINED = "the oracle judged this input not worth writing -- " \
                  "write substantive content rather than retrying this one"
 
+      # A memory item read masked and written back would replace the stored
+      # values for good, with placeholders or with the model's guess at them,
+      # and nothing could restore them. A placeholder in a new item is refused
+      # too: it carries a value the model never saw.
+      MASKED_DECLINE = "#{DECLINE_PREFIX}masked read".freeze
+      MASKED = "the body holds a <redacted:N> placeholder, so the item was read masked -- " \
+               "leave it, or write a new item"
+      MASKED_REWRITE = "memory item %<id>s was read masked this session and cannot be rewritten from that read -- " \
+                       "leave it, or write a new item"
+      PLACEHOLDER = Regexp.new(Regexp.escape(::Lain::Sensitivity::Regions::PLACEHOLDER).sub("%d", "\\d+"))
+
       # Null Object for the injectable predicate seam: never flags anything, so
       # today's default cannot be confused with a real opinion.
       # {Oracle::MemorySave::Gate} is the arm this seam exists for, and a future
@@ -98,6 +109,9 @@ module Lain
 
         pattern = matched_pattern(effect.input)
         return refuse(env, effect, pattern, "input matches a #{pattern} pattern") if pattern
+        return refuse(env, effect, MASKED_DECLINE, format(MASKED_REWRITE, id: effect.input["id"].inspect)) \
+          if masked_rewrite?(env, effect)
+        return refuse(env, effect, MASKED_DECLINE, MASKED) if masked_write_back?(effect)
         return refuse(env, effect, ORACLE_DECLINE, DECLINED) if withhold?(effect.input)
 
         downstream(env, &app)
@@ -109,6 +123,14 @@ module Lain
       # is secret, record it as not-a-secret". Renaming the duck itself crosses
       # into the oracle's own file.
       def withhold?(input) = @oracle.secret?(input)
+
+      def masked_rewrite?(env, effect)
+        effect.name == "memory_write" && (env[:context] || Session::Null.instance).masked_memory?(effect.input["id"])
+      end
+
+      def masked_write_back?(effect)
+        effect.name == "memory_write" && effect.input["body"].to_s.match?(PLACEHOLDER)
+      end
 
       def matched_pattern(input)
         haystack = text(input)
