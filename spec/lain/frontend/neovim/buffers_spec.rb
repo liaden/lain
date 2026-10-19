@@ -537,6 +537,17 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       inspector.exec_lua('return vim.api.nvim_buf_get_lines(vim.fn.bufnr("lain://question"), 0, -1, false)', [])
     end
 
+    def fold_closed_at?(row)
+      inspector.exec_lua(<<~LUA, [row])
+        local row = ...
+        return vim.api.nvim_buf_call(vim.fn.bufnr("lain://question"), function()
+          return vim.fn.foldclosed(row) ~= -1
+        end)
+      LUA
+    end
+
+    def shown_messages = inspector.exec_lua('return vim.api.nvim_exec2("messages", { output = true }).output', [])
+
     def write_question
       inspector.exec_lua(<<~LUA, [])
         local ok, err = pcall(function()
@@ -555,6 +566,21 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
         expect(question_lines).to eq(rendered("storage" => %w[pg]))
         expect { handle.command_inbox.pop(true) }.to raise_error(ThreadError)
+      end
+    end
+
+    it "deletes nothing and says to open the fold when the cursor is on a closed fold" do
+      frontend.run do
+        document = rendered
+        open_question(document)
+        inspector.exec_lua('vim.cmd("normal! zM")', [])
+        heading = row_of(document, "## `checks` (choose any)")
+        expect(fold_closed_at?(heading)).to be(true)
+
+        feed("lain://question", "x", cursor: [heading, 0])
+
+        expect(question_lines).to eq(document)
+        expect(shown_messages).to include("zo")
       end
     end
 

@@ -421,6 +421,12 @@ end
 local function tick_or_delete()
   local buf = vim.api.nvim_get_current_buf()
   local row = vim.api.nvim_win_get_cursor(0)[1]
+  -- vim's `x` on a closed fold deletes the whole folded range, and a tick under
+  -- one would land unseen, so neither is offered.
+  if vim.fn.foldclosed(row) ~= -1 then
+    _G.__lain.review_refused("x on a closed question: open the fold (zo) to tick an option")
+    return ""
+  end
   if tick_targets(cached_lines(buf), row) == nil then
     return "x"
   end
