@@ -135,7 +135,7 @@ module Lain
       end
 
       def dual_ledger(sink)
-        Arm::DualLedger.new(name: "dual-ledger", instrument:, journal_factory: -> { Tee.new(sink) })
+        Arm::DualLedger.new(name: "dual-ledger", instrument:, journal_factory: -> { Channel::Tee.new(sink) })
       end
 
       # Grades a Timeline by parsing its produced files into the Trajectory
@@ -147,26 +147,6 @@ module Lain
         def grade(timeline) = @task.grader.grade(ArmSweep.trajectory(timeline))
       end
       private_constant :GraderAdapter
-
-      # A Channel that mirrors every pushed event into a caller-held sink before
-      # forwarding it, so the dual-ledger's journaled `ledger_transition`
-      # records are observed BEFORE the Run drains the journal for pricing.
-      # Channel's `alias << push` early-binds to the parent, so `<<` -- which
-      # the arm's Journaling listener uses -- is re-aliased here to see those
-      # writes too.
-      class Tee < Channel
-        def initialize(sink)
-          super()
-          @sink = sink
-        end
-
-        def push(event)
-          @sink << event
-          super
-        end
-        alias << push
-      end
-      private_constant :Tee
     end
   end
 end
