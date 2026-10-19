@@ -1055,14 +1055,14 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(masks.instance_variable_get(:@priming)).to be_a(Thread)
     end
 
-    it "runs Exec::Docker unwrapped and journals that the sandbox is unavailable under it" do
+    it "runs Exec::Docker unwrapped and journals that bash runs in the container" do
       chosen = Lain::Exec::Docker.new(image: "img:1", project: "/srv/project")
 
       exec = bash_exec(built(reader, exec: chosen))
 
       expect(exec).to be(chosen)
       expect(degraded.map(&:to_h)).to contain_exactly(
-        a_hash_including(capability: :sandbox, provider: "unavailable under the docker backend")
+        a_hash_including(capability: :container, provider: "docker")
       )
     end
 

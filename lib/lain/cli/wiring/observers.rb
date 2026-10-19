@@ -9,26 +9,33 @@ module Lain
         DEGRADED_NOTICE = "write records could not be read, so every user or project binary counts as changed this " \
                           "session and goes to the judge or to you; resume from an intact session to restore it"
 
-        # Remembers why the bash sandbox could not be built: the header still says
-        # `confine: reader`, so the human must hear that bash runs unconfined.
+        # Remembers why the bash sandbox could not be built, or that docker holds bash instead: the header
+        # still says `confine: reader`, so the human must hear what bash really runs in.
         class Unconfined
           def initialize
             @because = nil
+            @contained = false
           end
 
           # @param event [Hash, #to_journal] a journal record
           # @return [self]
           def <<(event)
-            @because ||= event.provider if sandbox_degraded?(event)
+            @because ||= event.provider if degraded?(event, :sandbox)
+            @contained ||= degraded?(event, :container)
             self
           end
 
           # @return [Array<String>]
-          def notices = @because ? ["the bash sandbox could not be built (#{@because}), so bash runs unconfined"] : []
+          def notices
+            [("the bash sandbox could not be built (#{@because}), so bash runs unconfined" if @because),
+             ("bash runs in the docker container, not in the reader sandbox" if @contained)].compact
+          end
 
           private
 
-          def sandbox_degraded?(event) = event.is_a?(Telemetry::CapabilityDegraded) && event.capability == :sandbox
+          def degraded?(event, capability)
+            event.is_a?(Telemetry::CapabilityDegraded) && event.capability == capability
+          end
         end
 
         # @param chronicle [#observe, #durable_journal] registers each observer on every journal the chat

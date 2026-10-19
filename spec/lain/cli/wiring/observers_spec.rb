@@ -135,6 +135,14 @@ RSpec.describe Lain::CLI::Wiring::Observers do
         expect(observers.notices).to contain_exactly(match(/lacks bwrap and landlock.*bash runs unconfined/))
       end
 
+      it "says bash runs in the docker container, never unconfined, under --exec docker" do
+        observers = described_class.register(chronicle:, paths:, resumed: nil, arms:)
+        chronicle.durable_journal << Lain::Telemetry::CapabilityDegraded.new(capability: :container,
+                                                                             requirer: "spec", provider: "docker")
+
+        expect(observers.notices).to eq(["bash runs in the docker container, not in the reader sandbox"])
+      end
+
       it "says nothing when the box offers every layer" do
         observers = described_class.register(chronicle:, paths:, resumed: nil, arms:)
         sandbox_on(->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] })

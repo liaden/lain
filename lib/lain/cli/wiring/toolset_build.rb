@@ -323,13 +323,15 @@ module Lain
         def confined(exec)
           case exec
           when Lain::Exec::Local then sandboxed(exec)
-          when Lain::Exec::Docker then unsandboxed(exec, "unavailable under the docker backend")
+          when Lain::Exec::Docker then contained(exec)
           else exec
           end
         end
 
-        def unsandboxed(exec, because)
-          Lain::Confine::Sandbox.degraded(exec, journal: seam.journal, requirer: self.class.name, because:)
+        def contained(exec)
+          seam.journal << Lain::Telemetry::CapabilityDegraded.new(capability: :container, requirer: self.class.name,
+                                                                  provider: "docker")
+          exec
         end
 
         def sandboxed(inner)
