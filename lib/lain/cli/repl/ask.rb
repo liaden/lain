@@ -83,6 +83,7 @@ module Lain
         # out that is worth keeping.
         def say_failure(response)
           failure = response.failure
+          anchor(reason: failure.stop_reason)
           @tty.render_response(response) unless failure.withholds_text? || response.text.empty?
           @tty.render_error(failure.message)
           remedy_for(response).each { |line| @tty.render_error(line) }
@@ -115,9 +116,12 @@ module Lain
         # turn the Agent stepped back from, so it follows the Agent back first.
         def record_interruption(error)
           @unfold.call if error.is_a?(Lain::Withdrawal) && error.withdrawn?
+          anchor(reason: Agent::StopReason.for(error), status: Agent::StopReason.status(error))
+        end
+
+        def anchor(reason:, status: nil)
           @chronicle.catch_up(@agent.timeline)
-          stop = { reason: Agent::StopReason.for(error), status: Agent::StopReason.status(error) }.compact
-          @chronicle.interrupted(head: @agent.timeline.head_digest, **stop)
+          @chronicle.interrupted(head: @agent.timeline.head_digest, **{ reason:, status: }.compact)
         end
 
         # The Agent is about to send a turn cut from the stranded turn's parent.

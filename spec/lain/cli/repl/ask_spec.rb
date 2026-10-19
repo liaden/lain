@@ -187,6 +187,29 @@ RSpec.describe Lain::CLI::Repl::Ask do
       expect(tty).to have_received(:render_error).with("model hit max_tokens before finishing").ordered
     end
 
+    describe "journaling a failed stop" do
+      %i[truncated max_tokens context_full refusal malformed unknown].each do |reason|
+        it "records one run_interrupted naming #{reason} and the head" do
+          ask.settle(stopped(reason, "partial"))
+
+          expect(chronicle).to have_received(:interrupted).once.with(head: "sha-head", reason:)
+        end
+      end
+
+      it "catches the journal up before anchoring the stop" do
+        ask.settle(stopped(:truncated, ""))
+
+        expect(chronicle).to have_received(:catch_up).with(timeline).ordered
+        expect(chronicle).to have_received(:interrupted).ordered
+      end
+
+      it "journals nothing for a finished reply" do
+        ask.settle(response)
+
+        expect(chronicle).not_to have_received(:interrupted)
+      end
+    end
+
     it "passes a response through untouched" do
       expect(ask.settle(response)).to equal(response)
     end

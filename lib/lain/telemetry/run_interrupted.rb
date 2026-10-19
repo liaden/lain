@@ -38,7 +38,10 @@ module Lain
       # it is the only thing every stopped run is known to have in common: a
       # record built with no classification says the unclassified thing rather
       # than borrowing a narrower one it cannot support.
-      REASONS = %i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn].freeze
+      #
+      # The tail is the stops a reply itself ended on, named by {Response#failure}'s stop_reason.
+      REASONS = %i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn
+                   max_tokens context_full refusal truncated malformed unknown].freeze
 
       # Mirrors {SessionClosed.reason!}, nil-tolerance included: a guard that
       # refuses differently from its sibling is one a reader has to check
