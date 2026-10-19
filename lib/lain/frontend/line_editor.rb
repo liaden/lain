@@ -105,6 +105,21 @@ module Lain
         # buffer cannot see it.
         def untouched? = !::Reline::IOGate.dumb? && ::Reline.core.line_editor.whole_buffer.empty?
 
+        # Whether the read open now holds typed words. Not `!untouched?`: a dumb
+        # gate can say neither, and here it must answer no, so a Ctrl-C at its
+        # prompt still reaches the chat.
+        def typed? = !::Reline::IOGate.dumb? && !::Reline.core.line_editor.whole_buffer.empty?
+
+        # How many screen rows of the open read sit above its cursor, so a
+        # caller can wipe the whole read and not only the cursor's row. A dumb
+        # gate draws none: the kernel echoes its line.
+        def rows_above_cursor
+          return 0 if ::Reline::IOGate.dumb?
+
+          editor = ::Reline.core.line_editor
+          editor.wrapped_cursor_position.last - editor.screen_scroll_top
+        end
+
         # Every byte the next read would take, taken now and read as nothing:
         # what the human typed before a prompt drew. Through Reline's own gate,
         # because the kernel is not the only place such bytes wait: Reline asks

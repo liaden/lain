@@ -117,7 +117,7 @@ module Lain
       def run
         CLI::Signals.new(sink: @relay).guarding do
           Sync do |task|
-            relaying = task.async { @relay.each { |name| signal(name) } }
+            relaying = task.async { @relay.each { |name| signal(task, name) } }
             # The screen is claimed only once there is something to draw on it:
             # a pane waiting for a chat that has not started yet says so on the
             # ordinary scrollback, where the human can still read it.
@@ -151,13 +151,19 @@ module Lain
       # chat, every signal is the human interrupting the only thing in front of
       # them, which is this pane. A Ctrl-C over a draft only clears it, as a
       # cooked terminal did; the next one, over nothing, is the interrupt.
-      def signal(name)
+      def signal(task, name)
         return quit if name == :sigterm || @client.nil?
 
         return @draft.discard { |kind, value| drafted(@client, kind, value) } if name == :sigint && !@draft.empty?
+        return redrawn_whole(task, @client, above: LineEditor.rows_above_cursor) if name == :sigint && typing?
 
         emit(@client, { "v" => "signal", "name" => name.to_s })
       end
+
+      # Only `you>` and `command>`: at an approval or a `human>` ask, a Ctrl-C
+      # still means the chat's countdown, whatever is half typed. No idle check:
+      # going idle clears what was drawn, so no kind matches there.
+      def typing? = %w[you command].include?(@drawn["kind"]) && StdinPump.terminal?(@input) && LineEditor.typed?
 
       # The connection is closed under the read rather than waited out, so the
       # frame loop unwinds through its own IOError rescue at once.
@@ -377,14 +383,10 @@ module Lain
       def reheaded(task, client, frame)
         header = frame["header"].to_s
         return @held.hold(frame) if holding?
+        return redrawn_whole(task, client, frame) unless same_rows?(@drawn["header"].to_s, header)
 
-        if same_rows?(@drawn["header"].to_s, header)
-          rewrite(header)
-          @drawn = frame
-        else
-          @replaced = header_rows(@drawn)
-          redraw(task, client, frame)
-        end
+        rewrite(header)
+        @drawn = frame
       end
 
       # The THIRD thing that can call for a draw, and neither of the other two
@@ -403,8 +405,15 @@ module Lain
         @resized ||= moved
         return unless moved && !@drawn.equal?(NOTHING_DRAWN) && !editing?
 
-        @replaced = header_rows(@drawn)
-        redraw(task, client, @held.over(@drawn))
+        redrawn_whole(task, client)
+      end
+
+      # Also how a Ctrl-C clears a typed line: the read is stopped and reopened
+      # rather than fed a kill key, because a fresh read is the one thing known
+      # to start from an empty buffer; `above` is the rows of that line over the cursor.
+      def redrawn_whole(task, client, frame = @held.over(@drawn), above: 0)
+        @replaced = header_rows(@drawn) + above
+        redraw(task, client, frame)
       end
 
       # Whatever called for it, a draw replaces the read that was open: the

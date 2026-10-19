@@ -1190,6 +1190,46 @@ RSpec.describe Lain::Frontend::LineEditor do
     end
   end
 
+  # Whether the read open now holds typed words, which a dumb gate cannot know.
+  describe ".typed?" do
+    it "reads the open read's buffer, empty or not" do
+      editor = instance_double(Reline::LineEditor, whole_buffer: "")
+      allow(Reline.core).to receive(:line_editor).and_return(editor)
+
+      expect(described_class.typed?).to be(false)
+      allow(editor).to receive(:whole_buffer).and_return("half a sent")
+      expect(described_class.typed?).to be(true)
+    end
+
+    it "is never true on a dumb gate" do
+      allow(Reline.core).to receive(:line_editor).and_return(instance_double(Reline::LineEditor, whole_buffer: "x"))
+      allow(Reline::IOGate).to receive(:dumb?).and_return(true)
+
+      expect(described_class.typed?).to be(false)
+    end
+  end
+
+  # How far the open read's cursor sits below its first row on screen, which is
+  # what a caller wiping the whole read has to climb.
+  describe ".rows_above_cursor" do
+    it "counts the wrapped rows above the cursor, less any scrolled off the top" do
+      editor = instance_double(Reline::LineEditor, wrapped_cursor_position: [4, 3], screen_scroll_top: 0)
+      allow(Reline.core).to receive(:line_editor).and_return(editor)
+
+      expect(described_class.rows_above_cursor).to eq(3)
+      allow(editor).to receive(:screen_scroll_top).and_return(1)
+      expect(described_class.rows_above_cursor).to eq(2)
+    end
+
+    it "is 0 on a dumb gate, which draws no rows of its own" do
+      editor = instance_double(Reline::LineEditor, wrapped_cursor_position: [4, 3], screen_scroll_top: 0)
+      allow(Reline.core).to receive(:line_editor).and_return(editor)
+      allow(Reline::IOGate).to receive(:dumb?).and_return(true)
+
+      expect(described_class.rows_above_cursor).to eq(0)
+    end
+  end
+
   # A real terminal, because the defect lives in the order of two reads that no
   # double reproduces: the gate's default bindings (up arrow, bracketed paste)
   # are installed only by Reline's own lazy inputrc read.

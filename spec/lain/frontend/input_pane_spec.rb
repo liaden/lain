@@ -1222,9 +1222,9 @@ RSpec.describe Lain::Frontend::InputPane do
     end
 
     # The frames up to the line sent after the Ctrl-C, so a signal frame sent for it shows.
-    def kinds_through_line(chat)
-      [].tap do |kinds|
-        Enumerator.produce { JSON.parse(chat.gets.to_s)["v"] }.find { |kind| kinds << kind and kind == "line" }
+    def frames_through_line(chat)
+      [].tap do |frames|
+        Enumerator.produce { JSON.parse(chat.gets.to_s) }.find { |frame| frames << frame and frame["v"] == "line" }
       end
     end
 
@@ -1237,7 +1237,7 @@ RSpec.describe Lain::Frontend::InputPane do
       settles { screen.string.end_with?("qq") ? nil : true }
       @pty.first.write("d\r")
 
-      expect(kinds_through_line(chat)).not_to include("signal")
+      expect(frames_through_line(chat).map { |frame| frame["v"] }).not_to include("signal")
     ensure
       @pty&.each(&:close)
     end
@@ -1255,7 +1255,7 @@ RSpec.describe Lain::Frontend::InputPane do
       next_frame(chat, of: "signal")
       @pty.first.write("d\r")
 
-      expect(kinds_through_line(chat)).not_to include("signal")
+      expect(frames_through_line(chat).map { |frame| frame["v"] }).not_to include("signal")
     ensure
       @pty&.each(&:close)
     end
@@ -1268,6 +1268,83 @@ RSpec.describe Lain::Frontend::InputPane do
       expect(next_frame(chat, of: "signal")).to eq({ "v" => "signal", "name" => "sigint" })
     ensure
       @pty&.each(&:close)
+    end
+
+    context "with a prompt drawn by the line editor" do
+      # Reline reads the terminal it was pointed at, so the pane's PTY is made its
+      # input and output for the example and the runner's put back after.
+      around do |example|
+        saved = [Reline.core.io_gate.instance_variable_get(:@input), Reline.core.output]
+        example.run
+      ensure
+        Reline.input, Reline.output = saved
+        @pty&.each(&:close)
+      end
+
+      def drawn_pane(kind)
+        @pty = PTY.open
+        Reline.input = Reline.output = @pty.last
+        @running = Thread.new { keyed_pane.run }
+        server.timeout = 5
+        chat = server.accept.tap { |client| client.timeout = 5 }
+        publish(chat, { "kind" => kind, "text" => "#{kind}> " })
+        chat
+      end
+
+      def keyed_pane = described_class.new(path:, tty:, input: @pty.last, commands:, layers:, tick: 0.01, geometry:)
+
+      def echoed_until(seen = +"", &)
+        Enumerator.produce { seen << pty_read(@pty.first, 1) }.find(&)
+      end
+
+      %w[you command].each do |kind|
+        it "clears a line typed at #{kind}> on Ctrl-C, redraws the prompt empty, and sends the chat no signal" do
+          chat = drawn_pane(kind)
+          echo = echoed_until { |seen| seen.include?("#{kind}> ") }
+          @pty.first.write("half a thought")
+          echoed_until(echo) { |seen| seen.include?("thought") }
+
+          deliver("INT")
+          echoed_until(+"") { |seen| seen.include?("#{kind}> ") }
+          @pty.first.write("d\r")
+          frames = frames_through_line(chat)
+
+          expect([frames.map { |frame| frame["v"] }.include?("signal"), frames.last["text"]]).to eq([false, "d"])
+        end
+      end
+
+      it "takes back every row of a 2 row line on Ctrl-C, not only the cursor's" do
+        drawn_pane("you")
+        echo = echoed_until { |seen| seen.include?("you> ") }
+        @pty.first.write("first row\e\rsecond row")
+        echoed_until(echo) { |seen| seen.include?("second row") }
+
+        deliver("INT")
+        echoed_until(+"") { |seen| seen.include?("you> ") }
+
+        expect(screen.string).to include("\e[1A\r\e[J")
+      end
+
+      it "sends a Ctrl-C over an empty line at you> to the chat" do
+        chat = drawn_pane("you")
+        echoed_until { |seen| seen.include?("you> ") }
+
+        deliver("INT")
+
+        expect(next_frame(chat, of: "signal")).to eq({ "v" => "signal", "name" => "sigint" })
+      end
+
+      # TERM=dumb picks Reline's gate once, at require, so the dumb gate is
+      # swapped in here rather than by environment.
+      it "sends a Ctrl-C at an empty you> to the chat on a dumb terminal, which reads cooked" do
+        stub_const("Reline::IOGate", Reline::Dumb.new)
+        chat = drawn_pane("you")
+        echoed_until { |seen| seen.include?("you> ") }
+
+        deliver("INT")
+
+        expect(next_frame(chat, of: "signal")).to eq({ "v" => "signal", "name" => "sigint" })
+      end
     end
 
     it "goes to the chat rather than interrupting the pane" do
