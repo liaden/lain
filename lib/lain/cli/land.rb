@@ -37,11 +37,13 @@ module Lain
       # @param sleeper [#call] waits between {#wait}'s polls
       # @param wall_clock [#call] answers now, against which a drain lock holder's time is told
       # @param alive [#call] whether a pid names a running process
+      # @param notice [#call] told, in a drainer, what its verify did about one a killed drainer left running
       def initialize(cwd:, paths: Paths.new, sink: Sink::Null.new,
                      spawner: Isolation::MergeCoordinator::Spawner.new,
                      drain_for: Isolation::MergeCoordinator::Drain.method(:for),
                      shell_out_factory: Shell::Out.public_method(:new), clock: RunClock::MONOTONIC,
-                     sleeper: Kernel.method(:sleep), wall_clock: -> { Time.now }, alive: ALIVE)
+                     sleeper: Kernel.method(:sleep), wall_clock: -> { Time.now }, alive: ALIVE,
+                     notice: Isolation::ParentLock::Silent)
         @cwd = File.expand_path(cwd)
         @paths = paths
         @sink = sink
@@ -52,6 +54,7 @@ module Lain
         @sleeper = sleeper
         @wall_clock = wall_clock
         @alive = alive
+        @notice = notice
       end
 
       # Nothing here holds a lock, so the drainer is spawned holding none of ours.
@@ -80,7 +83,8 @@ module Lain
       def drain(branch: nil, project: nil)
         root = project ? File.expand_path(project) : main_root
         branch ||= checked_out(root)
-        count = @drain_for.call(repo_root: root, branch:, paths: @paths, shell_out_factory: @shell_out_factory).call
+        count = @drain_for.call(repo_root: root, branch:, paths: @paths, shell_out_factory: @shell_out_factory,
+                                notice: @notice).call
         "landed #{count} #{count == 1 ? "batch" : "batches"} on #{branch}"
       end
 

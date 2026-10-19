@@ -459,7 +459,12 @@ A malformed command line, such as a missing id, is Thor's usage error and exits 
 from: its `.lain/config.rb`, its journal and its verify worktree are the main one's. A bare
 repository is refused. `lain epic land` and the drainer share one verify worktree and take turns on
 the branch's drain lock, so a landing waits rather than racing the other. A verify run takes the
-suite lock, which is one lock per machine, so two repositories never run their suites at once.
+suite lock, which is one lock per machine, so two repositories never run their suites at once. A
+drainer killed mid-verify leaves its suite running; the next suite-lock holder stops that process
+group before its own verify starts, and says so (in `drain.log` for a drainer, on stderr for
+`lain epic land`). It stops a group only when its leader's start time still matches, or when a
+member carries a verify's `lain-verify-` TMPDIR; a start time it cannot read leaves the group
+running and is named the same way.
 
 ### lain worktrees gc
 

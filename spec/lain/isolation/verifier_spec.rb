@@ -47,8 +47,8 @@ RSpec.describe Lain::Isolation::Verifier do
     let(:probe) do
       answer = answered
       sink = judged
-      lambda do |table, paths:, shell_out_factory:|
-        sink << [table.verifier, paths, shell_out_factory]
+      lambda do |table, paths:, shell_out_factory:, notice:|
+        sink << [table.verifier, paths, shell_out_factory, notice]
         ->(_candidate) { answer }
       end
     end
@@ -75,7 +75,7 @@ RSpec.describe Lain::Isolation::Verifier do
       result = queue.call([Lain::Isolation::LandingQueue::Worker.new(id: "w1", ref:, sha:)])
 
       expect([result.verification, judged])
-        .to eq([answered, [["probe", paths, Lain::Shell::Out.public_method(:new)]]])
+        .to eq([answered, [["probe", paths, Lain::Shell::Out.public_method(:new), Lain::Isolation::ParentLock::Silent]]])
     end
   end
 end

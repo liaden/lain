@@ -329,6 +329,25 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
     end
   end
 
+  describe "the notice" do
+    it "reaches the verify, which says when it leaves a dead holder's verify group running" do
+      configure(verify: passing)
+      spool.enqueue(worker("w1"))
+      orphan = Process.spawn({ "TMPDIR" => @state }, "sleep", "60", pgroup: true)
+      lock = File.join(paths.state_home, "locks", "suite.lock")
+      FileUtils.mkdir_p(File.dirname(lock))
+      File.write(lock, "pid=999999999 command=lain land drain verify_pgid=#{orphan} start=-\n")
+      notices = []
+
+      drain(notice: notices.method(:<<)).call
+
+      expect(notices).to contain_exactly(a_string_including("verify group #{orphan}", "left it running"))
+    ensure
+      Process.kill(:KILL, orphan)
+      Process.wait(orphan)
+    end
+  end
+
   describe "a drainer killed mid-batch" do
     let(:marker) { File.join(@state, "verifying.pid") }
 

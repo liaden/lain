@@ -275,6 +275,21 @@ RSpec.describe Lain::Isolation::LandingQueue, :seam do
       expect(handbacks).to be_empty
     end
 
+    it "hands its notice to the configured verify, which says what it did about a dead holder's group" do
+      orphan = Process.spawn({ "TMPDIR" => @repo }, "sleep", "60", pgroup: true)
+      lock = File.join(paths.state_home, "locks", "suite.lock")
+      FileUtils.mkdir_p(File.dirname(lock))
+      File.write(lock, "pid=999999999 command=lain epic land verify_pgid=#{orphan} start=-\n")
+      notices = []
+
+      candidate("exit 0", notice: notices.method(:<<)).call([worker("w1", "f" => "a\nB1\nc\n")])
+
+      expect(notices).to include(a_string_including("verify group #{orphan}", "left it running"))
+    ensure
+      Process.kill(:KILL, orphan)
+      Process.wait(orphan)
+    end
+
     it "hands the desk a lock it was given, and none of its own otherwise" do
       lock = Lain::FileLock.new(File.join(@repo, ".git", "held.lock"))
       built = []

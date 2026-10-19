@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "pathname"
+require "rbconfig"
 require "shellwords"
 require "tmpdir"
 
@@ -21,9 +22,13 @@ RSpec.describe Lain::Isolation::Verifier::Command, :seam do
   let(:sha) { "0123456789ab#{"f" * 28}" }
   let(:candidate) { Lain::Isolation::Candidate.new(sha:, path: checkout) }
 
+  let(:notices) { [] }
+  let(:suite_lock) { File.join(paths.state_home, "locks", "suite.lock") }
+
   def verifier(argv, **table)
     settings = { "verify" => argv }.merge(table.transform_keys(&:to_s))
-    Lain::Isolation::Verifier.from(Lain::Config::Isolation.from(settings, path: nil), paths:)
+    isolation = Lain::Config::Isolation.from(settings, path: nil)
+    Lain::Isolation::Verifier.from(isolation, paths:, notice: notices.method(:<<))
   end
 
   def gone?(pid)
@@ -136,5 +141,109 @@ RSpec.describe Lain::Isolation::Verifier::Command, :seam do
     verification = verifier(["sh", "-c", "grep -q pid=#{Process.pid} #{lock}"]).call(candidate)
 
     expect(verification.outcome).to eq(:passed)
+  end
+
+  describe "a verify group left by a holder that died" do
+    let(:probe) { Lain::Liveness::Probe.new }
+    let(:member) { File.join(@dir, "member.pid") }
+    let(:leader) { File.join(@dir, "leader.pid") }
+
+    def own_group(*argv)
+      Process.spawn({ "TMPDIR" => @dir }, *argv, pgroup: true, in: File::NULL, out: File::NULL, err: File::NULL)
+    end
+
+    def stale(pgid, start)
+      FileUtils.mkdir_p(File.dirname(suite_lock))
+      File.write(suite_lock, "pid=999999999 command=lain land drain verify_pgid=#{pgid} start=#{start}\n")
+    end
+
+    def stopped(pid)
+      Process.kill(:KILL, -pid)
+    rescue Errno::ESRCH
+      nil
+    end
+
+    def drainer_script
+      File.join(@dir, "verifying-child.rb").tap do |script|
+        File.write(script, <<~RUBY)
+          require "lain"
+          paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => ARGV[1], "HOME" => ARGV[2] })
+          isolation = Lain::Config::Isolation.from({ "verify" => ["sh", "-c", ARGV[3]] }, path: nil)
+          Lain::Isolation::Verifier.from(isolation, paths:).call(Lain::Isolation::Candidate.new(sha: ARGV[4], path: ARGV[0]))
+        RUBY
+      end
+    end
+
+    def killed_mid_verify(script)
+      lib = File.expand_path("../../../../lib", __dir__)
+      drainer = Process.spawn(RbConfig.ruby, "-I", lib, drainer_script, checkout, File.join(@dir, "state"), @dir,
+                              script, sha, pgroup: true, out: File::NULL, err: File::NULL)
+      begin
+        wait_until(timeout: 20, reason: "the first drainer's verify to name its group") do
+          File.size?(member) && File.size?(leader) && File.read(suite_lock).include?(" verify_pgid=")
+        end
+      ensure
+        Process.kill(:KILL, drainer)
+        Process.wait(drainer)
+      end
+      Integer(File.read(leader))
+    end
+
+    it "stops a SIGKILLed drainer's verify group before the next verify starts, and names its own group" do
+      pgid = killed_mid_verify("sleep 60 & echo $! > #{member}; echo $$ > #{leader}; wait")
+      named = "^pid=#{Process.pid} .* verify_pgid=$$ start=[0-9]+$"
+      script = "kill -0 -#{pgid} 2>/dev/null && exit 7; i=0; " \
+               "until grep -Eq \"#{named}\" #{suite_lock}; do i=$((i+1)); [ $i -gt 100 ] && exit 8; sleep 0.05; done"
+
+      verification = verifier(["sh", "-c", script]).call(candidate)
+
+      expect([verification.outcome, verification.detail]).to eq([:passed, ""])
+      expect([gone?(pgid), gone?(Integer(File.read(member)))]).to eq([true, true])
+      expect(notices).to contain_exactly(a_string_including("stopped", "verify group #{pgid}"))
+    ensure
+      stopped(pgid) if pgid
+    end
+
+    it "kills nothing when the recorded group's pid now has another start time" do
+      pid = own_group("sleep", "60")
+      stale(pid, Integer(probe.start_of(pid)) + 1)
+
+      verification = verifier(%w[true]).call(candidate)
+
+      expect([verification.outcome, gone?(pid), notices]).to eq([:passed, false, []])
+    ensure
+      stopped(pid)
+    end
+
+    it "kills nothing and says so when the start time cannot be read" do
+      pid = own_group("sleep", "60")
+      stale(pid, probe.start_of(pid))
+      blind = File.join(@dir, "no-proc")
+      stale_group = Lain::Isolation::Verifier::StaleGroup.new(notice: notices.method(:<<), proc_root: blind)
+      command = described_class.new(%w[true], timeout: 5, lock: Lain::Isolation::SuiteLock.for(paths:),
+                                              shell_out_factory: Lain::Shell::Out.public_method(:new), stale_group:)
+
+      verification = command.call(candidate)
+
+      expect([verification.outcome, gone?(pid)]).to eq([:passed, false])
+      expect(notices).to contain_exactly(a_string_including("verify group #{pid}", "left it running"))
+    ensure
+      stopped(pid)
+    end
+
+    it "stops the group when its leader died of the broken pipe and a member still runs" do
+      printing = "while :; do echo tick; sleep 0.1; done"
+      pgid = killed_mid_verify("sleep 60 & echo $! > #{member}; echo $$ > #{leader}; #{printing}")
+      wait_until(timeout: 10, reason: "the orphaned leader to die writing to its dead drainer") { gone?(pgid) }
+      orphan = Integer(File.read(member))
+      expect(gone?(orphan)).to be(false)
+
+      verification = verifier(["sh", "-c", "kill -0 -#{pgid} 2>/dev/null && exit 7; exit 0"]).call(candidate)
+
+      expect([verification.outcome, gone?(orphan)]).to eq([:passed, true])
+      expect(notices).to contain_exactly(a_string_including("stopped", "verify group #{pgid}"))
+    ensure
+      stopped(pgid) if pgid
+    end
   end
 end

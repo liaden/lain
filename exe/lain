@@ -650,7 +650,8 @@ class LainCLI < Thor
     method_option :project, type: :string, desc: "The project root; defaults to this checkout's main worktree"
     desc "drain", "Land every queued entry for the branch, a batch at a time"
     def drain
-      render { Lain::CLI::Land.new(cwd: Dir.pwd).drain(branch: options[:branch], project: options[:project]) }
+      land = Lain::CLI::Land.new(cwd: Dir.pwd, notice: ->(text) { warn(text) })
+      render { land.drain(branch: options[:branch], project: options[:project]) }
     end
 
     method_option :branch, type: :string, desc: "The branch the entry was queued for"

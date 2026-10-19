@@ -8,6 +8,9 @@ module Lain
     module Verifier
       # The project's own suite, run in the candidate's checkout behind the
       # machine-wide suite lock: two suites at once give false reds.
+      #
+      # A holder killed mid-run leaves its verify's group running; {StaleGroup}
+      # stops it before the next verify starts.
       class Command
         TAIL = 40
 
@@ -15,12 +18,15 @@ module Lain
         # @param timeout [Integer] seconds before the run is killed and failed
         # @param lock [FileLock] held for the whole run
         # @param shell_out_factory [#call] builds the subprocess runner
-        def initialize(argv, timeout:, lock:, shell_out_factory:)
+        # @param stale_group [StaleGroup] marks this verify's group on the lock
+        #   line, and stops one a dead holder left
+        def initialize(argv, timeout:, lock:, shell_out_factory:, stale_group: StaleGroup.new)
           @argv = argv
           @spelt = "`#{Shellwords.join(argv)}`"
           @timeout = timeout
           @lock = lock
           @shell_out_factory = shell_out_factory
+          @stale_group = stale_group
         end
 
         # @param candidate [Candidate]
@@ -30,13 +36,13 @@ module Lain
           checkout = File.expand_path(candidate.path)
           return verification(candidate, :failed, "#{checkout} is not a directory") unless File.directory?(checkout)
 
-          @lock.hold { attempted(candidate, checkout) }
+          @lock.hold(reclaim: @stale_group) { |note| attempted(candidate, checkout, note) }
         end
 
         private
 
-        def attempted(candidate, checkout)
-          within_own_tmp(checkout, candidate.sha) { |tmp| run(candidate, checkout, tmp) }
+        def attempted(candidate, checkout, note)
+          within_own_tmp(checkout, candidate.sha) { |tmp| run(candidate, checkout, tmp, note) }
         rescue SystemCallError => e
           verification(candidate, :failed, "#{@spelt} could not run: #{e.message}")
         end
@@ -44,22 +50,22 @@ module Lain
         # Under the checkout because a suite that hard-links or renames out of
         # TMPDIR cannot cross a device, and /tmp is often another one.
         def within_own_tmp(checkout, sha)
-          dir = File.join(checkout, "tmp", "lain-verify-#{sha[0, 12]}")
+          dir = File.join(checkout, "tmp", "#{StaleGroup::TMP_PREFIX}#{sha[0, 12]}")
           FileUtils.mkdir_p(dir)
           yield dir
         ensure
           FileUtils.rm_rf(dir)
         end
 
-        def run(candidate, checkout, tmp)
+        def run(candidate, checkout, tmp, note)
           shell = @shell_out_factory.call(*@argv, cwd: checkout, environment: environment(tmp), timeout: @timeout)
-          judged(candidate, shell)
+          judged(candidate, shell, note)
         end
 
         def environment(tmp) = Exec.child_env(Worktree::GIT_CONTEXT_SCRUB.merge("TMPDIR" => tmp))
 
-        def judged(candidate, shell)
-          shell.run_command
+        def judged(candidate, shell, note)
+          shell.run_command(on_spawn: ->(pgid) { note.call(@stale_group.mark(pgid)) })
           return verification(candidate, :passed) if Shell::Out.ok?(shell)
 
           verification(candidate, :failed, "#{exit_of(shell)}#{tails(shell)}")

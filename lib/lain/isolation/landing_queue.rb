@@ -99,7 +99,8 @@ module Lain
       # @param isolation [Config::Isolation] merge strategy, retries and verification
       # @param paths [Paths] where the scratch checkout and the suite lock live
       # @param notice [#call] told who holds the branch's landing drain, or the
-      #   parent checkout's lock, when a landing waits on it for long
+      #   parent checkout's lock, when a landing waits on it for long, and what
+      #   the configured verify did about a verify group a dead holder left
       # @param lock [#hold, nil] a drain lock the caller already holds, handed
       #   to the desk in place of its own; nil lets the desk take its own
       # @param shell_out_factory [#call] builds every git and verify subprocess
@@ -107,7 +108,7 @@ module Lain
       # @return [LandingQueue]
       def self.candidate(root:, base:, journal:, isolation:, paths:, notice: ParentLock::Silent, lock: nil,
                          shell_out_factory: Shell::Out.public_method(:new),
-                         verify: Verifier.from(isolation, paths:, shell_out_factory:))
+                         verify: Verifier.from(isolation, paths:, shell_out_factory:, notice:))
         checkout = VerifyCheckout.for(repo_root: MergeCoordinator.main_root(root, shell_out_factory:),
                                       branch: base.name, paths:, keep: isolation.verify_keep, shell_out_factory:)
         desk = CandidateDesk.new(

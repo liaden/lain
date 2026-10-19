@@ -175,6 +175,19 @@ RSpec.describe Lain::CLI::Land, :seam do
       expect(said).to include("1 batch", "main")
     end
 
+    it "hands the drainer the notice it was given" do
+      seen = {}
+      drain_for = lambda do |**kwargs|
+        seen.merge!(kwargs)
+        Struct.new(:call).new(0)
+      end
+      notice = ->(_text) {}
+
+      land(cwd: @state, drain_for:, notice:).drain(branch: "main", project: @repo)
+
+      expect(seen).to include(notice:)
+    end
+
     it "hands the drainer the project root it was given, never its own directory" do
       seen = {}
       drain_for = lambda do |**kwargs|

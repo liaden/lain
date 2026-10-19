@@ -32,17 +32,19 @@ module Lain
         # @param paths [Paths] where journals, the verify worktree and the suite lock live
         # @param shell_out_factory [#call] builds every git and verify subprocess
         # @param config [Config] whose `isolation` table names the verifier, the caps and the merge strategy
+        # @param notice [#call] told what the verify did about a verify group a killed drainer left running
         # @return [Drain]
         # @raise [Lain::Error] when repo_root is in no repository
         def self.for(repo_root:, branch:, paths:, shell_out_factory: Shell::Out.public_method(:new),
-                     config: Config.load(root: MergeCoordinator.main_root(repo_root, shell_out_factory:)))
+                     config: Config.load(root: MergeCoordinator.main_root(repo_root, shell_out_factory:)),
+                     notice: ParentLock::Silent)
           root = MergeCoordinator.main_root(repo_root, shell_out_factory:)
           home = Home.for(repo_root: root, branch:, shell_out_factory:)
           isolation = config.isolation
           journal_path = File.join(paths.sessions_dir(project: paths.project_hash(root)), ::Lain::Journal.stem)
           new(lock: home.drain_lock, branch:, spool: Spool.new(home), isolation:,
               journal: -> { ::Lain::Journal.open(journal_path) },
-              verify: Verifier.from(isolation, paths:, shell_out_factory:),
+              verify: Verifier.from(isolation, paths:, shell_out_factory:, notice:),
               queue_for: queues(root, branch, isolation, paths, shell_out_factory))
         end
 
