@@ -366,11 +366,12 @@ module Lain
           return line if Ext::Prompt.width(line) <= columns
 
           budget = columns - Ext::Prompt.width(ELLIPSIS)
-          kept, = line.each_grapheme_cluster.inject(["", 0]) do |(text, spent), cluster|
-            cost = Ext::Prompt.width(cluster)
-            spent + cost > budget ? [text, spent] : ["#{text}#{cluster}", spent + cost]
+          spent = 0
+          kept = line.each_grapheme_cluster.take_while do |cluster|
+            spent += Ext::Prompt.width(cluster)
+            spent <= budget
           end
-          "#{kept}#{ELLIPSIS}"
+          "#{kept.join}#{ELLIPSIS}"
         end
       end
     end

@@ -626,6 +626,12 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(Lain::Ext::Prompt.width(row.to_s)).to eq(80)
     end
 
+    it "ends the row at the first cluster that does not fit, never a later narrow one" do
+      line = "ab#{"\u4E2D" * 5}x"
+
+      expect(described_class.clamped(line, columns: 8)).to eq("ab\u4E2D\u4E2D\u2026")
+    end
+
     it "leaves a row inside the budget exactly as composed" do
       expect(described_class.undated(published).to_s).not_to end_with("\u2026")
     end
