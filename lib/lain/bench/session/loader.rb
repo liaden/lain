@@ -81,7 +81,7 @@ module Lain
             ledger_index: Ledger::Index.from_journal(@records),
             degraded:, mode:, memory:, open: open?,
             compaction: header["compact_strategy"], schedule: header_field("compact_schedule"),
-            arms: header["arms"] || {},
+            **bench_facts,
             compaction_tally: Compare::CompactionTally.from_records(@records)
           )
         end
@@ -257,6 +257,10 @@ module Lain
           raise Corrupt, "the session header records context_pipeline #{header["context_pipeline"].inspect}, " \
                          "which no longer resolves: #{e.message}"
         end
+
+        def bench_facts = { arms: header["arms"] || {}, compact: header["compact"], opaque: }
+
+        def opaque = of_type("run_arms").filter_map { |record| record.dig("arms", "opaque") }.first
 
         def toolset
           RecordedToolset.new(schema: header.fetch("tools"))

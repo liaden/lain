@@ -211,20 +211,25 @@ module Lain
       # `schedule` is the header's `compact_schedule`, which every header records.
       # `arms` is the header's bench arms, `{}` when none were on; defaulted
       # because the header omits the key for an unarmed run.
+      # `compact` is the header's `compact` key, `false` for a run with compaction off and nil
+      # when the header names none. `opaque` is the opaque-command policy the run's `run_arms`
+      # record names, nil for a run that wrote no such record.
       #
       # Frozen the same way `context_class` is when present: {Loader} hands it
       # a plain `String` straight off `JSON.parse`, unfrozen until this class
       # says otherwise, and `Ractor.shareable?(recording)` demands it does.
       Recording = Data.define(:context, :context_class, :toolset, :workspace,
                               :timeline, :baseline, :ledger_index, :degraded, :mode, :memory,
-                              :open, :messages, :compaction, :schedule, :compaction_tally, :arms) do
+                              :open, :messages, :compaction, :schedule, :compaction_tally, :arms,
+                              :compact, :opaque) do
         def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
-                       degraded:, mode:, memory:, open:, messages:, compaction:, schedule:, compaction_tally:, arms: {})
+                       degraded:, mode:, memory:, open:, messages:, compaction:, schedule:, compaction_tally:, arms: {},
+                       compact: nil, opaque: nil)
           super(context:, context_class: -context_class.to_s, toolset:, workspace:,
                 timeline:, baseline: baseline.freeze, ledger_index:, degraded:, mode:, memory:,
                 open:, messages: messages.freeze, compaction: compaction && -compaction,
                 schedule: schedule && -schedule, compaction_tally:,
-                arms: Ractor.make_shareable(arms))
+                arms: Ractor.make_shareable(arms), compact:, opaque: opaque && -opaque)
         end
 
         # A recording whose baseline outnumbers the DAG's assistant turns holds

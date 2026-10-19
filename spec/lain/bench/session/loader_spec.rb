@@ -141,6 +141,27 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(recording.arms).to eq({})
     end
 
+    it "rebuilds compact false from a header recording compaction off" do
+      lines = entries.map do |line|
+        record = JSON.parse(line)
+        record.key?("context_class") ? JSON.generate(record.merge("compact" => false)) : line
+      end
+      expect(described_class.new(lines).recording.compact).to be(false)
+    end
+
+    it "answers nil compact for a header carrying no compact key" do
+      expect(recording.compact).to be_nil
+    end
+
+    it "rebuilds the opaque policy from the run_arms record" do
+      extra = "#{JSON.generate("type" => "run_arms", "arms" => { "confine" => "reader", "opaque" => "refused" })}\n"
+      expect(described_class.new(entries.to_a + [extra]).recording.opaque).to eq("refused")
+    end
+
+    it "answers nil opaque for a journal with no run_arms record" do
+      expect(recording.opaque).to be_nil
+    end
+
     it "reads the turn schedule the header records for a run that configured no compaction" do
       expect(recording.schedule).to eq("turn")
     end

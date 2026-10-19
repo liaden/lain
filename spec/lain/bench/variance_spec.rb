@@ -39,9 +39,11 @@ RSpec.describe Lain::Bench::Variance do
 
   # One mock-recorded run of the task, round-tripped through Session so the
   # Recording under test is exactly what the driver will hold.
-  def record(responses, degrade: nil, flips: [], under: context, compact_strategy: nil, schedule: nil, arms: nil)
+  def record(responses, degrade: nil, flips: [], under: context, compact_strategy: nil, schedule: nil, arms: nil,
+             compact: nil, run_arms: nil)
     bytes = session_bytes(responses, degrade:, flips:, under:, compact_strategy:)
-    extra = { "compact_schedule" => schedule, "arms" => arms }.compact
+    extra = { "compact_schedule" => schedule, "arms" => arms, "compact" => compact }.compact
+    bytes += "#{JSON.generate("type" => "run_arms", "arms" => run_arms)}\n" unless run_arms.nil?
     Lain::Bench::Session.load(with_header(bytes, extra).each_line)
   end
 
@@ -314,6 +316,46 @@ RSpec.describe Lain::Bench::Variance do
 
     it "pools a recording that named the turn schedule with one that configured no compaction" do
       expect(described_class.new(recordings: [scheduled("turn"), reference]).report).to include("2: byte-identical")
+    end
+  end
+
+  describe "compaction on or off" do
+    def compacting(compact) = record([tool_response("tu_1", "hi"), text_response("done")], compact:)
+
+    it "raises when one recording ran without compaction and one recorded nothing" do
+      expect { described_class.new(recordings: [compacting(false), reference]) }
+        .to raise_error(Lain::Error, /one ran without compaction: compaction off vs compaction on/)
+    end
+
+    it "pools recordings that both ran without compaction" do
+      expect(described_class.new(recordings: [compacting(false), compacting(false)]).report)
+        .to include("2: byte-identical")
+    end
+
+    it "refuses a recording that named the turn schedule against one with compaction off" do
+      turn = record([tool_response("tu_1", "hi"), text_response("done")], schedule: "turn")
+      expect { described_class.new(recordings: [turn, compacting(false)]) }
+        .to raise_error(Lain::Error, /without compaction/)
+    end
+  end
+
+  describe "opaque policy" do
+    def opaque(run_arms) = record([tool_response("tu_1", "hi"), text_response("done")], run_arms:)
+
+    it "raises when only one recording recorded the opaque policy" do
+      expect { described_class.new(recordings: [opaque({ "opaque" => "refused" }), reference]) }
+        .to raise_error(Lain::Error, /different opaque policies: refused vs unrecorded/)
+    end
+
+    it "raises when the recorded policies differ" do
+      expect { described_class.new(recordings: [opaque({ "opaque" => "refused" }), opaque({ "opaque" => "open" })]) }
+        .to raise_error(Lain::Error, /different opaque policies: refused vs open/)
+    end
+
+    it "pools recordings that both refused opaque commands" do
+      refused = opaque({ "opaque" => "refused" })
+      expect(described_class.new(recordings: [refused, opaque({ "opaque" => "refused" })]).report)
+        .to include("2: byte-identical")
     end
   end
 

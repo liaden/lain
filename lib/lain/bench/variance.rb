@@ -45,6 +45,8 @@ module Lain
       #   arms
       # @raise [Lain::Error] when the recordings compacted on different schedules
       # @raise [Lain::Error] when the recordings ran under different bench arms
+      # @raise [Lain::Error] when one recording ran without compaction and another did not
+      # @raise [Lain::Error] when the recordings recorded different opaque-command policies
       def initialize(recordings:, price_book: PriceBook.default, set_aside: [])
         @recordings = Array(recordings).freeze
         raise ArgumentError, "variance needs at least two recordings; one run is not an experiment" if
@@ -56,6 +58,8 @@ module Lain
         guard_compaction!
         guard_schedule!
         guard_arms!
+        guard_compact!
+        guard_opaque!
         @compare = build_compare
         @diffs = @recordings.map { |recording| recording.dry_replay.diff(recording.context) }.freeze
       end
@@ -177,6 +181,22 @@ module Lain
         return if mismatch.nil?
 
         raise ::Lain::Error, "cannot compare runs under different bench arms: #{mismatch.join(" vs ")}"
+      end
+
+      def guard_compact!
+        names = @recordings.map { |recording| recording.compact == false ? "compaction off" : "compaction on" }
+        mismatch = names.combination(2).find { |(one, other)| one != other }
+        return if mismatch.nil?
+
+        raise ::Lain::Error, "cannot compare runs where one ran without compaction: #{mismatch.join(" vs ")}"
+      end
+
+      def guard_opaque!
+        names = @recordings.map { |recording| recording.opaque || "unrecorded" }
+        mismatch = names.combination(2).find { |(one, other)| one != other }
+        return if mismatch.nil?
+
+        raise ::Lain::Error, "cannot compare runs under different opaque policies: #{mismatch.join(" vs ")}"
       end
 
       def arms_label(arms) = arms.empty? ? "none" : arms.sort.map { |name, value| "#{name}=#{value}" }.join(",")
