@@ -1310,6 +1310,7 @@ RSpec.describe Lain::Approval::Escalation do
       ruling = ladder(described_class::Triage.new(sensitivity: classifiers)).rule(reading_a_key, nil)
 
       expect(ruling).to be_deny.and be_final
+      expect(ruling).not_to be_liftable
       expect(ruling.reason).to include("#{home}/.ssh/id_rsa")
     end
 
@@ -1427,6 +1428,22 @@ RSpec.describe Lain::Approval::Escalation do
       expect(ruling.told).to include("no approval is possible while approval is bypass", "do not re-send it")
       expect(ruling.told).not_to include("/mode ask")
       expect(ruling.reason).to include("switch to /mode ask")
+    end
+
+    it "marks the bypass refusal of a barred command as one a human in ask could lift" do
+      ruling = described_class.bypass(tools:, journal:).rule(effect, carried(barred: true))
+
+      expect(ruling).to be_liftable
+    end
+
+    it "tells the model about a barred bypass refusal once, without saying no approval will lift it" do
+      gate = Lain::Middleware::Gate.new(policy: described_class.bypass(tools:, journal:))
+      told = dispatch_call("bash", { "command" => "ls" }, toolset: tools, layers: [gate],
+                                                          context: carried(barred: true))
+
+      expect(told.content).to include("do not re-send it")
+      expect(told.content).not_to include("no approval will lift this")
+      expect(told.content.scan("do not re-send").size).to eq(1)
     end
 
     it "leaves a deny for a barred command a deny" do

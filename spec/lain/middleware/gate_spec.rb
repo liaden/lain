@@ -208,6 +208,14 @@ RSpec.describe Lain::Middleware::Gate do
                "so do not re-send the same command in another form")
     end
 
+    it "renders a liftable final deny as its own clause, without promising that no approval will lift it" do
+      policy = ruled(ruling.deny(rung: "bypass", because: "journal detail", final: true, liftable: true,
+                                 told: "only a human may approve it; do not re-send it"))
+
+      expect(through(described_class.new(policy:), tool_call("dangerous")).first.content)
+        .to eq('refused tool "dangerous": only a human may approve it; do not re-send it')
+    end
+
     it "renders a final deny that way whatever sentence was injected for the rest" do
       policy = ruled(ruling.deny(rung: "rules", because: "remembered no", final: true))
 

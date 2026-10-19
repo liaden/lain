@@ -837,6 +837,26 @@ RSpec.describe Lain::Approval::Judged do
       expect(ruling.told).to include("only a human").and include("--non-interactive")
     end
 
+    it "marks the barred refusal as one a human in ask could lift" do
+      ruling = ruled(rung(spawn_answering("approve"), asking: unattended), bash,
+                     within: context.with(automatic_approval_barred: true))
+
+      expect(ruling).to be_liftable
+    end
+
+    it "reaches the model through a Gate with its own clause and no promise that no approval will lift it" do
+      ruling = ruled(rung(spawn_answering("approve"), asking: unattended), bash,
+                     within: context.with(automatic_approval_barred: true))
+      policy = Struct.new(:ruling) { def rule(*) = ruling }.new(ruling)
+      gate = Lain::Middleware::Gate.new(policy:)
+
+      told = dispatch_call("bash", { "command" => "ls" }, toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
+                                                          layers: [gate])
+
+      expect(told.content).to include(ruling.told)
+      expect(told.content).not_to include("no approval will lift this")
+    end
+
     it "does not claim the judge was asked about a call it was not allowed to judge" do
       ruling = ruled(rung(spawn_answering("approve"), asking: unattended), call("read_file", { "path" => ".env" }))
 

@@ -83,6 +83,11 @@ module Lain
       FINAL = "refused tool %<name>s: %<because>s; no approval will lift this, " \
               "so do not re-send the same command in another form"
 
+      # What a FINAL refusal is reported as when a human in ask could still lift
+      # it: the rung's own clause already says what to do, and FINAL's promise
+      # would be false and would repeat it.
+      LIFTABLE = "refused tool %<name>s: %<because>s"
+
       # The rung a whole-tool refusal from the config is journaled under: no
       # ladder rung is asked about it, so the gate records it itself.
       CONFIG_RUNG = "config"
@@ -180,7 +185,7 @@ module Lain
 
       # Inside the one tool result, so the model reads them as the reason.
       def refusal(ruling, name)
-        return format(FINAL, name:, because: ruling.told) if ruling.final?
+        return format(ruling.liftable? ? LIFTABLE : FINAL, name:, because: ruling.told) if ruling.final?
 
         [format(@denial, name:), ruling.said].compact.join(": ")
       end

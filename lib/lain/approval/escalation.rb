@@ -87,7 +87,7 @@ module Lain
       # What one rung said, and everything a journal needs to attribute it.
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
       # so `Ractor.shareable?` holds and the record is safe to share.
-      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule, :note)
+      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule, :note, :liftable)
 
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
@@ -123,6 +123,10 @@ module Lain
         # that faulted without that rung having refused anything, which is
         # also why {#record} carries it -- the rung alone cannot tell the two.
         #
+        # `liftable` marks a final deny that a human in `ask` could still approve,
+        # so the model is not promised that no approval will lift it. Off {#record}:
+        # the journal keeps the rung, which already implies it.
+        #
         # `told` is the clause a MODEL reads, and defaults to the reason. The
         # reason is written for a journal reader and carries what a model would
         # misread -- a verdict's name, its disclaimer about safety -- so a rung
@@ -141,7 +145,7 @@ module Lain
         # parks, and never the model: the ladder hands it down as {Noted}, and it
         # is left off `told` and `said` so no refusal can carry it.
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil,
-                       said: nil, rule: nil, note: nil)
+                       said: nil, rule: nil, note: nil, liftable: false)
           unless VERDICTS.include?(verdict)
             raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
@@ -151,7 +155,7 @@ module Lain
 
           super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:,
                 final: final == true, told: -(told || reason).to_s, said: spoken(said), rule: spoken(rule),
-                note: spoken(note))
+                note: spoken(note), liftable: liftable == true)
         end
 
         def allow? = verdict == :allow
@@ -163,6 +167,7 @@ module Lain
         def fault? = fault
         def human? = authority == :human
         def final? = final
+        def liftable? = liftable
 
         def record
           { "verdict" => verdict.to_s, "rung" => rung, "reason" => reason,
@@ -765,7 +770,9 @@ module Lain
         def name = NAME
 
         def call(_effect, context)
-          return Ruling.deny(rung: NAME, because: REFUSED, final: true, told: TOLD) if Escalation.barred?(context)
+          if Escalation.barred?(context)
+            return Ruling.deny(rung: NAME, because: REFUSED, final: true, told: TOLD, liftable: true)
+          end
 
           Ruling.allow(rung: NAME, because: BECAUSE)
         end

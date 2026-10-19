@@ -1473,8 +1473,8 @@ RSpec.describe Lain::CLI::ToolGuard do
       told = Sync { run_bash(board, "cat notes.txt", id: "tu_2") }
 
       expect(told).to have_attributes(is_error: true)
-      expect(told.content).to include("no approval is possible while approval is bypass", "do not re-send it",
-                                      "no approval will lift this")
+      expect(told.content).to include("no approval is possible while approval is bypass", "do not re-send it")
+      expect(told.content).not_to include("no approval will lift this")
       expect(told.content).not_to include("/mode ask")
       expect(told.content).not_to include("PRIVATE KEY")
       expect(board.approvals.each.count).to eq(0)

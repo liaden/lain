@@ -131,7 +131,7 @@ module Lain
         def denied_told = DENIED
 
         def call(_effect, context)
-          return Escalation::Ruling.deny(rung: NAME, because: BARRED, final: true, told: TOLD) \
+          return Escalation::Ruling.deny(rung: NAME, because: BARRED, final: true, told: TOLD, liftable: true) \
             if Escalation.barred?(context)
           return overruled(context.overruled_by) if context.respond_to?(:overruled_by)
 
