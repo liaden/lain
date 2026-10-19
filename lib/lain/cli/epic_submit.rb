@@ -443,6 +443,9 @@ module Lain
       # @param spike_journal [Adjudication::Destination] where the pair's provider
       #   writes its own records; pointed at the decision's journal for the
       #   length of each decision, and the one the pair was built over
+      # @param tool_guard [HomedGuard] the guard the pair's children run behind;
+      #   pointed at the decided epic's home for the length of each decision,
+      #   and the one the pair was built over
       # @param policies [#call] resolves the submitted stage's policy;
       #   {WholePipeline} unless a caller decides one stage alone
       # @param epics [CLI::Epic] answers WHICH epic a bare invocation means.
@@ -451,7 +454,7 @@ module Lain
       def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                      input: nil, output: nil, asker: Prompt.on(input:, output:), journal: nil, role_spawn: nil,
                      brief: nil, spike_journal: Adjudication::Destination.new, policies: WholePipeline,
-                     epics: Epic.new(root:, paths:, config:))
+                     tool_guard: HomedGuard.new(root:), epics: Epic.new(root:, paths:, config:))
         @root = root
         @paths = paths
         @config = config
@@ -461,6 +464,7 @@ module Lain
         @role_spawn = role_spawn
         @brief = brief
         @spike_journal = spike_journal
+        @tool_guard = tool_guard
         @epics = epics
         @policies = policies
       end
@@ -489,9 +493,10 @@ module Lain
                             root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                             backend: -> { Backend.new(options, profile:, root:) })
         spike_journal = Adjudication::Destination.new
-        pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: guard(root),
-                                 journal: spike_journal)
-        new(root:, paths:, config:, input:, output:, role_spawn: pair.role_spawn, brief: pair.brief, spike_journal:)
+        tool_guard = HomedGuard.new(root:)
+        pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: tool_guard, journal: spike_journal)
+        new(root:, paths:, config:, input:, output:, role_spawn: pair.role_spawn, brief: pair.brief, spike_journal:,
+            tool_guard:)
       end
 
       # Which policy decides the submitted stage. The command resolves the
@@ -563,8 +568,38 @@ module Lain
       # The pair's children borrow no chat's guard, so this command builds
       # one. It records nowhere, as their spawn seam's own journal does: the
       # decision's journal is opened per decision, after the pair exists.
-      def self.guard(root) = ToolGuard.detached(journal: Channel::Null.instance, roots: [root])
-      private_class_method :guard
+      #
+      # The pair is built before any epic is named, and under `epics home: :xdg`
+      # an epic's files sit outside the project root, so the guard is pointed at
+      # the decided epic's home for the length of one decision, as the spike's
+      # journal is. Another epic's home is never in scope.
+      class HomedGuard
+        # @param root [String] the project root, in scope for every child
+        def initialize(root:)
+          @root = root
+          @current = build([root])
+        end
+
+        # @param home [Lain::Epic::Home] the epic the decision is about
+        def within(home)
+          outer = @current
+          @current = build([@root, home.path])
+          yield
+        ensure
+          @current = outer
+        end
+
+        # The seam asks the builder for each of these, and a copy made now would
+        # keep the roots of whichever decision it was taken in.
+        def call(...) = @current.call(...)
+        def never_parking = @current.never_parking
+        def guard_inputs = @current.guard_inputs
+        def with(...) = @current.with(...)
+
+        private
+
+        def build(roots) = ToolGuard.detached(journal: Channel::Null.instance, roots:)
+      end
 
       # @param stage [String] one of {Epic::STAGES}
       # @param slug [String, nil] the epic; omitted resolves to the sole one
@@ -577,7 +612,8 @@ module Lain
       #   stage boundary
       def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil)
         staged = Lain::Epic::Stage.new(stage)
-        decide(staged, Artifacts.new(home: home(slug), root: @root, issue:, digest:, tests:))
+        epic_home = home(slug)
+        decide(staged, epic_home, Artifacts.new(home: epic_home, root: @root, issue:, digest:, tests:))
       end
 
       # The question an issue's launch asks before any work starts: is this
@@ -604,13 +640,15 @@ module Lain
       # Held around the WHOLE decision, wiring refusal included, because
       # {Approval::Gate::Policies::Deps} carries a `journal` seam an adjudicating
       # policy needs before it is built.
-      def decide(stage, artifacts)
+      def decide(stage, epic_home, artifacts)
         submission = artifacts.submission(stage)
         required = artifacts.required(stage)
         records = journals.to_a
         @journal.hold do |journal|
           @spike_journal.within(journal) do
-            settled(stage, submission, required, records, ReadBack.new(journal, dir: @paths.sessions_dir))
+            @tool_guard.within(epic_home) do
+              settled(stage, submission, required, records, ReadBack.new(journal, dir: @paths.sessions_dir))
+            end
           end
         end
       end

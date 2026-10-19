@@ -703,6 +703,37 @@ RSpec.describe Lain::CLI::EpicSubmit do
                .with { |req| JSON.parse(req.body).dig("options", "num_batch") != 2048 }).not_to have_been_made
     end
 
+    describe "the evidence researcher's reach" do
+      def reading(path)
+        @wire = Lain::Provider::Mock.new(responses: [tool_response(["t1", "read_file", { "path" => path }]),
+                                                     text_response("the evidence"), text_response("APPROVE")])
+        EpicSubmitSpecSupport::FakeBackend.new(wire: @wire, context: Lain::Context.new(model: "judge", max_tokens: 256),
+                                               slots: Lain::Prompt::Slots.load(root:))
+      end
+
+      def read_result = @wire.requests[1].messages.to_json
+
+      it "reads its own epic's plan under epics home :xdg" do
+        home("alpha").plan("a").write("PLAN-ALPHA-TEXT\n")
+
+        from_options(adjudicating, backend: -> { reading(home("alpha").plan("a").path) }).submit("research", "alpha")
+
+        expect(read_result).to include("PLAN-ALPHA-TEXT")
+        expect(gate_evidence.fetch("text")).to eq("the evidence")
+      end
+
+      it "is outside its roots reading another epic's research" do
+        write_research("OTHER-EPIC-TEXT #{research_text}", slug: "other")
+
+        from_options(adjudicating, backend: -> { reading(home("other").research.path) }).submit("research", "alpha")
+
+        expect(read_result).to include("was refused")
+        expect(read_result).not_to include("OTHER-EPIC-TEXT")
+      end
+
+      def gate_evidence = journal_records.find { |record| record["type"] == "gate_evidence" }
+    end
+
     it "journals a failed spike's malformed_response into the decision journal" do
       prose = "Looking.\n<function=read_file>\n<parameter=path>\nepic.md\n</parameter>\n</function>\n</tool_call>"
       stub_request(:post, "http://localhost:11434/api/chat")
@@ -1539,6 +1570,29 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # of chat, from the same backend flags a chat reads, and ONLY when some stage
   # is configured `adjudicated`: a session gating everything interactively never
   # constructs a provider, so it never needs a key.
+  describe Lain::CLI::EpicSubmit::HomedGuard do
+    subject(:guard) { described_class.new(root:) }
+
+    def reach?(path)
+      verdict = guard.guard_inputs.sensitivity.judge(path, cwd: root)
+      verdict != Lain::Sensitivity::Policy::OUTSIDE_PROJECT
+    end
+
+    it "reaches the decided epic's home only for the length of the decision" do
+      inside = home("alpha").research.path
+      guard.within(home("alpha")) { expect(reach?(inside)).to be(true) }
+
+      expect(reach?(inside)).to be(false)
+    end
+
+    it "gives the home back when the decision raises" do
+      inside = home("alpha").research.path
+      expect { guard.within(home("alpha")) { raise "boom" } }.to raise_error("boom")
+
+      expect(reach?(inside)).to be(false)
+    end
+  end
+
   describe Lain::CLI::EpicSubmit::Adjudication do
     def interactive = Lain::Epic::STAGES.to_h { |stage| [stage, "interactive"] }
     def adjudicating = interactive.merge("research" => "adjudicated")
