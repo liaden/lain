@@ -1634,6 +1634,7 @@ RSpec.describe Lain::Sensitivity do
       end
       expect { related("/") }.to raise_error(Lain::Config::Refusal, /must name a specific tree/)
       expect { related("~/") }.to raise_error(Lain::Config::Refusal, /must name a specific tree/)
+      expect { related("~") }.to raise_error(Lain::Config::Refusal, /related must name a specific tree.*: "~"\z/)
     end
 
     it "refuses the home directory spelled absolutely, once the loader names home" do

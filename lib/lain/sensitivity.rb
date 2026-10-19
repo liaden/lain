@@ -556,6 +556,7 @@ module Lain
       def self.relation(pattern, path: nil)
         raise malformed(RELATED, pattern, "must be a string", path:) unless pattern.is_a?(String)
         raise malformed(RELATED, pattern, "must be readable text", path:) unless Sensitivity.readable?(pattern)
+        raise malformed(RELATED, pattern, UNSPECIFIC, path:) if pattern == Sensitivity::TILDE
         raise malformed(RELATED, pattern, RELATED_SHAPE, path:) unless pattern.start_with?(HOME, ROOT)
 
         directory = pattern.delete_suffix(ROOT)
