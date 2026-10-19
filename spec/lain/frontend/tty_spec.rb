@@ -1097,6 +1097,16 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string).to include(described_class::Inbox::GESTURE)
     end
 
+    it "names the typed gesture when the caller says there is no editor" do
+      row = Struct.new(:question, :from, :asked_at).new(announced("db", body: "which one?"), "orchestrator",
+                                                        Time.at(880))
+
+      drain_tty.drain_inbox([row], reader: ->(_prompt) { "" }, gesture: described_class::Inbox::TYPED_GESTURE) { nil }
+
+      expect(output.string).to include(described_class::Inbox::TYPED_GESTURE)
+      expect(output.string).not_to include("ticking boxes")
+    end
+
     # What the human types at the drain's prompt, a line per read.
     def typed = ->(_prompt) { input.gets&.chomp }
 

@@ -430,6 +430,30 @@ RSpec.describe Lain::CLI::HumanReplies do
       end
     end
 
+    it "names the typed gesture in a drain with no editor attached" do
+      Sync do
+        announced(ask_human, "q1?")
+        allow(conductor).to receive(:read_reply).and_return("")
+
+        replies.drain_at_prompt
+      end
+
+      expect(output.string).to include(Lain::Frontend::TTY::Inbox::TYPED_GESTURE)
+      expect(output.string).not_to include("ticking boxes is the nvim buffer")
+    end
+
+    it "keeps the nvim gesture in a drain once an editor is attached" do
+      replies.bind_editor(RecordingEditorRail.new)
+      Sync do
+        announced(ask_human, "q1?")
+        allow(conductor).to receive(:read_reply).and_return("")
+
+        replies.drain_at_prompt
+      end
+
+      expect(output.string).to include(Lain::Frontend::TTY::Inbox::GESTURE)
+    end
+
     it "keeps a blank-answered question listable -- a still-pending item is never dropped from the view" do
       Sync do
         announced(ask_human, "q1?")

@@ -134,7 +134,7 @@ module Lain
         @inbox = Pending.new(live: ->(digest) { ask_human.awaiting?(digest) })
         @reads = OpenReads.new
         @queued = questions ? Queued.new(questions) : Queued::NOTHING
-        @reply = Reply.new(tty:, conductor:, inbox: @inbox)
+        @reply = Reply.new(tty:, conductor:, inbox: @inbox, editor: -> { @editor })
         # READERS, never the surfaces: every one is bound after this returns, so
         # resolving each per call is what makes a late bind visible without
         # anybody remembering to rebuild.
@@ -1276,8 +1276,9 @@ module Lain
         # itself once.
         class UnknownArm < Error; end
 
-        def initialize(tty:, conductor:, inbox:, commands: NoSessionCommands.new)
+        def initialize(tty:, conductor:, inbox:, commands: NoSessionCommands.new, editor: -> { NoEditor })
           @tty = tty
+          @editor = editor
           @conductor = conductor
           @inbox = inbox
           @commands = commands
@@ -1527,8 +1528,13 @@ module Lain
         def drained(answering:, ended:)
           answer = ""
           reading = drain_reader(-> { answer = ended })
-          @tty.drain_inbox(@inbox, answering:, reader: reading) { |typed| answer = typed }
+          @tty.drain_inbox(@inbox, answering:, reader: reading, gesture: drain_gesture) { |typed| answer = typed }
           [answer, answering]
+        end
+
+        # Per drain, because the editor binds late and can go away mid-session.
+        def drain_gesture
+          @editor.call.attached? ? Frontend::TTY::Inbox::GESTURE : Frontend::TTY::Inbox::TYPED_GESTURE
         end
 
         # Each line read through the SAME {#classify} {#typed} uses, so a command

@@ -393,8 +393,10 @@ module Lain
       # @param answering [#question] the item this drain answers -- the oldest
       #   listed by default, which is what `/inbox` at `you>` means, and the
       #   parked item when a reply prompt drains mid-ask
-      def drain_inbox(items, reader:, answering: items.first, &on_answer)
-        @inbox.drain(items, reader:, answering:, &on_answer)
+      # @param gesture [String] the line under the document naming what the human
+      #   can do here -- {Inbox::TYPED_GESTURE} for a chat with no editor
+      def drain_inbox(items, reader:, answering: items.first, gesture: Inbox::GESTURE, &on_answer)
+        @inbox.drain(items, reader:, answering:, gesture:, &on_answer)
       end
 
       # One countdown tick: render remaining time + offered keys on the
@@ -778,10 +780,10 @@ module Lain
         # `answering` is the caller's own object and is not handed back: it
         # already knows which item it named, and a round trip would only offer
         # a second place for the two to disagree.
-        def drain(items, reader:, answering:)
+        def drain(items, reader:, answering:, gesture: GESTURE)
           return render_empty if items.empty?
 
-          @output.puts(@fit.call(listing(items, answering).join("\n")))
+          @output.puts(@fit.call(listing(items, answering, gesture).join("\n")))
           @output.flush
           answer = accepted(answering, reader)
           yield answer unless answer.empty?
@@ -838,9 +840,9 @@ module Lain
         # ONE clock read for the whole listing: two rows of one drain aged
         # against two moments is the same defect, one surface down, that
         # sharing the row closes between surfaces.
-        def listing(items, answering)
+        def listing(items, answering, gesture)
           now = @clock.call
-          [*items.map { |item| line_for(item, now) }, *document_for(answering.question)]
+          [*items.map { |item| line_for(item, now) }, *document_for(answering.question, gesture:)]
         end
 
         # The block below the listing, asked OF the value rather than
