@@ -9,7 +9,9 @@ framework, named so a failure reads as a sentence naming the scenario it proves.
 
 **Red first.** Run the tests you write before touching any implementation, and confirm each
 fails for the right reason — a real assertion of intent, not a typo, a missing require, or a
-load error. Only once you have shown the red run does anything get made green. Do not weaken a
+load error. The one exception: the subject file is not written yet, so a test that names the
+constant it will define (`RSpec.describe Greeting`) may fail with `uninitialized constant Greeting`,
+and that red counts. Only once you have shown the red run does anything get made green. Do not weaken a
 scenario's `Then`/`And` clauses to make a test pass; if a clause cannot be expressed
 mechanically, say so rather than approximating it.
 

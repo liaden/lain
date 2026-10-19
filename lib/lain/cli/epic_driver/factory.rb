@@ -1416,7 +1416,7 @@ module Lain
           before = dirty(worker_env.cwd)
           record = generated(criteria, worker_env, guard, subject:, level:, lane:)
           stray!(dirty(worker_env.cwd) - before - [record.target])
-          run = failing(record, worker_env)
+          run = failing(record, worker_env, subject)
           Red.new(record:, run:, sha: commit(worker_env.cwd, record))
         end
 
@@ -1453,14 +1453,29 @@ module Lain
           "wrote tests at #{target} the layout does not accept (#{record.verdict})"
         end
 
-        def failing(record, worker_env)
+        def failing(record, worker_env, subject)
           run = ran(record.target, worker_env)
-          unloaded!(record.target, run) if run.total == run.errors.size && !run.errors.empty?
+          unloaded!(record.target, run) if unloaded?(run) && !awaiting_subject?(run, worker_env.cwd, subject)
           return run unless run.clean?
 
           raise Error, "#{record.target} ran #{run.total} examples and none failed before any work was " \
                        "done, so they check nothing the work will change: the criteria or the " \
                        "generation are wrong, and nothing was committed"
+        end
+
+        def unloaded?(run) = run.total == run.errors.size && !run.errors.empty?
+
+        # A test written before its subject describes a constant only the
+        # subject will define; any other missing constant stays a load error.
+        def awaiting_subject?(run, root, subject)
+          return false if File.exist?(File.join(root, subject))
+
+          wanted = File.basename(subject, ".rb").split("_").map(&:capitalize).join
+          run.errors.all? { |text| missing_constants(text).then { |names| names.any? && names.all?(wanted) } }
+        end
+
+        def missing_constants(text)
+          text.scan(/uninitialized constant (\S+)/).flatten.map { |name| name.split("::").last }
         end
 
         def unloaded!(target, run)

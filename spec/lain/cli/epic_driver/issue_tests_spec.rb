@@ -118,11 +118,12 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
   # The layout is the PROJECT's, resolved from the repository root the held
   # checkout was cut from -- never from the checkout, which a gitignored
   # config never reaches.
-  def step(provider, harness: rspec, since: git(repo, "rev-parse", "HEAD"), lane: "issue.demo.a.1")
+  def step(provider, harness: rspec, since: git(repo, "rev-parse", "HEAD"), lane: "issue.demo.a.1",
+           subject: "app/models/order.rb")
     layout = Lain::Config.test_layout(root: repo)
     described_class.new(renderer:, role_spawn: role_spawn(provider), layout:, harness:,
                         test_layout: Lain::Middleware::GuardTestLayout::Run.new(layout:, root: repo))
-                   .call(criteria, worker_env, subject: "app/models/order.rb", since:, lane:)
+                   .call(criteria, worker_env, subject:, since:, lane:)
   end
 
   # What an earlier run's red step left on a kept branch: the tests, committed
@@ -239,6 +240,54 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     expect { step(writing(target, broken)) }
       .to raise_error(Lain::Error, /did not load.*missing_order/m)
     expect(git(held, "rev-parse", "HEAD")).to eq(head)
+  end
+
+  context "when the described constant is the subject's own, not yet written" do
+    let(:greeting_target) { "spec/unit/models/greeting_spec.rb" }
+    let(:describing_greeting) do
+      "RSpec.describe Greeting do\n  it(\"greets\") { expect(Greeting.new).to respond_to(:hello) }\nend\n"
+    end
+
+    def step_for_greeting(body) = step(writing(greeting_target, body), subject: "app/models/greeting.rb")
+
+    it "commits the tests as red, the run's only error being the uninitialized constant" do
+      result = step_for_greeting(describing_greeting)
+
+      expect(result.run.errors.size).to eq(1)
+      expect(result.run.errors.first).to include("uninitialized constant Greeting")
+      expect(git(held, "show", "--name-only", "--format=", result.sha).split("\n")).to eq([greeting_target])
+    end
+
+    it "still refuses a misspelt constant when the subject exists, and commits nothing" do
+      File.write(File.join(held, "app/models/greeting.rb"), "class Greeting; end\n")
+      git(held, "add", "app/models/greeting.rb")
+      git(held, "commit", "-q", "-m", "subject")
+      head = git(held, "rev-parse", "HEAD")
+
+      expect { step_for_greeting(describing_greeting.gsub("Greeting", "Greting")) }
+        .to raise_error(Lain::Error, /did not load.*Greting/m)
+      expect(git(held, "rev-parse", "HEAD")).to eq(head)
+    end
+
+    it "refuses the same missing constant once the subject file exists, since the test then never loads it" do
+      File.write(File.join(held, "app/models/greeting.rb"), "class Greeting; end\n")
+      git(held, "add", "app/models/greeting.rb")
+      git(held, "commit", "-q", "-m", "subject")
+
+      expect { step_for_greeting(describing_greeting) }
+        .to raise_error(Lain::Error, /did not load.*uninitialized constant Greeting/m)
+    end
+
+    it "accepts a namespaced constant ending in the subject's name, matching only the last segment" do
+      namespaced = "module Billing; end\n#{describing_greeting.gsub("Greeting", "Billing::Greeting")}"
+
+      expect(step_for_greeting(namespaced).run.errors.first).to include("uninitialized constant Billing::Greeting")
+    end
+
+    it "refuses a constant the subject does not define" do
+      expect { step_for_greeting(describing_greeting.gsub("Greeting", "Farewell")) }
+        .to raise_error(Lain::Error, /did not load.*Farewell/m)
+    end
   end
 
   it "refuses a red step that also wrote the subject, naming it, and commits nothing" do
