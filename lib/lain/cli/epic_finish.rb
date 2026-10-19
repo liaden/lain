@@ -97,9 +97,22 @@ module Lain
         return if open.empty?
 
         raise Unfinished, "epic #{epic_slug} is not finished: " \
-                          "#{open.map { |issue| "#{issue.id} is #{issue.status}" }.join(", ")} -- every issue " \
-                          "lands on epic/#{epic_slug} first (`lain epic land ISSUE_ID #{epic_slug}`), and " \
-                          "#{@finisher.untouched}"
+                          "#{open.map { |issue| "#{issue.id} is #{issue.status}" }.join(", ")} -- " \
+                          "#{remedies(epic_slug, open).join(", and ")}, and #{@finisher.untouched}"
+      end
+
+      # An abandoned issue is work somebody dropped; landing it would ship that work.
+      def remedies(epic_slug, open)
+        abandoned, landable = open.partition { |issue| issue.status == "abandoned" }
+        [(land_remedy(epic_slug) unless landable.empty?), (drop_remedy(abandoned) unless abandoned.empty?)].compact
+      end
+
+      def land_remedy(epic_slug)
+        "every issue lands on epic/#{epic_slug} first (`lain epic land ISSUE_ID #{epic_slug}`)"
+      end
+
+      def drop_remedy(abandoned)
+        "mark #{abandoned.size == 1 ? "it" : "each abandoned one"} done or remove it from epic.md, never land it"
       end
 
       def tip(epic_slug)

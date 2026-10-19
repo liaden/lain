@@ -169,6 +169,15 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       expect(forge_actions).to be_empty
       expect(calls.flatten).not_to include("push")
     end
+
+    it "names the remedy for an abandoned issue, which cannot be landed" do
+      write_epic("shelved", "a" => "done", "b" => "abandoned")
+
+      expect { command.finish("shelved") }.to raise_error(described_class::Unfinished) { |error|
+        expect(error.message).to include("b is abandoned", "mark it done or remove it from epic.md")
+        expect(error.message).not_to include("epic land")
+      }
+    end
   end
 
   # The removed promotion pushed one remote branch per issue beneath the
