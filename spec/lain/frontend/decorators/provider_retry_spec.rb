@@ -3,8 +3,24 @@
 RSpec.describe Lain::Frontend::Decorators::ProviderRetry do
   let(:theme) { Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false)) }
 
-  def event(attempt: 1, will_retry_in: 1.0, status: 503, reason: "Faraday::TimeoutError")
-    Lain::Telemetry::ProviderRetry.new(attempt:, will_retry_in:, status:, reason:)
+  def event(attempt: 1, will_retry_in: 1.0, status: 503, reason: "Faraday::TimeoutError", path: nil)
+    Lain::Telemetry::ProviderRetry.new(attempt:, will_retry_in:, status:, reason:, path:)
+  end
+
+  it "names the path the retry was for, so a failed window probe reads as one" do
+    rendered = described_class.new(event(path: "/api/ps")).render(theme)
+
+    expect(rendered).to include("/api/ps")
+  end
+
+  it "says nothing of a path when the event has none" do
+    expect(described_class.new(event).render(theme)).not_to include("/")
+  end
+
+  it "defaults path to nil when the constructor is given none, as an old journal line is" do
+    old = { attempt: 1, will_retry_in: 0.5, status: 503, reason: "Faraday::TimeoutError" }
+
+    expect(Lain::Telemetry::ProviderRetry.new(**old).path).to be_nil
   end
 
   it "announces the attempt as it happens, so a hung endpoint is not a blank screen" do

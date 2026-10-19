@@ -39,6 +39,16 @@ RSpec.describe Lain::Provider::Anthropic::RetryTap do
     it("names a sync body's frame anthropic-json") { expect(wire_of(false)).to eq("anthropic-json") }
   end
 
+  it "names the request path on the exhausted record and on a retry" do
+    url = URI("https://host.example/api/ps")
+    options = Data.define(:max).new(max: 3)
+    tap.exhausted_block.call(env: { status: nil, url: }, exception: Faraday::ConnectionFailed.new("x"), options:)
+    tap.retry_block.call(env: { status: nil, url: }, retry_count: 0, exception: Faraday::ConnectionFailed.new("x"),
+                         will_retry_in: 0.5)
+
+    expect(channel.events.grep(Lain::Telemetry::ProviderRetry).map(&:path)).to eq(["/api/ps", "/api/ps"])
+  end
+
   it "journals an exhausted retry run at the ordinal of the attempt that actually failed" do
     options = Data.define(:max).new(max: 3)
     tap.exhausted_block.call(env: { status: 503 }, exception: Faraday::ConnectionFailed.new("x"), options:)

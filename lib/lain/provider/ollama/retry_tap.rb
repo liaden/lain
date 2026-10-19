@@ -163,7 +163,7 @@ module Lain
             attempt&.abandon
             frame_on(env)&.rotate
             attempt&.attempted(exception)
-            @narration.retried(retry_count:, will_retry_in:, status: env[:status], exception:)
+            @narration.retried(retry_count:, will_retry_in:, status: env[:status], exception:, path: env[:url]&.path)
             narrow_on(attempt, exception)
             then_call&.call(env:, retry_count:, exception:, will_retry_in:, **rest)
           end
@@ -173,7 +173,7 @@ module Lain
         # that just failed; {RetryNarration#exhausted} adds the original try.
         def exhausted_block
           lambda do |env:, exception:, options:|
-            @narration.exhausted(max: options.max, status: env[:status], exception:)
+            @narration.exhausted(max: options.max, status: env[:status], exception:, path: env[:url]&.path)
           end
         end
 

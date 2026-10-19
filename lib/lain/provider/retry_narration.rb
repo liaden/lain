@@ -19,8 +19,9 @@ module Lain
       # @param will_retry_in [Float, nil] the backoff in seconds
       # @param status [Integer, nil] the failed attempt's HTTP status
       # @param exception [Exception] what the attempt failed with
-      def retried(retry_count:, will_retry_in:, status:, exception:)
-        say(attempt: retry_count + 1, will_retry_in:, status:, exception:)
+      # @param path [String, nil] the request path the retry was for
+      def retried(retry_count:, will_retry_in:, status:, exception:, path: nil)
+        say(attempt: retry_count + 1, will_retry_in:, status:, exception:, path:)
       end
 
       # `max` is the RETRY count; an original try plus `max` retries is `max + 1`
@@ -28,14 +29,15 @@ module Lain
       # @param max [Integer] the retry budget that ran out
       # @param status [Integer, nil] the last attempt's HTTP status
       # @param exception [Exception] what the last attempt failed with
-      def exhausted(max:, status:, exception:)
-        say(attempt: max + 1, will_retry_in: nil, status:, exception:)
+      # @param path [String, nil] the request path the retry was for
+      def exhausted(max:, status:, exception:, path: nil)
+        say(attempt: max + 1, will_retry_in: nil, status:, exception:, path:)
       end
 
       private
 
-      def say(attempt:, will_retry_in:, status:, exception:)
-        event = Telemetry::ProviderRetry.new(attempt:, will_retry_in:, status:, reason: exception.class.name)
+      def say(attempt:, will_retry_in:, status:, exception:, path:)
+        event = Telemetry::ProviderRetry.new(attempt:, will_retry_in:, status:, reason: exception.class.name, path:)
         @channel.push(event)
         @journal << event
       end

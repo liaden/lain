@@ -34,7 +34,7 @@ module Lain
         private
 
         def detail
-          "attempt #{@event.attempt}#{outcome}#{status_detail}#{reason_detail}"
+          "attempt #{@event.attempt}#{outcome}#{status_detail}#{reason_detail}#{path_detail}"
         end
 
         # `will_retry_in` is nil exactly when {Provider::*::RetryTap} has given
@@ -66,6 +66,10 @@ module Lain
 
         def reason_detail
           @event.reason ? " -- #{@event.reason}" : ""
+        end
+
+        def path_detail
+          @event.path ? " on #{@event.path}" : ""
         end
       end
     end

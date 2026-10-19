@@ -12,7 +12,7 @@ RSpec.describe Lain::Provider::RetryNarration do
 
     expect(retries_in(journal)).to eq(retries_in(channel))
     expect(retries_in(journal).map(&:to_h)).to eq(
-      [{ attempt: 2, will_retry_in: 0.5, status: 503, reason: "Faraday::ConnectionFailed" }]
+      [{ attempt: 2, will_retry_in: 0.5, status: 503, reason: "Faraday::ConnectionFailed", path: nil }]
     )
   end
 
@@ -20,9 +20,23 @@ RSpec.describe Lain::Provider::RetryNarration do
     narration.exhausted(max: 3, status: 503, exception: Faraday::ConnectionFailed.new("x"))
 
     expect(retries_in(journal).map(&:to_h)).to eq(
-      [{ attempt: 4, will_retry_in: nil, status: 503, reason: "Faraday::ConnectionFailed" }]
+      [{ attempt: 4, will_retry_in: nil, status: 503, reason: "Faraday::ConnectionFailed", path: nil }]
     )
     expect(retries_in(channel)).to eq(retries_in(journal))
+  end
+
+  it "names the path a retry was for, in both places, so a window probe is not mistaken for the chat call" do
+    narration.exhausted(max: 3, status: nil, exception: Faraday::ConnectionFailed.new("x"), path: "/api/ps")
+
+    expect(retries_in(journal).map(&:path)).to eq(["/api/ps"])
+    expect(retries_in(channel)).to eq(retries_in(journal))
+  end
+
+  it "names the path on a backing-off retry too" do
+    narration.retried(retry_count: 0, will_retry_in: 0.5, status: nil,
+                      exception: Faraday::ConnectionFailed.new("x"), path: "/api/ps")
+
+    expect(retries_in(journal).map(&:path)).to eq(["/api/ps"])
   end
 
   it "needs no journal to narrate" do
