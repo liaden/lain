@@ -154,6 +154,30 @@ RSpec.describe Lain::Compaction::Need do
     end
   end
 
+  describe "the reply reserve" do
+    def fires?(used, ceiling: 16_384, window: 32_768)
+      need.check(window_tokens: window, used_tokens: used, reply_ceiling: ceiling)
+          .signals.include?(:approaching_window)
+    end
+
+    it "fires at window minus the reserve when that is earlier than the ratio" do
+      expect(fires?(28_672)).to be(true)
+    end
+
+    it "does not fire one token under window minus the reserve" do
+      expect(fires?(28_671)).to be(false)
+    end
+
+    it "keeps the ratio when it is the earlier of the two" do
+      expect(fires?(900_000, ceiling: 32_768, window: 1_000_000)).to be(true)
+      expect(fires?(899_999, ceiling: 32_768, window: 1_000_000)).to be(false)
+    end
+
+    it "keeps today's ratio alone when no ceiling is named" do
+      expect(need.check(window_tokens: 32_768, used_tokens: 28_672).signals).not_to include(:approaching_window)
+    end
+  end
+
   describe "the manual signal" do
     it "raises the need flag on an explicit manual trigger" do
       result = check(manual: true)

@@ -22,7 +22,8 @@ module Lain
       # `/model` rewrites that mid-session, so a window fixed when the Need was
       # built would keep measuring occupancy against the model the run began
       # with. Per-turn state travels here; it does not make Need mutable.
-      State = Data.define(:head_bytes, :used_tokens, :window_tokens, :manual, :plan_step_completed)
+      State = Data.define(:head_bytes, :used_tokens, :window_tokens, :manual, :plan_step_completed,
+                          :reply_ceiling)
       private_constant :State
 
       # Which signals fired, as a frozen list of Symbols; empty means "not
@@ -95,7 +96,18 @@ module Lain
         def fired?(state)
           occupancy = ContextWindow::Occupancy.of(used_tokens: state.used_tokens,
                                                   window_tokens: state.window_tokens)
-          occupancy.at_least?(@ratio)
+          occupancy.at_least?(@ratio) || reserve_eaten?(state)
+        end
+
+        private
+
+        # The earlier of the ratio and window minus the reply reserve, so the
+        # next reply is guaranteed room however large the ratio's share is.
+        def reserve_eaten?(state)
+          return false unless state.reply_ceiling && state.used_tokens
+
+          reserve = ReplyReserve.for(window: state.window_tokens, ceiling: state.reply_ceiling)
+          state.used_tokens >= state.window_tokens - reserve.tokens
         end
       end
 
@@ -150,10 +162,14 @@ module Lain
       # @param manual [Boolean] an explicit, on-demand trigger
       # @param plan_step_completed [Boolean] whether a plan step completed since
       #   the last check -- an edge, see {PlanStepCompletion}
+      # @param reply_ceiling [Integer, nil] the output cap; named, it makes
+      #   {ApproachingWindow} also fire at window minus {ReplyReserve}. Nil keeps
+      #   the ratio alone, which a guessed window must.
       # @return [Result]
-      def check(window_tokens:, head_bytes: 0, used_tokens: nil, manual: false, plan_step_completed: false)
+      def check(window_tokens:, head_bytes: 0, used_tokens: nil, manual: false, plan_step_completed: false,
+                reply_ceiling: nil)
         state = State.new(head_bytes:, used_tokens:, window_tokens: window!(window_tokens),
-                          manual:, plan_step_completed:)
+                          manual:, plan_step_completed:, reply_ceiling:)
         fired = @detectors.select { |detector| detector.fired?(state) }.map { |detector| detector.class::KIND }
         Result.new(signals: fired)
       end
