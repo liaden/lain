@@ -306,7 +306,8 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
       told = mode("!")
 
       expect(board.mode_switch.current).to eq(Lain::Mode.new)
-      expect(told).to include("plan scope could not be entered")
+      expect(told).to include("could not be entered: this repository has no commit yet; make one, then /mode plan")
+      expect(told.scan("plan scope could").size).to eq(1)
       expect(git("worktree", "list", "--porcelain").scan(/^worktree /).size).to eq(1)
     end
   end

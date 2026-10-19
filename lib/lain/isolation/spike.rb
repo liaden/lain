@@ -46,6 +46,7 @@ module Lain
       RETAINED = "the spike's uncommitted changes are kept in its worktree at %<path>s"
 
       UNDELETED = "%<branch>s could not be deleted, so it stays: %<reason>s"
+      NO_COMMIT = "this repository has no commit yet; make one, then /mode plan"
 
       # The checkout's tracked state could not be committed, so no spike was cut.
       class Refused < Error; end
@@ -164,6 +165,8 @@ module Lain
       end
 
       def snapshot
+        raise Refused, NO_COMMIT if head_of(@repo_root).empty?
+
         Dir.mktmpdir("lain-plan-index") do |tmp|
           env = Worktree::GIT_CONTEXT_SCRUB.merge(IDENTITY, "GIT_INDEX_FILE" => File.join(tmp, "index"))
           git(env, "read-tree", "HEAD")

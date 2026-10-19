@@ -96,7 +96,7 @@ RSpec.describe Lain::Isolation::Spike, :seam do
     git("init", "-q", dir: empty)
 
     expect { described_class.new(repo_root: empty, root: @root, cwd: empty).acquire }
-      .to raise_error(described_class::Refused, /tracked state/)
+      .to raise_error(described_class::Refused, "this repository has no commit yet; make one, then /mode plan")
   end
 
   it "tells the model where it is, and that untracked files were not copied" do
