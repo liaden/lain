@@ -245,6 +245,27 @@ RSpec.describe Lain::Config::Builder do
         .to raise_error(Lain::Config::Refusal, /config\.rb:3: .*research/)
     end
 
+    it "names every bad gate line in one refusal" do
+      expect { build("epics do\n  gate :resarch, :auto\n  gate :research, :sometimes\nend\n") }
+        .to raise_error(Lain::Config::Refusal) { |error|
+          expect(error.message).to match(/config\.rb:2: .*resarch.*\n.*config\.rb:3: .*sometimes/)
+        }
+    end
+
+    it "keeps the plain single-line message when only one gate line is bad" do
+      expect { build("epics do\n  gate :research, :hands_off\n  gate :epic_plan, :bogus\nend\n") }
+        .to raise_error(Lain::Config::Refusal) { |error|
+          expect(error.message).to match(/\A\S*config\.rb:3: [^\n]*bogus[^\n]*\z/)
+        }
+    end
+
+    it "still refuses a repeated stage whose first line was invalid" do
+      expect { build("epics do\n  gate :research, :bogus\n  gate :research, :hands_off\nend\n") }
+        .to raise_error(Lain::Config::Refusal) { |error|
+          expect(error.message).to match(/config\.rb:2: .*bogus.*\n.*config\.rb:3: .*twice/)
+        }
+    end
+
     it "refuses gates given both as a keyword and as a block" do
       expect { build("epics gates: { research: :hands_off } do\n  gate :implementation, :hands_off\nend\n") }
         .to raise_error(Lain::Config::Refusal, /config\.rb:1: .*both as a keyword and as a block/)

@@ -252,17 +252,33 @@ module Lain
                                                                             key: "gates")
         end
 
-        gates = calls.each_with_object({}) do |call, seen|
-          stage, policy = gate_pair(call)
-          Epics::Gates.from(shaped({ stage => policy }), path: located_at(call.line))
-          if seen.key?(stage)
-            refuse("declares gate #{stage.inspect} twice", line: call.line, table: Epics::Gates::TABLE,
-                                                           key: stage.to_s)
-          end
-
-          seen[stage] = policy
-        end
+        gates = {}
+        refusals = calls.filter_map { |call| refusal_of(call, gates) }
+        raise_all(refusals)
         gates.empty? ? nil : gates
+      end
+
+      def refusal_of(call, seen)
+        stage, policy = gate_pair(call)
+        repeated = seen.key?(stage)
+        seen[stage] = policy
+        Epics::Gates.from(shaped({ stage => policy }), path: located_at(call.line))
+        if repeated
+          refuse("declares gate #{stage.inspect} twice", line: call.line, table: Epics::Gates::TABLE,
+                                                         key: stage.to_s)
+        end
+        nil
+      rescue Refusal => e
+        e
+      end
+
+      # One bad line re-raises as it was, so its file:line prefix is unchanged; several are
+      # one refusal because the first alone sends the user round the loop once per typo.
+      def raise_all(refusals)
+        raise refusals.first if refusals.one?
+        return if refusals.empty?
+
+        raise Refusal.new(refusals.map(&:message).join("\n"), key: refusals.flat_map { |r| Array(r.key) })
       end
 
       def gate_pair(call)
