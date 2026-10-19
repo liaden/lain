@@ -417,7 +417,11 @@ module Lain
       # prompt; the tier owns the decision, so callers do not branch on a name.
       #
       # @return [Array<String>]
-      def startup_notices = OllamaTier::NAMES.include?(provider_name) ? ollama_tier(provider_name).startup_notices : []
+      def startup_notices
+        return [*ollama_tier(provider_name).startup_notices] if OllamaTier::NAMES.include?(provider_name)
+
+        [*stranded_base_notice]
+      end
 
       # `--num-ctx`, through the same {Ceiling} both `--max-tokens` flags go
       # through, and OPTIONAL: unset means "serve the model's own". What is NOT
@@ -745,6 +749,18 @@ module Lain
       def ollama_tier(name) = OllamaTier.new(name:, chat: chat_name?(name), api_base: ollama_base(name))
 
       def ollama_base(name) = OllamaTier.claims_base?(name, run_profile.provider) ? api_base : nil
+
+      # Only a non-ollama chat can strand the flag, so the ollama chat arm never
+      # reaches this.
+      def stranded_base_notice
+        return unless run_profile.api_base
+
+        if compaction? && OllamaTier::NAMES.include?(summarizer_name)
+          "--api-base reaches the #{summarizer_name} summarizer only, not the #{provider_name} chat"
+        else
+          "--api-base reaches nothing: the #{provider_name} chat does not use it and no summarizer runs on ollama"
+        end
+      end
 
       # The ollama arms answer from {OllamaTier}'s CLASS rather than an
       # instance: this must not build a tier, read ENV, or be able to raise

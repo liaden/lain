@@ -116,6 +116,28 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  describe "#startup_notices for --api-base" do
+    let(:base) { "http://h:11434" }
+
+    it "says the base reaches only the ollama summarizer when the chat is anthropic" do
+      notices = backend_for(provider: "anthropic", api_base: base).startup_notices
+      expect(notices.join).to include("--api-base reaches the ollama summarizer only, not the anthropic chat")
+    end
+
+    it "says the base reaches nothing when the anthropic chat does not compact" do
+      notices = backend_for(provider: "anthropic", api_base: base, compact: false).startup_notices
+      expect(notices.join).to include("--api-base reaches nothing")
+    end
+
+    it "says nothing for an ollama chat, where the base is used" do
+      expect(backend_for(provider: "ollama", api_base: base).startup_notices).to eq([])
+    end
+
+    it "says nothing when no base was given" do
+      expect(backend_for(provider: "anthropic").startup_notices).to eq([])
+    end
+  end
+
   # The arm is selected by a PROVIDER NAME rather than by a boolean `--cloud`,
   # and that is what makes it reachable from `lain bench arms` / `lain bench
   # record`: both build their Backend from the model flag band, whose profile
