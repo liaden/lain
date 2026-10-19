@@ -257,7 +257,10 @@ RSpec.describe Lain::FileLock, :seam do
     File.write(@path, "pid=1\n")
     File.chmod(0o000, @path)
 
-    expect { described_class.new(@path).holder }.to raise_error(described_class::Unreadable, /#{Regexp.escape(@path)}/)
+    expect do
+      described_class.new(@path).holder
+    end.to raise_error(described_class::Unreadable,
+                       "cannot use the lock #{@path}: Permission denied")
   ensure
     File.chmod(0o600, @path)
   end
@@ -267,7 +270,7 @@ RSpec.describe Lain::FileLock, :seam do
     File.chmod(0o400, @path)
 
     expect { described_class.new(@path).writable! }
-      .to raise_error(described_class::Unreadable, /#{Regexp.escape(@path)}/)
+      .to raise_error(described_class::Unreadable, "cannot use the lock #{@path}: Permission denied")
   ensure
     File.chmod(0o600, @path)
   end

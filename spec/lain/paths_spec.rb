@@ -554,7 +554,8 @@ RSpec.describe Lain::Paths do
         p = paths("XDG_STATE_HOME" => tmp)
 
         expect { p.sessions_dir(project: "x") }
-          .to raise_error(described_class::Unwritable, /#{Regexp.escape(tmp)}/)
+          .to raise_error(described_class::Unwritable,
+                          %r{\Acannot create #{Regexp.escape(tmp)}/\S+: Permission denied\z})
       ensure
         File.chmod(0o700, tmp) # so Dir.mktmpdir's own cleanup can remove it
       end
