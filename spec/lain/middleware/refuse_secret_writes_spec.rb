@@ -103,6 +103,33 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
       end
     end
 
+    ["AWS_SECRET_ACCESS_KEY=abc123def", "DB_PASSWORD=hunter2pass", "GITHUB_TOKEN=ghx_abc123",
+     "OPENAI_API_KEY=sk-abc123", "STRIPE_SECRET=abc123def", "SECRET_KEY_BASE=abc123def456",
+     "export SLACK_TOKEN=xoxb-abc123"].each do |body|
+      it "refuses #{body.inspect} naming a credential assignment" do
+        env, called = run(tool_call(input: { "id" => "x", "description" => "y", "body" => body }))
+
+        expect(called).to be(false)
+        expect(journal.events.map(&:pattern)).to eq(["credential assignment"])
+        expect(env.fetch(:result).content).to include("credential assignment")
+      end
+    end
+
+    ["token_count = 5", "max_tokens: 100", "note: remember this", "access_token = request.headers['X']",
+     "id_token: nil", "refresh_token: params[:refresh]", "auth_token = SecureRandom.hex", "reset_password = true",
+     "confirm_password: string", "page_token = resp.next", "client_secret: <%= ENV['X'] %>",
+     "token = get_token2()", "token = response2.body", "token = $abc123", "token = @tok3n_x",
+     "token = abc12", "auth_token = Lain::Token", "token = ::Token", "token: :bearer",
+     %(token = "Bearer \#{t}")].each do |body|
+      it "stores #{body.inspect}, which is ordinary code" do
+        env, called = run(tool_call(input: { "id" => "x", "description" => "y", "body" => body }))
+
+        expect(called).to be(true)
+        expect(env.fetch(:result).error?).to be(false)
+        expect(journal.events).to be_empty
+      end
+    end
+
     # The reviewer's false-positive probe: "sk-" embedded in a hyphenated word
     # ("ask-someone...") satisfied the unanchored key regex, so benign prose was
     # refused under a pattern name it never honestly matched. The key shape must

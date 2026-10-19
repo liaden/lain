@@ -57,6 +57,25 @@ module Lain
       patterns.freeze
     end
 
+    # One vocabulary for both assignment shapes. The write side's shape takes
+    # the word as the last segment of a compound name, but only with a value
+    # that looks like a literal, because it refuses a human's own prose and
+    # ordinary code must pass: a reference, a constant or symbol, an
+    # interpolation, a call or index, and a value of only letters or only
+    # digits are not literals. Each run is atomic, since a backtracking one is
+    # quadratic on a long pasted line.
+    VOCABULARY = "password|passwd|secret|api[_-]?key|token"
+    ASSIGNED_NAME = "(?<![A-Za-z0-9])(?:#{VOCABULARY})(?:[_-](?:access[_-])?key(?:[_-]base)?)?".freeze
+    SEPARATOR = '(?>\s*)(?:=>|:=|[:=])(?>\s*)'
+    QUOTED_LITERAL = '"(?![^"\n]*#\{|\$[{(])[^"\n]+"|\'(?![^\'\n]*#\{|\$[{(])[^\'\n]+\''
+    VALUE_STOPS = '\s"\'`(\[.),;\\\\'
+    BARE_LITERAL = '(?![-@$<:]|#\{|(?-i:ENV[\[.]|params\[|request\.))' \
+                   "(?!(?>[^#{VALUE_STOPS}:]*)::)" \
+                   "(?=(?>[A-Za-z_]*)[^A-Za-z_#{VALUE_STOPS}])(?=(?>[0-9_]*)[^0-9_#{VALUE_STOPS}])" \
+                   "(?>[^#{VALUE_STOPS}]{6,})" \
+                   '(?![(\[]|\.\w)'.freeze
+    private_constant :VOCABULARY, :ASSIGNED_NAME, :SEPARATOR, :QUOTED_LITERAL, :VALUE_STOPS, :BARE_LITERAL
+
     # The sk- shape is anchored with a lookbehind because unanchored it matched
     # INSIDE hyphenated prose ("ask-someone-to-help-..."), refusing a benign
     # write under a pattern name it never honestly matched: a real key stands
@@ -73,15 +92,14 @@ module Lain
       "openai-style api key" => /(?<![\w-])sk-[A-Za-z0-9_-]{16,}/,
       "aws access key id" => /AKIA[0-9A-Z]{16}/,
       "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----(?:.*?-----END [A-Z ]*PRIVATE KEY-----|.*)/m,
-      "credential assignment" => /\b(?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S+/i
+      "credential assignment" => /#{ASSIGNED_NAME}#{SEPARATOR}(?:#{QUOTED_LITERAL}|#{BARE_LITERAL})/i
     )
 
-    # Name-agnostic on purpose, and the reason these stay off the write side: a
-    # compound environment-variable name has no word boundary before "PASSWORD",
-    # so WRITE's name-gated shape cannot see `DATABASE_PASSWORD=` at all, and
-    # gating these on a name vocabulary would reproduce that blind spot over the
-    # file bytes where it matters most. `^` is line-anchored, which is what lets
-    # one scan cover a whole file.
+    # Name-agnostic on purpose, and the reason these stay off the write side:
+    # WRITE's assignment shape sees only a credential word holding a literal, and
+    # gating these on a name vocabulary would reproduce that narrowness over the
+    # file bytes, where an unrecognized name or a dull value is exactly the risk.
+    # `^` is line-anchored, which is what lets one scan cover a whole file.
     #
     # KNOWN IMPRECISION, measured rather than estimated. The argument above
     # carries the dotenv shape, which needs an `=`; it does not equally carry the
@@ -124,7 +142,15 @@ module Lain
       "msmtprc password" => /^[ \t]*password[ \t]+(?<value>\S+)[ \t]*$/
     )
 
-    CONTENT = unreserved(WRITE.merge(ASSIGNMENTS, FILE_FORMATS))
+    # The read side keeps the any-value shape the write side gave up, so a value
+    # read from `$X` or `ENV[` is still masked: a false mask on a read costs one
+    # release decision, where a false refusal on a write loses a note. The
+    # literal shape comes last under its own name, so a line the older shapes
+    # already saw is journaled under the name it always was.
+    CONTENT = unreserved(
+      WRITE.merge("credential assignment" => /\b(?:#{VOCABULARY})\s*[:=]\s*\S+/i)
+           .merge(ASSIGNMENTS, FILE_FORMATS, "credential literal assignment" => WRITE.fetch("credential assignment"))
+    )
 
     # WRITE first, so a line that is both an assignment and a known issuer
     # prefix is journaled under the shape that says more.

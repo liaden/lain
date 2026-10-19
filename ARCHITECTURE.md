@@ -596,7 +596,7 @@ the ordering is the footgun and a list is the shape that stays inspectable.
 Four middleware phases ride this API today: model, tool, turn, and repl.
 `lib/lain/middleware/journal_requests.rb` and `journal_turns.rb` are the model and turn phases
 that write into the session record (disk layout below). `refuse_secret_writes.rb` is a
-tool-phase middleware, the first of `CLI::ToolGuard`'s six layers, that withholds a
+tool-phase middleware, the first of `CLI::ToolGuard`'s eight guards after `ConfineToScope`, that withholds a
 credential-shaped `memory_write` before it reaches the recorder. `skill_dispatch.rb` is the
 repl-phase middleware a `@role/skill` line folds through.
 

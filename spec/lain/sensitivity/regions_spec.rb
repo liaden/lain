@@ -695,14 +695,16 @@ RSpec.describe Lain::Sensitivity::Regions do
         expect(detect(File.binread(repo_path("lib/lain/credential_patterns.rb")))).to be_empty
       end
 
-      # The plan doc carries one deliberately fake Anthropic key. Finding exactly
-      # it, in a 1700-line prose document, is the positive and the negative
-      # control in one assertion.
-      it "finds only the sample key in the plan that specified it" do
+      # The plan doc carries one deliberately fake Anthropic key and quotes a
+      # fake compound assignment 3 times. Finding exactly those, each value
+      # without its backtick, in a long prose document, is the positive and the
+      # negative control in one assertion.
+      it "finds only the sample credentials in the plan that specified them" do
         regions = detect(File.binread(repo_path("planning/archive/chunk-project-root-and-secret-boundary.md")))
 
-        expect(regions.map(&:reason)).to eq(["openai-style api key"])
+        expect(regions.map(&:reason)).to eq(["openai-style api key"] + (["credential literal assignment"] * 3))
         expect(regions.first.bytes).to start_with("sk-ant-")
+        expect(regions.drop(1).map(&:bytes)).to eq(["hunter2"] * 3)
       end
 
       # Measured at 6.0% of 599 files when this landed, against the 86.0% the
@@ -798,6 +800,14 @@ RSpec.describe Lain::Sensitivity::Regions do
           .to eq(["high-entropy token", "openai-style api key"])
         expect(detect(mixed).map(&:start)).to eq([0, mixed.byteindex("sk-")])
       end
+    end
+
+    # The literal shape is the newest and the least specific, so a token an
+    # issuer shape names keeps that name even inside a compound assignment.
+    it "names a quoted mid-line compound assignment of a github token by the token" do
+      line = %(  "GITHUB_TOKEN=ghp_ZK1mQ8vR3xT5wL9nB2jH7yD4sA6fG0pEqW1z"\n)
+
+      expect(detect(line).map(&:reason)).to eq(["github token"])
     end
 
     context "when one span is matched by several detectors at once" do

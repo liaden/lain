@@ -25,10 +25,17 @@ RSpec.describe Lain::Frontend::Intake::Discretion do
     expect(writer.kept).to eq(["note: the build is green"])
   end
 
+  it "follows the write tier's assignment shape, keeping prose and withholding a compound credential name" do
+    discretion.remember("note: the build is green")
+    discretion.remember("DB_PASSWORD=hunter2pass")
+
+    expect(writer.kept).to eq(["note: the build is green"])
+  end
+
   # A terminal can hand over bytes that are not valid in the encoding they are
   # labelled with, and a raise here would unwind the read the line answered.
   it "judges a line whose bytes are not valid UTF-8 without raising" do
-    discretion.remember((+"caf\xE9 token=abc").force_encoding(Encoding::UTF_8))
+    discretion.remember((+"caf\xE9 token=abc123").force_encoding(Encoding::UTF_8))
     discretion.remember((+"caf\xE9 au lait").force_encoding(Encoding::UTF_8))
 
     expect(writer.kept.map(&:b)).to eq(["caf\xE9 au lait".b])

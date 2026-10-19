@@ -119,7 +119,12 @@ module Lain
       )\z/x
       REFERENCE_CHECKED = ["quoted password key", "suffixed password key", "url credentials"].freeze
 
-      CONTENT_SHAPES = CredentialPatterns.for(:content).merge(PASSWORD_SHAPES).freeze
+      # The literal assignment ranks last, below these too, so a token an issuer
+      # shape names keeps that name inside a compound assignment.
+      CONTENT_SHAPES = CredentialPatterns.for(:content).then do |content|
+        literal = content.slice("credential literal assignment")
+        content.except(*literal.keys).merge(PASSWORD_SHAPES, literal)
+      end.freeze
 
       # Issuer-fixed shapes are whole-match secrets; the assignment shapes are
       # gated and contribute only their value. Order is the table's own, so a
