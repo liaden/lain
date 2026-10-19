@@ -108,7 +108,7 @@ module Lain
         result = poll(spool, id, deadline, home)
         return waited_out(id, timeout, branch, home, deadline) if result.nil?
 
-        told(result.report, id, branch)
+        told(result, id, branch)
       rescue Interrupt
         @sink.puts("interrupted while waiting on #{id}; it is still queued unless it has landed since")
         130
@@ -218,11 +218,22 @@ module Lain
 
       def still_queued(id, timeout) = said(2, "#{id} is still queued after #{timeout}s")
 
-      def told(report, id, branch)
-        return said(0, "#{id} landed at #{report.sha}") if report.moved?
+      def told(result, id, branch)
+        report = result.report
+        return said(0, landed(result, id)) if report.moved?
         return said(0, "#{id} was already on #{branch}") if report.kind == :nothing_to_do
 
         said(1, ["#{id} did not land: #{report.kind}", report.summary].reject(&:empty?).join("\n"))
+      end
+
+      def landed(result, id)
+        ["#{id} landed at #{result.report.sha}", unverified(result.verification)].compact.join("\n")
+      end
+
+      def unverified(verification)
+        return unless verification&.outcome == :skipped
+
+        "verification skipped: #{verification.detail}"
       end
 
       def said(status, line)

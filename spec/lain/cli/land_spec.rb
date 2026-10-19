@@ -51,9 +51,9 @@ RSpec.describe Lain::CLI::Land, :seam do
     spool.enqueue(Lain::Isolation::LandingQueue::Worker.new(id:, ref: ref_for(id), sha: commit))
   end
 
-  def complete(entry, kind:)
+  def complete(entry, kind:, verification: nil)
     report = Lain::Isolation::WorkerHandoff::Report.new(kind:, ref: entry.worker.ref, sha: entry.worker.sha)
-    result = Lain::Isolation::MergeCoordinator::Spool::Result.new(id: entry.id, report:, verification: nil, batch: 1)
+    result = Lain::Isolation::MergeCoordinator::Spool::Result.new(id: entry.id, report:, verification:, batch: 1)
     spool.complete(entry.id, result)
   end
 
@@ -212,6 +212,27 @@ RSpec.describe Lain::CLI::Land, :seam do
           .to output(/#{commit}/).to_stdout
       end
       expect(status).to eq(0)
+    end
+
+    it "says the landing ran no verification when none is configured" do
+      entry = queued
+      skipped = Lain::Isolation::LandingQueue::Verification.new(
+        outcome: :skipped, tip: commit, detail: Lain::Isolation::Verifier::Skipped::DETAIL
+      )
+      complete(entry, kind: :merged, verification: skipped)
+
+      expect(land.wait(entry.id, branch: "main")).to eq(0)
+      expect(sink.string).to include("landed at #{commit}", "verification skipped: no verification is configured")
+    end
+
+    it "says nothing of verification when it passed" do
+      entry = queued
+      passed = Lain::Isolation::LandingQueue::Verification.new(outcome: :passed, tip: commit)
+      complete(entry, kind: :merged, verification: passed)
+
+      land.wait(entry.id, branch: "main")
+
+      expect(sink.string).not_to include("verification")
     end
 
     it "refuses an id the spool has neither queued nor answered, naming it and the branch" do

@@ -425,7 +425,9 @@ else is refused. The implementation gate's question reports what the project's s
 The merge coordinator's command line. A chat's workers queue through it on their own; you run it to
 land a commit by hand, or to see where a queued one stands. One drainer lands a branch's queue at a
 time, a batch of up to `batch_cap` entries per run of the suite named by `verify`, and the branch only
-ever fast-forwards to a commit that run passed.
+ever fast-forwards to a commit that run passed. With no `verify` configured a branch fast-forwards
+unverified, and `lain land wait` says `verification skipped: no verification is configured` after
+the landed line.
 
 ```bash
 lain land enqueue                       # queue HEAD for the main worktree's branch, start a drainer
