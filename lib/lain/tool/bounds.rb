@@ -195,7 +195,7 @@ module Lain
       # case measured.
       #
       # All of that is per result: several results in one turn add up, and
-      # nothing here bounds their sum.
+      # {RoundBudget} bounds their sum when an Agent is given one.
       #
       # A row per tool rather than one constant, so moving one tool is one
       # number. Every tool that returns content has a row; a row cap such as

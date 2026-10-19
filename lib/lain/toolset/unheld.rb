@@ -8,7 +8,7 @@ module Lain
     #
     # {Agent::ToolRunner} resolves each call to one of these or to the real
     # tool, once, and every reader takes it from there: it is never
-    # parallel-safe, it does not ask for approval, and when interpreted it
+    # parallel-safe or rerunnable, it does not ask for approval, and when interpreted it
     # refuses by name. A missing name is a failed call, not a crash -- and not
     # a question for a human, since approving it would run nothing.
     Unheld = Data.define(:name) do
@@ -17,6 +17,7 @@ module Lain
       end
 
       def parallel_safe? = false
+      def rerunnable? = false
       def requires_approval? = false
       def held? = false
 

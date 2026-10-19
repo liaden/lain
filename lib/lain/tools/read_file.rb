@@ -756,6 +756,8 @@ module Lain
       # chdir'd.
       def parallel_safe? = true
 
+      def rerunnable? = true
+
       protected
 
       def perform(input, invocation)

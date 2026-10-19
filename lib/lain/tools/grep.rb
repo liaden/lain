@@ -257,6 +257,8 @@ module Lain
       # filesystem. No Session write, no chdir, no shared state across calls.
       def parallel_safe? = true
 
+      def rerunnable? = true
+
       protected
 
       def perform(input, invocation)

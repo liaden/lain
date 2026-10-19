@@ -797,6 +797,14 @@ to the smallest local window, not to a model: at the worst measured density one 
 human to decide). `web_fetch` is an `Artifact`, and it is measured on the **readable text** its
 nokogiri converter produces rather than on the markup; `raw: true` asks for the markup instead.
 
+When an Agent is given one, a tool round's results are also bounded **as a whole**, by
+`Tool::RoundBudget` (`lib/lain/tool/round_budget.rb`): the policy builds a budget each round from the
+Agent's own window, the last turn's input and output, and the reply reserve, and
+`Agent::ToolRunner` applies it in call order, a torn round included. A repeated result is
+answered "same result as call <id>" when that is shorter, a rerunnable read past the budget is an
+error result (so it does not count as read), and when anything was shortened a `round_bounded`
+record names the turn and what was delivered, deduplicated and withheld.
+
 `Tool::Input` (`lib/lain/tool/input.rb`) is ActiveModel: one field declaration yields both the
 JSON Schema the model sees and the local validation, so they cannot diverge, and coercion is
 free. Its validations check **shape, not safety**; the file's header comment says so, because

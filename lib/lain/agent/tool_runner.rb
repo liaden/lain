@@ -57,15 +57,20 @@ module Lain
       # value. Nothing it holds is shared past the turn.
       class Answers
         # @param response [Lain::Response]
-        def self.for(response) = new(response.tool_uses)
+        def self.for(response) = new(response.tool_uses, usage: response.usage)
 
         # The turn's calls in wire order -- the SAME lenses {#blocks} keys by,
         # which is why {#run} reads them from here instead of asking the Response
         # a second time (`#tool_uses` mints a fresh lens per call).
         attr_reader :uses
 
-        def initialize(uses)
+        # The usage of the turn that made the calls, kept so a torn round's
+        # budget has the room a settled one would.
+        attr_reader :usage
+
+        def initialize(uses, usage: Usage.zero)
           @uses = uses.to_a.freeze
+          @usage = usage
           @blocks = {}
           @dispatched = {}
           @awaiting = {}
@@ -176,15 +181,26 @@ module Lain
       end
       private_class_method :refuse_mute_runner
 
+      # The room a runner told nothing about its window has: none, so a budget
+      # handed to it errs toward withholding.
+      ROOMLESS = ->(usage) { { window: 0, usage:, reserve: 0 } }
+
       # `toolset:` is what a call's name resolves against -- ONCE per call, in
       # {#dispatch} -- and what {#answered_questions} harvests from. `handler`
       # interprets the tool that resolution found; it holds no toolset itself.
+      # `round_budget:` is asked for one budget per round, with what `room:`
+      # answers for the usage of the turn that made the calls; `journal:` is
+      # where a round it shortened is recorded.
       def initialize(handler:, middleware: Middleware::Stack.new, toolset: Toolset.new,
-                     observer: Observer::Null.new)
+                     observer: Observer::Null.new, round_budget: Tool::RoundBudget::NONE, room: ROOMLESS,
+                     journal: Channel::Null.instance)
         @handler = handler
         @middleware = middleware
         @toolset = toolset
         @observer = observer
+        @round_budget = round_budget
+        @room = room
+        @journal = journal
       end
 
       # Barrier semantics: the turn splits into maximal CONTIGUOUS runs of
@@ -204,6 +220,9 @@ module Lain
       # commit down the cancellation path, where the observation that used to
       # raise never runs. No tool runs either, which is the better refusal.
       #
+      # The round's budget applies once every call has answered, so the
+      # observer sees what the model is sent.
+      #
       # @return [Array<Hash>] one tool_result block per tool_use, in wire order
       def run(response, context:, answers: Answers.for(response))
         refuse_foreign_answers(response, answers)
@@ -213,7 +232,7 @@ module Lain
         contiguous_runs(uses, safety).each do |run|
           gatherable?(run, safety) ? gather(run, context, answers) : sequential(run, context, answers)
         end
-        answers.blocks.tap { |blocks| observe_all(names, blocks) }
+        bounded(answers).tap { |blocks| observe_all(names, blocks) }
       end
 
       # One user-turn delivery: the tool_result blocks PLUS the causal edges the
@@ -253,7 +272,7 @@ module Lain
       # @param answers [Answers] the turn's partial answers
       # @return [Hash] {Timeline#commit} kwargs: `content:`, `causal_parents:`
       def cancelled_delivery(answers)
-        { content: answers.blocks, causal_parents: answered_questions }
+        { content: bounded(answers), causal_parents: answered_questions }
       end
 
       private
@@ -288,6 +307,11 @@ module Lain
         blocks.each { |block| observe(block, names.fetch(block["tool_use_id"])) }
       end
 
+      def bounded(answers)
+        calls = answers.uses.map { |tool_use| Tool::RoundBudget::Call.new(id: tool_use.id, tool: resolved(tool_use.name)) }
+        @round_budget.for { @room.call(answers.usage) }.call(answers.blocks, calls) { |record| @journal << record }
+      end
+
       def refuse_foreign_answers(response, answers)
         return if answers.answers?(response)
 
@@ -320,12 +344,11 @@ module Lain
       end
 
       # Observation is a side channel, so a broken observer costs the turn
-      # nothing -- the same containment {Oracle::Eager} gives a failed fire. That
-      # it is also SILENT is a named debt: a ToolRunner holds no journal and
-      # nothing outside the frontend may write to $stderr, so today there is
-      # nowhere for the failure to go. Give this object a journal and this rescue
-      # should record instead of swallow. `Async::Stop` is not a StandardError,
-      # so a stop still cancels the tree.
+      # nothing -- the same containment {Oracle::Eager} gives a failed fire. It
+      # is also silent: nothing outside the frontend may write to $stderr, and a
+      # failed observation changes nothing the model is sent, so it is not a
+      # fact of the round the journal records. `Async::Stop` is not a
+      # StandardError, so a stop still cancels the tree.
       def observe(block, tool_name)
         @observer.observe(block, tool_name)
       rescue StandardError

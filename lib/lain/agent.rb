@@ -61,7 +61,7 @@ module Lain
     # members too, so their DEFAULTS come from that value; they stay named here
     # because the clash rule is keyed on what a caller actually wrote.
     INGREDIENTS = { model_caller: %i[provider model_middleware],
-                    tool_runner: %i[handler tool_middleware tool_observer],
+                    tool_runner: %i[handler tool_middleware tool_observer round_budget],
                     accounting: %i[journal] }.freeze
 
     # The ingredient vocabulary, flat. Public because {#initialize} splits its
@@ -145,6 +145,9 @@ module Lain
     #   rather than built from `handler:`/`tool_middleware:`/`tool_observer:`.
     # @param handler [Effect::Handler] the tool-effect interpreter a ToolRunner
     #   gets built over when `tool_runner:` is not written.
+    # @param round_budget [Tool::RoundBudget] what a tool round's results may
+    #   cost together, asked each round with this Agent's window and the turn
+    #   that made the calls. Defaults to {Tool::RoundBudget::NONE}.
     # @param accounting [Agent::Accounting] the run's token roll-up, handed over
     #   WHOLE rather than built from `journal:`.
     # @param timeline [Timeline, nil] the run's causal history. `nil` builds an
@@ -183,7 +186,7 @@ module Lain
     #   keeps its meaning. Writing both raises.
     def initialize(toolset:, context:, instrumentation: OMITTED,
                    model_caller: OMITTED, provider: OMITTED,
-                   tool_runner: OMITTED, handler: OMITTED,
+                   tool_runner: OMITTED, handler: OMITTED, round_budget: OMITTED,
                    accounting: OMITTED, timeline: nil, workspace: Workspace.empty,
                    session: Session.new, mailbox: Context::Mailbox::Null,
                    budget: Budget.new, request_override: RequestOverride::None,
@@ -197,7 +200,7 @@ module Lain
       @mailbox = mailbox
       @context_window = context_window
       wire_callers(request_override:, instrumentation:, instrumented:,
-                   model_caller:, tool_runner:, accounting:, provider:, handler:)
+                   model_caller:, tool_runner:, accounting:, provider:, handler:, round_budget:)
       seed_run_state(session, snapshot_slot, budget, display:, display_as:)
     end
 
@@ -526,7 +529,20 @@ module Lain
       ToolRunner.new(handler: given.fetch(:handler) { Effect::Handler::Live.new },
                      middleware: given.fetch(:tool_middleware) { @instrumentation.tool_middleware },
                      toolset: @toolset,
-                     observer: given.fetch(:tool_observer) { @instrumentation.tool_observer })
+                     observer: given.fetch(:tool_observer) { @instrumentation.tool_observer },
+                     round_budget: given.fetch(:round_budget) { Tool::RoundBudget::NONE },
+                     room: method(:round_room), journal: @instrumentation.journal)
+    end
+
+    # The input reading is Accounting's, which survives a provider that
+    # reports no input tokens; the output is the turn's own, since that reply
+    # is now part of the context the round's results join. The head is still
+    # that turn while its round runs, the settled path and the torn one alike.
+    def round_room(usage)
+      window = @context_window.window_tokens(context.model)
+      { window:, reserve: ReplyReserve.for(window:, ceiling: context.max_tokens).tokens, head: @timeline.head_digest,
+        usage: Usage.new(input_tokens: accounting.last_turn_usage(on: @timeline).to_i,
+                         output_tokens: usage.output_tokens) }
     end
 
     def built_accounting(given) = Accounting.new(journal: given.fetch(:journal) { @instrumentation.journal })

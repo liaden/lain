@@ -46,6 +46,12 @@ module ToolRunnerSpecSupport
     end
   end
 
+  # A probe whose call can be repeated with nothing lost, so a round budget may
+  # withhold its result.
+  class RerunnableProbe < ProbeTool
+    def rerunnable? = true
+  end
+
   # Post-dispatch fixtures. Records what the seam was handed and WHERE it
   # ran -- the Async task, so a spec can pin the observation to the caller's
   # own scope rather than to a gather child. Shares the dispatch log, so
@@ -709,6 +715,95 @@ RSpec.describe Lain::Agent::ToolRunner do
       expect(blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2])
       expect(blocks.map { |block| block["content"] }).to eq(["ran tu_1", "ran tu_2"])
       expect(observer.seen).to eq(%w[tu_1 tu_2])
+    end
+  end
+
+  describe "a round budget" do
+    let(:journal) { [] }
+    let(:room) { ->(usage) { { window: 32_768, usage: usage + Lain::Usage.new(input_tokens: 7_492), reserve: 4_096 } } }
+
+    def reader(name, body, release: ToolRunnerSpecSupport::OpenGate.new)
+      ToolRunnerSpecSupport::RerunnableProbe.new(name:, safe: true, log: [], release:, body: -> { body })
+    end
+
+    def bounded_runner(*tools, round_budget: Lain::Tool::RoundBudget.window)
+      described_class.new(handler: Lain::Effect::Handler::Live.new, toolset: Lain::Toolset.new(tools),
+                          round_budget:, room:, journal:)
+    end
+
+    it "holds the round's results to the budget the policy builds from the room, and journals it" do
+      runner = bounded_runner(reader("one", "a" * 20_000), reader("two", "b" * 20_000), reader("again", "a" * 20_000))
+      response = tool_response(["tu_1", "one", {}], ["tu_2", "two", {}], ["tu_3", "again", {}])
+
+      blocks = runner.run(response, context: nil)
+
+      expect(blocks.map { |block| [block["tool_use_id"], block["is_error"]] })
+        .to eq([["tu_1", false], ["tu_2", true], ["tu_3", false]])
+      expect(blocks.last["content"]).to eq("same result as call tu_1")
+      expect(journal.map(&:to_journal)).to contain_exactly(include("type" => "round_bounded", "withheld" => %w[tu_2]))
+    end
+
+    it "delivers the same set whichever order the calls finish in" do
+      outcomes = [%w[one two three], %w[three two one]].map do |finish|
+        gates = finish.to_h { |name| [name, Async::Queue.new] }
+        runner = bounded_runner(*%w[one two three].map { |name| reader(name, name * 3_000, release: gates[name]) })
+        response = tool_response(["tu_1", "one", {}], ["tu_2", "two", {}], ["tu_3", "three", {}])
+        Sync do |task|
+          run = task.async { runner.run(response, context: nil) }
+          finish.each { |name| gates.fetch(name).enqueue(:go) }
+          run.wait
+        end
+      end
+
+      expect(outcomes.first).to eq(outcomes.last)
+      expect(outcomes.first.map { |block| block["is_error"] }).to eq([false, false, true])
+    end
+
+    it "observes the results the model is sent" do
+      observer = ToolRunnerSpecSupport::RecordingObserver.new
+      runner = described_class.new(handler: Lain::Effect::Handler::Live.new, round_budget: Lain::Tool::RoundBudget.static,
+                                   toolset: Lain::Toolset.new([reader("one", "a" * 40_000)]), room:, observer:)
+
+      runner.run(tool_response(["tu_1", "one", {}]), context: nil)
+
+      expect(observer.blocks.map { |block| block["is_error"] }).to eq([true])
+    end
+
+    it "holds a torn round's earned results to the budget too, from the usage of the turn that made the calls" do
+      runner = bounded_runner(reader("read", "r"))
+      calls = (1..4).map { |n| { "type" => "tool_use", "id" => "tu_#{n}", "name" => "read", "input" => {} } }
+      usage = Lain::Usage.new(output_tokens: 2_000)
+      response = Lain::Response.new(content: calls, stop_reason: :tool_use, usage:)
+      answers = described_class::Answers.for(response)
+      answers.uses.first(3).each_with_index do |use, index|
+        answers.answered(use, { "type" => "tool_result", "tool_use_id" => use.id, "content" => index.to_s * 10_000,
+                                "is_error" => false })
+      end
+
+      content = runner.cancelled_delivery(answers).fetch(:content)
+
+      expect(content.map { |block| block["is_error"] }).to eq([false, false, true, true])
+      expect(content[2]["content"]).to include("25125-byte budget")
+      expect(journal.map(&:withheld)).to eq([%w[tu_3]])
+    end
+
+    it "delivers an ok answer to a name the set does not hold, past the budget, as it is" do
+      handler = Lain::Effect::Handler::Mock.new(default: Lain::Tool::Result.ok("z" * 40_000))
+      runner = described_class.new(handler:, round_budget: Lain::Tool::RoundBudget.window, room:)
+
+      blocks = runner.run(tool_response(["tu_1", "ghost", {}]), context: nil)
+
+      expect(blocks.map { |block| block["is_error"] }).to eq([false])
+    end
+
+    it "changes nothing with no budget" do
+      tools = [reader("one", "a" * 40_000), reader("two", "a" * 40_000)]
+      runner = described_class.new(handler: Lain::Effect::Handler::Live.new, journal:, toolset: Lain::Toolset.new(tools))
+
+      blocks = runner.run(tool_response(["tu_1", "one", {}], ["tu_2", "two", {}]), context: nil)
+
+      expect(blocks.map { |block| block["content"] }).to eq(["a" * 40_000] * 2)
+      expect(journal).to be_empty
     end
   end
 end

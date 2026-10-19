@@ -228,6 +228,45 @@ RSpec.describe Lain::Session do
       expect(session.read?("/tmp/app.rb")).to be(true)
     end
 
+    describe "a round held to a budget" do
+      def result_block(id, content) = { "type" => "tool_result", "tool_use_id" => id, "content" => content }
+
+      def budgeted(ids, contents)
+        budget = Lain::Tool::RoundBudget.static.for { { window: 0, usage: Lain::Usage.zero, reserve: 0 } }
+        calls = ids.map { |id| Lain::Tool::RoundBudget::Call.new(id:, tool: Lain::Tools::ReadFile.new) }
+        budget.call(ids.zip(contents).map { |id, content| result_block(id, content) }, calls)
+      end
+
+      def record_reads(ids)
+        ids.zip(%w[/tmp/app.rb /tmp/lib.rb]).each do |id, path|
+          session.record_read(path, identity: version, tool_use_id: id)
+        end
+      end
+
+      def read_round(ids, contents)
+        asked = root.commit(role: :assistant, content: calls(*ids))
+        session.on_chain(asked)
+        record_reads(ids)
+        delivered = asked.commit(role: :user, content: budgeted(ids, contents))
+        session.record_delivery(digest: delivered.head_digest, parent: asked.head_digest,
+                                content: delivered.head.content)
+        session.on_chain(delivered.commit(role: :assistant, content: calls("tu_9")))
+      end
+
+      it "does not count a read whose result the budget withheld" do
+        read_round(%w[tu_1 tu_2], ["a" * 30_000, "b" * 30_000])
+
+        expect(session.read?("/tmp/app.rb")).to be(true)
+        expect(session.read?("/tmp/lib.rb")).to be(false)
+      end
+
+      it "counts a read answered as the same result as an earlier call, whose bytes the model has" do
+        read_round(%w[tu_1 tu_2], ["same bytes"] * 2)
+
+        expect(session.read?("/tmp/lib.rb")).to be(true)
+      end
+    end
+
     it "stops counting it once the chain is rewound past that turn, and never forgets it" do
       after = round(root, "tu_1")
       session.on_chain(after.rewind(2).commit(role: :assistant, content: calls("tu_2")))

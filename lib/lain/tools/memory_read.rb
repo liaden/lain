@@ -67,6 +67,8 @@ module Lain
       # process-global state, nothing mutated.
       def parallel_safe? = true
 
+      def rerunnable? = true
+
       protected
 
       # Rescuing UnknownId beats a #key? pre-check, which would walk the

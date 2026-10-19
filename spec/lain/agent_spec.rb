@@ -2333,6 +2333,7 @@ RSpec.describe Lain::Agent do
         handler: Lain::Effect::Handler::Mock.new,
         tool_middleware: Lain::Middleware::Stack.new,
         tool_observer: Lain::Agent::ToolRunner::Observer::Null.new,
+        round_budget: Lain::Tool::RoundBudget.static,
         journal: RecordingChannel.new }.fetch(keyword)
     end
 
@@ -2409,7 +2410,8 @@ RSpec.describe Lain::Agent do
     # wiring surface cannot list different keywords.
     it "names the ingredient vocabulary its refusals are keyed on" do
       expect(described_class::KEYWORDS)
-        .to contain_exactly(:provider, :model_middleware, :handler, :tool_middleware, :tool_observer, :journal)
+        .to contain_exactly(:provider, :model_middleware, :handler, :tool_middleware, :tool_observer, :round_budget,
+                            :journal)
       expect(described_class::OMITTED).to be_frozen
     end
 
@@ -2722,6 +2724,76 @@ RSpec.describe Lain::Agent do
       expect(described_class.public_instance_methods(false)).not_to include(:model_caller, :tool_runner,
                                                                             :accounting)
       expect(described_class.private_instance_methods(false)).to include(:model_caller, :tool_runner, :accounting)
+    end
+  end
+
+  describe "a round budget" do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @tmpdir = dir
+        example.run
+      end
+    end
+
+    let(:journal) { [] }
+    let(:paths) do
+      (1..5).map do |n|
+        File.join(@tmpdir, "file#{n}.rb").tap { |path| File.write(path, "# file #{n} #{"x" * 60}\n" * 100) }
+      end
+    end
+
+    def window_agent(*responses)
+      described_class.new(provider: CoreGraph.provider(*responses), journal:,
+                          toolset: CoreGraph.toolset([Lain::Tools::ReadFile.new, Lain::Tools::EditFile.new]),
+                          context: CoreGraph.context(model: "qwen3-coder:30b", max_tokens: 16_384),
+                          context_window: Lain::ContextWindow.new(windows: { "qwen3" => 32_768 }),
+                          round_budget: Lain::Tool::RoundBudget.window)
+    end
+
+    def fifteen_reads
+      calls = (1..15).map do |n|
+        { "type" => "tool_use", "id" => "tu_#{n}", "name" => "read_file", "input" => { "path" => paths[(n - 1) % 5] } }
+      end
+      Lain::Response.new(content: calls, stop_reason: :tool_use,
+                         usage: Lain::Usage.new(input_tokens: 7_492, output_tokens: 300))
+    end
+
+    def results(agent)
+      agent.timeline.to_a.find { |turn| turn.role == "user" && turn.content.first["type"] == "tool_result" }.content
+    end
+
+    it "holds the round to the window left after the last turn and the reply reserve" do
+      a = window_agent(fifteen_reads, text_response)
+      a.ask("read them all")
+
+      blocks = results(a)
+      expect(blocks.first(3).map { |block| block["is_error"] }).to eq([false, false, false])
+      expect(blocks[5]["content"]).to eq("same result as call tu_1")
+      expect(blocks[3]).to include("is_error" => true,
+                                   "content" => start_with("not delivered: this round reached its 27352-byte budget " \
+                                                           "(window 32768 tokens);"))
+      expect(journal.grep(Lain::Telemetry::RoundBounded).map { |record| [record.head, record.withheld] })
+        .to eq([[a.timeline.to_a[1].digest, %w[tu_4 tu_5 tu_9 tu_10 tu_14 tu_15]]])
+    end
+
+    it "runs a tool round with no budget on a window book that cannot name the model's window" do
+      a = described_class.new(provider: CoreGraph.provider(tool_response(["tu_1", "echo", { "text" => "x" }]),
+                                                           text_response),
+                              toolset:, context: CoreGraph.context(model: "mystery-model"),
+                              context_window: Lain::ContextWindow.new(windows: { "qwen3" => 32_768 }))
+
+      expect(a.ask("go").text).to eq("done")
+    end
+
+    it "refuses an edit of a file whose read was withheld, as for any error result" do
+      edit = tool_response(["tu_16", "edit_file",
+                            { "path" => paths[3], "old_string" => "# file 4", "new_string" => "#" }])
+      a = window_agent(fifteen_reads, edit, text_response)
+      a.ask("read them all, then edit the fourth")
+
+      refusal = a.timeline.to_a.reverse.find { |turn| turn.role == "user" }.content.first
+      expect(refusal).to include("is_error" => true, "content" => include("was never read"))
+      expect(File.read(paths[3])).to start_with("# file 4")
     end
   end
 end

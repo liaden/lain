@@ -74,6 +74,8 @@ module Lain
       # a chdir -- no process-global state.
       def parallel_safe? = true
 
+      def rerunnable? = true
+
       protected
 
       def perform(input, invocation)

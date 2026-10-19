@@ -119,6 +119,14 @@ module Lain
       false
     end
 
+    # Whether a call can be asked again in a later round with nothing lost but
+    # the round: a read. Defaults to false, because a {RoundBudget} withholds
+    # only these, and a result that cannot be asked for again (a subagent's
+    # answer, a command's output) is lost if withheld.
+    def rerunnable?
+      false
+    end
+
     # Whether this is a tool a {Toolset} holds: always, for a real one.
     # {Toolset::Unheld} is the stand-in that answers no, so the approval gate
     # can decline to ask a human about a call that will run nothing.
