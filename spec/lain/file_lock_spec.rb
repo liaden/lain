@@ -81,6 +81,121 @@ RSpec.describe Lain::FileLock, :seam do
     expect(notices.first).to include("pid=#{holder}")
   end
 
+  describe "reclaim" do
+    def killed_holder
+      ready, held = IO.pipe
+      pid = fork do
+        ready.close
+        described_class.new(@path).hold do |note|
+          note.call("verify=4242")
+          held.write("held") && held.flush && sleep
+        end
+      ensure
+        exit!(0)
+      end
+      held.close
+      raise "the other process never took the lock" unless ready.read(4) == "held"
+
+      Process.kill(:KILL, pid)
+      Process.wait(pid)
+      pid
+    end
+
+    it "hands a holder killed with SIGKILL's line, with its note, to whoever takes the lock next" do
+      reclaimed = []
+      dead = killed_holder
+
+      during = described_class.new(@path).hold(reclaim: ->(line) { reclaimed << line }) { File.read(@path) }
+
+      expect(reclaimed.size).to eq(1)
+      expect(reclaimed.first).to match(/\Apid=#{dead} command=.* verify=4242\z/)
+      expect(during).to match(/\Apid=#{Process.pid} command=[^\n]*\n\z/)
+      expect(during).not_to include("verify=4242")
+    end
+
+    it "calls nothing after a holder released normally" do
+      lock = described_class.new(@path)
+      lock.hold { |note| note.call("verify=1") }
+      reclaimed = []
+
+      lock.hold(reclaim: ->(line) { reclaimed << line }) { :entered }
+
+      expect(reclaimed).to be_empty
+    end
+
+    it "hands reclaim only the first line when a kill left an older line's tail behind it" do
+      File.write(@path, "pid=2 command=short\nverify_pgid=99 tail\n")
+      reclaimed = []
+
+      described_class.new(@path).hold(reclaim: ->(line) { reclaimed << line }) { :entered }
+
+      expect(reclaimed).to eq(["pid=2 command=short"])
+    end
+
+    it "keeps the dead holder's line for the next taker when reclaim raises" do
+      File.write(@path, "pid=1 command=dead\n")
+      ran = false
+
+      expect { described_class.new(@path).hold(reclaim: ->(_line) { raise "kill failed" }) { ran = true } }
+        .to raise_error(RuntimeError, "kill failed")
+      expect([ran, File.read(@path)]).to eq([false, "pid=1 command=dead\n"])
+    end
+
+    it "reads a dead holder's non-ASCII line under a US-ASCII locale" do
+      File.binwrite(@path, "pid=1 command=lain land /home/café\n")
+      reclaimed = []
+      external = Encoding.default_external
+      silently { Encoding.default_external = Encoding::US_ASCII }
+
+      described_class.new(@path).hold(reclaim: ->(line) { reclaimed << line }) { :entered }
+
+      expect(reclaimed).to eq(["pid=1 command=lain land /home/café"])
+    ensure
+      silently { Encoding.default_external = external }
+    end
+
+    it "calls no reclaim under a shared hold, and still yields a callable note" do
+      File.write(@path, "pid=1 command=dead\n")
+      reclaimed = []
+
+      noted = described_class.new(@path, mode: File::LOCK_SH)
+                             .hold(reclaim: ->(line) { reclaimed << line }) { |note| note.call("verify=1") }
+
+      expect([noted, reclaimed, File.read(@path)]).to eq([nil, [], "pid=1 command=dead\n"])
+    end
+  end
+
+  def silently
+    verbose = $VERBOSE
+    $VERBOSE = nil
+    yield
+  ensure
+    $VERBOSE = verbose
+  end
+
+  it "never shows a reader an empty holder line while a holder notes" do
+    lock = described_class.new(@path)
+    reader = described_class.new(@path)
+    seen = []
+    lock.hold do |note|
+      watcher = Thread.new { 2_000.times { seen << reader.holder } }
+      note.call("i=0") while watcher.alive?
+    end
+
+    expect(seen).not_to include("")
+  end
+
+  it "appends a note to the holder line while the lock is held" do
+    lock = described_class.new(@path)
+
+    during = lock.hold do |note|
+      note.call("verify=7")
+      lock.holder
+    end
+
+    expect(during).to match(/\Apid=#{Process.pid} command=.* verify=7\z/)
+  end
+
   it "polls through its sleeper rather than blocking the thread" do
     slept = []
     File.open(@path, File::RDWR | File::CREAT) do |blocker|

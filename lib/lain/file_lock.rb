@@ -34,20 +34,27 @@ module Lain
       @told_after = [(patience / interval.to_f).ceil, 1].max
     end
 
+    # A clean release truncates the file, so a line still there when the lock is
+    # taken was written by a holder that died holding it.
     # @param notice [#call] told once, in words, who holds the lock when a wait outlasts the patience
+    # @param reclaim [#call] given a dead holder's line once the lock is taken, before it is overwritten
+    # @yieldparam note [#call] appends its text to this holder's line; each call
+    #   rewrites the file, so it moves the mtime a reader may take as when the lock was taken
     # @return the block's value
-    def hold(notice: Isolation::ParentLock::Silent, &)
+    def hold(notice: Isolation::ParentLock::Silent, reclaim: Isolation::ParentLock::Silent, &)
       opened do |file|
         waited(file, notice)
-        held(file, &)
+        held(file, reclaim, &)
       end
     end
 
+    # An exclusive try yields the same note as #hold, and overwrites a dead
+    # holder's line without handing it to anyone.
     # @return [Boolean] true after running the block; false, without running it, when another process holds the lock
     def try(&)
       opened do |file|
         locked = file.flock(@mode | File::LOCK_NB)
-        held(file, &) if locked
+        held(file, Isolation::ParentLock::Silent, &) if locked
         locked ? true : false
       end
     end
@@ -55,7 +62,7 @@ module Lain
     # @return [String] the holder's pid and command, or "" when free
     # @raise [Unreadable] when the file exists and this user cannot read it
     def holder
-      File.exist?(@path) ? File.read(@path).strip : ""
+      File.exist?(@path) ? Utf8.legible(File.binread(@path)).strip : ""
     rescue SystemCallError => e
       raise Unreadable.new(@path, e)
     end
@@ -98,17 +105,30 @@ module Lain
     end
 
     # Shared holders must not overwrite one another's name, so only an exclusive one writes it.
-    def held(file, &block)
-      @mode == File::LOCK_EX ? claimed(file, &block) : yield
+    def held(file, reclaim, &block)
+      @mode == File::LOCK_EX ? claimed(file, reclaim, &block) : yield(Isolation::ParentLock::Silent)
     end
 
-    def claimed(file)
-      file.truncate(0)
-      file.write("pid=#{Process.pid} command=#{[$PROGRAM_NAME, *ARGV].join(" ")}\n")
-      file.flush
-      yield
-    ensure
-      file.truncate(0)
+    # Reclaim runs outside the ensure, so a reclaim that raises leaves the dead line for the next taker.
+    def claimed(file, reclaim)
+      previous = Utf8.legible(file.read).lines.first.to_s.strip
+      reclaim.call(previous) unless previous.empty?
+      begin
+        line = "pid=#{Process.pid} command=#{[$PROGRAM_NAME, *ARGV].join(" ")}"
+        named(file, line)
+        yield ->(text) { named(file, line = "#{line} #{text}") }
+      ensure
+        file.truncate(0)
+      end
+    end
+
+    # Written over the old line before the tail is cut, so neither a reader nor
+    # a kill between the two calls ever finds the file empty.
+    def named(file, line)
+      bytes = "#{line}\n".b
+      file.pwrite(bytes, 0)
+      file.truncate(bytes.bytesize)
+      nil
     end
 
     def waiting_on
