@@ -76,7 +76,7 @@ module Lain
         # A thread nobody will answer in is still a thread the human may place
         # a note at, so this takes the anchor and does nothing with it rather
         # than making {Handover#wrote_annotation} ask whether a docent exists.
-        def self.hold(_anchor) = nil
+        def self.hold(_anchor, **) = nil
       end
 
       # Nobody wired a close to this review: an epic stage's, which ends with the
@@ -380,7 +380,7 @@ module Lain
       def wrote_annotation(note)
         placed = anchor(note)
         @session.annotate(placed, note["text"], kind: note["kind"], drifted: note["drifted"])
-        @docent.hold(placed)
+        @docent.hold(placed, note: Surface::Message.new(speaker: note["kind"], text: note["text"]))
         nil
       rescue Lain::Error, ArgumentError => e
         e.message

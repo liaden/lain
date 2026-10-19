@@ -711,14 +711,24 @@ RSpec.describe Lain::Review::Handover do
     it "tells the docent about a note the session took, and not about one it refused" do
       held = []
       docent = Object.new
-      docent.define_singleton_method(:hold) { |anchor| held << anchor.id }
+      docent.define_singleton_method(:hold) { |anchor, note:| held << [anchor.id, note] }
       docent.define_singleton_method(:ask) { |_anchor_id, _question| nil }
       subject = handover(docent:)
 
       subject.wrote_annotation(note(kind: "nitpick", text: "refused"))
       subject.wrote_annotation(note(text: "took"))
 
-      expect(held).to eq(session.annotations.map(&:id))
+      expect(held.map(&:first)).to eq(session.annotations.map(&:id))
+    end
+
+    it "hands the docent the note's kind and text to keep at the head of the thread" do
+      held = []
+      docent = Object.new
+      docent.define_singleton_method(:hold) { |anchor, note:| held << [anchor.id, note] }
+
+      handover(docent:).wrote_annotation(note(kind: "question", text: "why is this nil?"))
+
+      expect(held.map { |_id, kept| [kept.speaker, kept.text] }).to eq([["question", "why is this nil?"]])
     end
 
     # SIDE IS THE NOTE'S OWN, and it is the member most easily defaulted away:
@@ -1300,7 +1310,7 @@ RSpec.describe Lain::Review::Handover do
       # answers. The docent gesture has its own group at the bottom of this file.
       let(:docent) do
         recorded = held
-        Object.new.tap { |recorder| recorder.define_singleton_method(:hold) { |anchor| recorded << anchor } }
+        Object.new.tap { |recorder| recorder.define_singleton_method(:hold) { |anchor, **| recorded << anchor } }
       end
       let(:notes) do
         described_class.new(session: survey_session, view: survey_view, docent:,

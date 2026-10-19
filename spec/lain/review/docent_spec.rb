@@ -242,6 +242,22 @@ RSpec.describe Lain::Review::Docent do
                 [described_class::SPEAKER_DOCENT, "because beta needed the same shape"]])
     end
 
+    it "shows the note the thread was opened on first, then the question, then the answer" do
+      answerer, = recording_answerer
+      note = Lain::Review::Surface::Message.new(speaker: "note", text: "why is this nil?")
+
+      Sync do
+        subject = docent(answerer:)
+        subject.hold(anchor, note:)
+        subject.ask("a-42", "why this way?").task.wait
+      end
+
+      expect(view.last_entries.map { |entry| [entry.speaker, entry.text] })
+        .to eq([["note", "why is this nil?"],
+                [described_class::SPEAKER_HUMAN, "why this way?"],
+                [described_class::SPEAKER_DOCENT, "because beta needed the same shape"]])
+    end
+
     # The anchor rides WHOLE, which is the thread pane's rule: the pane is
     # cursor-driven and no other entry point on that rail carries an anchor's
     # position.

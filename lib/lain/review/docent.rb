@@ -345,10 +345,12 @@ module Lain
       # caught, {Delivery#call}'s rule: a cancelled task must stay cancelled.
       #
       # @param anchor [Review::Anchor]
+      # @param note [Surface::Message, nil] the note the thread was opened on,
+      #   kept above the questions so an answer does not replace it in the pane
       # @return [Conversation, nil] nil when no hunk covers the anchor, and nil
       #   when the changeset could not be read to find out
-      def hold(anchor)
-        @threads.hold(anchor)
+      def hold(anchor, note: nil)
+        @threads.hold(anchor, note:)
       rescue StandardError, ScriptError
         nil
       end
@@ -625,12 +627,13 @@ module Lain
         end
 
         # @param anchor [Review::Anchor]
+        # @param note [Surface::Message, nil] kept above the exchanges
         # @return [Conversation, nil] nil when no hunk of this changeset covers
         #   the anchor, which is the one case there is nothing to hold
-        def hold(anchor)
+        def hold(anchor, note: nil)
           @open[anchor.id.to_s] ||= begin
             hunk = hunk_at(anchor)
-            Conversation.new(anchor:, hunk:, exchanges: replayed(anchor)) unless hunk.nil?
+            Conversation.new(anchor:, hunk:, exchanges: replayed(anchor), lead: [note].compact) unless hunk.nil?
           end
         end
 
@@ -720,17 +723,20 @@ module Lain
       # so the two cannot be one object -- and every caller here wants "the
       # thread at this anchor", never a pair.
       class Conversation
-        def initialize(anchor:, hunk:, exchanges: Exchanges.new)
+        def initialize(anchor:, hunk:, exchanges: Exchanges.new, lead: [])
           @anchor = anchor
           @hunk = hunk
           @exchanges = exchanges
+          @lead = lead.freeze
         end
 
         attr_reader :anchor, :hunk
 
-        # The thread's contents are the exchanges'; only {#settle} needs a body,
-        # and it has one below.
-        delegate :entries, :asked?, :pending?, :ask, :drop, to: :@exchanges
+        delegate :asked?, :pending?, :ask, :drop, to: :@exchanges
+
+        # @return [Array<Surface::Message>] the note the thread was opened on,
+        #   then the exchanges
+        def entries = [*@lead, *@exchanges.entries]
 
         def settle(question, speaker:, text:, state:)
           @exchanges.settle(question, speaker:, text:, state:)
