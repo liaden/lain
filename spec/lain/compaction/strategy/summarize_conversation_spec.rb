@@ -193,6 +193,33 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     end
   end
 
+  describe "a cut that falls between a prompt and its answer" do
+    let(:tier) { fixtures.counting }
+    let(:strategy) { fixtures.strategy(oracle: tier) }
+    let(:prompted) do
+      fixtures.messages([[fixtures.text("so")], [fixtures.text("then")], [fixtures.text("add a test")],
+                         [fixtures.text("done, test added")]])
+    end
+
+    it "keeps the trailing prompt outside the span it proposes" do
+      expect(strategy.ranges(prompted, span: 0..2)).to eq([0..1])
+    end
+
+    it "never shows the oracle the prompt that is kept" do
+      strategy.ranges(prompted, span: 0..2)
+
+      expect(tier.asked.map { |inputs| inputs.fetch(described_class::SLOT) }.join).not_to include("add a test")
+    end
+
+    it "proposes nothing when the prompt would leave a lone message" do
+      expect(strategy.ranges(prompted, span: 1..2)).to be_empty
+    end
+
+    it "still claims a span that ends on the assistant's turn whole" do
+      expect(strategy.ranges(prompted, span: 0..3)).to eq([0..3])
+    end
+  end
+
   describe "the runs it could claim, asked without the oracle" do
     let(:strategy) { fixtures.strategy(oracle: Class.new { def ask(_inputs) = raise("the oracle was asked") }.new) }
 

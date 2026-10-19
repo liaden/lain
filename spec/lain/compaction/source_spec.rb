@@ -1989,7 +1989,30 @@ RSpec.describe Lain::Compaction::Source do
       expect(cuts.last).to include("supersedes" => advances.map(&:address), "parent" => advances.last.address,
                                    "digest" => advances.last.digest, "strategy" => built.collapse_strategy)
       expect(cuts.last["collapses"].map { |collapse| collapse["span"] })
-        .to eq([[line.to_a[0].digest, line.to_a[9].digest]])
+        .to eq([[line.to_a[0].digest, line.to_a[8].digest]])
+      expect(messages.count { |message| replacement?(message) }).to eq(1)
+      expect(messages.size).to eq(4)
+    end
+
+    it "resumes a collapse recorded with the old span, ending on the prompt, to the context it rendered then" do
+      built = stepping
+      line = four_advances(built)
+      step(built, line)
+      old_shape = journal_io.string.each_line.map do |entry|
+        record = JSON.parse(entry)
+        if record["kind"] == "collapse"
+          record["collapses"]&.each do |collapse|
+            collapse["span"][1] = line.to_a[9].digest
+          end
+        end
+        JSON.generate(record)
+      end
+      expect(old_shape).not_to eq(journal_io.string.each_line.map { |entry| JSON.generate(JSON.parse(entry)) })
+      resumed = Lain::SessionRecord::Replay.new(old_shape).session
+
+      messages = render(stepping.context_for(base:, timeline: line, usage: nil, session: resumed), line).messages
+
+      expect(resumed.compaction_cuts.last.spans).to eq([[line.to_a[0].digest, line.to_a[9].digest]])
       expect(messages.count { |message| replacement?(message) }).to eq(1)
       expect(messages.size).to eq(3)
     end
