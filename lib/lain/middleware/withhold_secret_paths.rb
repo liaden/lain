@@ -193,6 +193,7 @@ module Lain
       # does -- and the same answer for a guarded tool whose input names no path
       # at all, whose rows can only be relative to where the worker stands.
       CWD = "."
+      GATED_FILE_SEARCH = "searching a gated file returns nothing; use read_file on it to ask for a release"
 
       # Readable for {Agent::ToolRunner#handler}'s reason, plus one: a wiring
       # spec has to be able to assert IDENTITY -- that this holds the run's one
@@ -217,6 +218,8 @@ module Lain
 
       def call(env, &app)
         effect = env.fetch(:effect)
+        return env.merge(result: Tool::Result.error(GATED_FILE_SEARCH)) if gated_file_search?(env, effect)
+
         carried = downstream(env, &app)
         shape = GUARDED_TOOLS[effect.name]
         return carried unless shape
@@ -225,6 +228,22 @@ module Lain
       end
 
       private
+
+      # Refused before the call so no approval is asked for a search whose every
+      # row would be withheld anyway; a directory still searches and is sifted.
+      # A path the tool itself must reject (non-String, NUL) is left to the tool,
+      # which answers it with an error result rather than a raise from here.
+      def gated_file_search?(env, effect)
+        return false unless effect.name == "grep"
+
+        path = at(effect.input, ::Lain::Sensitivity::Policy::PATH_FIELDS[effect.name])
+        return false unless path.is_a?(String) && ::Lain::Sensitivity.readable?(path) && !path.include?("\0")
+
+        context = env.fetch(:context)
+        target = base(effect, ::Lain::Session.cwd_of(context))
+        File.file?(target) &&
+          @filter.sift([target], within: ::Lain::Sensitivity::Policy.base_of(context)) { [_1] }.any?
+      end
 
       # {Middleware::Env} is `fetch`-based, so this merges over a `:result` the
       # tool has already set rather than short-circuiting past it.
@@ -345,9 +364,10 @@ module Lain
       # preserves all three. The rules that match one EXACT path are exemptions,
       # which the appended path never matches, so a reading of it can only be
       # stricter than a reading of the true path, never less: a grep over one
-      # exempted file withholds what `read_file` of it shows. A `stat` to tell
-      # the two targets apart would put IO in the middle of a middleware to buy
-      # nothing.
+      # exempted file withholds what `read_file` of it shows. A gated single
+      # file never gets this far: {#gated_file_search?} stats the target to
+      # refuse it up front, since a refusal before the approval needs to know
+      # file from directory and the rows cannot say.
       #
       # UTF-8, like {#rows}, so a row and its base join without an encoding
       # clash -- and as {Tools::ListFiles#perform} reads its own root, so a

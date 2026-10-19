@@ -128,13 +128,33 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
       expect(shown).to include("2 matches withheld (credential)")
     end
 
-    # A single-FILE grep labels its hits with the model's own spelling rather
-    # than relative to a walked root, so the row resolves against the file the
-    # tool opened. Nothing here stats to find that out.
-    it "withholds the matches of a gated file searched by name" do
-      shown = content(grep("API_KEY", path: ".env"))
+    it "refuses a search of one gated file before the tool runs, and says how to ask for a release" do
+      reached = false
+      env = stack.call({ effect: effect("grep", { "pattern" => "API_KEY", "path" => ".env" }),
+                         context: session }) do |inner|
+        reached = true
+        inner
+      end
 
-      expect(shown).to eq("1 match withheld (credential)")
+      expect(reached).to be(false)
+      expect(env.fetch(:result)).to be_error
+      expect(content(env)).to eq("searching a gated file returns nothing; use read_file on it to ask for a release")
+    end
+
+    it "leaves a path the tool must reject to the tool, whatever its shape" do
+      ["a\0b", 7].each do |path|
+        env = stack.call({ effect: effect("grep", { "pattern" => "x", "path" => path }), context: session }) do |inner|
+          inner.merge(result: Lain::Tool::Result.error("tool reached"))
+        end
+
+        expect(content(env)).to eq("tool reached")
+      end
+    end
+
+    it "still withholds the matches of a gated directory searched by name" do
+      shown = content(grep("API_KEY", path: "home/.ssh"))
+
+      expect(shown).not_to include("PRIVATE KEY")
     end
   end
 
@@ -154,6 +174,14 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
 
       expect(shown).to include("lib/a.rb:1:")
       expect(shown).not_to include("id_rsa.rb")
+      expect(shown).to end_with("1 match withheld (credential)")
+    end
+
+    it "still withholds the rows of one gated file searched by name" do
+      shown = content(run("ast_search", Lain::Tools::AstSearch.new,
+                          { "pattern" => "def $NAME", "language" => "ruby", "path" => "id_rsa.rb" }))
+
+      expect(shown).not_to include("hidden")
       expect(shown).to end_with("1 match withheld (credential)")
     end
 
