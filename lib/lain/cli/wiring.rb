@@ -292,7 +292,6 @@ module Lain
         recorder, session = run_state(resumed)
         agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
         startup = [*resumed&.notices, *memory_notices(recorder, resumed), *@observers.notices, *backend.startup_notices]
-        startup.each(&notice)
         tty = open_terminal(agent, notice, startup)
         rail = Lain::Frontend::Intake.new(screen: tty, history: history_for(tty), notes:, on_cycle: approval_key)
         @conductor = open_conductor(tty, rail)
@@ -391,8 +390,8 @@ module Lain
                           layers: @switchboard.mode_switch.method(:layers),
                           alternate_screen: alternate_screen?).then do |tty|
           @human_line = tty.method(:render_summons)
-          notices_on_screen = alternate_screen? && Lain::Frontend::StdinPump.terminal?(@stdin)
-          notices_on_screen ? ScreenNotices.new(tty, startup) : tty
+          startup.each(&(pane? ? tty.method(:render_warning) : notice))
+          alternate_screen? && Lain::Frontend::StdinPump.terminal?(@stdin) ? ScreenNotices.new(tty, startup) : tty
         end
       end
 
@@ -439,7 +438,10 @@ module Lain
       def input_socket_name = Lain::CLI::InputSocket.named(options[:input])
 
       # A pane reads the human, so the transcript scrolls in normal scrollback.
-      def alternate_screen? = attended? && input_socket_name.nil?
+      def alternate_screen? = attended? && !pane?
+
+      # The pane's scrollback is the terminal's to draw, so a notice wraps to its width.
+      def pane? = attended? && !input_socket_name.nil?
 
       # History is a line editor's: the pane's, over a socket, or this
       # terminal's. What a pipe feeds a chat is a script, not what a human

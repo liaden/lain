@@ -3347,31 +3347,63 @@ RSpec.describe Lain::CLI::Wiring do
         expect(screen.index(mismatch)).to be > screen.index(Lain::Frontend::TTY::ALTERNATE_SCREEN_ON)
       end
 
-      # A cockpit chat's notices stay in scrollback, so they are said once and not repeated.
-      it "stays on normal scrollback and says a notice once when a pane reads the human" do
+      def pane_output
+        @pane_output ||= Class.new(StringIO) do
+          def tty? = true
+          def winsize = [24, 60]
+        end.new
+      end
+
+      def pane_wiring(dir, paths)
+        stdin = StringIO.new
+        allow(stdin).to receive(:tty?).and_return(true)
+        allow(status_feed).to receive(:state).and_return({})
+        factory = lambda do |channel:, alternate_screen: true, **|
+          Lain::Frontend::TTY.new(channel:, output: pane_output, history_path: File.join(dir, "history"),
+                                  alternate_screen:)
+        end
+        described_class.new(options: { grace: 5, input: "socket:wiring-scrollback" }, chronicle:,
+                            status_feed:, paths:, stdin:, tty_factory: factory, conductor_opener:)
+      end
+
+      def run_in_pane(notice)
         said = []
-        screen = StringIO.new
         Dir.mktmpdir do |dir|
           paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
           path = Lain::CLI::InputSocket.path(name: "wiring-scrollback", paths:, cwd: Dir.pwd)
-          stdin = StringIO.new
-          allow(stdin).to receive(:tty?).and_return(true)
-          allow(status_feed).to receive(:state).and_return({})
-          factory = lambda do |channel:, alternate_screen: true, **|
-            Lain::Frontend::TTY.new(channel:, output: screen, history_path: File.join(dir, "history"),
-                                    alternate_screen:)
-          end
-          wiring = described_class.new(options: { grace: 5, input: "socket:wiring-scrollback" }, chronicle:,
-                                       status_feed:, paths:, stdin:, tty_factory: factory, conductor_opener:)
+          wiring = pane_wiring(dir, paths)
           pane = Thread.new { end_the_chat_from_a_pane(path) }
-          wiring.run(backend:, resumed: resumed_with_notice, nvim: nil) { |line| said << line }
+          wiring.run(backend:, resumed: resumed_with(notice), nvim: nil) { |line| said << line }
           wiring.conductor.close(reason: :exit)
           pane.join
         end
+        said
+      end
 
-        expect(screen.string).not_to include("\e[?1049h")
-        expect(said.count(mismatch)).to eq(1)
-        expect(screen.string).not_to include(mismatch)
+      def resumed_with(notice)
+        timeline = Lain::Timeline.new(head_digest: nil, store: Lain::Store.new)
+        Lain::CLI::Resume::Result.new(file: "prior.ndjson", timeline:, session: Lain::Session.new, open: false,
+                                      recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty),
+                                      notices: [notice])
+      end
+
+      # A cockpit chat's notices stay in scrollback, drawn by the terminal so they wrap to the pane.
+      it "stays on normal scrollback and draws a notice once when a pane reads the human" do
+        said = run_in_pane("short notice")
+
+        expect(pane_output.string).not_to include("\e[?1049h")
+        expect(pane_output.string.scan("short notice").size).to eq(1)
+        expect(said).not_to include("short notice")
+      end
+
+      it "wraps a long notice to the width of the pane it is drawn in" do
+        long = Array.new(20) { |i| "word#{i}" }.join(" ")
+        run_in_pane(long)
+
+        lines = pane_output.string.gsub(/\e\[[\d;?]*[A-Za-z]/, "").lines.map(&:chomp).grep(/word/)
+        expect(lines.size).to be > 1
+        expect(lines.map(&:length).max).to be <= 60
+        expect(lines.join(" ").scan(/word\d+/)).to eq(Array.new(20) { |i| "word#{i}" })
       end
 
       it "draws no alternate screen under --non-interactive, and says a notice once" do
