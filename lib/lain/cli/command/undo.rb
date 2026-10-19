@@ -33,7 +33,7 @@ module Lain
 
         SKIP = "skip"
 
-        NOTHING = "nothing to undo: no turn has changed a file this session recorded"
+        NOTHING = "nothing to undo: no file-changing turn is left"
 
         WRITE_SET_ONLY = "Only files lain's own tools wrote were restored: that turn ran under the write-set " \
                          "scope, which records nothing a shell did."
