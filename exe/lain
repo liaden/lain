@@ -91,8 +91,8 @@ class LainCLI < Thor
     # word and a nonzero status, never a backtrace over a signal the operator
     # sent on purpose. 130 (128 + SIGINT) is the shell's own convention for
     # "this process died to a signal", which is what actually happened.
-    def render(&block)
-      say yield
+    def render(newline: true, &block)
+      newline ? say(yield) : say(yield, nil, false)
     rescue Interrupt
       say "interrupted"
       exit 130
@@ -538,7 +538,7 @@ class LainCLI < Thor
     def status(slug = nil) = render { Lain::CLI::Epic.new.status(slug, mermaid: options[:mermaid]) }
 
     desc "show [DOC] [SLUG]", "Print one of an epic's documents: research (the default), epic, issues/ID or plans/ID"
-    def show(doc = "research", slug = nil) = render { Lain::CLI::Epic.new.show(doc, slug) }
+    def show(doc = "research", slug = nil) = render(newline: false) { Lain::CLI::Epic.new.show(doc, slug) }
 
     method_option :discovered_from, type: :string, desc: "The live issue this one grew out of, if any"
     desc "add ID TITLE [SLUG]", "Add a new issue to the epic graph, journaled as a graph_revision"

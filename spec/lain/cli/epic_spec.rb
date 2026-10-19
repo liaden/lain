@@ -1134,6 +1134,12 @@ RSpec.describe Lain::CLI::Epic do
       expect(show_via_cli).to include("# Research")
     end
 
+    it "prints a document with no trailing newline byte for byte" do
+      home_for("frugirl").research.write("# Research\nno newline")
+
+      expect(show_via_cli).to eq("# Research\nno newline")
+    end
+
     it "prints an issue plan by its home path" do
       home_for("frugirl").plan("a1").write("the a1 plan\n")
 
