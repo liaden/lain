@@ -71,7 +71,7 @@ module Lain
     # 3. Only the MAIN agent's calls are covered. {Middleware::JournalRequests} is
     #    wired into the main Agent's `model_middleware` alone, so a subagent's
     #    `turn_usage` has no `request_sent` to pair with. Every figure is scoped
-    #    to "priced main-agent calls", and the render says so.
+    #    to "main-agent calls", and the render says so.
     #
     # == Two things the figures do not say for themselves
     #
@@ -373,6 +373,9 @@ module Lain
 
       # @return [Array<String>] every model this journal called, in first-use order
       def models = @calls.map(&:model).uniq
+
+      # @return [Integer] calls whose model has a price on record
+      def priced_calls = @calls.count { |call| @unpriced_models.exclude?(call.model) }
 
       # @return [Integer] tokens re-bought because a prefix broke
       def rebilled_tokens = @rebills.sum(&:rebilled_tokens)

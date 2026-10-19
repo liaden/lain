@@ -267,8 +267,7 @@ module Lain
         # unpriceable model explains must say so rather than read as a clean
         # bill. "main-agent" because {Middleware::JournalRequests} is wired
         # into the main Agent alone, so a subagent's turns are outside every
-        # figure here -- "priced call(s)" alone is a scoping word only a source
-        # reader decodes.
+        # figure here, and a reader of the output alone cannot know that.
         def context
           [bought] + switch_notes + unpriced_notes + refusal_notes
         end
@@ -291,7 +290,8 @@ module Lain
         # session. The token count stays, because a zero the reader can see is
         # the evidence; only the vacuous dollar tail goes.
         def bought
-          calls = "#{@waste.calls.size} priced main-agent call(s)"
+          total = @waste.calls.size
+          calls = "#{total} main-agent #{"call".pluralize(total)}, #{@waste.priced_calls} priced"
           return "#{calls}, with no prompt cache to serve or save against" if @waste.no_prompt_cache?
 
           served = "#{@waste.cached_tokens} tokens served from cache over #{calls}"

@@ -865,7 +865,31 @@ RSpec.describe Lain::Friction::CacheWaste do
                          request_sent([[0, "blake3:a-EDITED"]]), turn_usage(creation: 12_000)])
 
       expect(rendered).to include("at most 12000 tokens re-billed")
-      expect(rendered).to include("main-agent call(s)")
+      expect(rendered).to include("main-agent calls")
+    end
+
+    it "counts every call and says how many were priced when none could be" do
+      rendered = render([request_sent([[0, "blake3:a"]], model: "claude-fable-5"),
+                         turn_usage(model: "claude-fable-5", creation: 10_000),
+                         request_sent([[0, "blake3:a-EDITED"]], model: "claude-fable-5"),
+                         turn_usage(model: "claude-fable-5", creation: 7_000)])
+
+      expect(rendered).to include("2 main-agent calls, 0 priced")
+      expect(rendered).to include("dollar figures exclude claude-fable-5")
+    end
+
+    it "says call, not calls, for a single call" do
+      rendered = render([request_sent([[0, "blake3:a"]]), turn_usage(creation: 20_000)])
+
+      expect(rendered).to include("1 main-agent call, 1 priced")
+    end
+
+    it "counts only the priced calls of a mixed journal as priced" do
+      rendered = render([request_sent([[0, "blake3:a"]]), turn_usage(creation: 20_000),
+                         request_sent([[0, "blake3:z"]], model: "claude-fable-5"),
+                         turn_usage(model: "claude-fable-5", creation: 9_000)])
+
+      expect(rendered).to include("2 main-agent calls, 1 priced")
     end
 
     # Integration check 9 greps a real run's journal for a credential
