@@ -2368,6 +2368,30 @@ RSpec.describe Lain::CLI::Up do
       expect(report.warnings.join).to include("already exists without the nvim pane")
     end
 
+    it "warns that the chat has ended when the chat pane it recorded has gone from the window" do
+      calls = []
+
+      report = reattaching_up(calls, pane_ids: %w[%1 %2], recorded: %w[%0 %1 %2]).call
+
+      expect(report.warnings.join).to include("chat has ended").and include("tmux kill-session -t lain")
+    end
+
+    it "does not say the chat has ended when the chat pane it recorded is still live" do
+      calls = []
+
+      report = reattaching_up(calls, pane_ids: %w[%0 %1 %2]).call
+
+      expect(report.warnings.join).not_to include("chat has ended")
+    end
+
+    it "does not say the chat has ended for a session that records no pane ids" do
+      calls = []
+
+      report = reattaching_up(calls, pane_ids: %w[%7], recorded: []).call
+
+      expect(report.warnings.join).not_to include("chat has ended")
+    end
+
     # The upgrade path, at the argv: a reattach builds no pane and so has no
     # id of its own, and reads the two it needs back out of the session.
     it "arms both session hooks on a reattach, from the pane ids the session records" do

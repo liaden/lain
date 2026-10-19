@@ -406,6 +406,15 @@ module Lain
         # @return [Boolean] whether the editor pane this window was built with is still in it
         def editor? = live.include?(option(EDITOR))
 
+        # An unset option is the empty string, which `list-panes` can never
+        # answer with, so a window lain never built is not called ended.
+        #
+        # @return [Boolean] whether a chat pane was recorded and is no longer in the window
+        def chat_ended?
+          chat = option(CHAT)
+          !chat.empty? && !live.include?(chat)
+        end
+
         private
 
         # A pane lain cannot name is a hook it must not write: an empty target
@@ -1329,6 +1338,7 @@ module Lain
       # either of them did, still earns its corpse and its seating.
       def reattach_session
         warn_editorless_reattach
+        warn_ended_chat
         keep_failed_pane
         @panes.rearm
       end
@@ -1359,6 +1369,13 @@ module Lain
 
         @warnings << "session '#{@session}' already exists without the nvim pane -- reattaching as-is " \
                      "(kill the session and re-run `lain up --nvim` for the cockpit, or attach plain)"
+      end
+
+      def warn_ended_chat
+        return unless @panes.chat_ended?
+
+        @warnings << "session '#{@session}' has no live chat pane -- the chat has ended and this reattach " \
+                     "shows what it left; `#{@tmux.argv("kill-session", "-t", @session).join(" ")}` starts fresh"
       end
 
       # Opened EMPTY, carrying tmux's default shell, for {#build_panes}'s
