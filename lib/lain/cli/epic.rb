@@ -361,7 +361,15 @@ module Lain
         walked = journals_for(slug)
         progress = Lain::Epic::Progress.fold(walked.to_a, graph: home.read_epic, epic_slug: slug)
         Report.new(slug:, path: home.path, sessions: walked.dir, progress:,
-                   note: untracked_note(home.path)).to_s
+                   note: untracked_note(home.path), closed: closed_stage_note(slug, progress.stage, walked.to_a)).to_s
+      end
+
+      # Only epic-wide earlier stages: an issue-scoped one is approved per issue,
+      # so no single answer exists for the epic as a whole.
+      def closed_stage_note(slug, stage, records)
+        queue = Approval::SignoffQueue.from_journal(records)
+        unapproved = stage.preceding.reject(&:issue_scoped?).reject { |earlier| queue.approved?(slug, earlier.name) }
+        unapproved.empty? ? "" : "#{stage} is not open: #{unapproved.map(&:name).join(", ")} is not approved"
       end
 
       def journals_for(slug) = Journals.new(paths: @paths, root: @root, epic_slug: slug)
@@ -715,8 +723,9 @@ module Lain
         # `sessions:` is printed rather than merely held: one epic at one home
         # folds different records from different working directories and reports
         # different progress, with nothing else in the output to say why.
-        def initialize(slug:, path:, sessions:, progress:, note:)
+        def initialize(slug:, path:, sessions:, progress:, note:, closed: "")
           @slug = slug
+          @closed = closed
           @path = path
           @sessions = sessions
           @progress = progress
@@ -728,7 +737,7 @@ module Lain
         private
 
         def preamble
-          ["epic `#{@slug}` — #{@progress.summary}", "home: #{@path}", "sessions: #{@sessions}", @note]
+          ["epic `#{@slug}` — #{@progress.summary}", "home: #{@path}", "sessions: #{@sessions}", @closed, @note]
             .reject(&:empty?).join("\n")
         end
 

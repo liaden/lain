@@ -84,6 +84,12 @@ RSpec.describe Lain::CLI::Epic do
     Lain::Epic::StageTransition.new(epic_slug:, stage:, event:)
   end
 
+  def verdict(approved:, at:, stage: "research")
+    Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha", stage:, approved:,
+                                     answered_by: "human", policy: "signoff", latency: 1.5)
+                                .to_journal.merge("ts" => at)
+  end
+
   # a blocks b blocks c: three waves, one issue each, so a residual view is
   # visible as soon as anything finishes.
   def chain = graph_of(issue("a", blocks: ["b"]), issue("b", blocks: ["c"]), issue("c"))
@@ -374,6 +380,24 @@ RSpec.describe Lain::CLI::Epic do
       session("one.ndjson", stage_event("epic_plan"))
 
       expect(command.status).to include("stage epic_plan")
+    end
+
+    it "says the stage is not open when the approval of an earlier stage was withdrawn" do
+      write_epic("alpha", chain)
+      session("one.ndjson", stage_event("epic_plan"),
+              verdict(approved: true, at: "2026-01-01T00:00:01Z"), verdict(approved: false, at: "2026-01-01T00:00:02Z"))
+
+      report = command.status
+
+      expect(report).to include("stage epic_plan")
+      expect(report).to include("epic_plan is not open: research is not approved")
+    end
+
+    it "stays quiet about the boundary while the earlier stage stands approved" do
+      write_epic("alpha", chain)
+      session("one.ndjson", stage_event("epic_plan"), verdict(approved: true, at: "2026-01-01T00:00:01Z"))
+
+      expect(command.status).not_to include("is not open")
     end
 
     it "reads the document alone when no session ever named this epic" do
