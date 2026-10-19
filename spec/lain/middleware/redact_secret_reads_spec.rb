@@ -857,7 +857,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       content = read(path) { |q| q.dequeue.deny(surface: "spec") }.fetch(:result).content
 
       expect(content).to end_with(
-        "1 region is masked as <redacted:1>. The file is inside the project and readable; " \
+        "1 region is masked as <redacted:1>. The file is readable; " \
         "the release was declined. Tell the user which file you need unmasked."
       )
     end
@@ -942,6 +942,15 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(parks).to be_empty
       expect(content).not_to include(api_key)
       expect(content).to include("<redacted:1>")
+    end
+
+    it "calls the file readable and never claims it is inside the project" do
+      path = write_under("pitchcraft/notes.md", one_secret)
+
+      content = read(path).fetch(:result).content
+
+      expect(content).to include("The file is readable;")
+      expect(content).not_to include("inside the project")
     end
 
     it "journals the read as redacted with nothing released" do

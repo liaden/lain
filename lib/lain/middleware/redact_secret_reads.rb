@@ -654,7 +654,7 @@ module Lain
         end
 
         def self.line(count, why)
-          "#{placeholders(count)}. The file is inside the project and readable; #{REASONS.fetch(why)}. " \
+          "#{placeholders(count)}. The file is readable; #{REASONS.fetch(why)}. " \
             "Tell the user which file you need unmasked."
         end
 
