@@ -1540,7 +1540,7 @@ module Lain
           raise Error, "git refused the failing tests' commit: #{shell.stderr.strip}"
         end
 
-        def message(target, digest) = "test: failing tests at #{target}, from criteria #{digest}"
+        def message(target, digest) = Lain::Epic::RedCommit.subject(target, digest)
       end
     end
   end
