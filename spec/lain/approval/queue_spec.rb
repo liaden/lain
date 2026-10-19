@@ -579,6 +579,21 @@ RSpec.describe Lain::Approval::Queue do
       expect(queue.denied(requester: described_class::REQUESTER, path: "/home")).to eq("not your business")
     end
 
+    it "holds a denial for a requester that asks again under a role, keyed by its name" do
+      denied_by_human(lists("/home"), in_dir("/", requester: "researcher"))
+      again = Lain::Requester.new(name: "researcher", role: "researcher", skill: "gherkin-tests")
+      context = in_dir("/", requester: again)
+
+      expect(queue.denied(requester: described_class.requester_for(context), path: "/home"))
+        .to eq("not your business")
+    end
+
+    it "journals a requester with a role under its name, a String" do
+      denied_by_human(lists("/home"), in_dir("/", requester: Lain::Requester.new(name: "dev-2", role: "dev")))
+
+      expect(decision_records).to contain_exactly(a_hash_including("requester" => "dev-2"))
+    end
+
     it "resolves a relative path against the call's own cwd, cleaned" do
       denied_by_human(lists("../secret/./x"), in_dir("/srv/project"))
 

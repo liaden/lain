@@ -628,7 +628,7 @@ RSpec.describe Lain::Frontend::TTY do
     it "echoes an answered set as a stamped heading over one line per question" do
       stamped.render_answer_echo(["device-sync: Haven't decided", "out-of-scope: Barcode scanning, Pantry inventory"])
 
-      expect(output.string.lines).to eq(["13:14:01 answered lain's questions\n",
+      expect(output.string.lines).to eq(["13:14:01 answered the agent's questions\n",
                                          "  device-sync: Haven't decided\n",
                                          "  out-of-scope: Barcode scanning, Pantry inventory\n"])
     end

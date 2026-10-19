@@ -37,7 +37,7 @@ module Lain
 
       # Who a gated call is asked on behalf of when neither the call nor the
       # session names anyone: the parent's own turn.
-      REQUESTER = "agent"
+      REQUESTER = Requester.main.key
 
       BASH = "bash"
       HOMED = %r{\A~(/|\z)}

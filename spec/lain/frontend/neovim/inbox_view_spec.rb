@@ -779,13 +779,13 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   describe "who the sender column names" do
     it "renders the asker's name, not the correlation an inherit child shares with its parent" do
       shared = parent_chain("shared")
-      first = ask_on(shared, one_question("db", "which db?"), agent: "lain")
+      first = ask_on(shared, one_question("db", "which db?"), agent: Lain::Requester.main.label)
       second = ask_on(shared, one_question("when", "deploy now?"), agent: "researcher")
       view.update(record(first))
       lines = view.update(record(second))
 
       expect(first.from).to eq(second.from)
-      expect(senders(lines)).to eq(%w[lain researcher])
+      expect(senders(lines)).to eq(%w[agent researcher])
     end
 
     it "falls back to the envelope's attribution for a record that carries no name" do

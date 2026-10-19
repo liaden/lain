@@ -1747,10 +1747,10 @@ RSpec.describe Lain::CLI::HumanReplies do
 
         with_surfaces { !ask_human.pending? }
 
-        expect(output.string).to match(/\d\d:\d\d:\d\d answered lain's questions\n/)
+        expect(output.string).to match(/\d\d:\d\d:\d\d answered the agent's questions\n/)
         expect(output.string).to include("device-sync: Haven't decided")
         expect(output.string).to include("out-of-scope: Barcode scanning, Pantry inventory")
-        expect(output.string.scan("answered lain's questions").size).to eq(1)
+        expect(output.string.scan("answered the agent's questions").size).to eq(1)
       end
 
       it "echoes the first line of a bare String answer from :LainReply" do
@@ -1759,7 +1759,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
         with_surfaces { !ask_human.pending? }
 
-        expect(output.string).to match(/answered lain's questions\n\s+postgres\n/)
+        expect(output.string).to match(/answered the agent's questions\n\s+postgres\n/)
         expect(output.string).not_to include("please")
       end
 
@@ -1769,7 +1769,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
         with_surfaces { editor.refusals.any? }
 
-        expect(output.string).not_to include("answered lain's questions")
+        expect(output.string).not_to include("answered the agent's questions")
       end
 
       it "echoes nothing for the second answer to a set already answered" do
@@ -1786,7 +1786,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
         with_surfaces { reply_calls >= 2 }
 
-        expect(output.string.scan("answered lain's questions").size).to eq(1)
+        expect(output.string.scan("answered the agent's questions").size).to eq(1)
       end
     end
 
@@ -3278,12 +3278,12 @@ RSpec.describe Lain::CLI::Wiring::Askers do
   # arrival is what the TTY drain and the nvim inbox render from.
   it "names each asking agent on its own arrival, rather than a hardcoded one" do
     Sync do
-      askers.enrol(parent, agent: "lain").asker.ask("which db?")
+      askers.enrol(parent, agent: Lain::Requester.main.label).asker.ask("which db?")
       askers.enrol(chain("child"), agent: "researcher").asker.ask("deploy now?")
 
       arrivals = [askers.questions.dequeue, askers.questions.dequeue]
 
-      expect(arrivals.map(&:from)).to eq(%w[lain researcher])
+      expect(arrivals.map(&:from)).to eq(%w[agent researcher])
     end
   end
 

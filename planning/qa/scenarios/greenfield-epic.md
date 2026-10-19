@@ -488,7 +488,7 @@ Checks:
     that reopens at every rewrite.
 14. **The answered question buffer is closed, not left open (2026-10-09 trial fixes).** After you answer the interview's last set
     with `:w`, the `lain://question` window closes (unless it was the tabpage's only window), and `:buffer lain://question` shows the document under a first line `answered at HH:MM; your
-    answers went to the agent`, read-only. The chat pane shows `HH:MM:SS answered lain's questions` and one indented line per
+    answers went to the agent`, read-only. The chat pane shows `HH:MM:SS answered the agent's questions` and one indented line per
     answer, each cut at 120 columns. With 2 sets pending, answering the first opens the second instead and
     the answered banner appears only after the last. An answer given with `/inbox` at the terminal echoes the same
     way.

@@ -52,7 +52,7 @@ module Lain
       HELD_BESIDE_APPROVAL = "that does not answer the approval: /approve answers it"
       # A reply can be tens of kilobytes on one line; the echo is a reminder, not a copy.
       ECHO_WIDTH = 120
-      ANSWERED = "answered lain's questions"
+      ANSWERED = "answered the agent's questions"
       NOTED = "note for the agent: "
       NOTE_WAITS = "your note joins your next prompt"
       DISCARDED = "discarded: %s -- finish that line and it is held as your next prompt"

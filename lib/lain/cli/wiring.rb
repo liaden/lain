@@ -39,11 +39,6 @@ module Lain
     # own assembly steps, so an object holding it would have to be handed this
     # one, which is a god-object handle.
     class Wiring
-      # What a human is told is asking when the question came from the chat they
-      # are having rather than from something it spawned. A fact about THIS
-      # agent, not about the seam: a child passes its own role.
-      MAIN_AGENT = "lain"
-
       # The capability policy every chat runs under -- see {#journal_degradation}
       # for why `:strict`, the only other member of {Capability::Policy::NAMES},
       # cannot be the value here.
@@ -773,7 +768,7 @@ module Lain
       # deregistered on the lease that reaps it -- see {Askers::Enrolled}.
       def wire_askers(parent)
         @askers = Askers.new(observer: chronicle.observer, attended: attended?, journal: chronicle.record_journal)
-        @askers.enrol(parent, agent: MAIN_AGENT).asker
+        @askers.enrol(parent, agent: Lain::Requester.main.label).asker
       end
 
       # What a chat can DO and what a child inherits is {ToolsetBuild}'s

@@ -2742,7 +2742,7 @@ RSpec.describe Lain::Tools::Subagent do
     # The chat the human is having, holding its own asker on the SAME seam --
     # so "parent and child are pending at once" is a claim about two real
     # askers and one queue, not about one asker asked twice.
-    let(:parent_asker) { askers.enrol(parent, agent: "lain").asker }
+    let(:parent_asker) { askers.enrol(parent, agent: Lain::Requester.main.label).asker }
 
     def asking_seam(provider)
       Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, askers:,
@@ -3163,7 +3163,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       %i[fresh inherit].each do |prefix|
         it "names the child apart from its parent at the TTY drain, on a #{prefix} spawn" do
-          expect(tty_senders(pending_pair(prefix))).to contain_exactly("lain", "researcher")
+          expect(tty_senders(pending_pair(prefix))).to contain_exactly("agent", "researcher")
         end
       end
 

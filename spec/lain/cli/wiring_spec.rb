@@ -996,6 +996,23 @@ RSpec.describe Lain::CLI::Wiring do
       expect(agent.toolset.fetch("subagent").seam.parent.call).to equal(agent.timeline)
     end
 
+    # `lain` names the harness, so the chat's own agent asks as `agent`, the
+    # name its approvals carry: one actor, one name on every surface.
+    it "names the main agent's questions agent, on the arrival line and in the record" do
+      wire_agent
+      shown = StringIO.new
+      tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: shown, input: StringIO.new)
+
+      Sync do
+        wiring.ask_human.ask("which db?")
+        item = wiring.questions.dequeue
+        tty.render_arrival(item.question, from: item.from)
+      end
+
+      expect(shown.string).to include("? agent which db?")
+      expect(wiring.ask_human.last_question.body).to include("asked_by" => "agent")
+    end
+
     # ---- session_usage: the fix, at the seam that made the failure possible --
 
     # Asked what its own session had spent, the agent invented a metrics table

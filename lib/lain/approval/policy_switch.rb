@@ -34,60 +34,19 @@ module Lain
       # rung must DUCK-TYPE on the context and never type-test it. A context
       # nobody wrapped names nobody, which is the parent's own turn.
       class Requested < SimpleDelegator
-        include Declarative
-
-        # One bare word, which is what every wired requester is.
-        NAME = /\A[\w-]+\z/
-        private_constant :NAME
-
-        # @return [String] what a human is TOLD is asking
+        # @return [String] the asking requester's name, the key a remembered denial is held under
         attr_reader :requester
 
         # @return [String, nil] the task the asking child was spawned with, in its parent model's words
         attr_reader :task
 
-        # Refused at construction, the one place that cannot be degraded away,
-        # for two separate reasons that happen to share a rule.
-        #
-        # BLANK, because the downstream guard does not fire where it looks like
-        # it does: {Telemetry::Carriers::ApprovalPending} validates presence, but
-        # its raise lands inside {Approval::Queue#record_evidence}, which
-        # rescues and degrades. Measured, a blank name DELETES the
-        # approval_pending record -- "something is waiting", the one state a
-        # human is asked to act on -- journals a decision naming nobody, and
-        # renders " asks: approve ..." at the terminal.
-        #
-        # UNPRINTABLE, because this string is rendered RAW into both human
-        # surfaces. A newline forges a whole second approval question in front
-        # of the real one at the terminal -- the attack
-        # {Approval::Queue::Outstanding#preamble} defeats, one slot over -- and
-        # in {Frontend::Neovim::ApprovalView} it splits one row across two
-        # buffer lines while the renderings stay one-per-pending, so a cursor
-        # resolves to the WRONG pending. Every value reaching this slot is a
-        # closed literal today, but it became a wiring ARGUMENT, and an
-        # invariant resting on "all current callers happen to be literals" is
-        # prose. A WHITELIST rather than a blacklist: the escapes worth refusing
-        # are not a set anyone can finish enumerating.
-        #
-        # The attribute is deliberately UNTYPED: ActiveModel's format validator
-        # matches against `value.to_s` anyway, so an untyped slot applies the
-        # same rule while leaving the refusal free to `inspect` what the caller
-        # actually passed -- a typed one would report the cast String and lose
-        # the difference between nil and `""`.
-        declare do
-          attribute :requester
-          validates :requester,
-                    format: { with: NAME,
-                              message: lambda { |_record, error|
-                                "must name who is asking in one bare word, got #{error[:value].inspect}"
-                              } }
-        end
-
+        # @param context [Object] the context the policy seam already threads
+        # @param requester [Requester, String] who is asking, kept by name only; anything but a bare word is
+        #   refused here by {Requester}'s rule, at the one place it cannot be degraded away
+        # @param task [String, nil] the task the asking child was spawned with
         def initialize(context, requester, task: nil)
-          self.class.check!(requester:)
-
+          @requester = Requester.of(requester).key
           super(context)
-          @requester = -requester.to_s
           @task = task && -task.to_s
         end
       end

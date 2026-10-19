@@ -143,7 +143,7 @@ Checks:
 8. **Every prompt is answered in the input pane** — `you>`, `[y/N]`, `human>`, the countdown.
    Nothing is typed into the chat pane.
    **The chat pane says your side back (2026-10-09 trial fixes).** A line read at `you>` is echoed there as
-   `HH:MM:SS you> <text>`, and an answered question set as `HH:MM:SS answered lain's questions` with one indented line per answer
+   `HH:MM:SS you> <text>`, and an answered question set as `HH:MM:SS answered the agent's questions` with one indented line per answer
    (cut at 120 columns). A line typed while a model call or tool runs, with nothing asking, is echoed as `HH:MM:SS note for the agent: <text>` and
    is a note, not a held prompt. A line typed at a parked `[y/N]`, `human>` or `command>` is never a note. `greenfield-epic.md` §3.6 and
    §3.7 drive these.
@@ -885,9 +885,9 @@ server has no client to show it on). *Driven 2026-09-14* in a `--no-nvim` chat i
 (BELL)`; a mode reads `checkout ask: notify (BELL)` since round 18), for the parent's
 own `ask_human`:
 
-- the pane stream carried `? lain What is your favourite colour?  -- answer in lain://inbox, or
+- the pane stream carried `? agent What is your favourite colour?  -- answer in lain://inbox, or
   /inbox` followed by exactly one `\a`;
-- the wrapper logged `display-message ? lain What is your favourite colour?  -- answer in
+- the wrapper logged `display-message ? agent What is your favourite colour?  -- answer in
   lain://inbox, or /inbox`.
 
 **And an inline `[y/N]` does not ring.** In the same kind of chat, with the layer up, a parked
@@ -1019,7 +1019,7 @@ the displayed figure is `5:00`.) Park `echo hello` and read each surface:
    `answered at HH:MM; your answers went to the agent`, it is read-only, its window closes (a window that is its tabpage's
    last stays), nothing else opens, and `:buffer lain://question` shows the answers. With 2 sets pending, answering the
    first opens the second and the banner waits for the last. **Wrong looks like:** the answered document left on screen and
-   writable, so a second `:w` is refused. The chat pane shows the stamped `answered lain's questions` echo.
+   writable, so a second `:w` is refused. The chat pane shows the stamped `answered the agent's questions` echo.
 7. **`/help` is columns.** Names in one aligned column, headings styled, descriptions wrapped under their
    own column; at 60 columns a long name pushes its description to the next row.
 
@@ -1210,7 +1210,7 @@ the same command-only reader §5 drives — a `/`-command runs, prose is held fo
 becomes the answer, and the answer goes through `lain://inbox` or a deliberate `/inbox`. Driven
 2026-09-14 in a `lain up` cockpit, with the parent's own `ask_human` parked:
 
-    ? lain What is your favourite colour?  -- answer in lain://inbox, or /inbox
+    ? agent What is your favourite colour?  -- answer in lain://inbox, or /inbox
     qwen3-coder:30b ctx 17%
     command>
 
