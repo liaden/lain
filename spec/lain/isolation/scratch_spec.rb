@@ -22,6 +22,14 @@ RSpec.describe Lain::Isolation::Scratch do
       expect(lease.origin.path).to eq(lease.worker_env.cwd)
     end
 
+    it "raises Unwritable naming its root and the errno's own reason when it cannot make one" do
+      allow(Dir).to receive(:mktmpdir).and_raise(Errno::EROFS)
+
+      expect { scratch.acquire }.to raise_error(described_class::Unwritable) { |e|
+        expect([e.dir, e.reason]).to eq([@root, "read-only file system"])
+      }
+    end
+
     # The checkout is what a leased worker's commands are judged in, so two
     # leases must never share one.
     it "leases a different directory every time" do

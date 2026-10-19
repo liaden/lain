@@ -1051,7 +1051,11 @@ module Lain
           Confined.new(worker_env: lease.worker_env, reminder: yield(lease.worker_env), kept: -> { record.call(:kept) })
         end
 
-        def scratched = confined(@scratch.acquire, @scratch) { |env| format(SCRATCH, dir: env.cwd, root: @root) }
+        def scratched
+          confined(@scratch.acquire, @scratch) { |env| format(SCRATCH, dir: env.cwd, root: @root) }
+        rescue Isolation::Scratch::Unwritable => e
+          raise Refused, e.message
+        end
 
         def spiked(spike, repo)
           lease = spike.attached(spike.acquire)

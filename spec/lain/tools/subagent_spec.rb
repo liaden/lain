@@ -2163,6 +2163,28 @@ RSpec.describe Lain::Tools::Subagent do
         expect(backend.leased).to be_empty
       end
 
+      def refuses_workspace(reason_pattern)
+        expect { kept_tool.call({ "prompt" => "go" }, invocation) }
+          .to raise_error(described_class::Kept::Refused,
+                          /\Athe research workspace could not be created at #{scratch_root}: #{reason_pattern}\z/)
+      end
+
+      it "refuses in words, with no system call named, when the scratch root cannot be written" do
+        skip "root writes anywhere" if Process.uid.zero?
+        FileUtils.mkdir_p(scratch_root)
+        FileUtils.chmod(0o500, scratch_root)
+
+        refuses_workspace("permission denied")
+      ensure
+        FileUtils.chmod(0o700, scratch_root) if File.directory?(scratch_root)
+      end
+
+      it "reads the reason of whatever errno stopped it" do
+        allow(Dir).to receive(:mktmpdir).and_raise(Errno::ENOSPC)
+
+        refuses_workspace("no space left on device")
+      end
+
       it "keeps the directory after the child ends" do
         kept_tool.call({ "prompt" => "go" }, invocation)
 

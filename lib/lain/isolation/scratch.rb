@@ -24,14 +24,31 @@ module Lain
         @prefix = prefix
       end
 
+      # The root could not be written, or a directory made in it.
+      class Unwritable < Error
+        # @return [String] the directory it tried to make
+        attr_reader :dir
+        # @return [String] the errno's own reason, in lower case
+        attr_reader :reason
+
+        def initialize(dir, reason)
+          @dir = dir
+          @reason = reason
+          super("the research workspace could not be created at #{dir}: #{reason}")
+        end
+      end
+
       # Named by its real path, because a worker's paths are compared by where
       # they really land.
       #
       # @return [Lease] over a new, empty directory
+      # @raise [Unwritable]
       def acquire(_worker_id = nil)
         FileUtils.mkdir_p(@root)
         dir = File.realpath(Dir.mktmpdir(@prefix, @root))
         Lease.new(worker_env: WorkerEnv.new(cwd: dir, env: ENV.to_h), origin: Lease::Origin.new(path: dir))
+      rescue SystemCallError => e
+        raise Unwritable.new(@root, SystemCallError.new(nil, e.errno).message.downcase)
       end
 
       # What the model is told about where it is.
