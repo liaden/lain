@@ -91,6 +91,13 @@ RSpec.describe Lain::Config::Middleware do
       end)
   end
 
+  it "names a class the config file defines by its own name" do
+    source = "module Mine; class Foo; end; end\nmiddleware { tool Mine::Foo }\n"
+
+    expect { Lain::Config::Builder.evaluate(source, path: "/p.rb") }
+      .to(refusal_for { |e| expect(e.message).to include("`middleware` Mine::Foo has no") })
+  end
+
   it "says a middleware is a Class when given a Module" do
     expect { described_class.from(calls_for(:tool, Module.new, line: 4), path: "/p") }
       .to(refusal_for do |e|

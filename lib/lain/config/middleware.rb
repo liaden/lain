@@ -47,7 +47,8 @@ module Lain
           wanted.reject { |name| klass.method_defined?(name) }.map { |name| "##{name}" }
         end
 
-        def self.describe(klass) = klass.name || "an anonymous class"
+        # instance_eval of the config file names its classes under the builder's singleton class.
+        def self.describe(klass) = klass.name&.sub(/\A#<Class:0x\h+>::/, "") || "an anonymous class"
 
         def self.refuse(detail, at, area) = raise(Refusal.new(detail, path: at, table: TABLE, key: area.to_s))
       end
