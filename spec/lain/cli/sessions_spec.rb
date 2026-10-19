@@ -89,6 +89,26 @@ RSpec.describe Lain::CLI::Sessions do
       end
     end
 
+    context "with a session recorded in another format" do
+      let(:lines) { sessions.listing.lines.map(&:chomp) }
+
+      before do
+        write_session("20260101T000000-1.ndjson",
+                      [header(started_at: "2026-01-01T00:00:00.000000Z").merge("format" => 2)])
+        write_session("20260102T000000-1.ndjson",
+                      [header(started_at: "2026-01-02T00:00:00.000000Z").except("format")])
+      end
+
+      it "says a format-2 file records another format and cannot be resumed" do
+        expect(lines.last).to include("recording another session format", "cannot be resumed",
+                                      "20260101T000000-1.ndjson")
+      end
+
+      it "says a file with no format key predates the current one" do
+        expect(lines.first).to include("predating session format", "cannot be resumed")
+      end
+    end
+
     # Ephemerality lives in the FILENAME (<ts>-<pid>.btw.ndjson), so the
     # listing's default view is the durable record only; --all is the honest
     # escape hatch, and promotion (a rename) moves a file between the two

@@ -43,7 +43,18 @@ module Lain
           path_of(chosen(selector.to_s))
         end
 
+        # @param header [Hash{String=>Object}, nil] a file's first header record
+        # @return [String, nil] why the file cannot load, or {PICKABLE}
+        def self.header_reason(header)
+          return HEADERLESS if header.nil?
+          return PICKABLE if SessionRecord.current_format?(header)
+
+          header.key?("format") ? OTHER_FORMAT : PREDATES
+        end
+
         private
+
+        def header_reason(header) = self.class.header_reason(header)
 
         def path_of(name) = File.join(@dir, name)
 
@@ -96,13 +107,6 @@ module Lain
           return EMPTY if Journal.empty?(path)
 
           header_reason(first_header(path))
-        end
-
-        def header_reason(header)
-          return HEADERLESS if header.nil?
-          return PICKABLE if SessionRecord.current_format?(header)
-
-          header.key?("format") ? OTHER_FORMAT : PREDATES
         end
 
         # Lazy, and it stops at the first line of a real session: the header is

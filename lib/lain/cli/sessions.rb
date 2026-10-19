@@ -107,6 +107,8 @@ module Lain
         def to_s
           return "#{@name}  ?  0 turns  #{unloadable}  -#{damage}" if header.nil?
 
+          return "#{@name}  #{started}  #{chain.size} turns  #{format_refusal}  -#{damage}" if format_reason
+
           "#{@name}  #{started}  #{chain.size} turns  #{status}  #{head_short}#{damage}"
         end
 
@@ -148,6 +150,11 @@ module Lain
 
           "#{@records.first["type"]}, not a chat"
         end
+
+        # The listing and the resume pick must not disagree about a file.
+        def format_reason = @format_reason ||= Resume::Selector.header_reason(header)
+
+        def format_refusal = "#{format_reason}, cannot be resumed"
 
         def header = @records.find { |record| record["type"] == SessionRecord::HEADER_TYPE }
         def closed = @records.find { |record| record["type"] == "session_closed" }
