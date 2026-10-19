@@ -182,7 +182,8 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     supervisor = RunSpecSupervisor.new(reports, live, raising: retiring, log:)
     actors = RunSpecActors.new(supervisor, live, refusals:)
     settled = landing || RunSpecLanding.new(statuses)
-    run = described_class.new(progress: progress_over(issues, statuses), plans: subjects, actors:, supervisor:, gate:,
+    run = described_class.new(slug: "demo", progress: progress_over(issues, statuses), plans: subjects, actors:,
+                              supervisor:, gate:,
                               landing: settled, width:, budget:,
                               red_only: red_only || described_class::Identical,
                               **(attempts ? { attempts: } : {}), **(grading ? { grading: } : {}),
@@ -517,7 +518,9 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       torn = Lain::CLI::SessionJournals::Unreadable.new("the session journal x.ndjson is damaged at line 9")
       live = { now: 0 }
       supervisor = RunSpecSupervisor.new({ "a" => anchored("sha-a") }, live)
-      run = described_class.new(progress: -> { statuses.value?("done") ? raise(torn) : folds.call }, plans:,
+      run = described_class.new(slug: "demo", progress: lambda {
+        statuses.value?("done") ? raise(torn) : folds.call
+      }, plans:,
                                 actors: RunSpecActors.new(supervisor, live), supervisor:, gate: RunSpecGate.new,
                                 landing: RunSpecLanding.new(statuses), width: 1, red_only: described_class::Identical)
 
@@ -546,7 +549,9 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
   # A caller building the loop directly must choose how "committed no work"
   # is judged: SHA equality is blind to a rebase, so it is never implied.
   it "requires a red-step judge, rather than defaulting to comparing SHAs" do
-    expect { described_class.new(progress: -> {}, plans:, actors: nil, supervisor: nil, gate: nil, landing: nil) }
+    expect do
+      described_class.new(slug: "demo", progress: -> {}, plans:, actors: nil, supervisor: nil, gate: nil, landing: nil)
+    end
       .to raise_error(ArgumentError, /red_only/)
   end
 
@@ -666,7 +671,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
 
       result = run.call
 
-      expect(result.reported.first.reason).to include("lain epic land", "--resume", "a")
+      expect(result.reported.first.reason).to include("lain epic land a demo --resume")
     end
   end
 
@@ -723,8 +728,8 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       actors = RunSpecActors.new(supervisor, live)
       landing = RunSpecLanding.new(statuses)
       interrupted = false
-      run = described_class.new(progress: progress_over([issue("a"), issue("b")], statuses), plans:, actors:,
-                                supervisor:, gate: RunSpecGate.new, landing:, width: 1,
+      run = described_class.new(slug: "demo", progress: progress_over([issue("a"), issue("b")], statuses),
+                                plans:, actors:, supervisor:, gate: RunSpecGate.new, landing:, width: 1,
                                 red_only: described_class::Identical, interrupt: -> { interrupted })
 
       allow(landing).to receive(:call).and_wrap_original do |original, *args, **options|
@@ -748,8 +753,8 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       interrupted = false
 
       elapsed = Sync do |task|
-        run = described_class.new(progress: progress_over([issue("a")], statuses), plans:, actors:, supervisor:,
-                                  gate: RunSpecGate.new(delay: 30), landing:, width: 1,
+        run = described_class.new(slug: "demo", progress: progress_over([issue("a")], statuses), plans:, actors:,
+                                  supervisor:, gate: RunSpecGate.new(delay: 30), landing:, width: 1,
                                   red_only: described_class::Identical,
                                   interrupt: -> { interrupted })
         task.async do
@@ -781,7 +786,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       Sync do |task|
         live = { now: 0 }
         supervisor = RunSpecSupervisor.new({ "a" => anchored("sha-a") }, live)
-        run = described_class.new(progress: progress_over([issue("a")], statuses), plans:,
+        run = described_class.new(slug: "demo", progress: progress_over([issue("a")], statuses), plans:,
                                   actors: RunSpecActors.new(supervisor, live), supervisor:,
                                   gate: gate_over(asker), landing: RunSpecLanding.new(statuses), width: 1,
                                   red_only: described_class::Identical,
@@ -886,7 +891,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     it "still names the resume when the failure came after the merge began" do
       reason = refused_by(RuntimeError.new("power cut mid-merge"))
 
-      expect(reason).to include("lain epic land", "--resume", "a")
+      expect(reason).to include("lain epic land a demo --resume")
     end
   end
 

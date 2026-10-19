@@ -1482,7 +1482,17 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     it "refuses an implementation for an issue whose plan was never approved" do
       expect { command.submit("implementation", issue: "a", digest: changeset) }
-        .to raise_error(described_class::PlanNotApproved, /lain epic submit issue_plan --issue a/)
+        .to raise_error(described_class::PlanNotApproved, /lain epic submit issue_plan alpha --issue a/)
+    end
+
+    it "names the epic in the remedy for an implementation that names no issue" do
+      expect { command.submit("implementation") }
+        .to raise_error(Lain::Error, /lain epic submit implementation alpha --issue ID/)
+    end
+
+    it "names the epic in the remedy for an implementation that names no digest" do
+      expect { command.submit("implementation", issue: "a") }
+        .to raise_error(Lain::Error, /lain epic submit implementation alpha --issue ID --digest ADDRESS/)
     end
 
     it "refuses a plan for an issue the epic does not hold, before anything is journaled" do

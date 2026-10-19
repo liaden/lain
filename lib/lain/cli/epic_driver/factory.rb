@@ -533,7 +533,7 @@ module Lain
         end
 
         def loop_over(fleet, checkout, layout, width:, budget:)
-          Run.new(progress: -> { epics.progress(slug) }, plans: ->(issue_id) { plan_for(issue_id, layout) },
+          Run.new(slug:, progress: -> { epics.progress(slug) }, plans: ->(issue_id) { plan_for(issue_id, layout) },
                   actors: actors(fleet, layout), supervisor: fleet, gate:, landing: landing(checkout, layout), width:,
                   budget:, attempts:, red_only: RedOnly.new(git: parent, base: working_branch),
                   interrupt: @optional.fetch(:interrupt), grading: @optional.fetch(:grading) || Run::Ungraded,
@@ -780,7 +780,7 @@ module Lain
         # next attempt's anchor would be refused by this one. The way out is a
         # command, and the reply has to name it.
         STRANDED = "its work is anchored at %<sha>s but never reached the working branch (%<why>s) -- finish it " \
-                   "with `lain epic land %<issue>s --resume`, which merges what is already anchored"
+                   "with `lain epic land %<issue>s %<slug>s --resume`, which merges what is already anchored"
 
         # Everything the landing refused BEFORE it merged anything. There is no
         # merge to resume, so the refusal speaks for itself: each of these names
@@ -977,6 +977,7 @@ module Lain
           def released = audited.empty? ? "" : ", #{audited.size} QA #{"checkpoint".pluralize(audited.size)} released"
         end
 
+        # @param slug [String] the epic, named in the remedies a reply prints
         # @param progress [#call] answers the epic's {Epic::Progress}, re-read
         #   per fold rather than cached -- a landing changes it, and the next
         #   issue's readiness is exactly that change
@@ -1007,9 +1008,10 @@ module Lain
         #   every checkpoint, because in an epic QA is not optional
         # @param tip_tests [#call] `call(issue_id, sha)`, the project's suite run
         #   on the anchored sha just before its gate is asked -- see {#gated}
-        def initialize(progress:, plans:, actors:, supervisor:, gate:, landing:, red_only:, width:, budget: nil,
+        def initialize(slug:, progress:, plans:, actors:, supervisor:, gate:, landing:, red_only:, width:, budget: nil,
                        interrupt: -> { false }, attempts: nil, grading: Ungraded, qa_gate: QaGate::Unaudited,
                        tip_tests: Untested)
+          @slug = slug
           @qa_gate = qa_gate
           @tip_tests = tip_tests
           @progress = progress
@@ -1292,7 +1294,7 @@ module Lain
         def unlanded(entry, report, error)
           return format(REFUSED, why: error.message) if refused_before_merging?(error)
 
-          format(STRANDED, sha: report.sha, issue: entry.issue_id, why: "#{error.class}: #{error.message}")
+          format(STRANDED, sha: report.sha, issue: entry.issue_id, slug: @slug, why: "#{error.class}: #{error.message}")
         end
 
         def refused_before_merging?(error) = error.is_a?(RefusedBeforeActing)

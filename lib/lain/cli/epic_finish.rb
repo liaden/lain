@@ -153,16 +153,16 @@ module Lain
       def told(epic_slug, sha, answer)
         @exit_status = answer.ok? ? 0 : 1
         head = ["#{answer.ok? ? "finished" : "stopped"} #{epic_slug} at #{sha}", "  branch epic/#{epic_slug}"]
-        (head + (answer.ok? ? @finisher.finished(epic_slug, answer) : stopped(answer))).join("\n")
+        (head + (answer.ok? ? @finisher.finished(epic_slug, answer) : stopped(epic_slug, answer))).join("\n")
       end
 
       # Read leniently because the producers differ: {Forge::Landing}'s
       # conflict carries a `state`, a {Forge::Gh} refusal a `message`, a
       # {Forge::Promotion} refusal both.
-      def stopped(answer)
+      def stopped(epic_slug, answer)
         said = %w[reason state message].map { |key| answer.detail[key].to_s }.reject(&:empty?)
         ["  #{said.empty? ? "refused, with no reason recorded" : said.join(" -- ")}",
-         "  nothing else finishes this epic until that is settled; run `#{@finisher.rerun}` again after"]
+         "  nothing else finishes this epic until that is settled; run `#{@finisher.rerun(epic_slug)}` again after"]
       end
     end
 
@@ -192,7 +192,7 @@ module Lain
            "holds it"]
         end
 
-        def rerun = "lain epic finish"
+        def rerun(epic_slug) = "lain epic finish #{epic_slug}"
 
         def untouched = "nothing reached the remote"
 
@@ -250,7 +250,7 @@ module Lain
 
         def finished(_epic_slug, answer) = ["  merged into #{BASE} at #{answer.value}; nothing was pushed"]
 
-        def rerun = "lain epic finish --local"
+        def rerun(epic_slug) = "lain epic finish #{epic_slug} --local"
 
         def untouched = "nothing merged into #{BASE}"
       end

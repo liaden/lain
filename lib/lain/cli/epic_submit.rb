@@ -241,7 +241,7 @@ module Lain
           # Said apart from "the artifact is missing", because the remedies
           # differ: this one names no issue at all.
           raise Error, "the #{stage} stage gates one issue's work, and nothing named the issue -- " \
-                       "lain epic submit #{stage} --issue ID"
+                       "lain epic submit #{stage} #{@home.slug} --issue ID"
         end
 
         def commit!(digest)
@@ -265,7 +265,7 @@ module Lain
           # something else already computed that address, and a second opinion on the
           # same content is how two records of one thing start disagreeing.
           raise Error, "the #{stage} stage gates a changeset, and no artifact in the epic home addresses " \
-                       "one -- lain epic submit #{stage} --issue ID --digest ADDRESS"
+                       "one -- lain epic submit #{stage} #{@home.slug} --issue ID --digest ADDRESS"
         end
       end
 
@@ -730,7 +730,7 @@ module Lain
         raise PlanNotApproved, "issue #{plan.issue_id.inspect} cannot open its implementation gate -- its " \
                                "issue_plan #{plan.digest} is not approved (never approved, still parked, " \
                                "denied since, or its plan or criteria changed since): lain epic submit " \
-                               "issue_plan --issue #{plan.issue_id}"
+                               "issue_plan #{plan.slug} --issue #{plan.issue_id}"
       end
 
       # `for_all`, never `for`: resolving one stage at a time refuses LATE, and

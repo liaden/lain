@@ -189,7 +189,8 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
 
       output = finish.finish("demo")
 
-      expect(output).to include("stopped demo", "refs/heads/epic/demo/a", "refs/heads/epic/demo/b")
+      expect(output).to include("stopped demo", "refs/heads/epic/demo/a", "refs/heads/epic/demo/b",
+                                "`lain epic finish demo` again")
       expect(finish.exit_status).to eq(1)
       expect(%w[a b].map { |issue| remote_ref("refs/heads/epic/demo/#{issue}") }).to all(eq(tip))
       expect(remote_ref("refs/heads/epic/demo")).to be_empty
@@ -263,7 +264,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
 
       output = local.finish("demo")
 
-      expect(output).to include("stopped demo", "README", "`lain epic finish --local` again")
+      expect(output).to include("stopped demo", "README", "`lain epic finish demo --local` again")
       expect(git(root, "rev-parse", "main")).to eq(before)
     end
 
