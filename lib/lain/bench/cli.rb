@@ -271,7 +271,8 @@ module Lain
         LiveArms.refuse_unservable!(spawn_options.fetch(:provider), cheap_model) if router.nil?
         confinement = confinement_for(arms, journal:, probe:, project:, paths:)
         spawn_seam = seam_for(backend, memory, confinement, spawn_options)
-        arm_report(LiveArms.build(price_book:, decompose:, model: spawn_seam.model, router:, cheap_model:),
+        live = LiveArms.build(price_book:, decompose:, model: spawn_seam.model, router:, cheap_model:, journal:)
+        arm_report(live,
                    tasks: suite.map(&:prompt), spawn_seam:, fixture: fixture_path, model: spawn_seam.model,
                    grader: SuiteGrader.new(suite), graded:, confine: confinement.state,
                    **lease_options(isolation:, journal:))

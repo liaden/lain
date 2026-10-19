@@ -207,6 +207,15 @@ RSpec.describe Lain::Bench::CLI do
       expect(driver_isolation.acquire("single-thread").worker_env).to be_a(Lain::WorkerEnv)
     end
 
+    it "hands the run journal to the roster, so the dual-ledger arm can record into it" do
+      journal = Lain::Channel.new
+      allow(Lain::Bench::LiveArms).to receive(:build).and_call_original
+
+      arms_report(isolation: "none", journal:)
+
+      expect(Lain::Bench::LiveArms).to have_received(:build).with(hash_including(journal:))
+    end
+
     # The header field, on the only path this command can take. `#lease_options`
     # REQUIRES a journal whenever `--isolation` is set, so the resolver always
     # returns a backend wrapped in `Isolation::Journal` -- which means every

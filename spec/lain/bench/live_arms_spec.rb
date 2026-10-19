@@ -355,6 +355,43 @@ END", model: "claude-sonnet-4",
     end
   end
 
+  describe "the dual-ledger arm's journal" do
+    let(:journal) { [] }
+    let(:seam) do
+      lambda do |journal:, workspace: Lain::Workspace.empty, timeline: nil, **|
+        provider = Lain::Provider::Mock.new(
+          responses: [text_response("same output", model: "claude-sonnet-4",
+                                                   usage: Lain::Usage.new(input_tokens: 6, output_tokens: 2))]
+        )
+        Lain::Agent.new(provider:, toolset: Lain::Toolset.new([]),
+                        context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 128),
+                        journal:, workspace:, timeline:)
+      end
+    end
+    let(:grader) { Lain::Grader::Fixture.new("open") { |fixture| fixture.check("never") { |_timeline| false } } }
+
+    def dual_ledger(**) = described_class.build(**).find { |arm| arm.name == "dual-ledger" }
+
+    it "leaves its ledger transitions in the journal, stamped with the arm and the task" do
+      dual_ledger(journal:).run("loop forever", spawn_seam: seam, grader:)
+
+      replans = journal.select { |record| record.to_journal["event"] == :replan }
+      expect(replans.map(&:to_journal)).to include(
+        a_hash_including("type" => "ledger_transition", "arm" => "dual-ledger", "task" => "loop forever")
+      )
+    end
+
+    it "journals nothing but the transitions" do
+      dual_ledger(journal:).run("loop forever", spawn_seam: seam, grader:)
+
+      expect(journal.map { |record| record.to_journal["type"] }.uniq).to eq(["ledger_transition"])
+    end
+
+    it "keeps the plain arm when no journal is given" do
+      expect(dual_ledger.class).to be(Lain::Arm::DualLedger)
+    end
+  end
+
   # The pin the deletability map used to carry. simplify-03's `adaptive_router`
   # row asserted the arm was reachable from nothing and pinned this marker as a
   # SIDE EFFECT of that; wiring the arm removes the row, so the marker needs a

@@ -188,6 +188,40 @@ module Lain
               "server says it has no such model. Name a --cheap-model it serves"
       end
 
+      # The record cannot know its arm or task, and a run journal is shared by every arm.
+      StampedTransition = Data.define(:record, :arm, :task) do
+        def to_journal = record.to_journal.merge("arm" => arm, "task" => task)
+      end
+      private_constant :StampedTransition
+
+      TransitionSink = Data.define(:journal, :arm, :task) do
+        def <<(record) = journal << StampedTransition.new(record:, arm:, task:)
+      end
+      private_constant :TransitionSink
+
+      # {Arm::DualLedger} whose transitions also reach the run journal. The
+      # arm's own journal is drained for pricing, so the copy is taken on the
+      # way in; `@task` is set per run because the factory is called without one.
+      class JournaledDualLedger < Arm::DualLedger
+        def initialize(run_journal:, **)
+          super(**, journal_factory: -> { ledger_tee(run_journal) })
+        end
+
+        def run(task, **)
+          # Safe because Arm::Driver runs tasks serially.
+          @task = task
+          super
+        end
+
+        private
+
+        def ledger_tee(run_journal)
+          Channel::Tee.new(TransitionSink.new(journal: run_journal, arm: name, task: @task),
+                           only: LedgerTransition.method(:===))
+        end
+      end
+      private_constant :JournaledDualLedger
+
       # The two epic entries' labels. They differ in WHO answers the gates and in
       # nothing else, so the names are the only thing telling their rows apart.
       PROGRESSIVE = "epic-progressive"
@@ -265,11 +299,13 @@ module Lain
       # @param cheap_model [String, nil] `--cheap-model`, forwarded to
       #   {.default_router} when `router` is absent; ignored when `router` is
       #   given, since a caller bringing its own tier answers this question itself.
+      # @param journal [#<<, nil] the run journal the dual-ledger arm's ledger
+      #   transitions are copied to; nil keeps them in the arm's own drained journal
       # @return [Array<Lain::Arm>] single-thread control first
       # @raise [UnroutableBackend] when no `router` is given and `model` has no
       #   cheaper sibling named or servable
       def self.build(price_book: PriceBook.default, decompose: DEFAULT_DECOMPOSE,
-                     model: Provider::Anthropic::DEFAULT_MODEL, router: nil, cheap_model: nil)
+                     model: Provider::Anthropic::DEFAULT_MODEL, router: nil, cheap_model: nil, journal: nil)
         # One instrument, so all four arms report wall-time off the same clock
         # and dollars off the same book -- the comparison is only a comparison
         # if the measuring is shared.
@@ -277,10 +313,17 @@ module Lain
         handoff = Isolation::WorkerHandoff::Discarding.new
         [Arm::SingleThread.new(name: "single-thread", instrument:, handoff:),
          Arm::OrchestratorWorker.new(name: "orchestrator-worker", instrument:, decompose:, handoff:),
-         Arm::DualLedger.new(name: "dual-ledger", instrument:, handoff:),
+         dual_ledger(instrument:, handoff:, journal:),
          Arm::AdaptiveRouter.new(name: "adaptive-router", instrument:, handoff:,
                                  router: router || default_router(model, cheap_model:))]
       end
+
+      def self.dual_ledger(instrument:, handoff:, journal:)
+        return Arm::DualLedger.new(name: "dual-ledger", instrument:, handoff:) if journal.nil?
+
+        JournaledDualLedger.new(name: "dual-ledger", instrument:, handoff:, run_journal: journal)
+      end
+      private_class_method :dual_ledger
     end
   end
 end
