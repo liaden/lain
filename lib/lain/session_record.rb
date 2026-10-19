@@ -71,10 +71,15 @@ module Lain
     # `writer:` is the process writing the file ({Liveness::Writer}), so a
     # reader elsewhere can tell a crashed session from a quiet one. Required,
     # so a new caller cannot forget it; an unrecorded writer writes no field.
+    #
+    # `max_tokens_source` says where the launch ceiling came from
+    # ({OutputCeiling#to_header}), so a reader can tell a typed one from a
+    # per-model one; a bare number writes none. A later `/model` does not
+    # rewrite it.
     def header(context:, toolset:, writer:, workspace: Workspace.empty, resumed_from: nil, profile: {},
                compaction: {}, arms: {}, middleware: {})
       record = { "type" => HEADER_TYPE, "format" => FORMAT, "context_class" => context.class.name,
-                 "model" => context.model, "max_tokens" => context.max_tokens,
+                 "model" => context.model, "max_tokens" => context.max_tokens, **context.output_ceiling.to_header,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "tools" => toolset.to_schema, "reminders" => workspace.reminders }
       record = record.merge(context_pipeline(context), profile, scheduled(compaction), section("arms", arms),

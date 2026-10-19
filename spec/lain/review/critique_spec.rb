@@ -307,7 +307,7 @@ RSpec.describe Lain::Review::Critique do
 
       expect { critique(changeset_of({ "lib/a.rb" => 4 }), window: window(4_096), spawn: big).call }
         .to raise_error(described_class::Refused) { |error|
-          expect(error.message).to include("4096-token response reserve")
+          expect(error.message).to include("2048-token response reserve", "4096-token window")
           expect(error.message).not_to include("lib/a.rb")
         }
       expect(big.calls).to be_empty

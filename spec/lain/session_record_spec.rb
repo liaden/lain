@@ -149,6 +149,19 @@ RSpec.describe Lain::SessionRecord::Scribe do
                                       writer: CoreGraph::NO_WRITER)).not_to have_key("middleware")
   end
 
+  it "writes the ceiling and its source when the Context resolved one" do
+    resolved = Lain::Context.new(model: "claude-opus-4-6", max_tokens: Lain::OutputCeiling.typed(4_096))
+
+    expect(Lain::SessionRecord.header(context: resolved, toolset:, workspace:, writer: CoreGraph::NO_WRITER))
+      .to include("max_tokens" => 4_096, "max_tokens_source" => "typed")
+  end
+
+  it "writes no ceiling source for a Context handed a bare number" do
+    scribe
+
+    expect(of_type("session").first).not_to have_key("max_tokens_source")
+  end
+
   it "writes no compaction key when the run recorded no section" do
     scribe
 

@@ -177,10 +177,12 @@ module Lain
       #   home directory
       # @param paths [Paths] where the epic home resolves its state directory
       # @param environment [Prompt::Environment] rendered into the system prompt; none renders nothing
+      # @param ceiling_default [Integer, nil] the `--max-tokens` default the
+      #   command declares, so a header names it as that rather than as typed
       # @option options [String] :provider name of the chat tier's provider
       # @option options [String] :model model id for the chat tier
       # @option options [String] :api_base base URL override, ollama only
-      # @option options [Integer] :max_tokens ceiling on a chat completion
+      # @option options [Integer] :max_tokens ceiling on a chat completion; unset takes the model's own
       # @option options [Float] :temperature sampler temperature, 0 for determinism
       # @option options [Integer] :seed sampler seed, paired with temperature 0
       # @option options [Integer] :num_batch prompt batch size, ollama only
@@ -198,8 +200,9 @@ module Lain
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
       def initialize(options, root:, profile: RunProfile.from_options(options),
                      compaction: CompactionProfile.typed(options), middleware: Config::Middleware.empty,
-                     paths: Paths.new, environment: Prompt::Environment.none)
+                     paths: Paths.new, environment: Prompt::Environment.none, ceiling_default: nil)
         @options = options
+        @ceiling_default = ceiling_default
         @environment = environment
         @paths = paths
         @root = root
@@ -773,10 +776,23 @@ module Lain
       end
 
       # `--max-tokens`, through the same {Ceiling} the summarizer tier's flag goes
-      # through. Unlike {#model} there is NO default to fall back to here: every
-      # command that renders a Context declares the flag with a Thor default, so a
-      # nil means a caller assembled this Backend by hand and left it out.
-      def max_tokens = Ceiling.new(flag: "--max-tokens", value: @options[:max_tokens]).tokens
+      # through. Set, it is fixed; unset, the ceiling is the model's own, read
+      # through {#context_window} for whichever model the Context renders, so a
+      # `/model` switch moves it. Building the Context asks no window; the first
+      # read does, which on a chat is the session header at launch.
+      #
+      # A set value equal to the command's own default is recorded as that
+      # default: Thor fills the default in, so the two cannot be told apart, and
+      # a bench header must not claim somebody typed it.
+      #
+      # @return [OutputCeiling, OutputCeiling::PerModel] the Context's ceiling slot
+      def max_tokens
+        typed = Ceiling.new(flag: "--max-tokens", value: @options[:max_tokens]).typed
+        return OutputCeiling.command_default(typed) if typed && typed == @ceiling_default
+        return OutputCeiling.typed(typed) if typed
+
+        OutputCeiling::PerModel.new(window: ->(name) { context_window.resolve(name) })
+      end
 
       # The context window is not resolved PER TURN here: the Source asks
       # {#context_window} about the live Context every turn, so a `/model`

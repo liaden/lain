@@ -19,6 +19,12 @@ RSpec.describe Lain::ReplyReserve do
     expect(reserve(32_768, 1_000).tokens).to eq(1_000)
   end
 
+  # A reserve the size of the window would put the compaction trigger at zero
+  # and fire it every turn.
+  it "never reserves more than half the window" do
+    expect(reserve(4_096, 4_096).tokens).to eq(2_048)
+  end
+
   it "names the window provenance it was computed from" do
     expect(reserve(32_768, 16_384, basis: :probed).basis).to eq(:probed)
   end

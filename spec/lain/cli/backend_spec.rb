@@ -1016,23 +1016,70 @@ RSpec.describe Lain::CLI::Backend do
         .to eq("BE TERSE")
     end
 
-    # `--max-tokens` has no default HERE (unlike --model, resolved above from the
-    # provider) -- every command declaring the flag gives Thor one, so a nil means
-    # a caller built this Backend and left the ceiling out. Backend is the single
-    # authority on it now that Bench's own constants are flag declarations only,
-    # so this is where it has to be caught: Context answers a nil with
-    # `TypeError: can't convert nil into Integer`, which is not a Lain::Error, so
-    # Boundary#render passes it through as a backtrace naming Context -- a class
-    # no operator has heard of. Same wound MissingAPIKey and InvalidCeiling were
-    # both written for; same error class as --summarizer-max-tokens'.
-    it "refuses a missing ceiling as a Lain::Error naming the flag, never a TypeError from Context" do
-      expect { backend_for(provider: "ollama").context }
-        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--max-tokens is not set/)
-    end
+    # An unset `--max-tokens` is no longer a refusal: the ceiling comes from the
+    # model, and a typed flag overrides it.
+    describe "an untyped --max-tokens" do
+      def served(tokens)
+        stub_request(:get, "http://localhost:11434/api/ps")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate("models" => [{ "name" => "qwen3-coder:30b", "model" => "qwen3-coder:30b",
+                                                        "digest" => "abc123", "context_length" => tokens }]))
+      end
 
-    it "refuses an explicit nil ceiling the same way an absent key is refused" do
-      expect { backend_for(provider: "ollama", max_tokens: nil).context }
-        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--max-tokens/)
+      def request_of(context) = context.render(timeline: CoreGraph.timeline, toolset: Lain::Toolset.new)
+
+      it "sends an Anthropic 4.6 model's table ceiling and names the table as its source" do
+        context = backend_for(provider: "anthropic", model: "claude-opus-4-6").context
+
+        expect([request_of(context).max_tokens, context.output_ceiling.to_header])
+          .to eq([128_000, { "max_tokens_source" => "table" }])
+      end
+
+      it "sends a local ollama model the window its server says it serves" do
+        served(32_768)
+        context = backend_for(provider: "ollama", model: "qwen3-coder:30b").context
+
+        expect([request_of(context).max_tokens, context.output_ceiling.source]).to eq([32_768, :served_window])
+      end
+
+      it "sends an ollama cloud model with no table entry the fallback" do
+        context = with_env("OLLAMA_API_KEY" => "sk-ollama-test") do
+          backend_for(provider: "ollama-cloud", model: "glm-5.3").context
+        end
+
+        expect([request_of(context).max_tokens, context.output_ceiling.source]).to eq([32_768, :fallback])
+      end
+
+      it "names a command's own default ceiling for what it is, not a typed value" do
+        context = described_class.new({ provider: "anthropic", model: "claude-opus-4-6", max_tokens: 1024 },
+                                      root: Dir.pwd, ceiling_default: 1024).context
+
+        expect([request_of(context).max_tokens, context.output_ceiling.source]).to eq([1_024, :command_default])
+      end
+
+      it "keeps a typed value that differs from the command's default typed" do
+        context = described_class.new({ provider: "anthropic", model: "claude-opus-4-6", max_tokens: 2048 },
+                                      root: Dir.pwd, ceiling_default: 1024).context
+
+        expect(context.output_ceiling.source).to eq(:typed)
+      end
+
+      it "lets a typed --max-tokens win" do
+        context = backend_for(provider: "anthropic", model: "claude-opus-4-6", max_tokens: 4096).context
+
+        expect([request_of(context).max_tokens, context.output_ceiling.source]).to eq([4_096, :typed])
+      end
+
+      it "re-resolves for the model /model switches to, while a typed ceiling stays" do
+        journal = Lain::Journal.new(io: StringIO.new)
+        untyped, typed = [{}, { max_tokens: 4096 }].map do |flags|
+          switch = Lain::Context::ModelSwitch.new("claude-opus-4-6", journal:)
+          [switch, backend_for(provider: "anthropic", model: "claude-opus-4-6", **flags).context.with_model(switch)]
+        end
+        [untyped, typed].each { |switch, _| switch.switch("claude-haiku-4-5", surface: "tty") }
+
+        expect([request_of(untyped.last).max_tokens, request_of(typed.last).max_tokens]).to eq([64_000, 4_096])
+      end
     end
 
     it "refuses a fractional --summarizer-max-tokens the same way" do
@@ -1048,8 +1095,8 @@ RSpec.describe Lain::CLI::Backend do
     # The two ceiling flags are two different mistakes to make, and one Ceiling
     # object now answers for both -- so the refusal has to name the one that was
     # actually wrong, or it sends the operator to the other flag.
-    it "names --max-tokens, never the summarizer's flag, when the chat tier's is missing" do
-      expect { backend_for(provider: "ollama").context }
+    it "names --max-tokens, never the summarizer's flag, when the chat tier's is wrong" do
+      expect { backend_for(provider: "ollama", max_tokens: 0).context }
         .to raise_error(Lain::CLI::Backend::InvalidCeiling) do |error|
           expect(error.message).not_to include("summarizer")
         end

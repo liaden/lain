@@ -24,7 +24,7 @@ module Lain
       Reminder.new(workspace:) >> CacheBreakpoints.new
     end
 
-    attr_reader :system, :max_tokens, :stream, :extra, :requires
+    attr_reader :system, :stream, :extra, :requires
 
     # The catalog name the pipeline was chosen by, or nil when nobody named one
     # -- the class default, or a pipeline injected as a value. Carried by every
@@ -37,6 +37,21 @@ module Lain
     # reader gets the model in force at read time. The switch is the one
     # deliberate, journaled impurity here.
     def model = @model.current
+
+    # The ceiling in force NOW, read through the slot the way {#model} is: an
+    # untyped one ({OutputCeiling::PerModel}) answers for the model in force, so
+    # `/model` moves it, and a typed or bare one answers itself.
+    #
+    # That makes an untyped ceiling a second impurity beside the model slot:
+    # it reads the run's window book, whose answer can change between turns
+    # when a probe lands. The ceiling is in `Request#digest` but in no prefix
+    # digest, so the cached prefix does not move with it.
+    #
+    # @return [OutputCeiling]
+    def output_ceiling = @ceiling.ceiling_for(model)
+
+    # @return [Integer]
+    def max_tokens = output_ceiling.tokens
 
     # `extra` (temperature, seed, num_ctx) rides through to Request#extra, which
     # Request excludes from cache_payload/digest by design -- so threading it
@@ -64,12 +79,15 @@ module Lain
     # `pipeline_name` is a label and is never resolved here: a name becomes a
     # pipeline before construction ({CLI::ContextPipeline}), so #render reads
     # nothing a name could change.
+    #
+    # `max_tokens` is a number, or a slot answering `#ceiling_for(model)`
+    # ({OutputCeiling}); a slot is stored as the slot, like `model`.
     def initialize(model:, max_tokens:, system: nil, stream: true, extra: {}, pipeline: nil, pipeline_name: nil)
       # A delegating slot is stored AS the slot; flattening it to its current
       # value would fix the model at construction, which is the very seam
       # `/model` exists to escape.
       @model = model.respond_to?(:current) ? model : StaticModel.new(model)
-      @max_tokens = Integer(max_tokens)
+      @ceiling = max_tokens.respond_to?(:ceiling_for) ? max_tokens : OutputCeiling.fixed(max_tokens)
       @system = system && Canonical.normalize(system)
       @stream = stream
       @extra = Canonical.normalize(extra)
@@ -164,10 +182,11 @@ module Lain
     # `model: @model` is the STORED slot, deliberately not the `#model` reader.
     # The reader unwraps to `.current`, so copying it would flatten a live
     # {ModelSwitch} to whatever it held at copy time and silently break `/model`
-    # from the next turn on.
+    # from the next turn on. `max_tokens: @ceiling` is the stored slot for the
+    # same reason.
     def copy(**changes)
-      self.class.new(model: @model, max_tokens:, system:, stream:, extra:, pipeline: @pipeline, pipeline_name:,
-                     **changes)
+      self.class.new(model: @model, max_tokens: @ceiling, system:, stream:, extra:, pipeline: @pipeline,
+                     pipeline_name:, **changes)
     end
 
     # Hoisted, because a `[].freeze` literal allocates a fresh Array per read

@@ -558,4 +558,35 @@ RSpec.describe Lain::Context do
       expect((Lain::Context::Identity >> substitute).reads_messages?).to be(true)
     end
   end
+
+  # The ceiling is a slot like the model: an untyped one resolves for the model
+  # in force when the Context renders, so a `/model` switch moves it.
+  describe "a per-model output ceiling" do
+    let(:per_model) do
+      Lain::OutputCeiling::PerModel.new(
+        window: ->(_model) { Lain::ContextWindow::WindowResolution.new(window_tokens: 1_000_000, provenance: :published) }
+      )
+    end
+
+    it "renders the ceiling of the model in force, and keeps the slot through a copy" do
+      switch = Lain::Context::ModelSwitch.new("claude-opus-4-6", journal: Lain::Journal.new(io: StringIO.new))
+      live = described_class.new(model: "m", max_tokens: per_model).with_model(switch).with_system("be terse")
+      before = live.render(timeline:, toolset:).max_tokens
+      switch.switch("claude-haiku-4-5", surface: "tty")
+
+      expect([before, live.render(timeline:, toolset:).max_tokens]).to eq([128_000, 64_000])
+    end
+
+    it "keeps a typed ceiling whatever the model" do
+      typed = described_class.new(model: "claude-opus-4-6", max_tokens: Lain::OutputCeiling.typed(4_096))
+
+      expect(typed.with_model("claude-haiku-4-5").render(timeline:, toolset:).max_tokens).to eq(4_096)
+    end
+
+    it "names the source of the ceiling it renders, and none for a bare number" do
+      expect([described_class.new(model: "claude-opus-4-6", max_tokens: per_model).output_ceiling.source,
+              described_class.new(model: "claude-opus-4-6", max_tokens: 1_024).output_ceiling.source])
+        .to eq([:table, nil])
+    end
+  end
 end

@@ -158,10 +158,12 @@ RSpec.describe "lain chat's flag surface" do
       seen.first[:max_tokens]
     end
 
-    it "defaults a chat to 16384, which the backend's context carries to the request" do
-      expect(max_tokens_under({})).to eq(16_384)
-      expect(parse[:max_tokens]).to eq(16_384)
-      expect(Lain::CLI::Backend.new(parse("--provider", "ollama"), root: Dir.pwd).context.max_tokens).to eq(16_384)
+    it "leaves a chat's ceiling unset, so the backend's context takes the model's own" do
+      expect(max_tokens_under({})).to be_nil
+      expect(parse[:max_tokens]).to be_nil
+      context = Lain::CLI::Backend.new(parse("--provider", "anthropic", "--model", "claude-opus-4-6"),
+                                       root: Dir.pwd).context
+      expect([context.max_tokens, context.output_ceiling.source]).to eq([128_000, :table])
     end
 
     it "leaves bench record on its own default" do

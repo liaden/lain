@@ -654,6 +654,17 @@ RSpec.describe Lain::Compaction::Source do
       expect(decisions.first["signals"]).to eq(%w[approaching_window])
     end
 
+    # The reply needs room the 0.9 ratio does not leave on a small window, so
+    # the chat's own ceiling moves the trigger to window minus its reserve.
+    it "fires it at window minus the reply reserve on an authoritative 32,768 window" do
+      ceilinged = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 16_384, system: "a system prompt")
+      [28_671, 28_672].each do |usage|
+        context_for(crossing(window_book(32_768)), timeline, base: ceilinged, usage:)
+      end
+
+      expect(decisions.map { |record| record["signals"].include?("approaching_window") }).to eq([false, true])
+    end
+
     # {CLI::Backend::WindowBook::Served} is the only PROBED window there is:
     # ollama's `/api/ps` naming the runner that is resident right now.
     it "fires it on a window probed from the provider" do

@@ -414,11 +414,11 @@ class LainCLI < Thor
     # that runner stays loaded: one question per method.
     #
     # @param thor [Class] the Thor class the flags accumulate onto
-    # @param max_tokens [Integer] this command's default ceiling
+    # @param max_tokens [Integer, nil] this command's default ceiling; nil takes the model's own
     # @param ceiling [String, nil] why this command's ceiling is the one it is
     # @param recorded [String, nil] where an untyped profile flag's default comes
     #   from before the environment, for a command that reads one
-    def self.declare(thor, max_tokens: 16_384, ceiling: nil, recorded: nil)
+    def self.declare(thor, max_tokens: nil, ceiling: nil, recorded: nil)
       endpoint(thor, recorded)
       sampling(thor, max_tokens, ceiling)
       throughput(thor, recorded)
@@ -465,7 +465,7 @@ class LainCLI < Thor
     def self.sampling(thor, max_tokens, ceiling)
       thor.method_option :max_tokens, type: :numeric, default: max_tokens,
                                       desc: "max_tokens per model turn#{"; #{ceiling}" if ceiling} " \
-                                            "[default #{max_tokens}]"
+                                            "[default #{max_tokens || "the model's own ceiling"}]"
       thor.method_option :temperature, type: :numeric,
                                        desc: "Sampler temperature, threaded into Request#extra (ollama honors it)"
       thor.method_option :seed, type: :numeric,
@@ -838,7 +838,8 @@ class LainCLI < Thor
     # block so a refusal from its own construction presents the same way.
     def record(taskfile)
       render do
-        Lain::Bench::CLI.new.record(taskfile:, backend: model_backend, out: options[:out],
+        backend = model_backend(Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens))
+        Lain::Bench::CLI.new.record(taskfile:, backend:, out: options[:out],
                                     runs: options[:n], system: options[:system],
                                     memory: options[:memory]).join("\n")
       end
@@ -905,7 +906,8 @@ class LainCLI < Thor
       refuse_journal_without_isolation!
       journal = lease_journal
       render do
-        Lain::Bench::CLI.new.arms_report(fixture_path: fixture, backend: model_backend, journal:,
+        backend = model_backend(Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS)
+        Lain::Bench::CLI.new.arms_report(fixture_path: fixture, backend:, journal:,
                                          system: options[:system], isolation: options[:isolation],
                                          cheap_model: options[:cheap_model], memory: options[:memory],
                                          arms: Lain::CLI::Arms.from(confine: options[:confine] || "off",
@@ -920,8 +922,9 @@ class LainCLI < Thor
     no_commands do
       # The backend the model flag band resolves: what was typed, then the
       # environment, then the built-in provider.
-      def model_backend
-        Lain::CLI::Backend.new(options, profile: ModelFlags.profile(options),
+      # @param ceiling_default [Integer, nil] the `--max-tokens` default this command declares
+      def model_backend(ceiling_default = nil)
+        Lain::CLI::Backend.new(options, profile: ModelFlags.profile(options), ceiling_default:,
                                         root: Lain::Project::Resolver.default_project.root)
       end
 

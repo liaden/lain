@@ -1129,7 +1129,7 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
 
   it "falls back to the built-in default when the environment says nothing" do
     expect(profile_under({ "LAIN_PROVIDER" => nil }, []).provider).to eq("anthropic")
-    expect(options_under({}, [])["max_tokens"]).to eq(16_384)
+    expect(options_under({}, [])["max_tokens"]).to be_nil
   end
 
   it "reads the numeric band as numbers, not strings" do
@@ -1149,7 +1149,7 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
     env = retired.to_h { |name| [name, "7"] }
     options = options_under(env, [])
 
-    expect(options["max_tokens"]).to eq(16_384)
+    expect(options["max_tokens"]).to be_nil
     expect(options["temperature"]).to be_nil
     expect(profile_under(env, []).keep_alive).to be_nil
   end

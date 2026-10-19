@@ -31,6 +31,12 @@ module Lain
             raise InvalidCeiling, "#{flag} must be positive, got #{ceiling}" unless ceiling.positive?
           end
         end
+
+        # For a flag whose absence has a meaning of its own.
+        #
+        # @return [Integer, nil] {#tokens}, or nil when the flag is unset
+        # @raise [InvalidCeiling] as {#tokens} does for a set value
+        def typed = value.nil? ? nil : tokens
       end
     end
   end

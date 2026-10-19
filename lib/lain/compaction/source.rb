@@ -782,7 +782,7 @@ module Lain
         head = Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:,
                         claimant: @derived.claimant(pins:), widening: @derived.widening(pins:))
         resolution = window_for(base)
-        need = need_for(head:, usage:, session:, resolution:)
+        need = need_for(head:, usage:, session:, resolution:, ceiling: base.max_tokens)
         occupancy = ContextWindow::Occupancy.of(used_tokens: usage, window_tokens: resolution.window_tokens)
         provenance = resolution.provenance
         turn = { base:, held_cut:, need:, head:, occupancy:, provenance:, cold: }
@@ -821,10 +821,14 @@ module Lain
       # every `#fired?` a place provenance could be read. What is withdrawn is
       # still RECORDED: {#record} journals the provenance on every decision, so
       # a denied signal is legible rather than merely absent.
-      def need_for(head:, usage:, session:, resolution:)
+      #
+      # The chat's ceiling goes in so the trigger also leaves the reply its
+      # {ReplyReserve}. On a guessed window that changes nothing: the signal is
+      # withdrawn whichever comparison fired it.
+      def need_for(head:, usage:, session:, resolution:, ceiling:)
         need = @need.check(head_bytes: head.bytesize, used_tokens: usage,
                            window_tokens: resolution.window_tokens,
-                           plan_step_completed: PlanSteps.pending?(session))
+                           plan_step_completed: PlanSteps.pending?(session), reply_ceiling: ceiling)
         resolution.authoritative? ? need : need.without(Need::ApproachingWindow::KIND)
       end
 
