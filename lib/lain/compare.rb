@@ -63,8 +63,11 @@ module Lain
     NO_PROMPT_CACHE = "not measured — every run records prompt_caching degraded, so there was no cache to hit"
     private_constant :NO_PROMPT_CACHE
 
-    NO_COMPACTION_COST = "not priced — a run has no compaction figures to sum"
+    NO_COMPACTION_COST = "not measured; a run has no compaction cost figures to sum"
     private_constant :NO_COMPACTION_COST
+
+    NO_CACHE_WRITES = "not measured; no run recorded a cache write"
+    private_constant :NO_CACHE_WRITES
 
     # One run's measured outcome, in the vocabulary Compare aggregates. Built
     # either directly from measured metrics or, more usually, from a recorded
@@ -266,7 +269,8 @@ module Lain
     # equal across the runs, so one run's answer is every run's.
     def withheld
       @withheld ||= { cost: unpriced_reason, cache_hit_ratio: no_prompt_cache_reason,
-                      compaction_cost_delta: unquoted_compaction_reason }.compact
+                      compaction_cost_delta: unquoted_compaction_reason,
+                      cache_write_tokens: no_cache_writes_reason }.compact
     end
 
     def unpriced_reason
@@ -277,6 +281,9 @@ module Lain
     def unquoted_compaction_reason
       NO_COMPACTION_COST if @runs.any? { |run| run.compaction_cost_delta.nil? }
     end
+
+    # Usage reads an absent cache field as 0, so an all-zero column cannot be told from one never measured.
+    def no_cache_writes_reason = (NO_CACHE_WRITES if @runs.all? { |run| run.cache_write_tokens.zero? })
 
     def no_prompt_cache_reason = (NO_PROMPT_CACHE if degraded.include?(:prompt_caching))
 

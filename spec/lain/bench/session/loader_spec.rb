@@ -117,8 +117,8 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(tally).to have_attributes(summary_misses: 3, prepared: 2, applied: 1, unapplied: 1)
     end
 
-    it "tallies zeros for a journal with no compaction records" do
-      expect(recording.compaction_tally).to have_attributes(summary_misses: 0, prepared: 0, cost_delta: 0)
+    it "tallies no cost delta for a journal with no compaction records" do
+      expect(recording.compaction_tally).to have_attributes(summary_misses: 0, prepared: 0, cost_delta: nil)
     end
 
     it "rebuilds the recorded arms from the header" do

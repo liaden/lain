@@ -174,6 +174,15 @@ RSpec.describe Lain::Compare do
     end
 
     describe "the compaction columns" do
+      it "keeps a compaction whose cost delta really is 0" do
+        records = [{ "type" => "compaction", "cost_saved" => "0.2", "cost_spent" => "0.2" }]
+        zero = Array.new(2) do |i|
+          run("z#{i}", usage: usage(input: 10, output: 1, cache_write: 5), cost: "0.001",
+                       compaction: Lain::Compare::CompactionTally.from_records(records))
+        end
+        expect(described_class.new(zero).report.lines.grep(/\Acompaction cost delta\s{2,}/)).not_to be_empty
+      end
+
       def tallied(name, tally)
         described_class::Run.new(name:, usage: usage(input: 10, output: 1),
                                  price: described_class::Priced.new(amount: BigDecimal("0.001")),
@@ -195,7 +204,7 @@ RSpec.describe Lain::Compare do
       it "withholds only the cost delta when a run's compaction was unpriced" do
         pair = [tallied("a", tally(cost_delta: nil)), tallied("b", tally)]
         text = described_class.new(pair).report
-        expect(text).to include("compaction cost delta: not priced")
+        expect(text).to include("compaction cost delta: not measured")
         expect(text).to include("summary misses", "prepared unapplied")
       end
 
@@ -208,7 +217,7 @@ RSpec.describe Lain::Compare do
         comparison = described_class.new(plain)
         expect(comparison.distribution(:summary_misses).values).to eq([0, 0])
         expect(comparison.distribution(:prepared_unapplied).values).to eq([0, 0])
-        expect(comparison.report).to include("compaction cost delta: not priced")
+        expect(comparison.report).to include("compaction cost delta: not measured")
       end
     end
 
@@ -305,6 +314,21 @@ RSpec.describe Lain::Compare do
       expect(report).to include(%(cost (USD): not priced — no price for model "qwen3:4b"))
       expect(report).not_to include("0.000000")
       expect(report.lines.grep(/\Acost \(USD\)\s{2,}/)).to be_empty
+    end
+
+    it "withholds a cache write count nothing measured, saying so" do
+      expect(report).not_to include("cache write tokens 0.0")
+      expect(report).to include("cache write tokens: not measured")
+    end
+
+    it "withholds the cost delta of runs that never compacted, saying so" do
+      journaled = Array.new(2) do |i|
+        run("r#{i}", usage: usage(input: 10, output: 1), cost: "0.001",
+                     compaction: Lain::Compare::CompactionTally.from_records([]))
+      end
+      text = described_class.new(journaled).report
+      expect(text).not_to include("0.000000")
+      expect(text).to include("compaction cost delta: not measured")
     end
 
     it "withholds the cost column from the per-run appendix" do

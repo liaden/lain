@@ -10,9 +10,9 @@ RSpec.describe Lain::Compare::CompactionTally do
   end
 
   describe ".from_records" do
-    it "tallies zeros for a journal with no compaction records" do
+    it "tallies zeros and no cost figure for a journal with no compaction records" do
       tally = described_class.from_records([{ "type" => "turn_usage" }])
-      expect(tally).to have_attributes(summary_misses: 0, prepared: 0, applied: 0, cost_delta: 0)
+      expect(tally).to have_attributes(summary_misses: 0, prepared: 0, applied: 0, cost_delta: nil)
     end
 
     it "counts from the journal" do

@@ -7,7 +7,8 @@ module Lain
     # What one run's journal says about compaction, in the 3 figures {Compare} folds across runs.
     # summary_misses is the sum of compaction_decision.summary_misses: every range the strategy was
     # asked for, a size-declined or failed ask included, which is why the column is named for the
-    # record and not for "calls". cost_delta is nil when any compaction record quotes no figures.
+    # record and not for "calls". cost_delta is nil when any compaction record quotes no figures, and when
+    # there is no compaction record at all, so a run that never compacted is not read as a measured 0.
     class CompactionTally
       # Reopened rather than defined in the Data block: a constant there lands on the enclosing module.
       NONE = new(summary_misses: 0, prepared: 0, applied: 0, cost_delta: nil)
@@ -23,6 +24,8 @@ module Lain
       end
 
       def self.cost_delta_of(compactions)
+        return nil if compactions.empty?
+
         deltas = compactions.map { |r| r["cost_saved"] && (BigDecimal(r["cost_saved"]) - BigDecimal(r["cost_spent"])) }
         deltas.include?(nil) ? nil : deltas.sum(BigDecimal(0))
       end
