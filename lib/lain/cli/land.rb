@@ -61,8 +61,9 @@ module Lain
       # @return [String] the entry id and its place in the queue
       # @raise [Lain::Error] when the ref does not resolve, its anchor cannot be
       #   written, or no branch is named and the main worktree is detached
+      # @raise [Project::Trust::Untrusted] when the project's config is not trusted
       def enqueue(ref = "HEAD", branch: nil, id: nil)
-        root = main_root
+        root = trusted_root
         branch ||= checked_out(root)
         here = git(@cwd)
         home = home(root, branch)
@@ -130,6 +131,9 @@ module Lain
       def home(root, branch)
         Isolation::MergeCoordinator::Home.for(repo_root: root, branch:, shell_out_factory: @shell_out_factory)
       end
+
+      # The drainer reads the config after the entry is queued, so an untrusted file must refuse here.
+      def trusted_root = main_root.tap { |root| Config.load(root:) }
 
       def main_root = Isolation::MergeCoordinator.main_root(@cwd, shell_out_factory: @shell_out_factory)
 

@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "rbconfig"
+require "securerandom"
 require "tmpdir"
 
 load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
@@ -141,6 +142,23 @@ RSpec.describe Lain::CLI::Land, :seam do
 
       expect(spawned).to be_empty
       expect(said).to include("lain land drain --branch main")
+    end
+  end
+
+  describe "#enqueue with an untrusted project config" do
+    before do
+      FileUtils.mkdir_p(File.join(@repo, ".lain"))
+      File.write(File.join(@repo, ".lain", "config.rb"), "# #{SecureRandom.hex}\nshell exclude: %w[curl]\n")
+    end
+
+    it "refuses naming the file and lain trust, anchoring, queuing and spawning nothing" do
+      config = Regexp.escape(File.join(@repo, ".lain", "config.rb"))
+
+      expect { land.enqueue(branch: "main") }
+        .to raise_error(Lain::Project::Trust::Untrusted, /#{config}.*lain trust/m)
+      expect(spawned).to be_empty
+      expect(spool.pending).to be_empty
+      expect(git(@repo, "for-each-ref", ref_for("w-alpha"))).to be_empty
     end
   end
 
