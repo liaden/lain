@@ -1313,6 +1313,34 @@ RSpec.describe Lain::Approval::ComposedTerm do
         end
       end
 
+      it "says a path-named program written this session is fresh" do
+        in_tree do |root, home|
+          on_disk(root, "run.sh", "#!/bin/sh\necho hi\n", mode: 0o755)
+          rule = classed_rule(root, home, path: "/usr/bin", since: Time.now - 60)
+
+          expect(note_for(rule, "./run.sh", root)).to include("written this session")
+        end
+      end
+
+      it "gives no note when a listed stage's flag refuses, whatever else the term holds" do
+        in_tree do |root, home|
+          with_readme(root)
+          on_disk(root, "run.sh", "#!/bin/sh\necho hi\n", mode: 0o755)
+          rule = classed_rule(root, home, path: "/usr/bin", since: Time.now - 60)
+
+          expect(note_for(rule, "grep -f README.md README.md && ./run.sh", root)).to be_nil
+        end
+      end
+
+      it "explains an unlisted bare program given a flag" do
+        in_tree do |root, home|
+          bin = File.dirname(on_disk(File.join(root, "bin"), "mytool", "#!/bin/sh\necho hi\n", mode: 0o755))
+          rule = classed_rule(root, home, path: "#{bin}:/usr/bin")
+
+          expect(note_for(rule, "mytool --verbose", root)).to include("mytool resolved to #{bin}/mytool (project)")
+        end
+      end
+
       it "gives no note when a predicate other than the class one refuses" do
         in_tree do |root, home|
           with_readme(root)

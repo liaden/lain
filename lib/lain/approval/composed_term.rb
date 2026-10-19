@@ -512,7 +512,7 @@ module Lain
       # @return [String, nil] which binary stopped the class predicate, once every
       #   other predicate held; nil where this rule would have decided or never judges
       def why_not(call)
-        return nil unless @classes && judged?(call) && call.term? && approvable?(call.term, call.input.cwd)
+        return nil unless @classes && judged?(call) && call.term? && explainable?(call.term, call.input.cwd)
 
         stages = executables(call)
         suspect = stages.flat_map(&:programs).find { !trusted?(_1) } if stages
@@ -525,11 +525,28 @@ module Lain
       # order is short-circuiting for cost and for nothing else, and another
       # goes here plus one method below.
       def approvable?(term, cwd)
-        bare_names?(term) && allowlisted?(term) && ordinary_words?(term, cwd) &&
-          unflagged?(term) && unaliased?(term) && confined?(term, cwd) &&
+        bare_names?(term) && allowlisted?(term) && unflagged?(term) && vouchable?(term, cwd)
+      end
+
+      # Everything but the name and flag predicates, which no flag table can
+      # answer for a path-named program, so one that only the class predicate
+      # stopped can still be explained.
+      def vouchable?(term, cwd)
+        ordinary_words?(term, cwd) && unaliased?(term) && confined?(term, cwd) &&
           plain_content?(term, cwd) && resolved_words?(term, cwd) &&
           unpinned?(term, cwd) && unrevealing?(term, cwd)
       end
+
+      def explainable?(term, cwd) = flags_ok_where_listed?(term) && vouchable?(term, cwd)
+
+      def flags_ok_where_listed?(term)
+        term.stages.all? do |stage|
+          program, *arguments = stage.argv
+          !listed?(program) || flags_for(program).admits?(arguments)
+        end
+      end
+
+      def listed?(program) = PROGRAMS.key?(program) || VERSION_PROBES.include?(program)
 
       def judged?(call) = call.tool_name == TOOL
 
@@ -539,7 +556,7 @@ module Lain
       def bare_names?(term) = programs(term).none? { |program| program.include?(SEPARATOR) }
 
       def allowlisted?(term)
-        programs(term).all? { |program| PROGRAMS.key?(program) || VERSION_PROBES.include?(program) }
+        programs(term).all? { listed?(_1) }
       end
 
       def ordinary_words?(term, cwd)
