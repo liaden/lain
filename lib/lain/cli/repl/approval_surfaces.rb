@@ -141,7 +141,7 @@ module Lain
           # is met on the next tick rather than inside this one.
           def sweep(queue)
             parked = queue.reject(&:decided?)
-            @announced.select(&:unanswered?).each { |pending| lapse(pending) }
+            @announced.select(&:unanswered?).reject(&:drawn_at).each { |pending| lapse(pending) }
             @announced.keep_if { |pending| parked.include?(pending) }
             parked.select { |pending| @announced.add?(pending) }.each { |pending| announce(pending) }
           end
@@ -162,7 +162,7 @@ module Lain
 
           # The chat is the only place a cockpit's human is looking when the
           # clock denies a call, so the denial is said here as well as in the
-          # approval list.
+          # approval list. A call whose [y/N] prompt drew already ended that line with the lapse.
           def lapse(pending)
             @notice.call(stamp(format(LAPSED, requester: pending.requester, tool: pending.tool,
                                               input: pending.input.inspect, lapse: pending.closure)))

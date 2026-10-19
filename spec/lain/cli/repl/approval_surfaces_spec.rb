@@ -243,6 +243,20 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(output.string.lines.grep(/denied after/).join).to include("bash(")
     end
 
+    it "says nothing of the lapse for a call whose prompt drew, leaving that line to the prompt" do
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        gated = task.async { queue.call(effect, nil) }
+        task.sleep(0.1)
+        queue.reject(&:decided?).each(&:drawn)
+        task.with_timeout(2) { gated.wait }
+        task.sleep(0.2)
+        watched.each(&:stop)
+      end
+
+      expect(output.string.lines.grep(/denied after/)).to be_empty
+    end
+
     it "starts the announcement with the time it was made" do
       fan_out(attached: editor)
 
