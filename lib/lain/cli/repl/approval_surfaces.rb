@@ -155,7 +155,7 @@ module Lain
             @notice.call(stamp(format(NOTE, preamble: pending.outstanding.preamble, requester: pending.requester,
                                             tool: pending.tool, input: pending.input.inspect,
                                             buffer: Frontend::Neovim::ApprovalView::BUFFER, window: pending.window_face,
-                                            notes: pending.notes.map { "; #{_1.inspect}" }.join)))
+                                            notes: said(pending))))
           rescue StandardError => e
             report(e)
           end
@@ -168,6 +168,11 @@ module Lain
                                               input: pending.input.inspect, lapse: pending.closure)))
           rescue StandardError => e
             report(e)
+          end
+
+          def said(pending)
+            deferral = "; #{Frontend::ApprovalPolicy::JUDGE_DEFERRED}" if pending.judge_deferred?
+            "#{deferral}#{pending.notes.map { "; #{_1.inspect}" }.join}"
           end
 
           def stamp(line) = "#{@wall_clock.call.strftime("%H:%M:%S")} #{line}"

@@ -231,6 +231,23 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(output.string).not_to include("\e[2K")
     end
 
+    it "names the judge's deferral in the announcement, once" do
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        context = Lain::Approval::Judged::Deferred.new(Lain::Approval::Escalation::Noted.new(nil, "cat is /x/"))
+        task.with_timeout(2) { task.async { queue.call(effect, context) }.wait }
+        watched.each(&:stop)
+      end
+
+      expect(notes.sole.scan(Lain::Frontend::ApprovalPolicy::JUDGE_DEFERRED).size).to eq(1)
+    end
+
+    it "does not claim a deferral for a call the judge never saw" do
+      fan_out(attached: editor)
+
+      expect(notes.sole).not_to include(Lain::Frontend::ApprovalPolicy::JUDGE_DEFERRED)
+    end
+
     it "says once, in the chat, that the clock denied a call nobody answered" do
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)
