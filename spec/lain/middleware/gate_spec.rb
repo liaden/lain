@@ -91,6 +91,63 @@ RSpec.describe Lain::Middleware::Gate do
     end
   end
 
+  # A tool that asks no approval never reaches the policy, so a config's
+  # whole-tool deny has to be the gate's own question or it is inert.
+  describe "a tool the trusted config denies" do
+    it "refuses a tool that asks no approval, naming the config's deny, and never asks the policy" do
+      policy = spy(verdict: true)
+
+      result, reached = through(described_class.new(policy:, denied_tools: Set["safe"]), tool_call("safe"))
+
+      expect(result).to eq(Lain::Tool::Result.error(
+                             'refused tool "safe": remembered in .lain/config.rb: `deny_tool` in its `approval` ' \
+                             "block refuses every safe call; no approval will lift this, so do not re-send the " \
+                             "same command in another form"
+                           ))
+      expect(reached).to be_empty
+      expect(policy.asked).to be_empty
+    end
+
+    it "refuses a gated tool before the policy is asked" do
+      policy = spy(verdict: true)
+
+      result, reached = through(described_class.new(policy:, denied_tools: Set["dangerous"]), tool_call("dangerous"))
+
+      expect(result.content).to include("`deny_tool`", "no approval will lift this")
+      expect(reached).to be_empty
+      expect(policy.asked).to be_empty
+    end
+
+    it "passes a tool the config does not deny" do
+      _, reached = through(described_class.new(policy: spy, denied_tools: Set["dangerous"]), tool_call("safe"))
+
+      expect(reached).to eq([tool_call("safe")])
+    end
+
+    it "passes an effect that names no tool" do
+      effect = Lain::Effect::ModelCall.new(request: nil)
+
+      _, reached = through(described_class.new(denied_tools: Set["safe"]), effect, tool: nil)
+
+      expect(reached).to eq([effect])
+    end
+
+    # No rung of the ladder is asked, so the gate is the only place the bench
+    # can count the refusal from.
+    it "journals the refusal as an escalation at the config rung, for the requester it was built for" do
+      journal = []
+      gate = described_class.new(denied_tools: Set["safe"], journal:, requester: "researcher")
+
+      through(gate, tool_call("safe", id: "tu_9"))
+
+      expect(journal).to contain_exactly(
+        hash_including("type" => "escalation", "tool" => "safe", "tool_use_id" => "tu_9",
+                       "requester" => "researcher", "rung" => "config", "verdict" => "deny", "final" => true)
+      )
+      expect(journal.first["reason"]).to include("`deny_tool`")
+    end
+  end
+
   describe "a gated tool, denied" do
     it "answers an is_error Result rather than raising, and nothing reaches downstream" do
       result, reached = through(described_class.new(policy: described_class::DenyAll.new), tool_call("dangerous"))

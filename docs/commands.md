@@ -1081,11 +1081,11 @@ epics home: :repo, width: 3 do
 end
 approval timeout: 900 do
   allow "bash", command: "bundle exec rspec"
-  deny_tool "web_fetch"
+  deny_tool "web_fetch"                         # refuses the tool whatever its tier; no approval lifts it
 end
 isolation retain_days: 14
 sensitivity gated: %w[secrets.yml], related: %w[~/notes]
-shell exclude: %w[curl]
+shell exclude: %w[curl]                         # bash commands only
 search include: %w[planning/notes/*.md], max_entries: 50_000, max_bytes: 100_000_000
 tests preset: :rspec
 ```

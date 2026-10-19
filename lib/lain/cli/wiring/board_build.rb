@@ -79,7 +79,7 @@ module Lain
                           sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, test_layout: test_layout(project:), middleware:,
                           approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:,
-                          request:, child_env:)
+                          request:, child_env:, denied_tools: config.approval.deny_tools)
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree
@@ -129,8 +129,7 @@ module Lain
         #
         # APPENDED, and the order is the precedence. {Approval::RuleChain}
         # settles on the first rule with an opinion, so a human's remembered
-        # `deny` -- or a `deny_tool` on `bash` -- still outranks anything the
-        # allowlist would have approved. Prepending would silently overturn an
+        # `deny` still outranks anything the allowlist would have approved. Prepending would silently overturn an
         # answer a person gave.
         #
         # The chain is the trusted config's; this adds to it and does not own

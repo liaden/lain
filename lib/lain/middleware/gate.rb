@@ -83,6 +83,15 @@ module Lain
       FINAL = "refused tool %<name>s: %<because>s; no approval will lift this, " \
               "so do not re-send the same command in another form"
 
+      # The rung a whole-tool refusal from the config is journaled under: no
+      # ladder rung is asked about it, so the gate records it itself.
+      CONFIG_RUNG = "config"
+
+      # Frozen explicitly: interpolation makes a mutable String whatever the
+      # magic comment says, and a reason travels into the Journal.
+      TOOL_REFUSED = "remembered in #{ProjectDir.config}: `deny_tool` in its `approval` block refuses every %s call"
+                     .freeze
+
       # A tool stack this gate does not close.
       class Unclosed < Error; end
 
@@ -119,10 +128,20 @@ module Lain
       #   asked, and nobody can be, has to say so or it invites exactly that
       #   retry. That is a fact about the SESSION, not about one ruling, which
       #   is why it is injected here rather than carried on the policy's answer.
-      def initialize(policy: DenyAll.new, sensitivity: ::Lain::Sensitivity::Policy::Null.instance, denial: DENIAL)
+      # @param denied_tools [Set<String>] the tools a trusted config refuses
+      #   outright with `deny_tool`. Asked here, ahead of the tier, because a
+      #   tool that asks no approval never reaches the policy at all.
+      # @param journal [#<<] where a whole-tool refusal lands as an `escalation` record
+      # @param requester [String, nil] who a child's stack asks for; nil reads
+      #   it off the context, as the queue does
+      def initialize(policy: DenyAll.new, sensitivity: ::Lain::Sensitivity::Policy::Null.instance, denial: DENIAL,
+                     denied_tools: Set[].freeze, journal: Channel::Null.instance, requester: nil)
         @policy = Callable.of(policy)
         @sensitivity = sensitivity
         @denial = denial
+        @denied_tools = denied_tools.to_set { |name| -name.to_s }.freeze
+        @journal = journal
+        @requester = requester
         super()
         freeze
       end
@@ -135,9 +154,10 @@ module Lain
       # made it: {WithholdAutomaticOutput} scans only what ran under an
       # automatic allow, and a fixed policy that asks no ladder is one.
       def call(env, &app)
+        asked = unwrapped(env.fetch(:effect))
+        return refused_by_config(env, asked) if denied?(asked)
         return downstream(env, &app) unless gated?(env)
 
-        asked = unwrapped(env.fetch(:effect))
         ruling = witnessed(@policy.rule(asked, noting(env, asked)), env[:context])
         return downstream(env.merge(effect: asked), &app) if ruling.allow?
 
@@ -145,6 +165,18 @@ module Lain
       end
 
       private
+
+      def denied?(effect) = effect.tool_call? && @denied_tools.include?(effect.name.to_s)
+
+      def refused_by_config(env, effect)
+        ruling = Approval::Escalation::Ruling.deny(rung: CONFIG_RUNG, because: format(TOOL_REFUSED, effect.name),
+                                                   final: true)
+        @journal << { "type" => Approval::Escalation::TYPE, "tool" => effect.name, "tool_use_id" => effect.tool_use_id,
+                      "requester" => requester_of(env[:context]) }.merge(ruling.record)
+        env.merge(result: Tool::Result.error(refusal(ruling, effect.name.inspect)))
+      end
+
+      def requester_of(context) = @requester || Approval::Queue.requester_for(context, Approval::Queue::REQUESTER)
 
       # Inside the one tool result, so the model reads them as the reason.
       def refusal(ruling, name)

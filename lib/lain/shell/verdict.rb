@@ -17,8 +17,8 @@ module Lain
     #
     # * *allow* -- every stage is literal and fully understood. The term runs as
     #   reconstructed argv, with no shell anywhere.
-    # * *deny* -- the session's capability set excludes a program this command
-    #   names. A decision the session already made, so it is reported as a
+    # * *deny* -- this command names a program the session's shell exclusion
+    #   lists. A decision the session already made, so it is reported as a
     #   decision and not as a doubt.
     # * *abstain* -- anything else, including every failure mode. It falls
     #   through to {Approval::Queue} and a human. Abstention is cheap and
@@ -389,7 +389,7 @@ module Lain
       NOTHING_TO_RUN = "there is no command to run"
       NOT_UNDERSTOOD = "not fully understood -- "
       NOT_A_PIPELINE = "the stages are joined by something other than pipes and &&"
-      EXCLUDED = "the session's capability set excludes"
+      EXCLUDED = "the session's shell exclusion covers bash commands and excludes"
       private_constant :NOTHING_TO_RUN, :NOT_UNDERSTOOD, :NOT_A_PIPELINE, :EXCLUDED, :Doubts
     end
   end

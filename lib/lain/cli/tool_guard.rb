@@ -62,11 +62,12 @@ module Lain
       # `#current`, the session scope the board is in; a run that can never
       # enter plan scope confines nothing, which is its default. `middleware`
       # is what the chat's config.rb files registered; a run with no chat
-      # reads no config, which is its default.
+      # reads no config, which is its default. `denied_tools` are the tools its
+      # config refuses outright, which the gate refuses whatever their tier.
       Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
-                           :scope, :middleware, :child_env) do
+                           :scope, :middleware, :child_env, :denied_tools) do
         def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty,
-                       child_env: Exec::ChildEnv::DEFAULT, **)
+                       child_env: Exec::ChildEnv::DEFAULT, denied_tools: Set[].freeze, **)
           super
         end
       end
@@ -432,7 +433,8 @@ module Lain
 
       def gating(inputs, policy, journal, requester)
         [Middleware::Sensitivity.new(sensitivity: inputs.sensitivity, journal:, requester:),
-         Middleware::Gate.new(policy:, sensitivity: inputs.sensitivity, denial: inputs.denial)]
+         Middleware::Gate.new(policy:, sensitivity: inputs.sensitivity, denial: inputs.denial,
+                              denied_tools: inputs.denied_tools, journal:, requester:)]
       end
 
       # Fresh instances on every call, so no two stacks share one.

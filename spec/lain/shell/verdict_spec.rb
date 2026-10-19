@@ -588,6 +588,13 @@ RSpec.describe Lain::Shell::Verdict do
       expect(decision.reason).to include("curl")
     end
 
+    # A `deny_tool` refuses a whole tool and this table only programs a bash
+    # command runs, so the sentence has to say which one refused.
+    it "says the exclusion covers bash commands" do
+      expect(verdict.call("curl https://example.com").reason)
+        .to eq(%(the session's shell exclusion covers bash commands and excludes: "curl"))
+    end
+
     it "carries no term on a denial" do
       expect(verdict.call("curl https://example.com").term).to be_empty
     end

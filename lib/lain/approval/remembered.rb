@@ -17,11 +17,13 @@ module Lain
     # `allow` and `deny` match an EXACT call shape -- the tool plus every set
     # field -- so a remembered `deny` on `bash(command: "rm -rf /tmp/x")` does
     # NOT cover the same command with `timeout: 120` beside it. The durable
-    # refusal is `deny_tool`, which names the tool and nothing else.
+    # refusal is `deny_tool`, which names the tool and nothing else, and is not
+    # this rule's: {Middleware::Gate} refuses it ahead of every tier, so a tool
+    # that asks no approval is refused too.
     #
     # == Precedence: the strictest remembered answer wins
     #
-    # `deny_tool` outranks `deny`, which outranks `allow`. A file carrying both
+    # `deny` outranks `allow`. A file carrying both
     # answers for one shape is a human who changed their mind and left the old
     # line behind, and the REFUSAL is the only reading safe to be wrong about.
     # Nothing is deduplicated on write: the file is the human's, and an editor
@@ -45,7 +47,6 @@ module Lain
       WHERE = ProjectDir.config.freeze
       # Interpolation makes these mutable Strings whatever the magic comment
       # says, and a reason travels into the Journal.
-      TOOL_REFUSED = "remembered in #{WHERE}: `deny_tool` in its `approval` block refuses every %s call".freeze
       SHAPE_REFUSED = "remembered in #{WHERE}: `deny` in its `approval` block refuses this %s call".freeze
       SHAPE_ALLOWED = "remembered in #{WHERE}: `allow` in its `approval` block permits this %s call".freeze
 
@@ -84,30 +85,27 @@ module Lain
       # @return [Remembered]
       def self.from(config)
         answers = config.approval
-        new(allow: answers.allow, deny: answers.deny, deny_tools: answers.deny_tools)
+        new(allow: answers.allow, deny: answers.deny)
       end
 
       # @param allow [Enumerable<Entry, Hash>] call shapes to allow
       # @param deny [Enumerable<Entry, Hash>] call shapes to deny
-      # @param deny_tools [Enumerable<#to_s>] tools to deny outright
-      def initialize(allow: [], deny: [], deny_tools: [])
+      def initialize(allow: [], deny: [])
         super()
         @allow = entries(allow)
         @deny = entries(deny)
-        @deny_tools = Set.new(deny_tools.map { |name| -name.to_s }).freeze
         freeze
       end
 
       # A remembered set nobody wrote to decides nothing, which makes this rule
       # its own Null Object -- no second class, and no call site guards on nil.
-      def empty? = @allow.empty? && @deny.empty? && @deny_tools.empty?
+      def empty? = @allow.empty? && @deny.empty?
 
       # @param call [Rule::Call] a call whose input is already validated
       # @return [Rule::Decision, nil] nothing when this call shape was never
       #   answered, which is what escalates it to a human
       def decide(call)
         entry = Entry.for_call(call)
-        return deny(call, because: format(TOOL_REFUSED, entry.tool)) if @deny_tools.include?(entry.tool)
         return deny(call, because: format(SHAPE_REFUSED, entry.tool)) if @deny.include?(entry)
         return allow(call, because: format(SHAPE_ALLOWED, entry.tool)) if @allow.include?(entry)
 

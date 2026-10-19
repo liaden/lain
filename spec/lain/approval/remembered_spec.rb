@@ -125,20 +125,17 @@ RSpec.describe Lain::Approval::Remembered do
         expect(remembered_at(root).decide(call_for(read_file, { "path" => "README.md" }))).to be_deny
       end
     end
+  end
 
-    it "lets a tool-wide denial outrank a call-specific allow" do
+  # The gate refuses a whole tool ahead of every tier, so this rule never sees
+  # one and holds no opinion about it.
+  describe "a tool-wide denial" do
+    it "is not this rule's to decide" do
       Dir.mktmpdir do |root|
-        write_config(root, <<~RUBY)
-          approval do
-            allow "read_file", path: "README.md"
-            deny_tool "read_file"
-          end
-        RUBY
+        write_config(root, %(approval do\n  deny_tool "read_file"\nend\n))
 
-        decision = remembered_at(root).decide(call_for(read_file, { "path" => "README.md" }))
-
-        expect(decision).to be_deny
-        expect(decision.reason).to include("read_file", "`deny_tool` in its `approval` block")
+        expect(remembered_at(root)).to be_empty
+        expect(remembered_at(root).decide(call_for(read_file, { "path" => "README.md" }))).to be_nil
       end
     end
   end

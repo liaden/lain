@@ -295,6 +295,46 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
+  # A whole-tool deny on a tool that asks no approval, through the stack the
+  # board's guard builds, so the refusal is the one a model would read.
+  describe "a remembered deny_tool, on the production path" do
+    def fetched(root, home, ran)
+      board = board_over(root, home)
+      handler = Lain::Effect::Handler::Mock.new do |effect, _context|
+        ran << effect.name
+        Lain::Tool::Result.ok("fetched")
+      end
+      layers = Lain::CLI::ToolGuard.stack(Lain::CLI::ToolGuard::Journaled.new(journal:), board).to_a
+      result = dispatch_call("web_fetch", { "url" => "https://example.com" },
+                             toolset:, layers:, handler:, context: Lain::Session.new)
+      [board, result]
+    end
+
+    it "refuses web_fetch naming the config's deny, and nothing runs" do
+      in_tree(config: %(approval do\n  deny_tool "web_fetch"\nend\n)) do |root, home|
+        ran = []
+        _, result = fetched(root, home, ran)
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include('refused tool "web_fetch"', "`deny_tool`", "no approval will lift this")
+        expect(ran).to be_empty
+        expect(rulings).to contain_exactly(hash_including("tool" => "web_fetch", "rung" => "config",
+                                                          "verdict" => "deny", "requester" => "agent"))
+      end
+    end
+
+    it "runs web_fetch with no approval asked when no deny_tool names it" do
+      in_tree do |root, home|
+        ran = []
+        board, result = fetched(root, home, ran)
+
+        expect(result).to eq(Lain::Tool::Result.ok("fetched"))
+        expect(ran).to eq(%w[web_fetch])
+        expect(board.approvals.each.count).to eq(0)
+      end
+    end
+  end
+
   # What this chunk's spine buys, driven through the REAL construction path: a
   # program a project ruled out becomes a NAMED REFUSAL where there was a
   # prompt. `Shell::Verdict`'s `capability_set` has existed, unwired, since it
@@ -308,7 +348,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
         expect(board.policy_switch.call(bash_of("curl http://example.com"), nil)).to be(false)
         expect(rulings.first).to include("rung" => "triage", "verdict" => "deny", "faulted" => false)
-        expect(rulings.first["reason"]).to include("curl", "the session's capability set excludes")
+        expect(rulings.first["reason"]).to include("curl", "the session's shell exclusion covers bash commands")
       end
     end
 
@@ -894,9 +934,11 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
 
     # APPENDED and not prepended, which is the precedence: a human's remembered
-    # refusal of the whole tool still wins over an allowlisted pipeline.
+    # refusal of a call shape still wins over an allowlisted pipeline.
     it "keeps a remembered answer ahead of it, so a human's refusal still wins" do
-      in_tree(config: %(approval do\n  deny_tool "bash"\nend\n)) do |root, home|
+      in_tree do |root, home|
+        shape = %(command: "cat README.md | head -20", cwd: #{root.inspect})
+        write_config(root, %(approval do\n  deny "bash", #{shape}\nend\n))
         board = board_over(root, home)
         rules = board.ladder.to_a[1].instance_variable_get(:@rules)
 

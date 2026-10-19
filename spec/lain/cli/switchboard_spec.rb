@@ -931,7 +931,7 @@ RSpec.describe Lain::CLI::Switchboard do
         refusal = told(board, "curl http://example.com")
 
         expect(refusal).to eq(
-          %(refused tool "bash": the session's capability set excludes: "curl"; ) \
+          %(refused tool "bash": the session's shell exclusion covers bash commands and excludes: "curl"; ) \
           "no approval will lift this, so do not re-send the same command in another form"
         )
         expect_plain(refusal)

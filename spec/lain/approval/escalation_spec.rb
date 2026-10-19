@@ -844,7 +844,7 @@ RSpec.describe Lain::Approval::Escalation do
                                                    input: { "command" => command }), nil)
     end
 
-    it "denies what the session's capability set excludes, which nothing enforced before" do
+    it "denies a program the session's shell exclusion lists, which nothing enforced before" do
       excluded = Class.new { def permits?(program) = program != "curl" }.new
 
       expect(triaged("curl http://example.com", capability_set: excluded)).to be(false)
@@ -1339,7 +1339,7 @@ RSpec.describe Lain::Approval::Escalation do
       excluded = ladder(described_class::Triage.new(verdict: excluding_curl)).rule(bash_call("curl http://x"), nil)
 
       expect(path.told).to eq(%(#{described_class::Triage::TOLD_PROTECTED}: "#{home}/.ssh/id_rsa" is a protected path))
-      expect(excluded.told).to eq(%(the session's capability set excludes: "curl"))
+      expect(excluded.told).to eq(%(the session's shell exclusion covers bash commands and excludes: "curl"))
       expect(rulings.map { |record| record["reason"] }).to all(include(Lain::Shell::Verdict::CLAIM))
       expect(rulings.first["reason"]).to include("shell verdict allow", described_class::Triage::PROTECTED)
     end
