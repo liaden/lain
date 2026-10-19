@@ -27,6 +27,10 @@ module Lain
       # is pushed or merged.
       class NoBranch < Error; end
 
+      # A remote finish in a repository with no remote. Refused before anything
+      # is journaled, naming the finish that does apply.
+      class NoRemote < Error; end
+
       # This epic's forge records, and nobody else's. An {Intent} carries its
       # epic and issue as fields; an {Outcome} carries them in its `detail`,
       # stamped by {Forge::Journaled}, so each is read where it lives and a
@@ -59,6 +63,10 @@ module Lain
         def detailed(detail) = [detail["epic_slug"].to_s, detail["issue_id"].to_s]
       end
 
+      # @return [Integer] 1 once the last finish stopped, else 0; the String
+      #   {#finish} returns carries no status of its own
+      attr_reader :exit_status
+
       # @param root [String] the project root, which is also the checkout
       #   holding `epic/<slug>`
       # @param paths [Paths] injected, so a spec resolves a throwaway state home
@@ -78,6 +86,7 @@ module Lain
         @shell_out_factory = shell_out_factory
         @github = github
         @finisher = finisher
+        @exit_status = 0
       end
 
       # @param slug [String, nil] the epic; omitted resolves to the sole one
@@ -142,6 +151,7 @@ module Lain
       end
 
       def told(epic_slug, sha, answer)
+        @exit_status = answer.ok? ? 0 : 1
         head = ["#{answer.ok? ? "finished" : "stopped"} #{epic_slug} at #{sha}", "  branch epic/#{epic_slug}"]
         (head + (answer.ok? ? @finisher.finished(epic_slug, answer) : stopped(answer))).join("\n")
       end
@@ -170,6 +180,8 @@ module Lain
 
         # @return [Forge::Gh::Answer]
         def call(epic_slug, sha, journaled)
+          raise NoRemote, no_remote(epic_slug) unless remote?
+
           entries = Scoped.new(records: journals.to_a, epic_slug:).to_a
           folded(entries, wiring(epic_slug, sha, journaled))
         end
@@ -185,6 +197,14 @@ module Lain
         def untouched = "nothing reached the remote"
 
         private
+
+        def remote?
+          argv = ["git", "-C", @root, "remote"]
+          !@shell_out_factory.call(*argv, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+                             .run_command.stdout.strip.empty?
+        end
+
+        def no_remote(epic_slug) = "this repository has no remote; finish it with lain epic finish #{epic_slug} --local"
 
         # A first run knows nothing; any later one folds what earlier runs journaled.
         def folded(entries, wiring)

@@ -185,12 +185,26 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
   describe "per-issue branches the old promotion left on the remote" do
     it "refuses, naming them, and deletes none of them" do
       %w[a b].each { |issue| git(root, "push", "-q", "origin", "#{tip}:refs/heads/epic/demo/#{issue}") }
+      finish = command
 
-      output = command.finish("demo")
+      output = finish.finish("demo")
 
       expect(output).to include("stopped demo", "refs/heads/epic/demo/a", "refs/heads/epic/demo/b")
+      expect(finish.exit_status).to eq(1)
       expect(%w[a b].map { |issue| remote_ref("refs/heads/epic/demo/#{issue}") }).to all(eq(tip))
       expect(remote_ref("refs/heads/epic/demo")).to be_empty
+      expect(github).not_to have_received(:pr_create)
+    end
+  end
+
+  describe "a repository with no remote" do
+    before { git(root, "remote", "remove", "origin") }
+
+    it "refuses in words naming --local, touching nothing and never saying inconsistent_journal" do
+      expect { command.finish("demo") }.to raise_error(described_class::NoRemote) { |error|
+        expect(error.message).to eq("this repository has no remote; finish it with lain epic finish demo --local")
+      }
+      expect(forge_actions).to be_empty
       expect(github).not_to have_received(:pr_create)
     end
   end

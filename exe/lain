@@ -100,6 +100,17 @@ class LainCLI < Thor
       raise Thor::Error, e.message
     end
 
+    # A gate that said no is a failure to a script, so the command's own
+    # status follows the words; a zero status leaves Thor's normal return.
+    # The command is built inside render because building it can raise a
+    # Lain::Error, which render maps onto Thor's contract.
+    def render_failing(build)
+      command = nil
+      render { yield(command = build.call) }
+      status = command.exit_status
+      exit status unless status.zero?
+    end
+
     # For commands that OWN their exit status (watch): pass the block's
     # integer through exit, with the same Lain::Error mapping; Ctrl-C ends a
     # tail of a SIGKILL'd (never-closed) session -- clean exit, no backtrace.
@@ -577,11 +588,11 @@ class LainCLI < Thor
     ModelFlags.declare(self)
     desc "submit STAGE [SLUG]", "Put a stage's artifact in front of its gate and journal the verdict"
     def submit(stage, slug = nil)
-      render do
-        Lain::CLI::EpicSubmit.from_options(options, profile: ModelFlags.profile(options), input: $stdin,
-                                                    output: $stdout)
-                             .submit(stage, slug, issue: options[:issue], digest: options[:digest])
+      build = lambda do
+        Lain::CLI::EpicSubmit.from_options(options, profile: ModelFlags.profile(options),
+                                                    input: $stdin, output: $stdout)
       end
+      render_failing(build) { |command| command.submit(stage, slug, issue: options[:issue], digest: options[:digest]) }
     end
 
     method_option :resume, type: :boolean, default: false, desc: "Finish a landing that merged and then stopped"
@@ -602,7 +613,7 @@ class LainCLI < Thor
                                 "no remote, no pull request"
     def finish(slug = nil)
       local = options[:local] ? { finisher: Lain::CLI::EpicFinish::Local.new } : {}
-      render { Lain::CLI::EpicFinish.new(**local).finish(slug) }
+      render_failing(-> { Lain::CLI::EpicFinish.new(**local) }) { |finish| finish.finish(slug) }
     end
   end
 

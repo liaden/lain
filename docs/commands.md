@@ -379,14 +379,14 @@ lain epic finish --local                           # ...or one merge commit in m
 |---|---|
 | `lain epic status [SLUG]` | Ready issues and remaining waves, folded from the Journal. `--mermaid` renders the graph as mermaid flowchart source instead of the text report. Read-only and deterministic. |
 | `lain epic show [DOC] [SLUG]` | Print one document of the epic, verbatim: `research` (the default), `epic`, `issues/ID` or `plans/ID`. The epic home sits under `$XDG_STATE_HOME`, so this is how you read `research.md` outside a chat. A missing file names itself and the epic home; any other `DOC` is refused with the four names. Read-only. |
-| `lain epic submit STAGE [SLUG]` | Submit an artifact to a stage's gate. `--issue` names the issue for the per-issue stages, `--digest` the changeset for `implementation`; `--provider`/`--model` wire the adjudicating spike. |
+| `lain epic submit STAGE [SLUG]` | Submit an artifact to a stage's gate. `--issue` names the issue for the per-issue stages, `--digest` the changeset for `implementation`; `--provider`/`--model` wire the adjudicating spike. A denied or unanswered gate exits 1; a deferred one exits 0. |
 | `lain epic queue [SLUG]` | The parked sign-offs, folded from the journals rather than read from a file. |
 | `lain epic approve DIGEST` / `lain epic deny DIGEST` | Append a terminal decision, draining the partition. Both take `--reason`. |
 | `lain epic add ID TITLE [SLUG]` | Add an issue discovered mid-flight. `--discovered-from` names the live issue it grew out of. |
 | `lain epic split ID [SLUG]` | Replace one issue with several. `--into` is required and takes comma-separated ids. |
 | `lain epic merge LEFT RIGHT [SLUG]` | Replace two issues with one. `--as` is required and names the id it takes; `--title` overrides the combined title. |
 | `lain epic land ISSUE_ID [SLUG]` | Land one approved issue onto the epic's working branch, pushing nothing. `--resume` finishes a landing that merged and then stopped. |
-| `lain epic finish [SLUG]` | Take an epic whose every issue is done to `main` as one pull request, then delete its remote branch. `--local` merges it into `main` in this repository instead: no remote, no pull request, nothing pushed. |
+| `lain epic finish [SLUG]` | Take an epic whose every issue is done to `main` as one pull request, then delete its remote branch. `--local` merges it into `main` in this repository instead: no remote, no pull request, nothing pushed. With no remote it refuses and names `--local`; a stopped finish exits 1. |
 
 The three graph verbs are journaled as a `graph_revision`, so a restructuring is part of the record
 rather than an unexplained change to a file.

@@ -338,6 +338,10 @@ module Lain
       # verdict is a different job from resolving a home, a policy, a queue and a
       # journal: by the time this is built every one of those is settled.
       class Verdict
+        # @return [Integer] 1 for a denial or a closed window, 0 otherwise: a
+        #   deferral parks the artifact for a human and is not a failure
+        attr_reader :exit_status
+
         def initialize(submission:, stage:, policy:, gate:, queue:, advance:, journal:)
           @journal = journal
           @submission = submission
@@ -346,6 +350,7 @@ module Lain
           @gate = gate
           @queue = queue
           @advance = advance
+          @exit_status = 0
         end
 
         # `Sync` because {Approval::Gate#call} parks on the asker's promise, and
@@ -384,10 +389,15 @@ module Lain
         # call's own decision says whether it deferred; the queue only supplies the item.
         def refused
           window = @journal.expired(@submission.digest)
-          return unanswered(window) if window
+          return failed { unanswered(window) } if window
 
           parked = @journal.deferred?(@submission.digest) && parked_item
-          parked ? deferred(parked) : denied
+          parked ? deferred(parked) : failed { denied }
+        end
+
+        def failed
+          @exit_status = 1
+          yield
         end
 
         def parked_item = @queue.parked(slug, @stage.name).find { |item| item.artifact_digest == @submission.digest }
@@ -411,6 +421,10 @@ module Lain
           ["denied #{@submission.digest}", "  #{@stage} for epic #{slug} -- nothing advanced"].join("\n")
         end
       end
+
+      # @return [Integer] the last {#submit}'s status: 1 for a denial or a
+      #   closed window, 0 otherwise; the String it returns carries none
+      attr_reader :exit_status
 
       # `root:` defaults to the RESOLVED project's, not to `Dir.pwd`, for the
       # reason {CLI::Epic#initialize} states -- and asking `epics` is not enough
@@ -458,6 +472,7 @@ module Lain
         @root = root
         @paths = paths
         @config = config
+        @exit_status = 0
         @asker = asker
         @unheard = Prompt.unheard(input:, output:) || Prompt::NO_ASKER
         @journal = journal ? Lent.new(journal) : Owned.new(paths)
@@ -611,6 +626,7 @@ module Lain
       #   ambiguous home, a missing artifact, an unbuildable policy, or the
       #   stage boundary
       def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil)
+        @exit_status = 0
         staged = Lain::Epic::Stage.new(stage)
         epic_home = home(slug)
         decide(staged, epic_home, Artifacts.new(home: epic_home, root: @root, issue:, digest:, tests:))
@@ -663,8 +679,10 @@ module Lain
         return standing(submission, ready) { open.call if advance.moves? } if standing?(queue, submission)
 
         required.each { |plan| ensure_approved!(queue, plan) }
-        Verdict.new(submission:, stage:, policy:, gate:, queue:, advance: ready, journal:).call
+        verdict(Verdict.new(submission:, stage:, policy:, gate:, queue:, advance: ready, journal:))
       end
+
+      def verdict(verdict) = verdict.call.tap { @exit_status = verdict.exit_status }
 
       # The boundary a verdict meets inside {Approval::Gate::Policy#decide},
       # asked here only on the two routes that never reach it: a standing

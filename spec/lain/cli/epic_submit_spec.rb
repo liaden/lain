@@ -378,6 +378,13 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(progress.stage.name).to eq("epic_plan")
     end
 
+    it "exits 0, because a deferral is not a failure" do
+      submit = command(gates: hands_off.merge("epic_plan" => "deferred"))
+      submit.submit("epic_plan")
+
+      expect(submit.exit_status).to eq(0)
+    end
+
     it "leaves the artifact parked for sign-off" do
       command(gates: hands_off.merge("epic_plan" => "deferred")).submit("epic_plan")
 
@@ -1150,6 +1157,15 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(gate_decisions.map { |record| record["approved"] }).to eq([false])
     end
 
+    it "exits 1 on a denial and 0 on an approval" do
+      denied = command(gates: hands_off.merge("research" => "interactive"), input: tty("n\n"))
+      denied.submit("research")
+      approved = command(gates: hands_off.merge("research" => "interactive"), input: tty("y\n"))
+      approved.submit("research")
+
+      expect([denied.exit_status, approved.exit_status]).to eq([1, 0])
+    end
+
     it "prints denied, not parked, when a human denies over an earlier deferral of the same digest" do
       session("parked.ndjson", decision(digest: research_digest, stage: "research"))
 
@@ -1260,6 +1276,19 @@ RSpec.describe Lain::CLI::EpicSubmit do
                                     queue: nil, advance: nil, journal:)
 
       expect(verdict.call).to include("within 1 second --")
+    end
+
+    it "exits 1 when the window closed unanswered" do
+      policy = Object.new
+      policy.define_singleton_method(:decide) { |*| false }
+      journal = Object.new
+      journal.define_singleton_method(:expired) { |_digest| 5 }
+      submission = Lain::Epic::Submission.research(text: research_text, slug: "alpha")
+      verdict = described_class.new(submission:, stage: Lain::Epic::Stage.new("research"), policy:, gate: nil,
+                                    queue: nil, advance: nil, journal:)
+      verdict.call
+
+      expect(verdict.exit_status).to eq(1)
     end
   end
 
