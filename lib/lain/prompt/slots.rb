@@ -108,9 +108,11 @@ module Lain
         def refuse_approval_role!(path, name)
           return unless Role::Catalog.approval_roles.include?(name.to_sym)
 
-          raise UnknownSlot, "role slot file #{path.inspect} is refused: #{name} decides approvals, " \
+          raise UnknownSlot, "role slot file #{path.inspect} is refused: #{name} #{approval_verb(name)} approvals, " \
                              "so a project cannot rewrite its prompt"
         end
+
+        def approval_verb(name) = name.to_sym == :evidence_researcher ? "informs" : "decides"
 
         # A role's one spelling is its catalog name, so a file spelling a known
         # role with hyphens is named with the rename that fixes it.
