@@ -232,6 +232,11 @@ module Lain
                                                          shell_out_factory: @shell_out_factory)
           source.projection = @projection
           Resolved.new(source:, label: "branch #{target}", number: nil)
+        rescue Lain::Review::Source::UnknownRef => e
+          raise e unless base.nil? && e.role == "base"
+
+          raise Error, "#{e.message} -- this repository has no default base to review a branch against; " \
+                       "name one with --base <ref>"
         end
 
         # The base a LANDING targets, because what a review reviews is what is

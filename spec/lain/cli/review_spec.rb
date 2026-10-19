@@ -384,6 +384,20 @@ RSpec.describe Lain::CLI::Review, :seam do
       expect { command.present(number.to_s, base: "main") }
         .to raise_error(Lain::Error, /#{number}/)
     end
+
+    context "when the repository has no main" do
+      before { run_git("branch", "-D", "main") }
+
+      it "refuses saying there is no default base and to pass --base <ref>" do
+        expect { command.present("feature") }
+          .to raise_error(Lain::Error, /no default base.*--base <ref>/)
+      end
+
+      it "leaves an explicit, wrong --base with the resolver's plain words" do
+        expect { command.present("feature", base: "no-such-ref") }
+          .to raise_error(Lain::Review::Source::UnknownRef) { |e| expect(e.message).not_to include("--base <ref>") }
+      end
+    end
   end
 
   # The size guard. Its ceilings are constructor arguments precisely so a

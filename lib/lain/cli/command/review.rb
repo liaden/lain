@@ -294,21 +294,7 @@ module Lain
           Lain::Review::Handover::Closing.new(outbox: @outbox, rails: env.replies, surface:)
         end
 
-        # {Lain::CLI::Review::Target}'s own words, reached rather than
-        # restated -- EXCEPT for the one case only this command can tell
-        # apart from a typo'd branch: a `base` that failed to resolve because
-        # NOTHING was named for it, which means the target resolved a DEFAULT
-        # this repository does not have. That case names the flag that would
-        # fix it; an explicit `--base` that fails to resolve is the human's
-        # own typo and keeps the target resolver's plain words.
-        def resolved_target(parsed)
-          targets.resolve(parsed.target, base: parsed.base)
-        rescue Lain::Review::Source::UnknownRef => e
-          raise e unless parsed.base.nil? && e.role == "base"
-
-          raise Error, "#{e.message} -- this repository has no default base to review a branch against; " \
-                       "name one with --base <ref>"
-        end
+        def resolved_target(parsed) = targets.resolve(parsed.target, base: parsed.base)
 
         # The KIND is the question, not `open?`: a second `/review` over a
         # `/review` rebinds, which is how a human takes a second look at a

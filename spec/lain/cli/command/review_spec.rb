@@ -340,8 +340,8 @@ RSpec.describe Lain::CLI::Command::Review do
 
   # `--base`'s default is {Lain::Forge::Landing::BASE} ("main"), and a
   # repository whose trunk is called something else has this fail with no
-  # `--base` ever typed -- the one shape only THIS command can tell apart
-  # from an ordinary typo'd ref, because only it knows which ref came from a
+  # `--base` ever typed -- the one shape the target resolver tells apart
+  # from an ordinary typo'd ref, because it knows which ref came from a
   # flag and which came from a default nobody asked for.
   describe "a repository with no default base to review a branch against" do
     around do |example|
