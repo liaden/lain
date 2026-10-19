@@ -1056,6 +1056,41 @@ RSpec.describe Lain::Sensitivity::Policy do
         expect(confined.denial(call("write_file", { "path" => "/etc/passwd", "content" => "" }), cwd: root)).to be_nil
       end
 
+      it "refuses a bash command that names the account database, with the same home advice" do
+        denial = confined.denial(call("bash", { "command" => "cat /etc/passwd" }), cwd: root)
+
+        expect(denial).to have_attributes(tool: "bash", reason: :account_database,
+                                          advice: "the agent's home directory is #{home}")
+      end
+
+      it "refuses through bash what the policy refuses a read tool, as the read tool is refused" do
+        paths = ["/etc/shadow", "/etc/sudoers", File.join(home, ".ssh", "id_rsa")]
+
+        paths.each do |path|
+          expected = confined.denial(read(path), cwd: root)
+          actual = confined.denial(call("bash", { "command" => "cat #{path}" }), cwd: root)
+
+          expect(expected).not_to be_nil
+          expect(actual).to have_attributes(tool: "bash", reason: expected.reason, advice: expected.advice)
+        end
+      end
+
+      it "leaves a path the project's own config denies to the shell rung" do
+        rules = Lain::Sensitivity::Rules.from({ "denied" => ["*.secret"] })
+        configured = described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, rules:), home:, root:)
+                                    .confined(roots: [worker])
+
+        expect(configured.denial(call("bash", { "command" => "cat #{root}/prod.secret" }), cwd: root)).to be_nil
+      end
+
+      it "answers nil, without raising, for a bash call whose input is not a hash" do
+        expect([["x"], "cat /etc/passwd"].map { confined.denial(call("bash", _1), cwd: root) }).to all(be_nil)
+      end
+
+      it "leaves a bash command that names no account file to the gate" do
+        expect(confined.denial(call("bash", { "command" => "cat /etc/hosts" }), cwd: root)).to be_nil
+      end
+
       it "leaves the main agent's read of /etc/passwd gated rather than refused" do
         expect(policy.denial(read("/etc/passwd"), cwd: root)).to be_nil
         expect(policy.gates?(read("/etc/passwd"), cwd: root)).to be(true)

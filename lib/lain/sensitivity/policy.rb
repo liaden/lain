@@ -173,7 +173,8 @@ module Lain
       # file link it walks into, so a link in the project pointing out is read
       # through unasked.
       #
-      # A child's read of the account database is refused rather than gated:
+      # A child's read of the account database is refused rather than gated,
+      # whether a read tool or a bash command names it:
       # a researcher looking for its own home there is told where that is
       # instead, rather than parking a human on a question it can answer
       # itself. The main agent's read of the same files still asks.
@@ -207,7 +208,10 @@ module Lain
         # @param cwd [String] absolute
         # @return [Denial, nil] the policy's own, else one for a read that
         #   names or walks from the account database
-        def denial(effect, cwd:) = @policy.denial(effect, cwd:) || account_denial(Policy.unwrapped(effect), cwd)
+        def denial(effect, cwd:)
+          @policy.denial(effect, cwd:) || own_denial(Policy.unwrapped(effect), cwd)
+        end
+
         def classify(path, within: nil) = @policy.classify(path, within:)
         def related?(path) = @policy.related?(path)
         def filter = @policy.filter
@@ -240,10 +244,30 @@ module Lain
           effect.name == "glob" ? [base, glob_root(effect.input, base)].compact : [base]
         end
 
-        def account_denial(call, cwd)
-          hit = walked(call, cwd).find { account_file?(_1) }
+        def own_denial(call, cwd)
+          named = shell_named(call, cwd)
+          account_denial(call, cwd, named) || shell_denial(call, cwd, named)
+        end
+
+        def account_denial(call, cwd, named)
+          hit = (walked(call, cwd) + named).find { account_file?(_1) }
           hit && Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path: Policy.path_in(call) || hit,
                             verdict: ACCOUNT_DATABASE, advice: home_advice)
+        end
+
+        # A project's own configured denial is left to the shell rung, which
+        # refuses it in words that say no approval will lift it.
+        def shell_denial(call, cwd, named)
+          path, verdict = named.lazy.map { |named_path| [named_path, @policy.judge(named_path, cwd:)] }
+                               .find { |_, judged| judged.denied? && judged.reason != :configured }
+          verdict && Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path:, verdict:)
+        end
+
+        def shell_named(call, cwd)
+          return [] unless call.tool_call? && call.name == "bash" && call.input.is_a?(Hash)
+
+          base = File.expand_path(Policy.path_in(call) || ".", cwd)
+          Shell::Named.of(call.input["command"].to_s, cwd: base, home:).paths.map(&:resolved)
         end
 
         def home_advice = home && "the agent's home directory is #{home}".freeze
