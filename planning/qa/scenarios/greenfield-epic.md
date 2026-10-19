@@ -27,7 +27,7 @@ HUD's in-flight segment, the stall limit on a long tool call, the transcript's e
 files-written line, notes typed mid-run, `lain://epic` and `lain epic show`, and the cockpit's nvim,
 tmux and transcript behavior under a real user config.
 
-**Round 26 re-checks:** k25-1 fixed (a judge deny is stamped `HH:MM:SS the judge denied ...` and the child is told why), k25-3 fixed, k25-4 not fixed, B23-1 fixed.
+**Round 26 re-checks:** k25-1 fixed (a judge deny is stamped `HH:MM:SS the judge denied ...` and the child is told why), k25-3 fixed, k25-4 not fixed in round 26 and fixed since (T11: `x` on a closed fold of `lain://question` refuses instead of deleting the range), B23-1 fixed.
 
 **Cost:** spends real cloud quota. Budget about 150 completions for the whole journey (round 23 counted about 147; round 25 spent about 75 cloud completions, 60 of them §6.3's researcher; round 26 spent about 160, about 102 of them the 2 researchers, so a fork driving it needs the scenario alone and may still need a resume at 200 turns), most of them
 the `/research-epic` interview and its two researchers. Sections 1, 2 and 7 cost nothing or one
@@ -368,13 +368,13 @@ Checks:
 9. **A related directory is in a child's scope as a tree (2026-10-09 trial fixes).** With `sensitivity related: %w[<$QA>/parent/sibling]` set (§4.8),
    ask a researcher to `list_files` and then `glob` `**/*.rs` on `<$QA>/parent/sibling` itself. Neither parks as
    `outside_project`; the trial's researchers were parked on the related root and could read only single files.
-   A path beside it, `<$QA>/parent/slow`, still parks under `ask`. Under `auto` the listing goes to the judge; if the judge denies it, the chat shows a stamped line `the judge denied <tool>(<input>)` and the model is told `the judge refused this call` (round 25, k25-1, fixed), so a refusal is never silent. A judge that times out (30 s, `reason: fault`) parks the call with no note, so the human cannot tell a failed judge from no judge (round 26, k26-8). Under `--non-interactive` the model is told no human can approve it instead. State which approval level the step runs at.
+   A path beside it, `<$QA>/parent/slow`, still parks under `ask`. Under `auto` the listing goes to the judge; if the judge denies it, the chat shows a stamped line `the judge denied <tool>(<input>)` and the model is told `the judge refused this call` (round 25, k25-1, fixed), so a refusal is never silent. A judge that times out (30 s, `reason: fault`) parked the call with no note, so the human could not tell a failed judge from no judge (round 26, k26-8); the parked row now carries `the judge could not be asked (it timed out or failed)` (T74). Under `--non-interactive` the model is told no human can approve it instead. State which approval level the step runs at.
 
 10. **Frugirl round 4 checks (default `auto`, relaunched without `--approval`).** Record the judge's latency
     per call and any approve that was wrong, and count the human prompts for the whole journey against
     round 3's 37. Each call the judge approves leaves one stamped transcript line, `the judge approved
-    <tool>(<input>)`, and a call it left for you parks with `the judge deferred this` on its prompt and its
-    `lain://approval` row; a call that names a credential or a path lain cannot name for certain (`cat .env`,
+    <tool>(<input>)`, and a call it left for you parks with `the judge deferred this` on its prompt, its
+    `lain://approval` row and the plain chat's arrival line (b26-6 fixed, T5); a call that names a credential or a path lain cannot name for certain (`cat .env`,
     `ls "$HOME"`) never reaches the judge and parks with a quoted note after the call saying why:
     `the judge did not look: its paths cannot be named`, `the judge did not look: this command is barred from automatic approval`,
     `the judge did not look: it reaches more files than the judge weighs`, or `the judge did not look: <path> is not a path it may weigh`
@@ -417,7 +417,7 @@ Checks:
    review rail with the sentence on screen and the buffer left modified; it never raises a hit-enter prompt, so nvim stays
    responsive (`nvim --server "$S" --remote-expr 1` answers at once after the refusal). The same holds for a compose write
    that could not reach lain.
-   Round 26 (k26-3): the free-text question's hint row does not exist (the extmark carries no `virt_text`), and a column-0 answer is refused with option-line grammar.
+   Round 26 (k26-3): the hint row exists as `virt_lines` (`60_question.lua`), so "no hint row" was wrong; what stood was a column-0 answer refused with option-line grammar. Fixed (T12): it now reads `line <n>: "<text>" is not indented -- write your answer on a line indented two spaces below the question`.
    *Wrong looks like:* a refusal that says only "cannot be edited". The refusal now says where
    answers belong.
 3. **A typed reply at `/inbox` also answers the set**, as prose, and the model's next turn says it
@@ -458,7 +458,7 @@ Checks:
    way. Ask it to add one issue (`epic_graph` with `verb: add`) and then split it; the graph's
    issue files appear under the epic home and no `lain epic split` command is suggested.
 
-10. **The cap is roomy, and a cut names the flag (round 23 j-7, fixed).** `--max-tokens` now defaults to 16384 (it was 4096),
+10. **The cap is roomy, and a cut names the flag (round 23 j-7, fixed).** `--max-tokens` defaulted to 16384 (it was 4096), and since T89 it is unset by default: the output ceiling comes from the model (the window an ollama server says it serves, else 32768), and a typed value overrides it with `max_tokens_source: typed` in the header,
     so glm-5.3's first `/research-epic` turn finishes instead of spending the cap thinking; `lain up -- --max-tokens 16384` is
     no longer needed. To see the cut, relaunch with `-- --max-tokens 256` and send the same prompt: the chat prints `model hit
     max_tokens before finishing` followed by `raise --max-tokens (now 256); a thinking model's reasoning counts against it`.
@@ -466,7 +466,7 @@ Checks:
 
 11. **A long `epic_write` is not a stall (2026-10-09 trial fixes).** Ollama sends a tool call's arguments whole, after a silence
     that grows with their size (about 20s for 13 KB in a measurement). Ask the model to `epic_write` a `research` of about 300
-    lines (30 KB or more). With the default `--max-tokens 16384`, glm-5.3's 30 KB write plus thinking hits the cap; launch with `-- --max-tokens 32768` for the unforced leg. The run finishes: no `stalled stream` error, `research.md` exists under the epic home, and
+    lines (30 KB or more). With a typed `--max-tokens 16384`, glm-5.3's 30 KB write plus thinking hits the cap; the per-model default (T89) already allows more, and `-- --max-tokens 32768` forces the same for the unforced leg. The run finishes: no `stalled stream` error, `research.md` exists under the epic home, and
     the turn that carried the call is in the journal. A cloud deployment's stall limit is 115s and a local
     ollama's 295s, 5 under each request timeout. **Force a stall to read the message:** launch with
     `LAIN_STREAM_STALL_TIMEOUT=3` exported in the shell that runs `lain up` and repeat (it reaches the chat pane: `lain up` passes `LAIN_STREAM_STALL_TIMEOUT`, `LAIN_CONNECT_TIMEOUT`, `LAIN_STREAM_DEBUG` and `LAIN_ENV_PASS` on, round 25 k25-3, fixed). The ask ends with `stalled stream: no bytes for N.Ns, past the 3s
@@ -482,7 +482,7 @@ Checks:
     `markdown`), and **your cursor stays in the window you were in**. It is not in the 8 primed buffers of
     `cockpit-surfaces.md` §1. Have the model write it again: the buffer refreshes in place. Close its window
     (`:close` in it) and write again: the buffer refreshes **and no window reopens**; `:buffer lain://epic/<slug>/research.md`
-    brings it back. From a shell, `lain epic show` prints the same text (it adds a trailing newline, k26-10), `lain epic show epic` names the missing
+    brings it back. From a shell, `lain epic show` prints the same text (it adds no trailing newline of its own since T49, k26-10 fixed: the bytes are the file's), `lain epic show epic` names the missing
     `epic.md` and the home, and `lain epic show notes` lists `research`, `epic`, `issues/ID` and `plans/ID`.
     *Wrong looks like:* a document nobody can read without knowing the XDG path, a window that grabs focus mid-typing, or one
     that reopens at every rewrite.

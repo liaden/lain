@@ -235,7 +235,7 @@ as applied although the judge never saw it; trust the captured request, not that
 
 Round 26: the judge's system text (2,385 bytes, read through a body-dumping proxy) holds the environment block and not the project's `system.md`; d25-1 is fixed. The main and researcher requests do carry it.
 
-Known wording nit (d26-7): the `evidence_researcher.md` refusal says it "decides approvals"; it informs them.
+Wording nit (d26-7, fixed T52): the `evidence_researcher` text said it "decides approvals"; it now says it informs them.
 
 ## 6 — the 4096-token cache floor *(the one paid step — 2 completions, real Anthropic quota)*
 

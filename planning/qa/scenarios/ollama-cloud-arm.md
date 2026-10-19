@@ -148,7 +148,7 @@ gone, so:
 §3's 128,000-token published window was confirmed by round 17.
 
 **And the wire, since the same round-20 forks read it:** the captured request body carries
-`options={"num_predict"=>16384,"num_batch"=>2048}` `truncate=false` and `shift=false` (a `--max-tokens 40` chat stopped at 40 on
+`options={"num_predict"=><the per-model ceiling, or the typed --max-tokens>,"num_batch"=>2048}` `truncate=false` and `shift=false` (a `--max-tokens 40` chat stopped at 40 on
 ollama.com), and `--max-tokens 0` refuses at construction. A body without `num_predict` is the round-19 defect
 (no generation cap on the ollama wire) back.
 
@@ -178,7 +178,7 @@ for a retried 500. That is the retry envelope working, not corruption.
 
 To drive salvage with no spend, cut a completed cloud session's journal after its last `request_sent`, keep its WAL, make sure the writer named in the header is dead (a live writer skips salvage: `still open in process N`), then `--resume`. The recovered turn's digest must equal the original's (round 26, j25-1 fixed). Control: SIGKILL mid-stream gives `did not finish before the crash (N bytes recovered); not recovered`.
 
-An HTTP 404 from `/api/chat` is journaled `run_interrupted reason: torn` (j26-2); the retired `LAIN_OLLAMA_CLOUD_CONCURRENCY` is ignored without a word (j26-5).
+An HTTP 404 from `/api/chat` used to be journaled `run_interrupted reason: torn` (j26-2); it is now `reason: rejected` with the status (T64), and an ordinary refusal, a cut-off reply and a malformed reply journal their own reasons instead of nothing (T65). The retired `LAIN_OLLAMA_CLOUD_CONCURRENCY` was ignored without a word (j26-5); the cloud arm now says `LAIN_OLLAMA_CLOUD_CONCURRENCY was retired and is ignored; use LAIN_PROVIDER_CONCURRENCY.` (T71), and the local arm prints nothing.
 
 ## 6. Width, the launch notice and the 429 *(§6a costs nothing; §6b costs real quota or needs a stub)*
 
@@ -211,7 +211,7 @@ lain chat --provider ollama                                         # the local 
    once`. With `0` it reads `ollama-cloud runs with no limit on
    cloud requests; LAIN_PROVIDER_CONCURRENCY=0 set that.`
    With `--api-base` on a loopback address and the variable unset or empty, the line is instead `ollama-cloud base <base> is a
-   loopback address, so it is held to 1 request, not 3; LAIN_PROVIDER_CONCURRENCY does not lift that.` The line names the held width; round 26 found its last clause false (j26-1): a set `LAIN_PROVIDER_CONCURRENCY` is honoured on loopback. With the
+   loopback address, so it is held to 1 request; set LAIN_PROVIDER_CONCURRENCY to override it.` The line names the held width; round 26 found its old last clause (`does not lift that`) false (j26-1, fixed T71): a set `LAIN_PROVIDER_CONCURRENCY` is honoured on loopback. With the
    variable set to a number on loopback, the plain width line appears and that number is honoured.
 3. The local arm prints no such line, and `OLLAMA_API_KEY`'s value appears in no startup line.
    *Wrong looks like:* a notice naming a width other than the one a fan-out then uses, or the line missing from a cockpit's

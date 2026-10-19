@@ -203,7 +203,7 @@ Three things this is checking, and the first is the one that actually broke:
 **`lain bench variance` degrades the same way since 2026-09-14.** Round 17 found it refusing every
 local recording that had turns (`no price for model "qwen3-coder:30b"; configure a fallback to
 degrade`, exit 1), while this report degraded only its cost section (F109). Its cost row now reads
-`not priced` with the ledger's reason and the rest of the comparison renders. Driven round 26: `cost (USD): not priced`, the rest renders. `compaction cost delta 0.000000` and `cache write tokens 0.0` print beside it where 'not measured' belongs (l26-5).
+`not priced` with the ledger's reason and the rest of the comparison renders. Driven round 26: `cost (USD): not priced`, the rest renders. `compaction cost delta` and `cache write tokens` now read `not measured` there (l26-5 fixed, T34): a run with no compaction record has no delta, and cache writes that are all 0 are withheld.
 
 **A failed recording is set aside, and the remaining runs continue** — round 18's answer to a
 run whose round trip dies partway through. The file is renamed to `<stem>.failed.ndjson` (hard
@@ -238,14 +238,14 @@ omission is now *visible* for the first time; it is recorded, not fixed.
   repo with a sentinel file in a parent directory. After the run, `git status` in the scratch repo is clean and nothing outside the
   worktrees changed, the sentinel included. **What this does not cover:** an opaque shell command (`sh -c`, `python3 -c`) still runs
   and can write outside the lease, which is the limit the refusal text states; `--confine reader` confines only a read-only command.
-  Round 26: named paths are refused by the lease (absolute `write_file`, parsed `cd <outside> && touch`, outside `read_file` and `list_files`), but an opaque `cd <outside> && for f in $(find ...); do ...; done` from an arm wrote the parent sentinel and a tracked file in the launch repo (l26-1). Seed the launch repo with a tracked `.rb` and check `git status` there, not only the parent.
+  Round 26: named paths are refused by the lease (absolute `write_file`, parsed `cd <outside> && touch`, outside `read_file` and `list_files`), but an opaque `cd <outside> && for f in $(find ...); do ...; done` from an arm wrote the parent sentinel and a tracked file in the launch repo (l26-1). Since T20 a leased run with no human attached refuses any bash command whose paths cannot be read (a loop, `$(...)`, `cd` then `;`, `sh -c`, `ruby -e`, `xargs`), with `this run is leased to <worktree> and no human is attached, so a command whose paths cannot be read is refused`, and the `run_arms` header records `"opaque": "refused"`. Re-run the loop and check `git status` in the launch repo and the parent sentinel: both unchanged. What stays open is a named interpreter script (`ruby x.rb`), which still writes anywhere; a write-confined sandbox for arms is a separate design, not a round 27 card yet.
 - **`--confine reader` is the one chat arm a bench takes** (`--confine off|reader`; `classes` is refused as a chat arm, and `--exec`,
   `--exec-image`, `--judge-facts` and `--tripwire` are not bench flags). With it, the report's first lines carry `confine:   reader`
   beside `isolation:` (and `reader (degraded: the box lacks bwrap and landlock)` on a box without them), and the journal's `run_arms`
-  record names it. A refused run writes no record. No bench journal records the profile. Prove it from outside: sample `ps` for `lain-fence` during a slow allowlisted read (`sort big.txt | wc -l` on a 13 MB file). Round 26 saw only `strace -DD` (traced) and an outside `cat` that ran (l26-2).
+  record names it. A refused run writes no record. The bench journal now carries the arm's `sandbox` records, stamped with `arm` and `task` (l26-2 fixed, T22); read the profile there, and still prove it from outside: sample `ps` for `lain-fence` during a slow allowlisted read (`sort big.txt | wc -l` on a 13 MB file). Round 26 saw only `strace -DD` (traced) and an outside `cat` that ran.
 - The **dual-ledger arm settles on its ledger rather than its grader**, and its terminal state
-  distinguishes a dried-up ledger from a ceiling. This is not readable from a bench run: no `ledger_transition` reaches the run journal (l26-4).
-- A fixture needs 2 or more tasks with distinct prompts; 1 task crashes with a raw `ArgumentError` after journaling (l26-3), and identical prompts refuse.
+  distinguishes a dried-up ledger from a ceiling. It is readable from a bench run: a `ledger_transition` reaches the run journal, stamped with `arm` and `task`, only when `--journal` is given (l26-4 fixed, T23).
+- A fixture needs 2 or more tasks with distinct prompts; 1 task now refuses before anything is journaled (l26-3 fixed, T24; the Driver's own `ArgumentError` is untouched), and identical prompts refuse.
 - `grade_record` carries `arm` since round 26's re-check, and a partial row reads `6 of 8` with the surviving grades folded (l25-2 fixed).
 - **No `StalledStreamError`.** This arm runs concurrent actors against a single-slot ollama, which
   is the shape that has killed sessions elsewhere. It has not fired here in two rounds — the

@@ -341,6 +341,8 @@ stays here only while it is still in flight:
   (b26-1). **Two MED-HIGH:** `lain epic land`'s refusal points at the test-only red commit and following it put failing
   tests on `main` (h26-1), and a bench arm still escapes its lease through an opaque `$(find ...)` loop (l26-1). A
   credential line stored in memory spreads into every new session file (g26-2, i26-1).
+  The fixes plan [`../specs/qa-round-26-fixes.md`](../specs/qa-round-26-fixes.md) landed every finding rated MEDIUM or
+  higher and most LOW ones; what it left for round 27 is listed there, and each scenario notes its own.
 
 - [`../qa-findings-round25-2026-10-16.md`](../qa-findings-round25-2026-10-16.md): round 25, a full round over all 21
   scenarios in 12 forks, weighted to the round-24 fix batch and the bash confinement plan (T1 to T23, T26, T33 and
@@ -658,7 +660,7 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   each stage's resolved path and class, and since the round 25 fixes the string arm journals the stages read off the
   parse (`"basis":"parsed"`) and a docker call journals every stage `unresolved` with the anomaly `container_backend`.
   What remains uncovered is a command the parse cannot read whole, which keeps 1 unresolved entry.
-  Round 26 found `exec_resolution` names `/usr/bin/echo` for a shell builtin on the string arm (f26-4).
+  Round 26 found `exec_resolution` naming `/usr/bin/echo` for a shell builtin on the string arm (f26-4); fixed (T35): on the string arm an entry named `echo`, `printf`, `test`, `[`, `pwd`, `kill`, `true` or `false` journals `resolved` nil with basis `builtin`, and `/bin/echo` still resolves to its file.
 - **Cost and latency.** Nothing records wall-clock or tokens per act, so "the plumbing works" and
   "the plumbing is usable" are not separated. One wiring mistake once cost 84.0s against 7.5s and
   nothing here would catch the same class again.
@@ -701,7 +703,7 @@ a full directory does not read as completeness:
   `exec_resolution` journals each stage's resolved path and class, so the question is askable on the term arm.
   The string arm is covered by the parsed stages (round 25, a25-3, fixed), and a container reads `container_backend` (e25-2,
   fixed). What remains uncovered is a command the parse cannot read whole, which keeps 1 unresolved entry.
-  Round 26 found `exec_resolution` names `/usr/bin/echo` for a shell builtin on the string arm (f26-4).
+  Round 26 found `exec_resolution` naming `/usr/bin/echo` for a shell builtin on the string arm (f26-4); fixed (T35), see above.
 
 - **`Toolset::Disclosure`, both arms.** `Upfront` vs `Deferred` (+ the `tool_search` tool) is a
   headline context-strategy axis and `Bench::DisclosureSweep` exists to compare them — but **there is

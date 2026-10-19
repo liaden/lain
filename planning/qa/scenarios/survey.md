@@ -77,7 +77,7 @@ the same file. *Driven 2026-09-14*, the one-shot side: from a sibling directory,
 `lain survey <abs>/cs/changeset/lib` headlined `surveying <abs>/cs/changeset/lib at cumulative scope:
 1 file` and listed `[ ] cs/changeset/lib/tally.rb`; run from inside the repository as
 `lain survey lib` it listed `[ ] lib/tally.rb`. Survey the same absolute path with `/survey` from
-the same cwd and confirm the rows read identically. b25-10 is still unfixed in round 26: the sidebar strips a leading `../` that the refusal keeps, so check the sidebar naming against the refusal text. *(Prediction, not yet driven: the `/survey` side
+the same cwd and confirm the rows read identically. b25-10 is fixed (T10): the refusal, the `opened` report and the hunk count in `lain://review` now name a row's path as the sidebar displays it, so a leading `../` is stripped in all of them; check the sidebar naming against the refusal text. *(Prediction, not yet driven: the `/survey` side
 needs the cockpit.)*
 
 ## 2. The ceilings, at a size no round has driven

@@ -245,7 +245,10 @@ Checks:
     - **Ctrl-Z** in a cockpit input pane does not stop the process (it is exec'd with no shell, so there is no `fg`);
       check only that the pane keeps working.
     - **Ctrl-C over a line typed at a drawn `you>` and at `command>`:** the line must clear and nothing be forwarded.
-      Round 26 found both end the cockpit (b26-1); only a draft typed while no prompt is drawn clears safely.
+      Round 26 found both end the cockpit (b26-1); fixed (T1, T2): in the `lain input` pane the line clears, the prompt is
+      redrawn and no signal frame reaches the chat, and in a plain chat the same Ctrl-C over typed text clears it and the
+      chat lives. Over an empty line it is the ordinary interrupt and still ends the chat. On a dumb terminal (`TERM=dumb`)
+      a Ctrl-C over typed text still ends the chat, because the kernel holds the line (round 27 limit).
     - **A pasted multi-line draft is sent as one line.** Paste 3 lines in one go, then press Enter: the chat receives
       one line holding all 3, not 3 prompts. A bracketed paste and a plain one both do this.
     - **A very long line is sent whole.** A draft of more than 4,095 bytes arrives complete, with no cut and no
@@ -266,7 +269,7 @@ with no 4095-byte cut and no notice, and a 200-byte line mid-ask is held as type
 - `/stop` typed at whatever prompt the run parked on — it is lifted off the input rail before the
   command registry sees it, so it works from a `[y/N]` or a `human>` and not only from `you>`.
 - Ctrl-C, then `s` at the countdown. (`c` cancels the countdown, `w` extends it, `r` waits for
-  responses.) There is no idle countdown: a Ctrl-C at an idle `you>` **ends the chat**
+  responses.) There is no idle countdown: a Ctrl-C at an empty idle `you>` **ends the chat** (over typed text it only clears the line, T1, T2)
   (`docs/commands.md`, the `--grace` row). The countdown is for a run in flight, or for a
   `[y/N]` that took the terminal from an idle `you>`.
 
@@ -553,7 +556,7 @@ Check, in order:
   instead of one per unit, of which only the last survived the message line. A driver still expecting
   the digest form will file the fix as a regression; verified live, round 8.)
 - `x` on a row nothing has opened refuses **by name** and leaves the row unmarked:
-  `lain: lain://review line 3 names lib/version.rb, which nothing has read -- open it with <CR> first`.
+  `lain://review line 3 names lib/version.rb, nothing has read it -- <CR> opens it` (the shorter wording of T10, which also names the path as the sidebar shows it, b25-10 fixed).
 - `x` on a row with no hunks (an empty file) refuses cleanly:
   `lain: no hunk on lain://review line 1 -- nothing on that row can be marked`.
 - `:LainReviewVerdict approve` over a **partially** reviewed changeset refuses, naming the
@@ -872,7 +875,7 @@ ran on. *Driven 2026-09-14* in a `--no-nvim` chat (the same prompt class `/appro
 
 no `approval_decision` until the window closed, and the held `/status` ran at the next `you>`. A
 `/`-line recorded as a `tty` denial is round 17's shape back. Driven round 26: held, the prompt redrawn, no decision.
-When `/approve` drew the `[y/N]` and it times out, the lapse is said twice in the chat pane (round 26, b26-2). A held paste in `--no-nvim` is drawn onto the `[y/N]` row, so a `y` shows at an approval nobody gave (b26-4).
+When `/approve` drew the `[y/N]` and it times out, the lapse used to be said twice in the chat pane (round 26, b26-2); a call whose `[y/N]` prompt was drawn now lapses with one `denied after` line, and a call nobody drew still gets its own (T4). A held paste in `--no-nvim` was drawn as rows of the `[y/N]` prompt, so a `y` showed at an approval nobody gave (b26-4); rows after the first now draw no prompt, at an approval and at a `human>` question alike (T6). The first row's echo of the pasted `y` is the accepted residual of Reline; confirm no decision is made and the paste is held for the next `you>`.
 
 **The `notify` layer rings the terminal on an arrival, and nothing else runs.** Its lighter is
 `BELL`. While it stands, a question, approval or review arrival writes **one** BEL byte (`\a`) to
@@ -949,7 +952,7 @@ finding. A pending carrying `"humans_only": true` is the withheld-output case
 `surface=auto` is a finding too.
 
 Both the arrival line and the `[y/N]` must **name the requester** (`agent` / `researcher` /
-`subagent`) — with `fleet 2` on the status line you otherwise cannot tell a parent from its child.
+`subagent`), and a child that runs under a skill names it too, `dev (gherkin-tests) asks ...` (d26-5 fixed, T15, T16: the main agent is `agent` everywhere, and every acting agent shows its name and the role or skill it runs under, in the prompt, the fleet row and the window title) — with `fleet 2` on the status line you otherwise cannot tell a parent from its child.
 The whole prompt, as `/approve` draws it in a cockpit and as the plain chat draws it inline:
 
     <requester> asks: approve <tool>(<input>)? [y/N]

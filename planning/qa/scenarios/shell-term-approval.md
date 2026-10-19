@@ -333,7 +333,7 @@ $QA/drive.sh '/ruby Lain::Shell::Verdict.new(capability_set: Class.new { def per
 ```
 
 Measured: `verdict: :deny`, `term: []`, reason
-`the session's capability set excludes: "curl", "sh"`. And the basenaming holds in the direction a
+`the session's shell exclusion covers bash commands and excludes: "curl", "sh"`. And the basenaming holds in the direction a
 denylist needs it to — `/usr/bin/curl x`, `./curl x` and `../bin/curl x` all deny on `"curl"`.
 
 **What this section's finding-in-waiting was, kept as the historical record of the gap before T4/T6
@@ -863,7 +863,7 @@ Five things, then stop:
 4. **A rung above still refuses.** Drive the triage rung under `bypass`: `cat` an absolute path
    inside the fixture's protected set (§4's probe) and read the deny. Under `bypass` there is no
    queue to fall back to, so this is a refusal with no way to approve it, and the message says so.
-   A call that runs here is the serious finding in this section. Round 26 found the refusal wording better but still saying "no approval is possible while approval is bypass; do not re-send it; no approval will lift this, so do not re-send the same command in another form": "no approval will lift this" is false (a human in `ask` can), and "do not re-send" appears twice (f25-3).
+   A call that runs here is the serious finding in this section. Round 26 found the refusal still saying "no approval is possible while approval is bypass; do not re-send it; no approval will lift this, so do not re-send the same command in another form": "no approval will lift this" is false (a human in `ask` can), and "do not re-send" appears twice (f25-3). Fixed (T57): a deny a mode switch can lift now reads `refused tool "bash": <reason>` with no "no approval will lift this" clause, under `bypass` and for an unattended `ask`, and "do not re-send" appears once; the reason that remains names `/mode ask`. A rung no mode lifts (a protected path) still says it is unliftable.
 5. **The arm was still chosen.** `Tools::Bash` picks its arm from the verdict regardless of the
    approval level. Drive an allowed command no rule approves (`make -f nosuch.mk`): it reaches rung
    `bypass` and its `shell_arm` reads `"verdict":"allow","arm":"term"` (`shell-terms.md` §6 drives that

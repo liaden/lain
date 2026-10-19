@@ -48,7 +48,7 @@ Files read: `lib/lain/exec{,/local,/core,/docker}.rb`, `lib/lain/shell/{pipeline
 Where docs and code disagree:
 
 - The research report says `LD_PRELOAD` is scrubbed in `exec/docker.rb`. It is never named, so it never crosses. Code wins.
-- The research report's `Profiles` table scrubs `LD_LIBRARY_PATH`. `CLAUDE.md` requires `LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib` for OpenSSL in every child Ruby. This plan does not scrub it (Rejected options).
+- The research report's `Profiles` table scrubs `LD_LIBRARY_PATH`. `CLAUDE.md` once required `LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib` for OpenSSL in every child Ruby. Round 26 ruled it out of `ChildEnv::KEEP`: a machine that needs it passes it with `LAIN_ENV_PASS=LD_LIBRARY_PATH`. This plan did not scrub it (Rejected options); the ruling supersedes that.
 - `composed_term.rb:215-219` says resolving argv0 "changes no decision". T14 changes that, behind the arm flag, and rewrites the comment.
 
 mempalace was unreachable this session (MCP server failed to connect), so prior decisions come from the research report's first-pass queries and the memory files `binary-identity-rulings-2026-10.md` and `approval-layering-direction.md`.
@@ -99,7 +99,7 @@ Only the main session edits these. Cards hand back 1-line diffs.
 
 ## Rejected options
 
-- **Scrubbing `LD_LIBRARY_PATH`**: this repo's own child Ruby needs it for OpenSSL (`CLAUDE.md` Toolchain). A model that sets it does so in the command string, which a scrub cannot reach; the trace and the fence cover that.
+- **Scrubbing `LD_LIBRARY_PATH`** (rejected here, then reversed by round 26's ruling: it left `ChildEnv::KEEP`, and `LAIN_ENV_PASS` passes it where a child Ruby needs it for OpenSSL, which this box does not): this repo's own child Ruby needed it for OpenSSL (`CLAUDE.md` Toolchain). A model that sets it does so in the command string, which a scrub cannot reach; the trace and the fence cover that.
 - **A per-stage sandbox wrapper inside `Shell::Pipeline#commands`**: it cannot see the ruling or the profile, and a gVisor or VM backend is not an argv prefix of a stage. The decorator (T23) keeps `Pipeline` to 1 generic change (extra fds, T19).
 - **A shim directory or pinned `PATH` as enforcement**: bypassed by `command -p`, `env PATH=` and absolute paths (research, measured). The fence's `--exec-file` enforces instead.
 - **A microVM backend in this plan**: no KVM on this box, so nothing could be tested. The seam is built so one can follow (Open decisions).
@@ -268,10 +268,10 @@ Scenario: the loader cannot be told to inject
   When Exec::Local runs "env"
   Then neither variable appears in the output
 
-Scenario: the OpenSSL path survives
+Scenario: the OpenSSL path no longer survives by default
   Given LD_LIBRARY_PATH is set
   When Exec::Local runs "env"
-  Then LD_LIBRARY_PATH appears with its value
+  Then LD_LIBRARY_PATH does not appear, unless LAIN_ENV_PASS names it
 ```
 Spec file: `spec/lain/exec/local_spec.rb`
 

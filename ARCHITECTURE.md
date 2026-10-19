@@ -1610,7 +1610,7 @@ Where the cancellation guarantees come from is covered in
 the project-relative `.lain/` tree is `ProjectDir`'s, and the two never overlap. A live session's
 NDJSON file lands
 under `$XDG_STATE_HOME/lain/sessions/<project-hash>/` (`Paths#sessions_dir`, where
-`project_hash` is the first 12 hex chars of `SHA256(expand_path(project_dir))`) as a timestamped
+`project_hash` is the first 12 hex chars of `SHA256(realpath(project_dir))`) as a timestamped
 file that `Journal.open` creates.
 
 Its companion write-ahead log sits beside it. `Paths.wal_for(ndjson_path)` strips whatever

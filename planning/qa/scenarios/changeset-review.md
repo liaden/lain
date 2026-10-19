@@ -104,10 +104,11 @@ differently, and a round should drive both:
   base to review a branch against; name one with --base <ref>`. *(Driven round 26: the
   cockpit wording names `--base <ref>`. A headless chat refuses `/review` for having no editor before it resolves any ref, so this needs the
   cockpit.)*
-- **`lain review <branch>` still does not.** *Driven 2026-09-14, and again round 26 (`lain review feature` in a `master` repo says `base ref "main" does not resolve` with no `--base` hint)* in a `git init -b master`
-  repository: `base ref "main" does not resolve to a commit in <repo>`, exit 1, no mention of
-  `--base`. That is the one-shot's wording today, not a regression; file it as V2's remainder if a
-  round wants it changed.
+- **`lain review <branch>` names it too, since round 26's fix (T48).** *Driven 2026-09-14, and again round 26,
+  when `lain review feature` in a `master` repo said `base ref "main" does not resolve` with no `--base` hint.* In
+  a `git init -b master` repository both entry points now say `… -- this repository has no default base to review a
+  branch against; name one with --base <ref>`, exit 1, from the one `Target#branch`. A `--base` the human typed
+  that does not resolve still reports the plain `base ref … does not resolve`.
 
 ### 1b — two roots, no merge base
 

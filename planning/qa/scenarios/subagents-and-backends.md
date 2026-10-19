@@ -30,7 +30,7 @@ suffix, which is where the random ids a driver sees come from), while one whose 
 process is somebody else's lease and is refused. Keep one isolated run per project anyway (it keeps
 `git worktree list` readable), and **do** drive the collision: start a second run with the same worker key
 while the first is alive and expect the refusal naming the path and the holder; then kill the first hard
-and expect the second to take the path after moving the leftover aside. The worker path is a hash of the worker id resolved against the PROCESS cwd (i26-3), so drive the collision from the project root. A library harness `Lain::Isolation::Worktree.new(root:, repo_root:, base: WorkingBranch.checked_out(...)).acquire("dev-spawn.N")` run from the project gives `worker dev-spawn.N: worktree path ... is held: leased by live process <pid> on <host>`.
+and expect the second to take the path after moving the leftover aside. The worker path is a hash of the worker id resolved against the PROCESS cwd (i26-3, left for round 27: fixing it would rename every leftover worker worktree), so drive the collision from the project root. A library harness `Lain::Isolation::Worktree.new(root:, repo_root:, base: WorkingBranch.checked_out(...)).acquire("dev-spawn.N")` run from the project gives `worker dev-spawn.N: worktree path ... is held: leased by live process <pid> on <host>`.
 
 **And the chat's `subagent` tool is ONE-SHOT only** (round 17): actor mode is wired for the epic
 orchestrator alone, so every check below that needs a model-dispatched actor — §3's adoption,
@@ -136,7 +136,7 @@ Three things to drive:
    `lifecycle`. The fleet count in the HUD must come back down.
 3. **A lease refused before the spawn leaves neither record.** The lease is taken *before* the
    `:spawn` is written, so a refusal there must not leave a spawn with no child — that ordering
-   is the fix, and a lone `:spawn` from a refused lease is the old bug. Drive it by making the scratch directory unwritable (`chmod 0555 $XDG_STATE_HOME/lain/research/<hash>/scratch`). Round 26: 0 spawn records, and the tool result is a raw `Permission denied @ dir_s_mkdir` (i26-4).
+   is the fix, and a lone `:spawn` from a refused lease is the old bug. Drive it by making the scratch directory unwritable (`chmod 0555 $XDG_STATE_HOME/lain/research/<hash>/scratch`). Round 26: 0 spawn records, and the tool result was a raw `Permission denied @ dir_s_mkdir` (i26-4); it is now `the research workspace could not be created at <dir>: <reason>` (T76).
 4. **A one-shot child whose only output was a prose tool call fails rather than answering.** Ask
    for a subagent whose model responds with a bare tool-call envelope instead of an answer: the
    completion carries `lifecycle: failed`, `error: Lain::Tools::Subagent::MalformedAnswer`, and no
@@ -309,7 +309,7 @@ What to check, in order:
    concrete backend, exactly **once**. A doubled lease record is the second-wrap bug, and it corrupts
    lease accounting silently. Confirm one acquire/release pair per dispatch, and that an ordinary
    one-shot `subagent` call the model made on its own — not only the adopted actor above — leaves the
-   same pair, since both paths now lease from the one resolved backend. Under `--isolation worktree` the judge leases its own git worktree per judged call (round 26, i26-2).
+   same pair, since both paths now lease from the one resolved backend. Under `--isolation worktree` the judge used to lease its own git worktree per judged call (round 26, i26-2); it now takes an unleased backend over the chat's project cwd and leases nothing (T75), so the count of worktrees during a judged call must not grow.
 4. **A nested spawn's checkout lands at a THIRD path.** Have the actor spawn a grandchild subagent
    and read `git worktree list` again: the grandchild's lease must be its own entry, distinct from
    both the human's own working tree and the parent actor's checkout — a grandchild sharing either
@@ -455,7 +455,7 @@ session: `lain watch bfc36418ae69 --session <file>` rendered
 `[blake3:bfc36418ae69 spawn] fresh/schema spawned from blake3:ff9ca1f05f4a` and its completion, the
 same as the full digest. **A no-match names the file it searched**: `lain watch zzzz --session
 <file>` → `no spawn matched selector "zzzz" in <file's basename>`, exit 1. The `in <file>` refusal comes only
-from a closed session (round 25). `lain watch` with stdout redirected to a file prints nothing until it exits (i26-5).
+from a closed session (round 25). `lain watch` with stdout redirected to a file printed nothing until it exited (i26-5); it now flushes each line (T77).
 
 **A finished child is told apart from a killed one.** `lain watch` renders an answered one-shot's
 completion as `(done)` and a stopped one as `(stopped)`, though both journal `lifecycle: stopped`;

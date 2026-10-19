@@ -177,7 +177,7 @@ loop, so it lands on `ask` and not on the launch default `auto`, and then enters
 scope there is. Raise two layers, then `!`, then `/mode`: the report must show `plan` scope, `ask`
 approval and **no** layers. A reset that keeps a layer is the finding.
 
-f25-5 is unfixed in round 26: `/mode !` in a repo with no commits shows the raw `git read-tree` error.
+f25-5 is fixed (T19): `/mode !` in a repo with no commits now says `this repository has no commit yet; make one, then /mode plan`, once, instead of the raw `git read-tree` error. Other spike git failures (`plan scope could not commit ...`) still repeat the prefix; that is not fixed and no card owns it.
 
 **A reset in a repository where no spike can be cut still lands everything else**, in the
 checkout, and says why. And a reset **mid-turn** lands the approval and the layers immediately
@@ -299,12 +299,12 @@ of the new head, and the next request carried them. Since 2026-09-14 `/rewind` s
 in-flight predicate and refuses while any run holds the dispatch lock, naming the parked call and
 restating what the human typed:
 
-    /rewind 3 refused: the parked ask_human (call_…) call is still in flight, and settling it would commit its turns over a rewound head. Nothing moved -- answer or stop it, then rewind.
+    /rewind 3 refused: this turn's 1 tool call is still in flight (ask_human), and settling it would commit its turns over a rewound head. Nothing moved -- answer or stop it, then rewind.
 
-Round 26 drove it: `/rewind 2 refused: the parked ask_human (call_...) call is still in flight, ...`. The
-sentence is `Command::Rewind#in_flight`; when the head is not a pending `tool_use` it names `a run` instead.
-With a 3-call head where only `ask_human` is unanswered, the refusal lists all 3 calls as parked and keeps
-"call" singular (round 26, f26-3). Manufacture it the way round 17 did — park the
+Round 26 drove it and found the refusal listing every call of a 3-call head as parked, in the singular. Now (f26-3
+fixed, T17) the sentence is `Command::Rewind#in_flight`: it counts the turn's tool calls and names them, `this turn's
+3 tool calls are still in flight (echo, echo, ask_human)`, with "call is" for 1; it carries no call ids. When the head
+is not a pending `tool_use` it names `a run` instead. Manufacture it the way round 17 did — park the
 parent's own `ask_human` — and in a cockpit type `/rewind` at the `command>` reader
 (`cockpit-surfaces.md` §5b). Then answer the question and confirm **no** rewound turn comes back:
 the journal gains the answer and the model's reply, never a second copy of turns already on the
@@ -358,7 +358,7 @@ you> /undo                 back to "nothing to undo"
 
 **Check the count is of turns still undoable, not of turns that ever existed.** A count that takes
 in turns already undone reads "2 of 3" with two left, and the class doc says so explicitly — after
-the first `/undo` above, the second must say *the only*, not *the latest of 2*. Once the last turn is undone or skipped it says `nothing to undo: no turn has changed a file this session recorded` (f26-5, wording).
+the first `/undo` above, the second must say *the only*, not *the latest of 2*. Once the last turn is undone or skipped it says `nothing to undo: no file-changing turn is left` (f26-5 fixed, T18: one sentence true both for a session that never changed a file and for one whose changes are all undone).
 
 **Verify the effect, not the message**, as with `/pin`: read the files. Both directions must work —
 a turn that **created** a file has that file **deleted** by the undo, and a turn that **deleted** one
@@ -669,7 +669,7 @@ the model cannot finish, typing `/goal off` **in the input pane** during iterati
 - **PASS:** no iteration 2 starts, the chat pane prints the `goal off` reply, and `goal_iteration` minus
   `goal_iteration_dropped` is **1**.
 - **Catches A-1 returning:** iterations 2 to 5 run and `goal off` prints only after the cap.
-- On this model a `/goal off` typed during iteration 1 is held, because the model parks an `ask_human`; it ran at the boundary, and `goal_iteration` is 1. It passes, but it cannot tell "acts on arrival" from "acts at the boundary" (round 26).
+- On this model a `/goal off` typed during iteration 1 is held, because the model parks an `ask_human`; it ran at the boundary, and `goal_iteration` is 1. It passes, but it cannot tell "acts on arrival" from "acts at the boundary" (round 26; a property of this model, no card).
 - **This model ends the prime-list goal in iteration 1** (round 25), so the cockpit A-1 check cannot discriminate on
   it: a goal that finishes at once looks like a pass. Use a stand-in model that cannot finish.
 - `/stop` typed in the pane mid-ask stops the ask before it would have finished: `run_interrupted` with

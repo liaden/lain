@@ -93,7 +93,7 @@ lain land status        # "no drainer running; a stale holder line from pid N wa
 lain land enqueue       # a new drainer starts and lands the stranded entry
 ```
 
-Record: the dead drainer's verify process may outlive it (known follow-up): after `kill -9` of a drainer its verify child lives on, and the next drainer's verify starts in the same verify tree while it runs; the orphan then reported `pass` against the new candidate's HEAD (round 26, m26-1). Check `verify-all.log` for overlapping start lines. The queued entry is landed
+Record: after `kill -9` of a drainer its verify child used to live on, and the next drainer's verify started in the same verify tree while it ran; the orphan then reported `pass` against the new candidate's HEAD (round 26, m26-1). Fixed (T78, T79, T80): the holder line gains `verify_pgid=<n> start=<ticks>`, and the next taker of the suite lock stops that group (TERM, then KILL) and says `stopped verify group <n>, left running by a dead suite lock holder`; a reused pid whose group is not a verify one is left alone, and a box with no `/proc` kills nothing and says so. Check `verify-all.log` for overlapping start lines. The queued entry is landed
 by the next drainer, not lost; `wait` on the old id still reaches an answer.
 
 Then the case where nobody comes. Kill the drainer, and do **not** enqueue again. Run `lain land wait <id> --branch main`
@@ -107,7 +107,7 @@ live drainer holding the lock (a slow verify), `wait` keeps waiting past 5 secon
 Last, an unusable lock. `chmod 000 $QA/<the drain.lock path>` (the home directory `lain land status` reads is under
 the repository's git common dir, see §0; find it with `find $QA -name drain.lock`). `lain land enqueue` and `lain land status` each refuse in one line
 naming the file (`cannot use the lock <path>: ...`), with no backtrace and without saying a drainer is landing the entry. For
-`enqueue`, a lock that is readable but not writable is refused the same way. Restore the mode afterwards.
+`enqueue`, a lock that is readable but not writable is refused the same way. The path appears once and the reason is the system's, `cannot use the lock <path>: Permission denied` (m26-6 fixed, T85). Restore the mode afterwards.
 
 ## 7: A chat child hands back
 
@@ -119,12 +119,12 @@ exits 0 once landed. Observed in round 26: the reply was `[the worker's commits 
 
 Repeat §1 in 2 unrelated repositories at the same moment, each with its own log (`$QA/verify-repo1.log`, `$QA/verify-repo2.log`) and a verify that sleeps 10.
 Expect the second verify to start only after the first finished (the log timestamps are at least 10s
-apart; round 26 saw them 10.04 s apart). The waiter prints nothing about the suite lock (m26-5). Both land.
+apart; round 26 saw them 10.04 s apart). The waiter prints nothing about the suite lock, by design; the drain log now says `waiting on pid=<n> command=<argv> for <lock> (<path>)` once the wait runs long (m26-5 fixed, T84). Both land.
 
 ## Edges driven in round 26
 
 - A timed-out verify kills its process group.
-- Amending a branch and re-enqueuing lands the superseded commit (m26-2).
-- With an untrusted config, enqueue says a drainer is landing it and the drainer dies on trust (m26-3).
-- With no verify configured, `wait` says `landed at <sha>` with no word that nothing verified (m26-4).
+- Amending a branch and re-enqueuing lands the superseded commit (m26-2). Fixed (T81): the older entry completes as `declined` with detail `superseded by entry <id>`, and only the newer lands; a git error in the check skips it and logs the worker id.
+- With an untrusted config, enqueue says a drainer is landing it and the drainer dies on trust (m26-3). Fixed (T82): `lain land` enqueue loads the config first and refuses an untrusted one before queueing.
+- With no verify configured, `wait` says `landed at <sha>` with no word that nothing verified (m26-4). Fixed (T83): it adds `verification skipped: no verification is configured` after the landed line.
 - The verify child sees 0 names matching TOKEN, KEY or SSH_AUTH.

@@ -157,7 +157,7 @@ made the rule explicit and typed:
   Timeline, and only while that prompt is still the head. Anything else — a mid-stream sever, a
   stall, a `/stop`, a ceiling — leaves it stranded.
 
-A cut-off reply (unterminated stream, or `context_full`) ends the ask with an `error:` line and writes 0 `run_interrupted` records; the turn's `meta.stop_reason` (`truncated`, `context_full`) is the record (round 26, d26-3).
+A cut-off reply (unterminated stream, or `context_full`) ended the ask with an `error:` line and wrote 0 `run_interrupted` records in round 26, so only the turn's `meta.stop_reason` (`truncated`, `context_full`) recorded it (d26-3). Fixed (T65): the ask still ends with the `error:` line, and now also journals a `run_interrupted` whose reason is the stop (`truncated`, `context_full`, `max_tokens`, `refusal`, `malformed` or `unknown`); count one per cut-off ask.
 
 A severed reply gives no refusal and no fold either: an unterminated stream is committed as the assistant turn,
 marked, and the model is told (round 25, d25-2, ruled). The committed turn carries `meta` `stop_reason: "truncated"` and a final text block,
@@ -519,7 +519,7 @@ the command's output (exit status: 1) is 200000 bytes, over the ceiling of 16384
 holds.** Any line-structured file over the ceiling, 3 MB and 300 KB alike, is offered the windowed advice; the live
 distinction is `one.json` against `lines.json` (below). Treat the paragraph that follows as history.
 
-`read_file`'s windowed advice is the same for a 3 MB file as for a 36 KB one ("a limit of about 201 lines fits one window") and never says how many windows are needed; the model followed it 25 windows to the ceiling, 75 calls across 3 asks (round 26, d26-2).
+`read_file`'s windowed advice is the same for a 3 MB file as for a 36 KB one ("a limit of about 201 lines fits one window") and never said how many windows were needed; the model followed it 25 windows to the ceiling, 75 calls across 3 asks (round 26, d26-2). Fixed (T66): the advice now says `this file takes about N windows of 16384 bytes` (N is the size over the window), and over 20 windows it offers a structural read first; the ceiling refusal reads `over the ceiling of N <unit>`.
 
 **The difference between those first two was the whole design and was worth reading twice.** The
 smaller file is offered a *full-cover window* — advice that leads somewhere — because a window

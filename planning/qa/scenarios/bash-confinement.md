@@ -134,7 +134,7 @@ lain up "$QA/proj" -- --provider ollama --model <model> --approval ask
 W=1800 jr tripwire; W=600 jr exec_resolution | tail -1
 ```
 
-Drive it in a cockpit under `--approval ask` and approve the 3 calls by hand after reading them. A human's allow runs `traced` and the tripwire still records `fresh_program` (driven round 26). The parked `./run.sh` row carries no note that the file is fresh (round 26, e26-2). Whether §3 needs an approve-all leg at all is for the human to rule; until then, do not launch it under bypass. Each step must be its own call: a combined `chmod +x run.sh && ./run.sh`
+Drive it in a cockpit under `--approval ask` and approve the 3 calls by hand after reading them. A human's allow runs `traced` and the tripwire still records `fresh_program` (driven round 26). The parked `./run.sh` row now carries a note naming the binary, its class and `written this session` (e26-2 fixed, T31); re-check it, and that a mixed term with a refused flag on a listed program still gets no note. Whether §3 needs an approve-all leg at all is for the human to rule; until then, do not launch it under bypass. Each step must be its own call: a combined `chmod +x run.sh && ./run.sh`
 is one unresolved string stage, and no `fresh` fact exists for it (driven: no tripwire record).
 
 Driven 2026-10-17 on the three separate calls:
@@ -266,7 +266,7 @@ unless it is mounted. Each fallback journals `"klass":"unresolved"` with the ano
 `reader` never let `ComposedTerm` approve the call, and under `--judge-facts facts` or `request` a judge approve is Overruled and parks
 for a human; under the default `--judge-facts off` a judge approve still goes through. The fallbacks are an inspect that names no ID, an
 image with an `ENTRYPOINT`, and a listing that failed (which also prints a notice on the first docker bash call). [`subagents-and-backends.md`](subagents-and-backends.md)
-§4 owns the check. The plain case is now driven (round 26: stages resolve against the image; the startup notice says bash "runs unconfined", which it does not, it runs in the container, e26-3). The fallbacks are undriven.
+§4 owns the check. The plain case is now driven (round 26: stages resolve against the image; the startup notice now reads "bash runs in the docker container, not in the reader sandbox" instead of "runs unconfined", and the journal records `capability_degraded` with `capability: container`, e26-3 fixed, T32). The fallbacks are undriven.
 
 **Predictions this scenario has already had to correct, kept so nobody re-derives them:**
 

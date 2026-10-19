@@ -125,7 +125,7 @@ is that regression returning.
 
 `--num-ctx N` alone resolves a served window **with no server involved**, so it should give an
 honest denominator with nothing resident. That is the operator lever; it is otherwise untested.
-With no server, `--num-ctx N` resolves the window to N with provenance `guessed`, so it authorises no window signal until a probe lands (a26-4).
+With no server, `--num-ctx N` resolves the window to N with provenance `guessed`, so it authorises no window signal until a probe lands (a26-4). That is deliberate scope, not a defect: a number the provider did not confirm stays a request and may not authorise a rewrite (`cli/backend/window_book.rb`); it stays `guessed` until a probe confirms it, and no card changes it.
 
 ## 4 — The three readers must agree
 
@@ -224,7 +224,7 @@ env -u LAIN_NUM_BATCH lain chat --provider ollama ... --prompt hi
 ```
 
 Round 20 confirmed this on the wire from four forks (`num_predict` 4096, `num_batch` 2048,
-`truncate=false`). Round 25 reads `num_predict` 16384 on the wire now, not 4096. Every request also carries a top-level `shift=false` since round 24, so a reply that fills
+`truncate=false`). Round 25 read `num_predict` 16384 on the wire, not 4096; with no `--max-tokens` it is now the per-model ceiling (T89: the served window on ollama, else 32768), and a typed value still goes out verbatim. The header records the value and `max_tokens_source`, so a resume and `bench variance` see it. Every request also carries a top-level `shift=false` since round 24, so a reply that fills
 the window is cut instead of shifted.
 
 `max_tokens` is never the source of a silent zero here: a non-positive `--max-tokens` is refused at launch
@@ -340,7 +340,7 @@ Two launch-level checks, both free:
   (`rails-blog.md` 1b drives it with a real handoff).
 - **The header records `compact_schedule` whenever compaction is on, typed or not.** This is the one
   exception to the bullet above: the schedule that runs is always written (`idle` for an unflagged
-  launch, `turn` when typed so), so a reader can tell the two arms apart. `--no-compact` writes `compact_schedule: "turn"` (`UNCOMPACTED_SCHEDULE`), so its header is identical to `--compact-schedule turn`'s, and an untyped resume runs with compaction on (round 26, a26-2). A header with no key at all predates the field, and those runs compacted on
+  launch, `turn` when typed so), so a reader can tell the two arms apart. `--no-compact` writes `compact_schedule: "turn"` (`UNCOMPACTED_SCHEDULE`), so its schedule is identical to `--compact-schedule turn`'s, but the header also writes `"compact": false`, and only a run with compaction off writes that key (a26-2 fixed, T58). A resume of such a session now runs with compaction off and says `running without compaction, as recorded (pass --compact to compact)`; a typed `--compact` wins with `recorded with --compact false; continuing with true (the current flags win)`. `lain bench variance` refuses to pool a compaction-off recording with a compaction-on one: `cannot compare runs where one ran without compaction: compaction off vs compaction on` (T59). A header with no key at all predates the field, and those runs compacted on
   the turn. `lain bench variance` refuses recordings made under different schedules, ending
   `cannot compare runs under different compaction schedules: idle vs turn` (exit 1); a recording
   without the key counts as `turn`.
@@ -383,7 +383,7 @@ The window HUD and the StatusFeed show the pre-cut reading until the next reply,
 high after a prepare and drops on the first reply. That over-reports and hides nothing; it is not a
 finding.
 
-Step 4 needs a prepare that actually takes a summary. A head of tool rounds is elided with no summarizer call (`(elided -- no summary was taken)`), so a prepare takes milliseconds and there is nothing to type into. Build the head from asks with no tools. Typing during a real prepare's summary holds the ask until it lands, with no sign on screen (round 26, c26-4). Steps 1, 2, 3 and 5 were driven on 2026-10-18, with a prepare at `idle_seconds` 123.
+Step 4 needs a prepare that actually takes a summary. A head of tool rounds is elided with no summarizer call (`(elided -- no summary was taken)`), so a prepare takes milliseconds and there is nothing to type into. Build the head from asks with no tools. Typing during a real prepare's summary holds the ask until it lands, and now says so first: `finishing a compaction summary before your prompt runs` (c26-4 fixed, T25). Steps 1, 2, 3 and 5 were driven on 2026-10-18, with a prepare at `idle_seconds` 123.
 
 ## 8 — The price table, and the lint that keeps it honest
 
@@ -599,13 +599,13 @@ records only the arms that are on, as `"arms":{"confine":"reader","tripwire":"ob
 a launch with every arm off writes no `arms` key at all. The arms act: `--confine` and `--tripwire` change what
 a bash call runs under and what the journal holds, so a header that names an arm is evidence the arm was built,
 but not that it ran. A box that cannot build the sandbox still records `confine: reader` in the header, with a
-`capability_degraded` record and a startup notice that bash runs unconfined. `bench variance` ignores `arms`. **A `--resume` or
+`capability_degraded` record and a startup notice that bash runs unconfined. `bench variance` refuses recordings made under different arms (`cannot compare runs under different bench arms`), and under different opaque policies (`cannot compare runs under different opaque policies: refused vs unrecorded`; a leased arm records `"opaque": "refused"`, T20, T59). **A `--resume` or
 `--fork` keeps the recorded arms** (round 25, a25-2, fixed), with a flag typed on the resume winning over the record: an arm the old header
 did not record is off, and a header with no `arms` key at all (every session on disk before the arms existed) resumes with every arm off,
 not with today's defaults. An arm that resumes weaker than a fresh chat's default and was not typed gets one notice, for example
 `running without --confine (off), as recorded; a fresh chat runs reader (pass --confine reader to run it)` (and the tripwire's
 equivalent); a typed flag that differs from the record gets `recorded with --confine reader; continuing with off (the current flags win)`.
-The safe arms are on by default since 2026-10-17 (`06375702`): a `composed_term`-approved `cat` journals `sandbox profile:"reader"` and an `exec_record` through `lain-fence`, and a human-approved call runs `traced` (driven round 26). `--api-base` is silently ignored under `--provider anthropic` (a26-1).
+The safe arms are on by default since 2026-10-17 (`06375702`): a `composed_term`-approved `cat` journals `sandbox profile:"reader"` and an `exec_record` through `lain-fence`, and a human-approved call runs `traced` (driven round 26). `--api-base` under `--provider anthropic` is no longer silent: the startup notice reads `--api-base reaches nothing: the anthropic chat does not use it and no summarizer runs on ollama`, or names the one summarizer it does reach (a26-1 fixed, T63).
 Driving every arm is
 [`bash-confinement.md`](bash-confinement.md); this section only reads the header.
 

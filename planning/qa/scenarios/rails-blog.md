@@ -173,7 +173,7 @@ rounds (or a first-turn `/pin`) left it nothing to collapse and the journal read
 `summary_hits 0` on 42 decisions while the head grew from 2 B to 95 KB. Now the head holds only the claimed turns. Drive
 it: `--compact-bytes 1500 --compact-keep 2 --compact-strategy summarize-conversation`, `/pin` the first prompt's digest,
 ask questions that each produce a few KB of conversation, and expect a compaction once a claimable run exists, with the
-pin surviving it. Say 'plain text only, no tools, no questions' in every ask: this model calls `ask_human` after an essay and wanders into epic skills. It may issue all reads as 1 parallel round, which reaches a handoff (c26-3) instead of the stall line. `/unpin` is no longer the way out. When the window still fills with nothing the strategy can claim
+pin surviving it. Say 'plain text only, no tools, no questions' in every ask: this model calls `ask_human` after an essay and wanders into epic skills. It may issue all reads as 1 parallel round. With the default `--round-budget window` (T92, T93; `off` and `static` are the other arms) a round that would not fit is held to a budget in call order: a repeated rerunnable result answers `same result as call <id>`, a read past the budget is an error result (so it does not count as read, and a later `edit_file` of it is refused), and one `round_bounded` record names what was delivered, deduplicated and withheld. A round already committed past the window (c26-3) still reaches a handoff or the stall line; its fix waits on round 27. Bench arms record `round_budget` off. `/unpin` is no longer the way out. When the window still fills with nothing the strategy can claim
 (all tool rounds, under `summarize-conversation` alone), the decision's stall line names the strategy and, only when the
 wider arm would claim what it left, the pair: `but summarize-conversation claims none of the droppable turns` ... `use
 --compact-strategy elide-tools+summarize-conversation, which claims tool rounds and conversation both, or start a new
@@ -314,12 +314,12 @@ driven — this is integration check 7 of the discharging chunk)*:
   1. one `compaction_cut` with `"kind": "handoff"`, superseding every cut that held;
   2. the ask **is answered** — the handoff is a fallback that keeps the question, not a refusal;
   3. the state document carries all five sections (`Goal`, `Progress`, `Files and decisions`,
-     `Open todos`, `Next step`) and sits where the replaced history began, with the later ranges
+     `Open todos`, `Where the work stood`) and sits where the replaced history began, with the later ranges
      collapsing to empty content rather than to a second summary;
   4. what survives beside it is exactly the current ask, an unanswered `tool_use`/`tool_result`
      pair if there was one, and the pins — nothing else.
 
-  After a handoff, send a one-word ask and check it gets a one-word answer: round 26 saw the state document's `Next step` restart the old goal (c26-1). And a handoff can fire when the kept set alone overflows, losing the history while the ask is still refused (c26-3).
+  After a handoff, send a one-word ask and check it gets a one-word answer: round 26 saw the state document's `Next step` restart the old goal (c26-1). The document now carries a precedence sentence (the newest ask wins over the state) and the heading reads `Where the work stood` instead of `Next step` (T60); the field is still `next_step`. A handoff used to fire when the kept set alone overflowed, losing the history while the ask was still refused (c26-3); it now declines when the kept set alone fills the refused window, journals `handoff: "declined"` with `kept_tokens` on the `compaction_decision`, and the refusal names the newest tool round's size (T61). Re-drive it with a round that cannot fit (T92's round budget keeps a new one from reaching that size; a round already committed waits on round 27's stub item, c26-3).
 
   **The handoff also fires when the only droppable content is ONE lone conversational turn** (round 20's
   RB-3). `summarize-conversation` proposes nothing for a run of 1, so the source used to read as stuck
@@ -454,7 +454,7 @@ lain friction "$JOURNAL"
 Read the `cache_waste` line, and read it as a *pair of figures*, never as one:
 
     cache_waste: at most <N> tokens re-billed across <K> prefix break(s), <cost>; <M> tokens served
-    from cache over <C> priced main-agent call(s), <saved>: look at what edits the prompt PREFIX
+    from cache over <N> main-agent calls, <C> priced, <saved>: look at what edits the prompt PREFIX
     mid-session -- a Workspace or reminder block that changes every turn, or compaction firing while
     the cache was still warm
 
@@ -480,12 +480,12 @@ Four things to check, and three of them are about honesty rather than arithmetic
   A waste figure that jumps by roughly a whole prefix at the switch is the metric inflating, which
   is the single most likely defect in this analyzer.
 
-  `/model qwen3:4b` and back costs every other fork on the box a runner swap of about 100 s; announce it. After the switch the window read `8192 guessed` against about 22k served (c25-7, unfixed round 26).
+  `/model qwen3:4b` and back costs every other fork on the box a runner swap of about 100 s; announce it. After the switch the window read `8192 guessed` against about 22k served (c25-7, fixed T70: the first nonzero usage on the switched model allows one more `/api/ps` ask, so the guess is corrected after the first reply; re-drive).
 
 Two more, both expected rather than wrong: a local model is **unpriced**, so the dollars are absent
 and the report says `dollar figures exclude qwen3-coder:30b -- no price recorded` rather than
 printing a confident `$0.00`; and every figure covers the **main agent only**, since subagent turns
-are outside the journaling middleware — the wording says `priced main-agent call(s)` for exactly
+are outside the journaling middleware — the wording says `<N> main-agent calls, <M> priced` for exactly
 that reason, so do not reconcile it against a fleet's total.
 
 **A third shape, since T11 (verified by its panel) — and it is the shape THIS scenario now

@@ -248,7 +248,7 @@ Expected — a `Decision` whose name is `:deny`, whose term is empty, and whose 
 verbatim:
 
 ```
-the session's capability set excludes: "curl"
+the session's shell exclusion covers bash commands and excludes: "curl"
 ```
 
 Four properties to drive, all free:
@@ -257,7 +257,7 @@ Four properties to drive, all free:
   same reason naming `"curl"` — `Exclusions#permits?` basenames (`exclusions.rb:171`), which
   is sound for a denylist and is deliberately *not* how §4's allowlist matches.
 - **`shell exclude: %w[*]` is honoured, not refused.** `cat README.md | head -20` under it denies
-  with `the session's capability set excludes: "cat", "head"` — both programs named. The
+  with `the session's shell exclusion covers bash commands and excludes: "cat", "head"` — both programs named. The
   table can only ever subtract capability, so a wildcard is legal here where
   `Sensitivity`'s `exempt` refuses one (`exclusions.rb:30-33`).
 - **A malformed `shell` verb refuses by name, and the file and line are named in every
@@ -304,7 +304,7 @@ Four properties to drive, all free:
   ```
 
   Expected: `rung=triage`, `verdict=deny`, `authority=automatic`, and the reason verbatim
-  `shell verdict deny -- the session's capability set excludes: "curl" -- whether this
+  `shell verdict deny -- the session's shell exclusion covers bash commands and excludes: "curl" -- whether this
   command is syntactically literal and fully understood -- never whether it is safe to run`.
 
   **If `verdict=abstain` comes back, the config was read from the wrong directory** — that is
@@ -323,12 +323,12 @@ Four properties to drive, all free:
   *Driven 2026-09-14*, the `tool_result` verbatim:
 
   ```
-  refused tool "bash": the session's capability set excludes: "curl"; no approval will lift this, so do not re-send the same command in another form
+  refused tool "bash": the session's shell exclusion covers bash commands and excludes: "curl"; no approval will lift this, so do not re-send the same command in another form
   ```
 
   A human's denial at a prompt keeps the old sentence; only a rung that cannot be lifted says so.
 
-  A project's `shell exclude: %w[curl]` does not reach `web_fetch`, and the refusal steered the model to `web_fetch`, which ran with no escalation record under `ask` (round 26, e26-1).
+  A project's `shell exclude: %w[curl]` does not reach `web_fetch`, and in round 26 the refusal steered the model to `web_fetch`, which ran with no escalation record under `ask` (e26-1). Fixed (T30), in 2 parts: the refusal now says the exclusion `covers bash commands`, and `deny_tool "web_fetch"` in the `approval` block now acts, refusing every call before the ladder with `remembered in .lain/config.rb: `deny_tool` in its `approval` block refuses every web_fetch call`. Drive both; a shell exclusion still must not stop `web_fetch`.
 
 ## 3 — a deny moves the command onto the *string* arm *(free — `/ruby`)*
 

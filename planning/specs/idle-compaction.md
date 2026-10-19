@@ -491,7 +491,7 @@ Scenario: a recording older than the field ran on the turn, and resumes so
 
 Scenario: no compaction, no schedule
   When lain chat --no-compact starts, with or without --compact-schedule
-  Then the header carries no compact_schedule key and compaction_schedule answers "turn"
+  Then the header carries compact_schedule "turn" (the key is always written; a run with compaction off also writes compact false) and compaction_schedule answers "turn"
   And refuse_compaction_flags! still refuses the strategy and keep flags it refused before
 ```
 Spec file: `spec/lain/cli/compaction_profile_spec.rb`, `spec/lain/cli/backend_spec.rb`,

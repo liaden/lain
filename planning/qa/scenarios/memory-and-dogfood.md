@@ -93,7 +93,7 @@ Expected refusal, naming the subject, the size and the ceiling, and offering **t
 moves**: "write less — keep the body to what a later read actually needs" and "split it across
 several ids, one subject each, so the manifest can point at the right one".
 
-Drive the boundary through the library (`Tools::MemoryWrite.new(recorder: Memory::Recorder.new, author: Memory::Author.chat).call(...)`), because the model will not emit a body of an exact size. Round 26: `memory_write` accepts `AWS_SECRET_ACCESS_KEY=`, `DB_PASSWORD=`, `GITHUB_TOKEN=` and kin, because the credential pattern's `\b` never fires inside an identifier (g26-2); plant one with a fake value and count hits in a fresh session's file.
+Drive the boundary through the library (`Tools::MemoryWrite.new(recorder: Memory::Recorder.new, author: Memory::Author.chat).call(...)`), because the model will not emit a body of an exact size. Round 26: `memory_write` accepted `AWS_SECRET_ACCESS_KEY=`, `DB_PASSWORD=`, `GITHUB_TOKEN=` and kin, because the credential pattern's `\b` never fires inside an identifier (g26-2). Fixed (T50): a compound name ending in a credential word now refuses when its value is a quoted string or a bare run of 6 or more characters holding more than letters and underscores. A letters-only or digits-only bare value, `secret_key_base: string`, `access_token = request.headers['X']` and `token = ::Token` are still stored. Plant a fake value of each shape and count hits in a fresh session's file.
 
 **Then the check that says the pair is really matched:** the write's ceiling being no higher than
 the read's makes the read's ceiling *unreachable through the toolset*, which is what lets it be
@@ -136,7 +136,7 @@ Two properties, and the second is the one a casual read misses:
 
 The Agent stays memory-blind by construction: it never sees `Memory::Index` or the `Recorder`, only
 a journal that happens to also remember the root. Nothing outside can verify that directly; what it
-CAN verify is the consequence — no `memory_root` record carries an item body; `memory_loaded` carries them all by design, which is how a stored credential reaches every new session file (round 26, i26-1). Grep the journal for
+CAN verify is the consequence — no `memory_root` record carries an item body; `memory_loaded` carries them all by design, which is how a stored credential reaches every new session file (round 26, i26-1: ruled raw so resume replays exactly; the fix is at the source, T50 refuses the write and T51 masks the `memory_read` body, keeping the author line and ending in `1 region was masked in this memory item; a memory item cannot be released.`; `blake3:` lineage digests are left alone). A `memory_write` over an item read masked this session, or carrying a `<redacted:N>` placeholder, is refused and journaled as `decline:masked read`, so a masked read cannot overwrite the real values. Grep the journal for
 one of the bodies written above and confirm it appears only in the tool call and result, never in a
 telemetry record.
 
