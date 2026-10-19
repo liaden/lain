@@ -439,6 +439,11 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   `Shift+Enter in a pane inserts a newline and submits the whole draft on Enter` (load 14, passed alone
   and 3 of 3 with its seed on the base commit).
 
+  Added 2026-10-19, from a landing hook beside about 20 agents running specs: `Lain::Agent the graph
+  CoreGraph hands out by default runs to completion holding no file descriptor of its own` saw 9 open
+  descriptors where it counted 10 (another example in the same worker closed one mid-count). It passed
+  alone, and 3 of 3 with its worker's seed on the base commit and on the card's tree.
+
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
   - 2026-10-17: `a plain chat's inline prompts over a real terminal a prompt the approval window
