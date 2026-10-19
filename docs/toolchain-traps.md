@@ -379,7 +379,9 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
   alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber
-  running while the work never gives up the lock between threads`.
+  running while the work never gives up the lock between threads`. Red again on 2026-10-19, 6 against
+  15 at a load of about 5, and green alone and in a full suite with the failing seed on the base and
+  on the change. Twice is a pattern: the count is a wall-clock budget the box's load can starve.
 
   Added 2026-10-18, red once in a pre-commit suite at a load of about 6 with agents working beside it
   ("pane session ... outlived its tmux server"), green alone and in a full suite on the base and on
