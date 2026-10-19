@@ -220,8 +220,19 @@ module Lain
         end
 
         def implementation(stage)
-          Lain::Epic::Submission.implementation(slug: @home.slug, issue_id: issue!(stage), digest: digest!(stage),
+          id = issue!(stage)
+          Lain::Epic::Submission.implementation(slug: @home.slug, issue_id: id, digest: implemented!(id, stage),
                                                 tests: @tests)
+        end
+
+        # The red step's commit passes every gate a real changeset does, so an
+        # approval of it would land failing tests as the issue's implementation.
+        def implemented!(id, stage)
+          digest = digest!(stage)
+          red = Lain::Epic::RedCommit.new(git: checkout, base: "refs/heads/epic/#{@home.slug}")
+          return digest unless red.only?(digest)
+
+          raise Error, "that commit holds only #{id}'s failing tests; re-run the issue"
         end
 
         def issue!(stage)
@@ -241,8 +252,10 @@ module Lain
 
         def commit?(digest)
           digest.match?(/\A\h{40,64}\z/) &&
-            Shell::Out.ok?(Lain::Isolation::Checkout.new(@root).run("cat-file", "-e", "#{digest}^{commit}"))
+            Shell::Out.ok?(checkout.run("cat-file", "-e", "#{digest}^{commit}"))
         end
+
+        def checkout = Lain::Isolation::Checkout.new(@root)
 
         def digest!(stage)
           return commit!(@digest) unless @digest.to_s.strip.empty?

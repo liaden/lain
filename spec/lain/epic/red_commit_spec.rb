@@ -73,6 +73,14 @@ RSpec.describe Lain::Epic::RedCommit do
     expect(only?(commit(described_class.subject("spec/b_spec.rb", "def456")))).to be(true)
   end
 
+  it "judges the tip's own subject when the epic branch does not resolve" do
+    git("init", "-q", "-b", "main")
+    commit("chore: seed")
+    red_tip = commit(red)
+
+    expect([only?(red_tip), only?(commit("feat: greet"))]).to eq([true, false])
+  end
+
   it "is false for a sha git does not know" do
     base_sha
 

@@ -32,11 +32,15 @@ module Lain
 
       private
 
+      # A base that does not resolve (a renamed or missing epic branch) must
+      # not read as "not red", or the red tip is approved: the tip alone is judged.
       def subjects_past_base(sha)
         base = @git.run("merge-base", @base, sha)
-        return [] unless Shell::Out.ok?(base)
+        Shell::Out.ok?(base) ? subjects("#{base.stdout.strip}..#{sha}") : subjects("-1", sha)
+      end
 
-        log = @git.run("log", "--format=%s", "#{base.stdout.strip}..#{sha}")
+      def subjects(*range)
+        log = @git.run("log", "--format=%s", *range)
         Shell::Out.ok?(log) ? log.stdout.split("\n") : []
       end
     end

@@ -1476,6 +1476,51 @@ RSpec.describe Lain::CLI::EpicSubmit do
         .to raise_error(Lain::Error, /not a commit/)
     end
 
+    def seeded_on(branch)
+      home.plan("a").write("the plan for a\n")
+      command.submit("issue_plan", issue: "a")
+      SeedRepo.git(root, "init", "-q", "-b", branch)
+      commit_on_branch("chore: seed")
+      SeedRepo.git(root, "checkout", "-q", "-b", "issue/a")
+    end
+
+    def commit_on_branch(subject)
+      SeedRepo.git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+                   "commit", "-q", "--allow-empty", "-m", subject)
+      SeedRepo.git(root, "rev-parse", "HEAD").stdout.strip
+    end
+
+    def red_subject = Lain::Epic::RedCommit.subject("spec/a_spec.rb", "abc123")
+    def implementation_stages = gate_decisions.map { |record| record["stage"] }.grep("implementation")
+
+    it "refuses an implementation digest whose commits hold only the issue's failing tests" do
+      seeded_on("epic/alpha")
+      red = commit_on_branch(red_subject)
+
+      expect { command.submit("implementation", issue: "a", digest: red) }
+        .to raise_error(Lain::Error, "that commit holds only a's failing tests; re-run the issue")
+      expect(implementation_stages).to be_empty
+    end
+
+    it "refuses a red-only digest by its own subject when the epic branch is missing" do
+      seeded_on("main")
+      red = commit_on_branch(red_subject)
+
+      expect { command.submit("implementation", issue: "a", digest: red) }
+        .to raise_error(Lain::Error, "that commit holds only a's failing tests; re-run the issue")
+      expect(implementation_stages).to be_empty
+    end
+
+    it "approves an implementation built on top of the red commit" do
+      seeded_on("epic/alpha")
+      commit_on_branch(red_subject)
+
+      said = command.submit("implementation", issue: "a", digest: commit_on_branch("feat: greet"))
+
+      expect(said).to start_with("approved")
+      expect(implementation_stages).to eq(["implementation"])
+    end
+
     it "refuses an implementation with no changeset address" do
       expect { command.submit("implementation", issue: "a") }
         .to raise_error(Lain::Error, /implementation/)
