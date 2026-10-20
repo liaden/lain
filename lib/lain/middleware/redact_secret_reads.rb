@@ -675,17 +675,6 @@ module Lain
                   "A multi-line secret, such as a PEM body, cannot be detected one line at a time " \
                   "and is not masked here."
 
-        Span = Data.define(:start, :length)
-
-        # Byte offsets, because {Sensitivity::Masking} walks a row as bytes.
-        class Span
-          def finish = start + length
-
-          def reaches?(other) = other.start <= finish
-
-          def |(other) = Span.new(start:, length: [finish, other.finish].max - start)
-        end
-
         Row = Data.define(:prefix, :text, :path, :regions)
 
         # A region masks where it was found. Its bytes can recur in the row: an
@@ -698,15 +687,15 @@ module Lain
           # @return [Array(String, Integer)] the row as sent, and how many placeholders it holds
           def masked(unreleased, ordinals)
             spans = spans(unreleased)
-            [prefix + ::Lain::Sensitivity::Masking.render(text, spans, ordinals:), spans.size]
+            [prefix + ::Lain::Sensitivity::Masking.render(text, spans, ordinals:), spans.count]
           end
 
           private
 
           def spans(unreleased)
             withheld = unreleased.to_set(&:digest)
-            found = regions.select { withheld.include?(_1.digest) }.map { Span.new(start: _1.start, length: _1.length) }
-            coalesced(found + recurrences(unreleased))
+            found = regions.select { withheld.include?(_1.digest) }
+            ::Lain::Sensitivity::Spans.of(found + recurrences(unreleased))
           end
 
           def recurrences(unreleased)
@@ -719,15 +708,7 @@ module Lain
 
           def occurrences(haystack, needle)
             Enumerator.produce(haystack.byteindex(needle)) { haystack.byteindex(needle, _1 + needle.bytesize) }
-                      .take_while(&:itself).map { Span.new(start: _1, length: needle.bytesize) }
-          end
-
-          # Masking walks ascending, non-overlapping spans, and an escaped
-          # spelling can overlap a raw one.
-          def coalesced(spans)
-            spans.sort_by(&:start).inject([]) do |kept, span|
-              kept.last&.reaches?(span) ? [*kept[..-2], kept.last | span] : [*kept, span]
-            end
+                      .take_while(&:itself).map { ::Lain::Sensitivity::Spans::Span.new(start: _1, length: needle.bytesize) }
           end
         end
 

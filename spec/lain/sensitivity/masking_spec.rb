@@ -81,11 +81,18 @@ RSpec.describe Lain::Sensitivity::Masking do
       expect(described_class.render(bom, detect(bom))).to eq("\xEF\xBB\xBFAPI_KEY=#{placeholder(1)}\n")
     end
 
-    it "masks two regions with no separator bytes between them" do
-      adjacent = "a=#{secret}\nb=3f5a9c2e1d7b4a6f8c0e2d4b6a8f0c1e\n"
+    it "masks two touching regions as one slot" do
+      touching = [Lain::Sensitivity::Spans::Span.new(start: 2, length: 3),
+                  Lain::Sensitivity::Spans::Span.new(start: 5, length: 5)]
 
-      expect(described_class.render(adjacent, detect(adjacent)))
-        .to eq("a=#{placeholder(1)}\nb=#{placeholder(2)}\n")
+      expect(described_class.render("ab12345678cd", touching)).to eq("ab#{placeholder(1)}cd")
+    end
+
+    it "refuses regions out of order instead of emitting a masked byte raw" do
+      content = "a=#{secret}\nb=3f5a9c2e1d7b4a6f8c0e2d4b6a8f0c1e\n"
+
+      expect { described_class.render(content, detect(content).reverse) }
+        .to raise_error(Lain::Sensitivity::Spans::OutOfOrder, /start \d+/)
     end
 
     # The whole walk is in BINARY because an offset into re-decoded text is a

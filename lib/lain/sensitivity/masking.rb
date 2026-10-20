@@ -5,12 +5,12 @@ module Lain
     # Content with the regions nobody has released rendered as
     # {Regions::PLACEHOLDER}, and the surrounding bytes untouched.
     #
-    # Its own object because TWO arms withhold regions -- a `read_file` result
-    # on its way out of the tool phase ({Middleware::RedactSecretReads}) and a
-    # survey's projection of a file it may list ({Survey::Projection}) -- and a
-    # shared format with two walks is only half a guarantee: the arms could
-    # still disagree about the bytes AROUND the placeholder, the ordinal
-    # sequence, or the encoding they hand back. One walk cannot.
+    # Its own object because five callers render masks -- the read path
+    # ({Middleware::RedactSecretReads}), a survey's projection
+    # ({Survey::Projection}) and others -- and a shared format with several walks
+    # is only half a guarantee: they could still disagree about the bytes AROUND
+    # the placeholder, the ordinal sequence, or the encoding they hand back. One
+    # walk cannot.
     #
     # It does NOT decide what to mask; that is {Sensitivity::Ledger}'s answer,
     # and a caller passes only what nobody has released -- which is what keeps a
@@ -21,23 +21,24 @@ module Lain
     # type. The module-length cop named the split, and it is a real one.
     module Masking
       class << self
-        # Regions are byte offsets and {Regions.detect} guarantees them
-        # ascending and non-overlapping, so one forward walk rebuilds the
+        # Regions are byte offsets, held ascending and separated by {Spans}
+        # (a plain list is checked, never sorted), so one forward walk rebuilds the
         # content with each withheld span swapped for its placeholder. The whole
         # walk is in BINARY because an offset into re-decoded text is a
         # different offset; the original encoding is restored at the end, and
         # the placeholder is ASCII so it cannot invalidate it.
         #
         # @param content [String] the bytes the regions were detected in
-        # @param regions [Enumerable<#start, #length>] the ones to withhold,
-        #   ascending
+        # @param regions [Spans, Enumerable<#start, #length>] the ones to withhold,
+        #   ascending; touching ones render as one slot
         # @param ordinals [Enumerator] the placeholder numbering, supplied when
         #   a caller masks several pieces of one result and needs the ordinals
         #   to stay consecutive ACROSS them
         # @return [String] shaped and encoded as `content` arrived
         def render(content, regions, ordinals: (1..).each)
           bytes = content.b
-          cursor, parts = regions.inject([0, []]) { |carry, region| swap(bytes, carry, region, ordinals) }
+          spans = regions.is_a?(Spans) ? regions : Spans.ascending(regions)
+          cursor, parts = spans.inject([0, []]) { |carry, region| swap(bytes, carry, region, ordinals) }
 
           (parts << bytes.byteslice(cursor..)).join.force_encoding(content.encoding)
         end

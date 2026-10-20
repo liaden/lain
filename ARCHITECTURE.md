@@ -1035,7 +1035,7 @@ name and target itself.
 |---|---|---|
 | gate on the effect | `Sensitivity::Policy` | may this CALL happen? |
 | filter on the result | `Middleware::WithholdSecretPaths` → `Sensitivity::Filter` | which rows may the model see? |
-| mask on the content | `Middleware::RedactSecretReads` → `Sensitivity::Masking` | which BYTES may leave? |
+| mask on the content | `Middleware::RedactSecretReads` → `Sensitivity::Masking` over `Sensitivity::Spans` | which BYTES may leave? |
 
 `read_file`, `grep` and `ast_search` are the readers of the mask step. A `grep` or `ast_search` result
 is scanned row by row; a detected region the ledger has not released for that file is masked in place

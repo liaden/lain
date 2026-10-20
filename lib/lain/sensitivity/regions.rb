@@ -30,11 +30,11 @@ module Lain
     #   -- which file content routinely is not.
     module Regions
       # What a withheld region looks like wherever one is rendered. It lives
-      # HERE, beside the detector and not in either arm that renders one,
-      # because two arms mask now -- a `read_file` result on its way out of the
-      # tool phase ({Middleware::RedactSecretReads}) and a survey's projection of
-      # a file it may list ({Survey::Projection}) -- and a human has to
-      # recognise the same thing in both.
+      # HERE, beside the detector and not in any caller that renders one,
+      # because five callers mask -- the read path
+      # ({Middleware::RedactSecretReads}), a survey's projection
+      # ({Survey::Projection}) and others -- and a human has to recognise the
+      # same thing in all of them.
       #
       # The `%d` is an ORDINAL, counting masked regions in reading order, and
       # never the byte length withheld: a length discloses how long the secret
@@ -164,23 +164,16 @@ module Lain
         # assignment and a high-entropy run, and reporting four would ask the
         # human four times about one thing.
         def coalesce(sorted)
-          sorted.each_with_object([]) do |candidate, kept|
-            previous = kept.last
-            if previous && candidate[:start] < previous[:finish]
-              kept[-1] = coalesced(previous, candidate)
-            else
-              kept << candidate
-            end
-          end
+          spans = Spans.of(sorted.map { Spans::Span.new(start: _1[:start], length: _1[:finish] - _1[:start]) }).to_a
+          starts = spans.map(&:start)
+          sorted.group_by { owner(starts, _1[:start]) }.map { |index, group| named(spans.fetch(index), group) }
         end
+
+        def owner(starts, start) = (starts.bsearch_index { _1 > start } || starts.size) - 1
 
         # The merged span takes the name of the higher-precedence shape, which is
         # not always the one that started first.
-        def coalesced(previous, candidate)
-          [previous, candidate].min_by { _1[:rank] }
-                               .merge(start: previous[:start],
-                                      finish: [previous[:finish], candidate[:finish]].max)
-        end
+        def named(span, group) = group.min_by { _1[:rank] }.merge(start: span.start, finish: span.finish)
 
         def region_at(candidate, bytes, skip)
           start = candidate[:start] + skip

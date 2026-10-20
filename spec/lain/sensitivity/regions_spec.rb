@@ -861,6 +861,23 @@ RSpec.describe Lain::Sensitivity::Regions do
       # the entropy run inside it. That makes the two ends independently
       # observable: a merge that took the later start, or the earlier finish,
       # changes the bytes.
+      # No real shape abuts another (each ends at a delimiter), so the abutting
+      # pair is handed in at the candidate seam.
+      context "when two candidates touch with no byte between them" do
+        let(:content) { "aaaabbbb\n" }
+
+        before do
+          allow(described_class).to receive(:candidates).and_return(
+            [{ start: 0, finish: 4, reason: "r", detector: :pattern, rank: 0 },
+             { start: 4, finish: 8, reason: "r", detector: :pattern, rank: 1 }]
+          )
+        end
+
+        it "reports one region, because the pair is one slot" do
+          expect(detect(content).map(&:bytes)).to eq(["aaaabbbb"])
+        end
+      end
+
       context "when two overlapping candidates begin and end at different offsets" do
         let(:content) { "AUTH_TOKEN=$#{secret}!\n" }
 

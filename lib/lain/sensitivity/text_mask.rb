@@ -121,9 +121,9 @@ module Lain
 
         def sink(held, final)
           @sunk = !final
-          span = Middleware::RedactSecretReads::Rows::Span.new(start: 0, length: held.bytesize)
+          span = Spans::Span.new(start: 0, length: held.bytesize)
           @count += 1
-          Masking.render(held.force_encoding(Encoding::UTF_8), [span], ordinals: @ordinals)
+          Masking.render(held.force_encoding(Encoding::UTF_8), Spans.of([span]), ordinals: @ordinals)
         end
 
         def masked(text)
