@@ -44,7 +44,7 @@ module Lain
         #
         # It is NOT a {ContextWindow} built by merging the served window into
         # {ContextWindow::DEFAULTS}, and the difference is a live 4-8x
-        # over-estimate rather than a nicety. `ContextWindow#matched` falls back
+        # over-estimate rather than a nicety. `ContextWindow#resolve` falls back
         # to `name.include?(token)` across every key, so a merged key becomes a
         # SUBSTRING rule for every later model name: with `--model qwen3`
         # resident at 32,768, a mid-session `/model qwen3-coder:30b`, `/model

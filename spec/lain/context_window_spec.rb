@@ -708,4 +708,9 @@ RSpec.describe Lain::ContextWindow do
         .to raise_error(described_class::UnknownModel, /gpt-4/)
     end
   end
+
+  it "resolves a name through the shared longest-key rule" do
+    book = described_class.new(windows: { "opus" => 1, "opus-4" => 2 })
+    expect(book.window_tokens("claude-opus-4-5")).to eq(2)
+  end
 end

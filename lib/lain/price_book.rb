@@ -37,7 +37,8 @@ module Lain
     # * Opus 5's fast mode bills a different rate for the SAME model id, under a
     #   request-level flag this table cannot see.
     #
-    # All three close with an exact-model key, not by changing the family match.
+    # Each closes with an exact-model key, not by changing the family match;
+    # none is in the table yet.
     DEFAULTS = {
       "opus" => Price.per_mtok(input: 5, output: 25, cache_creation: 6.25, cache_read: 0.5),
       "sonnet" => Price.per_mtok(input: 3, output: 15, cache_creation: 3.75, cache_read: 0.3),
@@ -55,6 +56,7 @@ module Lain
       # the shared {DEFAULT} must not be corruptible through it. Price values
       # are Data instances, frozen already.
       @prices = prices.to_h { |key, price| [-key.to_s, price] }.freeze
+      @keys = ModelTable.new(@prices.keys)
       @fallback = fallback
       freeze
     end
@@ -82,9 +84,8 @@ module Lain
 
     private
 
-    # Longest family token the name contains, so a more specific key wins.
     def matched(name)
-      key = @prices.keys.select { |token| name.include?(token) }.max_by(&:length)
+      key = @keys.key_for(name)
       key && @prices.fetch(key)
     end
 

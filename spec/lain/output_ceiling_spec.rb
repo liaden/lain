@@ -66,4 +66,8 @@ RSpec.describe Lain::OutputCeiling do
         .to eq([128_000, 32_768])
     end
   end
+
+  it "resolves a name through the shared longest-key rule" do
+    expect(described_class.table_tokens("claude-opus-4-5-20251101")).to eq(64_000)
+  end
 end

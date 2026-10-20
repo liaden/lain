@@ -76,6 +76,9 @@ module Lain
       "claude-3-5-haiku" => 8_192
     }.freeze
 
+    KEYS = ModelTable.new(TABLE.keys)
+    private_constant :KEYS
+
     # For a model the table does not carry and no server measured: an ollama
     # cloud model, a local one whose window was only guessed, or a first-party
     # id the table has no row for yet.
@@ -84,8 +87,7 @@ module Lain
     # @param model [String]
     # @return [Integer, nil]
     def self.table_tokens(model)
-      name = model.to_s
-      key = TABLE.key?(name) ? name : TABLE.keys.select { |token| name.include?(token) }.max_by(&:length)
+      key = KEYS.key_for(model.to_s)
       key && TABLE.fetch(key)
     end
 

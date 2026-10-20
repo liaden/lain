@@ -74,6 +74,13 @@ RSpec.describe Lain::PriceBook do
   # corrupt every later cost figure with no error anywhere (the reviewer's repro:
   # `default.instance_variable_get(:@prices).clear` made `price("sonnet")` return
   # nil instead of raising). Deep frozenness is the mechanical proof it cannot.
+  it "resolves a name through the shared longest-key rule" do
+    cheap = Lain::Price.per_mtok(input: 1, output: 1, cache_creation: 0, cache_read: 0)
+    dear = Lain::Price.per_mtok(input: 2, output: 2, cache_creation: 0, cache_read: 0)
+    book = described_class.new(prices: { "opus" => cheap, "opus-4" => dear })
+    expect(book.price("claude-opus-4-5")).to eq(dear)
+  end
+
   describe ".default" do
     it "is deeply frozen and Ractor-shareable, so mutation through the singleton is impossible" do
       expect(described_class.default).to be_deeply_frozen

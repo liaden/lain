@@ -72,7 +72,7 @@ module Lain
     # (`https://ollama.com/search?c=cloud`) on 2026-08-24.
     #
     # Every key is an EXACT tag, never a family token and never a bare "cloud":
-    # {#matched_key} takes the longest substring hit, so a "qwen3" key would
+    # {ModelTable#key_for} takes the longest substring hit, so a "qwen3" key would
     # capture the local arm's own `Provider::Ollama::DEFAULT_MODEL` and measure
     # a 4B local runner against a hosted model's window.
     #
@@ -388,6 +388,7 @@ module Lain
       # fresh Hash literal are both mutable by default, and the shared
       # {DEFAULT} must not be corruptible through them.
       @windows = windows.to_h { |key, tokens| [-key.to_s, tokens] }.freeze
+      @keys = ModelTable.new(@windows.keys)
       @fallback = fallback
       @bare_cloud = bare_cloud
       freeze
@@ -425,7 +426,7 @@ module Lain
       # VALUE would instead demote it to the fallback and call it a guess -- an
       # invalid table degrading in silence.
       name = model.to_s
-      key = @windows.key?(name) ? name : matched_key(name) || (cloud_key(name) if @bare_cloud)
+      key = @keys.key_for(name) || (cloud_key(name) if @bare_cloud)
       return WindowResolution.new(window_tokens: @windows.fetch(key), provenance: PUBLISHED) if key
 
       WindowResolution.new(window_tokens: @fallback || unknown!(model), provenance: GUESSED)
@@ -453,17 +454,6 @@ module Lain
     CLOUD = new(windows: DEFAULTS, fallback: CONSERVATIVE_FALLBACK, bare_cloud: true)
 
     private
-
-    # Longest family token the name contains, mirroring {PriceBook#matched}'s
-    # resolution order so a more specific key wins over a more general one.
-    #
-    # It answers the KEY where PriceBook's answers the value -- the one
-    # deliberate divergence. A VALUE can be nil or false while the key exists,
-    # and a caller deciding "matched?" on that would silently reroute a
-    # malformed table entry to the fallback (see {#resolve}).
-    def matched_key(name)
-      @windows.keys.select { |token| name.include?(token) }.max_by(&:length)
-    end
 
     # A bare name a user types (`glm-5.3`, `gemma4:31b`) against rows keyed by
     # their served cloud tag; tried only after the substring match fails, so a
