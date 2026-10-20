@@ -16,7 +16,7 @@ RSpec.describe Lain::StatusFeed::Fleet do
   # One of a pair of twins: two adoptions of one arm from one head, whose
   # bodies differ in nothing but the per-adoption ordinal
   # {Lain::Tools::Subagent::Lineage} writes into an actor's `:spawn`. The
-  # payload is addressed the way {Lain::Event::ChainWriter} addresses one --
+  # payload is addressed the way {Lain::EventLog::ChainWriter} addresses one --
   # digest OF the body -- rather than by a hand-written literal, because the
   # ordinal is only a separator if a real hash carries it that far, and a
   # fixture that stamped its own distinct digests would prove nothing. Only the

@@ -124,7 +124,7 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
 
       cut = hand_off(line)
 
-      expect(cut).to have_attributes(kind: "handoff", supersedes: [], head: Lain::Event.stands_on(line.head))
+      expect(cut).to have_attributes(kind: "handoff", supersedes: [], head: Lain::EventLog::Guards.stands_on(line.head))
       expect(cut.spans).to eq([[line.to_a[0].digest, line.to_a[4].digest]])
     end
 
@@ -222,7 +222,8 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
     def advanced_over_one_to_two(line)
       session.record_compaction_cut(
         Lain::Telemetry::CompactionCut.new(
-          digest: line.to_a[2].digest, head: Lain::Event.stands_on(line.head), strategy: arm, kind: "advance",
+          digest: line.to_a[2].digest, head: Lain::EventLog::Guards.stands_on(line.head), strategy: arm,
+          kind: "advance",
           parent: nil, supersedes: [], plan_step_completions: 0,
           collapses: [{ "span" => [line.to_a[1].digest, line.to_a[2].digest], "content" => text("the replacement") }]
         )
@@ -265,7 +266,7 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
         turns = line.to_a
         session.record_compaction_cut(
           Lain::Telemetry::CompactionCut.new(
-            digest: turns[2 * summaries].digest, head: Lain::Event.stands_on(line.head), strategy: arm,
+            digest: turns[2 * summaries].digest, head: Lain::EventLog::Guards.stands_on(line.head), strategy: arm,
             kind: "advance", parent: nil, supersedes: [], plan_step_completions: 0, collapses: summarized(turns)
           )
         )
@@ -337,7 +338,7 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
 
       expect(cut).to have_attributes(kind: "collapse", supersedes: advances.map(&:address),
                                      parent: advances.last.address, digest: advances.last.digest,
-                                     head: Lain::Event.stands_on(line.head))
+                                     head: Lain::EventLog::Guards.stands_on(line.head))
       expect(cut.spans).to eq([[line.to_a[0].digest, line.to_a[5].digest]])
     end
 

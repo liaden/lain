@@ -150,7 +150,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     let(:parent) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("hi")) }
 
     it "promotes a :message as a message record" do
-      writer = Lain::Event::ChainWriter.new(observer: ->(event) { scribe.call(event) })
+      writer = Lain::EventLog::ChainWriter.new(observer: ->(event) { scribe.call(event) })
       writer.put(parent, kind: :message, from: "human", to: "lain", causal_parents: [], body: { "text" => "hi" })
 
       expect(of_type("message").size).to eq(1)
@@ -230,7 +230,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
 
     it "still routes a :message through the tee, delivered to the file once" do
-      writer = Lain::Event::ChainWriter.new(observer: ->(event) { scribe.call(event) })
+      writer = Lain::EventLog::ChainWriter.new(observer: ->(event) { scribe.call(event) })
       question = writer.put(parent, kind: :message, from: "lain", to: "human",
                                     causal_parents: [], body: { "question" => "which db?" })
 
@@ -274,9 +274,9 @@ RSpec.describe Lain::SessionRecord::Scribe do
       let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee, live: sink) }
 
       let(:question) do
-        Lain::Event::ChainWriter.new(observer: ->(event) { scribe.call(event) })
-                                .put(parent, kind: :message, from: "child", to: "human",
-                                             causal_parents: [], body: { "question" => "which db?" })
+        Lain::EventLog::ChainWriter.new(observer: ->(event) { scribe.call(event) })
+                                   .put(parent, kind: :message, from: "child", to: "human",
+                                                causal_parents: [], body: { "question" => "which db?" })
       end
 
       # The head Event of a two-turn child chain, the second turn citing +cited+.

@@ -118,7 +118,7 @@ class ReplGoalTerminal
     rail = Lain::Frontend::Intake.new(screen: tty)
     conductor = Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new,
                                          signals: Lain::CLI::Signals.new, rail:, grace: 5)
-    askers = Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
+    askers = Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human: askers.directory, questions: askers.questions)
     driver = Lain::CLI::GoalDriver.new(journal:, cap: Integer(cap))
     agent = Struct.new(:timeline, :session).new(CoreGraph.timeline, Lain::Session::Null.instance)
@@ -2143,7 +2143,9 @@ RSpec.describe Lain::CLI::Repl do
   describe "a line typed while the run is in flight" do
     let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
     let(:mailbox) do
-      Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of), observer: ->(_) {})
+      Lain::Context::Mailbox::Live.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of),
+                                       observer: lambda { |_|
+                                       })
     end
     let(:out) { StringIO.new }
     let(:tty) do

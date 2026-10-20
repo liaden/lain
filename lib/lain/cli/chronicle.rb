@@ -28,7 +28,7 @@ module Lain
         # Nil is the honest answer: --no-journal has no file, and /fork reads
         # this to refuse composing a selector no record backs.
         def journal_path = nil
-        def observer = Event::ChainWriter::Null.new
+        def observer = EventLog::ChainWriter::Null.new
         def start(**) = self
         def wrap_session(session) = @tee ? session.cuts_into(@tee) : session
         def wrap_memory(recorder) = recorder

@@ -189,8 +189,8 @@ RSpec.describe Lain::Compaction::Strategy::Summarizing do
       source = fixtures.history(9)
       derived = Lain::Compaction::Derivation.new(strategy: down, keep_last: 3).derive(source)
 
-      expect(Lain::Timeline.project(derived.to_a))
-        .to eq(Lain::Timeline.project(source.to_a))
+      expect(Lain::EventLog::Messages.project(derived.to_a))
+        .to eq(Lain::EventLog::Messages.project(source.to_a))
     end
   end
 

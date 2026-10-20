@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  class Event
+  module EventLog
     # The one home for message-writing and correlation: Timeline's
     # `next_correlation`, {Tools::Subagent::Lineage} and {Tools::AskHuman} all
     # delegate here, and the digests they produce are unchanged -- an

@@ -34,7 +34,7 @@ RSpec.describe Lain::Workspace::Restore do
   let(:log) { [] }
 
   def restorer(root: dir, projection_log: log)
-    described_class.new(projection: Lain::Event::Projection.new(projection_log), store:, root:)
+    described_class.new(projection: Lain::EventLog::Projection.new(projection_log), store:, root:)
   end
 
   def commit(timeline, number)
@@ -217,7 +217,7 @@ RSpec.describe Lain::Workspace::Restore do
       # re-seeds in_force from the log's LAST snapshot and would flag the
       # prior iteration's own rewind-back as dirty -- see probe 2 / the
       # handback's own noted follow-up, not re-litigated here).
-      projection = Lain::Event::Projection.new(log)
+      projection = Lain::EventLog::Projection.new(log)
       restore = restorer
       [2, 3, 4].each do |turn|
         restore.restore(turn:)

@@ -474,7 +474,7 @@ module Lain
 
     def prompted(prompt, on_fold)
       head = @timeline.head
-      return @timeline.commit(role: :user, content: prompt) unless Event.stranded_prompt?(head)
+      return @timeline.commit(role: :user, content: prompt) unless EventLog::Guards.stranded_prompt?(head)
 
       @timeline.checkout(head.parent).commit(role: :user, content: head.content + prompt)
                .tap { |folded| on_fold.call(@timeline, folded) }
@@ -483,7 +483,7 @@ module Lain
     # The repair every stranded head gets, through the one mint every repair
     # shares; a head with nothing stranded is left exactly as it is.
     def answer_stranded(kind)
-      return unless Event.pending_tool_use?(@timeline.head)
+      return unless EventLog::Guards.pending_tool_use?(@timeline.head)
 
       @timeline = @timeline.commit(role: :user, content: Tool::Cancellation.new(@timeline.head, kind:).blocks)
     end
@@ -786,7 +786,7 @@ module Lain
     # record carries the same answer to every live view.
     def call_model(on_stream_started, render)
       dispatch!
-      attempt(Event.stands_on(@timeline.head), on_stream_started, render)
+      attempt(EventLog::Guards.stands_on(@timeline.head), on_stream_started, render)
     end
 
     # A retry only where something can make room, and each way of making it

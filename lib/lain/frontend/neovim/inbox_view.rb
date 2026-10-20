@@ -4,7 +4,7 @@ module Lain
   module Frontend
     class Neovim
       # The human inbox as a projection: lain://inbox IS
-      # {Event::Projection#pending}("human") rendered -- {Buffers}' fourth
+      # {EventLog::Projection#pending}("human") rendered -- {Buffers}' fourth
       # view, PULL-shaped like its siblings, fed the three record shapes the
       # telemetry tee actually carries:
       #

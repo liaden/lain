@@ -24,30 +24,8 @@ module Lain
   class Event
     include ContentAddressed
 
-    KINDS = %i[turn spawn message snapshot].freeze
-    ROLES = %w[user assistant].freeze
-
     attr_reader :kind, :from, :to, :render_parent, :causal_parents,
                 :correlation, :payload_digest, :body, :carried_payload, :digest
-
-    # The kind coercion is shared with {Payload}: both carry the kind and both
-    # owe the same closed, loud enum, so a typo fails identically wherever a kind
-    # is named.
-    def self.normalize_kind(kind)
-      symbol = kind.to_s.to_sym
-      raise Error, "kind must be one of #{KINDS.join(", ")}, got #{kind.inspect}" unless KINDS.include?(symbol)
-
-      symbol
-    end
-
-    # Frozen and deduplicated: `Symbol#to_s` hands back a fresh mutable String,
-    # and one unfrozen String is enough to break Ractor shareability downstream.
-    def self.normalize_role(role)
-      string = -role.to_s
-      raise Error, "role must be one of #{ROLES.join(", ")}, got #{string.inspect}" unless ROLES.include?(string)
-
-      string
-    end
 
     # The :turn constructor -- what `Turn.new` was. Role, content and meta form
     # the out-of-line {Payload} body; meta stays inside the content address, via
@@ -59,58 +37,14 @@ module Lain
     # render also folded, never from the live log, or the edge would claim a
     # message the prompt never saw.
     def self.turn(role:, content:, parent: nil, meta: {}, correlation: nil, causal_parents: [])
-      payload = Payload.new(kind: :turn, body: { "role" => normalize_role(role),
+      payload = Payload.new(kind: :turn, body: { "role" => EventLog::Kinds.normalize_role(role),
                                                  "content" => content, "meta" => meta })
       new(kind: :turn, carried_payload: payload, render_parent: parent, correlation:, causal_parents:)
     end
 
-    # The turn a render over `head` stands on, and so what a reading or a
-    # compaction cut taken on that render is believed on. A user turn at the
-    # head is the one the render added -- a prompt, a round's results, a
-    # cancellation -- and an ask refused before any model saw it withdraws a
-    # prompt while the next one takes its place, so the answer is the turn
-    # beneath it; the model's own turn at the head is its own answer. nil is
-    # the empty chain, which every chain extends.
-    #
-    # @param head [Event, nil]
-    # @return [String, nil] a turn digest
-    def self.stands_on(head)
-      return nil if head.nil?
-
-      head.role == "user" ? head.parent : head.digest
-    end
-
-    # Whether `event` is an assistant turn still carrying an unanswered
-    # tool_use block -- the shape the next request would render as a dangling
-    # tool_use, which the API rejects.
-    #
-    # Such an event must never become a rewind TARGET. The session-loading doors
-    # repair rather than refuse -- CLI::Resume#settled commits a projected
-    # cancellation turn above the torn head, so a resumed chain legitimately
-    # starts from a head that is settled again; only a call naming no tool_use
-    # id, which nothing can pair a result with, still refuses there. The doors
-    # that move a LIVE head with no load behind them (CLI::Command::Fork#anchor!,
-    # CLI::Command::Rewind#settled_target!) still refuse outright.
-    #
-    # One definition, because this was two copies that had quietly drifted --
-    # one guarded a nil event, one did not. Nil-safe on purpose:
-    # CLI::Command::Rewind#nearest_valid evaluates it over `(1..heads.length)`,
-    # where `heads[heads.length]` is nil by construction.
-    def self.pending_tool_use?(event)
-      !event.nil? && event.role == "assistant" &&
-        event.content.any? { |block| block.is_a?(Hash) && block["type"] == "tool_use" }
-    end
-
-    # Text a human asked that nothing answered, so the next ask folds into it.
-    # A head of tool results is not one: folding it would put an answer to the
-    # model's calls in the human's mouth.
-    def self.stranded_prompt?(event)
-      !event.nil? && event.role == "user" && event.content.all? { |block| block["type"] == "text" }
-    end
-
     def initialize(kind:, payload_digest: nil, body: nil, carried_payload: nil, from: nil, to: nil,
                    render_parent: nil, causal_parents: [], correlation: nil)
-      @kind = self.class.normalize_kind(kind)
+      @kind = EventLog::Kinds.normalize_kind(kind)
       @from = Canonical.normalize(from)
       @to = Canonical.normalize(to)
       @render_parent = Canonical.normalize(render_parent)

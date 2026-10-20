@@ -64,7 +64,7 @@ module PlainChatPromptGuards
                                          signals: Lain::CLI::Signals.new, rail:,
                                          grace: Float(grace))
     pump = Lain::Frontend::StdinPump.new(rail:, screen: tty)
-    askers = Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
+    askers = Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human: askers.directory, questions: askers.questions)
     typed = File.join(dir, "typed")
     waiting = -> { Async::Task.current.sleep(0.02) until File.exist?(typed) }

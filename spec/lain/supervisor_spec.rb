@@ -319,7 +319,7 @@ RSpec.describe Lain::Supervisor do
       expect(spawn.digest).to eq(actor.address)
       expect(spawn.payload["lifecycle"]).to eq("launched")
       expect(reply.from).to eq(actor.address)
-      expect(reply.to).to eq(Lain::Event::ChainWriter.correlation_of(parent_timeline))
+      expect(reply.to).to eq(Lain::EventLog::ChainWriter.correlation_of(parent_timeline))
       expect(reply.payload["lifecycle"]).to eq("settled")
       expect(tell.payload).to eq({ "text" => "nudge" })
       expect(farewell.from).to eq(actor.address)

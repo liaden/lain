@@ -48,7 +48,7 @@ module Lain
 
       # @param observer [#call] every recorded snapshot is passed on to it, so a
       #   durable record can hang off the same seam
-      def initialize(observer: Event::ChainWriter::Null.new)
+      def initialize(observer: EventLog::ChainWriter::Null.new)
         @observer = observer
         @entries = []
         @pairs = {}

@@ -28,7 +28,7 @@ module Lain
       #
       # {Subagent}'s `@last_*` ivars are a ONE-SHOT-ONLY shape: concurrent
       # actors would race them. So an actor carries nothing on the tool -- each
-      # is its own object, and its record is its mailbox {Event::Projection}
+      # is its own object, and its record is its mailbox {EventLog::Projection}
       # over the shared {Log}. Its own fiber is single, so its own ivars have no
       # interleaving writer.
       class Actor

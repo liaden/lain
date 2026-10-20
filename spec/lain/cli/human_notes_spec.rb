@@ -3,7 +3,7 @@
 RSpec.describe Lain::CLI::HumanNotes do
   let(:store) { Lain::Dag::Factory.store }
   let(:mailbox) do
-    Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of), observer: ->(_) {})
+    Lain::Context::Mailbox::Live.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of), observer: ->(_) {})
   end
   let(:flight) { [true] }
   let(:notes) { described_class.new(mailbox:, in_flight: -> { flight.first }) }

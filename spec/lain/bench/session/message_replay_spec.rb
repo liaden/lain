@@ -41,7 +41,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
   def linked_messages(length)
     base = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("root"))
     written = []
-    writer = Lain::Event::ChainWriter.new(
+    writer = Lain::EventLog::ChainWriter.new(
       observer: ->(event) { written << as_record(Lain::Telemetry::Message.from_event(event)) }
     )
     (1..length).inject(nil) do |last, index|
@@ -64,7 +64,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
 
     # THE guard. 400 linked records asked the Store 80,600 times before this was
     # a greedy sweep, one pass per link; the bound below is ~2 lookups a record.
-    # {Event::Projection#causal_closure} records the same lesson from the other
+    # {EventLog::Projection#causal_closure} records the same lesson from the other
     # direction -- a long chain is a log shape, not an error.
     it "asks the Store a linear number of times, not a quadratic one" do
       records = linked_messages(400)
@@ -95,8 +95,8 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
     # blocked shape the Loader alternates the two folds to unblock.
     def citing_a_turn
       root = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("root"))
-      cited = Lain::Event::ChainWriter.new.put(root, kind: :message, from: "a", to: "b",
-                                                     causal_parents: [root.head_digest], body: { "n" => 1 })
+      cited = Lain::EventLog::ChainWriter.new.put(root, kind: :message, from: "a", to: "b",
+                                                        causal_parents: [root.head_digest], body: { "n" => 1 })
       [root.head, as_record(Lain::Telemetry::Message.from_event(cited))]
     end
 
@@ -127,9 +127,9 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
     # from, and the turn that delivers the answer cites the question back.
     it "lands a citing record written before the record it cites" do
       child = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("child ask"))
-      question = Lain::Event::ChainWriter.new.put(child, kind: :message, from: "child", to: "human",
-                                                         causal_parents: [child.head_digest],
-                                                         body: { "question" => "which db?" })
+      question = Lain::EventLog::ChainWriter.new.put(child, kind: :message, from: "child", to: "human",
+                                                            causal_parents: [child.head_digest],
+                                                            body: { "question" => "which db?" })
       records = [as_record(Lain::Telemetry::Message.from_event(question)),
                  as_record(Lain::Telemetry::ChildTurn.from_event(child.head))]
 

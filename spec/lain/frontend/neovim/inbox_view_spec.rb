@@ -4,7 +4,7 @@ require "json"
 require "timeout"
 require "tmpdir"
 
-# The human inbox. lain://inbox IS {Event::Projection#pending}("human")
+# The human inbox. lain://inbox IS {EventLog::Projection#pending}("human")
 # rendered -- a :message addressed to the human lists until a committed :turn
 # names its digest a causal parent (the delivery commit; see agent_spec's
 # "ask_human consumption" examples for the production emitter). A REPLY alone
@@ -78,8 +78,8 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   # question needs the question actually resident, exactly as in production.
   def stored_question(question: "which db?", from: "orchestrator")
     parent = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("seed #{question}"))
-    Lain::Event::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
-                                             causal_parents: [], body: { "question" => question })
+    Lain::EventLog::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
+                                                causal_parents: [], body: { "question" => question })
   end
 
   # A committed chain whose head turn cites `digests` -- the delivery commit's

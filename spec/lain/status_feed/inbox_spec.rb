@@ -2,7 +2,7 @@
 
 require "stringio"
 
-# The human inbox as {Lain::StatusFeed} publishes it: Event::Projection#pending
+# The human inbox as {Lain::StatusFeed} publishes it: EventLog::Projection#pending
 # folded incrementally, retired ONLY by a committed turn's causal edges -- and
 # reached through the two carriers that name those edges, a replayed `:turn`
 # Event and the {Lain::Telemetry::TurnUsage} head a live chat actually
@@ -18,8 +18,8 @@ RSpec.describe Lain::StatusFeed::Inbox do
   # question needs the question actually resident, exactly as in production.
   def stored_question(question: "which db?", to: "human")
     parent = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("seed #{question}"))
-    Lain::Event::ChainWriter.new.put(parent, kind: :message, from: "orchestrator", to:,
-                                             causal_parents: [], body: { "question" => question })
+    Lain::EventLog::ChainWriter.new.put(parent, kind: :message, from: "orchestrator", to:,
+                                                causal_parents: [], body: { "question" => question })
   end
 
   # The delivery commit: a chain whose head turn cites what it folded in.
@@ -201,7 +201,7 @@ RSpec.describe Lain::StatusFeed::Inbox do
   end
 
   # A digest the store genuinely HOLDS, naming a BODY rather than a turn --
-  # {Lain::Event::ChainWriter} puts one for every message it writes. It is what
+  # {Lain::EventLog::ChainWriter} puts one for every message it writes. It is what
   # a commit record naming the wrong address looks like from in here, and the
   # walk answers it with `NoMethodError: undefined method 'parent' for an
   # instance of Lain::Event::Payload` -- past a rescue that named only

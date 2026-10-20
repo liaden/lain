@@ -140,7 +140,7 @@ module Lain
           # A spawned chain's turns land in the SAME replay -- they and the
           # messages cite each other across the spawn boundary -- but they are
           # not mailbox traffic. Folding them in would put :turn events into
-          # every {Event::Projection} built over it, where the turn count is
+          # every {EventLog::Projection} built over it, where the turn count is
           # load-bearing.
           replayed.reject { |event| event.kind == :turn }
         end

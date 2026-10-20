@@ -19,7 +19,7 @@ module Lain
       attr_reader :kind, :body, :digest
 
       def initialize(kind:, body:)
-        @kind = Event.normalize_kind(kind)
+        @kind = EventLog::Kinds.normalize_kind(kind)
         @body = Canonical.normalize(body)
         @digest = Canonical.digest(payload)
         freeze

@@ -26,10 +26,10 @@ RSpec.describe Lain::Workspace::Restore do
   let(:log) { [] }
 
   def restorer(root: dir)
-    described_class.new(projection: Lain::Event::Projection.new(log), store:, root:)
+    described_class.new(projection: Lain::EventLog::Projection.new(log), store:, root:)
   end
 
-  def projection = Lain::Event::Projection.new(log)
+  def projection = Lain::EventLog::Projection.new(log)
 
   # One committed turn appended to both axes: the Timeline (conversation) and
   # the event log Projection#workspace_at counts :turn events in.
@@ -281,7 +281,7 @@ RSpec.describe Lain::Workspace::Restore do
       File.delete(only)
       only_log << writer.write(timeline: solo_timeline, paths: [only])
 
-      solo = described_class.new(projection: Lain::Event::Projection.new(only_log),
+      solo = described_class.new(projection: Lain::EventLog::Projection.new(only_log),
                                  store:, root: only_root)
       solo.restore(turn: 1)
       expect(read_file(only_root, "only.txt")).to eq("soon gone")
@@ -303,7 +303,7 @@ RSpec.describe Lain::Workspace::Restore do
       project = File.join(dir, "project").tap { |path| Dir.mkdir(path) }
       escape_log = escaping_log(project, outside)
       File.binwrite(outside, "edited since")
-      [outside, described_class.new(projection: Lain::Event::Projection.new(escape_log),
+      [outside, described_class.new(projection: Lain::EventLog::Projection.new(escape_log),
                                     store:, root: project)]
     end
 
@@ -340,7 +340,7 @@ RSpec.describe Lain::Workspace::Restore do
       def symlinked_setup
         root = File.join(dir, "root").tap { |path| Dir.mkdir(path) }
         outside_target = write_file(dir, "outside-target.txt", "pre-existing outside content")
-        restore = described_class.new(projection: Lain::Event::Projection.new(link_log(root)),
+        restore = described_class.new(projection: Lain::EventLog::Projection.new(link_log(root)),
                                       store:, root:)
         [root, outside_target, restore]
       end

@@ -11,7 +11,7 @@ module Lain
       # the correct addressing and "the asker that asked most recently" is the
       # bug it replaces.
       #
-      # This object answers ONLY who owns a name. {Event::Projection#pending}
+      # This object answers ONLY who owns a name. {EventLog::Projection#pending}
       # remains the authority on what is pending, and nothing here duplicates
       # it: a digest no registration has heard of is REFUSED, not inferred,
       # because inferring is how an answer typed for one set resolves another.

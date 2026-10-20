@@ -167,7 +167,7 @@ module Lain
         missing = snapshot.body.fetch("files").values.reject { |digest| store.key?(digest) }
         return blob_gap(snapshot, missing, notices) unless missing.empty?
 
-        Workspace::Restore.new(projection: Event::Projection.new(recording.messages), store:, root: @root)
+        Workspace::Restore.new(projection: EventLog::Projection.new(recording.messages), store:, root: @root)
                           .restore(turn: Workspace::Restore::ANY_TURN, force: @force)
       end
 
@@ -214,7 +214,7 @@ module Lain
     # within Metrics/ClassLength instead of loosening it.
 
     class Restart
-      # The write side of the sidecar: an {Event::ChainWriter} observer
+      # The write side of the sidecar: an {EventLog::ChainWriter} observer
       # decorator on the SAME seam the session scribe occupies. A :snapshot
       # event's payload names each file's bytes by digest; this journals those
       # bytes -- once per content address -- BEFORE forwarding the event, so a
@@ -244,7 +244,7 @@ module Lain
         # @param store [Store] resolves the snapshot's blob digests to bytes;
         #   must be the store the snapshot writer puts blobs into
         # @param observer [#call] the next observer in the chain (the scribe)
-        def initialize(journal:, store:, observer: Event::ChainWriter::Null.new)
+        def initialize(journal:, store:, observer: EventLog::ChainWriter::Null.new)
           @journal = journal
           @store = store
           @observer = observer

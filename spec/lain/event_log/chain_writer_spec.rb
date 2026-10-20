@@ -7,7 +7,7 @@ require "async"
 # payload-then-envelope write lived as three separate copies (Timeline,
 # Lineage, AskHuman). This pins that ChainWriter is the shared object all
 # three now delegate to, and that nothing about their pinned behavior moved.
-RSpec.describe Lain::Event::ChainWriter do
+RSpec.describe Lain::EventLog::ChainWriter do
   let(:store) { Lain::Dag::Factory.store }
   let(:root) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("hi")) }
   let(:parent) { root.commit(role: :assistant, content: text("yo")) }

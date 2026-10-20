@@ -180,7 +180,7 @@ RSpec.describe Lain::Bench::Session::ChainFold do
     end
 
     # A NULL is the sibling shape of a missing key, and for `role` alone it
-    # refused in the wrong currency: the field reaches Event.normalize_role
+    # refused in the wrong currency: the field reaches EventLog::Kinds.normalize_role
     # before any digest exists, so it came out as a bare Lain::Error ("role
     # must be one of user, assistant, got \"\"") -- honest, but no Corrupt, so
     # all three doors that read this format miss it and none names the file or

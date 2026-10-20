@@ -38,7 +38,7 @@ RSpec.describe "a human's reply handed back", :seam do
   end
   let(:conductor) { instance_double(Lain::CLI::Conductor) }
   let(:askers) do
-    Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
+    Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new)
   end
   let(:ask_human) { askers.enrol(parent, agent: "chat").asker }
   let(:replies) do

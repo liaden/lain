@@ -627,7 +627,7 @@ module Lain
       # Built while the agent is, so the agent is read at each line.
       def notes
         @notes ||= Lain::CLI::HumanNotes.new(
-          mailbox: Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
+          mailbox: Lain::Context::Mailbox::Live.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of),
                                                     observer: chronicle.observer),
           in_flight: -> { @agent&.working? }
         )

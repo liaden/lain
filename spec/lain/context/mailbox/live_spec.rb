@@ -4,7 +4,7 @@ RSpec.describe Lain::Context::Mailbox::Live do
   let(:store) { Lain::Dag::Factory.store }
   let(:recorded) { [] }
   let(:live) do
-    described_class.new(recipient: Lain::Event::ChainWriter.method(:correlation_of), observer: recorded.method(:<<))
+    described_class.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of), observer: recorded.method(:<<))
   end
 
   def prompted(text = "hi", on: Lain::Dag::Factory.timeline(store:))
@@ -88,7 +88,7 @@ RSpec.describe Lain::Context::Mailbox::Live do
 
   it "never folds an answer or a completion message, even one addressed to the same chain" do
     timeline = prompted
-    writer = Lain::Event::ChainWriter.new
+    writer = Lain::EventLog::ChainWriter.new
     writer.put(timeline, kind: :message, from: "human", to: timeline.correlation, causal_parents: [],
                          body: { "answer" => "yes" })
     writer.put(timeline, kind: :message, from: "child", to: timeline.correlation, causal_parents: [],
@@ -152,7 +152,7 @@ RSpec.describe Lain::Context::Mailbox::Live do
   # the same words at the same sequence must still be a new note.
   it "folds a note a fresh Live posts on a chain where an earlier Live's identical note was consumed" do
     timeline = prompted
-    earlier = described_class.new(recipient: Lain::Event::ChainWriter.method(:correlation_of), observer: ->(_) {})
+    earlier = described_class.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of), observer: ->(_) {})
     earlier.post(from: "human", text: "continue")
     resumed = consumed(timeline, earlier.capture(timeline))
     live.post(from: "human", text: "continue")
@@ -162,7 +162,7 @@ RSpec.describe Lain::Context::Mailbox::Live do
 
   it "keeps a note queued when recording it fails, and loses none queued behind it" do
     calls = 0
-    failing = described_class.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
+    failing = described_class.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of),
                                   observer: ->(_) { raise IOError, "disk full" if (calls += 1) == 1 })
     timeline = prompted
     %w[a b c].each { |text| failing.post(from: "human", text:) }

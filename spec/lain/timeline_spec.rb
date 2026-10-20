@@ -191,7 +191,7 @@ RSpec.describe Lain::Timeline do
 
     # The last block carries the render's own cache marker, which is not the projection's.
     it "is the one projection the context, the head and the derivation walk consume" do
-      allow(described_class).to receive(:project) do |turns|
+      allow(Lain::EventLog::Messages).to receive(:project) do |turns|
         turns.map { |_| { "role" => "user", "content" => [{ "type" => "text", "text" => "marked" }] }.freeze }.freeze
       end
       texts = ->(messages) { messages.flat_map { |message| message.fetch("content").map { |b| b.fetch("text") } }.uniq }

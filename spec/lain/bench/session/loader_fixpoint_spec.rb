@@ -20,7 +20,7 @@ RSpec.describe Lain::Bench::Session::Loader do
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:workspace) { Lain::Workspace.empty }
-  let(:writer) { Lain::Event::ChainWriter.new }
+  let(:writer) { Lain::EventLog::ChainWriter.new }
 
   # The live cycle at its smallest: a turn is asked from, the question cites
   # that turn, the answer cites the question, and the turn that folds the
@@ -214,7 +214,7 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
 
     # Landing the blocking message the way MessageReplay lands one: payload
-    # first, then the envelope. Rebuilt rather than carried -- Event::ChainWriter
+    # first, then the envelope. Rebuilt rather than carried -- EventLog::ChainWriter
     # addresses its payload by digest instead of holding it.
     def land(event)
       logged.put(Lain::Event::Payload.new(kind: event.kind, body: event.body))

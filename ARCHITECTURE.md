@@ -369,7 +369,7 @@ because a re-collapse can share a digest with the last cut it replaces.
 `Session#record_compaction_cut` keeps and journals it beside the pin-set, refusing a cut whose
 parent it never recorded, and `SessionRecord::Replay` folds it back.
 
-**`head` is the turn the committing render STOOD ON**, `Event.stands_on`: the model's own turn at
+**`head` is the turn the committing render STOOD ON**, `EventLog::Guards.stands_on`: the model's own turn at
 the head, or, where the render added a user turn that was refused before any model saw it, the
 turn *beneath* that withdrawn prompt. Pinning it to the asked prompt instead made every withdrawn
 ask re-commit the same cut, because the prompt it named left the chain with it.

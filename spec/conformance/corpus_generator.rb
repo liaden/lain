@@ -303,7 +303,7 @@ module ConformanceCorpus
     def causal(pool = Array.new(3) { digest }) = Array.new(int(0..4)) { pick(pool) }
 
     # A Symbol's name is US-ASCII, and the tagged tree holds UTF-8 and binary Strings only.
-    def kind = spelled(pick(Lain::Event::KINDS).name.encode(Encoding::UTF_8))
+    def kind = spelled(pick(Lain::EventLog::Kinds::KINDS).name.encode(Encoding::UTF_8))
   end
 
   # Values Canonical accepts: its dump and digest.
@@ -334,7 +334,7 @@ module ConformanceCorpus
     def inputs(draw) = Array.new(600) { draw.chance?(0.3) ? turn(draw) : event(draw) }
 
     def turn(draw)
-      { "turn" => { "role" => Tagged.encode(draw.spelled(draw.pick(Lain::Event::ROLES))),
+      { "turn" => { "role" => Tagged.encode(draw.spelled(draw.pick(Lain::EventLog::Kinds::ROLES))),
                     "content" => Tagged.encode(draw.value), "meta" => Tagged.encode(draw.table),
                     "parent" => draw.maybe_digest, "correlation" => draw.maybe_digest,
                     "causal_parents" => draw.causal } }
@@ -393,7 +393,7 @@ module ConformanceCorpus
 
     def commit(draw, index)
       { "on" => index.zero? || draw.chance?(0.15) ? nil : draw.int(0...index),
-        "role" => draw.pick(Lain::Event::ROLES),
+        "role" => draw.pick(Lain::EventLog::Kinds::ROLES),
         "content" => Tagged.encode([{ "type" => "text", "text" => draw.text }]),
         "meta" => Tagged.encode(draw.chance?(0.3) ? { "note" => draw.text } : {}),
         "causal" => index.zero? ? [] : Array.new(draw.int(0..2)) { draw.int(0...index) } }
@@ -505,7 +505,7 @@ module ConformanceCorpus
     # Draws one sequence against a live Ruby store, so a later op can name what an earlier one stored. Edges
     # name only the arm the extension expects, or nothing stored at all (see UNSAMPLED).
     class Script
-      KINDS = Lain::Event::KINDS.map(&:name).freeze
+      KINDS = Lain::EventLog::Kinds::KINDS.map(&:name).freeze
 
       attr_reader :ops
 

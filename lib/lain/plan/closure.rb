@@ -18,7 +18,7 @@ module Lain
     #   it before this, so "calibrate from the Journal alone" needs it.
     # * pass/score/why come from the chunk's {Grader::Grade}.
     # * files + blob digests come from the {Workspace::Snapshot} in force at the
-    #   seam ({Event::Projection#workspace_at}), carried with the snapshot's OWN
+    #   seam ({EventLog::Projection#workspace_at}), carried with the snapshot's OWN
     #   write-set-only scope note, so the record names its own blind spot rather
     #   than implying full coverage.
     # * `elided_digests` are the chunk's turn digests -- the span compaction

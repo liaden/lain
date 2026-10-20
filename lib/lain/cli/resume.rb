@@ -332,7 +332,7 @@ module Lain
       # between two the journal holds, so that shape is refused where it sits.
       def settled(door, timeline)
         refuse_buried_orphan(door, timeline)
-        return timeline unless Event.pending_tool_use?(timeline.head)
+        return timeline unless EventLog::Guards.pending_tool_use?(timeline.head)
 
         timeline.commit(role: :user, content: cancellation(door, timeline).blocks)
       end

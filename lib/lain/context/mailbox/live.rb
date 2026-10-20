@@ -24,7 +24,7 @@ module Lain
         def initialize(recipient:, observer:)
           @recipient = recipient
           @notes = Tools::Subagent::Log.new
-          @writer = Event::ChainWriter.new(observer: lambda { |event|
+          @writer = EventLog::ChainWriter.new(observer: lambda { |event|
             observer.call(event)
             @lock.synchronize { @notes << event }
           })
@@ -34,7 +34,7 @@ module Lain
           @lock = Mutex.new
         end
 
-        # {Event::ChainWriter#put} hashes no time, so the same words need the
+        # {EventLog::ChainWriter#put} hashes no time, so the same words need the
         # sequence to stay apart within this inbox, and the nonce to stay apart
         # from an earlier inbox's notes on a resumed chain.
         #

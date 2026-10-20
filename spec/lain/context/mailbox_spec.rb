@@ -116,7 +116,7 @@ RSpec.describe Lain::Context::Mailbox do
 
     it "leaves folded events queryable in the log -- the view is never consumed" do
       mailbox.call(conversation)
-      expect(Lain::Event::Projection.new(pending + [other]).mailbox("parent").to_a).to eq(pending)
+      expect(Lain::EventLog::Projection.new(pending + [other]).mailbox("parent").to_a).to eq(pending)
     end
   end
 

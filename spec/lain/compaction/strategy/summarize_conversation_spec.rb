@@ -327,7 +327,7 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     it "retains the tool messages and the lone turn verbatim, in position" do
       source = fixtures.history(fixtures.mixed_blocks)
       derived = Lain::Compaction::Derivation.new(strategy:, keep_last: 3).derive(source)
-      projected = Lain::Timeline.project(derived.to_a)
+      projected = Lain::EventLog::Messages.project(derived.to_a)
 
       expect(projected.select { |message| Lain::Compaction::ToolMessages.tool?(message) })
         .to eq(mixed.values_at(1, 2, 5, 6))

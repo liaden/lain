@@ -236,7 +236,7 @@ module Lain
         def replayed(policy, timeline, walk, cut)
           outcome = derivation(policy).derive(timeline, walk:, cut:, resume: resumable(policy)) do |derived, seam, kept|
             @resume = resumable(policy, kept)
-            Outcome.new(replay: Replay.new(Timeline.project(derived.to_a)), seam:,
+            Outcome.new(replay: Replay.new(EventLog::Messages.project(derived.to_a)), seam:,
                         hits: policy.hits, misses: policy.misses,
                         size_declined_misses: policy.size_declined_misses)
           end
@@ -298,7 +298,7 @@ module Lain
         # fails with `Ractor::IsolationError` on the first compacting turn of
         # every real chat, which is what the wiring spec's regression example
         # pins one object further in. Deep-freezing here is safe because the
-        # array is ours, built by {Timeline.project} out of already-frozen
+        # array is ours, built by {EventLog::Messages.project} out of already-frozen
         # event bodies.
         class Replay < Context::Combinator
           def initialize(messages)

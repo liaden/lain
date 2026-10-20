@@ -220,7 +220,7 @@ module Lain
       # The promise a question set is answered through, wearing the digest of
       # the Q event it answers. That digest is the whole point: "asked most
       # recently" is NOT "being answered", and a :turn edge is the ONLY
-      # consumption {Event::Projection#pending} counts -- so the wrong digest
+      # consumption {EventLog::Projection#pending} counts -- so the wrong digest
       # leaves an answered question in the human's inbox forever while an
       # unanswered one silently vanishes.
       class Pending < Promise
@@ -653,14 +653,14 @@ module Lain
       # handle instead of defaulting here a second way -- see {Parent#to} for
       # who inherits what. Passing `to:` explicitly still overrides, for a
       # caller with no handle worth carrying an address on at all.
-      def initialize(parent:, name: "ask_human", agent: nil, observer: Event::ChainWriter::Null.new, to: nil,
+      def initialize(parent:, name: "ask_human", agent: nil, observer: EventLog::ChainWriter::Null.new, to: nil,
                      notify: NoArrival, journal: Channel::Null.instance)
         super()
         @parent = Parent.over(parent)
         @name = name
         @agent = agent
         @to = to || @parent.to
-        @chain_writer = Event::ChainWriter.new(observer:)
+        @chain_writer = EventLog::ChainWriter.new(observer:)
         @outstanding = Outstanding.new
         @notify = notify
         @answered = Answered.new
@@ -791,7 +791,7 @@ module Lain
       # The digests of every question whose answer has passed the sync gate
       # since the last hand-over, then cleared. The Agent's tool_result commit
       # cites these as causal parents -- the :turn edge that is the ONLY
-      # consumption {Event::Projection#pending} counts, since a reply :message
+      # consumption {EventLog::Projection#pending} counts, since a reply :message
       # alone never retires its question. Handed over exactly once, because the
       # edge belongs to the one commit that delivers the answer.
       #
@@ -1032,7 +1032,7 @@ module Lain
 
       # A chain is named by its root event digest, so the asker is addressable
       # without new id machinery -- Subagent's Lineage derives it the same way.
-      def identity(timeline) = Event::ChainWriter.correlation_of(timeline)
+      def identity(timeline) = EventLog::ChainWriter.correlation_of(timeline)
 
       # The parent Timeline, live -- read through the {Parent} handle every
       # shape a caller passes is normalized into.

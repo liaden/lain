@@ -21,7 +21,7 @@ module Lain
       # question once these doors began to repair: on disk an unanswered
       # tool_use is stranded, live it may be in flight.
       # {CLI::Command::Fork#anchor!} keeps its own gate over the same
-      # {Event.pending_tool_use?}, narrowed by `env.replies.pending?` -- a
+      # {EventLog::Guards.pending_tool_use?}, narrowed by `env.replies.pending?` -- a
       # reader a loading door has no use for, because nothing of its own is
       # running -- and builds its sentence with the same {Resume::Door}.
       module MidTool

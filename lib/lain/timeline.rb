@@ -123,13 +123,8 @@ module Lain
     # @return [Array<Hash>] deep frozen, root first
     def messages(after: nil, onto: NO_MESSAGES)
       turns = ancestors.take_while { |turn| turn.digest != after }
-      fresh = self.class.project(turns.reverse)
+      fresh = EventLog::Messages.project(turns.reverse)
       reached?(turns, after) ? (onto + fresh).freeze : fresh
-    end
-
-    # @param turns [Array<Event>] already walked, for a caller that needs them beside the messages
-    def self.project(turns)
-      turns.map { |turn| { "role" => turn.role, "content" => turn.content }.freeze }.freeze
     end
 
     def length
@@ -156,10 +151,10 @@ module Lain
     # {Tools::Subagent::Lineage} and {Tools::AskHuman} address a chain with --
     # a chain is named by its root event's digest, no separate id machinery.
     # Public so any caller can address a Timeline by identity without reaching
-    # into `head.correlation`; {Event::ChainWriter.correlation_of} is the one
+    # into `head.correlation`; {EventLog::ChainWriter.correlation_of} is the one
     # shared implementation.
     def correlation
-      Event::ChainWriter.correlation_of(self)
+      EventLog::ChainWriter.correlation_of(self)
     end
 
     # Regular: two Timelines are equal exactly when they name the same turn.
@@ -190,7 +185,7 @@ module Lain
     # #commit's own name for the value #correlation already derives -- kept
     # as a distinct, private name because "the correlation to stamp on the
     # NEXT turn" is a different intent from "this chain's identity," even
-    # though {Event::ChainWriter.correlation_of} answers both the same way.
+    # though {EventLog::ChainWriter.correlation_of} answers both the same way.
     def next_correlation = correlation
   end
 end

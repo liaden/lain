@@ -485,7 +485,7 @@ RSpec.describe Lain::Bench::Session::Loader do
         loaded = described_class.new(records).recording
 
         expect(loaded.timeline.head_digest).to eq(chain.head_digest)
-        expect(Lain::Event.pending_tool_use?(loaded.timeline.head)).to be(true)
+        expect(Lain::EventLog::Guards.pending_tool_use?(loaded.timeline.head)).to be(true)
       end
     end
 
@@ -793,7 +793,7 @@ RSpec.describe Lain::Bench::Session::Loader do
 
     describe "message records rejoin the Store" do
       let(:chain) { CoreGraph.timeline.commit(role: :user, content: text("ask me")) }
-      let(:writer) { Lain::Event::ChainWriter.new }
+      let(:writer) { Lain::EventLog::ChainWriter.new }
       let(:question) do
         writer.put(chain, kind: :message, from: chain.correlation, to: "human",
                           causal_parents: [chain.head_digest], body: { "question" => "which file?" })

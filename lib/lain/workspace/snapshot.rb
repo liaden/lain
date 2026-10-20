@@ -7,7 +7,7 @@ module Lain
     # Writes the workspace's file state into the event log: one :snapshot event
     # whose payload maps each write-set path to the content address of its
     # current bytes, the bytes themselves stored out of line as {Blob}s in the
-    # same Store. {Event::Projection#workspace_at} is the read side, and WHICH
+    # same Store. {EventLog::Projection#workspace_at} is the read side, and WHICH
     # paths are captured is the injected {Scope}'s to say -- its note rides every
     # payload's "snapshot_scope", so the record names the policy that made it.
     #
@@ -75,13 +75,13 @@ module Lain
       attr_reader :outside
 
       # @param observer [#call] sees every :snapshot event written, the same
-      #   study-bench seam {Event::ChainWriter} gives ask_human's Q/A events
+      #   study-bench seam {EventLog::ChainWriter} gives ask_human's Q/A events
       # @param root [String] the workspace root file keys are made relative to;
       #   the same base `File.expand_path` resolves the Session's sets against
       # @param scope [Scope, Symbol, String] a scope object or a registered
       #   short name
-      def initialize(observer: Event::ChainWriter::Null.new, root: Dir.pwd, scope: Scope::WriteSet.new)
-        @chain_writer = Event::ChainWriter.new(observer:)
+      def initialize(observer: EventLog::ChainWriter::Null.new, root: Dir.pwd, scope: Scope::WriteSet.new)
+        @chain_writer = EventLog::ChainWriter.new(observer:)
         @root = Pathname.new(File.expand_path(root)).freeze
         @scope = Scope.resolve(scope)
         @last_files = nil
@@ -95,7 +95,7 @@ module Lain
 
       # Blobs land first -- the payload's file digests must not dangle for a
       # restore -- then the payload-then-envelope write rides
-      # {Event::ChainWriter#put}.
+      # {EventLog::ChainWriter#put}.
       #
       # A path with no file behind it is omitted, and the omission is itself
       # content: deleting the LAST file lands an EMPTY map, a real snapshot
@@ -113,7 +113,7 @@ module Lain
 
         @last_files = files
         @chain_writer.put(timeline, kind: :snapshot,
-                                    from: Event::ChainWriter.correlation_of(timeline), to: nil,
+                                    from: EventLog::ChainWriter.correlation_of(timeline), to: nil,
                                     causal_parents: [timeline.head_digest].compact,
                                     body: { "root" => @root.to_s, "files" => files,
                                             "snapshot_scope" => @scope.note })

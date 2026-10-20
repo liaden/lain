@@ -10,7 +10,7 @@ RSpec.describe Lain::Ext::Event do
     Lain::Event.new(kind:, carried_payload: payload, **fields)
   end
 
-  Lain::Event::KINDS.each do |kind|
+  Lain::EventLog::Kinds::KINDS.each do |kind|
     it "digests a #{kind} event to the Ruby digest" do
       fields = { from: "alice", to: "bob", render_parent: "blake3:p", causal_parents: %w[blake3:b blake3:a],
                  correlation: "blake3:root" }

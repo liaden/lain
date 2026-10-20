@@ -12,7 +12,7 @@ module Lain
     # * {#catch_up} walks the render chain and appends a `turn` record for every
     #   committed turn not yet written. A Timeline walk sees ONLY render-chain
     #   turns -- that is all it can see -- so that is all this writes.
-    # * {#call} is the {Event::ChainWriter} observer duck. :message/:spawn events
+    # * {#call} is the {EventLog::ChainWriter} observer duck. :message/:spawn events
     #   never enter any render chain (their causal edges point BACKWARD and the
     #   shared Store has no forward enumerator), so a Timeline walk CANNOT find
     #   them; they arrive by observation instead, as {Telemetry::Message}
@@ -166,7 +166,7 @@ module Lain
                                          compaction:, arms:, middleware:, writer:)
       end
 
-      # The {Event::ChainWriter} observer duck: journal an off-render-chain
+      # The {EventLog::ChainWriter} observer duck: journal an off-render-chain
       # event as its own flat record. A raise here propagates back through the
       # ChainWriter AFTER the Store write has landed (the seam's pinned
       # contract), so a scribe failure is loud, never silent record loss.

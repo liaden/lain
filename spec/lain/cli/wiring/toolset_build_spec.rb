@@ -2,7 +2,7 @@
 
 # {Lain::CLI::Chronicle::Null#observer} answers a FRESH Null chain writer on
 # every call, which cannot tell a forwarded observer from a discarded one -- the
-# assertion would pass against `observer: Event::ChainWriter::Null.new`. This one
+# assertion would pass against `observer: EventLog::ChainWriter::Null.new`. This one
 # holds ONE, so the spawn seam's observer member is an identity claim.
 class ToolsetBuildChronicle < Lain::CLI::Chronicle::Null
   def observer = @observer ||= ->(event) { event }
@@ -835,7 +835,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # second answer to "who is holding this question".
     describe "the ask-the-human seam a child inherits" do
       let(:askers) do
-        Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
+        Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new)
       end
 
       it "hands the spawn seam the run's own askers, never a second one" do

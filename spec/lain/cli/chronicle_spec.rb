@@ -319,8 +319,8 @@ RSpec.describe Lain::CLI::Chronicle do
     # Loud, not lossy: an event arriving before the scribe exists must raise,
     # never silently vanish -- pre-start is wiring time, when no event can flow.
     it "raises NotStarted from the observer (and catch_up) before #start" do
-      event = Lain::Event::ChainWriter.new.put(timeline, kind: :message, from: "a", to: "b",
-                                                         causal_parents: [], body: {})
+      event = Lain::EventLog::ChainWriter.new.put(timeline, kind: :message, from: "a", to: "b",
+                                                            causal_parents: [], body: {})
 
       expect { chronicle.observer.call(event) }.to raise_error(described_class::NotStarted)
       expect { chronicle.catch_up(timeline) }.to raise_error(described_class::NotStarted)
@@ -356,7 +356,7 @@ RSpec.describe Lain::CLI::Chronicle do
   describe "#observer" do
     it "routes tool events to the scribe: a ChainWriter put lands as a message record" do
       chronicle.start(context:, toolset:)
-      writer = Lain::Event::ChainWriter.new(observer: chronicle.observer)
+      writer = Lain::EventLog::ChainWriter.new(observer: chronicle.observer)
 
       event = writer.put(timeline, kind: :message, from: "a", to: "human",
                                    causal_parents: [], body: { "question" => "q?" })
@@ -372,7 +372,7 @@ RSpec.describe Lain::CLI::Chronicle do
       channel = []
       chronicle.wrap_tee(channel)
       chronicle.start(context:, toolset:)
-      writer = Lain::Event::ChainWriter.new(observer: chronicle.observer)
+      writer = Lain::EventLog::ChainWriter.new(observer: chronicle.observer)
 
       event = writer.put(timeline, kind: :message, from: "a", to: "human",
                                    causal_parents: [], body: { "question" => "q?" })
@@ -781,7 +781,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "satisfies the whole duck and records nothing" do
       expect(null.journal_path).to be_nil
-      expect(null.observer).to be_a(Lain::Event::ChainWriter::Null)
+      expect(null.observer).to be_a(Lain::EventLog::ChainWriter::Null)
       expect(null.start(context: nil, toolset: nil)).to be(null)
       expect(null.turn_middleware(-> {}).to_a).to be_empty
       expect(null.instrumentation.journal).to be(Lain::Channel::Null.instance)

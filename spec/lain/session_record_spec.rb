@@ -667,7 +667,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     let(:parent) { CoreGraph.timeline(store:).commit(role: :user, content: text("ask me")) }
 
     it "journals both :message events as `message` records, every envelope+body field pinned" do
-      writer = Lain::Event::ChainWriter.new(observer: scribe)
+      writer = Lain::EventLog::ChainWriter.new(observer: scribe)
 
       question = writer.put(parent, kind: :message, from: parent.correlation, to: "human",
                                     causal_parents: [parent.head_digest], body: { "question" => "which file?" })
@@ -688,7 +688,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
 
     it "records a :spawn event under the same additive `message` type, kind distinguishing it" do
-      writer = Lain::Event::ChainWriter.new(observer: scribe)
+      writer = Lain::EventLog::ChainWriter.new(observer: scribe)
       spawn = writer.put(parent, kind: :spawn, from: parent.correlation, to: nil,
                                  causal_parents: [parent.head_digest], body: { "spawned_from" => parent.head_digest })
 
@@ -704,7 +704,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       sink = []
       tee = Lain::CLI::JournalTee.new(journal, sink)
       routed = described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee)
-      writer = Lain::Event::ChainWriter.new(observer: routed)
+      writer = Lain::EventLog::ChainWriter.new(observer: routed)
 
       question = writer.put(parent, kind: :message, from: parent.correlation, to: "human",
                                     causal_parents: [parent.head_digest], body: { "question" => "which file?" })
@@ -735,7 +735,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     it "propagates a scribe failure out of the ChainWriter, the write already landed" do
       broken = described_class.new(journal:, context:, toolset:, workspace:)
       def broken.call(_event) = raise("scribe down")
-      writer = Lain::Event::ChainWriter.new(observer: broken)
+      writer = Lain::EventLog::ChainWriter.new(observer: broken)
 
       expect { writer.put(parent, kind: :message, from: "a", to: "b", causal_parents: [], body: {}) }
         .to raise_error("scribe down")

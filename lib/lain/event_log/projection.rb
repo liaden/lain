@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  class Event
+  module EventLog
     # Read-only views over a log of {Event}s. Each projection is a PURE FOLD:
     # same log and same injected data, same answer; no accumulated state.
     class Projection

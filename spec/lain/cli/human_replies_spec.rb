@@ -240,7 +240,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   # sides that each had green specs (see the editor rail below), and "the
   # arrival carries its own digest" is a claim about the pair.
   let(:askers) do
-    Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
+    Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new)
   end
   let(:questions) { askers.questions }
   # The run's routing table, exactly as Wiring hands it over: this class holds
@@ -3241,7 +3241,7 @@ RSpec.describe Lain::CLI::Wiring::Askers do
   let(:parent) do
     Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
-  let(:askers) { described_class.new(observer: Lain::Event::ChainWriter::Null.new) }
+  let(:askers) { described_class.new(observer: Lain::EventLog::ChainWriter::Null.new) }
   let(:set) { Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: "which db?")]) }
 
   def chain(text)
@@ -3263,7 +3263,7 @@ RSpec.describe Lain::CLI::Wiring::Askers do
 
   it "hands its journal to every asker, so a stopped ask is named consumed there" do
     journal = []
-    wired = described_class.new(observer: Lain::Event::ChainWriter::Null.new, journal:)
+    wired = described_class.new(observer: Lain::EventLog::ChainWriter::Null.new, journal:)
     Sync do |task|
       asker = wired.enrol(parent).asker
       run = task.async { asker.call({ "question" => "which db?" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance)) }

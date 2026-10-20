@@ -174,7 +174,7 @@ RSpec.describe "Lain::Agent cancellation" do
         # And the record stays honest: the cancelled question is still pending
         # in the human's projection -- unanswered, never claimed as consumed.
         log = agent.timeline.to_a + [cancelled, ask.last_question, ask.last_answer]
-        expect(Lain::Event::Projection.new(log).pending("human").to_a.map(&:digest)).to eq([cancelled.digest])
+        expect(Lain::EventLog::Projection.new(log).pending("human").to_a.map(&:digest)).to eq([cancelled.digest])
       end
     end
   end

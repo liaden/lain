@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe Lain::Event::Projection do
+RSpec.describe Lain::EventLog::Projection do
   def block(text) = [{ "type" => "text", "text" => text }]
 
   def message(to:, from: "orchestrator")

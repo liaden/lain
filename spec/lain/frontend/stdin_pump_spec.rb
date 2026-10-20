@@ -886,7 +886,9 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
     let(:store) { Lain::Dag::Factory.store }
     let(:mailbox) do
-      Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of), observer: ->(_) {})
+      Lain::Context::Mailbox::Live.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of),
+                                       observer: lambda { |_|
+                                       })
     end
     let(:notes) { Lain::CLI::HumanNotes.new(mailbox:, in_flight: -> { true }) }
     let(:timeline) do

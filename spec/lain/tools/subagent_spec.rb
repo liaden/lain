@@ -3122,11 +3122,11 @@ RSpec.describe Lain::Tools::Subagent do
   #
   # Driven through the REAL arrival seam rather than through a directory alone.
   # A plain {AskHuman} writes Q to the Store and announces to nobody, and
-  # {Event::Projection#pending} reads the Store -- so every other claim in this
+  # {EventLog::Projection#pending} reads the Store -- so every other claim in this
   # block passes for a child whose questions never reach the TTY. The queue,
   # and the sender the arrival carries, are what say they do.
   describe "asking the human from inside a child" do
-    let(:askers) { Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new) }
+    let(:askers) { Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new) }
 
     # The chat the human is having, holding its own asker on the SAME seam --
     # so "parent and child are pending at once" is a claim about two real
@@ -3562,7 +3562,7 @@ RSpec.describe Lain::Tools::Subagent do
       it "uses the asker's name and not the correlation an :inherit child shares with its parent" do
         items = pending_pair(:inherit)
 
-        expect(items.map(&:from)).not_to include(Lain::Event::ChainWriter.correlation_of(parent))
+        expect(items.map(&:from)).not_to include(Lain::EventLog::ChainWriter.correlation_of(parent))
       end
 
       it "names the child apart from its parent in the nvim inbox, on a fresh spawn" do
@@ -3603,7 +3603,7 @@ RSpec.describe Lain::Tools::Subagent do
     # what "reaches the human through its parent" means.
     it "reaches the human through its parent, and the record shows both hops" do
       tool = asking_subagent(mock(asks, text_response("done")))
-      parent_correlation = Lain::Event::ChainWriter.correlation_of(parent)
+      parent_correlation = Lain::EventLog::ChainWriter.correlation_of(parent)
 
       _dispatched, item = answered(tool, answer: "postgres")
       relayed = store.fetch(item.digest)
@@ -3677,7 +3677,7 @@ RSpec.describe Lain::Tools::Subagent do
 
           expect(parent_asker).to be_pending
           expect(items.map(&:from).uniq.size).to eq(2)
-          expect(Lain::Event::Projection.new(items.map { |item| store.fetch(item.digest) })
+          expect(Lain::EventLog::Projection.new(items.map { |item| store.fetch(item.digest) })
                                         .pending("human").to_a.size).to eq(2)
 
           items.each { |item| askers.directory.reply("ok", item.digest) }
@@ -3873,7 +3873,7 @@ RSpec.describe Lain::Tools::Subagent do
     # never produced an actor must not leave an asker nothing will release:
     # the Actor reference goes with the raise, so nothing else could ever
     # `deregister` it. Driven through the seam's observer, which
-    # {Event::ChainWriter#put} documents as raising OUT of the write.
+    # {EventLog::ChainWriter#put} documents as raising OUT of the write.
     it "releases the child's registration when the launch itself raises" do
       seam = asking_seam(mock(text_response("unused"))).with(observer: ->(_e) { raise "the record is on fire" })
       tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []),

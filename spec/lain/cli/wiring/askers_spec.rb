@@ -8,7 +8,7 @@ RSpec.describe Lain::CLI::Wiring::Askers do
     Lain::Dag::Factory.timeline(store:)
                       .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
-  let(:askers) { described_class.new(observer: Lain::Event::ChainWriter::Null.new) }
+  let(:askers) { described_class.new(observer: Lain::EventLog::ChainWriter::Null.new) }
 
   # {Tools::AskHuman}'s `parent:` is the idiom {Lain.live} generalizes: the
   # toolset is built before the Agent whose Timeline it asks against exists,

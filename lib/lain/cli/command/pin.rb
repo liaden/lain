@@ -81,12 +81,12 @@ module Lain
           # `ask_human` or any other tool_use nothing has answered yet -- is
           # never what a bare `/pin` means: an operator reads the answer, not
           # the open question, so a pin lands on the turn that gave it.
-          # {Event.pending_tool_use?} only ever answers true of the live head
+          # {EventLog::Guards.pending_tool_use?} only ever answers true of the live head
           # here, because every OLDER assistant turn was necessarily settled
           # before anything could commit past it -- so this skips at most one
           # candidate, never a real assistant turn buried in history.
           def last_assistant
-            parked = Event.pending_tool_use?(@timeline.head)
+            parked = EventLog::Guards.pending_tool_use?(@timeline.head)
             turn = @timeline.ancestors.find do |candidate|
               candidate.role == "assistant" && !(parked && candidate.digest == @timeline.head_digest)
             end

@@ -15,7 +15,7 @@ module Lain
       # commit head, the original run sent those turns verbatim, and a summary
       # committed later in time has no business replacing the turn a human
       # rewound TO. The commit head is the turn the render stood on
-      # ({Event.stands_on}), not the prompt at the head: an ask refused before
+      # ({EventLog::Guards.stands_on}), not the prompt at the head: an ask refused before
       # any model saw it withdraws that prompt and the next takes its place, so
       # a cut committed at the prompt itself retreated and was committed again
       # on every stuck ask. The arm rule keeps one arm's prefix from being sent
@@ -280,7 +280,7 @@ module Lain
 
         def cut(digest, kind:, supersedes:, collapses:)
           Telemetry::CompactionCut.new(
-            digest:, head: Event.stands_on(@walk.turns.last), strategy: @arm, kind:,
+            digest:, head: EventLog::Guards.stands_on(@walk.turns.last), strategy: @arm, kind:,
             parent: @lineage.last&.address, supersedes:, collapses:,
             plan_step_completions: @session.plan_step_completions
           )

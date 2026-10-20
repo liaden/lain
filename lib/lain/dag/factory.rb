@@ -33,7 +33,7 @@ module Lain
       # An event carrying its payload, for a caller that puts both: each store
       # takes only its own implementation's events.
       #
-      # @param kind [Symbol] one of {Event::KINDS}
+      # @param kind [Symbol] one of {EventLog::Kinds::KINDS}
       # @param body [Hash] what the payload carries, addressed apart from the envelope
       # @param envelope [Hash] `from:`, `to:`, `render_parent:`, `causal_parents:`, `correlation:`
       # @return [Lain::Ext::Event, Lain::Event]

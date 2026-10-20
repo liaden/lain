@@ -516,7 +516,7 @@ module Lain
       # It lives on {Subagent}, not inside the `Data.define` block: a constant
       # written in that block lands in the ENCLOSING module rather than on the
       # Data class, and the block's own constant lookup is lexical from here.
-      NO_OBSERVER = Event::ChainWriter::Null.new.freeze
+      NO_OBSERVER = EventLog::ChainWriter::Null.new.freeze
 
       # A spawn seam handed something other than a builder of a child's tool
       # stack. Named, and raised where the seam is built: the likeliest wrong
@@ -1505,7 +1505,7 @@ module Lain
           # A class method rather than an instance one: {ChildBuilder#own_chain}
           # needs this value BEFORE a Chain exists to call it on.
           def self.escalation_road(base, parent, beyond)
-            road = [Event::ChainWriter.correlation_of(base), Event::ChainWriter.correlation_of(parent), *beyond]
+            road = [EventLog::ChainWriter.correlation_of(base), EventLog::ChainWriter.correlation_of(parent), *beyond]
             road.chunk_while { |a, b| a == b }.map(&:first).drop(1)
           end
 

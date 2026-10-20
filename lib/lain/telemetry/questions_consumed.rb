@@ -28,7 +28,7 @@ module Lain
       include Journalable
 
       # @param event [Lain::Event] a `:turn` arriving on the
-      #   {Event::ChainWriter} funnel, which is to say a spawned chain's
+      #   {EventLog::ChainWriter} funnel, which is to say a spawned chain's
       # @return [QuestionsConsumed]
       def self.from_event(event) = new(turn: event.digest, digests: event.causal_parents)
 

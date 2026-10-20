@@ -46,7 +46,7 @@ module Lain
         #   is derived from
         # @param pending [Array<Event>] given whole by an inbox that judges
         #   pending itself ({Live}), in place of the derivation
-        def initialize(recipient: nil, events: [], pending: Event::Projection.new(events).pending(recipient).to_a)
+        def initialize(recipient: nil, events: [], pending: EventLog::Projection.new(events).pending(recipient).to_a)
           @pending = pending.dup.freeze
           freeze
         end

@@ -97,9 +97,9 @@ end
 --                  tool's name, once renders carry one) leading each
 --                  "[id stream]" prefix (JournalView#attribute_lines)
 --   lainDigest     the Store's own "blake3:..." digest shape
---   lainRole       exactly {Event::ROLES} (user/assistant) opening a
+--   lainRole       exactly {EventLog::Kinds::ROLES} (user/assistant) opening a
 --                  timeline turn line (Buffers#turn_line)
---   lainEventKind  {Event::KINDS} plus the tool-stream words the journal
+--   lainEventKind  {EventLog::Kinds::KINDS} plus the tool-stream words the journal
 --                  prints (stdout/stderr)
 --   lainAge        {InboxView#age_of}'s "12s"/"3m"/"1h" shape
 --   lainSender     inbox sender attribution: the text leading the

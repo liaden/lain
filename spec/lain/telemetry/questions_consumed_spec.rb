@@ -101,8 +101,8 @@ RSpec.describe Lain::Telemetry::QuestionsConsumed do
                                                           content: [{
                                                             "type" => "text", "text" => "seed"
                                                           }])
-      question = Lain::Event::ChainWriter.new.put(parent, kind: :message, from: "orchestrator", to: "human",
-                                                          causal_parents: [], body: { "question" => "which db?" })
+      question = Lain::EventLog::ChainWriter.new.put(parent, kind: :message, from: "orchestrator", to: "human",
+                                                             causal_parents: [], body: { "question" => "which db?" })
       shapes = [
         described_class.new(turn: "blake3:head", digests: question.digest),
         described_class.new(turn: "blake3:head", digests: nil),

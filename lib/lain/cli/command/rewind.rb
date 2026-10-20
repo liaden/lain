@@ -67,11 +67,11 @@ module Lain
         # A stranded head would fold the next line into a prompt whose answer
         # was just rewound away, replaying its side effects.
         def past_stranded(count, timeline)
-          Event.stranded_prompt?(timeline.ancestors.to_a[count]) ? count + 1 : count
+          EventLog::Guards.stranded_prompt?(timeline.ancestors.to_a[count]) ? count + 1 : count
         end
 
         def dropped_note(event)
-          return "" unless Event.stranded_prompt?(event)
+          return "" unless EventLog::Guards.stranded_prompt?(event)
 
           "\n1 more turn was dropped so the head is not a stranded prompt: #{quote(event)}"
         end
@@ -107,7 +107,7 @@ module Lain
 
         def parked(timeline)
           head = timeline.head
-          return "a run is still in flight" unless Event.pending_tool_use?(head)
+          return "a run is still in flight" unless EventLog::Guards.pending_tool_use?(head)
 
           names = head.content.grep(Hash).select { |block| block["type"] == "tool_use" }.map { |use| use["name"] }
           noun = names.one? ? "call is" : "calls are"
@@ -154,7 +154,7 @@ module Lain
           raise Refusal, "#{prefix.inspect} is ambiguous on this session's chain: #{matches.join(", ")}"
         end
 
-        # Shares {Event.pending_tool_use?} with the session-loading doors (see
+        # Shares {EventLog::Guards.pending_tool_use?} with the session-loading doors (see
         # {CLI::Resume::MidTool}): a target that is an assistant tool_use turn
         # must not become the head, because its results -- which exist, above
         # it -- would be rewound past and the next request would dangle the call.
@@ -169,7 +169,7 @@ module Lain
         # the guard.
         def settled_target!(count, timeline, typed)
           heads = timeline.ancestors.to_a
-          return unless Event.pending_tool_use?(heads[count])
+          return unless EventLog::Guards.pending_tool_use?(heads[count])
 
           raise Refusal, "#{typed} lands on an assistant tool_use turn; its tool results would be rewound " \
                          "past, and the next request would dangle the call (nearest valid targets: " \
@@ -179,9 +179,9 @@ module Lain
         # The valid counts adjacent to the refused one. Never empty: distance
         # `length` is the empty session, which no tool_use can occupy, and
         # `heads[heads.length]` is nil -- exactly what
-        # {Event.pending_tool_use?}'s nil guard exists for.
+        # {EventLog::Guards.pending_tool_use?}'s nil guard exists for.
         def nearest_valid(count, heads)
-          valid = (1..heads.length).reject { |candidate| Event.pending_tool_use?(heads[candidate]) }
+          valid = (1..heads.length).reject { |candidate| EventLog::Guards.pending_tool_use?(heads[candidate]) }
           [valid.reverse.find { |candidate| candidate < count }, valid.find { |candidate| candidate > count }].compact
         end
 

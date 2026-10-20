@@ -130,10 +130,6 @@ RSpec.describe Lain::Event do
     end
 
     describe "construction" do
-      it "accepts the two wire roles" do
-        expect(Lain::Event::ROLES).to contain_exactly("user", "assistant")
-      end
-
       it "rejects any other role" do
         expect { turn(role: "system") }
           .to raise_error(Lain::Error, /must be one of/)
@@ -235,98 +231,6 @@ RSpec.describe Lain::Event do
                        },
                        unequal: -> { described_class.turn(role: :user, content: block("bye")) },
                        non_member: -> { described_class.turn(role: :user, content: block("hi")).digest }
-    end
-  end
-
-  # The turn a render over a head stands on: what a reading or a compaction cut
-  # taken on that render is believed on. One rule, read by the Agent for a
-  # refused count and by the compaction cut for its commit head, and carried on
-  # the refusal record so a live view reads the same answer rather than guessing.
-  describe ".stands_on" do
-    let(:line) do
-      Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: block("ask"))
-                    .commit(role: :assistant, content: block("answer"))
-    end
-
-    it "is the turn beneath a user turn at the head, which the render added" do
-      prompted = line.commit(role: :user, content: block("next"))
-
-      expect(described_class.stands_on(prompted.head)).to eq(line.head_digest)
-    end
-
-    it "is the head itself when the head is the model's own turn" do
-      expect(described_class.stands_on(line.head)).to eq(line.head_digest)
-    end
-
-    it "is nil, the empty chain, beneath a root prompt and for no head at all" do
-      expect(described_class.stands_on(line.rewind(1).head)).to be_nil
-      expect(described_class.stands_on(nil)).to be_nil
-    end
-  end
-
-  # One definition of "the head is a tool_use awaiting results", shared by
-  # resume, fork, and rewind -- previously duplicated in resume.rb and
-  # rewind.rb with a load-bearing difference (rewind's guarded the nil case,
-  # resume's did not).
-  describe ".pending_tool_use?" do
-    def torn
-      described_class.turn(role: :assistant,
-                           content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo", "input" => {} }])
-    end
-
-    def settled = described_class.turn(role: :user, content: block("tool result"))
-
-    def prose_only = described_class.turn(role: :assistant, content: block("all done"))
-
-    # Mechanical check for the AC's own wording: exactly one `def` (class or
-    # instance) named pending_tool_use? anywhere under lib/.
-    it "is defined exactly once in lib/" do
-      lib_root = File.expand_path("../../lib", __dir__)
-      definitions = Dir.glob("#{lib_root}/**/*.rb").sum do |file|
-        File.read(file).scan(/\bdef\s+(?:self\.)?pending_tool_use\?/).size
-      end
-      expect(definitions).to eq(1)
-    end
-
-    it "answers true for a torn head: an assistant tool_use with no result" do
-      expect(described_class.pending_tool_use?(torn)).to be(true)
-    end
-
-    it "answers false for no event at all, rather than raising" do
-      expect(described_class.pending_tool_use?(nil)).to be(false)
-    end
-
-    it "answers false for a settled head: the user event carrying the tool results" do
-      expect(described_class.pending_tool_use?(settled)).to be(false)
-    end
-
-    it "answers false for an ordinary text answer" do
-      expect(described_class.pending_tool_use?(prose_only)).to be(false)
-    end
-  end
-
-  describe ".stranded_prompt?" do
-    it "answers true for a user turn whose every block is text" do
-      expect(described_class.stranded_prompt?(described_class.turn(role: :user, content: block("hi")))).to be(true)
-    end
-
-    it "answers false for no event at all, rather than raising" do
-      expect(described_class.stranded_prompt?(nil)).to be(false)
-    end
-
-    it "answers false for a user turn carrying a tool result" do
-      results = [{ "type" => "tool_result", "tool_use_id" => "tu_1", "content" => "ok" }]
-      expect(described_class.stranded_prompt?(described_class.turn(role: :user, content: results))).to be(false)
-    end
-
-    it "answers false for a user turn mixing text with a tool result" do
-      mixed = block("hi") + [{ "type" => "tool_result", "tool_use_id" => "tu_1", "content" => "ok" }]
-      expect(described_class.stranded_prompt?(described_class.turn(role: :user, content: mixed))).to be(false)
-    end
-
-    it "answers false for an assistant text turn" do
-      expect(described_class.stranded_prompt?(described_class.turn(role: :assistant,
-                                                                   content: block("hi")))).to be(false)
     end
   end
 

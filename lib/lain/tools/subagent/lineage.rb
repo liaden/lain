@@ -11,7 +11,7 @@ module Lain
       # first-parent walk and gate 2 are untouched.
       class Lineage
         # Every event this writer puts into the shared Store is also appended
-        # to `log` in EMISSION ORDER, so a mailbox {Event::Projection} can fold
+        # to `log` in EMISSION ORDER, so a mailbox {EventLog::Projection} can fold
         # it. The one-shot path injects {Log::Null}, whose appends vanish.
         #
         # `observer` is the outward slot on the same funnel. A further observer
@@ -19,13 +19,13 @@ module Lain
         # SUBSTITUTE for it -- or @log's mailbox fold silently stops.
         # `lane` names the spawn lane an actor is launched in; empty for the
         # run's own. See {#spawn}.
-        def initialize(policy:, log: Log::Null, observer: Event::ChainWriter::Null.new, lane: "", twins: Twins::Null)
+        def initialize(policy:, log: Log::Null, observer: EventLog::ChainWriter::Null.new, lane: "", twins: Twins::Null)
           @policy = policy
           @log = log
           @lane = lane
           @adoptions = Hash.new(0)
           @twins = twins.scoped
-          @chain_writer = Event::ChainWriter.new(observer: lambda { |event|
+          @chain_writer = EventLog::ChainWriter.new(observer: lambda { |event|
             @log << event
             observer.call(event)
           })
@@ -137,7 +137,7 @@ module Lain
         # The parent chain's root digest, the same identity {#put} stamps on
         # every event. Public so an {Actor} can address the parent without
         # reaching into `identity`.
-        def correlation_of(timeline) = Event::ChainWriter.correlation_of(timeline)
+        def correlation_of(timeline) = EventLog::ChainWriter.correlation_of(timeline)
 
         # A write that ends a one-shot and could not land: `record` names which
         # -- the `completion` or the `questions_consumed` -- and `error` the

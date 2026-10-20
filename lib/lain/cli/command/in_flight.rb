@@ -21,7 +21,7 @@ module Lain
         def self.dispatching?(env) = env.agent.dispatching?
 
         # The live head is itself the parked call.
-        def self.mid_tool?(env) = dispatching?(env) && Event.pending_tool_use?(env.timeline.head)
+        def self.mid_tool?(env) = dispatching?(env) && EventLog::Guards.pending_tool_use?(env.timeline.head)
       end
     end
   end

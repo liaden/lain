@@ -5,7 +5,7 @@ require "pathname"
 module Lain
   class Workspace
     # Puts a recorded snapshot's file state back on disk -- the write side of
-    # {Event::Projection#workspace_at}. Restoring is STATE, not overlay: the
+    # {EventLog::Projection#workspace_at}. Restoring is STATE, not overlay: the
     # write-set becomes exactly the target map, so files the target does not hold
     # are deleted (an empty map -- a total-deletion snapshot -- restores to
     # nothing).
@@ -93,7 +93,7 @@ module Lain
       # log's LAST snapshot: the state the record currently asserts is on disk.
       ANY_TURN = Float::INFINITY
 
-      # @param projection [Event::Projection] the read side; a log that has
+      # @param projection [EventLog::Projection] the read side; a log that has
       #   grown means constructing a new Projection, and so a new Restore
       # @param store [Store] resolves the file map's blob digests to bytes
       # @param root [String] where relative keys land -- defaults to the same
@@ -109,7 +109,7 @@ module Lain
       # (always), {Dirty} for on-disk bytes the record does not hold (unless
       # forced) -- so a refused restore leaves disk exactly as it found it.
       #
-      # @param turn [Integer] as {Event::Projection#workspace_at} counts turns
+      # @param turn [Integer] as {EventLog::Projection#workspace_at} counts turns
       # @param force [Boolean] waive the dirty check; never the confinement
       # @return [Result]
       # @raise [Error] when no `:snapshot` stands at or before `turn`, so there

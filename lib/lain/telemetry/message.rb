@@ -12,7 +12,7 @@ module Lain
     Message = Data.define(:digest, :kind, :from, :to, :payload, :causal_parents, :correlation) do
       include Journalable
 
-      # The one funnel {Event::ChainWriter} observes hands the scribe an Event;
+      # The one funnel {EventLog::ChainWriter} observes hands the scribe an Event;
       # this is where its envelope + body become the flat record. A :turn
       # arriving on that funnel belongs to a SPAWNED chain and wears
       # {ChildTurn} instead -- see there for why the two cannot share a record.

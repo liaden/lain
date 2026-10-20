@@ -97,7 +97,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
         actor.tell("please continue")
         actor.stop
 
-        projection = Lain::Event::Projection.new(log.to_a)
+        projection = Lain::EventLog::Projection.new(log.to_a)
         inbound = projection.mailbox(actor.address).to_a # parent -> actor
         outbound = projection.mailbox(actor.parent_correlation).to_a # actor -> parent
 
@@ -132,7 +132,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
 
         actor.stop
 
-        farewell = Lain::Event::Projection.new(log.to_a).mailbox(actor.parent_correlation).to_a.last
+        farewell = Lain::EventLog::Projection.new(log.to_a).mailbox(actor.parent_correlation).to_a.last
         expect(farewell.kind).to eq(:message)
         expect(log.to_a.size).to be > before
         expect(actor).to be_stopped

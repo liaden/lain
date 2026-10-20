@@ -41,8 +41,8 @@ module Lain
     #
     # That rule says "neither is a user message" rather than "both are
     # assistant" because this validates a RENDERED array: {Context::Compact}
-    # writes its summary's role straight in without {Event.normalize_role}, so
-    # the commit layer's closed {Event::ROLES} vocabulary cannot be assumed on
+    # writes its summary's role straight in without {EventLog::Kinds.normalize_role}, so
+    # the commit layer's closed {EventLog::Kinds::ROLES} vocabulary cannot be assumed on
     # this side of the seam.
     #
     # It holds its VERDICT rather than the messages: a rendered message array

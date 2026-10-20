@@ -61,7 +61,7 @@ module Lain
       def initialize(entries, epic_slug:)
         # Materialized once rather than left lazy: the fold enumerates three
         # times and a one-shot Enumerator would silently fold to empty on the
-        # second pass -- the trap {Event::Projection} documents for its own log.
+        # second pass -- the trap {EventLog::Projection} documents for its own log.
         # An epic is a handful of issues and a day's records, so three passes
         # over an Array is the cheap answer.
         records = Journal.records(entries).to_a
@@ -198,7 +198,7 @@ module Lain
     # IS the effective view and there is no second copy to disagree with it.
     # `#ready` is the graph's own derivation asked of that view rather than
     # reimplemented, which keeps "an abandoned blocker still blocks" one rule. A
-    # pure offline refold in {Event::Projection}'s shape: same records and same
+    # pure offline refold in {EventLog::Projection}'s shape: same records and same
     # graph, same answer, no accumulated state, deeply frozen and
     # `Ractor.shareable?`.
     #

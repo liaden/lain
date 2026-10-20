@@ -905,7 +905,7 @@ RSpec.describe Lain::Frontend::Intake do
     context "with an ask in flight and notes to the agent" do
       let(:store) { Lain::Dag::Factory.store }
       let(:mailbox) do
-        Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
+        Lain::Context::Mailbox::Live.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of),
                                          observer: ->(_) {})
       end
       let(:received) { [] }

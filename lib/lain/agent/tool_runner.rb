@@ -242,7 +242,7 @@ module Lain
 
       # One user-turn delivery: the tool_result blocks PLUS the causal edges the
       # Agent's commit cites -- the consumption edge that retires an answered
-      # question from {Event::Projection#pending}("human") (the full rule lives
+      # question from {EventLog::Projection#pending}("human") (the full rule lives
       # on {Tools::AskHuman#take_answered_questions}). The tools run FIRST, since
       # only a completed dispatch makes the hand-over readable. Toolsets with
       # nothing to hand over yield `causal_parents: []`, so ordinary turns'

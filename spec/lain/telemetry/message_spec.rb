@@ -9,8 +9,8 @@ RSpec.describe Lain::Telemetry::Message do
     Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:event) do
-    Lain::Event::ChainWriter.new.put(parent, kind: :message, from: parent.correlation, to: "human",
-                                             causal_parents: [parent.head_digest], body: { "question" => "q?" })
+    Lain::EventLog::ChainWriter.new.put(parent, kind: :message, from: parent.correlation, to: "human",
+                                                causal_parents: [parent.head_digest], body: { "question" => "q?" })
   end
 
   it "journals a :message Event as an additive `message` record, field-pinned" do
@@ -24,8 +24,8 @@ RSpec.describe Lain::Telemetry::Message do
   end
 
   it "carries a :spawn Event under the same type, kind distinguishing it, a nil `to` tolerated" do
-    spawn = Lain::Event::ChainWriter.new.put(parent, kind: :spawn, from: parent.correlation, to: nil,
-                                                     causal_parents: [parent.head_digest], body: {})
+    spawn = Lain::EventLog::ChainWriter.new.put(parent, kind: :spawn, from: parent.correlation, to: nil,
+                                                        causal_parents: [parent.head_digest], body: {})
     record = described_class.from_event(spawn)
     expect(record.kind).to eq(:spawn)
     expect(record.to).to be_nil

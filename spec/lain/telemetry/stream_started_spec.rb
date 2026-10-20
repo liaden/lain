@@ -33,6 +33,6 @@ RSpec.describe Lain::Telemetry::StreamStarted do
   # (:turn/:spawn/:message/:snapshot); StreamStarted is Channel/Telemetry
   # only, so it must never appear there.
   it "names no new Store kind -- the closed KINDS set is untouched" do
-    expect(Lain::Event::KINDS).not_to include(:stream_started)
+    expect(Lain::EventLog::Kinds::KINDS).not_to include(:stream_started)
   end
 end

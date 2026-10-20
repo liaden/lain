@@ -172,7 +172,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
     expect(torn_turn.content.map { |block| block["content"] }).to start_with("postgres")
     expect(torn_turn.causal_parents).to eq([ask.last_question.digest])
     log = agent.timeline.to_a + [ask.last_question, ask.last_answer]
-    expect(Lain::Event::Projection.new(log).pending("human").to_a).to be_empty
+    expect(Lain::EventLog::Projection.new(log).pending("human").to_a).to be_empty
   end
 
   # THE CONTRACT: `CLI::Resume::Cancellation` projects a block for the same
@@ -185,7 +185,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
     end
 
     # The one head both repairs answer: an assistant turn carrying a lone
-    # unanswered tool_use, which is what `Event.pending_tool_use?` names.
+    # unanswered tool_use, which is what `EventLog::Guards.pending_tool_use?` names.
     let(:stranded) do
       Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
                         .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])

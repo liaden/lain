@@ -1716,9 +1716,9 @@ RSpec.describe Lain::CLI::Resume do
     let(:child) { Lain::Dag::Factory.timeline(store: spawn_store).commit(role: :user, content: text("helper brief")) }
 
     let(:lineage) do
-      Lain::Event::ChainWriter.new.put(parent, kind: :message, from: "child", to: "agent",
-                                               causal_parents: [child.head_digest, parent.head_digest],
-                                               body: { "summary" => "helper finished" })
+      Lain::EventLog::ChainWriter.new.put(parent, kind: :message, from: "child", to: "agent",
+                                                  causal_parents: [child.head_digest, parent.head_digest],
+                                                  body: { "summary" => "helper finished" })
     end
 
     let(:continued) do

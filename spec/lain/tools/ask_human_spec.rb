@@ -38,7 +38,7 @@ RSpec.describe Lain::Tools::AskHuman do
   def answered(tool, answer) = tool.reply(answer, tool.last_question.digest)
 
   def projection
-    Lain::Event::Projection.new(store_events)
+    Lain::EventLog::Projection.new(store_events)
   end
 
   # The Store has no enumerator of its own; the events reachable from the parent
@@ -228,7 +228,7 @@ RSpec.describe Lain::Tools::AskHuman do
       Lain::Dag::Factory.timeline(store:)
                         .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
     end
-    let(:parent_correlation) { Lain::Event::ChainWriter.correlation_of(grandparent) }
+    let(:parent_correlation) { Lain::EventLog::ChainWriter.correlation_of(grandparent) }
     let(:child) { described_class.new(parent:, to: parent_correlation) }
 
     it "addresses a child's question to the parent it was spawned under, not the literal human" do
@@ -642,7 +642,7 @@ RSpec.describe Lain::Tools::AskHuman do
         Lain::Dag::Factory.timeline(store:)
                           .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
       end
-      let(:parent_correlation) { Lain::Event::ChainWriter.correlation_of(grandparent) }
+      let(:parent_correlation) { Lain::EventLog::ChainWriter.correlation_of(grandparent) }
       let(:relaying) do
         described_class::Parent.new(read: parent, to: parent_correlation,
                                     escalation: [described_class::HUMAN])
@@ -695,7 +695,7 @@ RSpec.describe Lain::Tools::AskHuman do
           run.wait
         end
 
-        inbox = Lain::Event::Projection.new([*seen, delivery(asker.take_answered_questions)])
+        inbox = Lain::EventLog::Projection.new([*seen, delivery(asker.take_answered_questions)])
         expect(inbox.pending(described_class::HUMAN).to_a).to be_empty
       end
     end
@@ -1105,7 +1105,7 @@ RSpec.describe Lain::Tools::AskHuman do
   # being answered". Every edge written from it is written against whichever
   # ask happened last: the A event's causal parent, and -- the dangerous one --
   # the digest handed to the delivery commit. A :turn edge is the ONLY thing
-  # Event::Projection#pending counts as consumption, so citing the wrong one
+  # EventLog::Projection#pending counts as consumption, so citing the wrong one
   # retires a question nobody answered and leaves the answered one in the
   # human's inbox forever. That presents as a haunted inbox, not as a stale
   # digest, so the promise carries the digest of the set it answers and every
@@ -1175,7 +1175,7 @@ RSpec.describe Lain::Tools::AskHuman do
 
       # The observable, not the returned Array: retiring the wrong digest
       # leaves the ANSWERED question listed and drops the unanswered one.
-      inbox = Lain::Event::Projection.new([*seen, delivery(answered)]).pending("human")
+      inbox = Lain::EventLog::Projection.new([*seen, delivery(answered)]).pending("human")
       expect(inbox.to_a.map(&:digest)).to eq([second.digest])
       expect(answered).to eq([first.digest])
     end
@@ -1548,7 +1548,7 @@ RSpec.describe Lain::Tools::AskHuman do
                           .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
       end
       let(:relaying) do
-        described_class::Parent.new(read: parent, to: Lain::Event::ChainWriter.correlation_of(grandparent),
+        described_class::Parent.new(read: parent, to: Lain::EventLog::ChainWriter.correlation_of(grandparent),
                                     escalation: [described_class::HUMAN])
       end
       let(:seen) { [] }

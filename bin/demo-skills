@@ -77,7 +77,7 @@ seam = Lain::Skill::RoleSpawn.new(
   provider:, context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256) },
   toolset: union, parent: -> { parent }, slots: library.slots,
   journal: Lain::Channel::Null.instance, supervisor: Lain::Supervisor::Null,
-  observer: Lain::Event::ChainWriter::Null.new
+  observer: Lain::EventLog::ChainWriter::Null.new
 )
 role_stack = Lain::CLI::ReplMiddleware.build(role_spawn: seam, library:, **critique_seams)
 

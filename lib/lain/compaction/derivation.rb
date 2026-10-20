@@ -191,7 +191,7 @@ module Lain
       Walk = Data.define(:turns, :messages) do
         def self.of(timeline)
           turns = timeline.to_a
-          new(turns:, messages: Timeline.project(turns))
+          new(turns:, messages: EventLog::Messages.project(turns))
         end
 
         # Both invariants live in the OBJECT and not in `.of`, so no Walk can
@@ -271,7 +271,7 @@ module Lain
       # way in, so these are the bytes the provider would have seen and this is
       # the SAME judgement the committed chain would get.
       def refuse_invalid(writes, before: NO_RANGES)
-        messages = Canonical.normalize(Timeline.project(before) + writes.map(&:projection))
+        messages = Canonical.normalize(EventLog::Messages.project(before) + writes.map(&:projection))
         conversation = Context::Conversation.new(messages)
         return if conversation.valid?
 

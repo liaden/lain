@@ -2,7 +2,7 @@
 
 module Lain
   class StatusFeed
-    # {Event::Projection#pending}({Tools::AskHuman::HUMAN}) mirrored
+    # {EventLog::Projection#pending}({Tools::AskHuman::HUMAN}) mirrored
     # incrementally: what is still addressed to the human and not yet named a
     # causal parent by a committed turn. Held as two standing sets rather than
     # re-run as a fresh fold on every event -- an O(n) refold per event (O(n^2)

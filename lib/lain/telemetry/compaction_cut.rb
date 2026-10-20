@@ -64,7 +64,7 @@ module Lain
     # One committed compaction cut: the SEAM it froze and what it froze there.
     #
     # `digest` is the source turn the compaction collapsed up to, and `head` the
-    # turn the committing render stood on ({Event.stands_on}): the model's own
+    # turn the committing render stood on ({EventLog::Guards.stands_on}): the model's own
     # turn at the head, or the turn beneath a user turn the render added, since
     # an ask refused before any model saw it withdraws that prompt. A cut holds
     # only while the chain contains `head`: a rewind or a fork below it is a

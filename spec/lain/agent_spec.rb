@@ -416,7 +416,7 @@ RSpec.describe Lain::Agent do
       expect(delivery.causal_parents).to include(ask.last_question.digest)
       # And the projection agrees: the delivered question is no longer pending.
       log = a.timeline.to_a + [ask.last_question, ask.last_answer]
-      expect(Lain::Event::Projection.new(log).pending("human").to_a).to be_empty
+      expect(Lain::EventLog::Projection.new(log).pending("human").to_a).to be_empty
     end
 
     it "cites the digest exactly once: a later tool turn carries no stale edge" do
@@ -639,7 +639,7 @@ RSpec.describe Lain::Agent do
 
       it "lets the original refusal reach the caller, and the next ask answers the call once" do
         expect { doubly_torn.ask("hi") }.to raise_error(Lain::Error, UncommittableResults::Store::REFUSAL)
-        expect(Lain::Event.pending_tool_use?(doubly_torn.timeline.head)).to be(true)
+        expect(Lain::EventLog::Guards.pending_tool_use?(doubly_torn.timeline.head)).to be(true)
 
         doubly_torn.ask("again")
 
@@ -657,7 +657,7 @@ RSpec.describe Lain::Agent do
                      timeline: CoreGraph.timeline(store: UncommittableResults::Store.new(notice)))
 
         expect { over.ask("hi") }.to raise_error(Lain::Budget::Exceeded)
-        expect(Lain::Event.pending_tool_use?(over.timeline.head)).to be(true)
+        expect(Lain::EventLog::Guards.pending_tool_use?(over.timeline.head)).to be(true)
       end
     end
 
@@ -2213,7 +2213,7 @@ RSpec.describe Lain::Agent do
                .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
                .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
     end
-    let(:recipient) { Lain::Event::ChainWriter.correlation_of(parent_timeline) }
+    let(:recipient) { Lain::EventLog::ChainWriter.correlation_of(parent_timeline) }
 
     def note(text)
       lineage = Lain::Tools::Subagent::Lineage.new(policy: CoreGraph.spawn_policy, log:)
@@ -2303,7 +2303,7 @@ RSpec.describe Lain::Agent do
     describe "with a Mailbox::Live" do
       let(:journaled) { [] }
       let(:live) do
-        Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
+        Lain::Context::Mailbox::Live.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of),
                                          observer: journaled.method(:<<))
       end
       let(:encoder) { Class.new { include Lain::Provider::Ollama::Encoding }.new }

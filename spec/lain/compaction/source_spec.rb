@@ -282,7 +282,7 @@ RSpec.describe Lain::Compaction::Source do
     snapshot = Lain::Compaction::SummarySnapshot.take(messages: head.messages,
                                                       eager: Lain::Compaction::Source::NoSummaries)
     derived = Lain::Compaction::Derivation.new(strategy: SourceSpecHeldSpan.new(snapshot), keep_last:).derive(line)
-    Lain::Canonical.dump(Lain::Timeline.project(derived.to_a)).bytesize -
+    Lain::Canonical.dump(Lain::EventLog::Messages.project(derived.to_a)).bytesize -
       Lain::Canonical.dump(messages).bytesize
   end
 
@@ -1407,7 +1407,7 @@ RSpec.describe Lain::Compaction::Source do
     def chain_at(digest, store) = Lain::Dag::Factory.timeline(head_digest: digest, store:)
 
     def projection_of(digest, store)
-      Lain::Timeline.project(chain_at(digest, store).to_a)
+      Lain::EventLog::Messages.project(chain_at(digest, store).to_a)
     end
 
     it "renders the projection of the derived head the journal names" do
@@ -3089,7 +3089,8 @@ RSpec.describe Lain::Compaction::Source do
       line = timeline
       built = handing_off(keep_last: 4)
       advance = Lain::Telemetry::CompactionCut.new(
-        digest: line.to_a[1].digest, head: Lain::Event.stands_on(line.to_a.last), strategy: built.collapse_strategy,
+        digest: line.to_a[1].digest, head: Lain::EventLog::Guards.stands_on(line.to_a.last),
+        strategy: built.collapse_strategy,
         kind: "advance", parent: nil, supersedes: [], plan_step_completions: 0,
         collapses: [{ "span" => [line.to_a[0].digest, line.to_a[1].digest],
                       "content" => [{ "type" => "text", "text" => "an earlier summary" }] }]
@@ -3126,7 +3127,8 @@ RSpec.describe Lain::Compaction::Source do
       recorded = "an older document\r\n## Goal\r\nkeep going"
       session.record_compaction_cut(
         Lain::Telemetry::CompactionCut.new(
-          digest: line.to_a[1].digest, head: Lain::Event.stands_on(line.to_a.last), strategy: built.collapse_strategy,
+          digest: line.to_a[1].digest, head: Lain::EventLog::Guards.stands_on(line.to_a.last),
+          strategy: built.collapse_strategy,
           kind: "handoff", parent: nil, supersedes: [], plan_step_completions: 0,
           collapses: [{ "span" => [line.to_a[0].digest, line.to_a[1].digest],
                         "content" => [{ "type" => "text", "text" => recorded }] }]

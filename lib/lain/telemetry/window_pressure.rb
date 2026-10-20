@@ -35,7 +35,7 @@ module Lain
     # `request_digest` joins it onto the `request_sent` that carried the
     # prompt. `kind` is a closed set of one, kept so a reader discriminates on a
     # tag rather than on shape. `stands_on` is the turn the count is believed on
-    # ({Event.stands_on}, named by the Agent as it called the model), so a live
+    # ({EventLog::Guards.stands_on}, named by the Agent as it called the model), so a live
     # view tags the reading as the Agent does instead of inferring it; nil is
     # the empty chain, a value, which is why the keyword has no default.
     #

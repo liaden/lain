@@ -57,7 +57,7 @@ module Lain
       def initialize(record)
         body = read_body(record)
         body = {} unless body.is_a?(Hash)
-        # `-mark`, the house idiom (`Event.normalize_role`'s `-role.to_s`):
+        # `-mark`, the house idiom (`EventLog::Kinds.normalize_role`'s `-role.to_s`):
         # `Kernel#freeze` on `self` below is not transitive, so a mark read
         # out of an unfrozen source String -- one whose body did not pass
         # through `Canonical.normalize` before reaching this object, e.g. a

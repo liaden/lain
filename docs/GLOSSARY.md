@@ -484,7 +484,7 @@ as the `to_s` of its own object header: *valid* JSON carrying a debug string, wh
 hop from the Journal's `JSON.generate`.
 
 Adoption is partial on purpose. `Context::DedupeToolCalls`, `Context::PurgeFailedInputs`,
-`Grader::ToolCallIndex` and `Plan::Closure` read through the lenses. `Event::Projection` does not,
+`Grader::ToolCallIndex` and `Plan::Closure` read through the lenses. `EventLog::Projection` does not,
 and its comment says why: 2 of the 3 `tool_result` blocks in its own spec fixtures carry no
 `is_error`, because a causal walk has never needed to ask, so a `fetch` reader would raise on the
 project's own test data. The `fetch` readers are sound exactly where `ResultBlock.of` built the

@@ -296,7 +296,7 @@ RSpec.describe Lain::StatusFeed do
 
     it "leaves a note the human typed to the running agent out of the count" do
       feed = described_class.new(path:)
-      notes = Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
+      notes = Lain::Context::Mailbox::Live.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of),
                                                observer: feed.method(:<<))
       timeline = CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
       notes.post(from: Lain::Tools::AskHuman::HUMAN, text: "prefer Syncthing")
@@ -327,7 +327,7 @@ RSpec.describe Lain::StatusFeed do
     # The shipped example above used a synthetic :turn
     # built straight from the question's digest. The REAL Tools::AskHuman#reply
     # shape is an A :message (from: "human", causal_parents: [Q.digest]) --
-    # and Event::Projection#pending's own doc is explicit that a :message's
+    # and EventLog::Projection#pending's own doc is explicit that a :message's
     # causal_parents is lineage, never consumption: "Consumption counts :turn
     # edges ONLY". So the human answering does NOT retire their own question;
     # only a LATER :turn (an assistant commit whose folded mailbox names Q) does.
@@ -371,8 +371,8 @@ RSpec.describe Lain::StatusFeed do
 
       def stored_question(question: "which db?", from: "orchestrator")
         parent = CoreGraph.timeline(store:).commit(role: :user, content: text("seed #{question}"))
-        Lain::Event::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
-                                                 causal_parents: [], body: { "question" => question })
+        Lain::EventLog::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
+                                                    causal_parents: [], body: { "question" => question })
       end
 
       # The delivery commit's shape: a committed chain whose head turn cites
@@ -506,8 +506,8 @@ RSpec.describe Lain::StatusFeed do
 
       def stored_question(question: "which db?", from: "orchestrator")
         parent = CoreGraph.timeline(store:).commit(role: :user, content: text("seed #{question}"))
-        Lain::Event::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
-                                                 causal_parents: [], body: { "question" => question })
+        Lain::EventLog::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
+                                                    causal_parents: [], body: { "question" => question })
       end
 
       def commit_citing(*digests)
@@ -2028,7 +2028,7 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
-  # The O(n) Event::Projection fold that used to run on
+  # The O(n) EventLog::Projection fold that used to run on
   # EVERY `<<` made a session's total cost O(n^2) -- a reviewer measured 1k
   # events at 0.245s and 8k events at 8.554s. Pinned here as a cost-SHAPE
   # invariant rather than a wall-clock budget (flaky on shared/loaded CI
@@ -2036,9 +2036,9 @@ RSpec.describe Lain::StatusFeed do
   # tracks only OUTSTANDING state (currently-pending / currently-spawned),
   # never the total count of events ever pushed.
   describe "incremental derivation (no O(n) refold per event)" do
-    it "never constructs an Event::Projection -- the whole point of the incremental rewrite" do
+    it "never constructs an EventLog::Projection -- the whole point of the incremental rewrite" do
       feed = described_class.new(path:)
-      allow(Lain::Event::Projection).to receive(:new).and_call_original
+      allow(Lain::EventLog::Projection).to receive(:new).and_call_original
 
       300.times do |i|
         question = message_event("bulk-#{i}", to: "human")
@@ -2046,7 +2046,7 @@ RSpec.describe Lain::StatusFeed do
         feed << turn_event(causal_parents: [question.digest])
       end
 
-      expect(Lain::Event::Projection).not_to have_received(:new)
+      expect(Lain::EventLog::Projection).not_to have_received(:new)
     end
 
     it "keeps fleet/inbox_count bounded by OUTSTANDING state, not the total volume of events ever pushed" do
