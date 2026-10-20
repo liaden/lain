@@ -4,23 +4,15 @@ module Lain
   class Event
     # Read-only views over a log of {Event}s. Each projection is a PURE FOLD:
     # same log and same injected data, same answer; no accumulated state.
-    #
-    # `usage` is INJECTED, never read off an event, because the digest is
-    # content-only -- a rewound-then-regenerated turn is the SAME content at a
-    # DIFFERENT cost (see {Telemetry::TurnUsage}). The caller folds the Journal's
-    # `turn_usage` records into a `digest => Usage` map; this map is that join
-    # already resolved.
     class Projection
       # @param events [Enumerable<Event>] the log, in append order -- materialized
       #   here, because the folds re-enumerate and a one-shot Enumerator would
       #   silently fold to empty the second time
-      # @param usage [Hash{String=>Usage}] digest => summed usage, Journal-derived
-      def initialize(events = [], usage: {})
+      def initialize(events = [])
         # Copied, not aliased: `Array#to_a` returns the receiver, so without the
         # `dup` a caller appending to its own Array would mutate this
         # projection's log -- and a pure fold whose inputs can change is a lie.
         @events = events.to_a.dup.freeze
-        @usage = usage
       end
 
       # Exactly the :message events addressed to `recipient`, in log order.
@@ -70,23 +62,6 @@ module Lain
       # @return [Array<Hash>] the tool_result blocks, in causal-walk order
       def provenance(event)
         causal_closure(event).flat_map { |source| tool_results(source) }
-      end
-
-      # Total usage over the UNIQUE digests reachable from the given timelines.
-      # A branched history shares its prefix; keying on the content address
-      # collapses that prefix to one entry, so it is counted once no matter how
-      # many branches walk through it -- the payoff of the content-addressed DAG,
-      # and why {Usage} is a commutative monoid.
-      #
-      # A digest absent from the injected map contributes {Usage.zero}. That
-      # silence is policy, not proof: a genuinely free user turn and a
-      # Journal-join gap price identically, and this fold cannot tell them
-      # apart -- a caller auditing spend must validate the join upstream.
-      #
-      # @param timelines [Array<Timeline>]
-      # @return [Usage]
-      def usage(*timelines)
-        unique_digests(timelines).sum(Usage.zero) { |digest| @usage.fetch(digest, Usage.zero) }
       end
 
       private
@@ -149,13 +124,6 @@ module Lain
       def tool_results(event)
         blocks = event.body.is_a?(Hash) ? event.body["content"] : nil
         Array(blocks).select { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
-      end
-
-      # The Set is what collapses a shared ancestry prefix to a single entry.
-      def unique_digests(timelines)
-        timelines.flatten.each_with_object(Set.new) do |timeline, digests|
-          digests.merge(timeline.ancestor_digests)
-        end
       end
     end
   end

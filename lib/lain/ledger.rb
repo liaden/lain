@@ -11,9 +11,10 @@ module Lain
   #
   # 1. CONTENT is deduplicated. Two branches share a prefix stored once, so the
   #    walk covers UNIQUE reachable digests -- the payoff of the content-
-  #    addressed Merkle DAG, and the same reason {Lain::Usage} is a commutative
-  #    monoid: the total must not depend on how many branches cross a shared
-  #    turn, nor on order.
+  #    addressed Merkle DAG. The total does not depend on how many branches
+  #    cross a shared turn, nor on order; so the fold is a monoid homomorphism
+  #    only over timelines that share no digest, and over a fork it loses
+  #    exactly the usage of the render meet.
   # 2. PAYMENTS are not. A reachable digest may carry several {Index::Entry}s
   #    (rewind, then identical regeneration), and every one was genuinely paid
   #    for, so usage and cost sum over ALL of a turn's recorded payments.

@@ -39,17 +39,18 @@
 #   combine   [#call(a, b) -> replacement]  defaults to concatenating the two
 #                                           contents back into a replacement
 #   equal     [#call(a, b) -> bool]         defaults to `==`
+#   distinct  [bool]                        draw only pairs of distinct spans; defaults false
 module AlgebraLaws
   # The free monoid's operation, spelled out: no replacement answers `+`,
   # because nothing outside a spec ever folded two of them. Outside the Data
   # block, where a constant written inside would land here anyway.
   CONCATENATED_CONTENT = ->(a, b) { Lain::Compaction::Strategy::Replacement.of(a.content + b.content) }
 
-  MonoidHomomorphism = Data.define(:collapse, :combine, :unit, :spans, :same) do
+  MonoidHomomorphism = Data.define(:collapse, :combine, :unit, :spans, :same, :distinct) do
     def self.from(config)
       new(collapse: config.fetch(:collapse), combine: config.fetch(:combine, CONCATENATED_CONTENT),
           unit: config.fetch(:unit), spans: config.fetch(:spans).call,
-          same: config.fetch(:equal, ->(a, b) { a == b }))
+          same: config.fetch(:equal, ->(a, b) { a == b }), distinct: config.fetch(:distinct, false))
     end
 
     def to_h
@@ -70,7 +71,9 @@ module AlgebraLaws
       same.call(collapse.call(left + right), combine.call(collapse.call(left), collapse.call(right)))
     end
 
-    def pairs = spans.product(spans)
+    # A deduplicating fold is not a homomorphism on a self-pair by construction,
+    # so it opts into ordered pairs of distinct spans.
+    def pairs = distinct ? spans.permutation(2).to_a : spans.product(spans)
 
     # Spans the collapse answers real content for. A law read only over spans
     # that collapse to the unit is a statement about the unit, which is exactly

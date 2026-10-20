@@ -176,4 +176,57 @@ RSpec.describe Lain::Ledger do
         .to raise_error(Lain::PriceBook::UnknownModel, /qwen3:4b/)
     end
   end
+
+  # Built at group-definition time, because the shared groups draw their spans
+  # then: a lambda closing over locals, not over example-group methods.
+  describe "the usage fold as a monoid homomorphism" do
+    payment = lambda { |records, timeline, text|
+      committed = timeline.commit(role: "assistant", content: [{ type: "text", text: }])
+      records << { "type" => "turn_usage", "digest" => committed.head_digest, "model" => "claude-sonnet-4",
+                   "stop_reason" => "end_turn",
+                   "usage" => { "input_tokens" => 10, "output_tokens" => 5,
+                                "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 0 } }
+      committed
+    }
+
+    chain = lambda { |records, *texts, from: Lain::Timeline.empty(store: Lain::Store.new)|
+      texts.inject(from) { |timeline, text| payment.call(records, timeline, text) }
+    }
+
+    # Distinct stores and distinct root content: equal prompts share a digest
+    # across stores, which would bring the dedup back unseen.
+    disjoint_records = []
+    disjoint = %w[one two three].map { |name| chain.call(disjoint_records, "#{name}-root", "#{name}-tip") }
+    disjoint_ledger = described_class.from_journal(disjoint_records)
+
+    fork_records = []
+    base = chain.call(fork_records, "shared-1", "shared-2")
+    branch_a = chain.call(fork_records, "only-a", from: base)
+    branch_b = chain.call(fork_records, "only-b", from: base)
+    fork_ledger = described_class.from_journal(fork_records)
+
+    context "when the timelines share no digest" do
+      include_examples "a monoid homomorphism",
+                       collapse: ->(span) { disjoint_ledger.usage(*span) },
+                       combine: :+.to_proc,
+                       unit: Lain::Usage.zero,
+                       spans: -> { disjoint.zip },
+                       distinct: true
+    end
+
+    context "when the timelines fork from one base" do
+      include_examples "not a monoid homomorphism",
+                       collapse: ->(span) { fork_ledger.usage(*span) },
+                       combine: :+.to_proc,
+                       unit: Lain::Usage.zero,
+                       spans: -> { [[base], [branch_a], [branch_b]] }
+
+      it "loses exactly the meet: usage of both plus usage of the meet equals the sum of each alone" do
+        meet = Lain::Dag::RenderAncestry.meet(branch_a, branch_b)
+
+        expect(fork_ledger.usage(branch_a, branch_b) + fork_ledger.usage(meet))
+          .to eq(fork_ledger.usage(branch_a) + fork_ledger.usage(branch_b))
+      end
+    end
+  end
 end

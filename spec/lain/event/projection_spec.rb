@@ -200,30 +200,9 @@ RSpec.describe Lain::Event::Projection do
     end
   end
 
-  # Scenario: usage never double-counts a shared prefix.
   describe "#usage" do
-    def usage(input) = Lain::Usage.new(input_tokens: input, output_tokens: 0)
-
-    it "folds the injected map over unique reachable digests, counting a shared prefix once" do
-      store = Lain::Store.new
-      base = Lain::Timeline.empty(store:).commit(role: "user", content: block("shared"))
-      branch_a = base.commit(role: "user", content: block("a"))
-      branch_b = base.commit(role: "user", content: block("b"))
-
-      injected = {
-        base.head_digest => usage(100),
-        branch_a.head_digest => usage(10),
-        branch_b.head_digest => usage(20)
-      }
-      projection = described_class.new(usage: injected)
-
-      expect(projection.usage(branch_a, branch_b)).to eq(usage(130))
-    end
-
-    it "counts a digest the injected map never priced as free" do
-      store = Lain::Store.new
-      timeline = Lain::Timeline.empty(store:).commit(role: "user", content: block("unpriced"))
-      expect(described_class.new(usage: {}).usage(timeline)).to eq(Lain::Usage.zero)
+    it "is not offered: the Ledger is the one usage fold" do
+      expect(described_class.new).not_to respond_to(:usage)
     end
   end
 
