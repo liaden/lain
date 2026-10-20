@@ -241,7 +241,7 @@ module Lain
           # Said apart from "the artifact is missing", because the remedies
           # differ: this one names no issue at all.
           raise Error, "the #{stage} stage gates one issue's work, and nothing named the issue -- " \
-                       "lain epic submit #{stage} #{@home.slug} --issue ID"
+                       "#{Lain::Epic::Remedy.submit(stage, @home.slug, issue: "ISSUE_ID")}"
         end
 
         def commit!(digest)
@@ -265,7 +265,7 @@ module Lain
           # something else already computed that address, and a second opinion on the
           # same content is how two records of one thing start disagreeing.
           raise Error, "the #{stage} stage gates a changeset, and no artifact in the epic home addresses " \
-                       "one -- lain epic submit #{stage} #{@home.slug} --issue ID --digest ADDRESS"
+                       "one -- #{Lain::Epic::Remedy.submit(stage, @home.slug, issue: "ISSUE_ID", digest: "ADDRESS")}"
         end
       end
 
@@ -399,7 +399,7 @@ module Lain
         def deferred(item)
           Said.new(text: ["deferred #{item.artifact_digest}",
                           "  parked in #{item.partition} -- nothing advanced",
-                          "  review it: lain epic queue #{item.epic_slug}"].join("\n"),
+                          "  review it: #{Lain::Epic::Remedy.queue(item.epic_slug)}"].join("\n"),
                    status: 0)
         end
 
@@ -635,7 +635,7 @@ module Lain
 
       def home(slug)
         Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root,
-                                 slug: @epics.resolve_slug(slug, command: "epic submit STAGE"))
+                                 slug: @epics.resolve_slug(slug, remedy: Lain::Epic::Remedy.submit("STAGE", "SLUG")))
       end
 
       # Held around the WHOLE decision, wiring refusal included, because
@@ -712,8 +712,8 @@ module Lain
 
         raise PlanNotApproved, "issue #{plan.issue_id.inspect} cannot open its implementation gate -- its " \
                                "issue_plan #{plan.digest} is not approved (never approved, still parked, " \
-                               "denied since, or its plan or criteria changed since): lain epic submit " \
-                               "issue_plan #{plan.slug} --issue #{plan.issue_id}"
+                               "denied since, or its plan or criteria changed since): " \
+                               "#{Lain::Epic::Remedy.submit("issue_plan", plan.slug, issue: plan.issue_id)}"
       end
 
       # `for_all`, never `for`: resolving one stage at a time refuses LATE, and

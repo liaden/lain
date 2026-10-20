@@ -81,7 +81,7 @@ module Lain
       # MIDDLE, so every verb's advice is the invocation that just refused with
       # one slug added, and the trailing `SLUG` stays here rather than in four
       # strings that can drift apart.
-      REMEDY = "name one: lain %<command>s SLUG"
+      REMEDY = "name one: %<remedy>s"
 
       # The container exists but cannot be listed. Its own class for
       # {Epic::Home::UnreadableArtifact}'s reason: an unreadable directory is not
@@ -207,7 +207,7 @@ module Lain
         slugs = slugs_in(container)
         return unstarted(container) if slugs.empty?
 
-        resolved = chosen(slug, slugs, container, command: "epic status")
+        resolved = chosen(slug, slugs, container, remedy: "lain epic status SLUG")
         mermaid ? Lain::Epic::Mermaid.render(progress(resolved)) : report(resolved)
       end
 
@@ -221,7 +221,7 @@ module Lain
       #   unwritable id
       def show(doc = "research", slug = nil)
         slugs = slugs_in(container)
-        resolved = chosen(slug, slugs, container, command: "epic show")
+        resolved = chosen(slug, slugs, container, remedy: "lain epic show SLUG")
         document(home_for(resolved), doc).read
       end
 
@@ -230,16 +230,15 @@ module Lain
       #
       # Public because every epic verb has to answer it the SAME way -- a second
       # spelling of "the sole epic" would let two verbs report on different work,
-      # silently, since neither would raise. `command` has no default for the
+      # silently, since neither would raise. `remedy` has no default for the
       # same reason: it would let the NEXT verb inherit advice for a command its
-      # operator never ran. Spell it as argv does, minus the slug:
-      # `"epic submit STAGE"`, `"chat --epic"`.
+      # operator never ran.
       #
       # @param slug [String, nil]
-      # @param command [String] what the operator invoked, for {REMEDY}
+      # @param remedy [String] the command line the operator should run instead, slug as SLUG, built with {Lain::Epic::Remedy}
       # @return [String] the resolved slug
       # @raise [Ambiguous, UnknownEpic, UnreadableHome]
-      def resolve_slug(slug = nil, command:) = chosen(slug, slugs_in(container), container, command:)
+      def resolve_slug(slug = nil, remedy:) = chosen(slug, slugs_in(container), container, remedy:)
 
       # The Journal's runtime truth folded over `epic.md`, for a slug already
       # resolved (through {#resolve_slug} or {#status}'s own `chosen`).
@@ -277,7 +276,7 @@ module Lain
       # @raise [Lain::Error] any refusal from {Epic::Issue} or {Epic::Graph},
       #   before anything is written
       def add(id, title, slug = nil, discovered_from: nil)
-        apply(slug, command: "epic add ID TITLE") do |graph|
+        apply(slug, remedy: "lain epic add ISSUE_ID TITLE SLUG") do |graph|
           fiber = nil
           revised = graph.add(Lain::Epic::Issue.new(id:, title:), discovered_from:) { |cut| fiber = cut }
           [revised, fiber]
@@ -296,7 +295,7 @@ module Lain
       # @raise [Lain::Error] any refusal from {Epic::Graph}, before anything is
       #   written
       def file(issue, slug = nil)
-        apply(slug, command: "epic add ID TITLE") do |graph|
+        apply(slug, remedy: "lain epic add ISSUE_ID TITLE SLUG") do |graph|
           fiber = nil
           revised = graph.add(issue) { |cut| fiber = cut }
           [revised, fiber]
@@ -313,7 +312,7 @@ module Lain
       # @raise [Lain::Error] any other refusal from {Epic::Graph}, likewise
       #   before anything is written
       def split(id, into, slug = nil)
-        apply(slug, command: "epic split ID") do |graph|
+        apply(slug, remedy: "lain epic split ISSUE_ID SLUG") do |graph|
           original = graph.fetch(id)
           parts = comma_ids(into).map { |part_id| original.with(id: part_id) }
           fiber = nil
@@ -333,7 +332,7 @@ module Lain
       # @raise [Lain::Error] any refusal from {Epic::Issue} or {Epic::Graph},
       #   before anything is written
       def merge(left, right, slug = nil, as:, title: nil)
-        apply(slug, command: "epic merge LEFT RIGHT") do |graph|
+        apply(slug, remedy: "lain epic merge LEFT RIGHT SLUG") do |graph|
           left_issue = graph.fetch(left)
           right_issue = graph.fetch(right)
           refuse_finished_side!(left_issue, right_issue)
@@ -391,8 +390,8 @@ module Lain
         Lain::Epic::Home::NAME.match?(entry) && File.directory?(File.join(container, entry))
       end
 
-      def chosen(slug, slugs, container, command:)
-        return sole(slugs, container, command:) if slug.nil?
+      def chosen(slug, slugs, container, remedy:)
+        return sole(slugs, container, remedy:) if slug.nil?
         return slug if slugs.include?(slug)
 
         held = slugs.empty? ? "no epics" : listed(slugs)
@@ -402,12 +401,12 @@ module Lain
       # An empty home is reachable only through {#resolve_slug}: {#status}
       # answers {#unstarted} before it ever chooses. "holds 0 epics ()" would be
       # a sentence about nothing, so the emptiness is said outright.
-      def sole(slugs, container, command:)
+      def sole(slugs, container, remedy:)
         raise UnknownEpic, "no epics yet in #{container} -- there is nothing to name" if slugs.empty?
         return slugs.first if slugs.one?
 
         raise Ambiguous, "#{container} holds #{slugs.size} epics (#{listed(slugs)}) -- " +
-                         format(REMEDY, command:)
+                         format(REMEDY, remedy:)
       end
 
       def document(home, doc)
@@ -428,7 +427,7 @@ module Lain
       def unstarted(container)
         ["no epics yet in #{container}", untracked_note(container),
          "start one with the research-epic skill -- it interviews you, writes research.md, " \
-         "and lands epic.md in a new <slug>/ directory here"].reject(&:empty?).join("\n")
+         "and lands epic.md in a new SLUG/ directory here"].reject(&:empty?).join("\n")
       end
 
       # Said in the output rather than raised: the status an ignored repo home
@@ -510,8 +509,8 @@ module Lain
       # nothing reads `graph_revision` records for anything but that replay
       # today -- `epic.md` itself, `Progress.fold`, and every other reader
       # answer straight from the graph that is actually on disk.
-      def apply(slug, command:)
-        resolved = resolve_slug(slug, command:)
+      def apply(slug, remedy:)
+        resolved = resolve_slug(slug, remedy:)
         home = @homes.call(resolved)
         source = home.epic.read
         preamble = Lain::Epic::Document.preamble_of(source)

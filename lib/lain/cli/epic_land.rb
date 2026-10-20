@@ -46,7 +46,7 @@ module Lain
       # @return [String]
       # @raise [Lain::Error] every refusal, each before anything merges
       def land(issue_id, slug = nil)
-        epic_slug = @epics.resolve_slug(slug, command: "epic land ISSUE_ID")
+        epic_slug = @epics.resolve_slug(slug, remedy: Lain::Epic::Remedy.land("ISSUE_ID", "SLUG"))
         issue = named!(issue_id)
         wired(epic_slug) { |landing| Told.new(epic_slug).landed(landing.land(landing.anchored(issue))) }
       end
@@ -54,7 +54,7 @@ module Lain
       # @return [String]
       # @raise [Error] when nothing merged
       def resume(issue_id, slug = nil)
-        epic_slug = @epics.resolve_slug(slug, command: "epic land --resume ISSUE_ID")
+        epic_slug = @epics.resolve_slug(slug, remedy: Lain::Epic::Remedy.land("ISSUE_ID", "SLUG", resume: true))
         issue = named!(issue_id)
         wired(epic_slug) { |landing| Told.new(epic_slug).resumed(landing.resume(issue)) }
       end
@@ -82,7 +82,7 @@ module Lain
 
         def done(entry)
           ["landed #{entry.issue_id} at #{entry.sha} onto #{@branch} -- #{how(entry.report)}", moved(entry),
-           "  nothing was pushed; `lain epic finish #{@epic_slug}` takes the epic to the remote once every " \
+           "  nothing was pushed; `#{Lain::Epic::Remedy.finish(@epic_slug)}` takes the epic to the remote once every " \
            "issue is done"].join("\n")
         end
 

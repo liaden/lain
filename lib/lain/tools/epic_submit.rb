@@ -62,8 +62,7 @@ module Lain
       end
 
       def shell_command(input)
-        command = "lain epic submit #{input.stage} #{input.slug}"
-        input.stage == "issue_plan" ? "#{command} --issue #{input.issue}" : command
+        Lain::Epic::Remedy.submit(input.stage, input.slug, issue: (input.issue if input.stage == "issue_plan"))
       end
     end
   end

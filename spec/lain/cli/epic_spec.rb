@@ -436,7 +436,7 @@ RSpec.describe Lain::CLI::Epic do
       write_epic("alpha", chain)
       write_epic("beta", graph_of(issue("z")))
 
-      expect { command.resolve_slug(nil, command: "chat --epic") }
+      expect { command.resolve_slug(nil, remedy: Lain::Epic::Remedy.chat("SLUG")) }
         .to raise_error(Lain::CLI::Epic::Ambiguous, /name one: lain chat --epic SLUG/)
     end
 
@@ -447,7 +447,7 @@ RSpec.describe Lain::CLI::Epic do
     it "refuses to answer for a caller that will not say which command asked" do
       write_epic("alpha", chain)
 
-      expect { command.resolve_slug(nil) }.to raise_error(ArgumentError, /command/)
+      expect { command.resolve_slug(nil) }.to raise_error(ArgumentError, /remedy/)
     end
 
     it "names an unknown slug and the epics that do exist" do
@@ -471,7 +471,7 @@ RSpec.describe Lain::CLI::Epic do
   # file and the three verb specs, the CLI's own arity in epic_land_spec.rb's
   # "refuses a second selector on the resume command" -- so they can drift apart
   # with every example still green. Give `--resume` a sha positional again and
-  # `lain epic land --resume ISSUE_ID SLUG` goes stale in silence: the very
+  # `lain epic land ISSUE_ID SLUG --resume` goes stale in silence: the very
   # defect this whole card exists to close, recurring one level up, in the file
   # a future author is most likely to touch.
   #
@@ -507,11 +507,11 @@ RSpec.describe Lain::CLI::Epic do
       write_epic("alpha", chain)
       write_epic("beta", graph_of(issue("z")))
       triggers = { "status" => %w[epic status], "submit" => %w[epic submit research],
-                   "land" => %w[epic land a1], "resume" => %w[epic land --resume a1] }
+                   "land" => %w[epic land a1], "resume" => %w[epic land a1 --resume], "finish" => %w[epic finish] }
 
       advised = triggers.transform_values { |argv| remedy_advised_by(argv) }
-      [described_class, Lain::CLI::EpicSubmit,
-       Lain::CLI::EpicLand].each { |klass| allow(klass).to receive(:new).and_raise(dispatched) }
+      [described_class, Lain::CLI::EpicSubmit, Lain::CLI::EpicLand,
+       Lain::CLI::EpicFinish].each { |klass| allow(klass).to receive(:new).and_raise(dispatched) }
 
       replayed = advised.transform_values { |remedy| start_cli(argv_for(remedy))&.message }
 
@@ -673,7 +673,8 @@ RSpec.describe Lain::CLI::Epic do
           subject = instance_exec(&build)
 
           expect(subject.instance_variable_get(:@root)).to eq(project)
-          expect(subject.instance_variable_get(:@epics).resolve_slug(nil, command: "epic status")).to eq("alpha")
+          expect(subject.instance_variable_get(:@epics).resolve_slug(nil,
+                                                                     remedy: "lain epic status SLUG")).to eq("alpha")
         end
       end
     end
@@ -965,7 +966,7 @@ RSpec.describe Lain::CLI::Epic do
         e
       end
 
-      expect(refusal.message).to include("name one: lain epic add ID TITLE SLUG")
+      expect(refusal.message).to include("name one: lain epic add ISSUE_ID TITLE SLUG")
       expect(graph_revisions).to be_empty
     end
 

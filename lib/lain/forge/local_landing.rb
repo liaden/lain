@@ -221,7 +221,7 @@ module Lain
       def in_flight?(issue_id) = @progress.call.status(issue_id) == IN_FLIGHT
 
       def approve(issue_id, sha)
-        "approve it with `lain epic submit implementation #{@epic_slug} --issue #{issue_id} --digest #{sha}`"
+        "approve it with `#{Lain::Epic::Remedy.submit("implementation", @epic_slug, issue: issue_id, digest: sha)}`"
       end
 
       def not_in_flight(issue_id, status)
@@ -275,7 +275,7 @@ module Lain
 
       def never_merged(issue_id, sha)
         "#{@base.name} does not hold issue #{issue_id}'s approved commit #{sha}, so there is no merge to resume -- " \
-          "land it with `lain epic land #{issue_id} #{@epic_slug}`"
+          "land it with `#{Lain::Epic::Remedy.land(issue_id, @epic_slug)}`"
       end
 
       def misplaced(issue_id, sha, refused)

@@ -88,7 +88,7 @@ module Lain
       # @return [Said] status 1 when the finish stopped, else 0
       # @raise [Unfinished] naming every issue that is not done
       def finish(slug = nil)
-        epic_slug = @epics.resolve_slug(slug, command: "epic finish")
+        epic_slug = @epics.resolve_slug(slug, remedy: Lain::Epic::Remedy.finish("SLUG"))
         finished!(epic_slug)
         sha = tip(epic_slug)
         told(epic_slug, sha, journaling { |journal| @finisher.call(epic_slug, sha, journaled(epic_slug, journal)) })
@@ -112,7 +112,7 @@ module Lain
       end
 
       def land_remedy(epic_slug)
-        "every issue lands on epic/#{epic_slug} first (`lain epic land ISSUE_ID #{epic_slug}`)"
+        "every issue lands on epic/#{epic_slug} first (`#{Lain::Epic::Remedy.land("ISSUE_ID", epic_slug)}`)"
       end
 
       def drop_remedy(abandoned)
@@ -187,7 +187,7 @@ module Lain
            "holds it"]
         end
 
-        def rerun(epic_slug) = "lain epic finish #{epic_slug}"
+        def rerun(epic_slug) = Lain::Epic::Remedy.finish(epic_slug)
 
         def untouched = "nothing reached the remote"
 
@@ -199,7 +199,9 @@ module Lain
                              .run_command.stdout.strip.empty?
         end
 
-        def no_remote(epic_slug) = "this repository has no remote; finish it with lain epic finish #{epic_slug} --local"
+        def no_remote(epic_slug)
+          "this repository has no remote; finish it with #{Lain::Epic::Remedy.finish(epic_slug, local: true)}"
+        end
 
         # A first run knows nothing; any later one folds what earlier runs journaled.
         def folded(entries, wiring)
@@ -245,7 +247,7 @@ module Lain
 
         def finished(_epic_slug, answer) = ["  merged into #{BASE} at #{answer.value}; nothing was pushed"]
 
-        def rerun(epic_slug) = "lain epic finish #{epic_slug} --local"
+        def rerun(epic_slug) = Lain::Epic::Remedy.finish(epic_slug, local: true)
 
         def untouched = "nothing merged into #{BASE}"
       end

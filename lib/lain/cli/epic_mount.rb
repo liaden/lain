@@ -151,7 +151,7 @@ module Lain
       # @return [EpicMount]
       def self.mount(chronicle:, options:, told:, root:, config:, paths:,
                      bindings: nil, changesets: nil, surface: nil, view: nil, policy: nil)
-        new(slug: Epic.new(root:, paths:, config:).resolve_slug(options[:epic], command: "chat --epic"),
+        new(slug: Epic.new(root:, paths:, config:).resolve_slug(options[:epic], remedy: Lain::Epic::Remedy.chat("SLUG")),
             journal: chronicle.record_journal, root:, paths:, config:, bindings:, told:,
             changesets:, surface:, view:, policy:)
       end

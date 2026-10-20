@@ -443,7 +443,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       home("other").write_epic(graph)
 
       expect { command.resume("a") }
-        .to raise_error(Lain::CLI::Epic::Ambiguous, /name one: lain epic land --resume ISSUE_ID SLUG/)
+        .to raise_error(Lain::CLI::Epic::Ambiguous, /name one: lain epic land ISSUE_ID SLUG --resume/)
     end
 
     # Through the Thor command object rather than `LainCLI::Epic.start`, which

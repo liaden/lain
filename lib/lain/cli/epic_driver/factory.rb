@@ -76,7 +76,8 @@ module Lain
       # capability floor every other child attenuates from.
       class Factory
         UNMOUNTED = "this chat is in no epic, so there is nothing to implement -- start one with " \
-                    "`lain chat --epic SLUG`, and `lain epic status` lists the epics this project has"
+                    "`#{Lain::Epic::Remedy.chat("SLUG")}`, and `lain epic status` lists the epics " \
+                    "this project has".freeze
 
         # Where lain checks out an epic's branch to land on, under the same
         # worktree root the issue actors lease from: one checkout per epic, at
@@ -780,7 +781,7 @@ module Lain
         # next attempt's anchor would be refused by this one. The way out is a
         # command, and the reply has to name it.
         STRANDED = "its work is anchored at %<sha>s but never reached the working branch (%<why>s) -- finish it " \
-                   "with `lain epic land %<issue>s %<slug>s --resume`, which merges what is already anchored"
+                   "with `%<remedy>s`, which merges what is already anchored"
 
         # Everything the landing refused BEFORE it merged anything. There is no
         # merge to resume, so the refusal speaks for itself: each of these names
@@ -1294,7 +1295,8 @@ module Lain
         def unlanded(entry, report, error)
           return format(REFUSED, why: error.message) if refused_before_merging?(error)
 
-          format(STRANDED, sha: report.sha, issue: entry.issue_id, slug: @slug, why: "#{error.class}: #{error.message}")
+          remedy = Lain::Epic::Remedy.land(entry.issue_id, @slug, resume: true)
+          format(STRANDED, sha: report.sha, remedy:, why: "#{error.class}: #{error.message}")
         end
 
         def refused_before_merging?(error) = error.is_a?(RefusedBeforeActing)
