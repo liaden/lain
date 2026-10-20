@@ -1,6 +1,7 @@
 # Simplify 13 — prove the Rust obeys the laws, then delete the Ruby that was proving it
 
 status: draft
+superseded-by: `algebra-and-flip.md` (re-cut against HEAD as T27 to T41, 2026-10-19)
 commit-mode: orchestrator-commits
 language: rust (with Ruby at the boundary and for the corpus generator)
 panel: Raph Levien, Andrew Gallant, Frank McSherry, Ashley Williams; Edward Kmett and Philip Wadler join for T2 and T4; Jeremy Evans and Sandi Metz for the Ruby deletions

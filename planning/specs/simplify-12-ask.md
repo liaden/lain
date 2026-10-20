@@ -1,6 +1,7 @@
 # Simplify 12 — nine ways to ask somebody something become one
 
 status: draft — **deferred as a whole**; T1 and T2 extracted to run standalone (see Open decisions)
+superseded-by: `algebra-and-flip.md` (T1 to T5 re-cut there as T1 to T8, 2026-10-19; T6 and T7 stay deferred here)
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson

@@ -2095,6 +2095,17 @@ XDG path relative, which put machine state back inside the user's repository)
    cards landed, panel-reviewed; the opt-in stub arm was deferred to round 27 as a render-time mask, because a stub
    cut breaks the compaction floor and keep_last.
 
+66. **Planned (2026-10-19, panel-reviewed)**: `planning/specs/algebra-and-flip.md`, the 4 streams the user ruled on after the
+   round-26 review (memory `simplify-round26-rulings-2026-10-19.md`): the approval split re-cut from `simplify-12` T1 to T5
+   around a `Sensitivity::Verdict` total order, one escalation record, authority as a field, an `Approval::Ladder` value with
+   poisoning at the edge (the `RuleChain` bracketing defect is its first failing test), `Requester` as a value and one parse per
+   bash effect; masks as a `Spans` monoid and a closure operator, the display mask moved into the boundary, one withheld-sources
+   ledger; the bench folds held to their laws (one usage fold, compaction cost as an inductive value, `Recording#comparability`,
+   one arm stamper, one model table, a `Room` value, `RoundBudget` laws, dedup as its own arm); `Budget::Ceilings` and `Spent`
+   so a child never outranks its spawner, with child spend rolled up, width capped and `--max-cost`; `simplify-13` re-cut
+   against HEAD plus the batch render crossing the benchmark showed was missing, ending with the Ruby `Timeline`, `Store` and
+   `Event` deleted; and the round-26 copies replaced by their owners. 53 cards, no back-compat owed.
+
 ## Map of the documents
 
 - **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
