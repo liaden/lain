@@ -1078,6 +1078,18 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(trailer).to include("multi-line secret")
     end
 
+    describe "rows already holding a placeholder" do
+      before { File.write(settings, "name: app\n  token: <redacted:1>\n  other_token: #{token}\n") }
+
+      it "numbers a fresh mask past it and says how many were already redacted" do
+        content = search({ "pattern" => "token", "path" => "config" })
+
+        expect(rows(content).first(2)).to eq(["settings.yml:2:  token: <redacted:1>",
+                                              "settings.yml:3:  other_token: <redacted:2>"])
+        expect(rows(content).last).to start_with("1 row was masked, 1 already redacted:")
+      end
+    end
+
     it "parks nothing" do
       grep("config")
 
@@ -1344,6 +1356,13 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       end
     end
 
+    it "says so, and journals nothing, when the output holds only placeholders" do
+      result = bash("echo '<redacted:1>'")
+
+      expect(result.content.lines.last).to include("0 regions were masked", "1 already redacted")
+      expect(journal.grep(Lain::Telemetry::CommandRedacted)).to be_empty
+    end
+
     it "counts every region in the trailer" do
       result = bash("echo #{token}; echo #{token.reverse}")
 
@@ -1506,7 +1525,36 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       recall(credential)
 
       expect(journal.grep(Lain::Telemetry::MemoryMasked))
-        .to contain_exactly(have_attributes(tool_use_id: "tu_mem", id: "note", regions: 1))
+        .to contain_exactly(have_attributes(tool_use_id: "tu_mem", id: "note", regions: 1, prior: 0))
+    end
+
+    describe "a body quoting a masked read" do
+      let(:quoting) { "deploy notes\nDB_PASSWORD=<redacted:1>\n" }
+
+      it "reads back honestly: nothing newly masked, 1 already redacted" do
+        result = recall(quoting)
+
+        expect(result.content).to start_with("author: chat\n#{quoting}")
+        expect(result.content.lines.last)
+          .to eq("0 regions were masked in this memory item, 1 already redacted; a memory item cannot be released.")
+      end
+
+      it "records no masked read and journals nothing" do
+        recall(quoting)
+
+        expect(session.masked_memory?("note")).to be(false)
+        expect(journal.grep(Lain::Telemetry::MemoryMasked)).to be_empty
+      end
+
+      it "numbers a new secret after the placeholder and says both counts" do
+        result = recall("#{quoting}API_KEY=#{api_key}\n")
+
+        expect(result.content).to include("API_KEY=<redacted:2>\n")
+        expect(result.content.lines.last)
+          .to eq("1 region was masked in this memory item, 1 already redacted; a memory item cannot be released.")
+        expect(journal.grep(Lain::Telemetry::MemoryMasked))
+          .to contain_exactly(have_attributes(regions: 1, prior: 1))
+      end
     end
 
     describe "through a chat's guard stack" do
@@ -1539,6 +1587,19 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
         expect(result.content).to start_with("author: chat\ndeploy notes\nDB_PASSWORD=<redacted:1>\n")
         expect(result.content).not_to include("hunter2pass")
+      end
+
+      it "lets a write carrying a placeholder through when the item was never read masked" do
+        layers = Lain::CLI::ToolGuard.stack(chronicle, board).to_a
+        input = { "id" => "other", "description" => "d", "body" => "DB_PASSWORD=<redacted:1>\n" }
+        result = Sync do |task|
+          task.with_timeout(10) do
+            dispatch_call("memory_write", input, toolset:, layers:, context: session)
+          end
+        end
+
+        expect(result).to have_attributes(is_error: false)
+        expect(recorder.fetch("other").body).to eq("DB_PASSWORD=<redacted:1>\n")
       end
 
       it "refuses to rewrite the item from that read, with no placeholder in the new body" do

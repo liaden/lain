@@ -41,6 +41,8 @@ module Lain
       # is, which is a fact about the secret. The ordinal discloses only how many
       # there are, which the release prompt already tells the human.
       PLACEHOLDER = "<redacted:%d>"
+      PLACEHOLDER_SHAPE = Regexp.new(Regexp.escape(PLACEHOLDER).sub("%d", "(\\d+)"))
+      PLACEHOLDER_ONLY = /\A#{PLACEHOLDER_SHAPE}\z/
 
       # A region no pattern named. Journaled as-is, so triage stays legible as
       # triage rather than reading like a matched credential.
@@ -155,9 +157,58 @@ module Lain
           merge(candidates(scanned).sort_by { [_1[:start], _1[:rank]] }, bytes, skip)
         end
 
+        # @param text [String]
+        # @return [Integer] how many placeholders it holds, a repeat counted each time
+        def placeholders(text) = placeholder_spans(text).size
+
+        # A fresh region numbers past every placeholder present, so one never
+        # reuses a slot already standing for another secret.
+        #
+        # @param text [String]
+        # @return [Enumerator<Integer>]
+        def numbering_after(text) = ((highest(text) + 1)..).each
+
+        # @param text [String]
+        # @return [Integer] the largest placeholder number present, 0 when none
+        def highest(text) = text.b.scan(PLACEHOLDER_SHAPE).flatten.map(&:to_i).max.to_i
+
+        # Where each of `secrets` recurs in `text`, raw or escaped as `inspect` would
+        # escape it. Only a value of substance is sought, since a short one recurs in
+        # ordinary words and the placeholders would spell it back out. An occurrence
+        # touching a placeholder is dropped, because masking it would erase the slot.
+        #
+        # @param text [String]
+        # @param secrets [Array<String>]
+        # @return [Array<Spans::Span>]
+        def recurrences(text, secrets)
+          haystack = text.b
+          standing = placeholder_spans(text)
+          secrets.select { _1.bytesize >= SUBSTANCE_LENGTH }.flat_map { spellings(_1) }.uniq
+                 .flat_map { occurrences(haystack, _1) }
+                 .reject { |span| standing.any? { span.start < _1.finish && _1.start < span.finish } }
+        end
+
         private
 
-        def merge(sorted, bytes, skip) = coalesce(sorted).map { region_at(_1, bytes, skip) }.freeze
+        def merge(sorted, bytes, skip)
+          # Here and not in the CONTENT pattern, which a real value starting with `<` must still match.
+          coalesce(sorted).map { region_at(_1, bytes, skip) }.reject { _1.bytes.match?(PLACEHOLDER_ONLY) }.freeze
+        end
+
+        def placeholder_spans(text)
+          haystack = text.b
+          haystack.to_enum(:scan, PLACEHOLDER_SHAPE).map do
+            found = Regexp.last_match
+            Spans::Span.new(start: found.begin(0), length: found[0].bytesize)
+          end
+        end
+
+        def spellings(bytes) = [bytes.b, String.new(bytes, encoding: Encoding::UTF_8).inspect[1..-2].b]
+
+        def occurrences(haystack, needle)
+          Enumerator.produce(haystack.byteindex(needle)) { haystack.byteindex(needle, _1 + needle.bytesize) }
+                    .take_while(&:itself).map { Spans::Span.new(start: _1, length: needle.bytesize) }
+        end
 
         # One secret is one region however many detectors reach it:
         # `API_KEY=sk-` is a dotenv assignment, an issuer prefix, a credential

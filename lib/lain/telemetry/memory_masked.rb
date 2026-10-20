@@ -9,21 +9,24 @@ module Lain
       class MemoryMasked < Declarative::Carrier
         attribute :id
         attribute :regions
+        attribute :prior
         validates :id, presence: { message: "must name the memory item read masked, got %<value>s" }
-        validates :regions, numericality: { only_integer: true, greater_than_or_equal_to: 0,
-                                            message: "must be a non-negative Integer, got %<value>s" }
+        validates :regions, :prior, numericality: { only_integer: true, greater_than_or_equal_to: 0,
+                                                    message: "must be a non-negative Integer, got %<value>s" }
       end
     end
 
-    # A `memory_read` whose body had spans masked: which item and how many,
-    # never which bytes. A resumed session refuses to rewrite that item.
-    MemoryMasked = Data.define(:tool_use_id, :id, :regions) do
+    # A `memory_read` whose body had spans masked: which item, how many, and how
+    # many placeholders it already held, never which bytes. A resumed session
+    # refuses to rewrite that item. `prior` defaults to 0 so a record journaled
+    # before it existed still reads.
+    MemoryMasked = Data.define(:tool_use_id, :id, :regions, :prior) do
       include Journalable
 
-      def initialize(tool_use_id:, id:, regions:)
-        Carriers::MemoryMasked.check!(id:, regions:)
+      def initialize(tool_use_id:, id:, regions:, prior: 0)
+        Carriers::MemoryMasked.check!(id:, regions:, prior:)
 
-        super(tool_use_id: -tool_use_id.to_s, id: -id.to_s, regions: regions.to_i)
+        super(tool_use_id: -tool_use_id.to_s, id: -id.to_s, regions: regions.to_i, prior: prior.to_i)
       end
     end
   end

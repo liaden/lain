@@ -1050,11 +1050,13 @@ under a secret path are withheld by `WithholdSecretPaths`, as `grep` rows are.
 
 A `memory_read` result is masked by the same step, body only, with no release: the author line is lain's own and
 the body goes through the region detector plus the session's secret literals (`Sensitivity::TextMask`), nothing
-parks, and a trailer says the item cannot be released. A whole `blake3:<64 hex>` token is lain's own lineage
+parks, and a trailer says the item cannot be released; it counts the regions masked now and, when the body already held
+`<redacted:N>` placeholders, how many were already redacted, since masking a placeholder again is the identity. A whole `blake3:<64 hex>` token is lain's own lineage
 digest and stays unmasked. The clerk's read goes through the same mask. The session remembers each item it read
 masked, and `RefuseSecretWrites` refuses any `memory_write` to that id for the rest of the session, placeholder
-or not, so a masked read cannot overwrite the real values; a new item holding a `<redacted:N>` placeholder is
-refused too. Both refusals are journaled as `decline:masked read`. `improvement_write` is append-only and not
+or not, so a masked read cannot overwrite the real values. A new item holding a `<redacted:N>` placeholder is
+allowed: the placeholder is a slot whose bytes are already gone, so writing it loses nothing. The refusal is
+journaled as `decline:masked read`. `improvement_write` is append-only and not
 checked. Each masked memory read journals `memory_masked` (the item id and a region count, never bytes), and
 `SessionRecord::Replay` folds it back beside `read_redacted`, so a resumed or forked session refuses the rewrite
 too. The journaled

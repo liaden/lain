@@ -912,6 +912,34 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
   end
 
+  describe ".detect over a masked text" do
+    it "flags no value that is exactly a placeholder" do
+      text = %("password": "<redacted:1>"\nDB_PASSWORD: "<redacted:2>"\nurl: https://u:<redacted:3>@host/\n)
+
+      expect(detect(text)).to be_empty
+    end
+
+    it "still flags a real value beside a placeholder" do
+      expect(detect("a_password: <redacted:1>\nB_TOKEN=#{secret}\n").map(&:bytes)).to eq([secret])
+    end
+  end
+
+  describe ".numbering_after" do
+    it "starts one past the highest placeholder present, however it repeats" do
+      expect(described_class.numbering_after("<redacted:2> <redacted:7> <redacted:2>").take(2)).to eq([8, 9])
+    end
+
+    it "starts at 1 when no placeholder is present" do
+      expect(described_class.numbering_after("nothing").first).to eq(1)
+    end
+  end
+
+  describe ".placeholders" do
+    it "counts every placeholder present, a repeat included" do
+      expect(described_class.placeholders("<redacted:1> x <redacted:1> <redacted:12>")).to eq(3)
+    end
+  end
+
   describe ".detect over credential-file formats" do
     {
       "a netrc machine line" => ["machine h login u password hunter2hunter2", "hunter2hunter2"],

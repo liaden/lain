@@ -2,29 +2,25 @@
 
 module Lain
   class Sensitivity
-    # A command's output as one {Middleware::RedactSecretReads::Rows::Row}, so a
-    # region and every recurrence of it, raw or escaped, mask alike. A
-    # secret-named value joins as a {Literal}, found only by its recurrences.
+    # A command's output masked as one text, so a region and every recurrence of
+    # it, raw or escaped, mask alike. A secret-named value joins as a literal,
+    # found only by its recurrences.
+    #
+    # A placeholder already in the text is a slot whose bytes are gone: it is
+    # kept, counted as `prior`, and never renumbered, so masking is idempotent.
     #
     # A command's output has no file to key a release on, so nothing here is
     # ever released: what is detected is masked.
     class TextMask
-      Literal = Data.define(:bytes)
-
-      # Matches no detected region, so only its recurrences mask.
-      class Literal
-        def digest = nil
-      end
-
       # @param secrets [Array<String>] values masked wherever they appear
       def initialize(secrets:)
-        @literals = secrets.map { Literal.new(bytes: _1) }.freeze
+        @secrets = secrets.map(&:-@).freeze
         freeze
       end
 
       # @param text [String] the whole output
-      # @return [Array(String, Integer)] the masked text and how many spans were masked
-      def call(text) = mask(text, (1..).each)
+      # @return [Masked] numbered after the highest placeholder already present
+      def call(text) = mask(text, Regions.numbering_after(text))
 
       # @param ordinals [Enumerator] the placeholder numbering; shared, it numbers
       #   several streams of one command as one
@@ -34,10 +30,11 @@ module Lain
       # @api private
       # @param text [String]
       # @param ordinals [Enumerator] the placeholder numbering, shared across a stream's pieces
-      # @return [Array(String, Integer)]
+      # @return [Masked]
       def mask(text, ordinals)
-        row = Middleware::RedactSecretReads::Rows::Row.new(prefix: "", text:, path: nil, regions: Regions.detect(text))
-        row.masked(row.regions + @literals, ordinals)
+        found = Regions.detect(text)
+        spans = Spans.of(found + Regions.recurrences(text, found.map(&:bytes) + @secrets))
+        Masked.new(text: Masking.render(text, spans, ordinals:), fresh: spans.count, prior: Regions.placeholders(text))
       end
 
       # Output arriving in pieces, masked with one numbering across all of them.
@@ -59,7 +56,7 @@ module Lain
         KEY_END = /-----END [^\n]*\n/n
         SUNK = /\A.*?-----END [^\n]*\n/mn
 
-        # @return [Integer] how many spans have been masked so far
+        # @return [Integer] how many fresh spans have been masked so far
         attr_reader :count
 
         # @param mask [TextMask]
@@ -119,6 +116,12 @@ module Lain
           text.sub(SUNK, "")
         end
 
+        # The numbering is shared and cannot rewind, so a slot the input already shows is stepped over.
+        def skip_shown(text)
+          highest = Regions.highest(text)
+          @ordinals.next while @ordinals.peek <= highest
+        end
+
         def sink(held, final)
           @sunk = !final
           span = Spans::Span.new(start: 0, length: held.bytesize)
@@ -127,13 +130,13 @@ module Lain
         end
 
         def masked(text)
-          out, spans = @mask.mask(text.force_encoding(Encoding::UTF_8), @ordinals)
-          @count += spans
-          out
+          text.force_encoding(Encoding::UTF_8)
+          skip_shown(text)
+          masked = @mask.mask(text, @ordinals)
+          @count += masked.fresh
+          masked.text
         end
       end
-
-      private_constant :Literal
     end
   end
 end

@@ -11,20 +11,79 @@ RSpec.describe Lain::Sensitivity::TextMask do
   def streamed(stream, chunks) = chunks.map { stream << _1 }.join + stream.finish
 
   describe "#call" do
-    it "returns the masked text and the count, numbering from 1" do
+    it "returns the masked text and the fresh count, numbering from 1" do
       text = "A_TOKEN=#{secret}\nB_TOKEN=#{other}\n"
 
-      expect(mask.call(text)).to eq(["A_TOKEN=#{placeholder(1)}\nB_TOKEN=#{placeholder(2)}\n", 2])
+      expect(mask.call(text))
+        .to eq(Lain::Sensitivity::Masked.new(text: "A_TOKEN=#{placeholder(1)}\nB_TOKEN=#{placeholder(2)}\n", fresh: 2,
+                                             prior: 0))
     end
 
     it "masks a given secret wherever it recurs" do
-      masked, count = described_class.new(secrets: [other]).call("echo #{other} #{other}\n")
+      masked = described_class.new(secrets: [other]).call("echo #{other} #{other}\n")
 
-      expect([masked, count]).to eq(["echo #{placeholder(1)} #{placeholder(2)}\n", 2])
+      expect(masked).to have_attributes(text: "echo #{placeholder(1)} #{placeholder(2)}\n", fresh: 2)
     end
 
     it "leaves clean text alone" do
-      expect(mask.call("hello\n")).to eq(["hello\n", 0])
+      expect(mask.call("hello\n")).to eq(Lain::Sensitivity::Masked.new(text: "hello\n", fresh: 0, prior: 0))
+    end
+
+    it "counts a placeholder already present as prior, not fresh, and keeps its number" do
+      text = "seen #{placeholder(3)}\nA_TOKEN=#{secret}\n"
+
+      expect(mask.call(text))
+        .to eq(Lain::Sensitivity::Masked.new(text: "seen #{placeholder(3)}\nA_TOKEN=#{placeholder(4)}\n", fresh: 1,
+                                             prior: 1))
+    end
+
+    it "numbers after the highest placeholder present when one repeats" do
+      text = "#{placeholder(2)} #{placeholder(2)} #{placeholder(1)}\nA_TOKEN=#{secret}\n"
+
+      expect(mask.call(text).text).to end_with("A_TOKEN=#{placeholder(3)}\n")
+    end
+
+    it "does not mask a placeholder a secret-named key holds" do
+      text = %("password": "#{placeholder(1)}"\napi_token: #{placeholder(2)}\n)
+
+      expect(mask.call(text)).to eq(Lain::Sensitivity::Masked.new(text:, fresh: 0, prior: 2))
+    end
+
+    it "never lets a given secret eat a placeholder it spells part of" do
+      text = "#{placeholder(1)} redacted\n"
+
+      expect(described_class.new(secrets: ["redacted"]).call(text).text).to eq("#{placeholder(1)} #{placeholder(2)}\n")
+    end
+
+    describe "its laws, over drawn texts" do
+      let(:word) { PropCheck::Generators.alphanumeric_string(min: 1, max: 8) }
+      let(:token) { PropCheck::Generators.alphanumeric_string(min: 40, max: 48).map { "kJ8fQ#{_1}Zq9" } }
+      let(:holder) { PropCheck::Generators.choose(1..9).map { placeholder(_1) } }
+      let(:line) do
+        piece = PropCheck::Generators.one_of(word, token.map { "A_TOKEN=#{_1}" }, holder)
+        PropCheck::Generators.array(piece, min: 1, max: 4).map { "#{_1.join(" ")}\n" }
+      end
+      let(:drawn) { PropCheck::Generators.array(line, min: 1, max: 5).map(&:join) }
+
+      def placeholders_in(text) = text.scan(/<redacted:\d+>/)
+
+      it "is idempotent: a second pass changes no byte, finds nothing fresh and counts what is there",
+         aggregate_failures: false do
+        forall(text: drawn) do |text:|
+          once = mask.call(text)
+
+          expect(mask.call(once.text))
+            .to eq(Lain::Sensitivity::Masked.new(text: once.text, fresh: 0, prior: once.fresh + once.prior))
+        end
+      end
+
+      it "is extensive: no placeholder disappears, and each fresh region adds one", aggregate_failures: false do
+        forall(text: drawn) do |text:|
+          masked = mask.call(text)
+
+          expect(placeholders_in(masked.text).size).to eq(placeholders_in(text).size + masked.fresh)
+        end
+      end
     end
   end
 
@@ -33,7 +92,42 @@ RSpec.describe Lain::Sensitivity::TextMask do
       text = "A_TOKEN=#{secret}\nB_TOKEN=#{other}\n"
       chunks = [text[0, 20], text[20, 30], text[50..]]
 
-      expect(streamed(mask.stream, chunks)).to eq(mask.call(text).first)
+      expect(streamed(mask.stream, chunks)).to eq(mask.call(text).text)
+    end
+
+    it "never reuses a placeholder slot a previous chunk showed" do
+      stream = mask.stream
+
+      expect(streamed(stream, ["#{placeholder(1)}\n", "A_TOKEN=#{secret}\n"]))
+        .to eq("#{placeholder(1)}\nA_TOKEN=#{placeholder(2)}\n")
+    end
+
+    it "numbers a later fresh region past the highest placeholder in the same chunk" do
+      text = "a #{placeholder(3)} b\nA_TOKEN=#{secret}\n"
+
+      expect(streamed(mask.stream, [text])).to eq(mask.call(text).text)
+    end
+
+    it "masks the same bytes however the input is split", aggregate_failures: false do
+      text = "A_TOKEN=#{secret}\nplain line\nB_TOKEN=#{other}\ntail"
+      cuts = PropCheck::Generators.array(PropCheck::Generators.choose(0..text.size), min: 0, max: 6).map(&:sort)
+
+      forall(cuts:) do |cuts:|
+        chunks = [0, *cuts, text.size].each_cons(2).map { |from, to| text[from...to] }
+
+        expect(streamed(mask.stream, chunks)).to eq(mask.call(text).text)
+      end
+    end
+
+    it "masks the same bytes however a text opening with a placeholder is split", aggregate_failures: false do
+      text = "plain #{placeholder(2)}\nA_TOKEN=#{secret}\nB_TOKEN=#{other}\ntail"
+      cuts = PropCheck::Generators.array(PropCheck::Generators.choose(0..text.size), min: 0, max: 6).map(&:sort)
+
+      forall(cuts:) do |cuts:|
+        chunks = [0, *cuts, text.size].each_cons(2).map { |from, to| text[from...to] }
+
+        expect(streamed(mask.stream, chunks)).to eq(streamed(mask.stream, [text]))
+      end
     end
 
     it "emits only complete lines" do

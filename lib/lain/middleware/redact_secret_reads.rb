@@ -87,7 +87,8 @@ module Lain
       GUARDED_TOOLS = Set["read_file"].freeze
 
       COMMAND_TOOLS = Set["bash"].freeze
-      OUTPUT_TRAILER = "%<count>d %<noun>s masked in this command's output; a command's output cannot be released."
+      OUTPUT_TRAILER = "%<count>d %<noun>s masked in this command's output%<prior>s; " \
+                       "a command's output cannot be released."
 
       # A row is a partial view, so its regions are masked and never parked: a park per
       # matched file would turn one search into a queue of prompts, and
@@ -95,7 +96,7 @@ module Lain
       ROW_TOOLS = Set["grep", "ast_search"].freeze
 
       MEMORY_TOOLS = Set["memory_read"].freeze
-      MEMORY_TRAILER = "%<count>d %<noun>s masked in this memory item; a memory item cannot be released."
+      MEMORY_TRAILER = "%<count>d %<noun>s masked in this memory item%<prior>s; a memory item cannot be released."
       LINEAGE_DIGEST = /((?<![[:alnum:]:])blake3:\h{64}(?![[:alnum:]]))/
 
       SCANNED_TOOLS = [GUARDED_TOOLS, ROW_TOOLS, COMMAND_TOOLS, MEMORY_TOOLS].freeze
@@ -303,44 +304,58 @@ module Lain
       end
 
       def printed(carried, result)
-        text, count = text_mask(carried).call(result.text)
-        return carried unless count.positive?
+        masked = text_mask(carried).call(result.text)
+        return carried unless masked.fresh.positive? || masked.prior.positive?
 
-        masked = carried.merge(result: Tool::Result.new(content: with_trailer(text, count), is_error: result.error?))
-        record(Telemetry::CommandRedacted) do
-          Telemetry::CommandRedacted.new(tool_use_id: carried.fetch(:effect).tool_use_id, regions: count)
-        end
-        masked
+        record_printed(carried, masked) if masked.fresh.positive?
+        carried.merge(result: Tool::Result.new(content: with_trailer(masked), is_error: result.error?))
       end
 
+      def record_printed(carried, masked)
+        record(Telemetry::CommandRedacted) do
+          Telemetry::CommandRedacted.new(tool_use_id: carried.fetch(:effect).tool_use_id, regions: masked.fresh,
+                                         prior: masked.prior)
+        end
+      end
+
+      # A body that holds only placeholders is read back with a trailer saying so but is not
+      # recorded as masked: nothing in it was lost to this read, so a rewrite stays lossless.
       def recalled(carried, effect, result)
         author, body = result.text.split("\n", 2)
-        text, count = recalled_body(text_mask(carried), body.to_s)
-        return carried unless count.positive?
+        masked = recalled_body(text_mask(carried), body.to_s)
+        return carried unless masked.fresh.positive? || masked.prior.positive?
 
+        record_recalled(carried, effect, masked) if masked.fresh.positive?
+        carried.merge(result: Tool::Result.ok("#{author}\n#{with_trailer(masked, MEMORY_TRAILER)}"))
+      end
+
+      def record_recalled(carried, effect, masked)
         (carried.fetch(:context) || Session::Null.instance).record_masked_memory(effect.input["id"])
         record(Telemetry::MemoryMasked) do
-          Telemetry::MemoryMasked.new(tool_use_id: effect.tool_use_id, id: effect.input["id"], regions: count)
+          Telemetry::MemoryMasked.new(tool_use_id: effect.tool_use_id, id: effect.input["id"], regions: masked.fresh,
+                                      prior: masked.prior)
         end
-        carried.merge(result: Tool::Result.ok("#{author}\n#{with_trailer(text, count, MEMORY_TRAILER)}"))
       end
 
       # A lineage digest is the evidence a clerk is asked to cite, and the
       # entropy detector would take it for a token, so the text around each one
       # is masked and the digest is kept, with one numbering across the pieces.
       def recalled_body(mask, body)
-        ordinals = (1..).each
-        body.split(LINEAGE_DIGEST).each_slice(2).inject(["", 0]) do |(text, count), (piece, digest)|
-          masked, spans = mask.mask(piece, ordinals)
-          [text + masked + digest.to_s, count + spans]
+        masked = ::Lain::Sensitivity::Masked
+        ordinals = ::Lain::Sensitivity::Regions.numbering_after(body)
+        body.split(LINEAGE_DIGEST).each_slice(2).inject(masked.plain("")) do |kept, (piece, digest)|
+          kept + mask.mask(piece, ordinals) + masked.plain(digest.to_s)
         end
       end
 
       def text_mask(carried) = ::Lain::Sensitivity::TextMask.new(secrets: session_secrets(carried.fetch(:context)))
 
-      def with_trailer(text, count, trailer = OUTPUT_TRAILER)
+      def with_trailer(masked, trailer = OUTPUT_TRAILER)
+        text = masked.text
         lead = text.end_with?("\n") ? text : "#{text}\n"
-        lead + format(trailer, count:, noun: count == 1 ? "region was" : "regions were")
+        count = masked.fresh
+        lead + format(trailer, count:, noun: count == 1 ? "region was" : "regions were",
+                               prior: masked.prior.positive? ? ", #{masked.prior} already redacted" : "")
       end
 
       def session_secrets(context)
@@ -671,7 +686,7 @@ module Lain
       # target with the model's own spelling, so a row's file is its label
       # resolved against the root or the worker's cwd: the key `read_file` uses.
       class Rows
-        TRAILER = "%<count>d %<noun>s masked: read_file on a file may ask for the release of its regions. " \
+        TRAILER = "%<count>d %<noun>s masked%<prior>s: read_file on a file may ask for the release of its regions. " \
                   "A multi-line secret, such as a PEM body, cannot be detected one line at a time " \
                   "and is not masked here."
 
@@ -699,16 +714,7 @@ module Lain
           end
 
           def recurrences(unreleased)
-            haystack = text.b
-            unreleased.map(&:bytes).select { _1.bytesize >= ::Lain::Sensitivity::Regions::SUBSTANCE_LENGTH }
-                      .flat_map { spellings(_1) }.uniq.flat_map { occurrences(haystack, _1) }
-          end
-
-          def spellings(bytes) = [bytes.b, String.new(bytes, encoding: Encoding::UTF_8).inspect[1..-2].b]
-
-          def occurrences(haystack, needle)
-            Enumerator.produce(haystack.byteindex(needle)) { haystack.byteindex(needle, _1 + needle.bytesize) }
-                      .take_while(&:itself).map { ::Lain::Sensitivity::Spans::Span.new(start: _1, length: needle.bytesize) }
+            ::Lain::Sensitivity::Regions.recurrences(text, unreleased.map(&:bytes))
           end
         end
 
@@ -728,6 +734,7 @@ module Lain
           @directory = File.directory?(base)
           @anchor = @directory ? base : cwd
           @base = base
+          @text = content
           @rows = content.split("\n", -1).map { row_of(_1) }
           freeze
         end
@@ -738,16 +745,21 @@ module Lain
         # @param unreleased [Hash{String => Array<#digest>}] the regions to withhold, per file
         # @return [String] the rows with those regions masked, and the trailer saying so
         def mask(unreleased)
-          ordinals = (1..).each
+          ordinals = ::Lain::Sensitivity::Regions.numbering_after(@text)
           rendered = @rows.map { _1.masked(unreleased.fetch(_1.path, []), ordinals) }
           masked = rendered.count { |(_, placeholders)| placeholders.positive? }
-          [*rendered.map(&:first), format(TRAILER, count: masked, noun: masked == 1 ? "row was" : "rows were")]
-            .join("\n")
+          [*rendered.map(&:first), trailer(masked)].join("\n")
         end
 
         private
 
         def matches = @rows.grep(Row)
+
+        def trailer(masked)
+          prior = ::Lain::Sensitivity::Regions.placeholders(@text)
+          format(TRAILER, count: masked, noun: masked == 1 ? "row was" : "rows were",
+                          prior: prior.positive? ? ", #{prior} already redacted" : "")
+        end
 
         # A row whose file cannot be found keys on its first reading, so it still masks.
         def row_of(text)

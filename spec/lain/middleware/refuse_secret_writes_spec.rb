@@ -188,15 +188,11 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
       run(tool_call(name:, input: { "id" => "cache-note", "description" => "d", "body" => body }))
     end
 
-    it "is refused, telling the model the item was read masked and to leave it or write a new item" do
-      env, called = write_back("cache note: token_count = <redacted:2>")
+    it "is allowed, since writing a placeholder loses nothing" do
+      _, called = write_back("cache note: token_count = <redacted:2>")
 
-      expect(called).to be(false)
-      expect(env.fetch(:result)).to have_attributes(is_error: true)
-      expect(env.fetch(:result).content).to include("read masked", "leave it, or write a new item")
-      expect(env.fetch(:result).content).not_to include("without the masked values")
-      expect(journal.events.first.pattern).to eq(described_class::MASKED_DECLINE)
-      expect(described_class).to be_decline(described_class::MASKED_DECLINE)
+      expect(called).to be(true)
+      expect(journal.events).to be_empty
     end
 
     it "lets a body that only mentions the word redacted through" do
@@ -205,7 +201,6 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
       expect(called).to be(true)
     end
 
-    # The notes are append-only, so a placeholder there replaces nothing.
     it "lets an improvement_write holding a placeholder through" do
       _, called = run(tool_call(name: "improvement_write", input: { "note" => "saw <redacted:1> in a read" }))
 
