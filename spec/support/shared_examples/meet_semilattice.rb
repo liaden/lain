@@ -68,6 +68,12 @@ RSpec.shared_examples "a meet semilattice under ancestry" do |config|
   end
 end
 
+# The same four laws under the order-neutral name, for a meet whose order is
+# not ancestry; the old name stays because the Rust law names mirror it.
+RSpec.shared_examples "a meet semilattice" do |config|
+  include_examples "a meet semilattice under ancestry", config
+end
+
 # The population side of the law group, grown a UNION-GRAPH shape for the
 # dominator meet: render chains alone exercise the render meet, but the
 # dominance order lives on render AND causal edges under a virtual root, so
