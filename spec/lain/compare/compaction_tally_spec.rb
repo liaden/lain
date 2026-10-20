@@ -5,14 +5,16 @@ RSpec.describe Lain::Compare::CompactionTally do
   def prepared = { "type" => "compaction_prepared" }
   def applied = { "type" => "compaction_applied" }
 
+  def priced(amount) = Lain::Compare::Cost::Priced.new(amount: BigDecimal(amount))
+
   def compaction(saved:, spent:)
     { "type" => "compaction", "cost_saved" => saved, "cost_spent" => spent }
   end
 
   describe ".from_records" do
-    it "tallies zeros and no cost figure for a journal with no compaction records" do
+    it "tallies zeros and no compaction cost for a journal with no compaction records" do
       tally = described_class.from_records([{ "type" => "turn_usage" }])
-      expect(tally).to have_attributes(summary_misses: 0, prepared: 0, applied: 0, cost_delta: nil)
+      expect(tally).to have_attributes(summary_misses: 0, prepared: 0, applied: 0, cost_delta: Lain::Compare::Cost::NONE)
     end
 
     it "counts from the journal" do
@@ -23,19 +25,19 @@ RSpec.describe Lain::Compare::CompactionTally do
 
     it "sums the cost delta of the compaction records" do
       records = [compaction(saved: "0.5", spent: "0.2"), compaction(saved: "0.1", spent: "0.3")]
-      expect(described_class.from_records(records).cost_delta).to eq(BigDecimal("0.1"))
+      expect(described_class.from_records(records).cost_delta).to eq(priced("0.1"))
     end
 
-    it "answers a nil cost delta when any compaction record is unpriced" do
+    it "answers an unpriced cost delta when any compaction record quotes no figures" do
       records = [compaction(saved: "0.5", spent: "0.2"), compaction(saved: nil, spent: nil)]
-      expect(described_class.from_records(records).cost_delta).to be_nil
+      expect(described_class.from_records(records).cost_delta).to be_a(Lain::Compare::Cost::Unpriced)
     end
 
     it "reads the journal form of a real Telemetry::Compaction record" do
       record = Lain::Telemetry::Compaction.new(trigger: :tokens, cache_state: :cold, bytes_before: 10, bytes_after: 5,
                                                collapse_strategy: "eager",
                                                cost_saved: "0.5", cost_spent: "0.2").to_journal
-      expect(described_class.from_records([record]).cost_delta).to eq(BigDecimal("0.3"))
+      expect(described_class.from_records([record]).cost_delta).to eq(priced("0.3"))
     end
 
     it "reads a lazy enumerator of records" do
@@ -44,8 +46,8 @@ RSpec.describe Lain::Compare::CompactionTally do
   end
 
   describe "NONE" do
-    it "is a run with no journal: zero counts and no cost figure" do
-      expect(described_class::NONE).to have_attributes(summary_misses: 0, unapplied: 0, cost_delta: nil)
+    it "is a run with no journal: zero counts and no compaction cost" do
+      expect(described_class::NONE).to have_attributes(summary_misses: 0, unapplied: 0, cost_delta: Lain::Compare::Cost::NONE)
     end
   end
 

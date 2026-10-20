@@ -118,7 +118,7 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
 
     it "tallies no cost delta for a journal with no compaction records" do
-      expect(recording.compaction_tally).to have_attributes(summary_misses: 0, prepared: 0, cost_delta: nil)
+      expect(recording.compaction_tally).to have_attributes(summary_misses: 0, prepared: 0, cost_delta: Lain::Compare::Cost::NONE)
     end
 
     it "rebuilds the recorded arms from the header" do

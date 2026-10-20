@@ -16,13 +16,14 @@ RSpec.describe Lain::Compare do
 
   def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]), mode: nil,
           compaction: Lain::Compare::CompactionTally::NONE)
-    Lain::Compare::Run.new(name:, usage:, price: Lain::Compare::Priced.new(amount: BigDecimal(cost.to_s)), score:,
+    Lain::Compare::Run.new(name:, usage:, price: Lain::Compare::Cost::Priced.new(amount: BigDecimal(cost.to_s)), score:,
                            degraded:, mode:, compaction:)
   end
 
   # A run with no journal withholds the compaction cost column; a fully priced report needs this.
   def quoted_tally
-    Lain::Compare::CompactionTally.new(summary_misses: 0, prepared: 0, applied: 0, cost_delta: BigDecimal(0))
+    Lain::Compare::CompactionTally.new(summary_misses: 0, prepared: 0, applied: 0,
+                                       cost_delta: Lain::Compare::Cost::Priced.new(amount: BigDecimal(0)))
   end
 
   let(:runs) do
@@ -185,16 +186,18 @@ RSpec.describe Lain::Compare do
 
       def tallied(name, tally)
         described_class::Run.new(name:, usage: usage(input: 10, output: 1),
-                                 price: described_class::Priced.new(amount: BigDecimal("0.001")),
+                                 price: described_class::Cost::Priced.new(amount: BigDecimal("0.001")),
                                  degraded: Lain::Capability::DegradedSet.new([]), compaction: tally)
       end
 
-      def tally(misses: 0, prepared: 0, applied: 0, cost_delta: BigDecimal(0))
+      def tally(misses: 0, prepared: 0, applied: 0,
+                cost_delta: described_class::Cost::Priced.new(amount: BigDecimal(0)))
         described_class::CompactionTally.new(summary_misses: misses, prepared:, applied:, cost_delta:)
       end
 
       it "shows the counts and the cost delta for tallied runs" do
-        pair = [tallied("a", tally(misses: 4, prepared: 2, applied: 1, cost_delta: BigDecimal("0.25"))),
+        quarter = described_class::Cost::Priced.new(amount: BigDecimal("0.25"))
+        pair = [tallied("a", tally(misses: 4, prepared: 2, applied: 1, cost_delta: quarter)),
                 tallied("b", tally(misses: 2))]
         text = described_class.new(pair).report
         expect(text).to include("summary misses", "prepared unapplied", "compaction cost delta")
@@ -202,16 +205,17 @@ RSpec.describe Lain::Compare do
       end
 
       it "withholds only the cost delta when a run's compaction was unpriced" do
-        pair = [tallied("a", tally(cost_delta: nil)), tallied("b", tally)]
+        pair = [tallied("a", tally(cost_delta: described_class::Cost::Unpriced.new(reason: "no figures"))),
+                tallied("b", tally)]
         text = described_class.new(pair).report
-        expect(text).to include("compaction cost delta: not measured")
+        expect(text).to include("compaction cost delta: not measured; a run's compaction could not be priced")
         expect(text).to include("summary misses", "prepared unapplied")
       end
 
       it "reads a run built without a tally as 0, 0 and a withheld cost" do
         plain = Array.new(2) do |i|
           described_class::Run.new(name: "r#{i}", usage: usage(input: 10, output: 1),
-                                   price: described_class::Priced.new(amount: BigDecimal("0.001")),
+                                   price: described_class::Cost::Priced.new(amount: BigDecimal("0.001")),
                                    degraded: Lain::Capability::DegradedSet.new([]))
         end
         comparison = described_class.new(plain)
@@ -321,14 +325,25 @@ RSpec.describe Lain::Compare do
       expect(report).to include("cache write tokens: not measured")
     end
 
-    it "withholds the cost delta of runs that never compacted, saying so" do
+    it "keeps the compaction cost column when only the control never compacted, reading none" do
+      priced_tally = Lain::Compare::CompactionTally.from_records(
+        [{ "type" => "compaction", "cost_saved" => "0.5", "cost_spent" => "0.2" }]
+      )
+      pair = [run("control", usage: usage(input: 10, output: 1), cost: "0.001",
+                             compaction: Lain::Compare::CompactionTally.from_records([])),
+              run("compacted", usage: usage(input: 10, output: 1), cost: "0.001", compaction: priced_tally)]
+      text = described_class.new(pair).report
+      expect(text.lines.grep(/\Acompaction cost delta\s{2,}/)).not_to be_empty
+      expect(text.lines.find { |l| l.start_with?("control ") }).to include("none")
+      expect(text.lines.find { |l| l.start_with?("compacted ") }).to include("0.300000")
+    end
+
+    it "withholds the compaction cost column when no run compacted" do
       journaled = Array.new(2) do |i|
         run("r#{i}", usage: usage(input: 10, output: 1), cost: "0.001",
                      compaction: Lain::Compare::CompactionTally.from_records([]))
       end
-      text = described_class.new(journaled).report
-      expect(text).not_to include("0.000000")
-      expect(text).to include("compaction cost delta: not measured")
+      expect(described_class.new(journaled).report).to include("compaction cost delta: not measured; no run compacted")
     end
 
     it "withholds the cost column from the per-run appendix" do

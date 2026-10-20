@@ -7,11 +7,12 @@ module Lain
     # What one run's journal says about compaction, in the 3 figures {Compare} folds across runs.
     # summary_misses is the sum of compaction_decision.summary_misses: every range the strategy was
     # asked for, a size-declined or failed ask included, which is why the column is named for the
-    # record and not for "calls". cost_delta is nil when any compaction record quotes no figures, and when
-    # there is no compaction record at all, so a run that never compacted is not read as a measured 0.
+    # record and not for "calls". cost_delta is a {Cost}: unpriced when any compaction record quotes no
+    # figures, and none when there is no compaction record at all, so a run that never compacted is not
+    # read as a measured 0.
     class CompactionTally
       # Reopened rather than defined in the Data block: a constant there lands on the enclosing module.
-      NONE = new(summary_misses: 0, prepared: 0, applied: 0, cost_delta: nil)
+      NONE = new(summary_misses: 0, prepared: 0, applied: 0, cost_delta: Cost::NONE)
 
       # @param records [Enumerable<Hash>] 1 run's journal records
       # @return [CompactionTally]
@@ -24,12 +25,16 @@ module Lain
       end
 
       def self.cost_delta_of(compactions)
-        return nil if compactions.empty?
-
-        deltas = compactions.map { |r| r["cost_saved"] && (BigDecimal(r["cost_saved"]) - BigDecimal(r["cost_spent"])) }
-        deltas.include?(nil) ? nil : deltas.sum(BigDecimal(0))
+        Cost.sum(compactions.map { |r| delta_of(r) })
       end
       private_class_method :cost_delta_of
+
+      def self.delta_of(record)
+        return Cost::Unpriced.new(reason: "a compaction record quotes no figures") unless record["cost_saved"]
+
+        Cost::Priced.new(amount: BigDecimal(record["cost_saved"]) - BigDecimal(record["cost_spent"]))
+      end
+      private_class_method :delta_of
 
       # Over-counts by 1 when a restart precedes the first render through a prepared cut.
       def unapplied = prepared - applied

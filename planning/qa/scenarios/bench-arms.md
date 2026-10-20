@@ -203,7 +203,7 @@ Three things this is checking, and the first is the one that actually broke:
 **`lain bench variance` degrades the same way since 2026-09-14.** Round 17 found it refusing every
 local recording that had turns (`no price for model "qwen3-coder:30b"; configure a fallback to
 degrade`, exit 1), while this report degraded only its cost section (F109). Its cost row now reads
-`not priced` with the ledger's reason and the rest of the comparison renders. Driven round 26: `cost (USD): not priced`, the rest renders. `compaction cost delta` and `cache write tokens` now read `not measured` there (l26-5 fixed, T34): a run with no compaction record has no delta, and cache writes that are all 0 are withheld.
+`not priced` with the ledger's reason and the rest of the comparison renders. Driven round 26: `cost (USD): not priced`, the rest renders. `cache write tokens` reads `not measured` there (l26-5 fixed, T34): cache writes that are all 0 are withheld. `compaction cost delta` is withheld only when every run never compacted or a run's compaction was unpriced; a never-compacting control beside a compacted run keeps the column and reads `none`.
 
 **A failed recording is set aside, and the remaining runs continue** — round 18's answer to a
 run whose round trip dies partway through. The file is renamed to `<stem>.failed.ndjson` (hard

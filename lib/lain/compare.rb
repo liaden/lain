@@ -5,9 +5,8 @@ require "bigdecimal"
 module Lain
   # Compares n>=2 runs by DISTRIBUTION, because a single A/B is noise: one run
   # each of two arms tells you nothing about whether the difference you see is
-  # the tactic or the variance. So Compare folds each metric -- total tokens,
-  # cache-hit ratio, cost, grader score -- into a distribution across the runs
-  # and reports mean/median/min/max.
+  # the tactic or the variance. So Compare folds each metric -- {METRICS} names
+  # all 8 -- into a distribution across the runs and reports mean/median/min/max.
   #
   # It also REFUSES, up front, on the two axes that decide whether these runs
   # were comparable at all. {Capability::DegradedSet}: if one arm silently lost
@@ -33,38 +32,19 @@ module Lain
   class Compare
     include Declarative
 
-    # A run's dollar figure, known. {#refuses?} is the question a report asks
-    # of a cost it holds, so it never has to ask which of the two it was given.
-    Priced = Data.define(:amount) do
-      def refuses? = false
-    end
-
-    # A run's dollar figure, unknowable, carrying the {Ledger}'s own refusal.
-    # Never a zero: reading {#amount} raises that refusal again, so a caller
-    # that folds the number anyway fails loudly instead of reporting "free".
-    Unpriced = Data.define(:reason) do
-      # The one wording every report that folds costs refuses in. The Ledger's
-      # message already names the fix, so a second phrasing here would be a
-      # second authority on how to make a run priceable.
-      #
-      # @param unpriced [Array<Unpriced>]
-      # @return [String]
-      def self.describe(unpriced) = "not priced — #{unpriced.map(&:reason).uniq.join("; ")}"
-
-      def initialize(reason:)
-        super(reason: -reason.to_s)
-      end
-
-      def refuses? = true
-      def amount = raise PriceBook::UnknownModel, reason
-    end
+    # Kept for callers outside Compare that still name them; drop once they move to Cost.
+    Priced = Cost::Priced
+    Unpriced = Cost::Unpriced
 
     # Why a cache hit ratio over these runs would be a zero nobody measured.
     NO_PROMPT_CACHE = "not measured — every run records prompt_caching degraded, so there was no cache to hit"
     private_constant :NO_PROMPT_CACHE
 
-    NO_COMPACTION_COST = "not measured; a run has no compaction cost figures to sum"
-    private_constant :NO_COMPACTION_COST
+    NO_COMPACTION = "not measured; no run compacted"
+    private_constant :NO_COMPACTION
+
+    UNPRICED_COMPACTION = "not measured; a run's compaction could not be priced"
+    private_constant :UNPRICED_COMPACTION
 
     NO_CACHE_WRITES = "not measured; no run recorded a cache write"
     private_constant :NO_CACHE_WRITES
@@ -174,7 +154,7 @@ module Lain
       prepared_unapplied: { label: "prepared unapplied", reader: :prepared_unapplied,
                             fmt: ->(v) { format("%.1f", v) } },
       compaction_cost_delta: { label: "compaction cost delta", reader: :compaction_cost_delta,
-                               fmt: ->(v) { format("%.6f", v) } }
+                               fmt: ->(v) { v.is_a?(Cost::Priced) ? format("%.6f", v.amount) : v.to_s } }
     }.freeze
 
     # A comparison is a DISTRIBUTION, and one sample is not one. Declared over
@@ -206,7 +186,7 @@ module Lain
     # @return [Distribution] that metric's values across the runs
     def distribution(metric)
       spec = METRICS.fetch(metric) { raise ArgumentError, "unknown metric #{metric.inspect}" }
-      Distribution.new(@runs.map { |run| run.public_send(spec.fetch(:reader)) })
+      Distribution.new(@runs.flat_map { |run| Array(run.public_send(spec.fetch(:reader))) })
     end
 
     # A scannable report: a header, a per-metric summary table, and a per-run
@@ -279,7 +259,10 @@ module Lain
     end
 
     def unquoted_compaction_reason
-      NO_COMPACTION_COST if @runs.any? { |run| run.compaction_cost_delta.nil? }
+      deltas = @runs.map(&:compaction_cost_delta)
+      return UNPRICED_COMPACTION if deltas.any?(&:refuses?)
+
+      NO_COMPACTION if deltas.all?(Cost::NONE)
     end
 
     # Usage reads an absent cache field as 0, so an all-zero column cannot be told from one never measured.
