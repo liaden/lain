@@ -972,8 +972,8 @@ RSpec.describe Lain::Sensitivity::Policy do
       locked = File.join(root, "locked").tap { FileUtils.mkdir_p(File.join(_1, "inner")) }
       File.chmod(0o000, locked)
 
-      expect(confined.judge("loop", cwd: root)).to have_attributes(reason: :outside_project)
-      expect(confined.judge("locked/inner/a.rb", cwd: root)).to have_attributes(reason: :outside_project)
+      expect(confined.judge("loop", cwd: root)).to have_attributes(reason: :malformed, oracle_approvable?: false)
+      expect(confined.judge("locked/inner/a.rb", cwd: root)).to have_attributes(reason: :malformed)
     ensure
       File.chmod(0o755, locked) if locked
     end
@@ -983,6 +983,45 @@ RSpec.describe Lain::Sensitivity::Policy do
       expect(confined.filter).to be(policy.filter)
       expect(confined.gates?(read(".env"), cwd: root)).to be(true)
       expect(confined.related?(File.join(home, "notes", "a.md"))).to be(true)
+    end
+
+    it "keeps a credential reason outside its roots, which the secret oracle may not approve" do
+      npmrc = File.join(@base, "elsewhere", ".npmrc").tap { File.write(_1, "//registry/:_authToken=x\n") }
+
+      expect(confined.judge(npmrc, cwd: root)).to have_attributes(reason: :credential, oracle_approvable?: false)
+    end
+
+    it "still names a plain file outside its roots as outside the project" do
+      notes = File.join(@base, "elsewhere", "notes.txt").tap { File.write(_1, "notes\n") }
+
+      expect(confined.judge(notes, cwd: root)).to have_attributes(reason: :outside_project)
+    end
+
+    it "names a link's credential landing whether the out-of-scope side is its name or its landing" do
+      documents = File.join(home, "Documents").tap { FileUtils.mkdir_p(_1) }
+      File.write(File.join(root, ".npmrc"), "//registry/:_authToken=x\n")
+      File.symlink(File.join(root, ".npmrc"), File.join(documents, "registry"))
+      File.write(File.join(documents, "plain.txt"), "plain\n")
+      File.symlink(File.join(documents, "plain.txt"), File.join(root, "lib", ".npmrc"))
+
+      expect([confined.judge(File.join(documents, "registry"), cwd: root), confined.judge("lib/.npmrc", cwd: root)])
+        .to all(have_attributes(reason: :credential))
+    end
+
+    it "answers outside? by containment, whatever the path's name is judged for" do
+      documents = File.join(home, "Documents").tap { FileUtils.mkdir_p(_1) }
+      ssh = File.join(home, ".ssh").tap { FileUtils.mkdir_p(_1) }
+
+      paths = [documents, ssh, File.join(home, "notes"), File.join(worker, "a.rb")]
+
+      expect(paths.map { confined.outside?(_1, cwd: root) }).to eq([true, true, false, false])
+    end
+
+    it "answers in_related_tree? as its policy does" do
+      notes = File.join(home, "notes")
+
+      expect([confined.in_related_tree?(notes), confined.in_related_tree?(File.join(@base, "elsewhere"))])
+        .to eq([true, false])
     end
 
     it "confines again with more roots, keeping the ones it had" do

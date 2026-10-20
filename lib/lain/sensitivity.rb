@@ -51,6 +51,7 @@ module Lain
     # Symbols, so it journals and crosses a Ractor as-is.
     class Verdict
       include Declarative
+      include Comparable
 
       # The constants live on this reopen rather than in a `Data.define` block,
       # where they would scope to {Sensitivity} instead (see
@@ -79,6 +80,21 @@ module Lain
       # overrule, and an unreadable path is never waved through. An exempted
       # file is ordinary: the operator lifted its name gate on purpose.
       ORACLE_APPROVABLE = %i[none exempt out_of_scope outside_project].freeze
+      # Within a level, stricter first. Every pair the classifier emits has its
+      # own rank, because a tie between 2 unequal verdicts would make {#|}
+      # answer whichever operand came first. A secret-naming name outranks a
+      # credential-shaped one because a survey masks it whole, and an unreadable
+      # path outranks a location so it is never relabelled into an approvable one.
+      REASON_RANK = Ractor.make_shareable(
+        { denied: %i[account_database protected system configured],
+          gated: %i[named credential configured protected malformed out_of_scope outside_project],
+          ordinary: %i[exempt none] }
+      )
+      # Nested by level so a comparison builds no key.
+      STRICTNESS = Ractor.make_shareable(
+        LEVELS.flat_map { |level| REASON_RANK.fetch(level).reverse.map { [level, _1] } }
+              .each_with_index.with_object({}) { |((level, reason), rank), table| (table[level] ||= {})[reason] = rank }
+      )
 
       # Checked, not coerced, for the same reason a boundary check never
       # coerces: a wrong value answering the permissive question in silence is
@@ -100,6 +116,22 @@ module Lain
 
         super
       end
+
+      # Comparable's `==` would ask {#<=>}, which raises on a pair no rank
+      # names; equality stays Data's, field by field.
+      define_method(:==, ::Data.instance_method(:==))
+
+      # @param other [Verdict]
+      # @return [Integer, nil] by level, then by reason within it; nil for a non-Verdict
+      # @raise [KeyError] on a level and reason the classifier never pairs
+      def <=>(other) = other.is_a?(Verdict) ? strictness <=> other.strictness : nil
+
+      # @param other [Verdict]
+      # @return [Verdict] the stricter of the 2
+      def |(other) = strictness >= other.strictness ? self : other
+
+      # @return [Integer] higher is stricter
+      def strictness = STRICTNESS.fetch(level).fetch(reason)
 
       def ordinary? = level == :ordinary
       def gated? = level == :gated

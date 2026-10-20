@@ -460,14 +460,10 @@ module Lain
 
             # @param path [String, Pathname] as on {Lain::Sensitivity#classify}
             # @return [Lain::Sensitivity::Verdict]
-            def classify(path) = @classifiers.map { |classifier| classifier.classify(path) }.max_by { rank(_1) }
+            def classify(path) = @classifiers.map { |classifier| classifier.classify(path) }.inject(:|)
 
             def denied?(path) = classify(path).denied?
             def gated?(path) = classify(path).gated?
-
-            private
-
-            def rank(verdict) = [Lain::Sensitivity::Verdict::LEVELS.index(verdict.level), verdict.exempt? ? 1 : 0]
           end
 
           # @param home [String] the HOME the home-anchored rules resolve against

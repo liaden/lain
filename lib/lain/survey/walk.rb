@@ -220,15 +220,9 @@ module Lain
         admit(relative, absolute, File.size(absolute), verdict)
       end
 
-      # The STRICTEST of the names one file answers to. `Verdict::LEVELS` is
-      # ordered `ordinary, gated, denied`, so its index IS the strictness order
-      # and there is no second table to keep in step. Within a level a `named`
-      # verdict wins, because a survey masks it whole: `.env -> password.txt`
-      # is the password file. Other ties keep the first name, the link's own.
-      def verdict_for(*names, within:)
-        names.map { @sensitivity.classify(_1, within:) }
-             .max_by { [Sensitivity::Verdict::LEVELS.index(_1.level), _1.named? ? 1 : 0] }
-      end
+      # The STRICTEST of the names one file answers to: `.env -> password.txt`
+      # is the password file, and a survey masks it whole.
+      def verdict_for(*names, within:) = names.map { @sensitivity.classify(_1, within:) }.inject(:|)
 
       # Against the RESOLVED root, so a survey whose own root is reached through
       # a link does not declare every file in its tree outside it.

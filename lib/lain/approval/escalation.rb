@@ -710,8 +710,7 @@ module Lain
         # A directory denied in its own right is treated as outside, the
         # direction a refusal errs in.
         def outside?(project, directory)
-          verdict = project.judge(directory, cwd: directory)
-          verdict.denied? || verdict.reason == Sensitivity::Policy::OUTSIDE_PROJECT.reason
+          project.judge(directory, cwd: directory).denied? || project.outside?(directory, cwd: directory)
         end
 
         def in_place(resolved, dir) = resolved.sub(PROC_CWD) { dir }

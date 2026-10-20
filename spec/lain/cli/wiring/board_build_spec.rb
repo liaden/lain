@@ -1476,4 +1476,23 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
   end
+
+  describe Lain::CLI::Wiring::BoardBuild::Classifiers::Strictest do
+    def answering(level, reason)
+      verdict = Lain::Sensitivity::Verdict.new(level:, reason:)
+      Struct.new(:verdict) { def classify(_path) = verdict }.new(verdict)
+    end
+
+    def strictest(*answers) = described_class.of(answers.map { answering(*_1) }).classify("x")
+
+    it "takes an exemption over an ordinary match, whichever root answers first" do
+      expect([strictest(%i[ordinary none], %i[ordinary exempt]), strictest(%i[ordinary exempt], %i[ordinary none])])
+        .to all(have_attributes(reason: :exempt))
+    end
+
+    it "takes a secret-naming match over a credential one, whichever root answers first" do
+      expect([strictest(%i[gated credential], %i[gated named]), strictest(%i[gated named], %i[gated credential])])
+        .to all(have_attributes(reason: :named))
+    end
+  end
 end

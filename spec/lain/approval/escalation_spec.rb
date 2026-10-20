@@ -1114,13 +1114,13 @@ RSpec.describe Lain::Approval::Escalation do
       end
     end
 
-    def ruled(command, cwd: nil, root: @project, home: "/home/tester", checkout: nil)
+    def ruled(command, cwd: nil, root: @project, home: "/home/tester", checkout: nil, below: [])
       policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:)
       rung = described_class::Triage.new(sensitivity: EscalationSpecSupport::Classifiers.new(home:, base: root),
                                          policy:)
       session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: checkout || root, env: {}, checkout:))
       input = { "command" => command, "cwd" => cwd }.compact
-      ladder(rung).rule(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input:), session)
+      ladder(rung, *below).rule(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input:), session)
     end
 
     def shadow_link(name = "shadowlink") = File.symlink("/etc/shadow", File.join(@project, name))
@@ -1256,6 +1256,21 @@ RSpec.describe Lain::Approval::Escalation do
       root = File.join(@project, "repo").tap { FileUtils.mkdir_p(_1) }
 
       expect(ruled("cat pubring.kbx", cwd: File.join(home, ".gnupg"), root:, home:)).to be_deny.and be_final
+    end
+
+    # Outside is where a directory lies, not the reason its name is judged
+    # for: a home directory gated by its own name is still outside the project.
+    %w[Documents .ssh].each do |dir|
+      it "refuses a bare protected name from ~/#{dir} finally, though bypass sits below" do
+        home = File.join(@project, "home")
+        cwd = File.join(home, dir).tap { FileUtils.mkdir_p(_1) }
+        root = File.join(@project, "repo").tap { FileUtils.mkdir_p(_1) }
+
+        ruling = ruled("cat .netrc", cwd:, root:, home:, below: [described_class::Bypass.new])
+
+        expect(ruling).to be_deny.and be_final
+        expect(ruling.rung).to eq("triage")
+      end
     end
 
     # A project link into a home reached through a link: the real spelling is

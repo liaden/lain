@@ -1736,3 +1736,66 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 end
+
+# "The stricter of 2 verdicts" is one function, so every ranker that folds a
+# path's readings answers the same verdict whichever reading it met first.
+RSpec.describe Lain::Sensitivity::Verdict, "ordered by strictness" do
+  emitted = [%i[denied account_database], %i[denied protected], %i[denied system], %i[denied configured],
+             %i[gated named], %i[gated credential], %i[gated configured], %i[gated protected],
+             %i[gated malformed], %i[gated out_of_scope], %i[gated outside_project],
+             %i[ordinary exempt], %i[ordinary none]].map { |level, reason| described_class.new(level:, reason:) }
+
+  it "ranks the verdicts the classifier emits, stricter first, with no 2 tied" do
+    expect(emitted.sort.reverse).to eq(emitted)
+  end
+
+  it "gives every ranked reason within a level its own rank" do
+    expect(described_class::REASON_RANK.values).to all(satisfy { |reasons| reasons.uniq == reasons })
+  end
+
+  def verdict(level, reason) = described_class.new(level:, reason:)
+
+  it "joins a credential name and a secret-naming one to the name, which masks the file whole" do
+    expect(verdict(:gated, :credential) | verdict(:gated, :named)).to eq(verdict(:gated, :named))
+  end
+
+  it "joins an exemption and an ordinary match to the exemption" do
+    expect(verdict(:ordinary, :none) | verdict(:ordinary, :exempt)).to eq(verdict(:ordinary, :exempt))
+  end
+
+  it "joins a location verdict and an unreadable one to the unreadable one" do
+    expect(verdict(:gated, :malformed) | verdict(:gated, :outside_project)).to eq(verdict(:gated, :malformed))
+  end
+
+  it "joins inside a non-main Ractor, so the rank tables are shareable" do
+    joined = Ractor.new(emitted[5], emitted[4]) { |a, b| (a | b).reason }
+
+    expect(joined.value).to eq(:named)
+  end
+
+  context "when every pair and triple is read" do
+    pairs = emitted.product(emitted)
+
+    it "is idempotent" do
+      expect(emitted.find { |a| (a | a.dup) != a }).to be_nil
+    end
+
+    it "is commutative" do
+      expect(pairs.find { |a, b| (a | b) != (b | a) }).to be_nil
+    end
+
+    it "is associative" do
+      triples = pairs.product(emitted).map(&:flatten)
+      expect(triples.find { |a, b, c| ((a | b) | c) != (a | (b | c)) }).to be_nil
+    end
+
+    it "sits at least as strict as both operands" do
+      expect(pairs.find { |a, b| !((a | b) >= a && (a | b) >= b) }).to be_nil
+    end
+  end
+
+  include_examples "a meet semilattice under ancestry",
+                   population: -> { emitted },
+                   meet: ->(a, b) { a | b },
+                   ancestor_of: ->(joined, operand) { joined >= operand }
+end

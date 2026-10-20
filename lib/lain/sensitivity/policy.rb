@@ -214,6 +214,15 @@ module Lain
 
         def classify(path, within: nil) = @policy.classify(path, within:)
         def related?(path) = @policy.related?(path)
+        def in_related_tree?(path) = @policy.in_related_tree?(path)
+
+        # Asked by where a path lands, never by the reason its name is judged
+        # for: a home directory gated by name is still outside every root.
+        #
+        # @param path [String] as the call wrote it
+        # @param cwd [String] absolute
+        # @return [Boolean] whether it lands outside every root and related directory
+        def outside?(path, cwd:) = !held?(File.expand_path(path, cwd))
         def filter = @policy.filter
         def mask_paths(...) = @policy.mask_paths(...)
 
@@ -229,10 +238,10 @@ module Lain
         # @param cwd [String] absolute
         # @param within [String] absolute
         # @return [Verdict] the policy's own verdict for a denied path or one
-        #   inside a root, and {OUTSIDE_PROJECT} for any other
+        #   inside a root, and the stricter of it and {OUTSIDE_PROJECT} for any other
         def judge(path, cwd:, within: cwd)
           verdict = @policy.judge(path, cwd:, within:)
-          verdict.denied? || held?(File.expand_path(path, cwd)) ? verdict : OUTSIDE_PROJECT
+          verdict.denied? || held?(File.expand_path(path, cwd)) ? verdict : verdict | OUTSIDE_PROJECT
         end
 
         private
@@ -542,7 +551,7 @@ module Lain
         []
       end
 
-      def strictest(verdicts) = verdicts.find(&:denied?) || verdicts.find { !_1.ordinary? } || verdicts.first
+      def strictest(verdicts) = verdicts.inject(:|)
 
       # Mirrors {Sensitivity#text}, and for a reason narrower than symmetry:
       # {Tool::Input} COERCES rather than refuses, so the value this class

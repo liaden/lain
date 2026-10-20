@@ -99,6 +99,12 @@ RSpec.describe Lain::Sensitivity::Filter do
       expect(sifted.reasons).to eq(%i[credential protected])
     end
 
+    it "reports a row by its strictest reading, not its first" do
+      sifted = sift(["row"]) { ["/proj/.env", "/proj/password.txt", "#{home}/.ssh/id_rsa"] }
+
+      expect(sifted.reasons).to eq(%i[protected])
+    end
+
     # The count is the whole disclosure. Naming the paths would hand back what
     # the withholding took away, one indirection out.
     it "carries no path anywhere in what a caller reports" do

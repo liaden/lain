@@ -244,6 +244,25 @@ RSpec.describe Lain::Survey::Walk do
       expect(listing("settings.txt")).to have_attributes(gated?: true, explanation: "a credential-shaped name")
     end
 
+    it "takes a secret-naming target over a credential-shaped link, so the file is masked whole" do
+      write("password.txt", "hunter2\n")
+      link(".env", File.join(root, "password.txt"))
+
+      expect(listing(".env").verdict).to have_attributes(gated?: true, named?: true)
+    end
+
+    context "with a configured gate on the link's own name" do
+      let(:rules) { Lain::Sensitivity::Rules.from({ "gated" => ["*.sealed"] }) }
+      let(:sensitivity) { Lain::Sensitivity.new(home:, cwd: root, rules:) }
+
+      it "takes a credential-shaped target over the configured name, though the link's name is read first" do
+        write(".env", dotenv)
+        link("settings.sealed", File.join(root, ".env"))
+
+        expect(listing("settings.sealed").verdict).to have_attributes(gated?: true, credential?: true)
+      end
+    end
+
     # Containment is by SEGMENT, so a sibling directory whose path merely
     # starts with the root's is outside it. `<root>-backup` is the shape that
     # matters: a plain prefix test reads it as inside and surveys somebody's
