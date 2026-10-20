@@ -4,6 +4,7 @@ RSpec.describe Lain::Canonical do
   describe ".dump" do
     include_examples "canonical determinism",
                      dump: ->(input) { described_class.dump(input) },
+                     normalize: ->(input) { described_class.normalize(input) },
                      ambiguous_key_error: Lain::Canonical::AmbiguousKey,
                      non_finite_float_error: Lain::Canonical::NonFiniteFloat,
                      unsupported_type_error: Lain::Canonical::UnsupportedType

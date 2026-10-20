@@ -17,6 +17,10 @@
 #                                      Symbol and a String.
 #   non_finite_float_error   [Class]   raised on NaN/Infinity.
 #   unsupported_type_error   [Class]   raised on any other un-encodable input.
+#   normalize                [#call(input) -> value]   optional; the tree
+#                                      normaliser, for implementations that
+#                                      expose one apart from `dump`; the
+#                                      idempotence example is skipped without it.
 #
 # == Why `dump` runs through #canonical_call instead of a bare call
 #
@@ -29,6 +33,7 @@ RSpec.shared_examples "canonical determinism" do |config|
   ambiguous_key_error = config.fetch(:ambiguous_key_error)
   non_finite_float_error = config.fetch(:non_finite_float_error)
   unsupported_type_error = config.fetch(:unsupported_type_error)
+  normalize = config[:normalize]
 
   define_method(:canonical_call) { |callable, *args| instance_exec(*args, &callable) }
 
@@ -132,6 +137,24 @@ RSpec.shared_examples "canonical determinism" do |config|
      aggregate_failures: false do
     forall(value: json_value_generator) do |value:|
       expect(canonical_call(dump, mixed_spelling_keys(value))).to eq(canonical_call(dump, value))
+    end
+  end
+
+  it "survives a parse and a dump byte for byte", aggregate_failures: false do
+    forall(value: json_value_generator) do |value:|
+      bytes = canonical_call(dump, value)
+      expect(canonical_call(dump, JSON.parse(bytes))).to eq(bytes)
+    end
+  end
+
+  # The copy defeats Canonical's identity memo, which would otherwise make
+  # the law vacuous for Arrays. Gated because the Rust implementation exposes no normalizer.
+  if normalize
+    it "normalises a normalised value to an equal value", aggregate_failures: false do
+      forall(value: json_value_generator) do |value:|
+        once = canonical_call(normalize, value)
+        expect(canonical_call(normalize, JSON.parse(JSON.generate(once)))).to eq(once)
+      end
     end
   end
 
