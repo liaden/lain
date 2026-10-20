@@ -2177,6 +2177,8 @@ Spec file: `spec/lain/dag/factory_spec.rb` (AC 1 as an enumeration over `lib/`, 
 - `Timeline#==` is `other.is_a?(Timeline)` (`timeline.rb:147`) and `Ext::Timeline::CrossStore` is a separate class from `Dag::CrossStore`; both are T37's parity list, named here so it does not find them late.
 - Found while executing T31: a fetched `Blob` is a frozen binary String, and `snapshot_log`, `restore` and `restart` call
   `.bytes` on a fetch; they break at the flip and join T37's parity list.
+- Found while executing T32: `Lain::Ext::Store::MissingObject` is not a `Lain::Store::MissingObject`, so the rescues at
+  `supervisor/restart.rb:122` and `frontend/neovim/buffers.rb:113` stop catching it after the flip; they join T37's parity list.
 
 ### T37: Flip the factory          [risk: high]
 
@@ -2217,6 +2219,9 @@ Spec file: the suite (AC 1, AC 2), `spec/lain/seams/ledger_rust_timeline_spec.rb
 **Stop and report if:**
 - `LAIN_DAG=ruby` cannot stay green because T31's store size is not conditional; the flip is then not revertible and the gate is not met.
 - The render benchmark after the flip is slower than before T35 on the chat path; the numbers go in the Execution log and the flip waits.
+- Gate (user ruling 2026-10-20): the flip is judged on the chat path (a render after the first, through the Agent's
+  prefix memo), not on a cold full render; a cold full `Context#render` about 20% slower than Ruby at 10k turns is accepted
+  and recorded.
 
 ### T38: Rehome Event's class helpers and the 2 Ruby units that outlive the port          [risk: medium]
 
@@ -2323,7 +2328,7 @@ Spec file: `spec/conformance_corpus_spec.rb`
 **Depends on:** T40
 **Files:** delete `planning/rust-parity-gap.md`; `ext/lain/corpus/MANIFEST.json` (the divergences list)
 **Reuse:** each rule's own justification, quoted and dated
-**Shared-file wiring:** `ext/lain/CLAUDE.md:105,141`, `docs/rust-bindings.md:30`, `ROADMAP.md` item 23 and the M4-1 row; this card hands back its diffs and the main session applies them in one commit
+**Shared-file wiring:** `ext/lain/CLAUDE.md:105,141,143` (`:143`, never assert Rust equals Ruby inside cargo test, is broken by the T32 corpus and must invert too), `docs/rust-bindings.md:30`, `ROADMAP.md` item 23 and the M4-1 row; this card hands back its diffs and the main session applies them in one commit
 **Reachable from:** every agent session working on `ext/lain`
 
 `ext/lain/CLAUDE.md:105` ("the Ruby version is not deleted") and the `:141` table row invert because the
@@ -2725,7 +2730,7 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   (186 over the 184 ceiling is pre-existing; this plan may not raise it), `bin/runtime-census --check`.
 - `bundle exec rspec spec/lain/seams/ledger_rust_timeline_spec.rb` and read the number: a ledger pricing at zero is the flip's signature failure.
 - `LAIN_DAG=ruby bundle exec rake pspec` green after T37 lands and again after T38, so the revert path is tested while it exists; the flip commit itself is 1 commit, and T36's sweep stays either way.
-- The benchmark script rerun at T35 and after T37, both tables in the Execution log; replay-render on Ext must not be slower than the Ruby figure at `9eaff2a8`.
+- The benchmark script rerun at T35 and after T37, both tables in the Execution log; the chat-path render on Ext must not be slower than Ruby's (user ruling 2026-10-20: the cold full render is not the gate).
 - `pre-commit run --all-files`.
 - The QA scenarios touched (`secret-boundary.md`, `bench-arms.md`, `session-and-window.md`, `cockpit-surfaces.md`, `shell-term-approval.md`) state the landed behaviour; a stale enumeration is worse than a missing one (memory `qa-scenarios-track-features`).
 - **Manual, human:** one `lain chat` on a local model that commits several turns, types at `you>` and presses Ctrl-C (the line clears), runs a `bash` that prints a fake token (masked on the pane and in the record with the same numbers), then `/rewind` and `/undo`.
@@ -2789,3 +2794,8 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   probably a review mutant); T31 `56cff2b5` (2 store maps, events and members, with edges checked against events only;
   append 3.7x to 3.9x Ruby). Rulings: T23 widened with no shim and named the pair `Budget::Account`; T20 pins the spike's
   monotonicity witness; T46's remote check is pinned by a git that fails under `GIT_INDEX_FILE`.
+- 2026-10-20 started T32, T35 (opus), cut at `b541b418`; T4 review (opus, high).
+- 2026-10-20 T35 stop condition fired: at 10k turns a cold `messages` walk is 44 ips on Ext against 99 to 139 on Ruby, a cold
+  full `Context#render` 15.7 against 19 to 21, and the chat path after the first render 32,271 against 13,489. Asked the
+  user; ruled: T37 gates on the chat path, and the cold render's 20% gap is accepted (card and integration check amended).
+- 2026-10-20 T4 landed `dec32aaf` (2nd attempt: the first hook failed only on 'files were modified', caused by the main session writing this plan during the run; suite green both times, 26206 examples). T32 review: FFI reader replay added as a spec; `Ext::Store::MissingObject` ancestry and `ext/lain/CLAUDE.md:143` added to T37 and T41.
