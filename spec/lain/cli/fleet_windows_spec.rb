@@ -677,7 +677,7 @@ RSpec.describe Lain::CLI::FleetWindows do
     it "marks the window failed, not done, on a one-shot's failed completion" do
       failed = Lain::Telemetry::Message.new(
         digest: "blake3:fa11111122223333", kind: :message, from: spawn_digest, to: parent,
-        payload: { "lifecycle" => "failed", "error" => "Lain::Agent::Budget::Exceeded", "final" => "blake3:f1na" },
+        payload: { "lifecycle" => "failed", "error" => "Lain::Budget::Exceeded", "final" => "blake3:f1na" },
         causal_parents: [spawn_digest, "blake3:f1na"], correlation: spawn_digest
       )
       fleet << spawn_record

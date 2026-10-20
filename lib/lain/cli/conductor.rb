@@ -11,7 +11,7 @@ module Lain
     # One ask is supervised by co-locating THREE fibers in the SAME reactor: the
     # run task hosting `@agent.ask`, the {Shutdown} coordinator parked on its
     # pipe, and the countdown ticker. Co-location is the load-bearing invariant --
-    # {Agent::Budget#interrupt} is `Async::Task#stop`, and a task may only be
+    # {Agent.interrupt} is `Async::Task#stop`, and a task may only be
     # stopped from its own reactor thread, so the coordinator that stops the run
     # must live on the run's reactor, never a signal-handling side thread.
     #
@@ -154,7 +154,7 @@ module Lain
       # `typed:` answers whether the line editor drawing `you>` holds typed
       # words, so a Ctrl-C there clears them rather than ending the chat.
       def initialize(tty:, chronicle:, signals:, rail: Frontend::Intake.new, grace: Shutdown::GRACE_DEFAULT,
-                     budget: Agent::Budget.new, supervisor: Supervisor::Null, run_clock: RunClock.new,
+                     supervisor: Supervisor::Null, run_clock: RunClock.new,
                      clock: RunClock::MONOTONIC, tick: DEFAULT_TICK, countdown: RailCountdown::Unoffered,
                      typed: UNTYPED)
         @tty = tty
@@ -162,7 +162,6 @@ module Lain
         @signals = signals
         @rail = rail
         @grace = grace
-        @budget = budget
         @supervisor = supervisor
         @run_clock = run_clock
         @clock = clock
@@ -479,7 +478,7 @@ module Lain
       end
 
       def idle_shutdown(reading)
-        Shutdown.new(run_task: reading, closer: IdleClose.new(self), budget: @budget, clock: @clock, grace: @grace)
+        Shutdown.new(run_task: reading, closer: IdleClose.new(self), clock: @clock, grace: @grace)
       end
 
       # Each recorded signal, routed against what is drawn NOW: the prompt
@@ -542,7 +541,7 @@ module Lain
       # coordinator fiber with the sigquit escape hatch queued unread behind it.
       # A settle that hits the cap is journaled (drain_timed_out), never silent.
       def build_shutdown(run)
-        Shutdown.new(run_task: run, closer: self, budget: @budget, clock: @clock, grace: @grace,
+        Shutdown.new(run_task: run, closer: self, clock: @clock, grace: @grace,
                      actors: @supervisor.drain(within: @grace))
       end
 

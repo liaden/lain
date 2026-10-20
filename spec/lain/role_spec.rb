@@ -98,13 +98,21 @@ RSpec.describe Lain::Role do
     end
   end
 
+  describe "a role's budget is a request" do
+    it "is a ceilings value of its iterations and unlimited tokens" do
+      request = Lain::Role::Catalog.fetch(:researcher).budget
+
+      expect([request.class, request.iterations, request.tokens]).to eq([Lain::Budget::Ceilings, 60, nil])
+    end
+  end
+
   describe "a role declares its iteration ceiling" do
     it "gives the researcher 60 iterations" do
       expect(Lain::Role::Catalog.fetch(:researcher).max_iterations).to eq(60)
     end
 
     it "defaults a role that declares none to the budget default" do
-      expect(Lain::Role::Catalog.fetch(:dev).max_iterations).to eq(Lain::Agent::Budget::DEFAULT_MAX_ITERATIONS)
+      expect(Lain::Role::Catalog.fetch(:dev).max_iterations).to eq(Lain::Budget::DEFAULT_ITERATIONS)
       expect(described_class.new(name: :probe, only: []).max_iterations).to eq(25)
     end
   end

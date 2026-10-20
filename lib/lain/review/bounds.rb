@@ -5,7 +5,7 @@ module Lain
     # The sizes past which the review surface REFUSES, and the alternative it
     # names when it does.
     #
-    # {Agent::Budget}'s shape, for {Agent::Budget}'s reason: a ceiling the
+    # {Budget}'s shape, for {Budget}'s reason: a ceiling the
     # harness enforces is not an outcome the subject produced, so it raises
     # rather than returning a value a caller can read past. What differs is what
     # it defends. A budget bounds a loop pointed at a shell; this bounds a VIEW,

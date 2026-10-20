@@ -2,7 +2,7 @@
 
 # A REAL interrupt, through the real objects: a real Agent drives a real
 # ToolRunner over a real Toolset and a real Timeline inside a real reactor, and
-# the run is torn by `Async::Task#cancel` -- the same call `Agent::Budget#interrupt`
+# the run is torn by `Async::Task#cancel` -- the same call `Agent::Agent#interrupt`
 # makes from Ctrl-C and from grace expiry. Nothing between the Agent and the
 # Timeline is doubled, and the cancellation is not simulated by raising a
 # hand-made exception: the tool is genuinely parked on an await when the cancel
@@ -58,7 +58,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
   end
 
   # Ask, wait until the parking tool is genuinely parked, then cancel the task
-  # hosting the run exactly as Budget#interrupt does.
+  # hosting the run exactly as Agent#interrupt does.
   def torn_run(agent)
     Sync do |task|
       run = task.async { agent.ask("hi") }

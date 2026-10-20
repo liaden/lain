@@ -227,7 +227,7 @@ RSpec.describe Lain::CLI::Improve do
 
       expect { improve(provider).report }
         .to raise_error(Lain::Error, /stopped at the ceiling, stored 2 notes.*ceiling is \d+/) do |error|
-        expect(error.cause).to be_a(Lain::Agent::Budget::Exceeded)
+        expect(error.cause).to be_a(Lain::Budget::Exceeded)
       end
     end
 

@@ -138,7 +138,7 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
       tool_response(["c1", "no_such_tool", {}])
     end)
 
-    expect { dispatch(wired) }.to raise_error(Lain::Agent::Budget::Exceeded)
+    expect { dispatch(wired) }.to raise_error(Lain::Budget::Exceeded)
 
     expect(handbacks.first).to have_attributes(sync: :dirty, dirty: true, path:)
   end

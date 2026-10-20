@@ -40,7 +40,7 @@ RSpec.describe Lain::CLI::Repl::Ask do
     # `Async::Task`, which reports the harness's own decision to halt as
     # `Task may have ended with unhandled exception.` plus its backtrace.
     it "answers a harness refusal as a value rather than raising it" do
-      refusal = Lain::Agent::Budget::Exceeded.new("loop ran 25 iterations, ceiling is 25")
+      refusal = Lain::Budget::Exceeded.new("loop ran 25 iterations, ceiling is 25")
       allow(agent).to receive(:ask).and_raise(refusal)
 
       expect(ask.attempt("go")).to equal(refusal)
@@ -215,7 +215,7 @@ RSpec.describe Lain::CLI::Repl::Ask do
     end
 
     it "renders a refusal as its own message and delivers nothing over it" do
-      ask.settle(Lain::Agent::Budget::Exceeded.new("spent 200 tokens, ceiling is 50"))
+      ask.settle(Lain::Budget::Exceeded.new("spent 200 tokens, ceiling is 50"))
 
       expect(tty).to have_received(:render_error).with("spent 200 tokens, ceiling is 50")
     end
@@ -273,7 +273,7 @@ RSpec.describe Lain::CLI::Repl::Ask do
     it "says why by type: a ceiling, a refusal, a stop, a transport failure, or torn" do
       over_window = Lain::Middleware::RequestBudget::OverWindow.new("refused", prompt_tokens: 9, window_tokens: 8,
                                                                                source: "ollama")
-      { Lain::Agent::Budget::Exceeded.new("loop ran 25 iterations, ceiling is 25") => :ceiling,
+      { Lain::Budget::Exceeded.new("loop ran 25 iterations, ceiling is 25") => :ceiling,
         over_window => :over_window,
         Lain::Stopped.new("stopped") => :stopped,
         Lain::Provider::Ollama::PreWireError.new("connection refused") => :transport,

@@ -62,10 +62,10 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
 
     it "writes the failure's mark and error class beside the child's head, citing the :spawn and that head" do
       spawn = lineage.spawn(parent, prompt: "go")
-      message = lineage.ended(parent, spawn, child, lifecycle: failed, error: "Lain::Agent::Budget::Exceeded")
+      message = lineage.ended(parent, spawn, child, lifecycle: failed, error: "Lain::Budget::Exceeded")
 
       expect(message.kind).to eq(:message)
-      expect(message.body).to eq("lifecycle" => failed, "error" => "Lain::Agent::Budget::Exceeded",
+      expect(message.body).to eq("lifecycle" => failed, "error" => "Lain::Budget::Exceeded",
                                  "final" => child.head_digest)
       expect(message.causal_parents).to contain_exactly(spawn.digest, child.head_digest)
       expect(message.from).to eq(lineage.correlation_of(child))

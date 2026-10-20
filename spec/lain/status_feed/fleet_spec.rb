@@ -264,7 +264,7 @@ RSpec.describe Lain::StatusFeed::Fleet do
       fleet.launched(launch)
 
       fleet.completed(message_event("failed", body: { "lifecycle" => Lain::StatusFeed::SpawnLifecycle::FAILED,
-                                                      "error" => "Lain::Agent::Budget::Exceeded" },
+                                                      "error" => "Lain::Budget::Exceeded" },
                                               causal_parents: [launch.digest]))
 
       expect(fleet.digests).to eq([])
@@ -403,7 +403,7 @@ RSpec.describe Lain::StatusFeed::Fleet do
       fleet.launched(launch)
 
       fleet.completed(message_event("ended", body: { "lifecycle" => Lain::StatusFeed::SpawnLifecycle::FAILED,
-                                                     "error" => "Lain::Agent::Budget::Exhausted" },
+                                                     "error" => "Lain::Budget::Exceeded" },
                                              causal_parents: [launch.digest]))
 
       expect([fleet.tree.map { |row| row["state"] }, fleet.digests]).to eq([["failed"], []])

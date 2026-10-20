@@ -4,7 +4,7 @@ module Lain
   module CLI
     # The parked-prompt breakout seam. While the human is idle at the `you>`
     # prompt, Reline holds the terminal in a blocking read on the main thread and
-    # there is no run for {Agent::Budget#interrupt} to stop -- so a terminating
+    # there is no run for {Agent.interrupt} to stop -- so a terminating
     # signal there must instead break the readline out, and it must do so without
     # any work in the trap body.
     #

@@ -166,7 +166,7 @@ module Lain
         # distribution.
         def ask_each(agent)
           @prompts.each { |prompt| agent.ask(prompt) }
-        rescue Agent::Budget::Exceeded
+        rescue Budget::Exceeded
           agent
         end
 

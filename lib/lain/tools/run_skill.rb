@@ -26,7 +26,7 @@ module Lain
     # cross-skill, never-reset per-run COUNT -- a session QUOTA, which is why
     # the refusal says "budget" and not "depth".
     #
-    # A belt-and-suspenders SAFETY NET, not the primary cap: {Agent::Budget} is
+    # A belt-and-suspenders SAFETY NET, not the primary cap: {Budget} is
     # what actually stops a runaway self-calling loop, so the default sits well
     # above realistic composition and trips only on a genuine runaway.
     class RunSkill < Tool

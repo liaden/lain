@@ -128,7 +128,7 @@ RSpec.describe "Subagent gating" do
     Lain::Tools::Subagent.new(
       seam: seam(provider:, **over), toolset: union,
       policy: Lain::Role::Catalog[role].spawn_policy(posture:),
-      budget: Lain::Agent::Budget.new, max_depth: 1
+      budget: Lain::Budget.ceilings, max_depth: 1
     )
   end
 
@@ -304,7 +304,7 @@ RSpec.describe "Subagent gating" do
     def child(posture: :schema, sensitivity: path_policy, role: :dev)
       Lain::Tools::Subagent::ChildBuilder.new(
         seam: seam(provider: mock, gate_policy: SubagentGateSupport::SpyPolicy.new(verdict: false), sensitivity:),
-        toolset: union, policy: Lain::Role::Catalog[role].spawn_policy(posture:), budget: Lain::Agent::Budget.new
+        toolset: union, policy: Lain::Role::Catalog[role].spawn_policy(posture:), budget: Lain::Budget.ceilings
       ).build(parent, ceiling: 1).agent
     end
 
@@ -350,7 +350,7 @@ RSpec.describe "Subagent gating" do
       Lain::Tools::Subagent::ChildBuilder.new(
         seam: seam(provider: mock).with(tool_middleware: guard), toolset: union,
         policy: Lain::Role::Catalog[:merge_resolver].spawn_policy(posture: :handler_union),
-        budget: Lain::Agent::Budget.new
+        budget: Lain::Budget.ceilings
       ).build(parent, ceiling: 1).agent
     end
 
@@ -387,7 +387,7 @@ RSpec.describe "Subagent gating" do
       builder = Lain::Tools::Subagent::ChildBuilder.new(
         seam: seam(provider: mock).with(tool_middleware: ->(_worker_env, **) { shared }), toolset: union,
         policy: Lain::Role::Catalog[:merge_resolver].spawn_policy(posture: :handler_union),
-        budget: Lain::Agent::Budget.new
+        budget: Lain::Budget.ceilings
       )
 
       builder.build(parent, ceiling: 1)
@@ -405,7 +405,7 @@ RSpec.describe "Subagent gating" do
     def spawned_over(builder, posture: :schema)
       tool = Lain::Tools::Subagent.new(
         seam: seam(provider: mock(*calls("bash"))).with(tool_middleware: builder), toolset: union,
-        policy: Lain::Role::Catalog[:dev].spawn_policy(posture:), budget: Lain::Agent::Budget.new, max_depth: 1
+        policy: Lain::Role::Catalog[:dev].spawn_policy(posture:), budget: Lain::Budget.ceilings, max_depth: 1
       )
       tool.call({ "prompt" => "go" }, invocation)
     end

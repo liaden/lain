@@ -1545,7 +1545,7 @@ RSpec.describe Lain::CLI::Repl do
   end
 
   # Manual-QA round 4. A budget ceiling is the HARNESS deciding to
-  # halt ({Agent::Budget}'s class doc), and {Repl#respond} already renders it as
+  # halt ({Budget}'s class doc), and {Repl#respond} already renders it as
   # the one line a human needs: `error: loop ran 2 iterations, ceiling is 2`.
   # What the human actually met was that line preceded by
   # `Task may have ended with unhandled exception.` and the whole backtrace --
@@ -1579,7 +1579,7 @@ RSpec.describe Lain::CLI::Repl do
 
     # The ceiling that stops one ask driven into a tool loop -- the
     # reproduction an earlier card left standing, since the ceiling now bounds one ask.
-    let(:ceiling) { Lain::Agent::Budget.new(max_iterations: 2) }
+    let(:ceiling) { Lain::Budget.ceilings(iterations: 2) }
     let(:looping_thrice) { [looping] * 3 }
 
     # A whole conversation over ONE typed line, through the real {Repl#run} and
@@ -1669,7 +1669,7 @@ RSpec.describe Lain::CLI::Repl do
       end
     end
 
-    # The wedge {Agent::Budget} guards is the harness halting; a BUG is not, and
+    # The wedge {Budget} guards is the harness halting; a BUG is not, and
     # telling them apart is the whole reason the fix carries the refusal out as
     # a value instead of silencing Async. So this drives the SAME path as the
     # two examples above -- real Repl, real {Conductor#supervise}, real
@@ -1692,7 +1692,7 @@ RSpec.describe Lain::CLI::Repl do
       Dir.mktmpdir do |dir|
         escaped = nil
         noise = stderr_during do
-          converse_once(dir, [], budget: Lain::Agent::Budget.new, provider: ExplodingProvider.new(responses: []))
+          converse_once(dir, [], budget: Lain::Budget.ceilings, provider: ExplodingProvider.new(responses: []))
         rescue TypeError => e
           escaped = e
         end

@@ -351,8 +351,8 @@ the new cancellation specs). A red-first probe (`ReactorAssertingProvider`, whos
 raises unless `Async::Task.current?`) pins that the bridge actually establishes the reactor
 rather than the suite merely tolerating its absence.
 
-**The cancel seam.** `Agent::Budget#interrupt(task)` is `task.stop` — structured cancellation,
-grouped with the two ceilings because all three are *the harness deciding to halt* (a
+**The cancel seam.** `Agent.interrupt(task)` (and `Agent#interrupt`) is `task.stop` — structured cancellation,
+kept beside the two ceilings because all three are *the harness deciding to halt* (a
 `:refusal` is the model's outcome; these three are ours). It is `Async::Task#stop`, not
 `Thread#kill`, for the reason the "Threads" section rejected the latter: the stop raises
 `Async::Stop` only at a scheduler-controlled yield point, so `ensure` blocks run and — the
@@ -424,9 +424,9 @@ raised inside it, so a simultaneous interrupt and token-ceiling bust settles as 
 deciding to halt, so either is a legal outcome; the interrupt being the more imperative of the
 two is the sensible tiebreak, and it is measured, not assumed.
 
-**Using the cancel seam — a worked supervisor.** `Budget#interrupt` stops the `Async::Task`
+**Using the cancel seam — a worked supervisor.** `Agent#interrupt` stops the `Async::Task`
 *hosting* a run, so the run must be on its own task for there to be anything to stop —
-`agent.budget.interrupt(...)` from inside the run's own fiber has no task handle that isn't
+`agent.interrupt(...)` from inside the run's own fiber has no task handle that isn't
 itself. The shape is: wrap `ask` in `task.async`, keep the handle, stop it from a sibling fiber
 (a signal handler, a timeout, a UI event):
 
@@ -438,7 +438,7 @@ Sync do |task|
 
   watchdog = task.async do
     sleep 30                      # or: a Ctrl-C trap, a supervising UI event
-    agent.budget.interrupt(run)   # structured: lands at run's next scheduler yield
+    agent.interrupt(run)          # structured: lands at run's next scheduler yield
   end
 
   run.wait                        # returns nil if stopped; the agent is left in a

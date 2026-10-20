@@ -225,7 +225,7 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
 
         expect(path).to eq(File.join(tmp, "1.ndjson"))
         expect(Lain::Bench::Session.load(path).timeline.to_a.count { |turn| turn.role == "assistant" })
-          .to eq(Lain::Agent::Budget::DEFAULT_MAX_ITERATIONS)
+          .to eq(Lain::Budget::DEFAULT_ITERATIONS)
       end
     end
 

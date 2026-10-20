@@ -265,8 +265,8 @@ RSpec.shared_examples "a Lain::Provider" do |config|
     it "raises once max_iterations is reached" do
       a = parity_agent(provider_factory,
                        [parity_tool_response(["tu_1", "echo", { "text" => "loop" }])],
-                       budget: Lain::Agent::Budget.new(max_iterations: 3))
-      expect { a.ask("hi") }.to raise_error(Lain::Agent::Budget::Exceeded, /3 iterations/)
+                       budget: Lain::Budget.ceilings(iterations: 3))
+      expect { a.ask("hi") }.to raise_error(Lain::Budget::Exceeded, /3 iterations/)
     end
   end
 end

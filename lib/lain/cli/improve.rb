@@ -227,7 +227,7 @@ module Lain
       # Thor prints only the message, so the stored count has to ride in it.
       def answer(improver, prompt, sink)
         improver.ask!(prompt)
-      rescue Agent::Budget::Exceeded => e
+      rescue Budget::Exceeded => e
         raise Lain::Error, "improve: stopped at the ceiling, #{stored(sink)} (#{e.message})"
       rescue Response::Failed => e
         raise Lain::Error, "improve: #{e.message}, #{stored(sink)}"

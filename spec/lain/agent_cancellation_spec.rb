@@ -78,7 +78,7 @@ RSpec.describe "Lain::Agent cancellation" do
     Sync do |task|
       child = task.async { returned = agent.ask("hi") }
       entered.dequeue
-      agent.budget.interrupt(child)
+      agent.interrupt(child)
       child.wait
     end
     returned
@@ -151,7 +151,7 @@ RSpec.describe "Lain::Agent cancellation" do
         child = task.async { agent.ask("hi") }
         expect(ask.pending?).to be(true) # ran synchronously up to the await -- parked inside it
         cancelled = ask.last_question
-        agent.budget.interrupt(child)
+        agent.interrupt(child)
         child.wait
 
         # The stop escaped the await BEFORE the hand-over append: nothing is
@@ -225,7 +225,7 @@ RSpec.describe "Lain::Agent cancellation" do
       Sync do |task|
         child = task.async { returned = agent.ask("hi") }
         entered.dequeue # journal.<< is parked; the assistant turn is committed
-        agent.budget.interrupt(child)
+        agent.interrupt(child)
         release.enqueue(true) # the shielded write may now finish
         child.wait
       end

@@ -9,7 +9,7 @@ module Lain
     # false: a role CLAIMS the guarantee, it never inherits one. `sealed` is a
     # role that decides or informs an approval, so its prompt never carries the
     # project's slot fills: a project must not write the prompt that judges it.
-    def initialize(name:, only:, unattended: false, max_iterations: Agent::Budget::DEFAULT_MAX_ITERATIONS,
+    def initialize(name:, only:, unattended: false, max_iterations: Budget::DEFAULT_ITERATIONS,
                    sealed: false)
       super(name: name.to_sym, only: Array(only).map(&:to_sym).freeze,
             unattended: unattended ? true : false, max_iterations: Integer(max_iterations),
@@ -24,7 +24,7 @@ module Lain
 
     # The ceiling a child of this role runs under, handed to the spawn beside
     # the policy because the policy carries capabilities, not limits.
-    def budget = Agent::Budget.new(max_iterations:)
+    def budget = Budget.ceilings(iterations: max_iterations)
 
     # The spawn policy the {Tools::Subagent} tool reads: this role's `only`-set
     # and its unattended declaration, under the caller's chosen prefix/posture

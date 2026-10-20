@@ -202,7 +202,7 @@ RSpec.describe Lain::CLI::Consolidate do
     def looping = tool_response(["tu_loop", "memory_read", { "id" => "login-ttl" }])
 
     let(:provider) do
-      ceiling = Lain::Agent::Budget::DEFAULT_MAX_ITERATIONS
+      ceiling = Lain::Budget::DEFAULT_ITERATIONS
       Lain::Provider::Mock.new(responses: [tool_response(memory_write("login-ttl", "the token TTL was zero")),
                                            *Array.new(ceiling - 1) { looping }, text_response("B done")])
     end

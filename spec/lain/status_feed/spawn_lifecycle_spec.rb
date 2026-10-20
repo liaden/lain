@@ -58,7 +58,7 @@ RSpec.describe Lain::StatusFeed::SpawnLifecycle do
   # apart from one, because a failed child's head is not an answer.
   describe "a one-shot that failed" do
     let(:lifecycle) do
-      described_class.new(record({ "lifecycle" => "failed", "error" => "Lain::Agent::Budget::Exceeded",
+      described_class.new(record({ "lifecycle" => "failed", "error" => "Lain::Budget::Exceeded",
                                    "final" => "blake3:f1na" }))
     end
 

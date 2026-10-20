@@ -107,7 +107,7 @@ module Lain
       # `kept` gives each child a directory of its own, kept after it ends
       # ({Kept}), and adds `extends` to the input; not copied by {#descend}
       # either, since a grandchild works where its parent was put.
-      def initialize(toolset:, policy:, seam: nil, budget: Agent::Budget.new,
+      def initialize(toolset:, policy:, seam: nil, budget: Budget.ceilings,
                      max_depth: 1, name: NAME, announces_as: name, mode: :one_shot,
                      log: Log::Null, persona: Role::Persona::Null, model: ModelChoice::Null,
                      answer: ANSWER, compaction: ParentView::None, kept: Unkept, **spawn_over)
@@ -394,8 +394,8 @@ module Lain
       # self-sync ask, follows a complete answer and must not read as a stop.
       def asked(agent, prompt, on_stream_started)
         agent.ask(prompt, on_stream_started:)
-      rescue Agent::Budget::Exceeded => e
-        raise Agent::Budget::Exceeded, @answer.partial(agent, e.message)
+      rescue Budget::Exceeded => e
+        raise Budget::Exceeded, @answer.partial(agent, e.message)
       end
 
       # Checked before the bounding, so an envelope too large to deliver is not
@@ -1730,7 +1730,7 @@ module Lain
         # middleware must exist before the Agent that runs it.
         def recorded_turns(chain, mailbox)
           Middleware::Stack.new([*@seam.middleware.members(:turn),
-                                 WrapUp.new(mailbox:, ceiling: @budget.max_iterations),
+                                 WrapUp.new(mailbox:, ceiling: @budget.iterations),
                                  Middleware::JournalTurns.new(scribe: chain.feed, timeline: chain.timeline)])
         end
 

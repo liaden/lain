@@ -88,7 +88,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
       context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256) },
       toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]),
       policy: spawn_policy, parent:, journal: Lain::Channel::Null.instance,
-      budget: Lain::Agent::Budget.new, max_depth: 3
+      budget: Lain::Budget.ceilings, max_depth: 3
     )
   end
 
@@ -145,7 +145,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
     # tool_result turn at all.
     #
     # A fan-out stop is NOT a different fact from a main-loop tear. It arrives
-    # by the ordinary route: `budget.interrupt(run)` stops the PARENT's run
+    # by the ordinary route: `agent.interrupt(run)` stops the PARENT's run
     # task, so the parent unwinds through its own {Lain::Agent::ToolDelivery}
     # exactly as any torn turn does -- there is no separate fan-out path. The
     # model that made these three calls is the parent's, it is still there, and
@@ -171,7 +171,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
         run = task.async { parent_agent.ask("please spawn") }
         task.async do
           sleep(0.05)
-          parent_agent.budget.interrupt(run)
+          parent_agent.interrupt(run)
         end.wait
         run.wait
       end
@@ -211,7 +211,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
         run = task.async { parent_agent.ask("please spawn") }
         task.async do
           sleep(0.05)
-          parent_agent.budget.interrupt(run)
+          parent_agent.interrupt(run)
         end.wait
         run.wait
       end

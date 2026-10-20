@@ -152,7 +152,7 @@ module Lain
       end
 
       # @param journal [#record] where each driven iteration lands as evidence
-      # @param cap [Integer] the iteration ceiling, reused through {Agent::Budget}
+      # @param cap [Integer] the iteration ceiling, reused through {Budget::Account}
       # @param quiescent [#call] answers whether the fleet is quiet enough to drive
       # @param layer [#enable, #disable] the `goal` mode layer this driver moves
       def initialize(journal:, cap: DEFAULT_CAP, quiescent: -> { true }, layer: Layer::Unswitched)
@@ -253,7 +253,7 @@ module Lain
         def initialize(goal:, journal:, cap:, session:)
           @goal = goal
           @journal = journal
-          @budget = Agent::Budget.new(max_iterations: cap)
+          @budget = Budget::Account.new(ceilings: Budget.ceilings(iterations: cap), spent: Budget::Spent.zero)
           @iterations = 0
           @active = true
           @interrupted = false
@@ -317,13 +317,13 @@ module Lain
           cap_reason
         end
 
-        # Reused straight from {Agent::Budget}: checked before the iteration
+        # Reused straight from {Budget::Account}: checked before the iteration
         # runs, so `cap` is the number of turns driven. Its raise is the stop
         # notice, turned back into a reason string.
         def cap_reason
           @budget.check_iterations!(@iterations)
           nil
-        rescue Agent::Budget::Exceeded => e
+        rescue Budget::Exceeded => e
           "goal stopped: #{e.message}"
         end
 

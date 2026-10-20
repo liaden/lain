@@ -235,7 +235,7 @@ end
 # clock. In a module body for the reason the fixtures above are.
 module T6Interrupts
   # Cancels the task it is observing on, which is exactly what
-  # {Lain::Agent::Budget#interrupt} does from outside.
+  # {Lain::Agent#interrupt} does from outside.
   class Cancelling
     def observe(_block, _tool_name) = Async::Task.current.stop
   end
@@ -567,7 +567,7 @@ RSpec.describe Lain::Agent do
       Sync do |task|
         run = task.async { returned = a.ask("hi") }
         task.with_timeout(5) { entered.dequeue }
-        a.budget.interrupt(run)
+        a.interrupt(run)
         release.enqueue(true)
         run.wait
       end
@@ -653,10 +653,10 @@ RSpec.describe Lain::Agent do
                                                     "input" => { "text" => "x" } }],
                                         stop_reason: :tool_use,
                                         usage: Lain::Usage.new(input_tokens: 100, output_tokens: 100)),
-                     budget: Lain::Agent::Budget.new(max_total_tokens: 50),
+                     budget: Lain::Budget.ceilings(tokens: 50),
                      timeline: CoreGraph.timeline(store: UncommittableResults::Store.new(notice)))
 
-        expect { over.ask("hi") }.to raise_error(described_class::Budget::Exceeded)
+        expect { over.ask("hi") }.to raise_error(Lain::Budget::Exceeded)
         expect(Lain::Event.pending_tool_use?(over.timeline.head)).to be(true)
       end
     end
@@ -704,11 +704,11 @@ RSpec.describe Lain::Agent do
         agent(Lain::Response.new(content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
                                              "input" => { "text" => "x" } }],
                                  stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 100, output_tokens: 100)),
-              budget: Lain::Agent::Budget.new(max_total_tokens: 50))
+              budget: Lain::Budget.ceilings(tokens: 50))
       end
 
       it "stops with the budget refusal and a head that answers the call" do
-        expect { over_budget.ask("hi") }.to raise_error(described_class::Budget::Exceeded)
+        expect { over_budget.ask("hi") }.to raise_error(Lain::Budget::Exceeded)
 
         expect(over_budget.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
         expect(over_budget.timeline.head.content)
@@ -877,15 +877,31 @@ RSpec.describe Lain::Agent do
   describe "gate 7: the loop is bounded" do
     it "raises once max_iterations is reached" do
       a = agent([tool_response(["tu_1", "echo", { "text" => "loop" }])],
-                budget: Lain::Agent::Budget.new(max_iterations: 3))
-      expect { a.ask("hi") }.to raise_error(described_class::Budget::Exceeded, /3 iterations/)
+                budget: Lain::Budget.ceilings(iterations: 3))
+      expect { a.ask("hi") }.to raise_error(Lain::Budget::Exceeded, /3 iterations/)
     end
 
     it "raises once the token ceiling is passed" do
       usage = Lain::Usage.new(input_tokens: 100, output_tokens: 100)
       a = agent([Lain::Response.new(content: [], stop_reason: :end_turn, usage:)],
-                budget: Lain::Agent::Budget.new(max_total_tokens: 50))
-      expect { a.ask("hi") }.to raise_error(described_class::Budget::Exceeded, /ceiling is 50/)
+                budget: Lain::Budget.ceilings(tokens: 50))
+      expect { a.ask("hi") }.to raise_error(Lain::Budget::Exceeded, /ceiling is 50/)
+    end
+
+    it "bounds the session's tokens across asks, naming tokens" do
+      reply = ->(output) { Lain::Response.new(content: [], stop_reason: :end_turn, usage: Lain::Usage.new(output_tokens: output)) }
+      a = agent([reply.call(20), reply.call(20), reply.call(20)], budget: Lain::Budget.ceilings(tokens: 50))
+      a.ask("one")
+      a.ask("two")
+
+      expect { a.ask("three") }
+        .to raise_error(Lain::Budget::Exceeded, "spent 60 tokens, ceiling is 50") { |error| expect(error.kind).to eq(:tokens) }
+    end
+
+    it "names iterations on the refusal that bounds an ask" do
+      a = agent([tool_response(["tu_1", "echo", { "text" => "loop" }])], budget: Lain::Budget.ceilings(iterations: 3))
+
+      expect { a.ask("hi") }.to raise_error(Lain::Budget::Exceeded) { |error| expect(error.kind).to eq(:iterations) }
     end
 
     # A budget stop is the harness's decision, not the model's output; a refusal
@@ -908,7 +924,7 @@ RSpec.describe Lain::Agent do
 
       it "starts a fresh count on an ask that follows one which ran to the ceiling" do
         a = agent(settling_pair("first") + settling_pair("second"),
-                  budget: Lain::Agent::Budget.new(max_iterations: 2))
+                  budget: Lain::Budget.ceilings(iterations: 2))
 
         expect(a.ask("one").text).to eq("first")
         expect(a.ask("two").text).to eq("second")
@@ -919,11 +935,11 @@ RSpec.describe Lain::Agent do
       # to, whatever ran before it.
       it "still stops a single ask at the ceiling, however many asks preceded it" do
         a = agent(settling_pair("first") + [tool_response(["tu_2", "echo", { "text" => "forever" }])],
-                  budget: Lain::Agent::Budget.new(max_iterations: 2))
+                  budget: Lain::Budget.ceilings(iterations: 2))
         a.ask("one")
 
         expect { a.ask("two") }
-          .to raise_error(described_class::Budget::Exceeded, "loop ran 2 iterations, ceiling is 2")
+          .to raise_error(Lain::Budget::Exceeded, "loop ran 2 iterations, ceiling is 2")
       end
 
       # The silent-swallow half. A refused ask says which ceiling stopped it
@@ -933,10 +949,10 @@ RSpec.describe Lain::Agent do
         looping = tool_response(["tu_1", "echo", { "text" => "loop" }])
         provider = CoreGraph.provider(looping, looping, looping, text_response("recovered"))
         a = described_class.new(provider:, toolset:, context:,
-                                budget: Lain::Agent::Budget.new(max_iterations: 2))
+                                budget: Lain::Budget.ceilings(iterations: 2))
 
         expect { a.ask("one") }
-          .to raise_error(described_class::Budget::Exceeded, "loop ran 2 iterations, ceiling is 2")
+          .to raise_error(Lain::Budget::Exceeded, "loop ran 2 iterations, ceiling is 2")
         expect(a.ask("two").text).to eq("recovered")
         expect(provider.call_count).to eq(4)
       end
@@ -1032,10 +1048,10 @@ RSpec.describe Lain::Agent do
       usage = Lain::Usage.new(input_tokens: 100, output_tokens: 100)
       a = agent(Lain::Response.new(content: [{ "type" => "text", "text" => "expensive" }],
                                    stop_reason: :end_turn, usage:),
-                budget: Lain::Agent::Budget.new(max_total_tokens: 50),
+                budget: Lain::Budget.ceilings(tokens: 50),
                 journal:)
 
-      expect { a.ask("hi") }.to raise_error(described_class::Budget::Exceeded)
+      expect { a.ask("hi") }.to raise_error(Lain::Budget::Exceeded)
       expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant])
       expect(turn_usage_records.size).to eq(1)
       expect(turn_usage_records.first["digest"]).to eq(a.timeline.head_digest)
@@ -1943,7 +1959,7 @@ RSpec.describe Lain::Agent do
       source = A1PipelineSources::Preparing.new
       a = described_class.new(toolset:, context:, accounting:, pipeline_source: source,
                               provider: CoreGraph.provider(text_response),
-                              budget: Lain::Agent::Budget.new(max_total_tokens: 50))
+                              budget: Lain::Budget.ceilings(tokens: 50))
       expect(described_class::QUIESCENT).to include(a.state)
 
       expect(a.prepare_idle).to be(false)
@@ -1952,7 +1968,7 @@ RSpec.describe Lain::Agent do
 
     it "prepares under a budget that is not yet spent" do
       source = A1PipelineSources::Preparing.new
-      a = preparing_agent(source, budget: Lain::Agent::Budget.new(max_total_tokens: 50))
+      a = preparing_agent(source, budget: Lain::Budget.ceilings(tokens: 50))
 
       expect(a.prepare_idle).to be(true)
     end

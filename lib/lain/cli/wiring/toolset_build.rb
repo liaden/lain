@@ -47,7 +47,7 @@ module Lain
         # The role a reviewing child takes: it reads and searches the code it
         # judges, and holds nothing that writes or reaches the network.
         REVIEWER = :reviewer_code
-        ORCHESTRATOR_BUDGET = Lain::Agent::Budget.new(max_iterations: 200)
+        ORCHESTRATOR_BUDGET = Lain::Budget.ceilings(iterations: 200)
 
         # The orchestrator, and one level of children under it.
         EPIC_DEPTH = 2

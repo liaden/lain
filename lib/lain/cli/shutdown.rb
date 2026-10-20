@@ -23,10 +23,10 @@ module Lain
     # actors beyond the run task's own `#wait`, and `#enter` notifies nobody,
     # the countdown having been built poll-driven.
     #
-    # == Interrupting through Budget
+    # == Interrupting through the Agent
     #
     # On expiry, a promote, or a sigquit the run is stopped via
-    # {Agent::Budget#interrupt} -- `Async::Task#stop`, structured cancellation
+    # {Agent.interrupt} -- `Async::Task#stop`, structured cancellation
     # that raises `Async::Stop` only at a scheduler yield point, so the Agent's
     # own `defer_stop` shield lets the commit+journal atom complete and the
     # Timeline is only ever left BETWEEN whole commits (docs/concurrency.md's
@@ -76,7 +76,7 @@ module Lain
       #   coordinator holds is an ask at all -- a `you>` read is not one -- and
       #   `stopped(cause)` for an ask stopped under a session that goes on.
       #   {CLI::Conductor} and {CLI::Conductor::IdleClose} both answer all three
-      # @param budget [#interrupt] the interrupt seam; {Agent::Budget} by default
+      # @param interrupt [#call] the interrupt seam, `(task, cause: nil)`; {Agent.interrupt} by default
       # @param clock [#call] monotonic time source, injectable for tests (the
       #   injected-clock idiom {Frontend::TTY} and {Frontend::Neovim::Compose}
       #   also take)
@@ -89,14 +89,14 @@ module Lain
       # @param on_transition [#call] notified `(state, deadline)` after each
       #   transition -- the seam a countdown UI renders on, unwired in
       #   production because {CLI::Conductor::CountdownTicker} polls instead
-      def initialize(run_task:, closer:, budget: Agent::Budget.new,
+      def initialize(run_task:, closer:, interrupt: Agent.method(:interrupt),
                      clock: RunClock::MONOTONIC,
                      grace: GRACE_DEFAULT, actors: [].freeze, on_transition: ->(_state, _deadline) {})
         raise ArgumentError, "grace must be a positive Numeric, got #{grace.inspect}" unless positive?(grace)
 
         @run_task = run_task
         @closer = closer
-        @budget = budget
+        @interrupt = interrupt
         @clock = clock
         @grace = grace
         @actors = actors
@@ -201,7 +201,7 @@ module Lain
         cause = Lain::Stopped.new(STOPPED)
         @deadline = nil
         enter(:running)
-        @budget.interrupt(@run_task, cause:)
+        @interrupt.call(@run_task, cause:)
         @run_task.wait
         @closer.stopped(cause)
       end
@@ -212,7 +212,7 @@ module Lain
         @retired = true
       end
 
-      # Stop the run through Budget, let the cancellation settle, then close.
+      # Stop the run through the interrupt seam, let the cancellation settle, then close.
       # The Agent's `defer_stop` holds the stop off its commit+journal atom, so
       # the wait returns on a whole Timeline, never a torn one. The deadline
       # dies BEFORE :draining is announced: state and deadline reach a
@@ -222,7 +222,7 @@ module Lain
       def force_stop(reason)
         @deadline = nil
         enter(:draining)
-        @budget.interrupt(@run_task)
+        @interrupt.call(@run_task)
         @run_task.wait
         finish(reason)
       end

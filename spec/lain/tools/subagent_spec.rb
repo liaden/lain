@@ -269,7 +269,7 @@ RSpec.describe Lain::Tools::Subagent do
                      tool_middleware: ToolRegistry::UNGUARDED, observer: record, **seam)
     described_class.new(
       provider:, context_factory: -> { child_context }, toolset:, policy:,
-      parent:, journal:, budget: Lain::Agent::Budget.new, max_depth:, tool_middleware:, observer:, **seam
+      parent:, journal:, budget: Lain::Budget.ceilings, max_depth:, tool_middleware:, observer:, **seam
     )
   end
 
@@ -503,7 +503,7 @@ RSpec.describe Lain::Tools::Subagent do
       parent_agent = nil
       tool = described_class.new(provider:, context_factory: -> { child_context }, toolset: union,
                                  policy: spawn_policy, parent: -> { parent_agent.timeline },
-                                 budget: Lain::Agent::Budget.new(max_iterations: 2), max_depth: 3,
+                                 budget: Lain::Budget.ceilings(iterations: 2), max_depth: 3,
                                  tool_middleware: ToolRegistry::UNGUARDED, observer:, **seam)
       parent_agent = loop_parent(tool)
       parent_agent.ask("please spawn")
@@ -572,7 +572,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(result["is_error"]).to be(true)
       body = record.message.body
-      expect(body).to include("lifecycle" => failed, "error" => "Lain::Agent::Budget::Exceeded")
+      expect(body).to include("lifecycle" => failed, "error" => "Lain::Budget::Exceeded")
       expect(body).not_to have_key("result")
       child = Lain::Timeline.new(head_digest: body.fetch("final"), store:)
       expect(child.to_a.first.content.first["text"]).to eq("go")
@@ -684,7 +684,7 @@ RSpec.describe Lain::Tools::Subagent do
         parent_agent = nil
         tool = described_class.new(provider:, context_factory: -> { child_context }, toolset: union,
                                    policy: spawn_policy, parent: -> { parent_agent.timeline },
-                                   budget: Lain::Agent::Budget.new(max_iterations: 8), max_depth: 3,
+                                   budget: Lain::Budget.ceilings(iterations: 8), max_depth: 3,
                                    tool_middleware: ToolRegistry::UNGUARDED, observer: record)
         parent_agent = loop_parent(tool)
         parent_agent.ask("please spawn")
@@ -934,7 +934,7 @@ RSpec.describe Lain::Tools::Subagent do
     # this must not have: the parent is answered, and told why it is short.
     it "still answers the parent when the child's budget refuses the summarizing ask" do
       child = instance_double(Lain::Agent)
-      allow(child).to receive(:ask).and_raise(Lain::Agent::Budget::Exceeded, "loop ran 25 iterations")
+      allow(child).to receive(:ask).and_raise(Lain::Budget::Exceeded, "loop ran 25 iterations")
       response = Lain::Response.new(content: [{ "type" => "text", "text" => oversized }], stop_reason: :end_turn)
 
       bounded = Lain::Tools::Subagent::Answer.new.bounded(child, response)
@@ -2266,7 +2266,7 @@ RSpec.describe Lain::Tools::Subagent do
       tool = described_class.new(provider: mock(text_response("unused")),
                                  context_factory: -> { raise "this child gets no context" },
                                  toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
-                                 parent:, isolation: leases, budget: Lain::Agent::Budget.new,
+                                 parent:, isolation: leases, budget: Lain::Budget.ceilings,
                                  tool_middleware: ToolRegistry::UNGUARDED)
 
       expect { tool.run("go") }.to raise_error("this child gets no context")
@@ -2384,7 +2384,7 @@ RSpec.describe Lain::Tools::Subagent do
         tool = described_class.new(provider: mock(text_response("unused")),
                                    context_factory: -> { raise "this child gets no context" },
                                    toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
-                                   parent:, isolation: handing, budget: Lain::Agent::Budget.new,
+                                   parent:, isolation: handing, budget: Lain::Budget.ceilings,
                                    tool_middleware: ToolRegistry::UNGUARDED)
 
         expect { tool.run("go") }.to raise_error("this child gets no context")
@@ -2456,7 +2456,7 @@ RSpec.describe Lain::Tools::Subagent do
         tool = described_class.new(provider: mock(text_response("unused")),
                                    context_factory: -> { raise "this child gets no context" },
                                    toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
-                                   parent:, isolation: syncing, budget: Lain::Agent::Budget.new,
+                                   parent:, isolation: syncing, budget: Lain::Budget.ceilings,
                                    tool_middleware: ToolRegistry::UNGUARDED)
 
         expect { tool.run("go") }.to raise_error("this child gets no context")
@@ -2467,14 +2467,14 @@ RSpec.describe Lain::Tools::Subagent do
       # it must reach the parent as itself, not as a partial report.
       it "does not turn a ceiling hit in the self-sync into a partial report" do
         exhausted = Class.new(SubagentSpecSync) do
-          def call(*) = raise(Lain::Agent::Budget::Exceeded, "sync ask ran out")
+          def call(*) = raise(Lain::Budget::Exceeded, "sync ask ran out")
         end
         leases = Lain::Isolation::Leases.new(backend:, handoff:, sync: exhausted.new(calls))
         read = tool_response(["r1", "read_file", { "path" => "Gemfile" }])
         tool = build_subagent(provider: mock(read, text_response("answer")), isolation: leases,
                               policy: spawn_policy(only: %i[read_file]))
 
-        expect { tool.run("go") }.to raise_error(Lain::Agent::Budget::Exceeded, "sync ask ran out")
+        expect { tool.run("go") }.to raise_error(Lain::Budget::Exceeded, "sync ask ran out")
       end
 
       it "runs the child in the environment the sync hands it" do
@@ -4093,7 +4093,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "reads failed for a child that hit its ceiling" do
       tool = described_class.new(provider: mock(tool_response(["e1", "echo", { "text" => "again" }])),
                                  context_factory: -> { child_context }, toolset: union, policy: spawn_policy,
-                                 parent:, budget: Lain::Agent::Budget.new(max_iterations: 2), max_depth: 3,
+                                 parent:, budget: Lain::Budget.ceilings(iterations: 2), max_depth: 3,
                                  tool_middleware: ToolRegistry::UNGUARDED, observer: tee, telemetry: feed)
 
       expect { tool.run("keep going") }.to raise_error(StandardError)

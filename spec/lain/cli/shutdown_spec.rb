@@ -4,7 +4,7 @@
 # async-signal-safe ingress a real Signal.trap writes one byte into -- the trap
 # installation lives elsewhere; the coordinator owns the pipe + the parked
 # reader), runs the policy `running -> grace(deadline) -> draining -> closed`,
-# and interrupts the run through `Budget#interrupt` exactly as
+# and interrupts the run through `Agent#interrupt` exactly as
 # docs/concurrency.md's worked supervisor sketched. Cancellation is driven the
 # same deterministic way spec/lain/agent_cancellation_spec.rb pins it: a
 # provider that PARKS inside a model call on an internal queue, so the reactor
@@ -102,7 +102,7 @@ RSpec.describe Lain::CLI::Shutdown do
   end
 
   def build_coordinator(run_task:, agent:, clock:, grace: 60)
-    described_class.new(run_task:, closer:, budget: agent.budget, clock:, grace:, on_transition:)
+    described_class.new(run_task:, closer:, interrupt: agent.method(:interrupt), clock:, grace:, on_transition:)
   end
 
   describe "sigterm starts a grace window; the clock passing the deadline interrupts" do
@@ -396,7 +396,7 @@ RSpec.describe Lain::CLI::Shutdown do
       Sync do |task|
         run = task.async { "the model's answer" }
         answered = run.wait
-        shutdown = described_class.new(run_task: run, closer:, budget: Lain::Agent::Budget.new,
+        shutdown = described_class.new(run_task: run, closer:,
                                        clock: clock_returning(1000.0), on_transition:)
         coordinator = task.async { shutdown.coordinate }
 
@@ -419,7 +419,7 @@ RSpec.describe Lain::CLI::Shutdown do
 
       Sync do |task|
         run = task.async { task.sleep(5) }
-        shutdown = described_class.new(run_task: run, closer:, budget: Lain::Agent::Budget.new,
+        shutdown = described_class.new(run_task: run, closer:,
                                        clock: clock_returning(1000.0), on_transition:)
         coordinator = task.async { shutdown.coordinate }
 
@@ -444,7 +444,7 @@ RSpec.describe Lain::CLI::Shutdown do
 
       Sync do |task|
         run = task.async { task.sleep(5) }
-        shutdown = described_class.new(run_task: run, closer:, budget: Lain::Agent::Budget.new)
+        shutdown = described_class.new(run_task: run, closer:)
         running = shutdown.ask_in_flight?
         closer.in_flight = false
         no_ask = shutdown.ask_in_flight?
@@ -462,7 +462,7 @@ RSpec.describe Lain::CLI::Shutdown do
     it "refuses zero and negative windows loudly at construction" do
       [0, -1, nil].each do |grace|
         expect do
-          described_class.new(run_task: Object.new, closer:, budget: Lain::Agent::Budget.new, grace:)
+          described_class.new(run_task: Object.new, closer:, grace:)
         end.to raise_error(ArgumentError, /grace must be a positive Numeric/)
       end
     end
@@ -486,7 +486,7 @@ RSpec.describe Lain::CLI::Shutdown do
       Sync do |task|
         run = task.async { agent.ask("hi") }
         entered.dequeue
-        shutdown = described_class.new(run_task: run, closer:, budget: agent.budget,
+        shutdown = described_class.new(run_task: run, closer:, interrupt: agent.method(:interrupt),
                                        clock: clock_returning(1000.0), actors: [actor],
                                        on_transition:)
         coordinator = task.async { shutdown.coordinate }
@@ -515,7 +515,7 @@ RSpec.describe Lain::CLI::Shutdown do
       Sync do |task|
         run = task.async { agent.ask("hi") }
         entered.dequeue
-        shutdown = described_class.new(run_task: run, closer:, budget: agent.budget,
+        shutdown = described_class.new(run_task: run, closer:, interrupt: agent.method(:interrupt),
                                        clock: clock_returning(1000.0),
                                        on_transition: ->(state, deadline) { announced << [state, deadline] })
         coordinator = task.async { shutdown.coordinate }
@@ -538,8 +538,7 @@ RSpec.describe Lain::CLI::Shutdown do
     it "ends the coordinator fiber cleanly, journaling nothing" do
       shutdown = nil
       Sync do |task|
-        shutdown = described_class.new(run_task: Object.new, closer:,
-                                       budget: Lain::Agent::Budget.new, on_transition:)
+        shutdown = described_class.new(run_task: Object.new, closer:, on_transition:)
         # async is eager: the coordinator runs to its first await -- the pipe
         # park -- before this returns, so dispose provably lands on a parked read.
         coordinator = task.async { shutdown.coordinate }
@@ -580,7 +579,7 @@ RSpec.describe Lain::CLI::Shutdown do
 
   describe "signal after dispose" do
     it "tolerates the closed pipe and returns instead of raising into a trap" do
-      shutdown = described_class.new(run_task: Object.new, closer:, budget: Lain::Agent::Budget.new)
+      shutdown = described_class.new(run_task: Object.new, closer:)
       shutdown.dispose
 
       expect { shutdown.signal(:sigint) }.not_to raise_error
@@ -598,7 +597,7 @@ RSpec.describe Lain::CLI::Shutdown do
     end
 
     it "signal writes without blocking or raising on a writable pipe (trap-safe)" do
-      shutdown = described_class.new(run_task: Object.new, closer:, budget: Lain::Agent::Budget.new)
+      shutdown = described_class.new(run_task: Object.new, closer:)
 
       expect { 100.times { shutdown.signal(:sigint) } }.not_to raise_error
       shutdown.dispose

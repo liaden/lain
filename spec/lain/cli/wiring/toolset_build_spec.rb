@@ -1397,8 +1397,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     it "gives the orchestrator 200 iterations for its one ask, and a chat's researcher child 60" do
       full = toolset_build.build(recorder, ask_human:)
 
-      expect(issue_epic.budget.max_iterations).to eq(200)
-      expect(full.fetch("subagent").budget.max_iterations).to eq(60)
+      expect(issue_epic.budget.iterations).to eq(200)
+      expect(full.fetch("subagent").budget.iterations).to eq(60)
     end
 
     it "holds each orchestrator child to its role's own ceiling" do
@@ -1408,7 +1408,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         role.name == :dev ? role.with(max_iterations: 7) : role
       end
 
-      expect(issue_epic.attenuates_from.fetch("subagent")["dev"].budget.max_iterations).to eq(7)
+      expect(issue_epic.attenuates_from.fetch("subagent")["dev"].budget.iterations).to eq(7)
     end
 
     it "fans out exactly one level: the orchestrator spawns a dev child, which holds no spawner" do
@@ -1488,7 +1488,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         refusal = blocks.find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
         expect(result).to be_ok
         expect(refusal["is_error"]).to be(true)
-        expect(issued(build).budget.max_iterations).to eq(200)
+        expect(issued(build).budget.iterations).to eq(200)
       end
     end
   end

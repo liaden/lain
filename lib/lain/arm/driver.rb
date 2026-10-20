@@ -255,7 +255,7 @@ module Lain
         grader = Grader::Journaling.new(inner: @grader, journal: copy, subject_digest: SUBJECT_DIGEST)
         seam = CopyingSeam.new(@spawn_seam, copy)
         arm.run(task, spawn_seam: seam, isolation: @isolation, grader:)
-      rescue Agent::Budget::Exceeded => e
+      rescue Budget::Exceeded => e
         journal_failure(arm, task, number, "at the ceiling", e)
         TaskFailure.new(index: number, reason: CEILING_REASON)
       rescue Response::Failed => e

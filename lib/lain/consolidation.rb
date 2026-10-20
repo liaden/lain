@@ -132,7 +132,7 @@ module Lain
       Outcome.new(spawn: scaffold.spawn, result:, wrote: view.root != root_before, failure: nil)
     rescue Response::Failed => e
       failed_outcome(scaffold, view, root_before, e.failure)
-    rescue Agent::Budget::Exceeded => e
+    rescue Budget::Exceeded => e
       failed_outcome(scaffold, view, root_before, Response::Failure.new(stop_reason: CEILING, message: e.message))
     end
 

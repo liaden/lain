@@ -4,7 +4,7 @@ require "timeout"
 
 # The per-ask supervision conductor. It co-locates the run task, a
 # {Lain::CLI::Shutdown} coordinator, and the countdown ticker in ONE reactor (so
-# Budget#interrupt stops a task on its own reactor -- never cross-thread), routes
+# Agent#interrupt stops a task on its own reactor -- never cross-thread), routes
 # OS signals to that coordinator for the ask's duration, drives the TTY countdown,
 # and reports whether the session closed. Its own {#close} is the guarded closer
 # both the coordinator and chat's normal-exit ensure share.
@@ -96,7 +96,7 @@ RSpec.describe Lain::CLI::Conductor do
 
   def build_conductor(grace:, clock:, signals:, tick: 0.005, run_clock: Lain::RunClock.new,
                       countdown: described_class::RailCountdown::Unoffered, rail: self.rail)
-    described_class.new(tty:, chronicle:, signals:, rail:, grace:, clock:, tick:, budget: Lain::Agent::Budget.new,
+    described_class.new(tty:, chronicle:, signals:, rail:, grace:, clock:, tick:,
                         run_clock:, countdown:)
   end
 
@@ -359,7 +359,7 @@ RSpec.describe Lain::CLI::Conductor do
 
       Sync do |task|
         run = task.async { task.sleep(5) }
-        shutdown = Lain::CLI::Shutdown.new(run_task: run, closer: idle, budget: Lain::Agent::Budget.new,
+        shutdown = Lain::CLI::Shutdown.new(run_task: run, closer: idle,
                                            clock: clock_returning(1000.0))
         coordinator = task.async { shutdown.coordinate }
         shutdown.signal(:stop)

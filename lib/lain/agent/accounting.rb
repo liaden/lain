@@ -4,7 +4,7 @@ module Lain
   class Agent
     # The run's token ledger.
     #
-    # Split out of the Agent for the same reason Budget was: rolling up and
+    # Split out of the Agent because rolling up and
     # recording spend is bookkeeping, not the loop's job. Per-turn cost lives in
     # the Journal, one {Telemetry::TurnUsage} per model call, keyed by the
     # committed turn's digest.

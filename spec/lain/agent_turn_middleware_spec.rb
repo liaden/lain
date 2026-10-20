@@ -69,9 +69,9 @@ RSpec.describe "Agent turn_middleware" do
       stack = Lain::Middleware::Stack.new.use(counting_middleware(calls))
       responses = Array.new(5) { text_response("", stop_reason: :pause_turn) }
 
-      a = agent(responses, budget: Lain::Agent::Budget.new(max_iterations: 3), turn_middleware: stack)
+      a = agent(responses, budget: Lain::Budget.ceilings(iterations: 3), turn_middleware: stack)
 
-      expect { a.ask("hi") }.to raise_error(Lain::Agent::Budget::Exceeded, /3 iterations/)
+      expect { a.ask("hi") }.to raise_error(Lain::Budget::Exceeded, /3 iterations/)
       # The budget check itself lives inside the wrapped body (#step), so the
       # phase's outer middleware still observes the 4th, over-the-ceiling
       # attempt before Budget::Exceeded unwinds out of the downstream call --
@@ -112,7 +112,7 @@ RSpec.describe "Agent turn_middleware" do
       provider = Lain::Provider::Mock.new(responses: [text_response])
       a = Lain::Agent.new(
         provider:, toolset:, context:,
-        budget: Lain::Agent::Budget.new(max_iterations: 0),
+        budget: Lain::Budget.ceilings(iterations: 0),
         turn_middleware: Lain::Middleware::Stack.new.use(short_circuit)
       )
 

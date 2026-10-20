@@ -17,7 +17,7 @@ RSpec.describe Lain::Agent::StopReason do
   def status_error(status) = Lain::Provider::Ollama::APIStatusError.new("status #{status}", status:)
 
   it "names a budget ceiling" do
-    expect(described_class.for(Lain::Agent::Budget::Exceeded.new("loop ran 25 iterations"))).to eq(:ceiling)
+    expect(described_class.for(Lain::Budget::Exceeded.new("loop ran 25 iterations"))).to eq(:ceiling)
   end
 
   it "names a prompt refused for not fitting the context" do

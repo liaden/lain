@@ -189,7 +189,7 @@ module Lain
                    tool_runner: OMITTED, handler: OMITTED, round_budget: OMITTED,
                    accounting: OMITTED, timeline: nil, workspace: Workspace.empty,
                    session: Session.new, mailbox: Context::Mailbox::Null,
-                   budget: Budget.new, request_override: RequestOverride::None,
+                   budget: Budget.ceilings, request_override: RequestOverride::None,
                    snapshot_slot: SnapshotSlot.new, context_window: ContextWindow.default,
                    display: Channel::Null.instance, display_as: "lain", **instrumented)
       super() # state_machines sets the initial state through the super chain.
@@ -262,6 +262,29 @@ module Lain
     # @raise [Response::Failed] when the answer is a failed stop
     def ask!(prompt, **) = Response::Failed.refusing(ask(prompt, **)).text
 
+    # The cooperative halt: the harness deciding to stop rather than a model
+    # outcome, so it sits beside the ceilings' raise and not inside them.
+    #
+    # `Async::Task#stop`, not `Thread#kill`, per docs/concurrency.md:
+    # structured cancellation raises `Async::Stop` only at a
+    # scheduler-controlled yield point, so `ensure` blocks run and the
+    # immutable Timeline is only ever stopped BETWEEN whole commits. The task
+    # is duck-typed as "responds to #stop"; this stays ignorant of async.
+    # A `cause` rides WITH the cancellation, because every stop unwinds as
+    # the same `Async::Stop` and the reason has nowhere else to travel: an
+    # ask stopped on purpose ({Lain::Stopped}) and one a grace window expired
+    # on are otherwise indistinguishable to whatever catches the unwind.
+    # Absent, the scheduler's own cause stands.
+    #
+    # @param task [#stop] the task hosting the run
+    # @param cause [Exception, nil] what the cancellation carries
+    def self.interrupt(task, cause: nil)
+      cause.nil? ? task.stop : task.stop(false, cause:)
+    end
+
+    # @see Agent.interrupt
+    def interrupt(task, cause: nil) = self.class.interrupt(task, cause:)
+
     # Drive the machine from its current Timeline. Separated from {#ask} so a
     # rewound or forked Timeline can be resumed without inventing a user turn.
     #
@@ -275,7 +298,7 @@ module Lain
     #
     # `Sync` is what puts the loop inside a fiber reactor, so its IO (the
     # provider round trip, a `bash` shellout) yields to the scheduler and a
-    # {Budget#interrupt} lands as structured cancellation at those yield points.
+    # {Agent.interrupt} lands as structured cancellation at those yield points.
     # It joins the caller's reactor when there is one and spins one up when
     # there is not, which is why every non-reactor caller is unchanged.
     #
@@ -586,7 +609,7 @@ module Lain
     end
 
     def step(on_stream_started)
-      @budget.check_iterations!(@iterations)
+      ledger.check_iterations!(@iterations)
       @iterations += 1
       # Snapshotted HERE, before the render, and that one frozen Snapshot is
       # what both the render-side Mailbox fold and this turn's commit consume.
@@ -606,7 +629,7 @@ module Lain
     end
 
     # The commit, its record and its TurnUsage, shielded as ONE atom against
-    # cancellation. `defer_stop` holds a {Budget#interrupt} off until the region
+    # cancellation. `defer_stop` holds a {Agent.interrupt} off until the region
     # exits, so a stop can never land between the Timeline commit and either
     # write: bench cost accounting reads the Journal, and a committed turn whose
     # usage record vanished with an interrupt would silently price as free. The
@@ -660,7 +683,8 @@ module Lain
     def account(response)
       @replied_as = context.model
       @instrumentation.turn_middleware.settle(@timeline)
-      @budget.check_tokens!(accounting.observe(response, digest: @timeline.head_digest))
+      accounting.observe(response, digest: @timeline.head_digest)
+      ledger.check_tokens!
     rescue StandardError => e
       answer_errored
       raise e
@@ -695,7 +719,7 @@ module Lain
     # The side effects that follow are keyed off the state the machine just
     # reached: the machine owns the state, the Agent owns the run context. A
     # paused turn needs nothing -- it stays in `:awaiting_model` and
-    # re-dispatches, counting against max_iterations so a provider that pauses
+    # re-dispatches, counting against the iteration ceiling so a provider that pauses
     # forever still stops.
     #
     # @return [Symbol] :settled when the loop is finished, :continue otherwise
@@ -811,14 +835,9 @@ module Lain
 
     def preparable? = QUIESCENT.include?(state) && !budget_spent?
 
-    # {Budget} answers a ceiling only by raising, and an idle tick past it is a
-    # decline rather than a failure.
-    def budget_spent?
-      @budget.check_tokens!(accounting.usage)
-      false
-    rescue Budget::Exceeded
-      true
-    end
+    def budget_spent? = ledger.exceeded?(:tokens)
+
+    def ledger = Budget::Account.new(ceilings: @budget, spent: Budget::Spent.zero.with(usage: accounting.usage))
 
     # Every tool_result for one assistant turn goes back in ONE user message.
     # Splitting them across messages silently teaches Claude to stop making

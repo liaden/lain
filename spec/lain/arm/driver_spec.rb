@@ -56,7 +56,7 @@ module DriverSpecSupport
 
   class CeilingArm < Lain::Arm
     def run(_task, **)
-      raise Lain::Agent::Budget::Exceeded, "loop ran 25 iterations, ceiling is 25"
+      raise Lain::Budget::Exceeded, "loop ran 25 iterations, ceiling is 25"
     end
   end
 
@@ -584,7 +584,7 @@ RSpec.describe Lain::Arm::Driver do
     it "names both reasons, each with its task numbers, in a mixed run" do
       mixed = Class.new(Lain::Arm) do
         def run(task, **)
-          raise Lain::Agent::Budget::Exceeded, "ceiling" if task == "procedural task"
+          raise Lain::Budget::Exceeded, "ceiling" if task == "procedural task"
 
           failure = Lain::Response::Failure.new(stop_reason: :malformed, message: "malformed response")
           raise Lain::Response::Failed, failure

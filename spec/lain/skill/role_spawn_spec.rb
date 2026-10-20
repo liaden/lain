@@ -212,7 +212,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     end
 
     it "stops a role that declares no ceiling at 25 iterations" do
-      expect { spawn_over(:dev, 30) }.to raise_error(Lain::Agent::Budget::Exceeded, /ceiling is 25/)
+      expect { spawn_over(:dev, 30) }.to raise_error(Lain::Budget::Exceeded, /ceiling is 25/)
     end
   end
 

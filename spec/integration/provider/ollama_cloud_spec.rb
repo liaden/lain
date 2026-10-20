@@ -175,7 +175,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
     # whose own header promises four concurrent. Three is one more than the two
     # a healthy turn needs, so it bounds the blast radius without making a
     # slow-but-correct run fail.
-    let(:agent) { Lain::Agent.new(provider:, toolset:, context:, budget: Lain::Agent::Budget.new(max_iterations: 3)) }
+    let(:agent) { Lain::Agent.new(provider:, toolset:, context:, budget: Lain::Budget.ceilings(iterations: 3)) }
 
     it "calls echo, lands the result in one user turn, and settles" do
       agent.ask('Use the echo tool to echo back the word "pong". You must call the echo tool.')
