@@ -56,7 +56,7 @@ RSpec.describe "Shift+Enter in a pane", :seam do
     tmux("send-keys", "ab")
     tmux("send-keys", "S-Enter")
     tmux("send-keys", "cd", "Enter")
-    wait_for { File.exist?(submitted) }
+    wait_for { File.size?(submitted) }
 
     expect(File.read(submitted)).to eq("ab\ncd".inspect)
   end
@@ -67,7 +67,7 @@ RSpec.describe "Shift+Enter in a pane", :seam do
     wait_for { File.exist?(submitted) }
     wait_for { File.exist?("#{submitted}.ready") }
     tmux("send-keys", "S-Enter")
-    wait_for { File.exist?("#{submitted}.after") }
+    wait_for { File.size?("#{submitted}.after") }
 
     expect(File.read("#{submitted}.after")).to eq("\r".inspect)
   end
