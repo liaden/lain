@@ -57,11 +57,9 @@ module Lain
       #
       # @return [Event] the event just written
       def put(parent, kind:, from:, to:, causal_parents:, body:)
-        payload = Payload.new(kind:, body:)
-        event = Event.new(kind:, from:, to:, causal_parents:,
-                          correlation: self.class.correlation_of(parent),
-                          payload_digest: payload.digest, body: payload.body)
-        parent.store.put(payload)
+        event = Dag::Factory.event(kind:, body:, from:, to:, causal_parents:,
+                                   correlation: self.class.correlation_of(parent))
+        parent.store.put(event.carried_payload)
         parent.store.put(event)
         @observer.call(event)
         event

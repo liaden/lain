@@ -211,7 +211,9 @@ module Lain
 
         def self.prior(key, earlier) = earlier.reverse_each.find { |record| record.files.key?(key) }&.files&.fetch(key)
 
-        def self.side(store, digest) = Revert::Side.new(bytes: store.fetch(digest).bytes, mode: nil)
+        def self.side(store, digest)
+          Revert::Side.new(bytes: Snapshot::Blob.from_fetch(store.fetch(digest)).bytes, mode: nil)
+        end
 
         def self.outside?(key) = key.start_with?("/") || key == ".." || key.start_with?("../")
 

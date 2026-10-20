@@ -17,9 +17,8 @@ RSpec.describe Lain::Bench::Session::ChainFold do
   # causal_parents exactly as it does over the render edge, so a fold can only
   # rebuild a causal turn into a store that already holds what it names.
   def message_into(store, to:, body:)
-    payload = Lain::Event::Payload.new(kind: :message, body: { "text" => body })
-    store.put(payload)
-    Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to:).tap do |event|
+    Lain::Dag::Factory.event(kind: :message, body: { "text" => body }, from: "human", to:).tap do |event|
+      store.put(event.carried_payload)
       store.put(event)
     end
   end

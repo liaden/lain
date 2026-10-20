@@ -163,7 +163,7 @@ module Lain
       def clean?(key)
         actual = read(key)
         expected = in_force[key]
-        actual.nil? || (!expected.nil? && actual == @store.fetch(expected).bytes)
+        actual.nil? || (!expected.nil? && actual == bytes_at(expected))
       end
 
       # Each success is recorded in the ledger before the next operation runs;
@@ -189,9 +189,11 @@ module Lain
       end
 
       def put_back(key, digest, ledger)
-        place(key, @store.fetch(digest).bytes)
+        place(key, bytes_at(digest))
         ledger.written!(key, digest)
       end
+
+      def bytes_at(digest) = Snapshot::Blob.from_fetch(@store.fetch(digest)).bytes
     end
   end
 end

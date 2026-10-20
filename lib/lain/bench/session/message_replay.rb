@@ -27,7 +27,7 @@ module Lain
       # == File order stopped being an integrity check, deliberately
       #
       # This class used to put in strict file order, so a permuted section
-      # refused with {Store::MissingObject}. It cannot any more, and the reason
+      # refused with {Ext::Store::MissingObject}. It cannot any more, and the reason
       # is a real cycle rather than a tolerance anyone chose: a child's
       # `ask_human` question is written the instant it is asked and cites the
       # child turn it asked FROM, while the tool_result turn that delivers the
@@ -122,7 +122,7 @@ module Lain
         # turns. The Store's own message is carried through, not reworded.
         def forced_put(record, index)
           verified(record, index)
-        rescue Store::MissingObject => e
+        rescue Ext::Store::MissingObject => e
           raise Corrupt, "#{labelled(record, index)} cites a causal parent this replay never " \
                          "landed: #{e.message}"
         end
@@ -151,7 +151,7 @@ module Lain
         # digest exists. Three ways out, none of them {Corrupt}: a String dies
         # in `map`, a null BESIDE a digest dies in `sort`, and a lone null slips
         # through the `compact` above to be refused by the Store as a
-        # {Store::MissingObject} raised from the SWEEP, where {#forced_put}'s
+        # {Ext::Store::MissingObject} raised from the SWEEP, where {#forced_put}'s
         # translation cannot reach it. {ChainFold} has checked the identical
         # field for turn records since it was written; this half had not, and
         # that asymmetry was the defect.
@@ -235,12 +235,11 @@ module Lain
         # {#resolvable?} reads it: a `message` record legitimately carries none.
         def rebuilt(record, index, cited)
           kind = event_kind(record, index)
-          payload = Event::Payload.new(kind:, body: required(record, index, "payload"))
-          @store.put(payload)
-          event = Event.new(kind:, carried_payload: payload,
-                            from: required(record, index, "from"), to: required(record, index, "to"),
-                            render_parent: record["render_parent"],
-                            causal_parents: cited, correlation: required(record, index, "correlation"))
+          event = Dag::Factory.event(kind:, body: required(record, index, "payload"),
+                                     from: required(record, index, "from"), to: required(record, index, "to"),
+                                     render_parent: record["render_parent"],
+                                     causal_parents: cited, correlation: required(record, index, "correlation"))
+          @store.put(event.carried_payload)
           @store.put(event)
           event
         end

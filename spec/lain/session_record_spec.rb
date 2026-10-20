@@ -247,7 +247,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
   # commit, so O(n^2) over a session, on the durability path every ask waits on.
   # The records are identical either way, so only the fetch count can tell a
   # bounded walk from a full one (spec/support/store_fetch_count.rb).
-  describe "the catch_up walk is bounded by what is new" do
+  describe "the catch_up walk is bounded by what is new", dag: :ruby do
     it "visits only the new turn on a second catch_up, not the whole chain" do
       scribe.catch_up(timeline)
       grown = timeline.commit(role: :user, content: text("more"))
@@ -397,7 +397,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     # The check walks the seed, so it has to be worth its cost: it runs against
     # the FIRST chain that can adjudicate it and never again. Per session, not
     # per ask -- which is exactly the budget the old filtered walk blew.
-    it "checks the seed once, leaving later catch_ups at the bounded cost" do
+    it "checks the seed once, leaving later catch_ups at the bounded cost", dag: :ruby do
       chain = chain_of(40)
       scribe = described_class.new(journal:, context:, toolset:, workspace:,
                                    written: chain.to_a.map(&:digest))
@@ -986,9 +986,8 @@ RSpec.describe Lain::SessionRecord do
   def text(body) = [{ "type" => "text", "text" => body }]
 
   def message(to:, body:)
-    payload = Lain::Event::Payload.new(kind: :message, body: { "text" => body })
-    store.put(payload)
-    Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to:).tap do |event|
+    Lain::Dag::Factory.event(kind: :message, body: { "text" => body }, from: "human", to:).tap do |event|
+      store.put(event.carried_payload)
       store.put(event)
     end
   end

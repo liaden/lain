@@ -193,9 +193,8 @@ RSpec.describe Lain::Context::Mailbox do
     let(:source) { described_class.new(recipient: "parent", log:) }
 
     def put_message(to:, text:, from: "actor")
-      payload = Lain::Event::Payload.new(kind: :message, body: { "text" => text })
-      event = Lain::Event.new(kind: :message, from:, to:, payload_digest: payload.digest, body: payload.body)
-      store.put(payload)
+      event = Lain::Dag::Factory.event(kind: :message, body: { "text" => text }, from:, to:)
+      store.put(event.carried_payload)
       store.put(event)
       log << event
       event

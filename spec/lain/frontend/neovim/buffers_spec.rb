@@ -898,3 +898,27 @@ RSpec.describe Lain::Frontend::Neovim::Buffers, "#question_settled" do
     expect(described_class.new.question_settled("blake3:abc", at: Time.now)).to be_nil
   end
 end
+
+RSpec.describe Lain::Frontend::Neovim::Buffers, "#updates over a timeline the store cannot resolve" do
+  let(:missing) { Lain::Telemetry::TurnUsage.new(digest: "blake3:absent", model: nil, stop_reason: :end_turn, usage: {}) }
+
+  %w[ruby rust].each do |setting|
+    context "with LAIN_DAG=#{setting}" do
+      before do
+        allow(ENV).to receive(:fetch).and_call_original
+        allow(ENV).to receive(:fetch).with("LAIN_DAG", anything).and_return(setting)
+      end
+
+      it "renders a digest its store never held as unavailable" do
+        lines = described_class.new(store: Lain::Dag::Factory.store).updates(missing)
+
+        expect(lines.fetch("lain://timeline")).to eq(["[timeline unavailable: blake3:absent not in store]"])
+      end
+
+      it "renders the unavailable state when no store was injected" do
+        expect(described_class.new.updates(missing).fetch("lain://timeline"))
+          .to eq(["[timeline unavailable: blake3:absent not in store]"])
+      end
+    end
+  end
+end

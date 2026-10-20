@@ -79,7 +79,7 @@ RSpec.describe Lain::Arm::Synthesis do
         head_digest: "blake3:#{"0" * 64}", text: "ghost", usage_records: []
       )
 
-      expect { synthesis.fold(lead, [dangling]) }.to raise_error(Lain::Store::MissingObject)
+      expect { synthesis.fold(lead, [dangling]) }.to raise_error(Lain::Ext::Store::MissingObject)
     end
   end
 

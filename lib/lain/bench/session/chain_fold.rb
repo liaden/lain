@@ -147,13 +147,13 @@ module Lain
         # The rescue below is reached only from {#forced}, since {#advance}
         # pre-checks the same edges. TRANSLATED rather than left to escape:
         # {Corrupt} is the one error this format's readers rescue, so a bare
-        # {Store::MissingObject} would reach the exe as a backtrace instead of a
+        # {Ext::Store::MissingObject} would reach the exe as a backtrace instead of a
         # named refusal. {MessageReplay#forced_put} translates the same edge for
         # flat events, in the same currency.
         def recommitted(chain, record, index)
           chain.commit(role: role_of(record, index), content: required(record, index, "content"),
                        meta: required(record, index, "meta"), causal_parents: cited_parents(record, index))
-        rescue Store::MissingObject => e
+        rescue Ext::Store::MissingObject => e
           raise Corrupt, "#{labelled(record, index)} cites a causal parent this fold never " \
                          "landed: #{e.message}"
         end

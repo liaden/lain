@@ -263,7 +263,7 @@ RSpec.describe Lain::Agent::ToolDelivery do
   # committed user text over them, so every later derivation refused the chain.
   # The repair answers with a sentence of its own and none of the refused
   # blocks: re-committing those would raise again.
-  describe "a turn whose results cannot be committed" do
+  describe "a turn whose results cannot be committed", dag: :ruby do
     let(:refusing_store) { ToolDeliverySpecSupport::RefusingStore.new("ran tu_2") }
     let(:timeline) do
       Lain::Dag::Factory.timeline(store: refusing_store)
@@ -349,18 +349,18 @@ RSpec.describe Lain::Agent::ToolDelivery do
     Sync do
       described_class.new(runner: citing, snapshots:, journal:)
                      .perform(response, timeline:, session:) { |turn| committed = turn }
-    rescue Lain::Store::MissingObject => e
+    rescue Lain::Ext::Store::MissingObject => e
       raised << e
     end
 
-    expect(raised.map(&:class)).to eq([Lain::Store::MissingObject])
+    expect(raised).to match([a_kind_of(Lain::Ext::Store::MissingObject)])
     expect(committed.head.content).to eq(Lain::Tool::Cancellation.new(timeline.head, kind: :errored).blocks)
     expect(committed.head.causal_parents).to be_empty
   end
 
   # A stop landing on the repair itself must not re-enter the cancellation arm:
   # the errored commit sits in the settled branch, outside that rescue.
-  it "does not answer the calls a second time when a stop follows the errored commit" do
+  it "does not answer the calls a second time when a stop follows the errored commit", dag: :ruby do
     chain = Lain::Dag::Factory.timeline(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_2"))
                               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
                               .commit(role: :assistant, content: response.content)
@@ -495,7 +495,7 @@ RSpec.describe Lain::Agent::ToolDelivery do
       expect([read_on?(committed, "tu_1"), session.read?("/tmp/tu_2.rb")]).to eq([true, false])
     end
 
-    it "withholds every read of a round whose results could not be committed" do
+    it "withholds every read of a round whose results could not be committed", dag: :ruby do
       chain = Lain::Dag::Factory.timeline(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_2"))
                                 .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
                                 .commit(role: :assistant, content: response.content)

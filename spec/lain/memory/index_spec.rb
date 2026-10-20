@@ -49,7 +49,7 @@ RSpec.describe Lain::Memory::Index do
     it "chains nodes by parent digest, Merkle-style" do
       one = index.write(item("a"))
       two = one.write(item("b"))
-      expect(store.fetch(two.root).parent).to eq(one.root)
+      expect(described_class::Node.from_canon(store.fetch(two.root)).parent).to eq(one.root)
     end
   end
 
@@ -110,7 +110,7 @@ RSpec.describe Lain::Memory::Index do
 
   describe "#checkout" do
     it "refuses a root the store has never seen" do
-      expect { index.checkout("blake3:nope") }.to raise_error(Lain::Store::MissingObject)
+      expect { index.checkout("blake3:nope") }.to raise_error(Lain::Ext::Store::MissingObject)
     end
   end
 
@@ -177,7 +177,8 @@ RSpec.describe Lain::Memory::Index do
 
     it "exposes the item's digest, not its content" do
       one = index.write(item("a"))
-      expect(store.fetch(store.fetch(one.root).item_digest)).to eq(item("a"))
+      node = described_class::Node.from_canon(store.fetch(one.root))
+      expect(Lain::Memory::Item.from_canon(store.fetch(node.item_digest))).to eq(item("a"))
     end
 
     it "is rebuilt from its canonical tree, or handed back as it is" do

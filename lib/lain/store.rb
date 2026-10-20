@@ -11,7 +11,10 @@ module Lain
   # writes are idempotent and an unreachable branch leaves garbage behind exactly
   # as an unreferenced git object does.
   class Store
-    class MissingObject < Error; end
+    # A subclass of the extension's class, so one rescue of
+    # {Ext::Store::MissingObject} catches a miss from either store. Not an alias:
+    # the conformance corpus records this class's own name for Ruby's refusals.
+    class MissingObject < Ext::Store::MissingObject; end
 
     def initialize
       @objects = {}

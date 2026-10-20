@@ -14,7 +14,7 @@ module Lain
     # cite it -- a child's `ask_human` question names the head it asked from,
     # and {Tools::Subagent::Lineage#message} names the child's final turn -- so
     # a session that spawned anything was previously unforkable: replaying
-    # those messages raised {Store::MissingObject} over a turn no record
+    # those messages raised {Ext::Store::MissingObject} over a turn no record
     # carried.
     #
     # It is not cheap, and the price is the child's whole transcript: measured

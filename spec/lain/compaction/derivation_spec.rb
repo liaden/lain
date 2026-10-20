@@ -184,7 +184,7 @@ RSpec.describe Lain::Compaction::Derivation do
     # projection byte-identical to the one it was holding. Handed the walk, this
     # object reads only the chain it WRITES.
     describe "a walk it is handed" do
-      it "derives from it rather than walking the source again" do
+      it "derives from it rather than walking the source again", dag: :ruby do
         source = fixtures.history(9)
         walk = Lain::Compaction::Derivation::Walk.of(source)
         derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
@@ -216,7 +216,7 @@ RSpec.describe Lain::Compaction::Derivation do
 
         tally = count_store_fetches(source.store) do
           expect { derivation.derive(source, into: Lain::Dag::Factory.store) }
-            .to raise_error(Lain::Store::MissingObject)
+            .to raise_error(Lain::Ext::Store::MissingObject)
         end
 
         expect(tally.count).to be_zero
@@ -317,7 +317,7 @@ RSpec.describe Lain::Compaction::Derivation do
       derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
 
       expect { derivation.derive(source, into: Lain::Dag::Factory.store) }
-        .to raise_error(Lain::Store::MissingObject, /would dangle/)
+        .to raise_error(Lain::Ext::Store::MissingObject, /would dangle/)
     end
 
     it "journals the derivation edge" do
@@ -473,7 +473,7 @@ RSpec.describe Lain::Compaction::Derivation do
         derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
 
         expect(derivation.derive(source) { |derived, _seam| derived.length }).to eq(4)
-        expect(derivation.derive(source)).to be_a(Lain::Timeline)
+        expect(derivation.derive(source)).to be_a(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).class)
       end
 
       it "renders the held replacement verbatim, whatever the strategy would answer over the longer span now" do
@@ -548,7 +548,7 @@ RSpec.describe Lain::Compaction::Derivation do
 
       # A correct resume and a full derivation write the same digests, so only
       # the work done can tell them apart: the envelopes put into the store.
-      describe "resuming an earlier derivation" do
+      describe "resuming an earlier derivation", dag: :ruby do
         let(:holding) { described_class.new(strategy: Lain::Compaction::Strategy::Identity.new, keep_last: 3) }
         let(:earlier) { fixtures.history(9) }
         let(:later) { extended(earlier, 3) }

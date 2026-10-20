@@ -26,8 +26,9 @@ module Lain
 
         # The Null store: satisfies the read half of the {Store} duck and
         # resolves NOTHING, so a Buffers nobody wired a store into renders every
-        # timeline as unavailable -- visibly, through the same
-        # {Store::MissingObject} path a real store's genuine miss takes. The
+        # timeline as unavailable -- visibly, the same rendering a real
+        # store's genuine miss gets, asked by `key?` before any timeline is
+        # built, since the Rust timeline accepts only the Rust store. The
         # previous default, a real-but-DISCONNECTED `Store.new`, looked
         # plausible and crashed the drain thread on the first
         # {Telemetry::TurnUsage}: a default that can only ever fail should SAY
@@ -108,15 +109,14 @@ module Lain
           #   event that names no turn
           def update(event)
             return nil unless event.is_a?(Telemetry::TurnUsage)
+            return unavailable(event.digest) unless @store.key?(event.digest)
 
             render_chain(Dag::Factory.timeline(head_digest: event.digest, store: @store).to_a)
-          rescue Store::MissingObject
-            unavailable(event.digest)
           end
 
           # Which turn this view renders on `line`, for the editor's pin
           # gesture. Positional guessing is not available: the line carries no
-          # digest, and the {Store::MissingObject} rescue collapses the whole
+          # digest, and a head the store does not hold collapses the whole
           # chain to a single notice line.
           #
           # @param line [Integer] 1-based, as nvim's cursor reports it
@@ -153,7 +153,7 @@ module Lain
             turns.map { |turn| turn_line(turn) }
           end
 
-          # The rescue collapses the WHOLE chain to one notice line, so nothing
+          # A missing head collapses the WHOLE chain to one notice line, so nothing
           # on it is pinnable: the index empties with the lines rather than
           # keeping digests the buffer no longer shows.
           def unavailable(digest)

@@ -151,7 +151,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
 
       expect { replay(records).messages }
         .to raise_error(Lain::Bench::Session::Corrupt) { |error|
-          expect(error).not_to be_a(Lain::Store::MissingObject)
+          expect(error).not_to be_a(Lain::Ext::Store::MissingObject)
           expect(error.message).to include("message record 2", "ababab")
         }
     end
@@ -200,7 +200,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
 
         expect { replay(records).messages }
           .to raise_error(Lain::Bench::Session::Corrupt) { |error|
-            expect(error).not_to be_a(Lain::Store::MissingObject)
+            expect(error).not_to be_a(Lain::Ext::Store::MissingObject)
             expect(error.message).to include("message record 2", "causal_parents")
           }
       end

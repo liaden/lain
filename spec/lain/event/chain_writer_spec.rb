@@ -52,7 +52,7 @@ RSpec.describe Lain::Event::ChainWriter do
       event = writer.put(parent, kind: :message, from: "a", to: "b", causal_parents: [], body: { "text" => "hi" })
 
       stored = store.fetch(event.payload_digest)
-      expect(stored).to be_a(Lain::Event::Payload)
+      expect(stored).to be_a(event.carried_payload.class)
       expect(stored.digest).to eq(event.payload_digest)
       expect(stored.body).to eq(event.body)
     end

@@ -631,7 +631,7 @@ module Lain
       # command speaks ONE refusal type whichever arm fires.
       def load_session(path, records)
         replayable(Session.load(records), path)
-      rescue Session::Corrupt, Store::MissingObject => e
+      rescue Session::Corrupt, Ext::Store::MissingObject => e
         raise Session::Corrupt, "#{path}: #{e.message}"
       end
 

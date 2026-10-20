@@ -59,7 +59,7 @@ module Lain
       # Only committed heads become causal edges. A worker that settled no turn
       # has a nil head and is simply not a causal parent -- but a NON-nil head
       # the Store never saw is NOT dropped: it flows to {Timeline#commit}, which
-      # raises {Store::MissingObject} rather than silently discarding a dangling
+      # raises {Ext::Store::MissingObject} rather than silently discarding a dangling
       # parent.
       def causal_parents(results) = results.filter_map(&:head_digest)
 

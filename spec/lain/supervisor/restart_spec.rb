@@ -233,6 +233,18 @@ RSpec.describe Lain::Supervisor::Restart do
   # ---- The workspace-blob sidecar (closing a stated persistence gap) ---------
 
   describe "the workspace_blob sidecar records" do
+    { "Ruby" => Lain::Store, "Rust" => Lain::Ext::Store }.each do |implementation, store_class|
+      it "journals the bytes and digest a #{implementation} store answers for a blob" do
+        store = store_class.new
+        blob = Lain::Workspace::Snapshot::Blob.new(bytes: "alpha\xFF".b)
+        store.put(blob)
+
+        journaled = Lain::Supervisor::Restart::WorkspaceBlob.from(store.fetch(blob.digest))
+
+        expect([journaled.digest, journaled.bytes]).to eq([blob.digest, "alpha\xFF".b])
+      end
+    end
+
     it "journals each blob once, content-addressed: an unchanged file's bytes are never re-journaled" do
       # a.txt is unchanged at snapshot 2, so its digest rides BOTH snapshot
       # maps while its bytes land exactly once.
@@ -467,15 +479,21 @@ RSpec.describe Lain::Supervisor::Restart do
   # the same "unreachable" conclusion, and deletes the arm on that basis
   # alone gets a red example here instead of silently repeating the
   # `--resume`/`--fork` asymmetry a third time.
-  it "normalizes a bare Store::MissingObject into Corrupt naming the role (the defensive arm, pinned)" do
-    loader = instance_double(Lain::Bench::Session::Loader)
-    allow(Lain::Bench::Session::Loader).to receive(:new).and_return(loader)
-    allow(loader).to receive(:recording)
-      .and_raise(Lain::Store::MissingObject, "no object \"blake3:deadbeef\" in store")
+  { "Ruby" => Lain::Store, "Rust" => Lain::Ext::Store }.each do |implementation, store_class|
+    it "normalizes a bare #{implementation} store miss into Corrupt naming the role (the defensive arm, pinned)" do
+      miss = begin
+        store_class.new.fetch("blake3:deadbeef")
+      rescue StandardError => e
+        e
+      end
+      loader = instance_double(Lain::Bench::Session::Loader)
+      allow(Lain::Bench::Session::Loader).to receive(:new).and_return(loader)
+      allow(loader).to receive(:recording).and_raise(miss)
 
-    supervised do |supervisor|
-      expect { restart_over([], supervisor:) }.to raise_error(Lain::Bench::Session::Corrupt) do |error|
-        expect(error.message).to include("researcher", "no object \"blake3:deadbeef\" in store")
+      supervised do |supervisor|
+        expect { restart_over([], supervisor:) }.to raise_error(Lain::Bench::Session::Corrupt) do |error|
+          expect(error.message).to include("researcher", "no object \"blake3:deadbeef\" in store")
+        end
       end
     end
   end

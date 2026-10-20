@@ -385,4 +385,20 @@ RSpec.describe Lain::Workspace::SnapshotLog do
       expect(log.count).to eq(2)
     end
   end
+
+  describe "over the Rust store, whose fetch answers a blob as its bytes" do
+    before do
+      allow(ENV).to receive(:fetch).and_call_original
+      allow(ENV).to receive(:fetch).with("LAIN_DAG", anything).and_return("rust")
+    end
+
+    it "undoes an uncaptured write to the bytes the store holds" do
+      put("a.rb", "a v1")
+      turn_a = turn(start)
+      put("a.rb", "a v2")
+      turn(turn_a, pre_images: uncaptured("a.rb"))
+
+      expect(log.undo(store:).moves).to eq([move("a.rb", "a v1", "a v2")])
+    end
+  end
 end

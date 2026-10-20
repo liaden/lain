@@ -216,6 +216,22 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    # The MissingObject arm is defensive, so this drives it with a miss from the
+    # Rust store, whose class the Ruby one subclasses.
+    it "names the file when loading it misses in the Rust store" do
+      miss = begin
+        Lain::Ext::Store.new.fetch("blake3:deadbeef")
+      rescue Lain::Ext::Store::MissingObject => e
+        e
+      end
+      allow(Lain::Bench::Session).to receive(:load).and_raise(miss)
+      Dir.mktmpdir do |tmp|
+        FileUtils.cp(File.join(fixture_dir, "one.ndjson"), tmp)
+        expect { cli.variance_report([tmp]) }
+          .to raise_error(Lain::Bench::Session::Corrupt, /one\.ndjson: no object/)
+      end
+    end
+
     # Compare's two comparability guards speak in the RECORDINGS' vocabulary and
     # name no file, so an experimenter who pointed this at a directory of twelve
     # sessions reads "checkout/ask vs checkout/bypass" with no way back to the

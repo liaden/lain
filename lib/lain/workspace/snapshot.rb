@@ -2,9 +2,6 @@
 
 require "pathname"
 
-# Snapshot's own subtree index. Scope loads at the TOP because the class body
-# below reads Scope::WriteSet::NOTE while it evaluates.
-
 module Lain
   class Workspace
     # Writes the workspace's file state into the event log: one :snapshot event
@@ -56,6 +53,14 @@ module Lain
       # recorded rests on this word, so changing it moves them all.
       class Blob < ContentAddressed::Blob
         TAG = "blob"
+
+        # The blob a store answers on fetch: the Ruby store keeps the object,
+        # the extension's keeps only the bytes, and a fetched String's own
+        # `#bytes` is an Array of Integers.
+        #
+        # @param fetched [Blob, String] what {Store#fetch} answered
+        # @return [Blob]
+        def self.from_fetch(fetched) = fetched.is_a?(self) ? fetched : new(bytes: fetched)
 
         def initialize(bytes:)
           super(bytes:, tag: TAG)

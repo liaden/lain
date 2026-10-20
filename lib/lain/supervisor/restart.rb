@@ -119,7 +119,7 @@ module Lain
       # Folding it into a Result would decide that above this seam.
       def replay(role)
         Bench::Session::Loader.new(@records).recording
-      rescue Bench::Session::Corrupt, Store::MissingObject => e
+      rescue Bench::Session::Corrupt, Ext::Store::MissingObject => e
         raise Bench::Session::Corrupt, "cannot restart #{role.inspect} from its session record: #{e.message}"
       end
 
@@ -285,8 +285,9 @@ module Lain
       WorkspaceBlob = Data.define(:digest, :bytes_b64) do
         include Telemetry::Journalable
 
-        # @param blob [Workspace::Snapshot::Blob]
-        def self.from(blob)
+        # @param fetched [Workspace::Snapshot::Blob, String] what the store answered
+        def self.from(fetched)
+          blob = Workspace::Snapshot::Blob.from_fetch(fetched)
           new(digest: blob.digest, bytes_b64: [blob.bytes].pack("m0"))
         end
 

@@ -47,13 +47,20 @@ RSpec.describe Lain::Dag::RenderAncestry do
       expect(Lain::Timeline::CrossStore).to equal(Lain::Dag::CrossStore)
     end
 
+    it "names the Rust timeline's cross-store refusal by the same class, so one rescue catches both" do
+      text = [{ "type" => "text", "text" => "x" }]
+      one, other = Array.new(2) { Lain::Ext::Timeline.empty(store: Lain::Ext::Store.new).commit(role: :user, content: text) }
+
+      expect { one.meet(other) }.to raise_error(Lain::Dag::CrossStore)
+    end
+
     # The meet builds `mine` (one side's ancestry, a Hash) eagerly -- that
     # side has to see everything to answer "is this digest in my history" at
     # all. The OTHER side is a #find over the other's ancestors, and #find can
     # stop the moment it lands on a digest already in `mine` -- it should never
     # keep walking toward the other's own root once the shared history is
     # reached.
-    describe "cost: the find-side stops at the shared history" do
+    describe "cost: the find-side stops at the shared history", dag: :ruby do
       it "walks past the answer only on the eager side, never on the find-side" do
         base_length = 60
         base = (1...base_length).inject(say(timeline, "0")) { |acc, i| say(acc, i.to_s) }

@@ -3,6 +3,8 @@
 require "tmpdir"
 
 RSpec.describe Lain::Workspace::Snapshot do
+  def bytes_at(store, digest) = Lain::Workspace::Snapshot::Blob.from_fetch(store.fetch(digest)).bytes
+
   # A store with one committed turn, so snapshots have a turn to name as their
   # causal parent -- the same shape the Agent's tool_results commit leaves.
   def committed_timeline(store = Lain::Dag::Factory.store)
@@ -351,7 +353,7 @@ RSpec.describe Lain::Workspace::Snapshot do
       expect(event.causal_parents).to eq([timeline.head_digest])
       expect(event.body.fetch("files").keys).to contain_exactly("a.txt", "b.txt")
       event.body.fetch("files").each do |key, digest|
-        expect(timeline.store.fetch(digest).bytes).to eq(File.binread(File.join(dir, key)))
+        expect(bytes_at(timeline.store, digest)).to eq(File.binread(File.join(dir, key)))
       end
     end
 
@@ -497,7 +499,7 @@ RSpec.describe Lain::Workspace::Snapshot do
       expect(second).not_to be_nil
       new_digest = second.body.fetch("files").fetch("a.txt")
       expect(new_digest).not_to eq(first.body.fetch("files").fetch("a.txt"))
-      expect(timeline.store.fetch(new_digest).bytes).to eq("bash rewrote me")
+      expect(bytes_at(timeline.store, new_digest)).to eq("bash rewrote me")
     end
 
     it "records a deleted write-set file by omission, as a fresh snapshot" do
@@ -647,7 +649,7 @@ RSpec.describe Lain::Workspace::Snapshot do
       expect(results_turn.role).to eq("user")
       expect(snapshot.causal_parents).to eq([results_turn.digest])
       expect(snapshot.body.fetch("files").keys).to contain_exactly("a.txt", "b.txt")
-      expect(agent.timeline.store.fetch(snapshot.body.fetch("files").fetch("a.txt")).bytes)
+      expect(bytes_at(agent.timeline.store, snapshot.body.fetch("files").fetch("a.txt")))
         .to eq("alpha two")
       expect(agent.timeline.to_a.map(&:role)).to eq(%w[user assistant user assistant])
     end

@@ -18,6 +18,8 @@ end
 # What snapshot_spec.rb does not pin: skip-by-content through a real Agent, blob dedup
 # and domain separation, edge bytes, shareability, invisibility in the rendered Request.
 RSpec.describe Lain::Workspace::Snapshot do
+  def bytes_at(store, digest) = Lain::Workspace::Snapshot::Blob.from_fetch(store.fetch(digest)).bytes
+
   def committed_timeline(store = Lain::Dag::Factory.store)
     Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
   end
@@ -181,7 +183,7 @@ RSpec.describe Lain::Workspace::Snapshot do
       event = writer.write(timeline:, paths: [empty])
 
       digest = event.body.fetch("files").fetch("empty.txt")
-      expect(timeline.store.fetch(digest).bytes).to eq("")
+      expect(bytes_at(timeline.store, digest)).to eq("")
     end
 
     it "round-trips invalid-UTF-8 binary bytes through the Store" do
@@ -191,7 +193,7 @@ RSpec.describe Lain::Workspace::Snapshot do
       event = writer.write(timeline:, paths: [bin])
 
       digest = event.body.fetch("files").fetch("blob.bin")
-      expect(timeline.store.fetch(digest).bytes.bytes).to eq([0xff, 0xfe, 0x00, 0x01])
+      expect(bytes_at(timeline.store, digest).bytes).to eq([0xff, 0xfe, 0x00, 0x01])
     end
   end
 

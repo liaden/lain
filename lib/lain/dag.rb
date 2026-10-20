@@ -7,8 +7,9 @@ module Lain
   # {Dag::RenderAncestry} is the render edge alone.
   module Dag
     # Two Timelines over different Stores share no DAG, so no order can compare
-    # them; every order refuses by name rather than answering the bottom.
-    class CrossStore < Error; end
+    # them; every order refuses by name rather than answering the bottom. The
+    # extension's class itself, so one rescue catches either implementation.
+    CrossStore = Ext::Timeline::CrossStore
 
     def self.same_store!(one, other)
       return if one.store.equal?(other.store)

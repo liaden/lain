@@ -93,7 +93,7 @@ module Lain
         # so its forks would descend from `#run`'s root while the policy grew a
         # parallel mainline off its own, silently, and every continuation head the
         # policy returned would be unreachable in the run's Store. Caught loudly at
-        # run start rather than surfacing later as a {Store::MissingObject} or a
+        # run start rather than surfacing later as a {Ext::Store::MissingObject} or a
         # divergent chain.
         raise Error,
               "policy mainline root #{root.head_digest.inspect} does not match run root " \

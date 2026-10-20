@@ -83,7 +83,7 @@ RSpec.describe Lain::Workspace::Restore do
       restorer.restore(turn: 2)
 
       projection.workspace_at(2).body.fetch("files").each do |key, digest|
-        expect(read_file(dir, key)).to eq(store.fetch(digest).bytes)
+        expect(read_file(dir, key)).to eq(Lain::Workspace::Snapshot::Blob.from_fetch(store.fetch(digest)).bytes)
       end
       expect(read_file(dir, "a.txt")).to eq("alpha v1")
       expect(read_file(dir, "b.txt")).to eq("beta v1")
@@ -129,7 +129,7 @@ RSpec.describe Lain::Workspace::Restore do
       expect(rewound.to_a.map { |turn| turn.content.first.fetch("text") }).to eq(%w[turn-1 turn-2])
       files = projection.workspace_at(rewound.to_a.size).body.fetch("files")
       expect(files.keys).to contain_exactly("a.txt", "b.txt")
-      files.each { |key, digest| expect(read_file(dir, key)).to eq(store.fetch(digest).bytes) }
+      files.each { |key, digest| expect(read_file(dir, key)).to eq(Lain::Workspace::Snapshot::Blob.from_fetch(store.fetch(digest)).bytes) }
     end
 
     it "restores forward again cleanly: its own writes are never dirty" do
@@ -384,6 +384,33 @@ RSpec.describe Lain::Workspace::Restore do
           .to raise_error(Lain::Workspace::Restore::EscapesRoot, /link\.txt/)
         expect(File.binread(decoy)).to eq("innocent bystander")
       end
+    end
+  end
+
+  # The story is built in the outer `before`, so the setting is chosen in an
+  # `around`, which runs first.
+  describe "over the Rust store, whose fetch answers a blob as its bytes" do
+    around do |example|
+      saved = ENV.fetch("LAIN_DAG", nil)
+      ENV["LAIN_DAG"] = "rust"
+      example.run
+    ensure
+      ENV["LAIN_DAG"] = saved
+    end
+
+    it "writes back the bytes each blob holds" do
+      restorer.restore(turn: 2)
+
+      expect([read_file(dir, "a.txt"), read_file(dir, "b.txt")]).to eq(["alpha v1", "beta v1"])
+    end
+
+    it "finds its own writes clean when it restores forward again" do
+      restore = restorer
+      restore.restore(turn: 2)
+
+      restore.restore(turn: 5)
+
+      expect(read_file(dir, "a.txt")).to eq("alpha v2")
     end
   end
 

@@ -6,6 +6,8 @@ require "fileutils"
 # What restore_spec.rb does not pin: binary round trips, repeated restores over one
 # instance, dirt against a non-in-force blob, force: semantics, turn-addressing parity.
 RSpec.describe Lain::Workspace::Restore do
+  def bytes_at(store, digest) = Lain::Workspace::Snapshot::Blob.from_fetch(store.fetch(digest)).bytes
+
   def block(text) = [{ "type" => "text", "text" => text }]
 
   def write_file(root, name, bytes)
@@ -219,7 +221,7 @@ RSpec.describe Lain::Workspace::Restore do
       restore = restorer
       [2, 3, 4].each do |turn|
         restore.restore(turn:)
-        expected = store.fetch(projection.workspace_at(turn).body.fetch("files").fetch("a.txt")).bytes
+        expected = bytes_at(store, projection.workspace_at(turn).body.fetch("files").fetch("a.txt"))
         expect(read_file(dir, "a.txt")).to eq(expected)
         expect(read_file(dir, "a.txt")).to eq("v1")
       end

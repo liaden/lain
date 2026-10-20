@@ -169,7 +169,7 @@ RSpec.describe Lain::Bench::Session::Loader do
 
       expect { described_class.new(records).recording }
         .to raise_error(Lain::Bench::Session::Corrupt) { |error|
-          expect(error).not_to be_a(Lain::Store::MissingObject)
+          expect(error).not_to be_a(Lain::Ext::Store::MissingObject)
           expect(error.message).to include("message record 0", absent)
         }
     end
@@ -186,7 +186,7 @@ RSpec.describe Lain::Bench::Session::Loader do
   # speculative implementation that retried would leave the same Store. So the
   # guard now instruments the PUTS, one level down at the fold itself, where the
   # speculative commit would actually show.
-  describe "what a blocked turn puts before it is unblocked" do
+  describe "what a blocked turn puts before it is unblocked", dag: :ruby do
     # Anonymous rather than a named constant: it exists for this describe and
     # has no business in the global namespace (RSpec/LeakyConstantDeclaration),
     # the same shape message_replay_spec's counting store uses.

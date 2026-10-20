@@ -1184,9 +1184,8 @@ RSpec.describe Lain::CLI::Resume do
     # named one Resume builds a Refusal from, never a raw MissingObject.
     it "refuses a session whose turn cites a causal parent the fold cannot resolve" do
       store = Lain::Dag::Factory.store
-      payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "81 mg" })
-      store.put(payload)
-      answered = Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to: "agent")
+      answered = Lain::Dag::Factory.event(kind: :message, body: { "text" => "81 mg" }, from: "human", to: "agent")
+      store.put(answered.carried_payload)
       store.put(answered)
       cited = Lain::Dag::Factory.timeline(store:)
                                 .commit(role: :user, content: text("dose?"))
@@ -1205,6 +1204,30 @@ RSpec.describe Lain::CLI::Resume do
     # store message -- no file, no session, a backtrace -- from `--resume`.
     # Which door a user came through decided whether they were told anything
     # useful. Both doors are pinned now, so neither can drift alone again.
+    # Both doors' MissingObject arms are defensive, so these drive them with a
+    # miss from the Rust store, whose class the Ruby one subclasses.
+    def rust_store_miss
+      Lain::Ext::Store.new.fetch("blake3:deadbeef")
+    rescue Lain::Ext::Store::MissingObject => e
+      e
+    end
+
+    it "refuses a Rust store's miss at --resume, naming the file" do
+      write_closed("20260101T000000-1.ndjson", chain("hi", "yo"))
+      allow(Lain::Bench::Session::Loader).to receive(:new).and_raise(rust_store_miss)
+
+      expect { resume.call }.to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
+    end
+
+    it "refuses a Rust store's miss at --fork, naming the file" do
+      line = chain("hi", "yo")
+      write_closed("20260101T000000-1.ndjson", line)
+      allow(Lain::Bench::Session::Loader).to receive(:new).and_raise(rust_store_miss)
+
+      expect { resume.fork(selector: "20260101@#{line.head_digest.delete_prefix("blake3:")[0, 12]}") }
+        .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
+    end
+
     it "refuses a session whose message record holds a null causal parent" do
       write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: [null_parent_message])
 

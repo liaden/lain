@@ -180,7 +180,7 @@ module Lain
       # see, so one uncovered escape there is a raw backtrace out of the exe.
       # {#rebuild} carries the identical pair -- a damaged journal must not
       # refuse differently depending on which door a user came through.
-      rescue Bench::Session::Corrupt, Store::MissingObject => e
+      rescue Bench::Session::Corrupt, Ext::Store::MissingObject => e
         raise fork_refusal(point, e.message)
       rescue Errno::ENOENT
         # The TOCTOU between ForkPoint's read and this load: a reap or rename
@@ -206,7 +206,7 @@ module Lain
         outcome = salvage(path, recording)
         recording = load_recording(path) if outcome.closes_file?
         resumed_result(path, recording, outcome, current)
-      rescue Bench::Session::Corrupt, Store::MissingObject => e
+      rescue Bench::Session::Corrupt, Ext::Store::MissingObject => e
         # Corrupt's own message names digests and reasons; only this layer still
         # holds the path. The MissingObject arm is {#fork}'s, and it was missing
         # here once at a real cost: the SAME damaged file refused namedly from
