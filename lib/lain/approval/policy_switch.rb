@@ -52,7 +52,7 @@ module Lain
 
         # @return [String] the asking requester's name, the key a remembered denial is held under and the
         #   journal edge
-        def requester = identity.key
+        def requester = identity.name
       end
 
       attr_reader :current

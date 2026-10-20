@@ -243,7 +243,7 @@ RSpec.describe Lain::Approval::PolicySwitch do
       # The complement, so the rule cannot be tightened into refusing the names
       # the harness really wires -- every role name is a catalog symbol.
       it "accepts every name this harness actually wires" do
-        names = ["agent", Lain::CLI::Wiring::ToolsetBuild::SPAWN_REQUESTER,
+        names = ["agent", Lain::CLI::Wiring::ToolsetBuild::SPAWN_REQUESTER.name,
                  *Lain::Role::Catalog.names.map(&:to_s)]
 
         expect(names.map { |name| wrapped(name).requester }).to eq(names)

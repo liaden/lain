@@ -222,7 +222,7 @@ RSpec.describe Lain::Approval::Queue do
   describe "how long a parked call has left" do
     def pending_at(now, timeout: 300)
       effect = tool_call
-      described_class::Pending.new(effect:, requester: "agent", clock: -> { now.call }, timeout:)
+      described_class::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { now.call }, timeout:)
     end
 
     it "counts the window from the park until a surface draws it" do
@@ -257,7 +257,7 @@ RSpec.describe Lain::Approval::Queue do
       now = 100.0
       wall = Time.new(2026, 10, 8, 13, 15, 0, "+00:00")
       effect = tool_call
-      pending = described_class::Pending.new(effect:, requester: "agent", clock: -> { now }, timeout: 300,
+      pending = described_class::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { now }, timeout: 300,
                                              wall: -> { wall + (now - 100.0) })
       now = 160.0
       first = pending.fires_at_face
@@ -339,14 +339,14 @@ RSpec.describe Lain::Approval::Queue do
     end
 
     it "refuses an authority no ruling knows" do
-      pending = described_class::Pending.new(effect: tool_call, requester: "agent", clock: -> { 0.0 })
+      pending = described_class::Pending.new(effect: tool_call, identity: Lain::Requester.main, clock: -> { 0.0 })
 
       expect { pending.decide(true, surface: "tty", authority: :person) }.to raise_error(ArgumentError, /person/)
       expect(pending).not_to be_decided
     end
 
     it "decides as automatic when the surface names no authority" do
-      pending = described_class::Pending.new(effect: tool_call, requester: "agent", clock: -> { 0.0 })
+      pending = described_class::Pending.new(effect: tool_call, identity: Lain::Requester.main, clock: -> { 0.0 })
       pending.decide(true, surface: "tty")
 
       expect(pending.authority).to eq(:automatic)
@@ -402,7 +402,7 @@ RSpec.describe Lain::Approval::Queue do
   end
 
   describe "the words a denial is given in" do
-    def pending = described_class::Pending.new(effect: tool_call, requester: "agent", clock: -> { 0.0 })
+    def pending = described_class::Pending.new(effect: tool_call, identity: Lain::Requester.main, clock: -> { 0.0 })
 
     it "keeps them on one line with no control bytes, so they stay one clause of the tool result" do
       denied = pending
@@ -579,7 +579,15 @@ RSpec.describe Lain::Approval::Queue do
       end
 
       expect([@pending.requester, @pending.label]).to eq(["dev", "dev (gherkin-tests)"])
+      expect(@pending.identity).to eq(child)
       expect(pending_records).to contain_exactly(a_hash_including("requester" => "dev"))
+    end
+
+    it "resolves a context to the identity it carries, and to the fallback when it names nobody" do
+      child = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
+
+      expect([described_class.identity_for(asked_by(child)), described_class.identity_for(nil)])
+        .to eq([child, Lain::Requester.main])
     end
 
     it "labels a context that names nobody as the queue's own requester" do
@@ -644,7 +652,7 @@ RSpec.describe Lain::Approval::Queue do
     it "keys a context that names nobody under the main agent" do
       denied_by_human(lists("/home"))
 
-      expect(queue.denied(requester: described_class::REQUESTER, path: "/home")).to eq("not your business")
+      expect(queue.denied(requester: described_class::REQUESTER.name, path: "/home")).to eq("not your business")
     end
 
     it "holds a denial for a requester that asks again under a role, keyed by its name" do
@@ -652,7 +660,7 @@ RSpec.describe Lain::Approval::Queue do
       again = Lain::Requester.new(name: "researcher", role: "researcher", skill: "gherkin-tests")
       context = in_dir("/", requester: again)
 
-      expect(queue.denied(requester: described_class.requester_for(context), path: "/home"))
+      expect(queue.denied(requester: described_class.identity_for(context).name, path: "/home"))
         .to eq("not your business")
     end
 
@@ -998,7 +1006,7 @@ RSpec.describe Lain::Approval::Queue do
     end
 
     it "keeps the deferral among the notes the journal records" do
-      pending = described_class::Pending.new(effect: tool_call, requester: "agent", clock: -> { 0.0 },
+      pending = described_class::Pending.new(effect: tool_call, identity: Lain::Requester.main, clock: -> { 0.0 },
                                              notes: ["a path", described_class::Reason.own("lain says")])
 
       expect(pending.notes).to eq(["a path", "lain says"])
@@ -1375,7 +1383,7 @@ RSpec.describe Lain::Approval::Queue do
     # collaborator here has one) fails right here.
     it "takes no ledger, so `decide` has nothing to release into" do
       expect(described_class::Pending.instance_method(:initialize).parameters)
-        .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key label], %i[key timeout],
+        .to eq([%i[keyreq effect], %i[keyreq identity], %i[keyreq clock], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
                 %i[key notes]])
     end
@@ -1413,7 +1421,7 @@ RSpec.describe Lain::Approval::Queue do
     it "keeps exactly one winner when two live fibers race to decide it" do
       verbs = %i[approve deny]
       outcomes = Array.new(25) do
-        pending = described_class::Pending.new(effect: tool_call, requester: "agent",
+        pending = described_class::Pending.new(effect: tool_call, identity: Lain::Requester.main,
                                                clock: -> { 0.0 }, outstanding:)
         won = []
 

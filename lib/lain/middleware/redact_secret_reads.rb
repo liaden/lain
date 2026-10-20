@@ -145,7 +145,7 @@ module Lain
         # `outstanding:` is accepted and discarded, but cannot be renamed to the
         # unused-argument underscore: it is a KEYWORD, so the name is the duck.
         def adjudicate(_effect, context, outstanding: nil) # rubocop:disable Lint/UnusedMethodArgument
-          Verdict.new(requester: Approval::Queue.requester_for(context))
+          Verdict.new(requester: Approval::Queue.identity_for(context).name)
         end
 
         INSTANCE = new.freeze
@@ -187,7 +187,7 @@ module Lain
       #   {Unqueued} when a run wires none. Required for the same reason.
       # @param journal [#<<] where {Telemetry::ReadRedacted},
       #   {Telemetry::SearchRedacted} and {Telemetry::ReadReleased} land
-      # @param requester [String, nil] the child a read is asked for, as its
+      # @param requester [Requester, nil] the child a read is asked for, as its
       #   gate names it; nil for the parent, whose context names nobody
       # @param related [#related?] answers whether an absolute path lies under
       #   a `sensitivity related:` directory, whose regions mask without asking.

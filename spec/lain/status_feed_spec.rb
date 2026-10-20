@@ -66,7 +66,7 @@ RSpec.describe Lain::StatusFeed do
 
   def approval_decision(tool: "bash", tool_use_id: "tu_1", verdict: true)
     effect = Lain::Effect::ToolCall.new(tool_use_id:, name: tool, input: {})
-    pending = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 })
+    pending = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
     pending.decide(verdict, surface: "tty")
     pending
   end

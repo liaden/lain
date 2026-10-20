@@ -467,7 +467,7 @@ module Lain
         window = @windows[record.spawn]
         return unless window && record.role && @unnamed.delete?(record.spawn)
 
-        role = window_role(record.role.split(" (", 2).first)
+        role = window_role(record.role)
         rename_window(record.spawn, window, window_name(role, record.spawn))
       end
 

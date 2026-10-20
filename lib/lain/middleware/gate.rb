@@ -140,7 +140,7 @@ module Lain
       #   outright with `deny_tool`. Asked here, ahead of the tier, because a
       #   tool that asks no approval never reaches the policy at all.
       # @param journal [#<<] where a whole-tool refusal lands as an `escalation` record
-      # @param requester [String, nil] who a child's stack asks for; nil reads
+      # @param requester [Requester, nil] who a child's stack asks for; nil reads
       #   it off the context, as the queue does
       def initialize(policy: DenyAll.new, sensitivity: ::Lain::Sensitivity::Policy::Null.instance, denial: DENIAL,
                      denied_tools: Set[].freeze, journal: Channel::Null.instance, requester: nil)

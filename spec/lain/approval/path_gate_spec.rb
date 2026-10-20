@@ -29,7 +29,7 @@ RSpec.describe Lain::Approval::PathGate do
 
   def pending(tool, input)
     effect = Struct.new(:name, :input, :tool_use_id).new(tool, input, "tu_1")
-    Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 })
+    Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
   end
 
   describe "#path_for" do
@@ -87,7 +87,9 @@ RSpec.describe Lain::Approval::PathGate do
         base = File.realpath(made)
         cwd = File.join(base, "secrets", "sub")
         effect = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => "notes.txt" }, "tu_1")
-        parked = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, cwd:, within: base)
+        parked = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main,
+                                                    clock: -> { 0.0 },
+                                                    cwd:, within: base)
         policy = Lain::Sensitivity::Policy.new(
           sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/elsewhere", rules: Lain::Sensitivity::Rules.empty)
         )

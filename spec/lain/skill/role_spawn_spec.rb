@@ -634,7 +634,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     it "names each never-parking child by its own role" do
       named = []
       parked = Class.new do
-        define_method(:with) { |requester:| (named << requester.key) && self }
+        define_method(:with) { |requester:| (named << requester.name) && self }
         def call(worker_env, **) = ToolRegistry::UNGUARDED.call(worker_env)
       end.new
       guard = ->(worker_env, **) { ToolRegistry::UNGUARDED.call(worker_env) }

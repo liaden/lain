@@ -162,7 +162,7 @@ RSpec.describe Lain::Middleware::Gate do
 
     it "journals the requester the context names when the gate was built for none" do
       journal = []
-      context = Struct.new(:requester).new("researcher")
+      context = Lain::Approval::PolicySwitch::Requested.new(nil, "researcher")
 
       through(described_class.new(denied_tools: Set["safe"], journal:), tool_call("safe"), context:)
 
@@ -191,7 +191,7 @@ RSpec.describe Lain::Middleware::Gate do
       let(:journal) { [] }
 
       it "journals that name on the escalation record" do
-        refused(context: Struct.new(:requester).new("researcher"))
+        refused(context: Lain::Approval::PolicySwitch::Requested.new(nil, "researcher"))
 
         expect(journal).to include(a_hash_including("type" => "escalation", "rung" => "config",
                                                     "requester" => "researcher"))

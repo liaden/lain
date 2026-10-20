@@ -273,7 +273,7 @@ module Lain
       def place_for(effect, context)
         root = own_tree(context) || @policy.root || ::Lain::Sensitivity::Policy.base_of(context)
         cwd = ::Lain::Session.cwd_of(context)
-        Judge::Place.new(root:, cwd:, requester: Queue.requester_for(context),
+        Judge::Place.new(root:, cwd:, requester: Queue.identity_for(context).name,
                          outside: outside(effect, context, cwd, [root, ::Lain::Sensitivity::Policy.base_of(context)]),
                          facts: facts_for(effect, context), request: @request.call(context),
                          human_checkout: (@policy.root unless root == @policy.root))

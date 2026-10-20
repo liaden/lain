@@ -43,13 +43,14 @@ module Lain
         # The standing half of the row, written once as the child is
         # dispatched: what it is for, and where its work is going.
         #
-        # @param role [String] what the spawn is announced as
+        # @param who [Requester] what the spawn is announced as
         # @param task [String] the prompt; the record clamps and scrubs it
         # @param worker [String, nil] the lease key, nil where no worker was
         #   minted
         # @return [self]
-        def dispatched(role:, task:, worker:)
-          @tee << Telemetry::ChildProgress.new(spawn: @spawn, role:, task_line: task, worker:, turns: @turns)
+        def dispatched(who:, task:, worker:)
+          @tee << Telemetry::ChildProgress.new(spawn: @spawn, label: who.label, role: who.role || who.name,
+                                               skill: who.skill, task_line: task, worker:, turns: @turns)
           self
         end
 

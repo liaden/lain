@@ -217,6 +217,8 @@ module EscalationSpecSupport
 end
 
 RSpec.describe Lain::Approval::Escalation do
+  def asked_as(name) = Lain::Approval::PolicySwitch::Requested.new(nil, name)
+
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:bash) { Lain::Tools::Bash.new }
@@ -546,7 +548,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     it "names the requester a child's context carries, on a rung's final deny and on the bottom" do
-      child = Struct.new(:requester).new("researcher")
+      child = asked_as("researcher")
 
       ladder(EscalationSpecSupport::Fixed.new("triage", :deny)).call(effect, child)
       ladder(EscalationSpecSupport::Silent.new).call(effect, child)
@@ -688,14 +690,14 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     it "names the requester on the human allow it honours over a fault" do
-      settled_by(faulting, surface: "tty", authority: :human, context: Struct.new(:requester).new("researcher"))
+      settled_by(faulting, surface: "tty", authority: :human, context: asked_as("researcher"))
 
       expect(rulings.last).to include("verdict" => "allow", "faulted" => true, "requester" => "researcher")
     end
 
     it "names the requester on the automatic allow a fault suppresses" do
       ladder(faulting, EscalationSpecSupport::Fixed.new("auto", :allow))
-        .call(effect, Struct.new(:requester).new("researcher"))
+        .call(effect, asked_as("researcher"))
 
       expect(rulings.last).to include("rung" => "rules", "verdict" => "deny", "requester" => "researcher")
     end

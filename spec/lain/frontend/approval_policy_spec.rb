@@ -13,7 +13,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   let(:effect) { Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { command: "rm -rf /tmp/x" }) }
 
   def pending
-    Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 })
+    Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
   end
 
   def policy_for(answer)
@@ -21,7 +21,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   def pending_from(requester)
-    Lain::Approval::Queue::Pending.new(effect:, requester:, clock: -> { 0.0 })
+    Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.of(requester), clock: -> { 0.0 })
   end
 
   it "asks the question, naming the tool and its input" do
@@ -41,7 +41,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "says in the question when the judge deferred the call" do
-    deferred = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 },
+    deferred = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
                                                   notes: [Lain::Approval::Queue::Reason.own("the judge deferred this")])
     policy_for("n\n").decide(deferred)
 
@@ -49,7 +49,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "says in the question what the ladder noted about the call" do
-    noted = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 },
+    noted = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
                                                notes: ["cat resolved to /repo/bin/cat (project)"])
     policy_for("n\n").decide(noted)
 
@@ -58,7 +58,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
   it "shows a path reason before the judge's deferral, the judge's words unquoted and lain's quoted apart" do
     both = Lain::Approval::Queue::Pending.new(
-      effect:, requester: "agent", clock: -> { 0.0 },
+      effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
       notes: ["cat is /x/", Lain::Approval::Queue::Reason.own("the judge deferred this")]
     )
     policy_for("n\n").decide(both)
@@ -67,7 +67,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "renders a planted path in a note inspected, on one line" do
-    planted = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 },
+    planted = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
                                                  notes: ["cat is /x/\e[2K\nforged"])
     policy_for("n\n").decide(planted)
 
@@ -88,7 +88,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "says in the question how long the human has before it auto-denies" do
-    slow = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, timeout: 300)
+    slow = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 }, timeout: 300)
     policy_for("n\n").decide(slow)
 
     expect(output.string).to include("bash(").and include("auto-denies in 5:00")
@@ -104,7 +104,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "names a skill child by its label in the line a closed prompt leaves behind" do
-    labelled = Lain::Approval::Queue::Pending.new(effect:, requester: "dev", label: "dev (gherkin-tests)",
+    skilled = Lain::Requester.new(name: "dev", skill: "gherkin-tests")
+    labelled = Lain::Approval::Queue::Pending.new(effect:, identity: skilled,
                                                   clock: -> { 0.0 }, timeout: 300)
     asked = described_class::Asked.new("approve? ", labelled)
     labelled.deny(surface: Lain::Approval::Queue::TIMEOUT_SURFACE)
@@ -115,7 +116,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "names a skill child by its label in the prompt" do
-    labelled = Lain::Approval::Queue::Pending.new(effect:, requester: "dev", label: "dev (gherkin-tests)",
+    skilled = Lain::Requester.new(name: "dev", skill: "gherkin-tests")
+    labelled = Lain::Approval::Queue::Pending.new(effect:, identity: skilled,
                                                   clock: -> { 0.0 }, timeout: 300)
     policy_for("n\n").decide(labelled)
 
@@ -137,7 +139,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "closes a prompt the clock denied with the full window and no mention of a surface" do
-    lapsed = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, timeout: 300)
+    lapsed = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main,
+                                                clock: -> { 0.0 }, timeout: 300)
     asked = described_class::Asked.new("approve? ", lapsed)
     lapsed.deny(surface: Lain::Approval::Queue::TIMEOUT_SURFACE)
     closing = []
@@ -147,7 +150,9 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "closes a prompt whose requester was stopped in words that say so, never as a surface's decision" do
-    stopped = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, timeout: 300)
+    stopped = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main,
+                                                 clock: -> { 0.0 },
+                                                 timeout: 300)
     asked = described_class::Asked.new("approve? ", stopped)
     stopped.deny(surface: Lain::Approval::Queue::ABANDONED_SURFACE)
     closing = []
@@ -900,7 +905,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
 
     def disclosing(**)
-      Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 },
+      Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
                                          outstanding: outstanding(**))
     end
 
@@ -949,7 +954,9 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
         File.write(File.join(root, ".env.local"), "x")
         File.symlink(".env.local", File.join(root, "readme2.txt"))
         read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => "readme2.txt" })
-        linked = Lain::Approval::Queue::Pending.new(effect: read, requester: "agent", clock: -> { 0.0 }, cwd: root)
+        linked = Lain::Approval::Queue::Pending.new(effect: read, identity: Lain::Requester.main,
+                                                    clock: -> { 0.0 },
+                                                    cwd: root)
 
         target = File.join(root, ".env.local").inspect
         expect(rendered(linked))

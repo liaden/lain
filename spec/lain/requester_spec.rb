@@ -5,7 +5,7 @@ RSpec.describe Lain::Requester do
     it "names the chat's own agent agent, on every reading" do
       main = described_class.main
 
-      expect([main.name, main.label, main.key, main.to_s]).to eq(%w[agent agent agent agent])
+      expect([main.name, main.label, main.name, main.to_s]).to eq(%w[agent agent agent agent])
     end
   end
 
@@ -29,8 +29,8 @@ RSpec.describe Lain::Requester do
     end
   end
 
-  it "is keyed by its name, whatever it is shown as" do
-    expect(described_class.new(name: "researcher", label: "dev-2", role: "dev").key).to eq("researcher")
+  it "has no separate key: the name is the identity, whatever it is shown as" do
+    expect(described_class.new(name: "researcher", label: "dev-2", role: "dev")).not_to respond_to(:key)
   end
 
   describe "a name that is not one bare word is refused" do

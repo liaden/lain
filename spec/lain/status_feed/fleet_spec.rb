@@ -456,6 +456,28 @@ RSpec.describe Lain::StatusFeed::Fleet do
         expect(fleet.tree.map { |row| row["role"] }).to eq(%w[researcher])
       end
 
+      it "recognises a judge by its role when its label carries a skill qualifier" do
+        fleet = described_class.new(clock: -> { now })
+        described_class::ENDED_SHOWN.succ.times do |index|
+          other = launch_with_role(fleet, "r#{index}", "researcher")
+          fleet.completed(completion(other, id: "r#{index}"))
+        end
+        judge = spawn_event("j").tap { |launch| fleet.launched(launch) }
+        fleet.progressed(progress(judge, label: "reviewer", role: Lain::Approval::Judge::ROLE.to_s,
+                                         skill: "gherkin-tests", task_line: "work", turns: 1))
+        fleet.completed(completion(judge, id: "j"))
+
+        expect(fleet.tree.map { |row| row["role"] }).to all(eq("researcher"))
+      end
+
+      it "publishes a role or label a session file spelled as more than one bare word" do
+        fleet = described_class.new(clock: -> { now })
+        launch = spawn_event("w").tap { |event| fleet.launched(event) }
+        fleet.progressed(progress(launch, label: "a b", role: "my role.x", task_line: "work", turns: 1))
+
+        expect(fleet.tree.map { |row| row["role"] }).to eq(["a b (my role.x)"])
+      end
+
       it "shows a judge that is running" do
         fleet = described_class.new(clock: -> { now })
         launch_with_role(fleet, "j", "auto_approver")

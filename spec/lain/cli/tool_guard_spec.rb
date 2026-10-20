@@ -1093,7 +1093,7 @@ RSpec.describe Lain::CLI::ToolGuard do
           def call(effect, context) = rule(effect, context).allow?
 
           def rule(effect, context)
-            @asked << [effect.name, Lain::Approval::Queue.requester_for(context)]
+            @asked << [effect.name, Lain::Approval::Queue.identity_for(context).name]
             Lain::Approval::Escalation::Ruling.deny(rung: "spec", because: "no", final: true)
           end
         end.new(asked)
@@ -1189,7 +1189,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       named = Dir.mktmpdir do |dir|
         leased = Lain::WorkerEnv.default.with(cwd: File.realpath(dir), checkout: File.realpath(dir))
         [Lain::WorkerEnv.default, leased].map do |worker_env|
-          renamed.call(worker_env).to_a.grep(Lain::Middleware::Sensitivity).first.instance_variable_get(:@requester)
+          renamed.call(worker_env).to_a.grep(Lain::Middleware::Sensitivity).first.instance_variable_get(:@requester).name
         end
       end
 

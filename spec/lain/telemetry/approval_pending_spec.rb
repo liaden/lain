@@ -31,7 +31,7 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
   it "is built from a parked Pending, carrying neither its clock nor its decision" do
     pending = Lain::Approval::Queue::Pending.new(
       effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "cmd" => "ls" }),
-      requester: "the-agent", clock: -> { 0.0 }
+      identity: Lain::Requester.new(name: "the-agent"), clock: -> { 0.0 }
     )
 
     record = described_class.from(pending)
@@ -42,7 +42,7 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
   it "says so when the Pending it is built from may be decided by a person only" do
     pending = Lain::Approval::Queue::Pending.new(
       effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {}),
-      requester: "agent", clock: -> { 0.0 }, humans_only: true
+      identity: Lain::Requester.main, clock: -> { 0.0 }, humans_only: true
     )
 
     expect(described_class.from(pending).humans_only).to be(true)
@@ -51,7 +51,7 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
   it "carries the notes of the Pending it is built from, and omits the key when there are none" do
     pending = Lain::Approval::Queue::Pending.new(
       effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {}),
-      requester: "agent", clock: -> { 0.0 }, notes: ["cat is /bin/cat"]
+      identity: Lain::Requester.main, clock: -> { 0.0 }, notes: ["cat is /bin/cat"]
     )
 
     record = described_class.from(pending)

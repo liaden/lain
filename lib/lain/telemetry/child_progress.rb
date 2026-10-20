@@ -16,7 +16,7 @@ module Lain
       end
     end
 
-    ChildProgress = Data.define(:spawn, :role, :task_line, :worker, :turns, :head)
+    ChildProgress = Data.define(:spawn, :label, :role, :skill, :task_line, :worker, :turns, :head)
 
     # How far a spawned child has got, while it is still getting there.
     #
@@ -28,7 +28,7 @@ module Lain
     # fleet view needs ride here instead, beside the spawn, naming it.
     #
     # TWO SHAPES, ONE RECORD. The dispatch one carries what does not change:
-    # `role`, `task_line` and the `worker` key its lease was cut under. Each
+    # `label`, `role`, `skill`, `task_line` and the `worker` key its lease was cut under. Each
     # later one carries only what moved, `turns` and `head`, so a fifteen-turn
     # child costs one task line rather than fifteen. A reader folds them onto
     # one row by `spawn`, which is what makes the omissions safe.
@@ -58,10 +58,11 @@ module Lain
       # output, but it joins the same line, so it takes the same rule.
       def self.line(text) = Tools::AskHuman::InboxRow.one_line(text)
 
-      def initialize(spawn:, turns:, role: nil, task_line: nil, worker: nil, head: nil)
+      def initialize(spawn:, turns:, label: nil, role: nil, skill: nil, task_line: nil, worker: nil, head: nil)
         Carriers::ChildProgress.check!(spawn:, turns:)
 
-        super(spawn: -spawn.to_s, role: role && -ChildProgress.line(role),
+        super(spawn: -spawn.to_s, label: label && -ChildProgress.line(label),
+              role: role && -ChildProgress.line(role), skill: skill && -ChildProgress.line(skill),
               task_line: task_line && -ChildProgress.line(task_line)[0, MAX_TASK_LINE],
               worker: worker && -worker.to_s, turns: Integer(turns), head: head && -head.to_s)
       end

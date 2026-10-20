@@ -29,9 +29,11 @@ module Lain
       end
 
       # @param context [Object, nil]
-      # @param given [String, nil] a name fixed when the stack was built
-      # @return [String]
-      def self.requester_of(context, given = nil) = given || Approval::Queue.requester_for(context)
+      # @param given [Requester, String, nil] who the stack was built for
+      # @return [String] the name, because a record keeps a String and not the value
+      def self.requester_of(context, given = nil)
+        (given ? Requester.of(given) : Approval::Queue.identity_for(context)).name
+      end
 
       # `tool_use_id` rides beside the name because parallel calls of one tool are in flight together.
       def to_journal

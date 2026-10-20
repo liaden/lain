@@ -107,7 +107,7 @@ RSpec.describe Lain::Middleware::Sensitivity do
     it "names the default requester when none was given and the context names none" do
       through(layer, reads("#{home}/.ssh/id_ed25519"))
 
-      expect(journal.first).to have_attributes(requester: Lain::Approval::Queue::REQUESTER)
+      expect(journal.first).to have_attributes(requester: Lain::Approval::Queue::REQUESTER.name)
     end
 
     # The reason travels from the VERDICT, not from a constant here: a path a

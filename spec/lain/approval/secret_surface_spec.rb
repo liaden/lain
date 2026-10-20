@@ -153,7 +153,7 @@ RSpec.describe Lain::Approval::SecretSurface do
 
       expect(journaled.last).to include("type" => described_class::DEFERRED_TYPE, "surface" => described_class::SURFACE,
                                         "path" => path, "verdict" => "approve", "tool_use_id" => "tu_read_file",
-                                        "requester" => Lain::Approval::Queue::REQUESTER,
+                                        "requester" => Lain::Approval::Queue::REQUESTER.name,
                                         "because" => described_class::PATTERN_RULE)
       expect(journaled.to_s).not_to include(token)
     end

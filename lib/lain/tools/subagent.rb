@@ -345,7 +345,7 @@ module Lain
       # the child's writes land in and the spawn a watcher addresses it by.
       def reporting(spawn, prompt, worker)
         Progress.new(spawn: spawn.digest, tee: telemetry)
-                .dispatched(role: @announces_as.to_s, task: prompt, worker:)
+                .dispatched(who: @announces_as, task: prompt, worker:)
       end
 
       # The answer, with what the lease's handback owes the parent folded in,

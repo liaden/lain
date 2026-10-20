@@ -24,7 +24,7 @@ RSpec.describe Lain::CLI::Command::Approve do
 
   def pending(tool = "bash", input = { "command" => "ls" })
     Lain::Approval::Queue::Pending.new(effect: ApproveSpecSupport::Effect.new(tool, input, "tu_#{tool}"),
-                                       requester: "agent", clock: -> { 0.0 })
+                                       identity: Lain::Requester.main, clock: -> { 0.0 })
   end
 
   def env_over(parked)

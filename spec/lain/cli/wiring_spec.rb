@@ -1234,7 +1234,7 @@ RSpec.describe Lain::CLI::Wiring do
         surface = wiring.secret_surface(backend)
         parked = lambda do |path|
           effect = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => path }, "tu_1")
-          Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 })
+          Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
         end
 
         expect([".env.local", "lib/lain.rb"].map { |path| surface.mine?(parked.call(path)) }).to eq([true, false])

@@ -396,7 +396,7 @@ module Lain
       # context as the run's own agent ({Approval::Queue::REQUESTER}).
       #
       # @param policy [#rule]
-      # @param requester [String, nil]
+      # @param requester [Requester, String, nil]
       # @param task [String, nil] what the child was spawned to do
       # @return [#rule]
       def named(policy, requester, task: nil) = requester ? Asking.new(policy:, requester:, task:) : policy
@@ -412,7 +412,7 @@ module Lain
       # any builder is also held to.
       def layered(chronicle, inputs, roots, policy, requester: nil, held: [])
         journal = chronicle.instrumentation.journal
-        requester &&= Requester.of(requester).key
+        requester &&= Requester.of(requester)
         Middleware::Gate.closes!(
           Middleware::Stack.new([*configured(inputs), Middleware::ConfineToScope.new(scope: inputs.scope), *held,
                                  Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),

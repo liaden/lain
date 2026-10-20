@@ -40,7 +40,7 @@ module Lain
       #   the gate asks
       # @param denial [String] the gate's refusal, `%<name>s` standing for the tool
       # @param journal [#<<] where each refusal lands as an `escalation` record
-      # @param requester [String, nil] who a child's stack asks for; nil reads
+      # @param requester [Requester, nil] who a child's stack asks for; nil reads
       #   it off the context, as the queue does
       def initialize(queue:, sensitivity:, denial:, journal: Channel::Null.instance, requester: nil)
         @queue = queue

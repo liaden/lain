@@ -41,7 +41,7 @@ module Lain
 
       # Who a gated call is asked on behalf of when neither the call nor the
       # session names anyone: the parent's own turn.
-      REQUESTER = Requester.main.key
+      REQUESTER = Requester.main
 
       BASH = "bash"
       HOMED = %r{\A~(/|\z)}
@@ -147,10 +147,10 @@ module Lain
       # is normal operation, so the loser's answer is a quiet no-op here and NOT
       # the coordination bug {Promise::AlreadyResolved} names.
       #
-      # `label` is for display only; `requester` is the key a denial is held
-      # under and what the journal keeps.
+      # `identity` is who asked, whole; `requester` is its name, the key a denial
+      # is held under and what the journal keeps, and `label` is what a surface shows.
       class Pending
-        attr_reader :requester, :label, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd,
+        attr_reader :identity, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd,
                     :within, :timeout, :reason, :authority
 
         # Defaulting here is NOT the ledger's no-default rule bent: a defaulted
@@ -173,7 +173,7 @@ module Lain
         # judging that path lands it where the gate did; absent, it is the
         # process's, as for a call made with no session. `within` is where the
         # gate counted directory names from, see {Sensitivity::Policy.base_of}.
-        def initialize(effect:, requester:, clock:, label: requester, timeout: DEFAULT_TIMEOUT,
+        def initialize(effect:, identity:, clock:, timeout: DEFAULT_TIMEOUT,
                        outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
                        within: cwd, wall: -> { Time.now }, notes: [])
           @timeout = timeout
@@ -185,12 +185,17 @@ module Lain
           @within = within
           take(effect)
           @outstanding = outstanding || Outstanding::NONE
-          @requester = requester
-          @label = label
+          @identity = identity
           @clock = clock
           @asked_at = clock.call
           @promise = Promise.new
         end
+
+        # @return [String] the asking identity's name
+        def requester = identity.name
+
+        # @return [String] the asking identity as a surface shows it
+        def label = identity.to_s
 
         def take(effect)
           @tool = effect.name
@@ -339,9 +344,9 @@ module Lain
       # @param journal [#record] where decisions land as evidence; required,
       #   not defaulted, because silently unjournaled approvals would be a hole
       #   in the experiment record
-      # @param requester [String] who a gated call is asked on behalf of when
+      # @param requester [Requester, String] who a gated call is asked on behalf of when
       #   the call itself names nobody -- the SESSION's default, not the fleet's
-      #   answer; see {.requester_for}
+      #   answer; see {.identity_for}
       # @param timeout [Numeric] seconds an unanswered pending waits before the
       #   fail-closed denial
       # @param clock [#call] monotonic seconds, injectable so specs pin latency
@@ -353,7 +358,7 @@ module Lain
                      wall: -> { Time.now }, home: nil)
         @journal = journal
         @home = home
-        @requester = requester
+        @requester = Requester.of(requester)
         @timeout = timeout
         @clock = clock
         @wall = wall
@@ -408,19 +413,10 @@ module Lain
       # no queue to park on still has to say whom its release was for.
       #
       # @param context [Object, nil] the context a call is judged in
-      # @param fallback [String] who is asking when the context names nobody
-      # @return [String]
-      def self.requester_for(context, fallback = REQUESTER)
-        context.respond_to?(:requester) ? context.requester : fallback
-      end
-
-      # The role and skill a surface shows beside the name; {.requester_for} is the key.
-      #
-      # @param context [Object, nil] the context a call is judged in
-      # @param fallback [String] who is asking when the context names nobody
-      # @return [String]
-      def self.label_for(context, fallback = REQUESTER)
-        context.respond_to?(:identity) ? context.identity.to_s : fallback
+      # @param fallback [Requester] who is asking when the context names nobody
+      # @return [Requester]
+      def self.identity_for(context, fallback = REQUESTER)
+        context.respond_to?(:identity) ? context.identity : fallback
       end
 
       # Where a call's path lands, spelled one way for both the recording and
@@ -477,7 +473,7 @@ module Lain
       # `path`, on where it lands, or on a directory above either; "" when
       # they gave none.
       #
-      # @param requester [String] as {.requester_for} names it
+      # @param requester [String] as {.identity_for} names it
       # @param path [String] absolute and resolved, see {.resolved}
       # @return [String, nil] nil when no such denial was given
       def denied(requester:, path:)
@@ -491,7 +487,7 @@ module Lain
       # The reason a human gave when they denied this requester this exact
       # call, run from the same directory; "" when they gave none.
       #
-      # @param requester [String] as {.requester_for} names it
+      # @param requester [String] as {.identity_for} names it
       # @param tool [String] as the call named it
       # @param input [Object] the call's input, compared whole
       # @param cwd [String] absolute; the session's directory for the call
@@ -518,8 +514,7 @@ module Lain
       # lock-freedom rests on `<<` and `enqueue` staying straight-line with no
       # yield point between them.
       def admit(effect, context, outstanding)
-        pending = Pending.new(effect:, requester: Queue.requester_for(context, @requester),
-                              label: Queue.label_for(context, @requester), clock: @clock,
+        pending = Pending.new(effect:, identity: Queue.identity_for(context, @requester), clock: @clock,
                               timeout: @timeout, wall: @wall, outstanding:,
                               humans_only: context.respond_to?(:automatic_approval_barred?) &&
                                            context.automatic_approval_barred?,

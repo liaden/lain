@@ -29,6 +29,7 @@ module JudgedSpecSupport
   # worker environment, a requester, and the bar on automatic approval.
   Context = Data.define(:worker_env, :requester, :automatic_approval_barred) do
     def automatic_approval_barred? = automatic_approval_barred
+    def identity = Lain::Requester.of(requester)
   end
 end
 

@@ -56,7 +56,7 @@ module Lain
       #   ROOT-QUALIFIED, because inside this class body a bare `Sensitivity`
       #   is THIS CLASS.
       # @param journal [#<<] where {Telemetry::ReadRefused} lands
-      # @param requester [String, nil] the child this stack is built for; nil
+      # @param requester [Requester, nil] the child this stack is built for; nil
       #   reads the name off the call's context, as {RememberedDenials} does
       def initialize(sensitivity: ::Lain::Sensitivity::Policy::Null.instance, journal: Channel::Null.instance,
                      requester: nil)

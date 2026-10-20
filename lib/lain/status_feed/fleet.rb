@@ -229,6 +229,8 @@ module Lain
           @started = started
           @state = RUNNING
           @role = Telemetry::ChildProgress::DEFAULT_ROLE
+          @label = nil
+          @skill = nil
           @task = ""
           @worker = nil
           @turns = 0
@@ -249,6 +251,8 @@ module Lain
         # task, and taking its nils would erase what the dispatch record said.
         def progressed(record)
           @role = record.role unless record.role.nil?
+          @label = record.label unless record.label.nil?
+          @skill = record.skill unless record.skill.nil?
           @task = record.task_line unless record.task_line.nil?
           @worker = record.worker unless record.worker.nil?
           @head = record.head unless record.head.nil?
@@ -256,9 +260,11 @@ module Lain
           @rows = nil
         end
 
+        def shown = Requester.shown(label: @label || @role, role: @role, skill: @skill)
+
         # Memoised per depth: the iso8601 string dominated a rebuild's cost.
         def published(depth)
-          (@rows ||= {})[depth] ||= { "spawn" => @spawn, "role" => @role, "task" => @task, "worker" => @worker,
+          (@rows ||= {})[depth] ||= { "spawn" => @spawn, "role" => shown, "task" => @task, "worker" => @worker,
                                       "state" => @state, "turns" => @turns, "depth" => depth,
                                       "started" => @started.utc.iso8601 }.freeze
         end

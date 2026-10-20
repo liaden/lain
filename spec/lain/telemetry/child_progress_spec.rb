@@ -7,11 +7,11 @@
 RSpec.describe Lain::Telemetry::ChildProgress do
   describe "the dispatch record" do
     it "names the spawn, the role, the task line and the worker its lease was cut under" do
-      record = described_class.new(spawn: "blake3:spawn", role: "dev", task_line: "port the parser",
-                                   worker: "spawn.dev.1", turns: 0)
+      record = described_class.new(spawn: "blake3:spawn", label: "dev-2", role: "dev", skill: "gherkin-tests",
+                                   task_line: "port the parser", worker: "spawn.dev.1", turns: 0)
 
-      expect(record.to_h).to eq({ spawn: "blake3:spawn", role: "dev", task_line: "port the parser",
-                                  worker: "spawn.dev.1", turns: 0, head: nil })
+      expect(record.to_h).to eq({ spawn: "blake3:spawn", label: "dev-2", role: "dev", skill: "gherkin-tests",
+                                  task_line: "port the parser", worker: "spawn.dev.1", turns: 0, head: nil })
     end
 
     # A child lent its spawner's own checkout runs under a lease nobody minted
@@ -25,8 +25,8 @@ RSpec.describe Lain::Telemetry::ChildProgress do
     it "carries the count and the new head, and leaves the standing fields out" do
       record = described_class.new(spawn: "blake3:spawn", turns: 3, head: "blake3:t3")
 
-      expect(record.to_h).to eq({ spawn: "blake3:spawn", role: nil, task_line: nil,
-                                  worker: nil, turns: 3, head: "blake3:t3" })
+      expect(record.to_h).to eq({ spawn: "blake3:spawn", label: nil, role: nil, skill: nil,
+                                  task_line: nil, worker: nil, turns: 3, head: "blake3:t3" })
     end
   end
 

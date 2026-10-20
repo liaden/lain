@@ -54,14 +54,16 @@ module Lain
       super(name: -name.to_s, label: -(label || name).to_s, role: role && -role.to_s, skill: skill && -skill.to_s)
     end
 
-    # @return [String] what a remembered denial is keyed on
-    def key = name
-
+    # Unvalidated, for a reader of a session file it did not write.
+    #
     # @return [String] the label, with the role and skill it runs under when they add anything
-    def to_s
+    def self.shown(label:, role: nil, skill: nil)
       qualifiers = [(role unless role == label), skill].compact
       qualifiers.empty? ? label : "#{label} (#{qualifiers.join(", ")})"
     end
+
+    # @return [String] {.shown} of this requester
+    def to_s = self.class.shown(label:, role:, skill:)
 
     MAIN = new(name: "agent")
     private_constant :MAIN

@@ -341,7 +341,7 @@ RSpec.describe Lain::Frontend::Intake do
       now = Time.new(2026, 10, 8, 13, 14, 1)
       pending = Lain::Approval::Queue::Pending.new(
         effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {}),
-        requester: "agent", clock: -> { 0 }
+        identity: Lain::Requester.main, clock: -> { 0 }
       )
       waiting = Lain::Frontend::ApprovalPolicy::Asked.new("[y/N] ", pending, wall_clock: -> { now })
       drawn = nil
@@ -364,7 +364,7 @@ RSpec.describe Lain::Frontend::Intake do
     it "starts the call's clock through the real approval prompt" do
       pending = Lain::Approval::Queue::Pending.new(
         effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: {}),
-        requester: "agent", clock: -> { 0 }
+        identity: Lain::Requester.main, clock: -> { 0 }
       )
       prompt = Lain::Frontend::ApprovalPolicy::Asked.new("[y/N] ", pending)
 
@@ -470,7 +470,7 @@ RSpec.describe Lain::Frontend::Intake do
       prompts = %w[tu_1 tu_2 tu_3].map do |id|
         pending = Lain::Approval::Queue::Pending.new(
           effect: Lain::Effect::ToolCall.new(tool_use_id: id, name: "read_file", input: { "path" => id }),
-          requester: "agent", clock: -> { 0 }
+          identity: Lain::Requester.main, clock: -> { 0 }
         )
         Lain::Frontend::ApprovalPolicy::Asked.new("[y/N] ", pending)
       end

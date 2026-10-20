@@ -123,8 +123,8 @@ RSpec.describe Lain::CLI::FleetWindows do
   describe "a window named from the child's progress record" do
     let(:nameless) { described_class.new(surface:, notice: notices, spawner:) }
 
-    def progress(role, spawn: spawn_digest)
-      Lain::Telemetry::ChildProgress.new(spawn:, turns: 0, role:, task_line: "go")
+    def progress(role, spawn: spawn_digest, **)
+      Lain::Telemetry::ChildProgress.new(spawn:, turns: 0, role:, task_line: "go", **)
     end
 
     it "renames the fallback window for the role the child announces" do
@@ -137,10 +137,26 @@ RSpec.describe Lain::CLI::FleetWindows do
 
     it "names the window for the role alone when a skill runs it" do
       nameless << spawn_record
-      nameless << progress("test_engineer (gherkin-tests)")
+      nameless << progress("test_engineer", skill: "gherkin-tests")
       nameless.drain_pending
 
       expect(rename_argvs.map(&:last)).to eq(["test_engineer-5aaa1111"])
+    end
+
+    it "names the window from the role field, never by parsing a rendered label" do
+      nameless << spawn_record
+      nameless << progress("test_engineer", label: "dev-2", skill: "gherkin-tests")
+      nameless.drain_pending
+
+      expect(rename_argvs.map(&:last)).to eq(["test_engineer-5aaa1111"])
+    end
+
+    it "names the window from the whole role when it contains a parenthesis" do
+      nameless << spawn_record
+      nameless << progress("odd (name")
+      nameless.drain_pending
+
+      expect(rename_argvs.map(&:last)).to eq(["odd -name-5aaa1111"])
     end
 
     it "marks the renamed window done under its new name" do

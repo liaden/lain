@@ -528,6 +528,24 @@ RSpec.describe "Subagent gating" do
         .to include("is_error" => true, "content" => %(approval denied for tool "read_file"))
     end
 
+    # ---- Scenario: a child's requester reaches the parked call as a value ---
+
+    it "parks a skill child's call with the child's identity, and journals only its name" do
+      read = { "path" => "/home/tester/project/.env" }
+      build, = wired(scripted("read_file", read))
+
+      pending = Sync do |task|
+        call = task.async { build.role_spawn.call(:dev, :fresh, "go", skill: "gherkin-tests") }
+        parked = task.with_timeout(1) { board.approvals.dequeue }
+        parked.deny(surface: "spec")
+        call.wait
+        parked
+      end
+
+      expect([pending.identity.name, pending.identity.role, pending.identity.skill, pending.requester])
+        .to eq(%w[dev dev gherkin-tests dev])
+    end
+
     # ---- Scenario: a named child shows its name -----------------------------
 
     it "shows a named child's approval prompt by its name while the denial key stays the wired one" do
