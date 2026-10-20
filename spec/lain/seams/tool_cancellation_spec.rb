@@ -307,7 +307,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       Lain::CLI::Resume.new(paths:).call.timeline.head.content
     end
 
-    it "repairs a resumed head with the blocks a torn settle commits, apart from the notice kind" do
+    it "repairs a resumed head with the blocks a torn settle commits, apart from the notice kind", dag: :ruby do
       at_load = resumed_head_blocks
       at_tear = settle_torn.timeline.head.content
 

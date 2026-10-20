@@ -428,7 +428,7 @@ RSpec.describe Lain::Session do
 
     # The chain is walked once per head, not once per question: a read/edit
     # loop asks on every call, and a long conversation is a long walk.
-    it "walks the store once per head, and a grown head only back to the last one walked" do
+    it "walks the store once per head, and a grown head only back to the last one walked", dag: :ruby do
       counting = Class.new(Lain::Store) do
         attr_reader :fetches
 

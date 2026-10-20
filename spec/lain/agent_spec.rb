@@ -590,7 +590,7 @@ RSpec.describe Lain::Agent do
       Lain::Effect::Handler::Mock.new { |effect, _| Lain::Tool::Result.ok("poison #{effect.tool_use_id}") }
     end
 
-    context "when the tool results cannot be committed" do
+    context "when the tool results cannot be committed", dag: :ruby do
       let(:raised) { [] }
       let(:torn) do
         agent([tool_response(["tu_1", "echo", { "text" => "a" }], ["tu_2", "echo", { "text" => "b" }]), text_response],
@@ -629,7 +629,7 @@ RSpec.describe Lain::Agent do
     # A repair runs on the way out of another failure, so its own failure must
     # never be what the caller sees: the original goes through, and the head is
     # left for the next ask to answer.
-    context "when the repair is refused too" do
+    context "when the repair is refused too", dag: :ruby do
       let(:notice) { Lain::Tool::Cancellation::NOTICES.fetch(:errored) }
       let(:store) { UncommittableResults::Store.new("poison", notice) }
       let(:doubly_torn) do
@@ -1804,7 +1804,7 @@ RSpec.describe Lain::Agent do
 
     # Forced at the instant between the guard and the move: a run that could
     # take the lock there would settle over the head this rewind is moving.
-    it "holds the dispatch lock from its guard through the move" do
+    it "holds the dispatch lock from its guard through the move", dag: :ruby do
       store = UncommittableResults::RacedStore.new
       a = agent([text_response("one")], timeline: CoreGraph.timeline(store:))
       a.ask("hi")
@@ -1829,7 +1829,7 @@ RSpec.describe Lain::Agent do
   end
 
   describe "the rendered prefix" do
-    it "asks its timeline only for the turns after the head it last rendered" do
+    it "asks its timeline only for the turns after the head it last rendered", dag: :ruby do
       provider = CoreGraph.provider(text_response("one"), text_response("two"))
       a = described_class.new(provider:, toolset:, context:)
       asked = []

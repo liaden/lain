@@ -75,7 +75,7 @@ end
 # concurrently -- yet gate 2 is unmoved: every tool_result still lands in ONE
 # user message, ordered by tool_use order, whatever order the children finish in.
 RSpec.describe "Lain::Tools::Subagent async fan-out" do
-  let(:store) { RecordingStore.new }
+  let(:store) { Lain::Dag::Factory.store }
 
   def spawn_policy
     Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: %i[read_file])
@@ -229,7 +229,10 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
   # ---- Scenario: attribution survives concurrency ----------------------------
 
   describe "interleaved child events keep their attribution" do
-    it "pairs every :message's result with its OWN child's final turn, no torn writes" do
+    # The recording store reads every put, which only the Ruby timeline makes in Ruby.
+    let(:store) { RecordingStore.new }
+
+    it "pairs every :message's result with its OWN child's final turn, no torn writes", dag: :ruby do
       prompts = %w[go-1 go-2 go-3]
       child_provider = ReverseOrderProvider.new(delays: [0.06, 0.04, 0.02])
       parent_agent, = fanout_parent(child_provider:, prompts:)

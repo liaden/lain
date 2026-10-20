@@ -2840,7 +2840,7 @@ RSpec.describe Lain::Compaction::Source do
   # {Lain::Context#render}'s. The rendered bytes are identical either way, so no
   # assertion over the messages can tell the two apart; the fetch count is the
   # only observable that can.
-  describe "what one rendered turn costs" do
+  describe "what one rendered turn costs", dag: :ruby do
     def forcing = source(need: build_need(byte_threshold: 100), hard_cap: 100)
 
     it "walks the source chain once and the derived chain once" do

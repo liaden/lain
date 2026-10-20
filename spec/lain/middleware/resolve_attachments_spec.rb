@@ -322,7 +322,7 @@ RSpec.describe Lain::Middleware::ResolveAttachments, :seam do
     # the real, pure {Lain::Context#render}. The positive halves keep the
     # negative from being vacuous: normalization happened, and the address itself
     # did pass through it.
-    it "lets no payload reach Canonical.normalize, on the one path that renders a picture" do
+    it "lets no payload reach Canonical.normalize, on the one path that renders a picture", dag: :ruby do
       seen = { base64 => 0, digest => 0 }
       allow(Lain::Canonical).to receive(:normalize).and_wrap_original do |original, value|
         seen[value] += 1 if value.is_a?(String) && seen.key?(value)
