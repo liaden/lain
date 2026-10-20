@@ -75,6 +75,33 @@ pub(crate) fn read_text(
     what: impl Fn() -> String,
 ) -> Result<String, Error> {
     let string = coerce_to_string(ruby, value, &what)?;
+    read_string(ruby, string, &what)
+}
+
+/// One argument's text, taken from Ruby and not yet read into Rust. A Symbol's
+/// text comes from `Symbol#to_s`, which is Ruby, and a fiber dropped inside it
+/// is never unwound, so a binding taking several texts takes every one of these
+/// before it reads the first into a Rust `String`.
+pub(crate) struct Text<'a> {
+    string: RString,
+    what: &'a str,
+}
+
+/// The Ruby half of [`read_text`] for one argument named `what`.
+pub(crate) fn text_of<'a>(ruby: &Ruby, value: Value, what: &'a str) -> Result<Text<'a>, Error> {
+    let string = coerce_to_string(ruby, value, &|| what.to_string())?;
+    Ok(Text { string, what })
+}
+
+impl Text<'_> {
+    /// The Rust half: the text as [`read_text`] reads it. No Ruby code runs.
+    pub(crate) fn read(self, ruby: &Ruby) -> Result<String, Error> {
+        read_string(ruby, self.string, &|| self.what.to_string())
+    }
+}
+
+/// The Rust half of [`read_text`]: no Ruby code runs in it.
+fn read_string(ruby: &Ruby, string: RString, what: &impl Fn() -> String) -> Result<String, Error> {
     let encoding = string.enc_get();
     let byte_transparent = encoding == ruby.utf8_encindex()
         || encoding == ruby.usascii_encindex()
@@ -138,7 +165,7 @@ pub(crate) fn read_text(
 
 /// The String behind `value`, accepting a Symbol by its name. A `TypeError`
 /// naming the class it got otherwise.
-fn coerce_to_string(
+pub(crate) fn coerce_to_string(
     ruby: &Ruby,
     value: Value,
     what: &impl Fn() -> String,

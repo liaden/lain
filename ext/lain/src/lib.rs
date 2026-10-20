@@ -60,6 +60,68 @@ fn blake3_hex(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
 
+/// The extension's global allocator. Not in the unit-test build, which
+/// installs its own per-thread counter (`dag`'s laziness tests).
+#[cfg(not(test))]
+mod heap {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The global allocator, `System` with a count of the bytes it holds live.
+    ///
+    /// A fiber dropped while suspended inside a call into Ruby is collected without
+    /// being unwound, so a Rust frame waiting in it never runs its destructors and
+    /// whatever it owns is never freed. That memory is invisible to every Ruby-side
+    /// measure, so the count lives here, and `Lain::Ext::Probe.live_bytes` is how
+    /// the reentry specs see a stranded allocation.
+    struct Counting;
+
+    /// Bytes allocated through [`Counting`] and not yet freed.
+    pub(crate) static LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+    #[global_allocator]
+    static ALLOCATOR: Counting = Counting;
+
+    // SAFETY: every method forwards its arguments to `System` unchanged and
+    // returns what `System` returned, so `System`'s guarantees are this
+    // allocator's; the only addition is a relaxed counter, which allocates nothing.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            // SAFETY: the caller's contract for `alloc`, passed through.
+            let ptr = unsafe { System.alloc(layout) };
+            if !ptr.is_null() {
+                LIVE_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
+            }
+            ptr
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            // SAFETY: the caller's contract for `alloc_zeroed`, passed through.
+            let ptr = unsafe { System.alloc_zeroed(layout) };
+            if !ptr.is_null() {
+                LIVE_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
+            }
+            ptr
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: the caller's contract for `dealloc`, passed through.
+            unsafe { System.dealloc(ptr, layout) };
+            LIVE_BYTES.fetch_sub(layout.size(), Ordering::Relaxed);
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            // SAFETY: the caller's contract for `realloc`, passed through.
+            let moved = unsafe { System.realloc(ptr, layout, new_size) };
+            if !moved.is_null() {
+                LIVE_BYTES.fetch_add(new_size, Ordering::Relaxed);
+                LIVE_BYTES.fetch_sub(layout.size(), Ordering::Relaxed);
+            }
+            moved
+        }
+    }
+}
+
 /// How deeply a Ruby structure may nest before the canonical reader refuses it.
 ///
 /// This is a SAFETY bound, the same class of bound as `prompt.rs`'s `MAX_DEPTH`
@@ -403,15 +465,15 @@ mod ffi {
     use crate::canonical::{self, Canon};
     use crate::dag::{self, BlobData, CanonData, NodeData, StoreMap};
     use crate::digest::Digest;
-    use crate::event::{EventData, Kind, PayloadData, Role};
+    use crate::event::{EventData, InvalidKind, Kind, PayloadData, Role};
     use magnus::{
-        DataTypeFunctions, Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule,
-        RString, Ruby, Symbol, TryConvert, TypedData, Value, function, gc, method,
+        DataTypeFunctions, Error, ExceptionClass, Fixnum, Float, Integer, RArray, RClass, RHash,
+        RModule, RString, Ruby, Symbol, TryConvert, TypedData, Value, function, gc, method,
         prelude::*,
         r_hash::ForEach,
         scan_args::{get_kwargs, scan_args},
         typed_data::{self, Obj},
-        value::Opaque,
+        value::{Opaque, Qfalse, Qtrue},
     };
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -466,6 +528,12 @@ mod ffi {
         }
     }
 
+    /// `Lain::Ext::Probe.live_bytes`: the Rust heap allocated right now (see
+    /// `crate::heap`).
+    fn live_bytes() -> usize {
+        crate::heap::LIVE_BYTES.load(Ordering::Relaxed)
+    }
+
     /// Build the exception named by `path` (a full constant path starting at
     /// `Lain`, e.g. `["Lain", "Canonical", "AmbiguousKey"]` or `["Lain", "Ext",
     /// "Store", "MissingObject"]`) with `message`. Looked up at raise-time
@@ -478,7 +546,17 @@ mod ffi {
     /// `ext_error` (`Lain::Ext::<class>::<error>`, three segments) -- they
     /// differed only in path depth, and every real caller is one of exactly
     /// those two shapes.
-    pub(crate) fn lookup_error(ruby: &Ruby, path: &[&str], message: String) -> Error {
+    ///
+    /// The exception is built here, not by magnus at raise time, because both
+    /// steps can run Ruby -- the lookup an autoload or a `const_missing`, the
+    /// build the class's `#initialize` -- and a fiber dropped inside either
+    /// would strand any Rust String alive across it. So `message` is written
+    /// only after the lookup, and handed over as a Ruby String before the build.
+    pub(crate) fn lookup_error(
+        ruby: &Ruby,
+        path: &[&str],
+        message: impl FnOnce() -> String,
+    ) -> Error {
         let (last, init) = path
             .split_last()
             .expect("lookup_error path must be non-empty");
@@ -491,7 +569,12 @@ mod ffi {
             .and_then(|scope| scoped_const_get(ruby, scope, last))
             .and_then(ExceptionClass::try_convert);
         match looked {
-            Ok(exception) => Error::new(exception, message),
+            Ok(class) => {
+                let text = ruby.str_new(&message());
+                class
+                    .new_instance((text,))
+                    .map_or_else(|failed| failed, Error::from)
+            }
             Err(lookup_failure) => lookup_failure,
         }
     }
@@ -499,52 +582,141 @@ mod ffi {
     /// Read a Ruby value into a [`Canon`], applying `Canonical.normalize`'s rules
     /// and raising the matching `Lain::Canonical` error on anything JSON cannot
     /// represent. Numbers keep the text Ruby renders (see `canonical.rs`): an
-    /// Integer via `#to_s`, a Float via `JSON.generate`, so the bytes match
-    /// Ruby's exactly even where Rust's float formatting would diverge.
+    /// Integer as `#to_s` renders it, a Float via `JSON.generate`, so the bytes
+    /// match Ruby's exactly even where Rust's float formatting would diverge.
     fn ruby_to_canon(ruby: &Ruby, value: Value) -> Result<Canon, Error> {
-        read_canon(ruby, value, 0)
+        let [canon] = ruby_to_canons(ruby, [value])?;
+        Ok(canon)
     }
 
-    /// The recursive half of [`ruby_to_canon`]. `depth` counts the containers
-    /// already entered, so the top-level value is read at 0 and every Array or
-    /// Hash costs one level -- see [`super::MAX_CANON_DEPTH`] for why the count
-    /// is bounded at all and why the bound is Ruby's own.
-    fn read_canon(ruby: &Ruby, value: Value, depth: usize) -> Result<Canon, Error> {
-        // `equal` calls Ruby's `#==`, which a hostile or buggy class can
-        // override to raise. Propagated with `?` rather than swallowed to
-        // `false`: falling through would misreport a raising `==` as "not
-        // true, not false" and (most likely) end up raising the wrong error --
-        // `UnsupportedType` for the object's class -- instead of the real one.
-        if value.is_nil() {
-            Ok(Canon::Null)
-        } else if value.equal(ruby.qtrue())? {
-            Ok(Canon::Bool(true))
-        } else if value.equal(ruby.qfalse())? {
-            Ok(Canon::Bool(false))
+    /// [`ruby_to_canon`] over several values into one [`Reading`], so a tree
+    /// already read waits there, not on this frame, while the next one calls
+    /// into Ruby.
+    fn ruby_to_canons<const N: usize>(
+        ruby: &Ruby,
+        values: [Value; N],
+    ) -> Result<[Canon; N], Error> {
+        let reading = Reading::start(ruby);
+        let read = values
+            .into_iter()
+            .try_for_each(|value| read_canon(ruby, value, 0, &reading));
+        let trees = reading.finish();
+        // Keeps `reading` in this frame's memory, where the collector scans
+        // it, until the conversion is done with it.
+        std::hint::black_box(reading.as_value());
+        read?;
+        <[Canon; N]>::try_from(trees).map_err(|_| {
+            Error::new(
+                ruby.exception_runtime_error(),
+                "Lain::Ext: a canonical reading finished with the wrong number of trees",
+            )
+        })
+    }
+
+    /// What a canonical conversion has built so far. A conversion calls into
+    /// Ruby midway (`JSON.generate` on a Float, `#to_s` on a Symbol or a
+    /// Bignum), and a fiber dropped while suspended there is never unwound, so
+    /// the partial tree lives in an object the collector frees with the fiber.
+    /// Holds no Ruby reference, so it needs no `mark`.
+    #[derive(TypedData)]
+    #[magnus(class = "Lain::Ext::Reading", free_immediately)]
+    struct Reading {
+        /// Every finished value, innermost last: a container takes its own
+        /// back off the end.
+        values: RefCell<Vec<Canon>>,
+        /// The keys of every Hash still being read, in the same order.
+        keys: RefCell<Vec<String>>,
+    }
+
+    impl DataTypeFunctions for Reading {}
+
+    impl Reading {
+        fn start(ruby: &Ruby) -> Obj<Reading> {
+            ruby.obj_wrap(Reading {
+                values: RefCell::new(Vec::new()),
+                keys: RefCell::new(Vec::new()),
+            })
+        }
+
+        fn push(&self, canon: Canon) {
+            self.values.borrow_mut().push(canon);
+        }
+
+        fn push_key(&self, key: String) {
+            self.keys.borrow_mut().push(key);
+        }
+
+        fn mark(&self) -> (usize, usize) {
+            (self.values.borrow().len(), self.keys.borrow().len())
+        }
+
+        fn values_since(&self, mark: (usize, usize)) -> Vec<Canon> {
+            self.values.borrow_mut().split_off(mark.0)
+        }
+
+        fn pairs_since(&self, mark: (usize, usize)) -> Vec<(String, Canon)> {
+            let keys = self.keys.borrow_mut().split_off(mark.1);
+            keys.into_iter().zip(self.values_since(mark)).collect()
+        }
+
+        /// Everything read, emptying the holder whether or not the read
+        /// succeeded, so only an abandoned reading outlives its call.
+        fn finish(&self) -> Vec<Canon> {
+            self.keys.borrow_mut().clear();
+            std::mem::take(&mut *self.values.borrow_mut())
+        }
+    }
+
+    /// The recursive half of [`ruby_to_canon`], pushing exactly one value onto
+    /// `reading`. `depth` counts the containers already entered, so the
+    /// top-level value is read at 0 and every Array or Hash costs one level --
+    /// see [`super::MAX_CANON_DEPTH`] for why the count is bounded at all and
+    /// why the bound is Ruby's own.
+    ///
+    /// `true` and `false` are matched by identity, as `Canonical.normalize`'s
+    /// `when` matches them, so a value's own `#==` is never asked.
+    fn read_canon(ruby: &Ruby, value: Value, depth: usize, reading: &Reading) -> Result<(), Error> {
+        let canon = if value.is_nil() {
+            Canon::Null
+        } else if Qtrue::from_value(value).is_some() {
+            Canon::Bool(true)
+        } else if Qfalse::from_value(value).is_some() {
+            Canon::Bool(false)
         } else if let Some(integer) = Integer::from_value(value) {
-            Ok(Canon::Num(integer.funcall("to_s", ())?))
+            Canon::Num(integer_text(integer)?)
         } else if let Some(float) = Float::from_value(value) {
-            canon_float(ruby, float, value)
+            canon_float(ruby, float, value)?
         } else if let Some(text) = coerce_text(ruby, value)? {
-            Ok(Canon::Str(text))
+            Canon::Str(text)
         } else if let Some(array) = RArray::from_value(value) {
             let inner = enter_container(ruby, depth)?;
-            let items = array
+            let mark = reading.mark();
+            array
                 .into_iter()
-                .map(|element| read_canon(ruby, element, inner))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Canon::Array(items))
+                .try_for_each(|element| read_canon(ruby, element, inner, reading))?;
+            Canon::Array(reading.values_since(mark))
         } else if let Some(hash) = RHash::from_value(value) {
-            canon_hash(ruby, hash, enter_container(ruby, depth)?)
+            canon_hash(ruby, hash, enter_container(ruby, depth)?, reading)?
         } else {
             // SAFETY: classname reads the object's class name; no Ruby code runs
             // meanwhile.
             let class = unsafe { value.classname() }.into_owned();
-            Err(lookup_error(
+            return Err(lookup_error(
                 ruby,
                 &["Lain", "Canonical", "UnsupportedType"],
-                format!("cannot canonicalize {class}"),
-            ))
+                || format!("cannot canonicalize {class}"),
+            ));
+        };
+        reading.push(canon);
+        Ok(())
+    }
+
+    /// An Integer's decimal text. A Fixnum is formatted here, as `#to_s` would;
+    /// only a Bignum still asks Ruby.
+    fn integer_text(integer: Integer) -> Result<String, Error> {
+        match Fixnum::from_value(integer.as_value()) {
+            Some(fixnum) => Ok(fixnum.to_i64().to_string()),
+            None => integer.funcall("to_s", ()),
         }
     }
 
@@ -555,7 +727,7 @@ mod ffi {
             return Err(lookup_error(
                 ruby,
                 &["Lain", "Canonical", "NonFiniteFloat"],
-                super::non_finite(float.to_f64()),
+                || super::non_finite(float.to_f64()),
             ));
         }
         let json = ruby.class_object().const_get::<_, RModule>("JSON")?;
@@ -576,22 +748,26 @@ mod ffi {
     /// change, tracked outside this crate.
     fn enter_container(ruby: &Ruby, depth: usize) -> Result<usize, Error> {
         super::descend(depth).map_err(|too_deep| {
-            lookup_error(ruby, &["Lain", "Canonical", "UnsupportedType"], too_deep)
+            lookup_error(ruby, &["Lain", "Canonical", "UnsupportedType"], || too_deep)
         })
     }
 
-    fn canon_hash(ruby: &Ruby, hash: RHash, depth: usize) -> Result<Canon, Error> {
-        let mut pairs: Vec<(String, Canon)> = Vec::new();
+    fn canon_hash(
+        ruby: &Ruby,
+        hash: RHash,
+        depth: usize,
+        reading: &Reading,
+    ) -> Result<Canon, Error> {
+        let mark = reading.mark();
         hash.foreach(|key: Value, val: Value| {
-            pairs.push((canon_key(ruby, key)?, read_canon(ruby, val, depth)?));
+            reading.push_key(canon_key(ruby, key)?);
+            read_canon(ruby, val, depth, reading)?;
             Ok(ForEach::Continue)
         })?;
-        let object = canonical::build_object(pairs).map_err(|ambiguous| {
-            lookup_error(
-                ruby,
-                &["Lain", "Canonical", "AmbiguousKey"],
-                ambiguous.message(),
-            )
+        let object = canonical::build_object(reading.pairs_since(mark)).map_err(|ambiguous| {
+            lookup_error(ruby, &["Lain", "Canonical", "AmbiguousKey"], || {
+                ambiguous.message()
+            })
         })?;
         Ok(Canon::Object(object))
     }
@@ -605,7 +781,7 @@ mod ffi {
             Err(lookup_error(
                 ruby,
                 &["Lain", "Canonical", "UnsupportedType"],
-                format!("hash keys must be String or Symbol, got {class}"),
+                || format!("hash keys must be String or Symbol, got {class}"),
             ))
         }
     }
@@ -616,11 +792,9 @@ mod ffi {
     /// convertible -- which is precisely when Ruby raises.
     fn validated_utf8(ruby: &Ruby, string: RString) -> Result<String, Error> {
         string.to_string().map_err(|_| {
-            lookup_error(
-                ruby,
-                &["Lain", "Canonical", "UnsupportedType"],
-                "string is not valid UTF-8".to_string(),
-            )
+            lookup_error(ruby, &["Lain", "Canonical", "UnsupportedType"], || {
+                "string is not valid UTF-8".to_string()
+            })
         })
     }
 
@@ -629,10 +803,20 @@ mod ffi {
     /// `#to_s` -- are identical across `ruby_to_canon`, `canon_key`, and
     /// `read_role`; each caller supplies its own error for the `None` case.
     fn coerce_text(ruby: &Ruby, value: Value) -> Result<Option<String>, Error> {
+        text_value(value)?
+            .map(|text| validated_utf8(ruby, text))
+            .transpose()
+    }
+
+    /// The Ruby half of [`coerce_text`]: a String as itself, a Symbol as its
+    /// `#to_s`. Apart so a call reading several texts can take each from Ruby
+    /// before it builds any Rust state: a fiber dropped inside `#to_s` is
+    /// never unwound, so Rust state alive across it would be stranded.
+    fn text_value(value: Value) -> Result<Option<RString>, Error> {
         if let Some(string) = RString::from_value(value) {
-            Ok(Some(validated_utf8(ruby, string)?))
+            Ok(Some(string))
         } else if let Some(symbol) = Symbol::from_value(value) {
-            Ok(Some(validated_utf8(ruby, symbol.funcall("to_s", ())?)?))
+            symbol.funcall("to_s", ()).map(Some)
         } else {
             Ok(None)
         }
@@ -688,11 +872,9 @@ mod ffi {
     /// exactly that reason, since a temporary guard in a `?`-terminated
     /// expression lives to the end of the whole statement.
     fn missing_object(ruby: &Ruby, dangling: impl std::fmt::Display) -> Error {
-        lookup_error(
-            ruby,
-            &["Lain", "Ext", "Store", "MissingObject"],
-            dangling.to_string(),
-        )
+        lookup_error(ruby, &["Lain", "Ext", "Store", "MissingObject"], || {
+            dangling.to_string()
+        })
     }
 
     /// The `&Store` a `Timeline` names. Collapses the `store_ref(...)` call at
@@ -798,35 +980,39 @@ mod ffi {
                 return Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "Event", "InvalidRole"],
-                    format!("role must be one of {}, got a {class}", Role::names()),
+                    || format!("role must be one of {}, got a {class}", Role::names()),
                 ));
             }
         };
         // `InvalidRole`'s `Display` (see `turn.rs`) IS this message; no
         // hand-built duplicate to keep in sync with the pure error type.
         raw.parse::<Role>().map_err(|invalid| {
-            lookup_error(
-                ruby,
-                &["Lain", "Ext", "Event", "InvalidRole"],
-                invalid.to_string(),
-            )
+            lookup_error(ruby, &["Lain", "Ext", "Event", "InvalidRole"], || {
+                invalid.to_string()
+            })
         })
     }
 
     /// Read a kind argument (String or Symbol) into a [`Kind`], raising
     /// `Lain::Error` with Ruby's message, offender quoted as Ruby would.
     fn read_kind(ruby: &Ruby, value: Value) -> Result<Kind, Error> {
-        let text = match coerce_text(ruby, value)? {
-            Some(text) => text,
-            None => value.funcall::<_, _, RString>("to_s", ())?.to_string()?,
+        type Read = fn(&Ruby, RString) -> Result<String, Error>;
+        let (source, read): (RString, Read) = match text_value(value)? {
+            Some(text) => (text, validated_utf8),
+            None => (value.funcall("to_s", ())?, |_, text| text.to_string()),
         };
-        text.parse::<Kind>().map_err(|invalid| {
-            let got = value
-                .funcall::<_, _, RString>("inspect", ())
+        if let Ok(kind) = read(ruby, source)?.parse::<Kind>() {
+            return Ok(kind);
+        }
+        // `#inspect` is Ruby, so the refusal's text is read only once it returns.
+        let inspected = value.funcall::<_, _, RString>("inspect", ());
+        Err(lookup_error(ruby, &["Lain", "Error"], || {
+            let offender = read(ruby, source).unwrap_or_default();
+            let got = inspected
                 .and_then(|inspected| inspected.to_string())
-                .unwrap_or_else(|_| invalid.0.clone());
-            lookup_error(ruby, &["Lain", "Error"], invalid.message(&got))
-        })
+                .unwrap_or_else(|_| offender.clone());
+            InvalidKind(offender).message(&got)
+        }))
     }
 
     /// A parent/head digest argument: `nil` (or absent) is a root/empty head, a
@@ -849,18 +1035,17 @@ mod ffi {
     }
 
     /// A meta argument, defaulting to `{}` when absent or nil.
-    fn read_meta(ruby: &Ruby, value: Option<Value>) -> Result<Canon, Error> {
-        match value {
-            Some(inner) if !inner.is_nil() => ruby_to_canon(ruby, inner),
-            _ => Ok(Canon::Object(Vec::new())),
-        }
+    fn meta_or_empty(ruby: &Ruby, value: Option<Value>) -> Value {
+        value
+            .filter(|inner| !inner.is_nil())
+            .unwrap_or_else(|| ruby.hash_new().as_value())
     }
 
     /// A causal_parents argument: ABSENT is the empty set, otherwise an Array
     /// whose every element is a digest String. Normalization (dedup, pinned
     /// sort order) happens in the pure layer, not here.
     ///
-    /// **An explicit `nil` is refused, unlike `read_meta` and
+    /// **An explicit `nil` is refused, unlike `meta_or_empty` and
     /// `read_optional_digest` above.** The difference is what a nil MEANS at
     /// each site: a nil parent digest is a root and a nil meta is an empty
     /// table, both of them values this domain has a name for -- while a nil
@@ -870,9 +1055,9 @@ mod ffi {
     /// matching `None` separately rather than by an `is_nil` guard, so a nil
     /// falls through to `RArray::from_value` and is refused as the non-Array it
     /// is, in the same message any other non-Array gets.
-    fn read_optional_text(ruby: &Ruby, value: Option<Value>) -> Result<Option<String>, Error> {
+    fn optional_text_arg(ruby: &Ruby, value: Option<Value>) -> Result<Option<RString>, Error> {
         match value {
-            Some(value) if !value.is_nil() => match coerce_text(ruby, value)? {
+            Some(value) if !value.is_nil() => match text_value(value)? {
                 Some(text) => Ok(Some(text)),
                 None => Err(Error::new(
                     ruby.exception_type_error(),
@@ -881,6 +1066,12 @@ mod ffi {
             },
             _ => Ok(None),
         }
+    }
+
+    /// Apart from [`optional_text_arg`] so a caller can finish every Ruby call
+    /// before the first Rust String exists.
+    fn optional_utf8(ruby: &Ruby, text: Option<RString>) -> Result<Option<String>, Error> {
+        text.map(|text| validated_utf8(ruby, text)).transpose()
     }
 
     fn read_causal_parents(ruby: &Ruby, value: Option<Value>) -> Result<Vec<Digest>, Error> {
@@ -990,9 +1181,11 @@ mod ffi {
                 correlation_value,
             ) = args.optional;
             let kind = read_kind(ruby, kind_value)?;
+            let from = optional_text_arg(ruby, from_value)?;
+            let to = optional_text_arg(ruby, to_value)?;
             let payload = Self::read_payload(ruby, kind, digest_value, body_value, carried_value)?;
-            let from = read_optional_text(ruby, from_value)?;
-            let to = read_optional_text(ruby, to_value)?;
+            let from = optional_utf8(ruby, from)?;
+            let to = optional_utf8(ruby, to)?;
             let render_parent = read_optional_digest(ruby, parent_value)?;
             let causal_parents = read_causal_parents(ruby, causal_value)?;
             let correlation = read_optional_digest(ruby, correlation_value)?;
@@ -1092,13 +1285,15 @@ mod ffi {
             let (parent_value, meta_value, correlation_value, causal_value, from_value, to_value) =
                 args.optional;
             let role = read_role(ruby, role_value)?;
-            let content = ruby_to_canon(ruby, content_value)?;
+            let from = optional_text_arg(ruby, from_value)?;
+            let to = optional_text_arg(ruby, to_value)?;
+            let meta_value = meta_or_empty(ruby, meta_value);
+            let [content, meta] = ruby_to_canons(ruby, [content_value, meta_value])?;
             let parent = read_optional_digest(ruby, parent_value)?;
-            let meta = read_meta(ruby, meta_value)?;
             let correlation = read_optional_digest(ruby, correlation_value)?;
             let causal_parents = read_causal_parents(ruby, causal_value)?;
-            let from = read_optional_text(ruby, from_value)?;
-            let to = read_optional_text(ruby, to_value)?;
+            let from = optional_utf8(ruby, from)?;
+            let to = optional_utf8(ruby, to)?;
             let turn = EventData::turn(role, content, parent, meta, correlation, causal_parents);
             // The sender and recipient live in the header, so they change the
             // digest while the payload is reused as built.
@@ -1152,17 +1347,15 @@ mod ffi {
         /// same rather than materializing `nil`.
         fn body_field<'a>(ruby: &Ruby, rb_self: &'a Turn, key: &str) -> Result<&'a Canon, Error> {
             if rb_self.inner.payload.is_none() {
-                return Err(lookup_error(
-                    ruby,
-                    &["Lain", "Error"],
+                return Err(lookup_error(ruby, &["Lain", "Error"], || {
                     format!(
                         "{} carries no body; it lives in the Store under {}. This envelope was \
                          rebuilt from digests alone -- fetch that payload through a Store, or \
                          build it via Event.turn to carry one",
                         rb_self.inspect(),
                         rb_self.inner.payload_digest
-                    ),
-                ));
+                    )
+                }));
             }
             rb_self.inner.body_field(key).ok_or_else(|| {
                 Error::new(
@@ -1393,9 +1586,9 @@ mod ffi {
         /// then [`Store::insert`] plus the error translation.
         fn put(ruby: &Ruby, rb_self: &Store, object: Value) -> Result<String, Error> {
             let node = read_node(ruby, object)?;
-            let digest = rb_self
-                .insert(None, &node)
-                .map_err(|refusal| put_refused(ruby, refusal))?;
+            let inserted = rb_self.insert(None, &node);
+            drop(node);
+            let digest = inserted.map_err(|refusal| put_refused(ruby, refusal))?;
             // FFI-out boundary: the digest returns to Ruby as a String.
             Ok(digest.into())
         }
@@ -1403,9 +1596,10 @@ mod ffi {
         /// What the crate can give back for each arm, since it holds no Ruby
         /// reference: an event, a payload, a blob's frozen binary bytes, or a
         /// deeply frozen canonical tree.
-        fn fetch(ruby: &Ruby, rb_self: &Store, digest: String) -> Result<Value, Error> {
-            let digest: Digest = digest.into();
-            let found = rb_self.locked().get(&digest);
+        fn fetch(ruby: &Ruby, rb_self: &Store, digest: RString) -> Result<Value, Error> {
+            // The Rust copy of the key is gone before a miss's refusal reaches
+            // Ruby, which quotes the key again from the Ruby String.
+            let found = rb_self.locked().get(&Digest::from(digest.to_string()?));
             match found {
                 Some(NodeData::Event(event)) => Ok(Turn::wrap(ruby, event).as_value()),
                 Some(NodeData::Payload(payload)) => Ok(Payload::wrap(ruby, payload).as_value()),
@@ -1418,7 +1612,12 @@ mod ffi {
                 None => Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "Store", "MissingObject"],
-                    format!("no object {digest:?} in store"),
+                    || {
+                        format!(
+                            "no object {:?} in store",
+                            Digest::from(digest.to_string().unwrap_or_default())
+                        )
+                    },
                 )),
             }
         }
@@ -1451,17 +1650,21 @@ mod ffi {
         if let Ok(payload) = <&Payload>::try_convert(object) {
             return Ok(NodeData::Payload(Arc::clone(&payload.inner)));
         }
-        let node = if object.respond_to("canonical", false)? {
-            let tree = ruby_to_canon(ruby, object.funcall("canonical", ())?)?;
-            NodeData::Canon(Arc::new(CanonData::new(tree)))
+        let claimed_digest = || object.funcall::<_, _, RString>("digest", ());
+        // Every call into Ruby comes before any Rust state is built, except the
+        // tree's own conversion, which keeps its partial state in a `Reading`.
+        let (node, claimed) = if object.respond_to("canonical", false)? {
+            let tree: Value = object.funcall("canonical", ())?;
+            let claimed = claimed_digest()?;
+            let tree = ruby_to_canon(ruby, tree)?;
+            (NodeData::Canon(Arc::new(CanonData::new(tree))), claimed)
         } else if object.respond_to("tag", false)? && object.respond_to("bytes", false)? {
             let tag: RString = object.funcall("tag", ())?;
             let bytes: RString = object.funcall("bytes", ())?;
+            let claimed = claimed_digest()?;
             let tag = validated_utf8(ruby, tag)?;
-            NodeData::Blob(Arc::new(BlobData::new(
-                &tag,
-                with_bytes(bytes, <[u8]>::to_vec),
-            )))
+            let blob = BlobData::new(&tag, with_bytes(bytes, <[u8]>::to_vec));
+            (NodeData::Blob(Arc::new(blob)), claimed)
         } else {
             let class = object.class().inspect();
             return Err(Error::new(
@@ -1471,13 +1674,11 @@ mod ffi {
                 ),
             ));
         };
-        let claimed: RString = object.funcall("digest", ())?;
-        verified(node, Digest::from(validated_utf8(ruby, claimed)?)).map_err(|mismatch| {
-            lookup_error(
-                ruby,
-                &["Lain", "Ext", "Store", "DigestMismatch"],
-                mismatch.to_string(),
-            )
+        let claimed = Digest::from(validated_utf8(ruby, claimed)?);
+        verified(node, claimed).map_err(|mismatch| {
+            lookup_error(ruby, &["Lain", "Ext", "Store", "DigestMismatch"], || {
+                mismatch.to_string()
+            })
         })
     }
 
@@ -1485,11 +1686,11 @@ mod ffi {
     fn put_refused(ruby: &Ruby, refusal: PutRefusal) -> Error {
         match refusal {
             PutRefusal::Dangling(dangling) => missing_object(ruby, dangling),
-            mislabelled @ PutRefusal::NotItsPayload { .. } => lookup_error(
-                ruby,
-                &["Lain", "Ext", "Store", "DigestMismatch"],
-                mislabelled.to_string(),
-            ),
+            mislabelled @ PutRefusal::NotItsPayload { .. } => {
+                lookup_error(ruby, &["Lain", "Ext", "Store", "DigestMismatch"], || {
+                    mislabelled.to_string()
+                })
+            }
         }
     }
 
@@ -1663,7 +1864,7 @@ mod ffi {
                             ruby,
                             &["Lain", "Ext", "Store", "MissingObject"],
                             // `digest: &Digest`, transparent `Debug` -> same bytes.
-                            format!("no object {digest:?} in store"),
+                            || format!("no object {digest:?} in store"),
                         )),
                     }
                 }
@@ -1684,8 +1885,8 @@ mod ffi {
             let (role_value, content_value) = args.required;
             let (meta_value, causal_value) = args.optional;
             let role = read_role(ruby, role_value)?;
-            let content = ruby_to_canon(ruby, content_value)?;
-            let meta = read_meta(ruby, meta_value)?;
+            let meta_value = meta_or_empty(ruby, meta_value);
+            let [content, meta] = ruby_to_canons(ruby, [content_value, meta_value])?;
             let causal_parents = read_causal_parents(ruby, causal_value)?;
             let store_value = rb_self.store_value(ruby);
             let store: &Store = store_ref(ruby, &rb_self)?;
@@ -1708,9 +1909,9 @@ mod ffi {
                 .payload
                 .as_ref()
                 .map(|payload| NodeData::Payload(Arc::clone(payload)));
-            let digest = store
-                .insert(payload.as_ref(), &NodeData::Event(turn))
-                .map_err(|refusal| put_refused(ruby, refusal))?;
+            let inserted = store.insert(payload.as_ref(), &NodeData::Event(turn));
+            drop(payload);
+            let digest = inserted.map_err(|refusal| put_refused(ruby, refusal))?;
             Ok(Timeline::wrap(ruby, Some(digest), store_value))
         }
 
@@ -1872,15 +2073,25 @@ mod ffi {
             )?;
             let (after_value, onto) = kwargs.optional;
             let after = read_optional_digest(ruby, after_value)?;
+            let canonical: RModule = ruby
+                .class_object()
+                .const_get::<_, RModule>("Lain")?
+                .const_get("Canonical")?;
             let store: &Store = store_ref(ruby, rb_self)?;
-            let walked = dag::turns_since(
-                &store.locked().events,
-                rb_self.head.as_ref(),
-                after.as_ref(),
-            );
-            let (turns, reached) = walked.map_err(|e| missing_object(ruby, e))?;
-            let prefix = onto.filter(|_| reached);
-            MessageBuilder::new(ruby)?.messages(prefix, &turns)
+            let (messages, adoptable) = {
+                let walked = dag::turns_since(
+                    &store.locked().events,
+                    rb_self.head.as_ref(),
+                    after.as_ref(),
+                );
+                let (turns, reached) = walked.map_err(|e| missing_object(ruby, e))?;
+                let prefix = onto.filter(|_| reached);
+                MessageBuilder::new(ruby).messages(prefix, &turns)?
+            };
+            for array in adoptable {
+                let _: Value = canonical.funcall("adopt", (array,))?;
+            }
+            Ok(messages)
         }
 
         fn ancestor_digests(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
@@ -2104,11 +2315,12 @@ mod ffi {
 
     /// Builds `Timeline#messages`' answer. Every Hash key and role is one frozen
     /// String per call rather than one per turn, and every Array it builds is
-    /// handed to `Canonical.adopt`, so a render normalizing the content finds it
-    /// already produced instead of rebuilding it.
+    /// collected for `Canonical.adopt`, so a render normalizing the content
+    /// finds it already produced instead of rebuilding it. Adopting is Ruby, so
+    /// it waits until the builder, and the Rust state it holds, is gone.
     struct MessageBuilder<'r> {
         ruby: &'r Ruby,
-        canonical: RModule,
+        adoptable: RArray,
         strings: HashMap<String, Value>,
         // Roots every cached String: `strings` lives on the Rust heap, which
         // Ruby's collector does not scan, and a Hash may keep an equal interned
@@ -2117,21 +2329,21 @@ mod ffi {
     }
 
     impl<'r> MessageBuilder<'r> {
-        fn new(ruby: &'r Ruby) -> Result<Self, Error> {
-            let lain: RModule = ruby.class_object().const_get("Lain")?;
-            Ok(MessageBuilder {
+        fn new(ruby: &'r Ruby) -> Self {
+            MessageBuilder {
                 ruby,
-                canonical: lain.const_get("Canonical")?,
+                adoptable: ruby.ary_new(),
                 strings: HashMap::new(),
                 rooted: ruby.ary_new(),
-            })
+            }
         }
 
+        /// The messages, and every Array in them still to be adopted.
         fn messages(
             mut self,
             prefix: Option<RArray>,
             turns: &[Arc<EventData>],
-        ) -> Result<RArray, Error> {
+        ) -> Result<(RArray, RArray), Error> {
             let held = prefix.map_or(0, |prefix| prefix.len());
             let messages = self.ruby.ary_new_capa(held + turns.len());
             if let Some(prefix) = prefix {
@@ -2141,7 +2353,7 @@ mod ffi {
                 messages.push(self.message(turn)?)?;
             }
             messages.freeze();
-            Ok(messages)
+            Ok((messages, self.adoptable))
         }
 
         fn message(&mut self, turn: &EventData) -> Result<Value, Error> {
@@ -2171,7 +2383,7 @@ mod ffi {
                         array.push(self.tree(item)?)?;
                     }
                     array.freeze();
-                    let _: Value = self.canonical.funcall("adopt", (array,))?;
+                    self.adoptable.push(array)?;
                     Ok(array.as_value())
                 }
                 Canon::Object(pairs) => {
@@ -2233,7 +2445,7 @@ mod ffi {
         Err(lookup_error(
             ruby,
             &["Lain", "Ext", "Store", "MissingObject"],
-            format!("no {noun} {target:?}"),
+            || format!("no {noun} {target:?}"),
         ))
     }
 
@@ -2263,16 +2475,16 @@ mod ffi {
             Err(lookup_error(
                 ruby,
                 &["Lain", "Ext", "Timeline", "CrossStore"],
-                "cannot compare Timelines backed by different stores".to_string(),
+                || "cannot compare Timelines backed by different stores".to_string(),
             ))
         }
     }
 
-    /// A String or Symbol id/text field of a build pair, coerced to UTF-8. Ids
+    /// A String or Symbol id/text field of a build pair, as a Ruby String. Ids
     /// arrive as Ruby Strings (a memory item's id); Symbols are accepted for the
     /// same reason `read_role` accepts them. Anything else is a loud type error.
-    fn read_pair_field(ruby: &Ruby, value: Value, what: &str) -> Result<String, Error> {
-        match coerce_text(ruby, value)? {
+    fn pair_field(ruby: &Ruby, value: Value, what: &str) -> Result<RString, Error> {
+        match text_value(value)? {
             Some(text) => Ok(text),
             None => {
                 // SAFETY: see ruby_to_canon; no Ruby code runs meanwhile.
@@ -2311,7 +2523,8 @@ mod ffi {
         /// Degenerate batches raise the named `Bm25::EmptyCorpus` /
         /// `Bm25::DuplicateId` errors from the pure builder.
         fn build(ruby: &Ruby, pairs: RArray) -> Result<Obj<Self>, Error> {
-            let mut batch: Vec<(String, String)> = Vec::with_capacity(pairs.len());
+            // Every field's text is taken from Ruby before the batch exists.
+            let fields = ruby.ary_new_capa(pairs.len() * 2);
             for pair_value in pairs.into_iter() {
                 let pair = RArray::from_value(pair_value).ok_or_else(|| {
                     Error::new(
@@ -2325,8 +2538,13 @@ mod ffi {
                         format!("each pair must be [id, text], got {} elements", pair.len()),
                     ));
                 }
-                let id = read_pair_field(ruby, pair.entry(0)?, "id")?;
-                let text = read_pair_field(ruby, pair.entry(1)?, "text")?;
+                fields.push(pair_field(ruby, pair.entry(0)?, "id")?)?;
+                fields.push(pair_field(ruby, pair.entry(1)?, "text")?)?;
+            }
+            let mut batch: Vec<(String, String)> = Vec::with_capacity(pairs.len());
+            for at in (0..fields.len()).step_by(2) {
+                let id = validated_utf8(ruby, fields.entry(at as isize)?)?;
+                let text = validated_utf8(ruby, fields.entry(at as isize + 1)?)?;
                 batch.push((id, text));
             }
             // `BuildError`'s `Display` (see `bm25.rs`) IS the FFI-visible
@@ -2336,12 +2554,12 @@ mod ffi {
                 Err(err @ crate::bm25::BuildError::EmptyCorpus) => Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "Bm25", "EmptyCorpus"],
-                    err.to_string(),
+                    || err.to_string(),
                 )),
                 Err(err @ crate::bm25::BuildError::DuplicateId(_)) => Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "Bm25", "DuplicateId"],
-                    err.to_string(),
+                    || err.to_string(),
                 )),
             }
         }
@@ -2383,6 +2601,11 @@ mod ffi {
         ext.define_singleton_method("blake3_hex", function!(ffi_blake3_hex, 1))?;
         ext.define_singleton_method("canonical_dump", function!(canonical_dump, 1))?;
         ext.define_singleton_method("canonical_digest", function!(canonical_digest, 1))?;
+        let probe = ext.define_module("Probe")?;
+        probe.define_singleton_method("live_bytes", function!(live_bytes, 0))?;
+        // Built only by a canonical conversion; nothing constructs one from Ruby.
+        ext.define_class("Reading", ruby.class_object())?
+            .undef_default_alloc_func();
 
         // Subclass Lain::Error, which `lib/lain.rb` requires before this
         // extension loads (see `lain/error`, then `lain/lain`). No fallback to

@@ -616,7 +616,7 @@ pub mod ffi {
     // shared by four bindings in three namespaces, so it has no lain class to
     // raise into without inventing one. A caller rescuing `Lain::Error` alone
     // will NOT catch the encoding case; `Tools::AstSearch` names both.
-    use crate::read_text::read_text;
+    use crate::read_text::text_of;
     use magnus::{Error, RArray, RString, Ruby, Value, prelude::*};
 
     /// `Lain::Ext::AstGrep.search(src, lang, pattern)` -> a frozen Array of
@@ -624,9 +624,12 @@ pub mod ffi {
     /// `captures` maps each `$NAME` to `{ "text", "start", "end" }`. One FFI
     /// crossing: the whole result is materialized and frozen before returning.
     pub fn search(ruby: &Ruby, src: Value, lang: Value, pattern: Value) -> Result<RArray, Error> {
-        let src = read_text(ruby, src, || "source".to_string())?;
-        let lang = read_text(ruby, lang, || "language".to_string())?;
-        let pattern = read_text(ruby, pattern, || "pattern".to_string())?;
+        let (src, lang, pattern) = (
+            text_of(ruby, src, "source")?,
+            text_of(ruby, lang, "language")?,
+            text_of(ruby, pattern, "pattern")?,
+        );
+        let (src, lang, pattern) = (src.read(ruby)?, lang.read(ruby)?, pattern.read(ruby)?);
         let matches = pure_search(&src, &lang, &pattern).map_err(|err| raised(ruby, err))?;
         let out = ruby.ary_new_capa(matches.len());
         for matched in matches {
@@ -667,8 +670,11 @@ pub mod ffi {
     /// kinds, the companion capability that lets an agent inspect the tree and
     /// fix a pattern that silently under-matched.
     pub fn dump(ruby: &Ruby, src: Value, lang: Value) -> Result<RString, Error> {
-        let src = read_text(ruby, src, || "source".to_string())?;
-        let lang = read_text(ruby, lang, || "language".to_string())?;
+        let (src, lang) = (
+            text_of(ruby, src, "source")?,
+            text_of(ruby, lang, "language")?,
+        );
+        let (src, lang) = (src.read(ruby)?, lang.read(ruby)?);
         let text = pure_dump(&src, &lang).map_err(|err| raised(ruby, err))?;
         let string = ruby.str_new(&text);
         string.freeze();
@@ -698,13 +704,13 @@ pub mod ffi {
         let message = err.to_string();
         match err {
             SearchError::BadPattern { .. } => {
-                lookup_error(ruby, &["Lain", "Ext", "AstGrep", "BadPattern"], message)
+                lookup_error(ruby, &["Lain", "Ext", "AstGrep", "BadPattern"], || message)
             }
             SearchError::UnknownLanguage(_) => Error::new(ruby.exception_arg_error(), message),
             SearchError::DumpTooDeep(_) => lookup_error(
                 ruby,
                 &["Lain", "Structural", "Matcher", "DumpCapped"],
-                message,
+                || message,
             ),
         }
     }

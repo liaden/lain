@@ -309,7 +309,7 @@ pub mod ffi {
     // `treesitter`. Candidate positions here index GRAPHEME CLUSTERS (see
     // `positions`), which only means anything because `read_text` guarantees the
     // clusters are the caller's own bytes and not a transcoded copy.
-    use crate::read_text::read_text;
+    use crate::read_text::{coerce_to_string, read_text};
     use magnus::{
         DataTypeFunctions, Error, ExceptionClass, Integer, RArray, RHash, RModule, Ruby, TypedData,
         Value, function, method,
@@ -351,20 +351,26 @@ pub mod ffi {
         /// `Lain::Ext::Fuzzy.new(candidates)` -- one batch crossing. Raises the
         /// named `Fuzzy::CandidateTooLong` from the pure builder.
         fn new(ruby: &Ruby, candidates: RArray) -> Result<Obj<Self>, Error> {
-            let batch = candidates
+            let label = |index: usize| move || format!("candidate {index}");
+            // Every candidate's text is taken from Ruby before the batch exists.
+            let strings = ruby.ary_new_capa(candidates.len());
+            for (index, value) in candidates.into_iter().enumerate() {
+                strings.push(coerce_to_string(ruby, value, &label(index))?)?;
+            }
+            let batch = strings
                 .into_iter()
                 .enumerate()
-                .map(|(index, value)| read_text(ruby, value, || format!("candidate {index}")))
+                .map(|(index, value)| read_text(ruby, value, label(index)))
                 .collect::<Result<Vec<String>, Error>>()?;
 
             // `BuildError`'s `Display` IS the Ruby-visible message; there is no
             // second wording here to drift from the Rust test.
             let inner = Candidates::new(batch).map_err(|err| match err {
-                BuildError::CandidateTooLong { .. } => lookup_error(
-                    ruby,
-                    &["Lain", "Ext", "Fuzzy", "CandidateTooLong"],
-                    err.to_string(),
-                ),
+                BuildError::CandidateTooLong { .. } => {
+                    lookup_error(ruby, &["Lain", "Ext", "Fuzzy", "CandidateTooLong"], || {
+                        err.to_string()
+                    })
+                }
             })?;
 
             let obj = ruby.obj_wrap(Fuzzy {
@@ -388,11 +394,11 @@ pub mod ffi {
             let query = read_text(ruby, query, || "query".to_string())?;
 
             let hits = rb_self.inner.rank(&query, limit).map_err(|err| match err {
-                QueryError::TooLong { .. } => lookup_error(
-                    ruby,
-                    &["Lain", "Ext", "Fuzzy", "QueryTooLong"],
-                    err.to_string(),
-                ),
+                QueryError::TooLong { .. } => {
+                    lookup_error(ruby, &["Lain", "Ext", "Fuzzy", "QueryTooLong"], || {
+                        err.to_string()
+                    })
+                }
             })?;
 
             let out = ruby.ary_new_capa(hits.len());

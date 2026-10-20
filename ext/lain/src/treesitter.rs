@@ -441,7 +441,7 @@ pub mod ffi {
     // `Lain::Error` because a malformed S-expression is lain's vocabulary, while
     // the encoding refusal is Ruby's bare `EncodingError`. Rescuing `Lain::Error`
     // alone will not catch it.
-    use crate::read_text::read_text;
+    use crate::read_text::text_of;
     use magnus::{Error, RArray, Ruby, Value, prelude::*};
 
     /// `Lain::Ext::TreeSitter.query(src, lang, query)` -> a frozen Array of
@@ -450,16 +450,19 @@ pub mod ffi {
     /// order. One FFI crossing: the whole result is materialized and frozen
     /// before returning, matching `AstGrep`'s frozen-hash style.
     pub fn query(ruby: &Ruby, src: Value, lang: Value, query_src: Value) -> Result<RArray, Error> {
-        let src = read_text(ruby, src, || "source".to_string())?;
-        let lang = read_text(ruby, lang, || "language".to_string())?;
-        let query_src = read_text(ruby, query_src, || "query".to_string())?;
+        let (src, lang, query_src) = (
+            text_of(ruby, src, "source")?,
+            text_of(ruby, lang, "language")?,
+            text_of(ruby, query_src, "query")?,
+        );
+        let (src, lang, query_src) = (src.read(ruby)?, lang.read(ruby)?, query_src.read(ruby)?);
         let captures = match pure_query(&src, &lang, &query_src) {
             Ok(captures) => captures,
             Err(err @ QueryFailure::BadQuery { .. }) => {
                 return Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "TreeSitter", "BadQuery"],
-                    err.to_string(),
+                    || err.to_string(),
                 ));
             }
             Err(err @ QueryFailure::UnknownLanguage(_)) => {

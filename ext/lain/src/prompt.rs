@@ -1407,7 +1407,7 @@ pub mod ffi {
     // raised out of `Canonical`, so a caller nowhere near `Canonical` had to
     // rescue a `Canonical` error. Both are why this does not reuse `lib.rs`'s
     // `coerce_text`: that policy is laxer and its taxonomy is different.
-    use crate::read_text::read_text;
+    use crate::read_text::{coerce_to_string, read_text};
     use magnus::{
         DataTypeFunctions, Error, ExceptionClass, RHash, RModule, Ruby, TypedData, Value, function,
         method,
@@ -1494,17 +1494,31 @@ pub mod ffi {
     /// identically to an empty String; everything else goes through the same
     /// `read_text` every other entry point uses.
     fn read_vars(ruby: &Ruby, bindings: RHash) -> Result<Vars, Error> {
-        let mut vars = Vars::new();
+        let name_label = || "variable name".to_string();
+        // Every binding's text is taken from Ruby before the first Rust String.
+        let pairs = ruby.ary_new_capa(bindings.len() * 2);
         bindings.foreach(|key: Value, value: Value| {
-            let name = read_text(ruby, key, || "variable name".to_string())?;
+            let name = coerce_to_string(ruby, key, &name_label)?;
+            pairs.push(name)?;
+            if value.is_nil() {
+                pairs.push(value)?;
+            } else {
+                let label = || format!("value for {:?}", name.to_string().unwrap_or_default());
+                pairs.push(coerce_to_string(ruby, value, &label)?)?;
+            }
+            Ok(ForEach::Continue)
+        })?;
+        let mut vars = Vars::new();
+        for at in (0..pairs.len()).step_by(2) {
+            let name = read_text(ruby, pairs.entry(at as isize)?, name_label)?;
+            let value: Value = pairs.entry(at as isize + 1)?;
             let bound = if value.is_nil() {
                 String::new()
             } else {
                 read_text(ruby, value, || format!("value for {name:?}"))?
             };
             vars.insert(name, bound);
-            Ok(ForEach::Continue)
-        })?;
+        }
         Ok(vars)
     }
 
@@ -1543,19 +1557,15 @@ pub mod ffi {
     // Each pure error type's `Display` IS the Ruby-visible message; there is no
     // second, hand-built wording here to drift away from the Rust tests.
     fn style_error(ruby: &Ruby, err: &StyleError) -> Error {
-        lookup_error(
-            ruby,
-            &["Lain", "Ext", "Prompt", "StyleError"],
-            err.to_string(),
-        )
+        lookup_error(ruby, &["Lain", "Ext", "Prompt", "StyleError"], || {
+            err.to_string()
+        })
     }
 
     fn config_error(ruby: &Ruby, err: &ConfigError) -> Error {
-        lookup_error(
-            ruby,
-            &["Lain", "Ext", "Prompt", "ConfigError"],
-            err.to_string(),
-        )
+        lookup_error(ruby, &["Lain", "Ext", "Prompt", "ConfigError"], || {
+            err.to_string()
+        })
     }
 
     /// Register `Lain::Ext::Prompt` and its two named errors. Called from
