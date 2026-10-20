@@ -32,7 +32,7 @@ module Lain
       # Fork `timeline` into one trajectory per branch, score each, select the
       # max.
       #
-      # @param timeline [Lain::Timeline] the node to speculate from
+      # @param timeline [Lain::Ext::Timeline] the node to speculate from
       # @param branches [Array<#call(Timeline)>] each maps the forked Timeline to
       #   a trajectory the grader can score
       # @return [Selection]

@@ -11,7 +11,7 @@ require "tmpdir"
 # `ask_human` question is asked from. The scribe's own walk cannot reach any of
 # it (a Timeline walk sees ONE chain), so every session that spawned anything
 # recorded messages naming turns no record carried, and rebuilding it raised
-# {Lain::Store::MissingObject}.
+# the store's `MissingObject`.
 #
 # Driven through the REAL spawn path -- a parent Agent whose toolset holds the
 # subagent tool, over {Lain::Provider::Mock} -- because the whole shape of this

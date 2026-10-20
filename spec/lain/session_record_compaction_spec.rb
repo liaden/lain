@@ -12,7 +12,7 @@
 #
 # This spec asserts an invariant that already holds by construction: Compact
 # lives entirely inside `Context#render`'s pure pipeline, while the Scribe
-# and Loader both work off {Lain::Timeline}, which Compact never sees. If this
+# and Loader both work off a `Lain::Ext::Timeline`, which Compact never sees. If this
 # ever fails, that is a finding about a lib regression, not something this
 # spec should paper over.
 RSpec.describe "compaction-retention invariant" do

@@ -90,11 +90,11 @@ module Lain
       #   -> Agent::Instrumentation`, asked once per spawn for the same reason.
       #   It takes the worker env because the run's guard stack is built over
       #   the checkout a lease cut, if it cut one.
-      # @raise [Lain::CLI::UnknownProvider] on a name outside the advertised set
-      # @raise [Lain::CLI::Backend::MissingAPIKey] resolving anthropic keyless
       # @param memory [#view] the project memory each spawned agent's view opens
       #   on; {Memory::ProjectStore::Null} keeps an arm's writes out of the
       #   operator's own project, which is what makes two sweeps comparable
+      # @raise [Lain::CLI::UnknownProvider] on a name outside the advertised set
+      # @raise [Lain::CLI::Backend::MissingAPIKey] resolving anthropic keyless
       def initialize(backend:, provider: nil, tools: Harness::TOOLS, system: nil,
                      instrumentation: Harness::INSTRUMENTATION, memory: Memory::ProjectStore::Null)
         @provider = provider || backend.provider
@@ -122,9 +122,9 @@ module Lain
       #   is what prices exactly the turns this arm produced
       # @param workspace [Lain::Workspace] sent into the spawned Agent's Request,
       #   not stored; empty unless the task needs files
-      # @param timeline [Lain::Timeline, nil] the agent's root, when the caller
+      # @param timeline [Lain::Ext::Timeline, nil] the agent's root, when the caller
       #   holds one directly ({Arm::DualLedger}'s per-step spawn)
-      # @param base_timeline [Lain::Timeline, nil] the agent's root, when the
+      # @param base_timeline [Lain::Ext::Timeline, nil] the agent's root, when the
       #   caller only has a fresh root over another's store
       #   ({Arm::OrchestratorWorker}'s per-worker spawn); falls back to `timeline`
       # @param worker_env [Lain::WorkerEnv, nil] a lease's environment, threaded

@@ -27,7 +27,7 @@ module Lain
 
         def open? = @closed.nil?
 
-        # @return [Timeline] `chain`, unchanged
+        # @return [Ext::Timeline] `chain`, unchanged
         # @raise [Corrupt] when `chain`'s rebuilt head disagrees with the
         #   recorded anchor
         def verify(chain)

@@ -40,7 +40,7 @@ module Lain
       # to a byte-identical question and hits the recorded answer. Deliberately
       # NOT a message digest, because a well-formed but wrongly-keyed address
       # costs every lookup, silently and permanently. Not an EVENT digest
-      # either, and it cannot be: {Event#payload} folds `render_parent`, so a
+      # either, and it cannot be: {Ext::Event#payload} folds `render_parent`, so a
       # range's event digests move when anything ahead of them in the chain
       # does, while its content does not.
       #

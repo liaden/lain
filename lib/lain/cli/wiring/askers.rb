@@ -50,7 +50,7 @@ module Lain
         # method call and raises there instead, which is why the nil is written
         # out.
         #
-        # @param parent [Timeline, #call] the live parent-Timeline handle ({AskHuman}'s
+        # @param parent [Ext::Timeline, #call] the live parent-Timeline handle ({AskHuman}'s
         #   own `parent:`) -- a Timeline or a thunk reading one, since the toolset is
         #   built before the Agent; the shared Store and the asker's identity both
         #   ride on it

@@ -202,10 +202,11 @@ RSpec.describe Lain::StatusFeed::Inbox do
 
   # A digest the store genuinely HOLDS, naming a BODY rather than a turn --
   # {Lain::EventLog::ChainWriter} puts one for every message it writes. It is what
-  # a commit record naming the wrong address looks like from in here, and the
-  # walk answers it with `NoMethodError: undefined method 'parent' for an
-  # instance of Lain::Event::Payload` -- past a rescue that named only
-  # MissingObject, out through {Lain::CLI::JournalTee}, into the agent loop.
+  # a commit record naming the wrong address looks like from in here. The
+  # deleted Ruby walk answered it with `NoMethodError` -- past a rescue that
+  # named only MissingObject, out through {Lain::CLI::JournalTee}, into the
+  # agent loop. The extension answers MissingObject ("no event"); the example
+  # holds the promise either way.
   describe "a head the walk cannot make sense of" do
     it "is a miss, not a raise -- a status line may never cost the agent its turn" do
       inbox = described_class.new(store:)

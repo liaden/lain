@@ -22,7 +22,7 @@ module Lain
 
         # @param records [Array<Hash>] the file's parsed records, in file
         #   order; types outside {TYPES} are other folds' and skipped
-        # @param base [Timeline] the fold's starting chain -- empty, or a
+        # @param base [Ext::Timeline] the fold's starting chain -- empty, or a
         #   resume chain's verified prior head
         def initialize(records:, base:)
           @records = SessionRecord.applied(records.select { |record| TYPES.include?(record["type"].to_s) })
@@ -45,7 +45,7 @@ module Lain
         #
         # rubocop:disable Naming/PredicateMethod -- a COMMAND whose Boolean
         # reports whether it moved, not a query. `advance?` would name the
-        # question and hide the fold, which is {Timeline#commit}'s lesson.
+        # question and hide the fold, which is {Ext::Timeline#commit}'s lesson.
         def advance
           members
           before = @position
@@ -139,7 +139,7 @@ module Lain
         # written before {SessionRecord.turn} carried the field has no key, and
         # no key IS the empty set.
         #
-        # {Event#normalize_causal} re-sorts and dedups on the way in, so a
+        # The event constructor re-sorts and dedups `causal_parents` on the way in, so a
         # record whose array was reordered or repeated folds to the SAME
         # verified turn -- two distinct journal byte strings, one record.
         # Correct, since element order is deliberately outside the content
@@ -160,11 +160,11 @@ module Lain
         end
 
         # `content` and `meta` announce their corruption through the digest they
-        # then fail to re-derive, and a bad `role` is refused by {Event} naming
+        # then fail to re-derive, and a bad `role` is refused by {Ext::Event} naming
         # the roles it allows -- but this field reaches neither check, because
-        # {Event#normalize_causal} maps and sorts it before any digest exists,
-        # so a null arrives as a NoMethodError three frames down. Shape-checked
-        # here so the whole record type answers corruption in ONE currency.
+        # the event constructor reads it before any digest exists, so a null
+        # arrives as the extension's `TypeError`. Shape-checked here so the
+        # whole record type answers corruption in ONE currency.
         def cited_parents(record, index)
           cited = record.fetch("causal_parents", [])
           return cited if cited.is_a?(Array) && cited.all?(String)

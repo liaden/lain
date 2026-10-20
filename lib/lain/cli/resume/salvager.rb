@@ -20,7 +20,7 @@ module Lain
       # than growing a parallel "open-plus-salvaged" shape.
       class Salvager
         # @param path [String] the OPEN session file's own path
-        # @param timeline [Lain::Timeline] its loaded (pre-salvage) Timeline
+        # @param timeline [Lain::Ext::Timeline] its loaded (pre-salvage) Timeline
         def initialize(path:, timeline:)
           @path = path
           @timeline = timeline

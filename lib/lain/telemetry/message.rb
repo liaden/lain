@@ -4,7 +4,7 @@ module Lain
   module Telemetry
     # A :message or :spawn Event promoted to the session record, its OWN additive
     # type so the turn-chain loader's `of_type` narrowing never sees it (a
-    # :message can never survive {Timeline#commit}'s digest re-derivation, so it
+    # :message can never survive {Ext::Timeline#commit}'s digest re-derivation, so it
     # must not wear the `turn` shape). Field-pinned to what a later re-put into a
     # Store needs -- `payload` is the addressed body, `causal_parents` the
     # backward edges a provenance walk descends -- carried as data here, and

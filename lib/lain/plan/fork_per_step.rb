@@ -18,14 +18,14 @@ module Lain
     class ForkPerStep
       include SeamPolicy
 
-      # @return [Timeline] the mainline as advanced so far -- append-only
+      # @return [Ext::Timeline] the mainline as advanced so far -- append-only
       attr_reader :mainline
 
       # @return [Array<Supersession>] the reopen references recorded so far, in
       #   the order steps reopened; empty until a step closes a second time
       attr_reader :supersessions
 
-      # @param mainline [Timeline] the store-backed mainline every fork branches
+      # @param mainline [Ext::Timeline] the store-backed mainline every fork branches
       #   from; the {Runner}'s run starts from this same Timeline
       # @param journal [#<<] where a reopen's {Telemetry::SupersessionRecord}
       #   lands; the Null channel by default, so a non-journaling caller needs no

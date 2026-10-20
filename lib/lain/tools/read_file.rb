@@ -149,8 +149,8 @@ module Lain
         #
         # Bytes that could never become a turn are refused HERE, the one point
         # both readers pass through and the last that still knows which path
-        # produced them. Left alone they reach `Canonical.normalize` on
-        # {Timeline#commit}, which raises `UnsupportedType` naming no file and
+        # produced them. Left alone they reach the canonical read inside
+        # {Ext::Timeline#commit}, which raises `UnsupportedType` naming no file and
         # takes the whole ask down with it.
         def deliver(session, path, tool_use_id)
           return ReadFile.not_text(path) unless committable?

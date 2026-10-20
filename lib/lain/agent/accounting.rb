@@ -16,7 +16,7 @@ module Lain
       # context a fraction of its size. `head` is nil for a chain standing on
       # nothing, which every chain extends.
       Reading = Data.define(:tokens, :head) do
-        # @param timeline [Timeline] the chain being asked about
+        # @param timeline [Ext::Timeline] the chain being asked about
         # @return [Integer, nil] the tokens, or nil where the reading does not
         #   describe `timeline`
         def on(timeline) = head.nil? || timeline.include?(head) ? tokens : nil
@@ -105,7 +105,7 @@ module Lain
       # can answer -- see `#take_reading` for why a response carrying none is
       # skipped rather than believed.
       #
-      # @param on [Timeline] the chain whose occupancy is asked
+      # @param on [Ext::Timeline] the chain whose occupancy is asked
       # @return [Integer, nil] nil before any turn, and on a chain that no
       #   longer holds the turn the reading stood on -- distinct from zero,
       #   which would read as an empty context

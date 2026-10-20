@@ -171,7 +171,7 @@ module Lain
       # ChainWriter AFTER the Store write has landed (the seam's pinned
       # contract), so a scribe failure is loud, never silent record loss.
       #
-      # @param event [Lain::Event]
+      # @param event [Lain::Ext::Event]
       # @return [self]
       def call(event)
         event.kind == :turn ? child_turn(event) : message(event)
@@ -187,7 +187,7 @@ module Lain
       # and the seed have both been judged, so a refused catch_up leaves the
       # file unchanged past its last good record.
       #
-      # @param timeline [Lain::Timeline]
+      # @param timeline [Lain::Ext::Timeline]
       # @return [self]
       # @raise [Diverged] for a rewound or diverged timeline, or a seed that was
       #   never the chain it claimed to be; nothing is written
@@ -236,7 +236,7 @@ module Lain
       # the two would resume onto a chain holding neither prompt.
       #
       # @param to [String, nil] a turn digest this record already wrote
-      # @param with [Lain::Timeline] a chain standing on `to`
+      # @param with [Lain::Ext::Timeline] a chain standing on `to`
       # @return [self]
       # @raise [Diverged] for a target never written, or a chain not standing
       #   on it; nothing is written
@@ -355,7 +355,7 @@ module Lain
 
       def recorded_turn?(digest) = @written.include?(digest) || @spawned.include?(digest)
 
-      # The turns above the append point, root-to-head: {Timeline#ancestors}
+      # The turns above the append point, root-to-head: {Ext::Timeline#ancestors}
       # walked head-first and stopped AT the append point, so a catch_up reads
       # the new turns and one more. Filtering a full walk instead cost O(n) per
       # ask -- O(n^2) over a session, on the durability path every ask waits on.

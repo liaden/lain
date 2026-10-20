@@ -202,7 +202,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # The ONE thing a spec injecting rendered lines through `set_view`
   # cannot see -- what happens when a view's own rendering reaches
   # `nvim_buf_set_lines`. Driven through real {Lain::Telemetry} events and a
-  # real {Lain::Store} for that reason, and over TWO asks, because the freeze
+  # real `Lain::Ext::Store` for that reason, and over TWO asks, because the freeze
   # this pins is permanent from the first offending render onward: a single-ask
   # assertion passes against the defect.
   #

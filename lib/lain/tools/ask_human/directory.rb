@@ -179,7 +179,7 @@ module Lain
         #
         # @param answer [String] what the human typed
         # @param digest [String] the Q event of the set this answers
-        # @return [Lain::Event] the A :message event the asker wrote
+        # @return [Lain::Ext::Event] the A :message event the asker wrote
         # @raise [NoPendingQuestion] naming the digest, when no registered asker
         #   holds that name -- unknown, deregistered, or withdrawn
         # @raise [Promise::AlreadyResolved] when this directory already routed

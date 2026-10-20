@@ -115,7 +115,7 @@ The headroom is for merging back the classes the old ceiling split, not for new 
 - **Comments are minimal, and explain WHY.** If a reader cannot tell *what* the code does, that
   is a defect in the code — extract a named method until it reads. Comment only what is
   *forced*: a wire-format quirk, a cop's false positive, a performance shape. Match
-  `lib/lain/timeline.rb`.
+  `lib/lain/epic/graph.rb`.
 - **Value objects are deeply frozen.** `Ractor.shareable?(event)` must stay `true` — the
   mechanical statement of "no reachable mutable state". There is a spec.
 
@@ -124,11 +124,13 @@ The headroom is for merging back the classes the old ceiling split, not for new 
 The rule above says a comment explains WHY. These say how much of it there may be, and what
 one is allowed to cite. `bin/comment-census` measures all three and is the worklist.
 
-- **Density is set by an exemplar, not by a ratio.** `lib/lain/timeline.rb` is the measured shape:
-  **0.79 prose:code, longest comment block 16 lines**. Write toward that file rather than toward a
-  number — the mandate is *whatever comments remain are genuinely useful*, and a ratio met by
-  deleting a reason is a failure wearing a pass's clothes. For scale, the census read `lib/` on
-  2026-09-12 at 61,518 prose against 51,296 code (1.20:1), 471 of 773 files carrying more comment than code.
+- **Density is set by an exemplar, not by a ratio.** `lib/lain/epic/graph.rb` is the measured shape:
+  **0.77 prose:code, longest comment block 13 lines**, measured 2026-10-20. It replaced
+  `lib/lain/timeline.rb` (0.79 and 16), deleted with the Ruby DAG. Write toward that file rather
+  than toward a number — the mandate is *whatever comments remain are genuinely useful*, and a ratio
+  met by deleting a reason is a failure wearing a pass's clothes. For scale, the census read `lib/`
+  on 2026-09-12 at 61,518 prose against 51,296 code (1.20:1), 471 of 773 files carrying more
+  comment than code.
 
 - **YARD tags are exempt from all of it.** ~4,900 lines across `lib/` and `spec/`, and they
   carry the shape a reader skims by: `@param`, `@return`, `@!attribute` and their kin are
@@ -294,10 +296,11 @@ this rule used to be about is gone; the disk-versus-`HEAD` gap is not.)
 Full treatment in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 `Canonical` gives deterministic bytes, serving turn hashing *and* prompt-cache stability — one
-function, two invariants. `Event`/`Store`/`Timeline` form a lossless content-addressed Merkle
-DAG, so `fork` is O(1) and `diverge_at` localizes a cache break. **There is no `Lain::Turn`**: it
-collapsed into `Lain::Event`, kind-tagged `:turn`, over a closed
-`KINDS = %i[turn spawn message snapshot]`. `Context#render` is a **pure** function
+function, two invariants. `Ext::Event`/`Ext::Store`/`Ext::Timeline` form a lossless
+content-addressed Merkle DAG in Rust, built through `Dag::Factory`, so `fork` is O(1) and
+`diverge_at` localizes a cache break; the Ruby DAG was deleted on 2026-10-20. **There is no
+`Lain::Turn`**: it collapsed into `Lain::Ext::Event`, kind-tagged `:turn`, over a closed
+`EventLog::Kinds::KINDS = %i[turn spawn message snapshot]`. `Context#render` is a **pure** function
 `(Timeline, Toolset, Workspace) → Request`; purity and cache-hit are the same constraint. Tool
 calls are `Effect`s interpreted by an `Effect::Handler`, with `Middleware` the Rack-idiom public
 API in front of it — one `Middleware::Stack` per agent, ending in the gate, then exactly one

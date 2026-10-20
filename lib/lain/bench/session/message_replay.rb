@@ -66,7 +66,7 @@ module Lain
         #
         # rubocop:disable Naming/PredicateMethod -- a COMMAND whose Boolean
         # reports whether it landed anything, not a query. `sweep?` would name
-        # the question and hide the puts, which is {Timeline#commit}'s lesson.
+        # the question and hide the puts, which is {Ext::Timeline#commit}'s lesson.
         def sweep
           before = @pending.size
           stalled = false
@@ -79,7 +79,7 @@ module Lain
         end
         # rubocop:enable Naming/PredicateMethod
 
-        # @return [Array<Event>] every event this file (and any earlier one in
+        # @return [Array<Ext::Event>] every event this file (and any earlier one in
         #   its chain) carries, root/prior-file-first, in FILE order
         # @raise [Corrupt] on a record whose envelope no longer re-derives to
         #   its recorded digest, or whose edges name nothing the file provides
@@ -147,14 +147,12 @@ module Lain
         # A journal is bytes, and bytes can be wrong. Every other field
         # announces its corruption through the digest it then fails to
         # re-derive, but `causal_parents` reaches neither that check nor the
-        # Store's, because {Event#normalize_causal} maps and SORTS it before any
-        # digest exists. Three ways out, none of them {Corrupt}: a String dies
-        # in `map`, a null BESIDE a digest dies in `sort`, and a lone null slips
-        # through the `compact` above to be refused by the Store as a
-        # {Ext::Store::MissingObject} raised from the SWEEP, where {#forced_put}'s
-        # translation cannot reach it. {ChainFold} has checked the identical
-        # field for turn records since it was written; this half had not, and
-        # that asymmetry was the defect.
+        # Store's, because the event constructor reads it before any digest
+        # exists, and refuses a String in place of the Array, or a non-String
+        # member, as a `TypeError`, which is not {Corrupt}. {ChainFold} checks
+        # the identical field for turn records; this is the same check for
+        # messages, so both halves answer a damaged edge in the one currency a
+        # door rescues.
         #
         # FIELD-scoped, like its {ChainFold} counterpart and unlike a name such
         # as "well formed": `render_parent`, `kind`, `digest` and `payload` are

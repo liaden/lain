@@ -407,7 +407,7 @@ module Lain
         # where to send a question.
         attr_reader :escalation
 
-        # @param read [Lain::Timeline, #call] a Timeline, or a thunk reading the
+        # @param read [Lain::Ext::Timeline, #call] a Timeline, or a thunk reading the
         #   live one, since the toolset is built before the Agent
         # @param to [String] who a question written against this handle is
         #   addressed to; see {#to}
@@ -434,7 +434,7 @@ module Lain
         # message before it rather than a live agent head -- see
         # {AskHuman#emit_question} for why that is what lets a relay never
         # wait on a parent's own dispatch. The block is handed
-        # FROM/TO/BODY/CAUSAL_PARENTS and answers with the {Lain::Event} it
+        # FROM/TO/BODY/CAUSAL_PARENTS and answers with the `Lain::Ext::Event` it
         # put, so this stays what this class already is -- data about where a
         # question goes -- and the ChainWriter stays the caller's own.
         def escalate(message)
@@ -738,7 +738,7 @@ module Lain
       # @param answer [String, Unanswered] what the human typed, or the answer
       #   nobody gave
       # @param digest [String] the Q event of the set this answers
-      # @return [Lain::Event] the A :message event, or the record that says the
+      # @return [Lain::Ext::Event] the A :message event, or the record that says the
       #   question went unanswered
       # @raise [NoPendingQuestion] naming the digest, when no set of that name
       #   is awaiting a reply

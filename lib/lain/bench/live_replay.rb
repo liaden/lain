@@ -24,7 +24,7 @@ module Lain
       # turn carries no `text` block, so it is naturally skipped -- what remains
       # is exactly the sequence a person typed, which is the task to re-run.
       #
-      # @param timeline [Lain::Timeline]
+      # @param timeline [Lain::Ext::Timeline]
       # @return [Array<String>]
       def self.prompts_from(timeline)
         timeline.to_a.select { |turn| turn.role == "user" }.filter_map { |turn| ask_text(turn) }

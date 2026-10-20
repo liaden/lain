@@ -232,7 +232,7 @@ module Lain
       # scheme: a corpus reviewed as it stands is not a diff, and an address that
       # claimed otherwise would be forgeable across the two.
       #
-      # Deeply frozen, {Event}'s rule and reason: an address already journalled
+      # Deeply frozen, {Ext::Event}'s rule and reason: an address already journalled
       # must not be editable under the session that wrote it. `-part.to_s` is
       # what makes that true of the members as well as the tuple -- string
       # interpolation returns a MUTABLE String, and one of those anywhere in the

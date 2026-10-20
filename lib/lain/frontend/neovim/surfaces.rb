@@ -20,7 +20,7 @@ module Lain
       class Surfaces
         # @param rpc [#post_view, #post_render] the editor's render inlet
         #   ({RpcThread}), the ONE way out of here
-        # @param store [Lain::Store] backs the live Timeline (see {Buffers})
+        # @param store [Lain::Ext::Store] backs the live Timeline (see {Buffers})
         # @param session [Lain::Session] the run's live reminders source
         # @param journal [#<<] where a resent request is recorded
         # @param questions [#open] where a set the human chose in the inbox is

@@ -3,8 +3,8 @@
 module Lain
   # Mutable state for ONE run, and deliberately not a value object.
   #
-  # Everything else the model sees is either content-addressed and frozen (an
-  # {Lain::Event}) or frozen and sent-not-stored (a {Lain::Workspace}). Session
+  # Everything else the model sees is either content-addressed and frozen (a
+  # `Lain::Ext::Event`) or frozen and sent-not-stored (a {Lain::Workspace}). Session
   # is the exception on purpose: it is the run's scratch memory and must
   # accumulate as tools run. Keeping it OFF the Timeline is what keeps
   # `Ractor.shareable?(turn)` true, and it is why rewinding or forking the
@@ -183,7 +183,7 @@ module Lain
     # delivery. A round that delivered leaves nothing open, so an ordinary run
     # journals nothing here.
     #
-    # @param timeline [Timeline]
+    # @param timeline [Ext::Timeline]
     # @return [self]
     def on_chain(timeline)
       withheld(@reads.withhold_undelivered)
@@ -197,7 +197,7 @@ module Lain
     # per tool round and would pay a whole-chain memory fold on every one of
     # them to answer a question only a rewind can change.
     #
-    # @param timeline [Timeline] the chain as the rewind left it
+    # @param timeline [Ext::Timeline] the chain as the rewind left it
     # @return [self]
     def rewound_to(timeline)
       on_chain(timeline)

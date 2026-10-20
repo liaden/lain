@@ -228,7 +228,7 @@ module Lain
           attr_reader :parent
 
           # @param lineage [Lineage] the writer
-          # @param parent [Timeline] the head the spawn is made from
+          # @param parent [Ext::Timeline] the head the spawn is made from
           # @param consumed [#<<] the journal the live inbox surfaces fold, where
           #   a question the child left parked is named consumed
           # @param journal [#<<] the session record, where a loss is noted when

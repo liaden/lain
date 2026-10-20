@@ -52,7 +52,7 @@ module Lain
       private_constant :COLUMNS
 
       # How a graded subject is addressed for its {Telemetry::GradeRecord}.
-      # Every arm hands its grader a {Timeline}, which carries no `#digest` of
+      # Every arm hands its grader a {Ext::Timeline}, which carries no `#digest` of
       # its own -- its content address is its head turn's -- so the Driver
       # injects the resolution rather than leaving
       # {Grader::Journaling#digest_for} to its duck-typed fallbacks, which would

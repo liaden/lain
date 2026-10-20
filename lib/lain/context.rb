@@ -194,7 +194,7 @@ module Lain
     NO_MESSAGES = [].freeze
     private_constant :NO_MESSAGES
 
-    # The Timeline as the message list a Provider sees: {Timeline#messages},
+    # The Timeline as the message list a Provider sees: {Ext::Timeline#messages},
     # which {Compaction::Head} and {Compaction::Derivation::Walk} also take, so
     # a head is measured and a derived chain validated in the very bytes sent.
     #

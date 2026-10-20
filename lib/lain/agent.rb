@@ -174,8 +174,8 @@ module Lain
     #   that made the calls. Defaults to {Tool::RoundBudget::NONE}.
     # @param accounting [Agent::Accounting] the run's token roll-up, handed over
     #   WHOLE rather than built from `journal:`.
-    # @param timeline [Timeline, nil] the run's causal history. `nil` builds an
-    #   empty Timeline over a fresh {Store}; a caller resuming a session hands
+    # @param timeline [Ext::Timeline, nil] the run's causal history. `nil` builds an
+    #   empty Timeline over a fresh {Ext::Store}; a caller resuming a session hands
     #   one in.
     # @param workspace [Workspace] the sent-not-stored files/tools context
     #   rendered into every Request. Frozen, and never appended to the Timeline.

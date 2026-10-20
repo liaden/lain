@@ -43,8 +43,8 @@ module Lain
       # turn) and the journal entries a {Ledger} prices the workers through.
       Folded = Data.define(:timeline, :ledger_entries)
 
-      # @param lead [Timeline] the orchestrator's Timeline; its Store must already
-      #   hold every worker head (the workers ran over it), or {Timeline#commit}'s
+      # @param lead [Ext::Timeline] the orchestrator's Timeline; its Store must already
+      #   hold every worker head (the workers ran over it), or {Ext::Timeline#commit}'s
       #   referential-integrity check raises when the causal edge dangles
       # @param results [Array<Result>] one per subtask, in subtask order
       # @return [Folded]
@@ -58,7 +58,7 @@ module Lain
 
       # Only committed heads become causal edges. A worker that settled no turn
       # has a nil head and is simply not a causal parent -- but a NON-nil head
-      # the Store never saw is NOT dropped: it flows to {Timeline#commit}, which
+      # the Store never saw is NOT dropped: it flows to {Ext::Timeline#commit}, which
       # raises {Ext::Store::MissingObject} rather than silently discarding a dangling
       # parent.
       def causal_parents(results) = results.filter_map(&:head_digest)

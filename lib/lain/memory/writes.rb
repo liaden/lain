@@ -11,7 +11,7 @@ module Lain
     # ({Bench::Session::MemoryReplay}) -- because a session rendering a memory
     # its own record says the chain dropped is exactly the divergence this
     # exists to make unrepresentable. It reads content blocks, so a live
-    # {Event}'s and a recorded turn's are the same input.
+    # {Ext::Event}'s and a recorded turn's are the same input.
     class Writes
       include Enumerable
 

@@ -4,7 +4,7 @@ module Lain
   module Tools
     class Subagent < Tool
       # The append-only, ordered read-side a mailbox {EventLog::Projection} folds.
-      # The shared {Store} is a digest->object map with no order, so it cannot
+      # The shared {Ext::Store} is a digest->object map with no order, so it cannot
       # present a recipient's messages as a SEQUENCE; this preserves emission
       # order so the projection can. Append-only by construction -- no delete,
       # no pop -- which is what keeps a mailbox a pure FOLD rather than a

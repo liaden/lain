@@ -11,7 +11,7 @@ module Lain
     #
     # == Why the causal fan-in is safe
     #
-    # {Timeline#to_a} follows `render_parent` ONLY, so a replacement event can
+    # {Ext::Timeline#to_a} follows `render_parent` ONLY, so a replacement event can
     # name every source digest it subsumes in `causal_parents` and the derived
     # chain still renders the replacement rather than the turns it replaced.
     # `causal_parents` is the FIBRE of the collapse -- a replacement's preimage
@@ -139,10 +139,10 @@ module Lain
         freeze
       end
 
-      # @param source [Timeline] the session timeline
-      # @param into [Store] where the derived chain is written. The source's own
+      # @param source [Ext::Timeline] the session timeline
+      # @param into [Ext::Store] where the derived chain is written. The source's own
       #   store is the only answer -- a replacement's causal edges name source
-      #   digests, and {Store#put} refuses an edge it does not hold -- and it is
+      #   digests, and {Ext::Store#put} refuses an edge it does not hold -- and it is
       #   refused here rather than left to dangle, because a strategy that
       #   collapses nothing would otherwise build a whole chain in the wrong
       #   store in silence.
@@ -158,14 +158,14 @@ module Lain
       # @param resume [Resume, nil] an earlier derivation of a prefix of
       #   `source`, extended rather than rewritten when it {Resume#covers?}
       #   this one; nil, or one that does not cover it, derives in full
-      # @yieldparam derived [Timeline] the derived chain
+      # @yieldparam derived [Ext::Timeline] the derived chain
       # @yieldparam seam [Seam] the seam this derivation froze: `cut` itself
       #   when nothing after it collapsed, and otherwise a later one holding
       #   every range this chain collapsed. It is the caller's to commit or
       #   discard -- a derivation does not know whether its chain will be sent.
       # @yieldparam resume [Resume, nil] this derivation as a later one may
       #   resume it; nil when something new collapsed or the source is empty
-      # @return [Timeline, Object] the derived chain, in `into`; or the block's
+      # @return [Ext::Timeline, Object] the derived chain, in `into`; or the block's
       #   value when a block is given
       def derive(source, into: source.store, walk: nil, cut: UNCUT, resume: nil)
         refuse_foreign(source, into)
@@ -222,7 +222,7 @@ module Lain
       # begins with the very turns that chain was derived from.
       Resume = Data.define(:head, :size, :seam, :derived) do
         # @param plan [Plan] this derivation's plan
-        # @param into [Store] where this derivation writes
+        # @param into [Ext::Store] where this derivation writes
         # @return [Boolean] whether extending `derived` gives the full
         #   derivation's chain: the same seam held, the same prefix, every held
         #   range inside it, nothing new collapsing, and the same store
@@ -267,9 +267,9 @@ module Lain
       # committed chain would leave a dead chain behind on every refusal --
       # bounded for a deterministic strategy, unbounded for a model-backed one.
       #
-      # `Canonical.normalize` is the transform {Event::Payload} applies on the
-      # way in, so these are the bytes the provider would have seen and this is
-      # the SAME judgement the committed chain would get.
+      # `Canonical.normalize` applies the rules a `Lain::Ext::Payload` reads its
+      # body under on the way in, so these are the bytes the provider would have
+      # seen and this is the SAME judgement the committed chain would get.
       def refuse_invalid(writes, before: NO_RANGES)
         messages = Canonical.normalize(EventLog::Messages.project(before) + writes.map(&:projection))
         conversation = Context::Conversation.new(messages)
@@ -301,7 +301,7 @@ module Lain
         def projection = { "role" => role, "content" => content }
 
         # Unfiltered, {Arm::Synthesis}'s discipline: a causal parent the Store
-        # has not seen flows to {Timeline#commit} and raises, rather than being
+        # has not seen flows to {Ext::Timeline#commit} and raises, rather than being
         # quietly dropped from the edge.
         def onto(timeline) = timeline.commit(role:, content:, causal_parents:)
       end

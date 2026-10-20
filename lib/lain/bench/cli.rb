@@ -778,7 +778,7 @@ module Lain
           @suite = unique_prompts!(suite)
         end
 
-        # @param timeline [Timeline] the run to score
+        # @param timeline [Ext::Timeline] the run to score
         # @return [Grader::Grade]
         def grade(timeline) = task_for(asked_in(timeline)).grader.grade(ArmSweep.trajectory(timeline))
 

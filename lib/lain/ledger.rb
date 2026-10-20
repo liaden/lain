@@ -47,7 +47,7 @@ module Lain
 
     # Total usage over the unique reachable turns of every given Timeline.
     #
-    # @param timelines [Array<Lain::Timeline>]
+    # @param timelines [Array<Lain::Ext::Timeline>]
     # @return [Lain::Usage]
     def usage(*timelines)
       unique_turns(timelines).values.reduce(Usage.zero) { |sum, turn| sum + usage_of(turn) }
@@ -57,7 +57,7 @@ module Lain
     # its own model. Unlike {#usage} this cannot be a single monoid fold: two
     # payments under different models add different dollars for the same tokens.
     #
-    # @param timelines [Array<Lain::Timeline>]
+    # @param timelines [Array<Lain::Ext::Timeline>]
     # @return [BigDecimal]
     def cost(*timelines)
       unique_turns(timelines).values.reduce(BigDecimal(0)) { |sum, turn| sum + cost_of(turn) }
@@ -69,7 +69,7 @@ module Lain
     # Journal never priced contributes {Usage.zero}, so user turns and
     # un-instrumented turns are simply free.
     #
-    # @param turn [Lain::Event]
+    # @param turn [Lain::Ext::Event]
     # @return [Lain::Usage]
     def usage_of(turn)
       @index.entries_for(turn.digest).reduce(Usage.zero) { |sum, entry| sum + entry.usage }
@@ -79,7 +79,7 @@ module Lain
     # raises {PriceBook::UnknownModel} -- a silently-free payment would be a lie
     # -- unless the PriceBook carries a fallback, which still prices it.
     #
-    # @param turn [Lain::Event]
+    # @param turn [Lain::Ext::Event]
     # @return [BigDecimal]
     def cost_of(turn)
       @index.entries_for(turn.digest).reduce(BigDecimal(0)) do |sum, entry|

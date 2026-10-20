@@ -133,7 +133,7 @@ module Lain
 
       # The sidecar re-put: every recorded blob back into the replayed Store,
       # verified by re-derivation exactly as the Loader verifies a turn, so a
-      # tampered record cannot load quietly wrong. {Store#put} dedups.
+      # tampered record cannot load quietly wrong. {Ext::Store#put} dedups.
       def restore_blobs(store)
         of_type("workspace_blob").each do |record|
           blob = Workspace::Snapshot::Blob.new(bytes: record.fetch("bytes_b64").unpack1("m0"))
@@ -219,7 +219,7 @@ module Lain
       # event's payload names each file's bytes by digest; this journals those
       # bytes -- once per content address -- BEFORE forwarding the event, so a
       # file-order reader meets bytes before the record that names them
-      # ({Store#put}'s payload-then-envelope discipline, on disk).
+      # ({Ext::Store#put}'s payload-then-envelope discipline, on disk).
       #
       # Stateful like {Workspace::Snapshot}'s last-files skip, and for the
       # mirrored reason: "which blobs did this writer already journal" is
@@ -241,7 +241,7 @@ module Lain
       # note takes.
       class JournalBlobs
         # @param journal [#<<] where workspace_blob records land
-        # @param store [Store] resolves the snapshot's blob digests to bytes;
+        # @param store [Ext::Store] resolves the snapshot's blob digests to bytes;
         #   must be the store the snapshot writer puts blobs into
         # @param observer [#call] the next observer in the chain (the scribe)
         def initialize(journal:, store:, observer: EventLog::ChainWriter::Null.new)
@@ -255,7 +255,7 @@ module Lain
         # contract): a blob that could not be journaled is silent checkpoint
         # loss, the failure class replay-restart exists to close.
         #
-        # @param event [Event]
+        # @param event [Ext::Event]
         # @return [self]
         def call(event)
           journal_blobs(event) if event.kind == :snapshot

@@ -33,7 +33,7 @@ module Lain
     # record data, not live-view telemetry -- so a count that waited for the
     # Event only ever climbed (2 published against a `lain://inbox` drawing one,
     # measured live). The usage record names the committed head, so the cited
-    # digests are read off that head's chain in the run's {Store}.
+    # digests are read off that head's chain in the run's {Ext::Store}.
     #
     # A SPAWNED chain's turn is a third carrier and it names its edges directly:
     # {StatusFeed} hands them to {#retire} off a {Telemetry::QuestionsConsumed},
@@ -50,7 +50,7 @@ module Lain
     # All three write the same standing {#consumed} set, so a replay delivering
     # more than one retires once.
     class Inbox
-      # @param store [Store] where a committed head's chain is resolved. Defaulted
+      # @param store [Ext::Store] where a committed head's chain is resolved. Defaulted
       #   to an EMPTY one rather than required: `ChatLaunch` builds the feed that
       #   owns this object before `Wiring` exists at all. An empty Store is a real
       #   object that resolves no head, so an unbound inbox counts arrivals and
@@ -64,7 +64,7 @@ module Lain
         @pending = {}
       end
 
-      # @param store [Store] the run's object database, once there is one
+      # @param store [Ext::Store] the run's object database, once there is one
       # @return [void]
       def bind_store(store)
         @store = store
@@ -114,14 +114,12 @@ module Lain
       # a sink's failure into the agent loop, so a head this object cannot walk
       # is a MISS, never a raise that costs the turn over a status line.
       #
-      # ⚠️ THE RESCUE IS AS WIDE AS THAT PROMISE, deliberately, and it was not.
-      # `MissingObject` alone covers only the head the store does not HOLD (no
-      # Store bound yet, a replay from the middle of a session). A head it holds
-      # that names something other than a turn walks straight into
-      # `NoMethodError: undefined method 'parent' for an instance of
-      # Event::Payload` -- every message ever written puts such a digest in the
-      # same store -- and that one went out through the tee. So any StandardError
-      # here reads as "this head names nothing to retire": a status surface
+      # ⚠️ THE RESCUE IS AS WIDE AS THAT PROMISE, deliberately. A head the store
+      # HOLDS that names something other than a turn is common: every message
+      # ever written puts such a digest in the same store. The promise is about
+      # any head this object cannot walk, whichever error the walk raises for
+      # it, so naming one class here would make it rest on that. Any StandardError
+      # here therefore reads as "this head names nothing to retire": a status surface
       # answering "nothing pending" about a store it cannot make sense of beats
       # costing a turn to draw a number, and it is why this class derives the
       # payment BEFORE calling the walk ({StatusFeed#observe_commit}).

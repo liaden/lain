@@ -11,7 +11,7 @@ while holding the GVL is a known footgun, and an "in-process sandbox" is not a s
 ## Toolchain
 
 ```bash
-cargo test                                  # 235/235 today (`-p lain`); must not regress
+cargo test                                  # 287/287 on 2026-10-20 (`-p lain`); must not regress
 cargo clippy --all-targets -- -D warnings   # warnings are errors
 cargo doc --no-deps                         # clean; broken intra-doc links are denied
 cargo fmt -- --check                        # pre-commit runs this, not `cargo fmt`
@@ -47,9 +47,12 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
 - **Stable channel only. No `#![feature]`.** A subagent has already shipped `#![feature]` here
   and it does not build. If you reach for a nightly feature, the design is wrong.
 - **No `forbid(unsafe_code)` here.** That rule is `crates/lain-core`'s
-  (`crates/lain-core/src/main.rs:13`), not this crate's. `ext/lain` has 11 `unsafe {` blocks (`grep -rc 'unsafe {' ext/lain/src`)
-  and they are FFI-boundary calls in magnus's own unsafe API — they cannot be
-  removed, and forbidding them would not compile. Every one carries a `SAFETY:` comment; that is
+  (`crates/lain-core/src/main.rs:13`), not this crate's. `ext/lain` has 15 `unsafe {` blocks
+  (`grep -rc 'unsafe {' ext/lain/src`, 2026-10-20). 9 are FFI-boundary calls in magnus's own
+  unsafe API; the other 6 sit in the 2 counting global allocators, `lib.rs`'s `heap` (the
+  extension's, behind `Lain::Ext::Probe.live_bytes`) and `dag.rs`'s test-only one, each an
+  `unsafe impl GlobalAlloc` forwarding to `System`. None can be removed, and forbidding them
+  would not compile. Every one carries a `SAFETY:` comment; that is
   the standard here. The root `CLAUDE.md`'s "NO `unsafe` in lain's Rust" means *do not hand-roll
   new unsafe* — reach for a crate — not that the existing FFI boundary is a defect.
 - **Two doc lints, and only one of them bites today.** The crate-root `missing_docs` is just the
@@ -100,9 +103,29 @@ of it and test the decision.
 
 ## When porting a Ruby structure down here (M4)
 
-`Timeline` ships as pure Ruby first. The port is correct **only** when the existing `Regular` and
-`MeetSemilattice` property tests pass unchanged against *both* implementations — that is the
-acceptance test, and it is why the Ruby version is not deleted when the Rust one lands.
+Until 2026-10-20 the rule was the 2026-07-17 Ruby-first ruling: "`Timeline` ships as pure Ruby
+first. The port is correct **only** when the existing `Regular` and `MeetSemilattice` property
+tests pass unchanged against *both* implementations — that is the acceptance test, and it is why
+the Ruby version is not deleted when the Rust one lands." It held while the Ruby was the only
+statement of what the answers were.
+
+It is reversed. The Ruby `Event`, `Store` and `Timeline` were deleted on 2026-10-20, because "a
+differential test proves agreement, not correctness — if both sides share a wrong assumption it
+passes green forever" (`planning/specs/simplify-13-rust-port.md`, 2026-09-12). A port is now
+correct when 3 things hold, and the Ruby it replaces may then go:
+
+- **The laws are stated natively**, as `proptest` properties in `cargo test`, under the same law
+  names as the Ruby shared group (see below), and the shared groups still run unchanged in
+  `spec/lain/rust/*` against the binding.
+- **The Ruby's answers are frozen first**, as a conformance corpus under `ext/lain/corpus/`
+  (5 NDJSON files, each held at the blake3 digest `MANIFEST.json` records). `src/corpus.rs` reads
+  it in `cargo test`; `spec/conformance_corpus_spec.rb` reads it through the compiled extension.
+  `MANIFEST.json`'s `ruby_oracle_retired` names the commit after which a vector stopped
+  re-deriving from Ruby, and `divergences` lists every place the extension answers differently on
+  purpose. Only the canonical vectors still have a Ruby to re-derive from.
+- **The tests constrain the code**, measured by `bundle exec rake rust:mutants`: `cargo-mutants`
+  over the address-computing and graph modules, failing unless the killed, unviable and missed
+  counts equal `ext/lain/mutants-baseline.txt`.
 
 > ⚠️ **A magnus-wrapped `TypedData` object is not `Ractor.shareable?` for free.** `Ractor.shareable?(turn)`
 > must stay `true` — it is the mechanical statement of "no reachable mutable state", and there is a
@@ -111,6 +134,40 @@ acceptance test, and it is why the Ruby version is not deleted when the Rust one
 Batch across the boundary. A per-node FFI call in a DAG walk loses to plain Ruby, because
 conversion cost dominates almost every naive binding. If a port is not asymptotically better, it is
 not better.
+
+**One walk crosses per node, on purpose: the block form of `Ext::Timeline#ancestors`.** It is lazy
+because its callers stop early (`take_while`, `find`), so a walk pays for the nodes it read and not
+for the chain. Every other walk (`to_a`, `ancestor_digests`, `messages`) still crosses once with a
+built Array. What makes the lazy one safe is where its state lives: the snapshot and the cursor are
+in a `Lain::Ext::Timeline::Walk`, an object Ruby's collector owns, and each node's wrapper goes
+straight to `rb_yield`. A new per-node crossing needs the same 2 reasons: a caller that stops early,
+and state the collector can free.
+
+**Rust never holds owned heap state across a call into Ruby.** A fiber dropped while suspended
+inside that call is collected without being unwound, so a Rust frame waiting in it never runs its
+destructors, and whatever it owns leaks where no Ruby-side measure can see it. A site that calls
+into Ruby does one of 3 things:
+
+- It makes every Ruby call before it builds any Rust state (`read_node`).
+- It keeps its partial state in a holder the collector frees with the fiber (`Lain::Ext::Reading`
+  for a canonical conversion, `Lain::Ext::Timeline::Walk` for a lazy walk).
+- It refuses through a `Refusal` instead of building the exception itself. Building a `Lain`
+  exception runs Ruby twice: the constant lookup can autoload, and the class's `#initialize` can
+  run anything. So `lookup_error` renders its message into a Ruby String first, and its
+  `message` closure is bound `FnOnce() -> String + 'static`. That bound is how the rule holds for
+  what a message closure captures: the compiler refuses a closure that borrows caller state, so whatever it
+  captures is owned and dropped once the message is rendered, before the lookup. A helper that
+  still owns state when it refuses (`utf8`, `read_causal_parents`, `put_refusal` and their kin)
+  returns `Refusal::Named(path, message)` or `Refusal::Built(error)`; the caller drops its state
+  and only then raises.
+
+`spec/support/reentry.rb` measures a site: it drops a suspended fiber 20 times and reads the live
+Rust heap through `Lain::Ext::Probe.live_bytes`, which counts the global allocator in `lib.rs`'s
+`heap` module. The bound is 1 payload. The `spec/lain/rust/*_reentry_spec.rb` files hold one
+example per refusal reachable without a corrupt store (`refusal_reentry_spec.rb` has 12); a site
+reachable only from a corrupt store, or covered by the `'static` bound alone, has none. A new
+call into Ruby that a caller can reach gets its own example. The lazy walk is counted by
+`Walk.live` instead, in `spec/lain/rust/timeline_spec.rb`.
 
 ### A ported algebraic structure keeps the Ruby law names; that is the whole contract
 
@@ -138,11 +195,19 @@ the structure without them. An order that is *not* a semilattice gets a differen
 | Suite | Proves | Notes |
 |---|---|---|
 | `cargo test` | the Rust **algorithm** obeys the law | plain functions, no `magnus`, no VM — a layer the Ruby suite cannot reach |
-| `spec/lain/rust/*` | the Rust **binding** agrees with Ruby | runs the shared groups **unchanged**; the SOLE authority on cross-implementation agreement |
+| `spec/lain/rust/*` | the Rust **binding** obeys the same laws | runs the shared groups **unchanged** through the compiled extension |
+| `src/corpus.rs` and `spec/conformance_corpus_spec.rb` | the extension answers what Ruby answered | the frozen corpus; the SOLE authority on agreement with the deleted Ruby |
 
-Never assert "Rust equals Ruby" inside `cargo test`. If a Rust test wants a Ruby value to compare
-against, it belongs in RSpec — the port acceptance rule above depends on there being exactly one
-such authority.
+Until 2026-10-20 the rule here was: "Never assert 'Rust equals Ruby' inside `cargo test`. If a Rust
+test wants a Ruby value to compare against, it belongs in RSpec — the port acceptance rule above
+depends on there being exactly one such authority" (from the 2026-07-27 algebra vocabulary chunk,
+where a second Rust-native parity suite would have forked the differential oracle). The frozen
+corpus broke it: `src/corpus.rs` compares Rust against Ruby's recorded answers inside
+`cargo test`, and once the Ruby was deleted no live Ruby value is left to compare against in RSpec.
+The reason survives as the rule: **there is exactly one authority on agreement with Ruby, and it
+is the corpus.** A Rust test compares against a recorded vector, never against a value it computes
+by re-implementing the Ruby, and a new disagreement goes into `MANIFEST.json`'s `divergences`
+with its reason (through `spec/conformance/corpus_generator.rb`, which writes the manifest).
 
 Testability follows the same rule the **Testing shape** section states: push the decision out of
 the FFI method and test the decision. `put_into` was split out of `Store::put` for exactly this —

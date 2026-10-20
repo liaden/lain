@@ -8,7 +8,7 @@ module Lain
     # {RefuseSecretWrites}' mirror image, and the same rule turned around: the
     # only place a leak can be stopped is before the thing that remembers it. This
     # one rewrites `env[:result]` on the way OUT of the tool phase, so unreleased
-    # bytes never exist above the middleware -- never in an {Event}, never in a
+    # bytes never exist above the middleware -- never in an {Ext::Event}, never in a
     # digest, never in the prompt-cache prefix.
     #
     # == Why this boundary exists when the path boundary already refused

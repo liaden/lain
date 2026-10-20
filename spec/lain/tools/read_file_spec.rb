@@ -594,8 +594,9 @@ RSpec.describe Lain::Tools::ReadFile do
 
   # From QA round 10: a file whose bytes are not valid UTF-8 used to come
   # back as a SUCCESS, and the ask then died several objects later inside
-  # {Lain::Timeline#commit}: `Event::Payload#initialize` calls
-  # `Canonical.normalize`, which refuses a String it cannot pin to UTF-8. The
+  # the Timeline's commit: the Ruby `Event::Payload#initialize` called
+  # `Canonical.normalize`, which refuses a String it cannot pin to UTF-8, and
+  # `Lain::Ext::Timeline#commit` refuses the same bytes today. The
   # model learned nothing, the turn never landed, and the message named no
   # file. The refusal moves that verdict to the one place that still knows
   # which path produced the bytes, and it asks exactly the question

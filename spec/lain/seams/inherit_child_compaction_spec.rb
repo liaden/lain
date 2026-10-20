@@ -8,7 +8,7 @@ require "tmpdir"
 # real parent {Lain::Agent} with its real {Lain::Compaction::Source}, a real
 # {Lain::Session} journaling into a real session file through a real
 # {Lain::SessionRecord::Scribe}, and the real {Lain::Tools::Subagent} spawning
-# over the shared {Lain::Store}. The child's own Source is a real one of the
+# over the shared `Lain::Ext::Store`. The child's own Source is a real one of the
 # parent's arm. The file is read back by the real loader.
 #
 # The chat provider is recorded: it refuses a render still holding the

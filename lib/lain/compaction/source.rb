@@ -619,7 +619,7 @@ module Lain
       # so when those alone come to the refused window it declines before the
       # summarizer is asked: the document could only be written beside them.
       #
-      # @param timeline [Timeline] the chain the refused render stood on
+      # @param timeline [Ext::Timeline] the chain the refused render stood on
       # @param session [Session] the run's, which records the cut
       # @param refusal [Lain::WindowExceeded] the refusal that asked, whose
       #   exact count and window the kept set is measured against
@@ -647,7 +647,7 @@ module Lain
       # {Agent::PipelineSource}'s duck.
       #
       # @param base [Context] the Agent's own Context
-      # @param timeline [Timeline] the history as of this render
+      # @param timeline [Ext::Timeline] the history as of this render
       # @param usage [Integer, nil] the LAST-TURN input tokens -- nil before any
       #   turn and on a chain rewound past the turn they were read on, which
       #   {Need::ApproachingWindow} distinguishes from zero. A cumulative total
@@ -673,7 +673,7 @@ module Lain
       # A command whose Boolean reports what it did, which PredicateMethod misreads as a question.
       #
       # @param base [Context] the Agent's own Context
-      # @param timeline [Timeline] the history as of this tick
+      # @param timeline [Ext::Timeline] the history as of this tick
       # @param usage [Integer, nil] the LAST-TURN input tokens, as {#context_for} takes them
       # @param session [Session] the run's, which records the cut
       # @return [Boolean] whether a cut was committed

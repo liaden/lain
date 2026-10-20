@@ -38,8 +38,8 @@ module Lain
     end
 
     # A graded trajectory, and the Arm seam's whole output vocabulary. A RESULT
-    # CARRIER, not a value object: frozen (Data), but it holds a live {Timeline}
-    # over a mutable {Store}, so unlike {Compare::Run} it is deliberately NOT
+    # CARRIER, not a value object: frozen (Data), but it holds a live {Ext::Timeline}
+    # over a mutable {Ext::Store}, so unlike {Compare::Run} it is deliberately NOT
     # `Ractor.shareable?` -- there is no shareability spec to satisfy here and
     # porting one on would be a category error. Wall-time rides along because
     # {Compare} does not model it.
@@ -47,13 +47,13 @@ module Lain
     # REACHABILITY CONTRACT (load-bearing for fan-out arms). `#usage`/`#cost`/
     # `#compare_run` fold the Ledger over the unique turns REACHABLE from
     # `timeline`'s head, and {Ledger} walks RENDER ancestry only (first-parent,
-    # {Timeline#ancestors}) -- causal edges are NOT priced. So an arm's totals are
+    # {Ext::Timeline#ancestors}) -- causal edges are NOT priced. So an arm's totals are
     # made correct one of two ways: (a) every paid turn sits on the head's
     # first-parent chain, which a single-thread run gets for free; or (b) a paid
     # turn that is not render-reachable (a fan-out worker's fresh-root turns) has
     # its usage re-keyed onto a reachable digest, each moved record marked
     # `reattributed: true` and `attributed_from: <the worker head>` so per-worker
-    # spend stays recoverable. Fan-out synthesis is (b): the multi-parent {Event}
+    # spend stays recoverable. Fan-out synthesis is (b): the multi-parent {Ext::Event}
     # it commits names every worker head causally, while the workers' tokens
     # re-attribute onto the reachable synthesis turn. Returning a Run whose totals
     # silently omit a paid worker prices that worker at zero.

@@ -28,7 +28,7 @@ module Lain
       # root digest, inherited unchanged. The `head &&` guard is what makes this
       # total over the empty chain without a separate `empty?` check.
       #
-      # @param timeline [Timeline]
+      # @param timeline [Ext::Timeline]
       # @return [String, nil]
       def self.correlation_of(timeline)
         head = timeline.head
@@ -42,11 +42,11 @@ module Lain
       end
 
       # Writes one :message/:spawn event into `parent`'s shared Store: a
-      # kind-tagged {Payload} out of line, then the envelope that addresses it
+      # kind-tagged {Ext::Payload} out of line, then the envelope that addresses it
       # by digest, correlated to `parent`'s chain identity. `payload_digest`
       # is a Store edge (referential integrity), so the payload must land
       # first or the envelope's own put would dangle -- the same discipline
-      # {Timeline#commit} follows for :turn events.
+      # {Ext::Timeline#commit} follows for :turn events.
       #
       # A raising observer raises OUT of this method, deliberately: the write
       # has already landed, so a raise means the OBSERVATION failed -- the
@@ -55,7 +55,7 @@ module Lain
       # Callers may re-put idempotently: content addressing makes the retry a
       # no-op on the Store side.
       #
-      # @return [Event] the event just written
+      # @return [Ext::Event] the event just written
       def put(parent, kind:, from:, to:, causal_parents:, body:)
         event = Dag::Factory.event(kind:, body:, from:, to:, causal_parents:,
                                    correlation: self.class.correlation_of(parent))

@@ -207,7 +207,7 @@ module Lain
       # headless run, so /status still answers its honest zeros.
       #
       # Built here and BOUND LATER: `inbox_count` needs the session's
-      # {Lain::Store} to resolve a committed head's causal chain, and that store
+      # `Lain::Ext::Store` to resolve a committed head's causal chain, and that store
       # does not exist until `Wiring#run` has built the Agent -- a layer below
       # this line. So Wiring hands it over ({Lain::StatusFeed#bind_store});
       # until then an empty Store resolves nothing and the count only climbs.

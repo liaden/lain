@@ -1046,10 +1046,10 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   # The consuming walk's ONE failure mode, held to the same promise on this side
   # of the parity as on {Lain::StatusFeed::Inbox}'s -- deliberately together, so
   # the two cannot drift. A head naming a stored BODY rather than a turn (the
-  # ChainWriter puts one per message) walks into `NoMethodError: undefined
-  # method 'parent' for an instance of Lain::Event::Payload`, past a rescue that
-  # named only MissingObject and out through the drain thread that feeds this
-  # view.
+  # ChainWriter puts one per message) once walked into `NoMethodError` in the
+  # deleted Ruby Timeline, past a rescue that named only MissingObject and out
+  # through the drain thread that feeds this view. The extension refuses it as
+  # MissingObject ("no event"); the example holds the promise either way.
   describe "a head the chain walk cannot make sense of" do
     it "is a miss, not a raise that kills the drain" do
       question = stored_question

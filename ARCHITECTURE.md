@@ -174,9 +174,11 @@ The sections below name the files behind each box.
 |---|---|
 | Deterministic serialization | `lib/lain/canonical.rb` |
 | Content addressing (digest mixin) | `lib/lain/content_addressed.rb` |
-| The envelope that generalizes `Turn` | `lib/lain/event.rb`, `lib/lain/event/payload.rb` |
-| The append-only object database | `lib/lain/store.rb` |
-| The (head digest, store) pointer | `lib/lain/timeline.rb` |
+| The envelope that generalizes `Turn` | `ext/lain/src/event.rs` (`Lain::Ext::Event`, `Lain::Ext::Payload`) |
+| The append-only object database | `ext/lain/src/dag.rs` (`Lain::Ext::Store`) |
+| The (head digest, store) pointer | `ext/lain/src/lib.rs` (`Lain::Ext::Timeline`) |
+| The one place each is built | `lib/lain/dag/factory.rb` |
+| The kind and role vocabularies, and the projections over events | `lib/lain/event_log/` |
 | Deep immutability | `lib/lain/freezable.rb` |
 
 `Lain::Canonical` produces deterministic bytes: sorted keys, stable array order, BLAKE3 digest.
@@ -186,22 +188,25 @@ extension holds BLAKE3 and a separate canonical encoder the DAG uses. It keeps a
 process-wide set of the Arrays it has returned, so normalizing one again hands back the same
 object without walking it; off the main Ractor it always normalizes in full.
 
-There is no standalone `Turn` class in the current tree. `Lain::Event` (`lib/lain/event.rb`)
-is a CloudEvents-shaped envelope with a closed `KINDS` set (`turn spawn message snapshot`).
-`Event.turn(...)` does what `Turn.new` used to do, and `Timeline#commit`
-(`lib/lain/timeline.rb`) calls exactly that. The Merkle-DAG properties `CLAUDE.md` describes are
-unchanged, now built over `Event`.
+There is no standalone `Turn` class in the current tree. `Lain::Ext::Event`
+(`ext/lain/src/event.rs`) is a CloudEvents-shaped envelope over a closed kind set,
+`EventLog::Kinds::KINDS` (`turn spawn message snapshot`), and a `:turn` event is what `Turn.new`
+used to build. `Ext::Timeline#commit` builds one. The Merkle-DAG properties `CLAUDE.md` describes
+are unchanged, now built over the Rust event. The Ruby `Event`, `Store` and `Timeline` were deleted
+on 2026-10-20; the frozen corpus under `ext/lain/corpus/` holds what they answered.
 
-`Store` (`lib/lain/store.rb`) is the append-only, content-addressed map underneath. A
-`Timeline` is only ever a `(head_digest, store)` pair, which is why `#fork` returns `self`:
-under immutability, forking and identity are the same operation.
+`Ext::Store` is the append-only, content-addressed map underneath. It holds 2 maps in one
+keyspace: events, each carrying its payload, and every other member (payloads, blobs, canonical
+values). A `Timeline` is only ever a `(head_digest, store)` pair, which is why `#fork` returns
+`self`: under immutability, forking and identity are the same operation. Every Timeline, Store and
+stored event is built by `Dag::Factory`, so no caller binds itself to the extension's constructors.
 
 ### Two parent edges
 
 The render chain and the causal graph diverge on purpose. `render_parent` is the single
 first-parent edge the model sees. `causal_parents` is a set carried by `:spawn` and `:message`
-events (subagent lineage, below) that never enters a render chain. `Store#put` checks
-referential integrity on both.
+events (subagent lineage, below) that never enters a render chain. `Ext::Store#put` checks
+referential integrity on both, against the event map only, so neither edge can name a payload.
 
 ### Three orders, and where each lives
 
@@ -209,18 +214,17 @@ The 2 edge kinds give one Store's DAG 3 orders, each with its own greatest-lower
 and they are not interchangeable. A `Timeline` is an *element* of these orders, not their owner: an
 order belongs to the Store the Timelines point into, so it answers questions about 2 of them rather
 than living on either. Two Timelines over different Stores share no DAG, and every order refuses
-them by name (`Dag::CrossStore` in Ruby, `Ext::Timeline::CrossStore` from the Rust orders) rather than
-answering the bottom.
+them by name (`Ext::Timeline::CrossStore`) rather than answering the bottom.
 
-**The render order is a Ruby module**, `Dag::RenderAncestry` (`lib/lain/dag/render_ancestry.rb`),
-because the production `Timeline` is Ruby. `.meet` is the deepest common ancestor along the
-first-parent walk, returned as a `Timeline`; `.diverge_at` is its head digest, which is all
-cache-break localization needs; `.below?` is `Timeline#ancestor_of?`, which stays on the Timeline
-because a chain walk is the Timeline's own vocabulary. They stay render-only deliberately, so their
-answers do not move as causal edges land. Nothing in `lib/` calls `.meet` or `.diverge_at` yet:
-cache-break localization is specified here and not wired.
+**The render order** is `Ext::Dag::RenderAncestry`; its Ruby module, `Dag::RenderAncestry`, went
+with the Ruby DAG. `.meet` is the deepest common ancestor along the first-parent walk, returned as a
+`Timeline`; `Timeline#diverge_at` is its head digest, which is all cache-break localization needs;
+`.below?` is `Timeline#ancestor_of?`, which stays on the Timeline because a chain walk is the
+Timeline's own vocabulary. They stay render-only deliberately, so their answers do not move as
+causal edges land. Nothing in `lib/` calls `.meet` or `.diverge_at` yet: cache-break localization is
+specified here and not wired.
 
-**Dominance and causal ancestry are Rust types**, and Rust is their only implementation, by ruling.
+**Dominance and causal ancestry are Rust types**, and have been Rust-only since 2026-09-14, by ruling.
 `ext/lain/src/algebra.rs` names the 3 orders as zero-sized types. `RenderAncestry` and `Dominance`
 implement a `MeetSemilattice` trait whose private supertrait nothing outside `algebra.rs` can name,
 and which that file writes only through the `declare_meet_semilattice!` macro, in the same expansion
@@ -233,8 +237,8 @@ over the trait cannot be instantiated at it. Ruby reaches the orders by name as
 `#dominates?` and `#causal_meets`. The `Ext::Dag` classes register the very functions those
 `Ext::Timeline` methods delegate to (`Timeline::meet_via::<S>` and `below_via::<S>`, generic over the
 trait, and `causal_meets`), so the 2 spellings cannot come to answer differently. Mind the
-names: `Lain::Dag` is the Ruby module and `Lain::Ext::Dag` the Rust one, and a bare `Dag::` written
-lexically inside `module Ext` resolves to the Rust one.
+names: `Lain::Dag` is the Ruby module holding `Dag::Factory` and `Lain::Ext::Dag` the Rust one, and
+a bare `Dag::` written lexically inside `module Ext` resolves to the Rust one.
 
 `causal_meets` is reachability over *both* edges, git's "all parents". The causal DAG admits no
 unique greatest lower bound, so it returns the **set** of maximal common ancestors, in digest
@@ -1493,7 +1497,7 @@ child's turns.
 
 Two `Event`s record the causal lineage the render chain omits. A `:spawn` event names the parent
 head the child was spawned from, and a `:message` event carries the child's result back.
-Neither is in any render chain, so the render order (`Dag::RenderAncestry`) and the first-parent
+Neither is in any render chain, so the render order (`Ext::Dag::RenderAncestry`) and the first-parent
 walk are untouched by spawning. A child's tool stack is its parent's, built by the same
 `CLI::ToolGuard` over the parent's board, so a child is guarded and gated as its parent is, and a
 child's refused path lands in the same session journal. `max_depth` is a hard, transitively-decrementing ceiling enforced at construction
@@ -1886,10 +1890,10 @@ and git's own `--all` flag is the confession: a criss-cross merge leaves several
 and no greatest one. One Store's DAG answers the question 3 ways, each an order of its own, and
 where each one's claim is held says which side of that line it falls on:
 
-- **Render ancestry**, `Dag::RenderAncestry` (Ruby): first-parent render edges only. The chain is
-  linear, so the meet exists and is unique. Held to the group in
-  `spec/lain/dag/render_ancestry_spec.rb`, and against `Ext::Timeline#meet` in
-  `spec/lain/rust/timeline_spec.rb`.
+- **Render ancestry**, `Lain::Ext::Dag::RenderAncestry` (Rust; its Ruby module went with the Ruby
+  DAG on 2026-10-20): first-parent render edges only. The chain is linear, so the meet exists and is
+  unique. Held to the group through `Ext::Timeline#meet` in `spec/lain/rust/timeline_spec.rb`, by
+  `declare_meet_semilattice!` in `cargo test`, and against `#meet` in `spec/lain/rust/dag_spec.rb`.
 - **Causal ancestry**, `Lain::Ext::Dag::CausalAncestry` (Rust): reachability over both edge kinds.
   **Not a semilattice**: a criss-cross fan-in leaves incomparable maximal common ancestors, so no
   greatest lower bound exists at all, and the honest answer is the *set* of maximal ones,
@@ -2050,8 +2054,8 @@ extends that to the request bytes); token totals independent of fold order (comm
 compaction audit with no bookkeeping tables (preimages); a checkpoint primitive that is
 provably unique where the naive one provably is not (dominators versus causal meets); and Rust
 orders held to the same law names the Ruby groups use, with the render order passing *the same
-unchanged group* against both implementations, which is how a port is known to be a swap rather
-than a rewrite.
+unchanged group* against the binding, and the deleted Ruby's answers frozen in a corpus the
+extension must reproduce, which is how a port is known to be a swap rather than a rewrite.
 
 ## Everything else, mapped
 
@@ -2146,16 +2150,17 @@ explicitly, because the Store mutates one map in place and no Timeline retains a
 so the current O(1) `fork` comes from the handle plus content addressing rather than from the
 HAMT. The binding earns rule 2 of `docs/rust-bindings.md`'s five only once speculative branching
 snapshots
-the map. Pure Ruby ships first behind the same interface, and **where both implementations exist**
-the `Regular` / `MeetSemilattice` property tests must pass unchanged against both, which is what
-makes a port a swap rather than a rewrite, and why the Ruby render order is not deleted. Dominance
-and causal ancestry are the exception, by ruling: they live only in Rust, held to their laws by
-`cargo test` and to written-down fixtures by `spec/lain/rust/`, with no Ruby twin to agree with
-(`docs/rust-bindings.md`, rule 5).
+the map. Until 2026-10-20 pure Ruby shipped first and stayed, because the property tests had to
+pass unchanged against both implementations. That day the Ruby `Event`, `Store` and `Timeline`
+were deleted, and a port is now held to its laws natively in `cargo test`, to the shared groups
+in `spec/lain/rust/`, to a frozen conformance corpus of the old implementation's answers
+(`ext/lain/corpus/`), and to a `cargo-mutants` baseline (`docs/rust-bindings.md`, rule 5).
+Dominance and causal ancestry have been Rust-only since 2026-09-14, held to written-down fixtures
+as well.
 
-Watch the shareability trap when that lands: a magnus-wrapped object is not `Ractor.shareable?`
-for free, and `Ractor.shareable?(turn)` staying `true` is spec'd mechanically. Treat that spec as
-the port's acceptance test.
+The shareability trap held for the port: a magnus-wrapped object is not `Ractor.shareable?` for
+free, and `Ractor.shareable?(event)` staying `true` is spec'd mechanically. `Ext::Event` and
+`Ext::Payload` are `frozen_shareable`; a new wrapped value object must establish the same.
 
 `crates/lain-core` is a separate binary. `main.rs` is a msgpack-RPC daemon on a Unix socket
 whose path arrives via argv, because path *policy* stays in Ruby (`Paths#runtime_dir`) and the

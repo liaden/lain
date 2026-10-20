@@ -36,9 +36,9 @@ module Lain
 
     class << self
       # The wire form of +value+: JSON-native types only, String keys, objects
-      # sorted, deeply frozen. Callers that *store* content (Lain::Event) keep
-      # this and not the original, so what is hashed and what is retained cannot
-      # drift apart.
+      # sorted, deeply frozen. A caller that keeps content beside its address
+      # keeps this and not the original, so what is hashed and what is retained
+      # cannot drift apart.
       def normalize(value)
         case value
         when nil, true, false, Integer then value

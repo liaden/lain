@@ -2,10 +2,10 @@
 
 module Lain
   module EventLog
-    # Read-only views over a log of {Event}s. Each projection is a PURE FOLD:
+    # Read-only views over a log of {Ext::Event}s. Each projection is a PURE FOLD:
     # same log and same injected data, same answer; no accumulated state.
     class Projection
-      # @param events [Enumerable<Event>] the log, in append order -- materialized
+      # @param events [Enumerable<Ext::Event>] the log, in append order -- materialized
       #   here, because the folds re-enumerate and a one-shot Enumerator would
       #   silently fold to empty the second time
       def initialize(events = [])
@@ -19,7 +19,7 @@ module Lain
       # Lazy, so a consumer reads one message without materializing the log.
       #
       # @param recipient [String, Symbol]
-      # @return [Enumerator::Lazy<Event>]
+      # @return [Enumerator::Lazy<Ext::Event>]
       def mailbox(recipient)
         wanted = Canonical.normalize(recipient)
         @events.lazy.select { |event| event.kind == :message && event.to == wanted }
@@ -35,7 +35,7 @@ module Lain
       # causal_parents for lineage, which is not consumption.
       #
       # @param recipient [String, Symbol]
-      # @return [Enumerator::Lazy<Event>]
+      # @return [Enumerator::Lazy<Ext::Event>]
       def pending(recipient)
         consumed = consumed_by_turns
         mailbox(recipient).reject { |event| consumed.include?(event.digest) }
@@ -46,7 +46,7 @@ module Lain
       # the log. Nil before the first snapshot.
       #
       # @param turn [Integer]
-      # @return [Event, nil]
+      # @return [Ext::Event, nil]
       def workspace_at(turn)
         @events.each_with_object(count: 0, current: nil) do |event, state|
           state[:count] += 1 if event.kind == :turn
@@ -58,7 +58,7 @@ module Lain
       # to: every tool_result block carried by an event reachable through
       # `causal_parents`, each source visited once.
       #
-      # @param event [Event]
+      # @param event [Ext::Event]
       # @return [Array<Hash>] the tool_result blocks, in causal-walk order
       def provenance(event)
         causal_closure(event).flat_map { |source| tool_results(source) }

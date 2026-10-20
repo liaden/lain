@@ -57,9 +57,9 @@ module Lain
       # chain a read has to be on to license an edit.
       #
       # @param response [Lain::Response] the assistant turn carrying the calls
-      # @param timeline [Lain::Timeline] the timeline as of the assistant commit
+      # @param timeline [Lain::Ext::Timeline] the timeline as of the assistant commit
       # @param session [Lain::Session] the tools' context, and the snapshot's paths
-      # @yieldparam committed [Lain::Timeline] the commit this delivery produced
+      # @yieldparam committed [Lain::Ext::Timeline] the commit this delivery produced
       # @raise [Async::Stop] re-raised after the cancellation commit, so an
       #   interrupt still ends the run it was asked to end
       # @raise [StandardError] whatever refused the settled commit, re-raised

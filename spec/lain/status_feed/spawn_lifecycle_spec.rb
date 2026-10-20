@@ -135,7 +135,7 @@ RSpec.describe Lain::StatusFeed::SpawnLifecycle do
     end
   end
 
-  # `Lain::Event#payload` is the CONTENT-ADDRESS ENVELOPE (kind/from/to/
+  # `Lain::Ext::Event#payload` is the CONTENT-ADDRESS ENVELOPE (kind/from/to/
   # causal_parents/correlation/payload_digest), not the body -- its own doc
   # says the body is "deliberately absent" from it. The body lives on
   # `Event#body`. A real actor farewell or one-shot completion travels as
@@ -255,8 +255,8 @@ RSpec.describe Lain::StatusFeed::SpawnLifecycle do
     # unfrozen source String and stored as-is would leave THIS object
     # unshareable even though `#initialize` calls `freeze`. Going through the
     # `record`/`event` helpers above would not exercise this: both
-    # `Telemetry::Message.new` and `Lain::Event.new` run their `payload`/
-    # `body` through `Canonical.normalize`, which deep-freezes every String
+    # `Telemetry::Message.new` and `Lain::Ext::Event.new` hand back a
+    # `payload`/`body` already normalized and deep-frozen, every String
     # before this object ever sees it -- so a plain `#payload`-answering
     # double, fed a `JSON.parse` Hash (ordinary mutable Strings, unlike every
     # frozen literal used elsewhere in this file), is what actually drives an

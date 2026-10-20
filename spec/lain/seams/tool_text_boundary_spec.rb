@@ -9,7 +9,7 @@ require "tmpdir"
 # after the command ran and after the tool_use turn was already committed.
 #
 # So: a real command through a real {Lain::Tools::Bash}, a real {Lain::Agent}
-# over a {Lain::Provider::Mock}, a real {Lain::Timeline}, and the real
+# over a {Lain::Provider::Mock}, a real `Lain::Ext::Timeline`, and the real
 # {Lain::CLI::Repl::Ask} whose refusal path is what writes `run_interrupted`.
 # The Chronicle is real too; only its journal is a recorder, because the
 # records it receives are the observation.

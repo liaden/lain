@@ -55,7 +55,7 @@ module Lain
     Run = Data.define(:name, :usage, :price, :score, :degraded, :mode, :compaction) do
       # @param name [String] this run's label in the comparison table (the arm
       #   it came from)
-      # @param timeline [Lain::Timeline] the recorded run
+      # @param timeline [Lain::Ext::Timeline] the recorded run
       # @param ledger [Lain::Ledger] usage + cost, deduped by content-address.
       #   Required, no default: usage lives in the Journal, so only the caller
       #   knows which journal priced this run.

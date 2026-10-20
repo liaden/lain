@@ -102,7 +102,7 @@ module Lain
       # Minted EAGERLY, so construction is the one place {Unpairable} can
       # surface; a lazy #blocks would raise past whichever caller rescued it.
       #
-      # @param head [Lain::Event] an assistant turn carrying the stranded calls
+      # @param head [Lain::Ext::Event] an assistant turn carrying the stranded calls
       # @param kind [Symbol] which repair this is, a key of {NOTICES}
       # @raise [Unpairable] when a stranded call names no tool_use id
       def initialize(head, kind:)

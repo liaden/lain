@@ -26,15 +26,25 @@ Before binding, all five must hold. If any fails, keep it in Ruby.
    sharing forks in O(1); `Hash#dup` is O(n). That gap is the argument. "Rust is faster" is not.
 3. **It is hot per-turn**, not per-session. Per-session work is never worth a boundary.
 4. **The boundary is crossed in batches, not per element.** Conversion cost dominates almost
-   every naive binding; a per-node FFI call in a DAG walk loses to plain Ruby.
-5. **It survives the same tests.** `Timeline` ships as pure Ruby first, and **where both
-   implementations exist** the `Regular` / `MeetSemilattice` property tests must pass unchanged
+   every naive binding; a per-node FFI call in a DAG walk loses to plain Ruby. One walk is the
+   exception: the block form of `Ext::Timeline#ancestors` crosses per node because its callers
+   stop early, and its cursor lives in `Lain::Ext::Timeline::Walk`, an object Ruby's collector
+   owns. `ext/lain/CLAUDE.md` says what a second exception would need.
+5. **It is held to a frozen corpus and a mutation gate.** Until 2026-10-20 this rule read: "where
+   both implementations exist the `Regular` / `MeetSemilattice` property tests must pass unchanged
    against both. That is how we know a port is correct, and it is why the Ruby version is not
-   deleted. Dominance and causal ancestry are the exception, by ruling: they live only in Rust.
-   An operation implemented only in Rust is held to the shared law group where it is a
-   semilattice (dominance), and in every case to fixtures whose expected answers are written
-   down, never derived from a second implementation, plus a check read off the order's
-   definition — which is all causal ancestry has, its Rust type implementing
+   deleted." It was reversed when the Ruby `Event`, `Store` and `Timeline` were deleted, because
+   "a differential test proves agreement, not correctness"
+   (`planning/specs/simplify-13-rust-port.md`, 2026-09-12). A port now needs no second
+   implementation. It needs the laws stated natively as `proptest` properties under the shared
+   group's law names, the shared groups passing unchanged against the binding in
+   `spec/lain/rust/*`, the old implementation's answers frozen first as a conformance corpus
+   (`ext/lain/corpus/`, digests in `MANIFEST.json`, read by `cargo test` and by
+   `spec/conformance_corpus_spec.rb`), and a `cargo-mutants` sweep whose killed, unviable and
+   missed counts equal `ext/lain/mutants-baseline.txt` (`bundle exec rake rust:mutants`).
+   Dominance and causal ancestry have lived only in Rust since 2026-09-14, by ruling: dominance
+   is held to the shared law group, and both are held to fixtures whose expected answers are written down, plus a check
+   read off the order's definition, which is all causal ancestry has, its Rust type implementing
    `MaximalLowerBounds` and never `MeetSemilattice`.
 
 Structures that plausibly qualify, and what they buy:
@@ -51,6 +61,6 @@ Structures that plausibly qualify, and what they buy:
 | Vector / graph index | `tantivy`, `usearch`, `petgraph` | Memory retrieval (M6) — these are I/O-shaped, so they live **out** of process. |
 
 > ⚠️ **A magnus-wrapped object is not `Ractor.shareable?` for free.** Deep immutability is spec'd
-> mechanically, and `Ractor.shareable?(event)` must stay `true`. Porting `Event` or `Timeline` to a
-> Rust-backed `TypedData` object will break that spec unless shareability is established
-> deliberately. Treat the spec as the acceptance test for the port, not as an obstacle to it.
+> mechanically, and `Ractor.shareable?(event)` must stay `true`. A Rust-backed `TypedData` object
+> breaks that spec unless shareability is established deliberately, as `Ext::Event` establishes it
+> with `frozen_shareable`. Treat the spec as the acceptance test for a port, not as an obstacle to it.

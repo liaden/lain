@@ -98,13 +98,13 @@ module Lain
       # carry: an actor's farewell cites the address it took from its own
       # `:spawn` digest, a one-shot's completion cites that `:spawn` beside the
       # child's final head. EVERY cited digest is ended rather than the first
-      # one found to be a member, because `Event#normalize_causal` uniqs and
-      # SORTS: "the first cited parent" is not recoverable from the list, and
+      # one found to be a member, because the event constructor uniqs and
+      # SORTS `causal_parents`: "the first cited parent" is not recoverable from the list, and
       # matching once would make the retirement turn on which digest sorted
       # lower. A record citing no member ends nothing.
       #
       # @param record [#causal_parents] an arriving `:message`, in either shape
-      #   the feed's `:message` arm dispatches: a raw {Event} or the
+      #   the feed's `:message` arm dispatches: a raw {Ext::Event} or the
       #   {Telemetry::Message} the actor path promotes it into
       # @return [void]
       def completed(record)

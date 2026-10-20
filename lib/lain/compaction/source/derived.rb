@@ -137,7 +137,7 @@ module Lain
         # and the span {Need} measures must come from ONE number.
         attr_reader :keep_last
 
-        # @param timeline [Timeline] the SOURCE timeline; the derived chain is
+        # @param timeline [Ext::Timeline] the SOURCE timeline; the derived chain is
         #   built in its own Store, which is the only store whose objects its
         #   replacements' causal edges can name
         # @param walk [Derivation::Walk] that timeline already walked and

@@ -4,7 +4,7 @@ module Lain
   class Tool
     # The two orthogonal axes of a spawn, as small strategy objects the
     # {Tools::Subagent} tool reads at dispatch. A leaf that references
-    # {Timeline} and {Toolset} only from inside method bodies, never at load
+    # {Dag::Factory} and {Toolset} only from inside method bodies, never at load
     # time, so nothing here pulls either unit in merely by being read.
     #
     # * **Prefix strategy** decides whose render prefix the child's bytes share:

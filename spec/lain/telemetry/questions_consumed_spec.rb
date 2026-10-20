@@ -45,8 +45,8 @@ RSpec.describe Lain::Telemetry::QuestionsConsumed do
     expect(record).to be_deeply_frozen
   end
 
-  # The record's one producer, {Lain::Event#normalize_causal}, always hands it
-  # an Array -- but a `Data.define` constructor is public, and `Canonical.normalize`
+  # Every producer hands it an Array (an event's sorted `causal_parents`, or a
+  # one-digest list) -- but a `Data.define` constructor is public, and `Canonical.normalize`
   # passes a bare String through unchanged rather than wrapping it. Left alone,
   # that makes `digests: "blake3:q1"` constructible, and both inbox surfaces
   # raise on it (`Inbox#retire` calls `#each`, `InboxView#retire` calls

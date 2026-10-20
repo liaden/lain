@@ -10,7 +10,7 @@ module Lain
     # Unlike {Sweep} and {DisclosureSweep}, this one reuses {Compare} ITSELF
     # rather than just its Table and Distribution: {Compare} carries exactly the
     # cache-write column this sweep exists to surface, and once each arm is
-    # priced through its own {Ledger}-backed {Timeline}, {Compare::Run}'s
+    # priced through its own {Ledger}-backed {Ext::Timeline}, {Compare::Run}'s
     # usage/cost/score shape is the right one. ({Sweep} could not reuse it, for
     # want of a Ledger-priced Timeline; here there is one by construction.)
     #
@@ -33,7 +33,7 @@ module Lain
     #
     # == Isolation: one Timeline, one Store, per arm
     #
-    # Every arm scores over its OWN {Timeline} on its OWN {Store}, built fresh
+    # Every arm scores over its OWN {Ext::Timeline} on its OWN {Ext::Store}, built fresh
     # in {Arms} and never the object a live run would hold, so nothing this
     # sweep does can pollute a real conversation. `inline` and
     # `model_self_directed` are the two arms whose Timeline is NOT empty: it is
@@ -97,11 +97,11 @@ module Lain
         @report ||= render
       end
 
-      # arm name => its own isolated {Timeline}, built on its own {Store}.
+      # arm name => its own isolated {Ext::Timeline}, built on its own {Ext::Store}.
       # Exposed so the isolation invariant is directly checkable rather than
       # merely implied by the report's numbers.
       #
-      # @return [Hash{String=>Lain::Timeline}]
+      # @return [Hash{String=>Lain::Ext::Timeline}]
       def timelines = @arms.timelines
 
       private

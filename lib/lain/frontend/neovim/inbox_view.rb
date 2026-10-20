@@ -161,7 +161,7 @@ module Lain
           def settled(_digest, **) = nil
         end
 
-        # @param store [Lain::Store] resolves a TurnUsage's head so the chain's
+        # @param store [Lain::Ext::Store] resolves a TurnUsage's head so the chain's
         #   causal edges are readable; the {Buffers::DetachedStore} default
         #   renders consumption as simply never observed, same honesty as the
         #   timeline view's unavailable state
@@ -359,12 +359,11 @@ module Lain
           end
         end
 
-        # THE RESCUE IS AS WIDE AS "a miss, not a drain-thread death".
-        # `MissingObject` alone covers only the head this store does not HOLD; a
-        # head it holds that names something other than a turn walks into
-        # `NoMethodError: undefined method 'parent' for an instance of
-        # Event::Payload`, and every message ever written puts such a digest in
-        # the same store. {Lain::StatusFeed::Inbox}'s identical walk must stay as
+        # THE RESCUE IS AS WIDE AS "a miss, not a drain-thread death". A head
+        # this store holds that names something other than a turn is common:
+        # every message ever written puts such a digest in the same store, and
+        # the rescue is wide so the promise does not rest on which error a walk
+        # raises for one. {Lain::StatusFeed::Inbox}'s identical walk must stay as
         # wide: a rescue that differs between them is a difference the parity
         # spec cannot see.
         def cited_by_chain(head_digest)
@@ -375,7 +374,7 @@ module Lain
 
         # The Q body as this view reads it: a Hash, or nothing at all. The
         # record reaches here as a {Telemetry::Message} (`payload`) or as an
-        # {Event} (`body`), and either may carry something that is not a Hash --
+        # {Ext::Event} (`body`), and either may carry something that is not a Hash --
         # so the miss is answered ONCE, here, and every reader below is a plain
         # lookup on a Hash.
         def body_of(event)

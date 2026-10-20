@@ -240,8 +240,8 @@ module Lain
     #
     # It is the GREATEST lower bound under the refinement order {#refines?} names,
     # and its spec holds it to the four semilattice laws. Its partiality -- two
-    # different spans refuse -- is {Dag::RenderAncestry.meet}'s with span
-    # substituted for store.
+    # different spans refuse -- is the render order's (`Ext::Dag::RenderAncestry.meet`)
+    # with span substituted for store.
     def meet(other)
       refuse_mismatched(other)
       IntervalPartition.new(owner: "#{owner} meet #{other.owner}", span:, ranges: intersections(other),

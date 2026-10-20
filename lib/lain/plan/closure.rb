@@ -44,12 +44,12 @@ module Lain
       include ContentAddressed
 
       # @param step [Plan::Step] the closed step -- id/title/status/criteria
-      # @param timeline [Timeline] the chunk's history; its Store holds every
+      # @param timeline [Ext::Timeline] the chunk's history; its Store holds every
       #   digest this record names
       # @param chunk_range [Range] integer turn indices into the timeline's
-      #   root-first order ({Timeline#to_a}) -- the span this chunk spent
+      #   root-first order ({Ext::Timeline#to_a}) -- the span this chunk spent
       # @param grade [Grader::Grade] the chunk's verdict
-      # @param snapshot [Event, nil] the :snapshot in force at the seam, or nil
+      # @param snapshot [Ext::Event, nil] the :snapshot in force at the seam, or nil
       #   before any snapshot landed (files empty, scope note still carried)
       def self.build(step:, timeline:, chunk_range:, grade:, snapshot:)
         turns = chunk_turns(timeline, chunk_range)

@@ -76,7 +76,7 @@ module Lain
       # Nothing goes back to the store: a rewound entry stays durable, where the
       # next fresh chat still sees it.
       #
-      # @param timeline [Lain::Timeline] the chain as the rewind left it
+      # @param timeline [Lain::Ext::Timeline] the chain as the rewind left it
       # @return [String, nil] the new root
       def follow(timeline)
         @index = folded(loaded.items + Writes.new(timeline.ancestors.to_a.reverse.map(&:content)).to_a)

@@ -13,7 +13,7 @@ module Lain
     # and the measurement live here, and both collaborators are handed the same
     # object.
     #
-    # {.from_timeline} takes {Timeline#messages}, the same projection
+    # {.from_timeline} takes {Ext::Timeline#messages}, the same projection
     # `Context#render` sends, so the head is the bytes that will actually be
     # rendered.
     #
@@ -41,7 +41,7 @@ module Lain
         def claims(*) = []
       end
 
-      # @param timeline [Lain::Timeline]
+      # @param timeline [Lain::Ext::Timeline]
       # @param keep_last [Integer] the trailing messages a Compact keeps verbatim
       # @param pins [Context::PinnedMessages] the exemption policy, which must
       #   be the very object the paired {Context::Compact} takes as

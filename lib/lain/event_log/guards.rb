@@ -13,7 +13,7 @@ module Lain
       # beneath it; the model's own turn at the head is its own answer. nil is
       # the empty chain, which every chain extends.
       #
-      # @param head [Event, nil]
+      # @param head [Ext::Event, nil]
       # @return [String, nil] a turn digest
       def self.stands_on(head)
         return nil if head.nil?

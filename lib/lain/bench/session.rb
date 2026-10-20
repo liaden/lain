@@ -96,7 +96,7 @@ module Lain
 
         # The other half of "required", for `role` and `kind` alone -- the only
         # fields a VALIDATOR reads before any digest exists. A falsey value
-        # there refuses out of {Event} as a bare {Lain::Error}, honest about
+        # there refuses out of {Ext::Event} as a {Lain::Error}, honest about
         # the names it allows but in a currency no door rescues and with
         # neither the file nor the record index on it, while a falsey value in
         # any other field announces itself as the content-address mismatch it

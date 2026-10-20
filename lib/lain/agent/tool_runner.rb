@@ -248,7 +248,7 @@ module Lain
       # nothing to hand over yield `causal_parents: []`, so ordinary turns'
       # recorded digests do not move.
       #
-      # @return [Hash] {Timeline#commit} kwargs: `content:`, `causal_parents:`
+      # @return [Hash] {Ext::Timeline#commit} kwargs: `content:`, `causal_parents:`
       def delivery(response, context:, answers: Answers.for(response))
         content = run(response, context:, answers:)
         { content:, causal_parents: answered_questions }
@@ -275,7 +275,7 @@ module Lain
       # with no suspension point, and structured cancellation only lands at one.
       #
       # @param answers [Answers] the turn's partial answers
-      # @return [Hash] {Timeline#commit} kwargs: `content:`, `causal_parents:`
+      # @return [Hash] {Ext::Timeline#commit} kwargs: `content:`, `causal_parents:`
       def cancelled_delivery(answers)
         { content: bounded(answers), causal_parents: answered_questions }
       end

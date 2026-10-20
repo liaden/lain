@@ -178,7 +178,7 @@ module Lain
         # only stops holding across an arm it was never committed under), and
         # `--compact-keep` is fixed for the run. The one rule that DOES retire
         # a cut mid-session -- a rewind moving the chain off its commit head --
-        # is exactly what {Timeline#include?} answers.
+        # is exactly what {Ext::Timeline#include?} answers.
         class Compacted
           def initialize(session:, timeline:)
             @session = session

@@ -146,9 +146,9 @@ module Lain
         end
         private_class_method :settle
 
-        # @param messages [Enumerable<Event>] the session's :message/:spawn
+        # @param messages [Enumerable<Ext::Event>] the session's :message/:spawn
         #   events, in file order
-        # @param store [Store] the Store they, and every turn they cite, landed in
+        # @param store [Ext::Store] the Store they, and every turn they cite, landed in
         def initialize(messages:, store:)
           @messages = messages
           @store = store

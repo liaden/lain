@@ -66,7 +66,7 @@ module Lain
         end
 
         # @param session [Session] whose recorded cuts are asked
-        # @param timeline [Timeline] this turn's chain
+        # @param timeline [Ext::Timeline] this turn's chain
         # @param derived [Derived] the run's derive-and-substitute step
         # @param arm [String] the name of the arm this run collapses under
         # @return [HeldCut]
@@ -136,7 +136,7 @@ module Lain
           @floor = @held.empty? ? 0 : at.fetch(@held.last.digest) + 1
         end
 
-        # @return [Timeline] this turn's chain
+        # @return [Ext::Timeline] this turn's chain
         attr_reader :timeline
 
         # @return [Derivation::Walk] that chain, walked once
@@ -422,7 +422,7 @@ module Lain
             @shown = @pieces.select(&:shown?)
           end
 
-          # @return [Timeline] the chain the stretch is read off
+          # @return [Ext::Timeline] the chain the stretch is read off
           attr_reader :timeline
 
           # @return [Derivation::Walk] that chain, walked once

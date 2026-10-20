@@ -6,7 +6,7 @@ module Lain
   module Bench
     class DeciderSweep
       # Builds each arm's own {Compare::Run}: its {Oracle} tier, its
-      # {Timeline} (own {Store}, per {DeciderSweep}'s Isolation section), the
+      # {Ext::Timeline} (own {Ext::Store}, per {DeciderSweep}'s Isolation section), the
       # {Ledger} entries its usage prices through, and the {Grader::Fixture}
       # grade its verdicts earn against the fixture's gold. {DeciderSweep}
       # itself only ranks and renders what this collaborator produces.
@@ -33,7 +33,7 @@ module Lain
           )
         end
 
-        # @return [Hash{String=>Lain::Timeline}]
+        # @return [Hash{String=>Lain::Ext::Timeline}]
         def timelines
           built.transform_values { |arm_build| arm_build.fetch(:timeline) }
         end

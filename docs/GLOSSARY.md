@@ -221,7 +221,7 @@ an overlap refuses naming both owners and the indices they both claimed
 > application. ([Wikipedia](https://en.wikipedia.org/wiki/Idempotence))
 
 One of the 4 laws checked by `spec/support/shared_examples/meet_semilattice.rb`, alongside
-commutativity, associativity and "a meet sits below both operands". `Dag::RenderAncestry.meet(timeline, timeline)` must return the same
+commutativity, associativity and "a meet sits below both operands". `Ext::Dag::RenderAncestry.meet(timeline, timeline)` must return the same
 timeline.
 
 ### Meet-semilattice
@@ -230,7 +230,7 @@ timeline.
 > ([Wikipedia](https://en.wikipedia.org/wiki/Semilattice))
 
 One Store's event DAG carries three orders, and Timelines are their elements. Render ancestry
-(`Dag::RenderAncestry`, over the first-parent edge) is a genuine meet-semilattice: the chain is
+(`Lain::Ext::Dag::RenderAncestry`, Rust, over the first-parent edge) is a genuine meet-semilattice: the chain is
 linear, so the deepest common ancestor is unique. Dominance over the union of both parent edges
 (`Lain::Ext::Dag::Dominance`, Rust) is one too, because a node's dominators are totally ordered and so
 the deepest common dominator is unique. Causal ancestry (`Lain::Ext::Dag::CausalAncestry`, Rust) is
@@ -359,7 +359,8 @@ predecessor must be processed before its successors.
 The argument for binding Rust at all. Ruby's `Hash#dup` is O(n), so a speculative branch that
 snapshots state pays a full copy, where a persistent map forks in O(1) with the untouched structure
 shared between versions. That asymptotic gap is what earns an FFI boundary. Speed alone does not,
-which is why the Timeline ships as pure Ruby first behind the same interface.
+which is why the Timeline shipped as pure Ruby first behind the same interface, until the Ruby
+DAG was deleted on 2026-10-20.
 
 ### HAMT (hash array mapped trie)
 
@@ -613,7 +614,8 @@ diagram. `Frontend::Neovim` injects its whole runtime into a bare `nvim --listen
 > A CNCF specification for describing event data in a common envelope across systems.
 > ([cloudevents.io](https://cloudevents.io/))
 
-`Lain::Event` is shaped after it, with a closed `KINDS` set of `turn spawn message snapshot`. The
+`Lain::Ext::Event` is shaped after it, with a closed kind set of `turn spawn message snapshot`
+(`EventLog::Kinds::KINDS`). The
 closed set is the point: an unknown kind fails loudly rather than being silently ignored.
 
 ## Method
@@ -628,9 +630,10 @@ lain states its laws as RSpec shared example groups and runs them against every 
 `monoid_homomorphism.rb`, `regular.rb`, `store_laws.rb`, `canonical_laws.rb`, `memory_index_laws.rb`,
 and `provider_parity.rb`. An operation is held to a law in its own spec, which includes the group
 with a population drawn for that operation, so the claim and its proof sit where a reader of the
-operation will look. This is also the acceptance test for any Rust port: where both implementations
-exist, the Rust one has to pass the same unchanged group as the Ruby one, which is how a port is
-known to be a swap rather than a rewrite.
+operation will look. A Rust port passes the same unchanged group through its binding, and since
+the Ruby DAG was deleted on 2026-10-20 it no longer needs a Ruby twin passing beside it: a frozen
+corpus of the old implementation's answers and a `cargo-mutants` baseline take that place
+(`docs/rust-bindings.md`, rule 5). That is how a port is known to be a swap rather than a rewrite.
 
 `monoid_homomorphism.rb` is the first group whose **negative** form is asserted too. It ships two
 readings of one law set from one object — "a monoid homomorphism" and "not a monoid homomorphism" —

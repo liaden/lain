@@ -87,7 +87,7 @@ module Lain
           !@resumed_from.nil?
         end
 
-        # @return [Store] the ONE store this file (and every prior one in its
+        # @return [Ext::Store] the ONE store this file (and every prior one in its
         #   chain) rebuilds into
         def store
           @store ||= present? ? prior_loader.store : Dag::Factory.store
@@ -99,7 +99,7 @@ module Lain
         # by fold membership rather than head equality -- the checkout itself
         # verifies nothing, so it happens only for a digest the fold proved.
         #
-        # @return [Timeline]
+        # @return [Ext::Timeline]
         # @raise [Corrupt] when the recorded resumed_from head was never
         #   verified on the prior file's chain
         def prior_timeline
@@ -113,7 +113,7 @@ module Lain
                          "digest on its chain; the resume chain is broken"
         end
 
-        # @return [Array<Event>] the prior file's own already-verified
+        # @return [Array<Ext::Event>] the prior file's own already-verified
         #   messages, or none when this file did not resume one
         def prior_messages
           present? ? prior_loader.messages : []

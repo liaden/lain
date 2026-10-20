@@ -1135,7 +1135,7 @@ module Lain
           freeze
         end
 
-        # @param base [Timeline] where the child starts
+        # @param base [Ext::Timeline] where the child starts
         # @param worker_env [WorkerEnv] the child's environment
         # @param scope [Session::Unconfined, Session::Confined] where the
         #   child's tools are confined to
@@ -1289,7 +1289,7 @@ module Lain
       # a live client, and `parent` is a thunk or a Timeline. A new member
       # should say which direction it moves that claim; the current ones move it
       # nowhere new. This bundles collaborators -- it is not a value in the
-      # {Event}/{Canonical} sense.
+      # {Ext::Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :display_channel,
                          :supervisor, :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware,
                          :twins, :holder, :spend) do

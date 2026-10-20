@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-# {RpcThread} must exist before the `class Neovim` body below opens, because
-# that body defines {Neovim::FrontendListener} against it. {RuntimeLoader} comes
-# first for the same reason, one level down: {RpcThread}'s body names it.
-
 module Lain
   module Frontend
     # The Neovim frontend: a second surface on the same {Lain::Channel} the {TTY}
@@ -94,7 +90,7 @@ module Lain
       #   answer -- {RpcThread} digests the bytes it is about to inject, which is
       #   the only reading that cannot go stale. A String overrides it, which is
       #   how a spec stands an editor up holding a runtime this gem did not write.
-      # @param store [Lain::Store] backs the live Timeline behind
+      # @param store [Lain::Ext::Store] backs the live Timeline behind
       #   lain://timeline. Defaults to {Buffers::DetachedStore}: an un-wired
       #   frontend renders the timeline as unavailable rather than holding a
       #   real-but-disconnected store that crashes on the first

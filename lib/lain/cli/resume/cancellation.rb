@@ -15,7 +15,7 @@ module Lain
       # which is what separates it from the fabrication the backstop was right
       # to refuse ({Resume::MidTool}).
       class Cancellation < Tool::Cancellation
-        # @param head [Lain::Event] an assistant turn {EventLog::Guards.pending_tool_use?}
+        # @param head [Lain::Ext::Event] an assistant turn {EventLog::Guards.pending_tool_use?}
         #   answers true for
         # @raise [Tool::Cancellation::Unpairable] when a stranded call names no
         #   tool_use id

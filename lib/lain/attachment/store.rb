@@ -5,7 +5,7 @@ require "fileutils"
 module Lain
   module Attachment
     # One project's attachments, filed under their content address. The
-    # subsystem's argument -- why these bytes are not in {Lain::Store} and not on
+    # subsystem's argument -- why these bytes are not in `Lain::Ext::Store` and not on
     # the Timeline -- is on {Attachment} itself; what is here is the directory
     # and the two refusals.
     #

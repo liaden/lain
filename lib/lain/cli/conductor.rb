@@ -170,7 +170,7 @@ module Lain
       # its value becomes {Outcome#response}.
       #
       # @param task [Async::Task] the reactor parent the three fibers spawn under
-      # @param timeline [#call] -> Lain::Timeline
+      # @param timeline [#call] -> Lain::Ext::Timeline
       # @return [Outcome]
       def supervise(task, timeline, &block)
         @timeline = timeline

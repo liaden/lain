@@ -42,9 +42,9 @@ module Lain
         attr_reader :pending
 
         # @param recipient [String, nil] whose messages are pending
-        # @param events [Enumerable<Event>] the log `recipient`'s pending set
+        # @param events [Enumerable<Ext::Event>] the log `recipient`'s pending set
         #   is derived from
-        # @param pending [Array<Event>] given whole by an inbox that judges
+        # @param pending [Array<Ext::Event>] given whole by an inbox that judges
         #   pending itself ({Live}), in place of the derivation
         def initialize(recipient: nil, events: [], pending: EventLog::Projection.new(events).pending(recipient).to_a)
           @pending = pending.dup.freeze
@@ -80,7 +80,7 @@ module Lain
         # commit consumed -- and a message arriving after this read stays
         # pending for the NEXT turn's capture, never claimed by this one.
         #
-        # @param timeline [Timeline] the head this turn renders from
+        # @param timeline [Ext::Timeline] the head this turn renders from
         # @return [Snapshot]
         def capture(timeline)
           Snapshot.new(recipient: @recipient, events: timeline.to_a + @log.to_a)

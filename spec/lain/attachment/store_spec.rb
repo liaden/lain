@@ -4,7 +4,7 @@ require "fileutils"
 require "tmpdir"
 
 # Driven against a real directory throughout, because the directory IS the
-# subject: {Lain::Store} is a Hash that dies with the process, and the whole
+# subject: `Lain::Ext::Store` is an in-memory map that dies with the process, and the whole
 # reason this one exists is that an attachment's bytes must outlive the turn
 # that made them while only its digest rides the Timeline.
 RSpec.describe Lain::Attachment::Store, :seam do

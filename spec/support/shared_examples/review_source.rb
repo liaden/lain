@@ -315,7 +315,7 @@ RSpec.shared_examples "a review changeset source" do |config|
       expect(identity.parts).to all(be_a(String))
     end
 
-    # Deeply frozen for {Lain::Event}'s reason: this value is what an address is
+    # Deeply frozen for an event's reason: this value is what an address is
     # computed from, and nothing may edit it under a session that already
     # journalled the answer.
     it "answers a shareable value, so no reachable mutable state remains under an address" do

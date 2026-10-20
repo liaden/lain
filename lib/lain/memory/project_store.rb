@@ -101,7 +101,7 @@ module Lain
         # {Bench::Session::RecordedMemory#at} reads a per-turn snapshot back
         # through.
         #
-        # @param store [Lain::Store] where the folded nodes land
+        # @param store [Lain::Ext::Store] where the folded nodes land
         def index(store: Dag::Factory.store)
           items.inject(Index.empty(store:)) { |folded, item| folded.write(item) }
         end

@@ -20,7 +20,7 @@ module Lain
     # not pretend to be: a journal is a live sink and {Middleware::Stack} is
     # deliberately mutable, because ordering is Rack's footgun and the order has
     # to stay adjustable. So `Ractor.shareable?` is false here BY CONSTRUCTION
-    # -- unlike {Event}, whose deep freeze is a spec'd invariant -- and for the
+    # -- unlike {Ext::Event}, whose deep freeze is a spec'd invariant -- and for the
     # same reason equality is member identity: two separately built defaults are
     # not `==`, because their stacks are not.
     #

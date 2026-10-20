@@ -8,7 +8,7 @@ module Lain
     # asks what to put back. {Agent::SnapshotSlot} records each snapshot here
     # as it lands, with the turn's trees when its scope staged them; nothing
     # else could find them again, since a :snapshot event has no render parent
-    # and the {Store} has no enumerator.
+    # and the {Ext::Store} has no enumerator.
     #
     # An undo reverts exactly one turn's own change.
     #
@@ -65,7 +65,7 @@ module Lain
       # The observer duck: a snapshot with no trees behind it.
       def call(event) = record(event)
 
-      # @param event [Event] the :snapshot the writer just landed
+      # @param event [Ext::Event] the :snapshot the writer just landed
       # @param pair [#staged?, #moved?, #moves, #keys, #ignored?] the turn's trees
       # @param pre_images [Hash{String => Session::PreImage}] by absolute path,
       #   what the turn's tools captured before their first writes
@@ -78,7 +78,7 @@ module Lain
         self
       end
 
-      # @param store [Store] resolves a write-set record's blob digests to bytes
+      # @param store [Ext::Store] resolves a write-set record's blob digests to bytes
       # @return [Undo] {Undo::NOTHING} when no turn has changed a file
       def undo(store:)
         return Undo::NOTHING if @entries.empty?

@@ -13,13 +13,13 @@ module Lain
     # The conversation axis is untouched by construction: Restore never sees a
     # Timeline, so "restore files, keep conversation" is not a behavior to get
     # right but a dependency that does not exist. Rewinding both axes is this
-    # plus {Timeline#rewind}; they compose because they share only the turn
+    # plus {Ext::Timeline#rewind}; they compose because they share only the turn
     # number.
     #
     # A bare class, not an Effect behind {Middleware::Gate}: the Gate tiers
     # MODEL-initiated tool calls (the danger axis is "does the model control the
     # string"), and Restore is operator-initiated bench machinery in the same
-    # trust domain as {Timeline#rewind}'s pointer movement.
+    # trust domain as {Ext::Timeline#rewind}'s pointer movement.
     #
     # Keys are workspace-root-relative (the recorded format), so the INJECTED
     # root decides where they land; the payload's recorded "root" is provenance,
@@ -95,7 +95,7 @@ module Lain
 
       # @param projection [EventLog::Projection] the read side; a log that has
       #   grown means constructing a new Projection, and so a new Restore
-      # @param store [Store] resolves the file map's blob digests to bytes
+      # @param store [Ext::Store] resolves the file map's blob digests to bytes
       # @param root [String] where relative keys land -- defaults to the same
       #   base Snapshot defaults its relativization to
       def initialize(projection:, store:, root: Dir.pwd)

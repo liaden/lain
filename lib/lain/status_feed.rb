@@ -38,7 +38,7 @@ module Lain
   #   {Telemetry::ChildProgress} beside the events to do it.
   # * `inbox_count` -- what is still addressed to {Tools::AskHuman::HUMAN} and
   #   not yet named a causal parent by a committed turn. {Inbox} owns the
-  #   projection, the fold, and the {Store} the live carrier's chain resolves
+  #   projection, the fold, and the {Ext::Store} the live carrier's chain resolves
   #   in. Read its doc before touching the count: it is the only field whose
   #   ANSWER needs a collaborator this object cannot be given at construction
   #   (see {#bind_store}), and it is held to the nvim `lain://inbox` buffer's
@@ -153,7 +153,7 @@ module Lain
   #
   # Recognizing an event is DUCK-TYPED WHERE THE VOCABULARY IS OPEN and matched
   # by CLASS WHERE IT IS CLOSED, and that split is this file's rule. `#kind` is
-  # the open one: any {Event} answers it and nothing narrows the question to one
+  # the open one: any {Ext::Event} answers it and nothing narrows the question to one
   # record. Everything else names a closed set, because a duck over a GROWING
   # namespace is a guess that silently starts catching the wrong record --
   # {#turn_usage?} records the one that was actually shipped and what it cost.
@@ -206,7 +206,7 @@ module Lain
     #   so a directly constructed feed still publishes an honest elapsed.
     # @param context_window [#occupancy, #resolve] the book resolving a model name into
     #   the denominator, the same duck {Agent#occupancy} takes.
-    # @param store [Store] where a committed turn's causal chain is resolved --
+    # @param store [Ext::Store] where a committed turn's causal chain is resolved --
     #   {Inbox}'s collaborator. Defaulted to an EMPTY one rather than required,
     #   because the live chat has none yet at this object's construction point;
     #   see {#bind_store}.
@@ -276,7 +276,7 @@ module Lain
     #   WHAT A `#kind`-ANSWERING RECORD OWES BEYOND `#kind`: a `:spawn` owes
     #   `#digest`; a `:message` owes `#to`, `#digest` and `#causal_parents`,
     #   because {Fleet} reads the last of those to retire a finished spawn; a
-    #   `:turn` owes `#causal_parents`. Today only {Event} and
+    #   `:turn` owes `#causal_parents`. Today only {Ext::Event} and
     #   {Telemetry::Message} reach these arms and both answer all of it.
     #
     #   A LOOKALIKE IS NOT ENOUGH for the class-matched six. An object merely
@@ -302,27 +302,27 @@ module Lain
       @derivation_refusal_streak = 0 if event.is_a?(Telemetry::ContextDerived)
       interrupted if event.is_a?(Telemetry::RunInterrupted)
       # Matched by class, for {#turn_usage?}'s reason. It is the one record the
-      # fleet reads that is not an {Event}, and {Telemetry::ChildProgress} says
+      # fleet reads that is not an {Ext::Event}, and {Telemetry::ChildProgress} says
       # why the facts a tree needs ride beside a spawn rather than in it.
       @fleet.progressed(event) if event.is_a?(Telemetry::ChildProgress)
       observe_rewind(event) if rewound?(event)
       observe_consumption(event)
       observe(event) if event.respond_to?(:kind)
       # Matched by class rather than on `#to`/`#to_layers`, which would also
-      # catch an {Event}, whose `#to` is a message recipient.
+      # catch an {Ext::Event}, whose `#to` is a message recipient.
       @mode = ModeState.of(event) if event.is_a?(Telemetry::ModeSwitch)
       observe_approval(event)
       publish_if_changed
       self
     end
 
-    # The run's {Store}, handed over the moment one exists -- `Wiring#run`, the
+    # The run's {Ext::Store}, handed over the moment one exists -- `Wiring#run`, the
     # first line at which the Agent (and so its Timeline's store) has been
     # built. Late rather than injected because this object is constructed a
     # whole layer above that, in `ChatLaunch#open_chronicle`, which must be in
     # the tee's sink list before `Wiring` exists at all.
     #
-    # @param store [Store] the session's object database
+    # @param store [Ext::Store] the session's object database
     # @return [void]
     def bind_store(store)
       @store = store

@@ -65,7 +65,7 @@ module Lain
       # Execute the whole plan from +timeline+ (the store-backed mainline root)
       # rendering through +pipeline+, under the injected shape.
       #
-      # @param timeline [Timeline] the mainline root; a {ForkPerStep} policy is
+      # @param timeline [Ext::Timeline] the mainline root; a {ForkPerStep} policy is
       #   constructed from this SAME Timeline so the two never drift
       # @param pipeline [Context::Combinator, Provider] the initial render strategy
       # @param workspace [Workspace] sent, not stored, into each render

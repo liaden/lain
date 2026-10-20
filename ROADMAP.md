@@ -113,7 +113,11 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
   speculative branching. The committed *core*; the `[exp]`/`[parked]` fold-ins below remain future work.
 - **M4-1 — the Rust Timeline.** `[built]` (this session): `Canonical`/`Store`/`Turn`/`Timeline` ported
   to `ext/lain` as `frozen_shareable` `TypedData`, digests byte-identical to the Ruby reference, the
-  same shared law groups passing against **both** impls.
+  same shared law groups passing against **both** impls. **✅ Closed 2026-10-20**
+  (`planning/specs/algebra-and-flip.md`): every Timeline, Store and stored event is built by
+  `Dag::Factory` over `Lain::Ext`, the Ruby `Event`, `Store` and `Timeline` are deleted, and the
+  Rust is held to native `proptest` laws, the shared groups, a frozen conformance corpus
+  (`ext/lain/corpus/`) and a `cargo-mutants` baseline in place of a second implementation.
   **✅ Done:** `planning/specs/rust-findings-resolution.md` — resolved the 2026-07-15 `ext/lain`
   findings (loud walks on corrupt chains, idiomatic errors via thiserror, FFI naming/dedup,
   Digest/Role domain types, edition 2024). (Stale "Planned" marker fixed 2026-07-17 — the plan
@@ -220,7 +224,7 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 > `Bench::Rewrites` landed in chunk-cache-memory-hands (2026-07-13).
 - `[built]` Property-tested laws, each held in its subject's own spec by `include_examples` with a
   population (`Lain::Algebra`'s registry and sweep were deleted 2026-09-14; the three DAG orders are
-  `Dag::RenderAncestry` in Ruby and Rust types for dominance (behind the sealed `MeetSemilattice`
+  Rust types since 2026-10-20: `Ext::Dag::RenderAncestry` and dominance (behind the sealed `MeetSemilattice`
   trait) and causal ancestry (`MaximalLowerBounds`)). `Context`
   combinators composing under `>>`, each declaring `requires`, selectable by name with
   `--context-pipeline`. All four middleware phases (`model`/`tool`/`turn`/`repl`).
@@ -330,7 +334,9 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 ### M4 — Rust timeline, Neovim, and time-travel `[planned]` (4-1 `[built]`)
 - `[built]` (M4-1) Persistent Merkle DAG behind the existing interface; the same property tests pass
   unchanged, against **both** the Ruby and Rust impls. Cache-break localization. Speculative branching.
-  In `ext/lain`, `frozen_shareable`, digests byte-identical to the Ruby reference.
+  In `ext/lain`, `frozen_shareable`, digests byte-identical to the Ruby reference. Since 2026-10-20
+  the Rust DAG is the only one: the Ruby impl is deleted and its answers are frozen in
+  `ext/lain/corpus/`.
 - `[planned]` (M4-2) Neovim frontend with the **editable `lain://request` buffer** (edit it,
   `:LainResend`, watch what changes).
 - **Fold-ins:**
@@ -380,7 +386,8 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   (the Rust re-port, blocked on TL-3). **✅ Both ruled and landed 2026-07-17** — see item 10
   below: TL-3 ruled enriched (a) (render meet byte-unchanged, set-valued `causal_meets`, new
   `dominator_meet` checkpoint primitive); TL-5 landed as the T25 Rust re-port, un-parking all
-  four digest-parity pendings. (2026-09-14: the render meet is now `Dag::RenderAncestry`, and
+  four digest-parity pendings. (2026-09-14: the render meet is now `Dag::RenderAncestry`, Rust's
+  `Ext::Dag::RenderAncestry` alone since 2026-10-20, and
   `causal_meets`/`dominator_meet` live only in Rust, as `Lain::Ext::Dag::CausalAncestry` and
   `Lain::Ext::Dag::Dominance`; the checkpoint primitive is still unwired.) **Remaining M5 tail:**
   grader-from-Gherkin; the edge-grain
@@ -881,7 +888,7 @@ XDG path relative, which put machine state back inside the user's repository)
    capability guarding, `DryReplay`/`Grader`/`Compare` + speculative branching. The thesis is
    unlocked.
 3. **✅ M4-1 — the Rust Timeline — done** (this session): the persistent Merkle DAG in `ext/lain`, both
-   impls green against the shared law groups.
+   impls green against the shared law groups. Since 2026-10-20 the Rust is the only impl (item 23).
 4. **P — provisional cleanup** (needs a Console key): re-record the transport cassette, run the `:live`
    differential once, confirm the real rate-limit reset header. See `remaining-work.md` § P.
 4b. **✅ Chunk done (2026-07-13)** — CE-1 (cap bug), CE-2 (`Request#prefix_digests` + journaled
@@ -1168,11 +1175,11 @@ XDG path relative, which put machine state back inside the user's repository)
    Catalog load-once-render-once, `Toolset#to_schema`), the Rust safety/idiom work that is also a
    wiring prerequisite (recursion bounds, mutex-vs-Ruby discipline, the `NO_COLOR`-via-feature
    trim, one `read_text` encoding policy), a `Tools::Grep` lain-core RPC, and the record-keeping
-   card (T39) that writes the epic-tier entry, the Rust parity gap (`planning/rust-parity-gap.md`),
-   and the unwired-seam triage item. Memoization is constrained by ruling: restructure over cache,
-   stated key-space/bound/consistency, "not worth it" is an allowed verdict (T19). The Rust
-   dag/canonical/event bindings stay **unwired** — wiring is the follow-up chunk this plan's T39
-   files.
+   card (T39) that writes the epic-tier entry, the Rust parity gap (`planning/rust-parity-gap.md`,
+   deleted 2026-10-20 and kept in item 23), and the unwired-seam triage item. Memoization is
+   constrained by ruling: restructure over cache, stated key-space/bound/consistency, "not worth it"
+   is an allowed verdict (T19). The Rust dag/canonical/event bindings stay **unwired** — wiring is
+   the follow-up chunk this plan's T39 files.
 
 21. **✅ Landed — planned 2026-07-29, panel-reviewed** —
    `planning/specs/chunk-review-missing-objects.md`: **chunk B, runs after chunk A lands** (its
@@ -1222,25 +1229,48 @@ XDG path relative, which put machine state back inside the user's repository)
    `Approval::Gate`; `adjudicated` is wired into `lain epic submit` rather than refused there;
    Linear is out) and the remaining work, sized.
 
-23. **Next chunk — the Rust `Timeline`/`Store` parity gap, and the wiring decision.** Grounding:
-   `planning/rust-parity-gap.md` (method-by-method Ruby↔`Lain::Ext`, written against the code,
-   `file:line` throughout). `lib/lain.rb:77` requires the compiled extension **unconditionally**,
+23. **✅ Closed 2026-10-20 — the Rust `Timeline`/`Store` parity gap, and the wiring decision.**
+   `planning/specs/algebra-and-flip.md` (T27 to T41) named the seam, `Dag::Factory`, flipped it to
+   `Lain::Ext`, and deleted the Ruby `Event`, `Store` and `Timeline` (`a62537ca`) once their answers
+   were frozen as a conformance corpus; `1bf87940` retired the last Ruby oracle. The grounding doc,
+   `planning/rust-parity-gap.md`, was deleted with this entry's close, and its measurements are
+   kept here. As written on 2026-07-29, line numbers as of `cc76ea4`. What already agreed then,
+   verified against the built `.so`: the same `(role, content)` gave a byte-identical
+   `head_digest` from both Timelines, and both an event and an `Ext::Turn` were
+   `Ractor.shareable?`.
+
+   `lib/lain.rb:77` requires the compiled extension **unconditionally**,
    so the question was never "is the extension present" — it is *which implementation a caller
    gets*, which makes this a design decision rather than an optionality problem. The gap is
    wider than "not wired": `Ext::Store#put` is monomorphic (`ext/lain/src/lib.rs:1007` takes
-   `&Turn`) while the production `Store` holds six other duck-typed kinds; `Ext::Timeline#commit`
+   `&Turn`; verified, `store.put("x")` raised `TypeError`) while the production `Store` holds six
+   other duck-typed kinds; `Ext::Timeline#commit`
    accepts no `causal_parents:` (`lib.rs:1150-1155`, hard-coded `Vec::new()` at `:1169`) while
    four `lib/` sites pass one and a fifth splats it in; the Ext store carries an event's payload
-   inline where Ruby stores two objects per turn, which the same shared-prefix spec pins at 8
-   (`spec/lain/timeline_spec.rb:150`) and 4 (`spec/lain/rust/timeline_spec.rb:77`); and
+   inline where Ruby stores two objects per turn (verified live: one commit onto an empty
+   timeline left `size == 2` in Ruby and `size == 1` in Ext), which the same shared-prefix spec
+   pins at 8 (`spec/lain/timeline_spec.rb:150`) and 4 (`spec/lain/rust/timeline_spec.rb:77`); and
    `Ext::Timeline#ancestors` returns an Array with no block form, so `Ledger`'s
-   `timeline.ancestors { … }` (`ledger.rb:117`) would silently accumulate nothing. Ruby's
+   `timeline.ancestors { … }` (`ledger.rb:117`) would silently accumulate nothing (verified: a
+   one-turn Ext timeline left the accumulator empty). Ruby's
    `causal_meets`, `dominator_meet`, and `correlation` have no Ext counterpart at all (reversed
    since: the Ruby `causal_meets` and `dominator_meet` were deleted 2026-09-14 and exist only as
    `Ext::Timeline` methods and `Lain::Ext::Dag::*` orders). **Ruled
    this chunk (item 20): the dag/canonical/event bindings stay unwired.** Timeline construction
-   is scattered across **16 sites in 12 files** with no factory to swap, so a wiring decision has
-   to name a seam before it can name an implementation.
+   is scattered across **16 sites in 12 files** with no factory to swap (12 `Timeline.empty`, 11 of
+   them passing `store:`, to 4 `Timeline.new(head_digest:, store:)`), so a wiring decision has
+   to name a seam before it can name an implementation. On 2026-10-19 the plan's grounding
+   recounted 23 `Timeline` sites in 19 files and 18 `Store.new`.
+
+   How each gap closed: `causal_parents:` and the block-form `#ancestors` had landed by
+   2026-09-12 (the block form is now lazy, one node per yield); the `correlation` reader landed
+   with T29 (`1c35cbf3`), the 3 other event kinds with T30 (`39a564ac`), and polymorphic store puts
+   with T31 (`56cff2b5`; 2 maps, events and members, with edges checked against events only). The benchmarks behind the flip
+   are in the plan's Spike findings and Execution log; the user's gate was that the chat-path
+   render on Ext is not slower than Ruby's (render after 1 commit at 10k turns: Ruby 39.6 ms,
+   Ext 36.2 ms on a quiet box, 2026-10-20). The deleted doc's Ruby-only rows (the
+   `causal_parents:` ArgumentError, the `Monitor` and `Mutex` lock row, the validated edges and the
+   per-site line table) are recoverable from `cc76ea4`.
 
 24. **Triage — the 30 unwired seams (the review's count; ~4,300 lines with zero production
    callers).** Inventory and per-unit line counts:

@@ -15,7 +15,7 @@ module Lain
         #
         # This class decides what a snapshot captures; every git call is its
         # {Repository}'s. Git is the CHANGE DETECTOR: the bytes a snapshot
-        # records still land in lain's blake3 {Store} through {Snapshot}.
+        # records still land in lain's blake3 {Ext::Store} through {Snapshot}.
         #
         # The store is a BARE repository under XDG state, keyed by
         # {Paths#project_hash}, driven with `GIT_DIR` pointed at it and

@@ -41,8 +41,8 @@ class SpawnRecord
   # Store the parent already shares with it. The same walk `last_child` gave --
   # a Timeline IS a head digest and a store, and both are recorded.
   #
-  # @param store [Lain::Store] the shared store the spawn wrote into
-  # @return [Lain::Timeline, nil] nil when no child ever finished
+  # @param store [Lain::Ext::Store] the shared store the spawn wrote into
+  # @return [Lain::Ext::Timeline, nil] nil when no child ever finished
   def child(store)
     # Any kind-`:message` event is the latest one, including an actor's note,
     # whose body carries "text" and no "final" -- so this asks rather than

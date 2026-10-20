@@ -46,7 +46,7 @@ module Lain
           nil
         end
 
-        # @param timeline [Timeline] the head this turn renders from
+        # @param timeline [Ext::Timeline] the head this turn renders from
         # @return [Snapshot, Null] Null while nothing was ever posted, without
         #   walking the timeline
         def capture(timeline)
@@ -56,7 +56,7 @@ module Lain
           Snapshot.new(pending: unconsumed(timeline, written))
         end
 
-        # @param timeline [Timeline]
+        # @param timeline [Ext::Timeline]
         # @return [Boolean] whether a note is queued or written but unconsumed
         def pending?(timeline)
           return false if never_posted?

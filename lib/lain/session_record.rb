@@ -126,7 +126,7 @@ module Lain
     # The body plus the render edge, which is exactly what a Loader re-commits
     # to recompute the digest recorded beside it.
     #
-    # `causal_parents` -- the SET edge, sorted and frozen by {Event} -- rides here
+    # `causal_parents` -- the SET edge, sorted and frozen by {Ext::Event} -- rides here
     # because it is part of that content address, so a record without it cannot
     # re-commit. It merges in only when the turn HAS one, on {.header}'s
     # `resumed_from` idiom, so a turn with no causal edge stays byte-identical to

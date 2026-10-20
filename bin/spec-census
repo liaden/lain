@@ -959,9 +959,10 @@ module SpecCensus
         * alternative constructors -- `CLI::Up.from_options`,
           `CLI::EpicSubmit.from_options`: public API by intent even when only
           a spec exercises them today.
-        * documented order vocabulary -- `Dag::RenderAncestry.below?` and
-          `.diverge_at` are the DAG's public questions, specified before any
-          lib/ caller asks them.
+        * documented order vocabulary -- an order's public questions,
+          specified before any lib/ caller asks them. The DAG's were the
+          case in hand (`.below?`, `.diverge_at`); they live in the extension
+          since 2026-10-20, so this list no longer sees them.
       Injected collaborators and Null Objects are EXCLUDED rather than listed,
       since a flag on one is the rule's error -- see LibReach::DOUBLE_OWNERS.
 

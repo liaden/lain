@@ -148,7 +148,7 @@ module Lain
       #   marker to be reported, never a raise that aborts recovery of a clean
       #   frame beyond it. Real frames answer #request_digest/#bytes/#complete?/#wire;
       #   a Corrupt marker answers #corrupt?.
-      # @param timeline [Lain::Timeline] the loaded session's current head; a
+      # @param timeline [Lain::Ext::Timeline] the loaded session's current head; a
       #   {Recovered} commits onto this without mutating it (Timeline is
       #   already immutable, stated here for the reader)
       # @param reassembly [#call] rebuilds a frame's {Response} given the

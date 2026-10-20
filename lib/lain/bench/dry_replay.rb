@@ -26,7 +26,7 @@ module Lain
       # rendered, paired with the recorded Request the render produced.
       Step = Data.define(:index, :timeline, :recorded)
 
-      # @param timeline [Lain::Timeline] the recorded final DAG
+      # @param timeline [Lain::Ext::Timeline] the recorded final DAG
       # @param baseline [Array<Lain::Request>] requests actually sent, in order
       # @param toolset [#to_schema] the toolset in effect at record time
       # @param workspace [Lain::Workspace] the workspace in effect at record time

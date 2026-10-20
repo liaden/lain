@@ -39,7 +39,7 @@ module Lain
         # raises mid-walk resumes from the last record that actually landed
         # rather than re-feeding the ones before it.
         #
-        # @param timeline [Lain::Timeline]
+        # @param timeline [Lain::Ext::Timeline]
         # @return [self]
         # @raise [Diverged] when the stop digest is not on this timeline
         def catch_up(timeline)

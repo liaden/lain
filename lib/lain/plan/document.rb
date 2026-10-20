@@ -12,7 +12,7 @@ module Lain
   # fork/replay over the same plan renders byte-identical prompts. #to_markdown
   # is the author-editable artifact and round-trips back through .parse_markdown
   # to the same #digest -- that round-trip IS the author-review loop.
-  # Content-addressed by #digest so the {Store} can hold it and it survives a
+  # Content-addressed by #digest so the {Ext::Store} can hold it and it survives a
   # fork (Session deliberately never carries a plan; see session.rb).
   module Plan
     # A status shown as a one-char mark inside the markdown checkbox, and the

@@ -38,7 +38,7 @@ module Lain
         result
       end
 
-      # @param timeline [Lain::Timeline] the timeline holding the turn just
+      # @param timeline [Lain::Ext::Timeline] the timeline holding the turn just
       #   committed, handed over rather than read, so the turn written is the
       #   turn committed
       def settle(timeline)

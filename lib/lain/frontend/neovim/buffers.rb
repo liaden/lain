@@ -24,7 +24,7 @@ module Lain
         # embeds the FULL message history -- see its doc) on every turn.
         CONTEXT_LINES = 3
 
-        # The Null store: satisfies the read half of the {Store} duck and
+        # The Null store: satisfies the read half of the {Ext::Store} duck and
         # resolves NOTHING, so a Buffers nobody wired a store into renders every
         # timeline as unavailable -- visibly, the same rendering a real
         # store's genuine miss gets, asked by `key?` before any timeline is
@@ -191,7 +191,7 @@ module Lain
           end
         end
 
-        # @param store [Lain::Store] backs the Timeline a {Telemetry::TurnUsage}'s
+        # @param store [Lain::Ext::Store] backs the Timeline a {Telemetry::TurnUsage}'s
         #   digest names -- the SAME store the live session's Timeline commits
         #   into, so its ancestors are actually reachable here. Defaults to
         #   {DetachedStore}, which renders every timeline as unavailable.

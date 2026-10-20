@@ -298,7 +298,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
       end
 
       # A NULL is the sibling shape, and `kind` is the one field where it
-      # refused in the wrong currency: it reaches Event::Payload and Event
+      # refused in the wrong currency: it reaches the event constructor
       # before any digest exists, so it came out as a bare Lain::Error ("kind
       # must be one of turn, spawn, message, snapshot, got nil") that no door
       # rescues. Every other field's null is caught by the content-address

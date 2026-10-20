@@ -58,7 +58,7 @@ module Lain
         # the extension's keeps only the bytes, and a fetched String's own
         # `#bytes` is an Array of Integers.
         #
-        # @param fetched [Blob, String] what {Store#fetch} answered
+        # @param fetched [Blob, String] what {Ext::Store#fetch} answered
         # @return [Blob]
         def self.from_fetch(fetched) = fetched.is_a?(self) ? fetched : new(bytes: fetched)
 
@@ -102,9 +102,9 @@ module Lain
       # recording total deletion rather than the stale silence that would let a
       # restore resurrect the file.
       #
-      # @param timeline [Timeline] whose head the snapshot names as its cause
+      # @param timeline [Ext::Timeline] whose head the snapshot names as its cause
       # @param paths [Enumerable<String>] the session write-set
-      # @return [Event, nil] the :snapshot event, or nil when nothing changed
+      # @return [Ext::Event, nil] the :snapshot event, or nil when nothing changed
       def write(timeline:, paths:)
         selection = @scope.paths(write_set: paths, root: @root)
         @outside = selection.outside
@@ -162,7 +162,7 @@ module Lain
       # scope knows whether its map is a whole state or one turn's delta.
       def skip?(files) = @scope.unchanged?(root: @root, files:, last: @last_files)
 
-      # Sorted so the map cannot vary with write-set recording order; {Store#put}
+      # Sorted so the map cannot vary with write-set recording order; {Ext::Store#put}
       # is idempotent, so re-hashing an unchanged file re-stores nothing.
       def manifest(store, paths)
         paths.sort.filter_map { |path| entry(store, path) }.to_h

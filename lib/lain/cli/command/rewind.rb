@@ -42,7 +42,7 @@ module Lain
         private
 
         # Refusals all happened above, so from here the move is committed. Catch
-        # up FIRST, then journal BEFORE the machine moves: {Timeline#rewind} on a
+        # up FIRST, then journal BEFORE the machine moves: {Ext::Timeline#rewind} on a
         # validated count cannot fail, and {Agent#rewind}'s in-flight refusal
         # cannot fire because {#exclusively} holds the dispatch lock it asks
         # for, so nothing can raise between the record landing and the machine
@@ -131,7 +131,7 @@ module Lain
                          "committed turns (valid range: 1..#{timeline.length})"
         end
 
-        # The resolved target's distance from the head -- {Timeline#rewind}'s
+        # The resolved target's distance from the head -- {Ext::Timeline#rewind}'s
         # count -- so the machine moves through the one public seam either form
         # uses.
         def distance_to(prefix, timeline)

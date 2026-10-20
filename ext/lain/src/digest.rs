@@ -2,10 +2,10 @@
 //!
 //! A [`Digest`] is a `"blake3:<hex>"` content address. It is a
 //! type-DISTINGUISHING wrapper, NOT a shape-VALIDATING one: it accepts whatever
-//! string the boundary hands it (the Ruby `Turn.new` accepts arbitrary parent
-//! strings, and `rust/turn_spec.rb` constructs `parent: "blake3:abc"`, which is
-//! not a real 64-hex digest), so a validating constructor here would diverge
-//! from the Ruby side and break the pinned parity specs. What it buys is that a
+//! string the boundary hands it (the deleted Ruby `Turn.new` accepted arbitrary
+//! parent strings, and `rust/turn_spec.rb` constructs `parent: "blake3:abc"`,
+//! which is not a real 64-hex digest), so a validating constructor here would
+//! diverge from what the corpus recorded and break the pinned specs. What it buys is that a
 //! bare `String` can no longer be passed where a digest is meant -- `TurnData`'s
 //! fields, the `StoreMap` keys, and every `dag` signature take `Digest`, so the
 //! two are no longer interchangeable at a call site.
@@ -20,14 +20,16 @@ use std::ops::Deref;
 /// A `"blake3:<hex>"` content address. Transparent over its `String`: the
 /// hand-written `Debug` below keeps every `{digest:?}` message byte-identical
 /// to Ruby's `String#inspect`, and the derived `Ord` sorts by exactly the bytes
-/// `String#<=>` sorts by, which is what `Event#normalize_causal` pins.
+/// `String#<=>` sorts by, the order the deleted Ruby `Event#normalize_causal`
+/// pinned and `ext/lain/corpus/event_digest.ndjson` now holds.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Digest(String);
 
 /// Hand-written, NOT derived. A derived `Debug` would render `Digest("blake3:x")`;
 /// but this crate's error messages interpolate a digest with `{digest:?}` (e.g.
 /// `no object {digest:?} in store`) expecting the plain `String`'s `Debug` --
-/// the quoted, `String#inspect`-equal form Ruby `Store#fetch` also emits.
+/// the quoted, `String#inspect`-equal form the deleted Ruby `Store#fetch`
+/// emitted, which `ext/lain/corpus/errors.ndjson` records.
 /// Delegating to the inner `String`'s `Debug` keeps every such message
 /// byte-identical after the field's type changed from `String` to `Digest`.
 impl std::fmt::Debug for Digest {
@@ -128,7 +130,7 @@ mod tests {
         assert!(digest.starts_with("blake3:"));
     }
 
-    // The pinned byte order: Ruby's `normalize_causal` sorts with
+    // The pinned byte order: Ruby's `normalize_causal` sorted with
     // `String#<=>`, so a derived `Ord` over the inner `String` is the same
     // order and `Vec<Digest>::sort` needs no comparator.
     #[test]

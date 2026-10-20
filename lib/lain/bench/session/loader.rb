@@ -124,7 +124,7 @@ module Lain
           chain_fold.member?(digest)
         end
 
-        # @return [Store] the ONE store this file (and, in a resume chain,
+        # @return [Ext::Store] the ONE store this file (and, in a resume chain,
         #   every prior one) rebuilds into -- see {ResumeChain}.
         def store = resume_chain.store
 

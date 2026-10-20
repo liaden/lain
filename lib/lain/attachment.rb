@@ -16,8 +16,8 @@ module Lain
   # Two objects: {Store}, the place, and {Reference}, the address that rides the
   # Timeline in the payload's stead.
   #
-  # {Store} is deliberately NOT {Lain::Store}: that one is an in-memory Hash of
-  # DAG nodes that dies with the process, and these bytes have to outlive it and
+  # {Store} is deliberately NOT `Lain::Ext::Store`: that one is an in-memory map
+  # of DAG nodes that dies with the process, and these bytes have to outlive it and
   # be found again by a resumed chat, a fork or a child agent. So this is a
   # directory, keyed by the PROJECT under {Paths#container} beside `sessions/`,
   # addressing bytes rather than objects. `Store::KIND` names that directory and

@@ -5,8 +5,8 @@ require "pathname"
 # Mechanical guard over the names the living docs use for things that exist.
 #
 # The one it was written for is `Turn`. `Lain::Turn` was deleted in 61f7e81 --
-# collapsed into `Lain::Event`, kind-tagged `:turn` -- and
-# `spec/lain/event_spec.rb` asserts no such constant remains. The docs did not
+# collapsed into an event kind-tagged `:turn`, which since the Ruby DAG's
+# deletion on 2026-10-20 is `Lain::Ext::Event` alone. The docs did not
 # follow: `CLAUDE.md` still described the Merkle DAG as `Turn`/`Store`/
 # `Timeline` and told a Rust porter to keep `Ractor.shareable?(turn)` true for a
 # class that is not there, more than a year of commits after the cut. Prose
@@ -22,7 +22,7 @@ require "pathname"
 # a guard that forbade the word would delete it. So the rule is CONTEXTUAL: a
 # mention of the retired name must sit beside the name that replaced it. That
 # admits every honest sentence -- an explanation, a table row pointing at
-# `lib/lain/event.rb`, a migration note -- and refuses the one shape that
+# `ext/lain/src/event.rs`, a migration note -- and refuses the one shape that
 # matters, a doc using `Turn` as if it were still a class you could reach for.
 #
 # The unit is the PARAGRAPH and not the line, because a line break in prose is
@@ -40,8 +40,8 @@ module DocsNaming
   # Whole-word and case-sensitive, so `TurnUsage` (a live record type), `turns`
   # and `turn` are all left alone. Only the bare constant reads as a class.
   RETIRED = /\bTurn\b/
-  # Case-insensitive, so a table row naming `lib/lain/event.rb` counts as
-  # context just as `Lain::Event` does.
+  # Case-insensitive, so a table row naming `ext/lain/src/event.rs` counts as
+  # context just as `Lain::Ext::Event` does.
   REPLACEMENT = /event/i
 
   # One paragraph that names the retired class with nothing to say it is gone.
@@ -71,19 +71,18 @@ RSpec.describe "the living docs" do
     expect(DocsNaming::DOCS).to all(be_file)
   end
 
-  # The mirror of spec/lain/event_spec.rb's "no Lain::Turn constant remains":
-  # that one holds the code to the cut, this one holds the prose to it.
+  # Holds the prose to the cut that deleted Lain::Turn.
   it "never names Turn as a class without saying it was replaced by Event" do
     found = DocsNaming::DOCS.flat_map { |doc| DocsNaming.drift(doc) }
 
     expect(found).to be_empty, lambda {
-      "Lain::Turn was deleted in 61f7e81; the unit is Lain::Event, kind-tagged :turn. " \
+      "Lain::Turn was deleted in 61f7e81; the unit is Lain::Ext::Event, kind-tagged :turn. " \
         "These paragraphs name the retired class with no mention of Event:\n  #{found.join("\n  ")}"
     }
   end
 
-  it "names Lain::Event in the architecture summary a contributor reads first" do
-    expect(DocsNaming::ROOT.join("CLAUDE.md").read).to include("Lain::Event")
+  it "names Lain::Ext::Event in the architecture summary a contributor reads first" do
+    expect(DocsNaming::ROOT.join("CLAUDE.md").read).to include("Lain::Ext::Event")
   end
 
   # The other half of spec/lain/cli/chat_flags_spec.rb's rule. That one refuses

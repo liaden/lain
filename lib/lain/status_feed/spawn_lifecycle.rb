@@ -43,7 +43,7 @@ module Lain
       attr_reader :unrecognized
 
       # @param record [#body, #payload] a {Telemetry::Message} or a raw
-      #   {Event} -- the two shapes this reads a body out of differently, on
+      #   {Ext::Event} -- the two shapes this reads a body out of differently, on
       #   purpose. `Event#payload` is the CONTENT-ADDRESS ENVELOPE (kind,
       #   from, to, causal_parents, correlation, payload_digest) and never
       #   carries the body at all, by that class's own doc; `Event#body` is

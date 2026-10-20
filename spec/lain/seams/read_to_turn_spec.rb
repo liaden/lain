@@ -3,14 +3,15 @@
 require "tmpdir"
 
 # The seam a defect shipped through. `read_file` was specced by itself, the Timeline
-# was specced by itself, and the raise lives in neither: `Canonical.normalize`
-# inside {Lain::Event::Payload} on {Lain::Timeline#commit}. The nearest existing
+# was specced by itself, and the raise lives in neither: the commit's own read
+# of the content, `Canonical.normalize` inside the deleted Ruby `Event::Payload`
+# then and the extension's canonical reading inside `Lain::Ext::Timeline#commit` now. The nearest existing
 # example -- the `unreadable` one in `redact_secret_reads_spec.rb` -- INJECTS
 # content and never runs the real reader, so no bytes a real `File.read`
 # produced ever crossed into a commit.
 #
 # So: a real file of random bytes, a real {Lain::Tools::ReadFile}, a real
-# {Lain::Agent::ToolRunner}, a real {Lain::Timeline}, and no double anywhere
+# {Lain::Agent::ToolRunner}, a real `Lain::Ext::Timeline`, and no double anywhere
 # between them. The channel and the middleware stack are each object's own
 # default (Null, empty) rather than a stand-in, and the secret boundary is
 # deliberately absent: it is a witness to this defect, not a participant.

@@ -40,7 +40,7 @@ module Lain
         true
       end
 
-      # @param timeline [Timeline] the agent's chain as it stands
+      # @param timeline [Ext::Timeline] the agent's chain as it stands
       # @return [Boolean] whether a note has not yet reached a request
       def pending?(timeline) = @mailbox.pending?(timeline)
 
