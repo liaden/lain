@@ -477,7 +477,7 @@ RSpec.describe Lain::Tools::EditFile do
         tool_middleware: ToolRegistry.gated(policy: Lain::Middleware::Gate::ApproveAll.new)
       )
       Lain::Tools::Subagent.new(seam:, toolset: floor, policy: Lain::Role::Catalog[:dev].spawn_policy(posture: :schema),
-                                budget: Lain::Budget.ceilings, max_depth: 1)
+                                budget: Lain::Budget.ceilings)
     end
 
     it "lands a child's edit in the session journal and shows the display nothing new" do

@@ -18,9 +18,9 @@ module Lain
     # guard cannot see -- each render finishes and returns before the next call
     # is made, so it is a chain of SEPARATE dispatches rather than one render.
     #
-    # Deliberately NOT a nesting depth like {Tools::Subagent}'s `max_depth`:
-    # that ceiling DECREMENTS into a per-child copy of the tool, so N sibling
-    # spawns never exhaust it. run_skill has no child and no toolset copy, so
+    # Deliberately NOT a nesting depth like {Tools::Subagent}'s depth ceiling:
+    # that one DECREMENTS into each child's holder, so N sibling spawns never
+    # exhaust it. run_skill has no child and no toolset copy, so
     # its "recursion" is repeated calls to the ONE instance with no return
     # signal to count down on. The honest bound is therefore a cumulative,
     # cross-skill, never-reset per-run COUNT -- a session QUOTA, which is why

@@ -31,7 +31,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
     Lain::Tools::Subagent.new(
       tool_middleware: ToolRegistry::UNGUARDED,
       provider:, context_factory: -> { context }, toolset: union, policy:,
-      parent:, journal:, budget: Lain::Budget.ceilings, max_depth: 3, observer:
+      parent:, journal:, budget: Lain::Budget.ceilings, holder: Lain::Tools::Subagent::Holder.at(3), observer:
     )
   end
 
@@ -214,7 +214,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
       provider:, context_factory: -> { child_context }, toolset: union,
       policy: policy(prefix: sibling_template.new(template: "tiny"), posture: :schema),
       parent:, journal:, budget: Lain::Budget.ceilings,
-      max_depth: 1, mode: :actor, log: Lain::Tools::Subagent::Log.new
+      mode: :actor, log: Lain::Tools::Subagent::Log.new
     )
     Sync do
       actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)

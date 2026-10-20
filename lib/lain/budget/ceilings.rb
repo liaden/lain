@@ -16,12 +16,14 @@ module Lain
       end
 
       # A nil in the request inherits this holder's room and a finite one is
-      # clamped to it, so a child never outranks its spawner.
-      # @raise [Lain::Budget::Ceilings::Unrunnable] when the child would have no iterations or no depth
+      # clamped to it, so a child never outranks its spawner. Depth is what the
+      # holder may still spawn below itself, so a child at 0 runs as a leaf.
+      # @raise [Lain::Budget::Ceilings::Unrunnable] when the holder has no depth or the child no iterations
       def attenuate(requested)
+        raise self.class::Unrunnable, :depth if depth&.zero?
+
         child = descend.meet(requested)
-        kind = %i[iterations depth].find { |limit| child.to_h[limit]&.zero? }
-        raise self.class::Unrunnable, kind if kind
+        raise self.class::Unrunnable, :iterations if child.iterations&.zero?
 
         child
       end
@@ -30,13 +32,16 @@ module Lain
     class Ceilings
       UNLIMITED = unlimited
 
-      # Raised with the kind of ceiling that left a child no room to run.
+      # Raised with the kind of ceiling that left no room for a child.
       class Unrunnable < Lain::Error
+        WHY = { depth: "this agent has no spawn depth left",
+                iterations: "a child with no iterations cannot run" }.freeze
+
         attr_reader :kind
 
         def initialize(kind)
           @kind = kind
-          super("a child with no #{kind} cannot run")
+          super(WHY.fetch(kind))
         end
       end
     end

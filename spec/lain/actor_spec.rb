@@ -24,7 +24,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
       context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
       toolset: Lain::Toolset.new([EchoTool.new]), policy:, parent: parent_timeline,
       journal: Lain::Channel::Null.instance, budget: Lain::Budget.ceilings,
-      max_depth: 1, mode: :actor, log:
+      mode: :actor, log:
     )
   end
 
@@ -240,7 +240,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
         toolset: Lain::Toolset.new([EchoTool.new]),
         policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
         parent: parent_timeline, journal: Lain::Channel::Null.instance,
-        budget: Lain::Budget.ceilings, max_depth: 1, mode: :actor, log:
+        budget: Lain::Budget.ceilings, mode: :actor, log:
       )
     end
 

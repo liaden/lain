@@ -959,6 +959,47 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  describe "#room" do
+    # Reads the agent's room while its tool runs, which is when a spawn asks.
+    def room_reader(seen, agent_ref)
+      Class.new(Lain::Tool) do
+        define_method(:name) { "room" }
+        define_method(:description) { "Reads the room." }
+        define_method(:input_schema) { { type: :object, properties: {} } }
+        define_method(:perform) { |_input, _context| Lain::Tool::Result.ok(seen.push(agent_ref.call.room).size.to_s) }
+      end.new
+    end
+
+    def spending(output) = Lain::Usage.new(output_tokens: output)
+
+    it "answers mid-ask the iterations this ask has left and the tokens the run has left" do
+      seen = []
+      a = nil
+      call = { "type" => "tool_use", "id" => "r1", "name" => "room", "input" => {} }
+      responses = [Lain::Response.new(content: [call], stop_reason: :tool_use, usage: spending(30)),
+                   text_response("done")]
+      a = described_class.new(provider: CoreGraph.provider(*responses), context:,
+                              toolset: CoreGraph.toolset([room_reader(seen, -> { a })]),
+                              budget: Lain::Budget.ceilings(iterations: 10, tokens: 100).with(depth: 2))
+
+      a.ask("go")
+
+      expect(seen.map { |room| [room.iterations, room.tokens, room.depth] }).to eq([[9, 70, 2]])
+    end
+
+    # A role spawn between asks must not inherit the count of the ask that
+    # ended: the next ask starts its own.
+    it "answers idle the whole iteration ceiling, after an ask that used most of it" do
+      a = agent([tool_response(["tu_1", "echo", { "text" => "x" }]), tool_response(["tu_2", "echo", { "text" => "y" }]),
+                 text_response("done", usage: spending(40))],
+                budget: Lain::Budget.ceilings(iterations: 3, tokens: 100))
+
+      a.ask("go")
+
+      expect([a.room.iterations, a.room.tokens]).to eq([3, 60])
+    end
+  end
+
   describe "turn usage accounting" do
     let(:journal_io) { StringIO.new }
     let(:journal) { Lain::Journal.new(io: journal_io) }

@@ -65,7 +65,6 @@ module Lain
       # @param slots [Prompt::Slots] where a role's persona is read from
       # @param seam [Tools::Subagent::Seam, nil] the spawn collaborators, or nil
       #   to build them from the loose members
-      # @param max_depth [Integer] how many levels a child may still spawn
       # @param compaction [Tools::Subagent::ParentView, #call] what every child
       #   it builds reads its parent's held cuts through
       # @param placed [Hash{Symbol => Placed}] by role name, the roles whose
@@ -73,14 +72,13 @@ module Lain
       # @param worker_env [#call] answers, at each spawn, the {WorkerEnv} a
       #   never-parking child runs in: the chat's own, which a scope change moves
       # @param spawn_over [Hash] the loose seam members, when no seam is given
-      def initialize(toolset:, slots:, seam: nil, max_depth: 1, compaction: Tools::Subagent::ParentView::None,
+      def initialize(toolset:, slots:, seam: nil, compaction: Tools::Subagent::ParentView::None,
                      placed: {}, worker_env: WorkerEnv.method(:default), **spawn_over)
         @seam = Tools::Subagent::Seam.resolve(seam, **spawn_over)
         @placed = placed
         @worker_env = worker_env
         @toolset = toolset
         @slots = slots
-        @max_depth = max_depth
         @compaction = compaction
       end
 
@@ -115,7 +113,7 @@ module Lain
       # @raise [Isolation::Leases::Lane::Refused] when git would not accept the name
       def within(worker_env, lane: nil)
         self.class.new(seam: @seam.with(isolation: lent(worker_env, lane)), toolset: @toolset, slots: @slots,
-                       max_depth: @max_depth, compaction: @compaction, placed: @placed, worker_env: @worker_env)
+                       compaction: @compaction, placed: @placed, worker_env: @worker_env)
       end
 
       # This spawn, its children built through the seam guard's never-parking
@@ -128,7 +126,7 @@ module Lain
       # @return [RoleSpawn]
       def never_parking
         self.class.new(seam: @seam.with(tool_middleware: @seam.tool_middleware.never_parking, isolation: unleased),
-                       toolset: @toolset, slots: @slots, max_depth: @max_depth, placed: unplaceable,
+                       toolset: @toolset, slots: @slots, placed: unplaceable,
                        worker_env: @worker_env)
       end
 
@@ -145,7 +143,7 @@ module Lain
       end
 
       # Everything the CALL decides: the role's policy, persona and child name,
-      # plus the model this one child was bound to. The seam, union and ceiling
+      # plus the model this one child was bound to. The seam and union
       # this instance already held.
       def build_subagent(role, context_mode, model, skill)
         place = placed(role)
@@ -153,7 +151,7 @@ module Lain
         Tools::Subagent.new(
           seam: named_for(who, place.seam), toolset: @toolset, policy: role.spawn_policy(prefix: context_mode),
           persona: Role::Persona.new(role:, slots: @slots), model:, budget: role.budget,
-          max_depth: @max_depth, name: role.name.to_s, announces_as: who, compaction: @compaction, kept: place.kept
+          name: role.name.to_s, announces_as: who, compaction: @compaction, kept: place.kept
         )
       end
 

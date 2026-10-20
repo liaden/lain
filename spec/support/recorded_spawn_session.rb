@@ -123,11 +123,10 @@ class RecordedSpawnSession
       seam: Lain::Tools::Subagent::Seam.new(
         tool_middleware: ToolRegistry::UNGUARDED, provider: Lain::Provider::Mock.new(responses:),
         context_factory: -> { CHILD_CONTEXT }, parent: -> { @agent.timeline },
-        observer: ->(event) { @scribe.call(event) }
+        observer: ->(event) { @scribe.call(event) }, holder: Lain::Tools::Subagent::Holder.at(depth)
       ),
       toolset: Lain::Toolset.new(child_tools),
-      policy: Lain::Tool::SpawnPolicy.new(prefix:, posture: :schema, only: []),
-      max_depth: depth
+      policy: Lain::Tool::SpawnPolicy.new(prefix:, posture: :schema, only: [])
     )
   end
 end

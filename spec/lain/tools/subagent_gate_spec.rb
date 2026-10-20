@@ -128,7 +128,7 @@ RSpec.describe "Subagent gating" do
     Lain::Tools::Subagent.new(
       seam: seam(provider:, **over), toolset: union,
       policy: Lain::Role::Catalog[role].spawn_policy(posture:),
-      budget: Lain::Budget.ceilings, max_depth: 1
+      budget: Lain::Budget.ceilings
     )
   end
 
@@ -305,7 +305,7 @@ RSpec.describe "Subagent gating" do
       Lain::Tools::Subagent::ChildBuilder.new(
         seam: seam(provider: mock, gate_policy: SubagentGateSupport::SpyPolicy.new(verdict: false), sensitivity:),
         toolset: union, policy: Lain::Role::Catalog[role].spawn_policy(posture:), budget: Lain::Budget.ceilings
-      ).build(parent, ceiling: 1).agent
+      ).build(parent).agent
     end
 
     def runner_of(agent) = agent.send(:tool_runner)
@@ -351,7 +351,7 @@ RSpec.describe "Subagent gating" do
         seam: seam(provider: mock).with(tool_middleware: guard), toolset: union,
         policy: Lain::Role::Catalog[:merge_resolver].spawn_policy(posture: :handler_union),
         budget: Lain::Budget.ceilings
-      ).build(parent, ceiling: 1).agent
+      ).build(parent).agent
     end
 
     # A configured member runs outermost, so inserting the refusal by its
@@ -390,7 +390,7 @@ RSpec.describe "Subagent gating" do
         budget: Lain::Budget.ceilings
       )
 
-      builder.build(parent, ceiling: 1)
+      builder.build(parent)
 
       expect(shared.to_a.map(&:class)).to eq([Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
@@ -405,7 +405,7 @@ RSpec.describe "Subagent gating" do
     def spawned_over(builder, posture: :schema)
       tool = Lain::Tools::Subagent.new(
         seam: seam(provider: mock(*calls("bash"))).with(tool_middleware: builder), toolset: union,
-        policy: Lain::Role::Catalog[:dev].spawn_policy(posture:), budget: Lain::Budget.ceilings, max_depth: 1
+        policy: Lain::Role::Catalog[:dev].spawn_policy(posture:), budget: Lain::Budget.ceilings
       )
       tool.call({ "prompt" => "go" }, invocation)
     end

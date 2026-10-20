@@ -345,7 +345,8 @@ RSpec.describe Lain::Middleware::ResolveAttachments, :seam do
     # sibling card shipped a dead `config` member whose hand-back claimed it
     # carried state to a subtree.
     it "hands a grandchild the same store, through the copy #descend makes" do
-      grandchild = subagent.descend(parent: -> { parent }, escalation: [Lain::Tools::AskHuman::HUMAN], ceiling: 1)
+      grandchild = subagent.descend(parent: -> { parent }, escalation: [Lain::Tools::AskHuman::HUMAN],
+                                    holder: Lain::Tools::Subagent::Holder.at(1))
 
       expect(grandchild.seam.attachments).to be(store)
     end

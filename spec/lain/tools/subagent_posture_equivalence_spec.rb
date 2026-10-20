@@ -34,7 +34,7 @@ RSpec.describe "Subagent posture equivalence" do
       tool_middleware: ToolRegistry::UNGUARDED,
       provider:, context_factory: -> { child_context }, toolset: union,
       policy: spawn_policy(posture:), parent:, journal:,
-      budget: Lain::Budget.ceilings, max_depth: 3, observer:
+      budget: Lain::Budget.ceilings, holder: Lain::Tools::Subagent::Holder.at(3), observer:
     )
   end
 

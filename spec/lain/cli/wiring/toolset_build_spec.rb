@@ -1335,18 +1335,17 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       floor = Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name)
 
       expect(epic.policy.only).to eq(orchestrator.spawn_policy.only)
-      expect(epic.max_depth).to eq(2)
+      expect(Lain.live(epic.seam.holder).depth).to eq(2)
       expect(epic.attenuates_from.names).to match_array(floor + %w[subagent run_skill])
     end
 
-    # The spawner in the orchestrator's union grants dev from the floor, and
-    # its own ceiling is 1: the epic's 2 lowers it to 1 and never raises it.
-    it "hands the orchestrator a dev spawner at depth 1, attenuating from the floor" do
+    # The spawner in the orchestrator's union grants dev from the floor; its
+    # depth is whatever the orchestrator has left when it is descended.
+    it "hands the orchestrator a dev spawner, attenuating from the floor" do
       toolset_build.build(recorder, ask_human:)
       spawner = issue_epic.attenuates_from.fetch("subagent")["dev"]
 
       expect(spawner.policy.only).to eq(dev.spawn_policy.only)
-      expect(spawner.max_depth).to eq(1)
       expect(spawner.attenuates_from.names).to match_array(Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name))
     end
 
@@ -1422,13 +1421,15 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(shown(provider.requests[1])).to eq(granted(dev))
     end
 
-    # Every member but two is the run's own: who the gate is told is asking,
-    # and the issue's lane in place of the chat's.
+    # Every member but three is the run's own: who the gate is told is asking,
+    # the issue's lane in place of the chat's, and the epic's own room.
     it "spawns over the run's one seam, so its children run behind the chat's own guard" do
       toolset_build.build(recorder, ask_human:)
       epic = issue_epic
       run = toolset_build.role_spawn.seam
-      shared = Lain::Tools::Subagent::Seam.members - %i[tool_middleware isolation]
+      shared = Lain::Tools::Subagent::Seam.members - %i[tool_middleware isolation holder]
+
+      expect(epic.seam.holder).to be(Lain::CLI::Wiring::ToolsetBuild::EPIC_ROOM)
 
       expect(epic.seam.isolation).not_to be(run.isolation)
       expect(epic.attenuates_from.fetch("subagent")["dev"].seam.isolation).to be(epic.seam.isolation)
@@ -1470,9 +1471,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         research = agent.toolset.fetch("subagent")
 
         expect(issued(build).policy.only).to eq(orchestrator.spawn_policy.only)
-        expect(issued(build).max_depth).to eq(2)
+        expect(Lain.live(issued(build).seam.holder).depth).to eq(2)
         expect(research.policy.only).to eq(Lain::Role::Catalog.fetch(:researcher).spawn_policy.only)
-        expect(research.max_depth).to eq(1)
+        expect(Lain.live(research.seam.holder).depth).to eq(1)
         expect(research.attenuates_from.names).not_to include("subagent", "run_skill")
         expect(research.seam.isolation).to be(build.role_spawn.seam.isolation)
         expect(issued(build).seam.isolation).not_to be(build.role_spawn.seam.isolation)

@@ -95,9 +95,13 @@ RSpec.describe Lain::Budget::Ceilings do
         .to raise_error(described_class::Unrunnable, /iterations/)
     end
 
-    it "refuses a holder at the last depth, naming depth" do
-      expect { ceilings(depth: 1).attenuate(ceilings) }
+    it "refuses a holder with no depth left, naming depth" do
+      expect { ceilings(depth: 0).attenuate(ceilings) }
         .to raise_error(described_class::Unrunnable, /depth/)
+    end
+
+    it "grants a holder at depth 1 a child at depth 0, which runs but cannot spawn" do
+      expect(ceilings(depth: 1).attenuate(ceilings).depth).to eq(0)
     end
 
     it "does not refuse for a ceiling other than iterations or depth being 0" do

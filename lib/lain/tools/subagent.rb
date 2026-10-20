@@ -76,11 +76,8 @@ module Lain
       def attenuates_from = @builder.toolset
 
       # What a spawn from this tool is granted, read by whoever grants a role
-      # rather than by the spawn: how many levels it may still spawn below
-      # itself, the policy its child is attenuated by, and the budget that
-      # child's loop runs under.
-      attr_reader :max_depth
-
+      # rather than by the spawn: the policy its child is attenuated by, and
+      # the ceilings its role asks for, which the holder's room then clamps.
       def policy = @builder.policy
 
       def budget = @builder.budget
@@ -108,7 +105,7 @@ module Lain
       # ({Kept}), and adds `extends` to the input; not copied by {#descend}
       # either, since a grandchild works where its parent was put.
       def initialize(toolset:, policy:, seam: nil, budget: Budget.ceilings,
-                     max_depth: 1, name: NAME, announces_as: name, mode: :one_shot,
+                     name: NAME, announces_as: name, mode: :one_shot,
                      log: Log::Null, persona: Role::Persona::Null, model: ModelChoice::Null,
                      answer: ANSWER, compaction: ParentView::None, kept: Unkept, **spawn_over)
         super()
@@ -118,7 +115,7 @@ module Lain
         @kept = kept
         @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, model:,
                                     name: @announces_as.label, compaction:)
-        seed_config(max_depth, name, mode, log)
+        seed_config(name, mode, log)
       end
 
       # Per instance, since only a spawner that gives its child a place of its
@@ -160,9 +157,7 @@ module Lain
       # actor lifecycle needs the Supervisor reactor {#perform} adopts onto,
       # which a synchronous caller here does not hold.
       def run(prompt)
-        return depth_exceeded if @max_depth <= 0
-
-        spawn_one_shot(prompt)
+        admitted(@builder) { |builder| spawn_one_shot(prompt, builder:) }
       end
 
       # Fan `prompts` out as sibling children, staggered: sibling 1 is
@@ -185,14 +180,16 @@ module Lain
       # also what the model takes when it fans several `subagent` calls out in
       # one turn; this method is the gated, orchestrator-driven arm.
       #
-      # The depth ceiling is honored per unit: a fan-out at the floor refuses
-      # each sibling and, firing no stream-start, releases the rest on degrade.
+      # The ceilings are honored per unit: a fan-out with no room refuses each
+      # sibling and, firing no stream-start, releases the rest on degrade.
       #
       # @param prompts [Array<String>]
       # @return [Array<Tool::Result>]
       def fan_out(prompts)
         units = prompts.map do |prompt|
-          ->(on_stream_started:) { @max_depth <= 0 ? depth_exceeded : spawn_one_shot(prompt, on_stream_started:) }
+          lambda do |on_stream_started:|
+            admitted(@builder) { |builder| spawn_one_shot(prompt, on_stream_started:, builder:) }
+          end
         end
         Stagger.new(journal:).call(units)
       end
@@ -205,6 +202,8 @@ module Lain
       # `worker_env` has no default: an actor handed none would run its tools
       # in the process's own directory, the tree the run was started in. An
       # adopter hands it the environment its lease was cut with.
+      #
+      # @raise [Lain::Budget::Ceilings::Unrunnable] when the holder has no room for a child
       def launch_actor(prompt, worker_env:, parent: parent_timeline)
         # Per launch: the floor note has no lifecycle exemption, so an
         # actor-mode sibling under the floor is reported too.
@@ -213,7 +212,8 @@ module Lain
         # child's LIFETIME: `Supervisor#stop` farewells every row, so a
         # `deregister` there rides the same lease teardown that reaps the fiber.
         # {ChildBuilder::Child} owns the case where no actor comes out at all.
-        build_child(parent, worker_env, task: prompt).launched do |agent, registration, tools|
+        build_child(parent, worker_env, task: prompt,
+                                        builder: granted(@builder)).launched do |agent, registration, tools|
           Actor.new(agent:, registration:, lineage:, parent:, journal:, answer: @answer,
                     worker: Isolation::SelfSync.worker(agent, tools:)).launch(prompt)
         end
@@ -223,15 +223,13 @@ module Lain
       # rebinding the seam's parent handle to the CHILD so the grandchild's
       # lineage names the child's head, and its escalation road to the CHILD's
       # OWN ({ChildBuilder#config}) so a grandchild's question relays through
-      # the child rather than skipping it. The ceiling is capped, never RAISED
-      # past this tool's own, so a tool wired never to spawn (max_depth 0)
-      # stays that way whatever the spawner had left. Public only for
-      # {ChildBuilder}, which is not a Subagent, so `protected` can no longer
-      # say "only the spawn machinery".
-      def descend(parent:, escalation:, ceiling:)
-        config = @builder.config(parent:, escalation:)
-        self.class.new(**config, max_depth: [@max_depth, ceiling].min, name: @name,
-                                 announces_as: @announces_as, mode: @mode, log: @log, answer: @answer)
+      # the child rather than skipping it. Its holder becomes the CHILD, so a
+      # grandchild is clamped to what the child has left, never to what this
+      # tool's own holder had. Public only for {ChildBuilder}, which is not a
+      # Subagent, so `protected` can no longer say "only the spawn machinery".
+      def descend(parent:, escalation:, holder:)
+        config = @builder.config(parent:, escalation:, holder:)
+        self.class.new(**config, name: @name, announces_as: @announces_as, mode: @mode, log: @log, answer: @answer)
       end
 
       protected
@@ -241,16 +239,19 @@ module Lain
       # so a bare perform-launched actor would park as ask's own child and
       # structured concurrency would never let ask return -- the loop wedges,
       # outer reactor or not. The Supervisor's reactor task is the fiber home
-      # that outlives the ask. Like the depth cap, the refusal emits no event
-      # and touches no Store.
+      # that outlives the ask. Like a child with no room, the refusal emits no
+      # event and touches no Store.
       def perform(input, _invocation)
-        return depth_exceeded if @max_depth <= 0
-        return adopt_actor(input) if @mode == :actor
-
-        spawn_one_shot(input.prompt, lease: kept_lease(input), builder: builder_for(input.name))
+        admitted(builder_for(input.name)) { |builder| dispatched(input, builder) }
       end
 
       private
+
+      def dispatched(input, builder)
+        return adopt_actor(input) if @mode == :actor
+
+        spawn_one_shot(input.prompt, lease: kept_lease(input), builder:)
+      end
 
       # The Supervisor runs {#launch_actor} under its own reactor task, so the
       # fiber persists past this dispatch. The result carries the actor's
@@ -411,8 +412,21 @@ module Lain
 
       def build_child(parent, worker_env, scope = @seam.scope.current, progress: Progress::Null, task: nil,
                       builder: @builder)
-        builder.build(parent, ceiling: @max_depth - 1, worker_env:, scope:, progress:, task:)
+        builder.build(parent, worker_env:, scope:, progress:, task:)
       end
+
+      # Checked before any record is written, so a spawn with no room leaves
+      # no :spawn behind, and the model is told which room ran out.
+      def admitted(builder)
+        child = granted(builder)
+      rescue Budget::Ceilings::Unrunnable => e
+        Tool::Result.error("subagent spawn refused: #{e.message}. Do the task yourself instead.")
+      else
+        yield child
+      end
+
+      # @raise [Lain::Budget::Ceilings::Unrunnable] when the holder has no room for a child
+      def granted(builder) = builder.granting(Lain.live(@seam.holder).attenuate(budget))
 
       # {Lineage} writes the :spawn and :message events; the causal-edge and
       # correlation-join reasoning lives there. Memoized rather than built in
@@ -434,14 +448,11 @@ module Lain
 
       # Mode fails loudly here: a mistyped mode must not silently fall through
       # to one-shot.
-      def seed_config(max_depth, name, mode, log)
-        @max_depth = Integer(max_depth)
+      def seed_config(name, mode, log)
         @name = name
         @mode = MODES.include?(mode.to_sym) ? mode.to_sym : raise(ArgumentError, "bad subagent mode #{mode.inspect}")
         @log = log
       end
-
-      def depth_exceeded = Tool::Result.error("subagent spawn depth exceeded: this agent is at the ceiling")
 
       def actor_refused
         Tool::Result.error("actor mode cannot be launched from a tool call: a long-lived actor needs " \
@@ -878,8 +889,8 @@ module Lain
 
         # Each spawner descends as its own, so every role on offer is capped at
         # the child's ceiling exactly as a lone spawner would be.
-        def descend(parent:, escalation:, ceiling:)
-          self.class.new(@spawners.transform_values { |spawner| spawner.descend(parent:, escalation:, ceiling:) })
+        def descend(parent:, escalation:, holder:)
+          self.class.new(@spawners.transform_values { |spawner| spawner.descend(parent:, escalation:, holder:) })
         end
 
         protected
@@ -1227,6 +1238,23 @@ module Lain
         end
       end
 
+      # The room an agent has left to grant a child ({Agent#room}). Depth is
+      # how many levels it may still spawn below itself.
+      module Holder
+        # @param depth [Integer, nil] how many levels below the holder may spawn
+        # @return [Budget::Ceilings] unlimited in every kind but depth
+        def self.at(depth) = Budget::Ceilings::UNLIMITED.with(depth:)
+
+        # A holder no agent stands behind: one level of children, as a spawner
+        # wired with no room of its own has always had.
+        ROOT = at(1)
+
+        # @param agent [#call] answers the holding {Agent}, late-bound because
+        #   the union a holder spawns from is built before the Agent is
+        # @return [Proc] answering that agent's room at each read
+        def self.of(agent) = -> { agent.call.room }
+      end
+
       # What a child spawn is built OVER: the collaborators every spawn needs
       # and no single spawn chooses. Three adopters ({Subagent},
       # {ChildBuilder}, {Skill::RoleSpawn}) took them as loose keywords, so a
@@ -1249,7 +1277,7 @@ module Lain
       # {Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :display_channel,
                          :supervisor, :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware,
-                         :twins) do
+                         :twins, :holder) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -1318,13 +1346,18 @@ module Lain
         # the reason `attachments` does: a grandchild inherits the seam verbatim,
         # so the whole subtree is configured alike. It holds recipes, not
         # instances: each child builds its own members from it.
+        #
+        # `holder` is the room the spawning agent has left, as {Budget::Ceilings}
+        # or a thunk answering them, read at each spawn. A child's ceilings are
+        # this attenuated by the role's request. It is late-bound for `parent`'s
+        # reason, and a descended copy rebinds it to the child ({Holder.of}).
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
                        telemetry: Channel::Null.instance, display_channel: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        askers: NoAskers, isolation: NO_ISOLATION,
                        escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED,
                        attachments: Middleware::ResolveAttachments::Unwired,
-                       middleware: NO_MIDDLEWARE, twins: Lineage::Twins::Null)
+                       middleware: NO_MIDDLEWARE, twins: Lineage::Twins::Null, holder: Holder::ROOT)
           Seam.refuse_unbuildable(tool_middleware)
 
           super
@@ -1502,9 +1535,16 @@ module Lain
         # `parent`'s: a bound model is ONE child's property, not a subtree's.
         # The copy this builds is the run's own `subagent` tool descending into
         # a child's union, and what binds a grandchild is whoever spawns it.
-        def config(parent:, escalation:)
-          { seam: @seam.with(parent:, escalation:), toolset: @toolset, policy: @policy,
+        def config(parent:, escalation:, holder:)
+          { seam: @seam.with(parent:, escalation:, holder:), toolset: @toolset, policy: @policy,
             budget: @budget, persona: @persona }
+        end
+
+        # This builder, its child run under `ceilings`: what the spawn was
+        # granted once the holder's room clamped the role's request.
+        def granting(ceilings)
+          self.class.new(seam: @seam, toolset: @toolset, policy: @policy, budget: ceilings, persona: @persona,
+                         model: @model, name: @name, compaction: @compaction)
         end
 
         # `child` is late-bound through the thunk exactly as the exe wires the
@@ -1522,11 +1562,11 @@ module Lain
         #
         # The task is handed to the tool guard, so an approval the child asks
         # for can be weighed against what it was spawned to do.
-        def build(parent, ceiling:, worker_env: WorkerEnv.default, scope: @seam.scope.current,
+        def build(parent, worker_env: WorkerEnv.default, scope: @seam.scope.current,
                   progress: Progress::Null, task: nil)
           child = nil
           chain = own_chain(parent, progress) { child.timeline }
-          union = child_union(chain.timeline, chain.escalation, ceiling)
+          union = child_union(chain.timeline, chain.escalation, Holder.of(-> { child }))
           view = @compaction.call(base: chain.base, worker_env: scope.env_over(worker_env), scope:)
           spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, view, task:)
             .tap { |built| child = built.agent }
@@ -1606,7 +1646,7 @@ module Lain
 
         # Every spawner in the injected union is replaced by a descended copy:
         # handing the SAME instances down would let a nested spawn keep its
-        # constructing ceiling, and recursion would never terminate via the cap.
+        # constructing holder, and recursion would never terminate via depth.
         # The copy's schema bytes are identical, so the rendered tools block --
         # and with it the cache prefix -- is unchanged.
         #
@@ -1614,9 +1654,9 @@ module Lain
         # only because this union is assembled below the trust boundary: a run's
         # own wiring decides what is in it, never the model, so a tool answering
         # the duck is one lain put there.
-        def child_union(parent_handle, escalation, ceiling)
+        def child_union(parent_handle, escalation, holder)
           Toolset.new(@toolset.map do |tool|
-            tool.respond_to?(:descend) ? tool.descend(parent: parent_handle, escalation:, ceiling:) : tool
+            tool.respond_to?(:descend) ? tool.descend(parent: parent_handle, escalation:, holder:) : tool
           end)
         end
 
@@ -1636,7 +1676,7 @@ module Lain
         # The interpreter is a bare {Effect::Handler::Live}: the runner resolves
         # each call against the RENDERED toolset -- the attenuated set under
         # `schema`, the descended union under `handler_union` -- so a permitted
-        # nested subagent runs at its decremented ceiling.
+        # nested subagent is clamped to what this child has left.
         #
         # The child Agent's OWN journal discards, deliberately, while the seam's
         # records around it reach the session file. What an Agent journals is

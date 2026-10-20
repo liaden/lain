@@ -3,7 +3,7 @@
 module Lain
   module Tools
     class Subagent < Tool
-      # Tells a one-shot child, once, that its iteration ceiling is near. A
+      # Tells a child, once, that its own iteration ceiling is near. A
       # child stopped by the ceiling hands its parent only the files it read and
       # its last text block, so the warning is the child's one chance to write
       # its findings down.

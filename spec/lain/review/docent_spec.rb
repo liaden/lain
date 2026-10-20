@@ -1332,7 +1332,7 @@ RSpec.describe Lain::Review::Docent do
         provider:, context_factory: -> { Lain::Context.new(model: "docent-model", max_tokens: 128) },
         parent: Lain::Timeline.empty(store: Lain::Store.new), askers:
       )
-      Lain::Tools::Subagent.new(seam:, toolset: union, policy: role.spawn_policy(posture:), max_depth: 1,
+      Lain::Tools::Subagent.new(seam:, toolset: union, policy: role.spawn_policy(posture:),
                                 name: role.name.to_s)
                            .call({ "prompt" => "explain this hunk" },
                                  Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))

@@ -622,6 +622,7 @@ module Lain
         Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: live, session:,
                         timeline:, request_override: Lain::Agent::RequestOverride.new, # ResendBridge's slot
                         round_budget: arms.round_budget_policy,
+                        budget: Lain::Budget.ceilings.with(depth: 1), # one level of children below the chat
                         display: channel, mailbox: notes.mailbox,
                         snapshot_slot: snapshot_slot(board, session:, journal: chronicle.record_journal, channel:),
                         **backing(backend, channel, -> { agent.timeline }, board:)).tap { |built| agent = built }
@@ -794,16 +795,9 @@ module Lain
       # resolves, so `Dir.pwd` would mount whichever subdirectory the shell
       # happened to be in, leaving every path above it missing INSIDE the
       # container while it still resolves outside one.
-      #
-      # The usage thunk's `&.` is NOT a coalesce: it lets the thunk RETURN nil so
-      # {Lain::Tools::SessionUsage}'s own `|| raise(Unwired)` fires and the model
-      # sees an intelligible sentence instead of `undefined method 'usage' for
-      # nil`. Nothing is invented either way -- `Lain::Usage.zero` is truthy, so
-      # a run that has spent nothing still reports zero and cannot be confused
-      # with an unassigned slot.
       def build_toolset(recorder, backend:, parent:, ask_human:, session: Lain::Session::Null.instance, notice: nil)
         @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend), session:,
-                                          chronicle:, options:, root:, usage: method(:current_usage), askers: @askers,
+                                          chronicle:, options:, root:, agent: -> { @agent }, askers: @askers,
                                           supervisor: @supervisor, parent:, library: backend.library,
                                           switchboard: -> { @switchboard }, journal: durable_journal,
                                           verdict:, isolation: fleet_isolation, exec: exec_backend.backend,
@@ -812,8 +806,6 @@ module Lain
                                           display: @channel, resolver: exec_resolver, config:, arms:)
         @toolset_build.build(recorder, ask_human:)
       end
-
-      def current_usage = @agent&.usage
 
       # Memoized: the toolset's exec and the resolver must come from one build.
       def exec_backend

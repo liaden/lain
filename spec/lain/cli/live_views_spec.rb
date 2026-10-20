@@ -321,7 +321,7 @@ RSpec.describe Lain::CLI::LiveViews do
                                              tool_middleware: ToolRegistry::UNGUARDED,
                                              telemetry: real_chronicle.instrumentation.journal)
       subagent = Lain::Tools::Subagent.new(
-        seam:, toolset: Lain::Toolset.new([spying_tool("grep", seen, state_reader)]), max_depth: 1,
+        seam:, toolset: Lain::Toolset.new([spying_tool("grep", seen, state_reader)]),
         policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: %w[grep])
       )
       parent = agent_for(replies(spawn_reply, done_reply), subagent)

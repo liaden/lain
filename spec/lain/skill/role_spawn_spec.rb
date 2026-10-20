@@ -202,13 +202,37 @@ RSpec.describe Lain::Skill::RoleSpawn do
       Array.new(count) { |i| tool_response(["r#{i}", "read_file", { "path" => "/nowhere/at/all" }]) }
     end
 
-    def spawn_over(role, calls)
+    # The parent's room is stated, because a child is clamped to what its
+    # holder has left: here a parent with iterations to spare.
+    def spawn_over(role, calls, room: Lain::Budget.ceilings(iterations: 100).with(depth: 1))
       provider = mock(*reads(calls), text_response("finished"))
-      seam(provider:, toolset: search_union).call(role, :fresh, "go")
+      seam(provider:, toolset: search_union, holder: room).call(role, :fresh, "go")
     end
 
     it "lets a researcher run past the default ceiling" do
       expect(spawn_over(:researcher, 30).content).to eq("finished")
+    end
+
+    it "stops a researcher at what its parent has left, below the role's own ceiling" do
+      expect { spawn_over(:researcher, 30, room: Lain::Budget.ceilings(iterations: 10).with(depth: 1)) }
+        .to raise_error(Lain::Budget::Exceeded, /ceiling is 10/)
+    end
+
+    it "gives a role spawned between asks its parent's whole iteration ceiling" do
+      chat = Lain::Agent.new(provider: mock(*reads(24), text_response("chat done")), toolset: union,
+                             context: Lain::Context.new(model: "parent", max_tokens: 256),
+                             timeline: parent, budget: Lain::Budget.ceilings.with(depth: 1))
+      chat.ask("work")
+
+      room = Lain::Tools::Subagent::Holder.of(-> { chat })
+      expect(spawn_over(:researcher, 3, room:).content).to eq("finished")
+    end
+
+    it "refuses the spawn in words when its parent has no depth left" do
+      result = spawn_over(:researcher, 0, room: Lain::Budget.ceilings.with(depth: 0))
+
+      expect(result).to be_error
+      expect(result.content).to include("no spawn depth left")
     end
 
     it "stops a role that declares no ceiling at 25 iterations" do

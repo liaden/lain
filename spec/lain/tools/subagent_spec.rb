@@ -8,6 +8,23 @@ require "stringio"
 require "tmpdir"
 require "timeout"
 
+# Answers with the spawn depth its holder has left, so a child's depth ceiling
+# is read from inside the child that holds it.
+class SubagentDepthProbe < Lain::Tool
+  def initialize(holder: Lain::Tools::Subagent::Holder::ROOT)
+    super()
+    @holder = holder
+  end
+
+  def name = "depth_probe"
+  def description = "Says how many levels below this agent it may still spawn."
+  def input_schema = { type: :object, properties: {} }
+
+  def descend(holder:, **) = self.class.new(holder:)
+
+  def perform(_input, _context) = Lain::Tool::Result.ok(Lain.live(@holder).depth.to_s)
+end
+
 # A REAL isolation backend, small enough to live beside the examples that drive
 # it: every acquire provisions an actual directory named for the worker and
 # hands back a lease whose cwd points there, and release removes it. Not a
@@ -265,11 +282,12 @@ RSpec.describe Lain::Tools::Subagent do
   # gating pair, in practice -- so an example can wire one without restating the
   # six collaborators every other example shares.
   def build_subagent(provider:, policy: spawn_policy, parent: self.parent,
-                     journal: Lain::Channel::Null.instance, max_depth: 3, toolset: union,
-                     tool_middleware: ToolRegistry::UNGUARDED, observer: record, **seam)
+                     journal: Lain::Channel::Null.instance, depth: 3, holder: Lain::Tools::Subagent::Holder.at(depth),
+                     toolset: union, budget: Lain::Budget.ceilings, tool_middleware: ToolRegistry::UNGUARDED,
+                     observer: record, **seam)
     described_class.new(
-      provider:, context_factory: -> { child_context }, toolset:, policy:,
-      parent:, journal:, budget: Lain::Budget.ceilings, max_depth:, tool_middleware:, observer:, **seam
+      provider:, context_factory: -> { child_context }, toolset:, policy:, parent:, journal:,
+      budget:, holder:, tool_middleware:, observer:, **seam
     )
   end
 
@@ -519,7 +537,7 @@ RSpec.describe Lain::Tools::Subagent do
       parent_agent = nil
       tool = described_class.new(provider:, context_factory: -> { child_context }, toolset: union,
                                  policy: spawn_policy, parent: -> { parent_agent.timeline },
-                                 budget: Lain::Budget.ceilings(iterations: 2), max_depth: 3,
+                                 budget: Lain::Budget.ceilings(iterations: 2), holder: Lain::Tools::Subagent::Holder.at(3),
                                  tool_middleware: ToolRegistry::UNGUARDED, observer:, **seam)
       parent_agent = loop_parent(tool)
       parent_agent.ask("please spawn")
@@ -700,7 +718,7 @@ RSpec.describe Lain::Tools::Subagent do
         parent_agent = nil
         tool = described_class.new(provider:, context_factory: -> { child_context }, toolset: union,
                                    policy: spawn_policy, parent: -> { parent_agent.timeline },
-                                   budget: Lain::Budget.ceilings(iterations: 8), max_depth: 3,
+                                   budget: Lain::Budget.ceilings(iterations: 8), holder: Lain::Tools::Subagent::Holder.at(3),
                                    tool_middleware: ToolRegistry::UNGUARDED, observer: record)
         parent_agent = loop_parent(tool)
         parent_agent.ask("please spawn")
@@ -1109,7 +1127,7 @@ RSpec.describe Lain::Tools::Subagent do
       )
 
       expect(tool.run("go").content).to include("over the ceiling of 8")
-      descended = tool.descend(parent:, escalation: [], ceiling: 1)
+      descended = tool.descend(parent:, escalation: [], holder: Lain::Tools::Subagent::Holder.at(1))
       expect(descended.run("go").content).to include("over the ceiling of 8")
 
       Sync do
@@ -1360,7 +1378,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "is not carried to a grandchild, whose parent is the child and not this session" do
       parent_session.record_compaction_cut(held_at_head)
       grandchild = spawning(:inherit, text_response("unused")).descend(parent: -> { parent }, escalation: [],
-                                                                       ceiling: 1)
+                                                                       holder: Lain::Tools::Subagent::Holder.at(1))
 
       grandchild.run("go")
 
@@ -1602,7 +1620,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
 
     it "honors the depth ceiling exactly as #perform does: refuses at 0, spawning nothing" do
-      tool = build_subagent(provider: mock(text_response("unused")), max_depth: 0)
+      tool = build_subagent(provider: mock(text_response("unused")), depth: 0)
       before = store.size
 
       result = tool.run("go")
@@ -1735,19 +1753,19 @@ RSpec.describe Lain::Tools::Subagent do
     it "descends into a child's union, so a role it offers is capped at the child's ceiling" do
       child = mock(tool_response(["c1", "subagent", { "prompt" => "deeper", "role" => "reader" }]),
                    text_response("child done"))
-      offer = offering(reader: build_subagent(provider: mock(text_response("never asked")), max_depth: 3))
-      outer = build_subagent(provider: child, max_depth: 1, toolset: Lain::Toolset.new([offer]),
+      offer = offering(reader: build_subagent(provider: mock(text_response("never asked")), depth: 3))
+      outer = build_subagent(provider: child, depth: 1, toolset: Lain::Toolset.new([offer]),
                              policy: spawn_policy(only: %i[subagent]))
 
       expect(outer.run("go").content).to eq("child done")
       expect(tool_result_in(child.last_request)).to include("is_error" => true)
-      expect(tool_result_in(child.last_request)["content"].to_s).to include("depth exceeded")
+      expect(tool_result_in(child.last_request)["content"].to_s).to include("depth")
     end
   end
 
   describe "the spawn-depth ceiling" do
     it "refuses to spawn at depth 0, emitting no :spawn event and touching no Store" do
-      tool = build_subagent(provider: mock(text_response("unused")), max_depth: 0)
+      tool = build_subagent(provider: mock(text_response("unused")), depth: 0)
       before = store.size
 
       result = tool.call({ "prompt" => "go" }, invocation)
@@ -1771,11 +1789,11 @@ RSpec.describe Lain::Tools::Subagent do
         text_response("child done")
       )
       deepest = build_subagent(provider:, policy: spawn_policy(only: []),
-                               toolset: Lain::Toolset.new([EchoTool.new]), max_depth: 9)
+                               toolset: Lain::Toolset.new([EchoTool.new]), depth: 9)
       mid = build_subagent(provider:, policy: spawn_policy(only: []),
-                           toolset: Lain::Toolset.new([EchoTool.new, deepest]), max_depth: 9)
+                           toolset: Lain::Toolset.new([EchoTool.new, deepest]), depth: 9)
       tool = build_subagent(provider:, policy: spawn_policy(only: []),
-                            toolset: Lain::Toolset.new([EchoTool.new, mid]), max_depth: 2)
+                            toolset: Lain::Toolset.new([EchoTool.new, mid]), depth: 2)
 
       result = tool.call({ "prompt" => "start" }, invocation)
 
@@ -1791,23 +1809,23 @@ RSpec.describe Lain::Tools::Subagent do
       expect(refusal["content"]).to include("depth")
     end
 
-    # A tool's OWN tighter ceiling survives the copy: descending must never
-    # RAISE a ceiling (that would be capability escalation), only lower it.
-    it "never raises a descendant's own tighter ceiling" do
+    # A request below the holder's room is granted as asked, so a role may
+    # ask for less depth than its spawner has and keep its child a leaf.
+    it "lets a role's own depth request keep its child from spawning" do
       provider = mock(
         tool_response(["c1", "subagent", { "prompt" => "go deeper" }]),
         text_response("child done")
       )
-      never_spawns = build_subagent(provider:, policy: spawn_policy(only: []),
-                                    toolset: Lain::Toolset.new([EchoTool.new]), max_depth: 0)
-      tool = build_subagent(provider:, policy: spawn_policy(only: []),
-                            toolset: Lain::Toolset.new([EchoTool.new, never_spawns]), max_depth: 5)
+      inner = build_subagent(provider:, policy: spawn_policy(only: []), toolset: Lain::Toolset.new([EchoTool.new]))
+      tool = build_subagent(provider:, policy: spawn_policy(only: []), depth: 5,
+                            budget: Lain::Budget.ceilings.with(depth: 0),
+                            toolset: Lain::Toolset.new([EchoTool.new, inner]))
 
       result = tool.call({ "prompt" => "start" }, invocation)
 
       expect(result).to be_ok
       # Only the child's two rounds ran: its spawn attempt was refused even
-      # though the spawner had depth to spare, because the inner tool said 0.
+      # though the spawner had depth to spare, because the role asked for 0.
       expect(provider.call_count).to eq(2)
       refusal = provider.requests[1].messages.flat_map { |m| m["content"] }
                                     .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
@@ -1827,13 +1845,13 @@ RSpec.describe Lain::Tools::Subagent do
         text_response("orchestrated")
       )
       deepest = build_subagent(provider:, policy: spawn_policy(only: []),
-                               toolset: Lain::Toolset.new([EchoTool.new]), max_depth: 9)
+                               toolset: Lain::Toolset.new([EchoTool.new]), depth: 9)
       spawner = build_subagent(provider:, policy: spawn_policy(only: []),
-                               toolset: Lain::Toolset.new([EchoTool.new, deepest]), max_depth: 9)
+                               toolset: Lain::Toolset.new([EchoTool.new, deepest]), depth: 9)
       floor = %w[read_file list_files glob grep edit_file write_file todo_write bash run_skill]
       epic = build_subagent(provider:, policy: Lain::Role::Catalog.fetch(:issue_orchestrator).spawn_policy,
                             toolset: Lain::Toolset.new(floor.map { |name| ToolRegistry.build(name) } + [spawner]),
-                            max_depth: 2)
+                            depth: 2)
 
       result = epic.call({ "prompt" => "run the plan" }, invocation)
 
@@ -1842,17 +1860,111 @@ RSpec.describe Lain::Tools::Subagent do
       refusal = provider.requests[2].messages.flat_map { |m| m["content"] }
                                     .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
       expect(refusal["is_error"]).to be(true)
-      expect(refusal["content"]).to eq("subagent spawn depth exceeded: this agent is at the ceiling")
+      expect(refusal["content"]).to eq("subagent spawn refused: this agent has no spawn depth left. " \
+                                       "Do the task yourself instead.")
     end
 
     # The exe shape -- a union holding no subagent -- passes through untouched:
     # nothing to replace, same names rendered.
     it "leaves a subagent-free union (the exe shape) unchanged" do
       provider = mock(text_response("done"))
-      tool = build_subagent(provider:, policy: spawn_policy(posture: :handler_union), max_depth: 2)
+      tool = build_subagent(provider:, policy: spawn_policy(posture: :handler_union), depth: 2)
       tool.call({ "prompt" => "go" }, invocation)
 
       expect(provider.last_request.tools.map { |t| t["name"] }).to eq(with_asker(union.names))
+    end
+  end
+
+  describe "a child's ceilings, attenuated from what its holder has left" do
+    def spawn_call = tool_response(["s1", "subagent", { "prompt" => "go" }])
+
+    def spawned_result(agent)
+      agent.timeline.to_a.flat_map { |event| Array(event.content) }
+           .find { |block| block["type"] == "tool_result" && block["tool_use_id"] == "s1" }
+    end
+
+    def holding(tool, responses, budget)
+      Lain::Agent.new(provider: mock(*responses), toolset: Lain::Toolset.new([EchoTool.new, tool]),
+                      context: Lain::Context.new(model: "parent", max_tokens: 256),
+                      timeline: Lain::Timeline.empty(store:), budget:)
+    end
+
+    it "gives the child what the parent has left of its iterations" do
+      parent_agent = nil
+      tool = build_subagent(provider: mock(tool_response(["e1", "echo", { "text" => "again" }])),
+                            holder: Lain::Tools::Subagent::Holder.of(-> { parent_agent }))
+      rounds = Array.new(19) { |i| tool_response(["p#{i}", "echo", { "text" => "step" }]) }
+      parent_agent = holding(tool, [*rounds, spawn_call, text_response("parent done")],
+                             Lain::Budget.ceilings(iterations: 25).with(depth: 1))
+
+      parent_agent.ask("spawn late")
+
+      expect(spawned_result(parent_agent)["content"]).to start_with("loop ran 5 iterations, ceiling is 5")
+    end
+
+    it "gives a child whose role asks no token ceiling what the parent has left of its tokens" do
+      parent_agent = nil
+      tool = build_subagent(provider: mock(text_response("done", usage: Lain::Usage.new(input_tokens: 700))),
+                            holder: Lain::Tools::Subagent::Holder.of(-> { parent_agent }))
+      spending = tool_response(["s1", "subagent", { "prompt" => "go" }], usage: Lain::Usage.new(input_tokens: 400))
+      parent_agent = holding(tool, [spending, text_response("parent done")],
+                             Lain::Budget.ceilings(tokens: 1000).with(depth: 1))
+
+      parent_agent.ask("spawn")
+
+      expect(spawned_result(parent_agent)["content"]).to start_with("spent 700 tokens, ceiling is 600")
+    end
+
+    it "gives a child and a grandchild of a parent at depth 2 depth ceilings of 1 and 0" do
+      provider = mock(tool_response(["c1", "depth_probe", {}]), tool_response(["c2", "subagent", { "prompt" => "on" }]),
+                      tool_response(["g1", "depth_probe", {}]), text_response("grandchild done"),
+                      text_response("child done"))
+      inner = build_subagent(provider:, policy: spawn_policy(only: []), toolset: Lain::Toolset.new([SubagentDepthProbe.new]))
+      tool = build_subagent(provider:, policy: spawn_policy(only: []), depth: 2,
+                            toolset: Lain::Toolset.new([SubagentDepthProbe.new, inner]))
+
+      tool.call({ "prompt" => "start" }, invocation)
+
+      probes = %w[c1 g1]
+      probed = provider.requests.flat_map { |request| request.messages.flat_map { |m| Array(m["content"]) } }
+                       .select { |block| block.is_a?(Hash) && probes.include?(block["tool_use_id"]) }
+                       .to_h { |block| [block["tool_use_id"], block["content"].to_s] }
+      expect(probed).to eq("c1" => "1", "g1" => "0")
+    end
+
+    it "refuses every sibling of a fan-out from a holder with no depth left, writing no :spawn" do
+      provider = mock(text_response("unused"))
+      results = build_subagent(provider:, depth: 0).fan_out(%w[one two])
+
+      expect(results).to all(be_error)
+      expect(results.map(&:content)).to all(include("no spawn depth left"))
+      expect([record.spawn, provider.call_count]).to eq([nil, 0])
+    end
+
+    it "gives an actor's child one level less depth than its holder" do
+      provider = mock(tool_response(["c1", "depth_probe", {}]), text_response("ready"))
+      tool = build_subagent(provider:, policy: spawn_policy(only: []), depth: 2, mode: :actor,
+                            toolset: Lain::Toolset.new([SubagentDepthProbe.new]))
+
+      Sync do
+        actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
+        actor.settle
+        actor.stop
+      end
+
+      probe = provider.requests[1].messages.flat_map { |m| Array(m["content"]) }
+                                  .find { |block| block.is_a?(Hash) && block["tool_use_id"] == "c1" }
+      expect(probe["content"].to_s).to eq("1")
+    end
+
+    it "warns the child against its own attenuated ceiling, not the role's request" do
+      provider = mock(text_response("done"))
+      tool = build_subagent(provider:, budget: Lain::Budget.ceilings(iterations: 8),
+                            holder: Lain::Budget.ceilings(iterations: 5).with(depth: 1))
+
+      tool.run("go")
+
+      expect(provider.requests.first.messages.to_s).to include("5 of 5 iterations remain")
     end
   end
 
@@ -2306,8 +2418,8 @@ RSpec.describe Lain::Tools::Subagent do
         text_response("child done")
       )
       inner = build_subagent(provider:, toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
-                             max_depth: 9, isolation: leases)
-      tool = build_subagent(provider:, toolset: cwd_only(inner), max_depth: 2,
+                             depth: 9, isolation: leases)
+      tool = build_subagent(provider:, toolset: cwd_only(inner), depth: 2,
                             policy: spawn_policy(only: %i[cwd subagent]), isolation: leases)
 
       expect(tool.call({ "prompt" => "start" }, invocation)).to be_ok
@@ -2627,8 +2739,8 @@ RSpec.describe Lain::Tools::Subagent do
 
     def two_deep(provider, **seam)
       reader = Lain::Toolset.new([Lain::Tools::ReadFile.new])
-      inner = build_subagent(provider:, max_depth: 9, toolset: reader, **seam)
-      build_subagent(provider:, max_depth: 2, toolset: Lain::Toolset.new(reader.to_a + [inner]),
+      inner = build_subagent(provider:, depth: 9, toolset: reader, **seam)
+      build_subagent(provider:, depth: 2, toolset: Lain::Toolset.new(reader.to_a + [inner]),
                      policy: spawn_policy(only: %i[read_file subagent]), **seam)
     end
 
@@ -2848,9 +2960,10 @@ RSpec.describe Lain::Tools::Subagent do
                                       tool_middleware: ToolRegistry::UNGUARDED, observer: record)
     end
 
-    def asking_subagent(provider, toolset: union, max_depth: 1, name: "subagent",
+    def asking_subagent(provider, toolset: union, depth: 1, name: "subagent",
                         policy: spawn_policy(only: []), **over)
-      described_class.new(seam: asking_seam(provider), toolset:, policy:, max_depth:, name:, **over)
+      described_class.new(seam: asking_seam(provider).with(holder: Lain::Tools::Subagent::Holder.at(depth)), toolset:,
+                          policy:, name:, **over)
     end
 
     def asks(question = "which db?") = tool_response(["c1", "ask_human", { "question" => question }])
@@ -2946,12 +3059,12 @@ RSpec.describe Lain::Tools::Subagent do
       let(:askers) { Lain::CLI::Wiring::Askers.new(observer:) }
 
       def recorded_tool(provider: mock(asks, text_response("done")), toolset: union,
-                        policy: spawn_policy(only: []), max_depth: 1)
+                        policy: spawn_policy(only: []), depth: 1)
         described_class.new(
           seam: Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context },
-                                                parent:, askers:, observer:,
+                                                parent:, askers:, observer:, holder: Lain::Tools::Subagent::Holder.at(depth),
                                                 tool_middleware: ToolRegistry::UNGUARDED),
-          toolset:, policy:, max_depth:
+          toolset:, policy:
         )
       end
 
@@ -2960,10 +3073,10 @@ RSpec.describe Lain::Tools::Subagent do
       # asker's, and a grandchild parked mid-iteration leaves the child's
       # iteration unreturned too.
       def nested_tool
-        inner = recorded_tool(provider: mock(asks("which db?"), text_response("inner done")), max_depth: 3)
+        inner = recorded_tool(provider: mock(asks("which db?"), text_response("inner done")), depth: 3)
         recorded_tool(provider: mock(tool_response(["s1", "subagent", { "prompt" => "deeper" }]),
                                      text_response("outer done")),
-                      toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, inner]), max_depth: 3)
+                      toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, inner]), depth: 3)
       end
 
       # A closed file for a run that ASKED and was answered: the shape every
@@ -3064,7 +3177,7 @@ RSpec.describe Lain::Tools::Subagent do
           seam: Lain::Tools::Subagent::Seam.new(provider: mock(text_response("child done")),
                                                 context_factory: -> { child_context }, parent: -> { agent.timeline },
                                                 observer: watching, tool_middleware: ToolRegistry::UNGUARDED),
-          toolset: union, policy: spawn_policy(only: []), max_depth: 1
+          toolset: union, policy: spawn_policy(only: [])
         )
         agent = Lain::Agent.new(
           provider: mock(tool_response(["tu_1", "subagent", { "prompt" => "go" }]), text_response("parent done")),
@@ -3356,10 +3469,10 @@ RSpec.describe Lain::Tools::Subagent do
     # "subagent", the name of whichever tool relayed it.
     it "tells the human which role originally asked, two relay hops deep" do
       grandchild = asking_subagent(mock(asks, text_response("grandchild done")),
-                                   name: "researcher", announces_as: "researcher", max_depth: 3)
+                                   name: "researcher", announces_as: "researcher", depth: 3)
       middle = asking_subagent(mock(tool_response(["m1", "researcher", { "prompt" => "deeper" }]),
                                     text_response("middle done")),
-                               toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, grandchild]), max_depth: 3)
+                               toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, grandchild]), depth: 3)
 
       Sync do |task|
         spawning(task, middle) do |run|
@@ -3424,8 +3537,8 @@ RSpec.describe Lain::Tools::Subagent do
     it "gives a grandchild an asker of its own" do
       provider = mock(tool_response(["c1", "subagent", { "prompt" => "deeper" }]),
                       text_response("grandchild done"), text_response("child done"))
-      inner = asking_subagent(provider, max_depth: 9)
-      outer = asking_subagent(provider, toolset: Lain::Toolset.new(union.to_a + [inner]), max_depth: 2)
+      inner = asking_subagent(provider, depth: 9)
+      outer = asking_subagent(provider, toolset: Lain::Toolset.new(union.to_a + [inner]), depth: 2)
 
       expect(outer.call({ "prompt" => "go" }, invocation)).to be_ok
       expect(provider.requests[1].tools.map { |tool| tool["name"] }).to include("ask_human")
@@ -3511,7 +3624,7 @@ RSpec.describe Lain::Tools::Subagent do
                                                context_factory: -> { child_context }, parent:, askers:,
                                                tool_middleware: ToolRegistry::UNGUARDED, observer: observed,
                                                telemetry:)
-        tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []), max_depth: 1)
+        tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []))
         Sync { |task| spawning(task, tool) { arrival(task) } }
       end
 
@@ -3538,7 +3651,7 @@ RSpec.describe Lain::Tools::Subagent do
                                                context_factory: -> { child_context }, parent:, askers:,
                                                tool_middleware: ToolRegistry::UNGUARDED, observer: refusing,
                                                telemetry:)
-        tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []), max_depth: 1)
+        tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []))
         item = Sync { |task| spawning(task, tool) { arrival(task) } }
 
         written = telemetry.drain
@@ -3586,7 +3699,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "releases the child's registration when the launch itself raises" do
       seam = asking_seam(mock(text_response("unused"))).with(observer: ->(_e) { raise "the record is on fire" })
       tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []),
-                                 max_depth: 1, mode: :actor, log: Lain::Tools::Subagent::Log.new)
+                                 mode: :actor, log: Lain::Tools::Subagent::Log.new)
 
       Sync do
         expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }.to raise_error(/the record is on fire/)
@@ -3855,7 +3968,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
 
     it "spawns over an injected seam, with no loose collaborator keywords" do
-      tool = described_class.new(seam:, toolset: union, policy: spawn_policy, max_depth: 3)
+      tool = described_class.new(seam:, toolset: union, policy: spawn_policy)
 
       result = tool.call({ "prompt" => "go" }, invocation)
 
@@ -4025,14 +4138,17 @@ RSpec.describe Lain::Tools::Subagent do
     # objects or a nested spawn's record vanishes one level up.
     it "descends the seam onto the child, rebinding only the parent and the escalation road" do
       wired = seam.with(observer: ->(_event) {}, supervisor: Lain::Supervisor.new, journal: Lain::Channel.new)
-      tool = described_class.new(seam: wired, toolset: union, policy: spawn_policy, max_depth: 3)
+      tool = described_class.new(seam: wired, toolset: union, policy: spawn_policy)
       child_handle = -> { parent }
+      room = Lain::Tools::Subagent::Holder.at(1)
 
-      copy = tool.descend(parent: child_handle, escalation: ["a-parent-correlation"], ceiling: 1)
+      copy = tool.descend(parent: child_handle, escalation: ["a-parent-correlation"], holder: room)
 
       expect(copy.seam.parent).to be(child_handle)
       expect(copy.seam.escalation).to eq(["a-parent-correlation"])
-      expect(copy.seam.to_h.except(:parent, :escalation)).to eq(wired.to_h.except(:parent, :escalation))
+      expect(copy.seam.holder).to be(room)
+      expect(copy.seam.to_h.except(:parent, :escalation, :holder))
+        .to eq(wired.to_h.except(:parent, :escalation, :holder))
     end
 
     # The union a child attenuates FROM, published. It was reachable only by a
@@ -4109,7 +4225,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "reads failed for a child that hit its ceiling" do
       tool = described_class.new(provider: mock(tool_response(["e1", "echo", { "text" => "again" }])),
                                  context_factory: -> { child_context }, toolset: union, policy: spawn_policy,
-                                 parent:, budget: Lain::Budget.ceilings(iterations: 2), max_depth: 3,
+                                 parent:, budget: Lain::Budget.ceilings(iterations: 2), holder: Lain::Tools::Subagent::Holder.at(3),
                                  tool_middleware: ToolRegistry::UNGUARDED, observer: tee, telemetry: feed)
 
       expect { tool.run("keep going") }.to raise_error(StandardError)

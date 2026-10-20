@@ -53,11 +53,11 @@ RSpec.describe Lain::SessionRecord::Scribe do
       seam: Lain::Tools::Subagent::Seam.new(
         tool_middleware: ToolRegistry::UNGUARDED,
         provider: Lain::Provider::Mock.new(responses: child_responses),
-        context_factory: -> { child_context }, parent:, observer: ->(event) { scribe.call(event) }
+        context_factory: -> { child_context }, parent:, observer: ->(event) { scribe.call(event) },
+        holder: Lain::Tools::Subagent::Holder.at(2)
       ),
       toolset: Lain::Toolset.new([EchoTool.new]),
-      policy: Lain::Tool::SpawnPolicy.new(prefix:, posture: :schema, only: []),
-      max_depth: 2
+      policy: Lain::Tool::SpawnPolicy.new(prefix:, posture: :schema, only: [])
     )
   end
 

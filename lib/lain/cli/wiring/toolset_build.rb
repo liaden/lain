@@ -49,8 +49,9 @@ module Lain
         REVIEWER = :reviewer_code
         ORCHESTRATOR_BUDGET = Lain::Budget.ceilings(iterations: 200)
 
-        # The orchestrator, and one level of children under it.
-        EPIC_DEPTH = 2
+        # The orchestrator, and one level of children under it: the room the
+        # epic's spawn is held to, since no agent stands above it.
+        EPIC_ROOM = Lain::Tools::Subagent::Holder.at(2)
 
         # The repl-phase role-spawn seam a role/skill line folds through, and the
         # docent ANSWERER -- both nil until {#build}. An answerer and not a {Review::Docent} because a
@@ -169,12 +170,14 @@ module Lain
         #   object. So {Wiring} builds it above both branches and hands the one
         #   instance down each. The default restricts nothing, on
         #   {BaseTools.build}'s note.
-        # @param usage [#call, nil] a thunk resolving to the live Agent's
-        #   cumulative {Lain::Usage}, for the main-agent-only
-        #   {Lain::Tools::SessionUsage}. Late-bound for `parent:`'s exact reason:
-        #   the Agent is built AFTER the Toolset it is handed. nil for the
-        #   direct-construction seams, and deliberately NOT a thunk over
-        #   {Lain::Usage.zero} -- an unwired build reporting zero tokens is
+        # @param agent [#call, nil] a thunk resolving to the live chat Agent,
+        #   late-bound for `parent:`'s exact reason: the Agent is built AFTER the
+        #   Toolset it is handed. Read for its cumulative {Lain::Usage} by the
+        #   main-agent-only {Lain::Tools::SessionUsage}, and for its room by
+        #   every child it spawns ({Lain::Tools::Subagent::Holder.of}). nil for
+        #   the direct-construction seams, whose children are held to
+        #   {Lain::Tools::Subagent::Holder::ROOT}, and deliberately NOT a usage
+        #   of {Lain::Usage.zero} -- an unwired build reporting zero tokens is
         #   indistinguishable from an honest fresh run, which is the exact defect
         #   that tool exists to remove.
         # @param handback [Wiring::Handback] how a child's work comes home: the
@@ -203,7 +206,7 @@ module Lain
         #   {Switchboard.for}, and the surface here reads that layer. Last,
         #   after every `@param`, because yard-lint fixes that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
-                       root:, switchboard:, askers:, paths:, config:, usage: nil, session: Lain::Session::Null.instance,
+                       root:, switchboard:, askers:, paths:, config:, agent: nil, session: Lain::Session::Null.instance,
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
                        handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
                        middleware: Lain::Config::Middleware.empty, display: Lain::Channel::Null.instance,
@@ -223,10 +226,10 @@ module Lain
           @epic = epic
           @in_chat = { chronicle:, root:, paths:, config: }.freeze
           @askers = askers
-          @usage = usage
+          @usage = agent && -> { agent.call&.usage }
           @switchboard = switchboard
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:,
-                             isolation:, handback:, middleware:, display:)
+                             isolation:, handback:, middleware:, display:).with(holder: room_of(agent))
           @session = session
           @parent_view = parent_view(backend, session)
         end
@@ -283,11 +286,11 @@ module Lain
           raise Lain::Error, "the epic Subagent spawns over the floor #build makes; build the toolset first" if
             @floor.nil?
 
-          issue = seam.with(isolation: issue_leases(isolation, handoff, lane))
+          issue = seam.with(isolation: issue_leases(isolation, handoff, lane), holder: EPIC_ROOM)
           Lain::Tools::Subagent.new(seam: announcing(ISSUE_ORCHESTRATOR.to_s, over: issue),
                                     toolset: orchestrating(issue),
                                     policy: backend.spawn_policy(ISSUE_ORCHESTRATOR), budget: ORCHESTRATOR_BUDGET,
-                                    persona: persona(ISSUE_ORCHESTRATOR), max_depth: EPIC_DEPTH, mode: :actor,
+                                    persona: persona(ISSUE_ORCHESTRATOR), mode: :actor,
                                     announces_as: ISSUE_ORCHESTRATOR.to_s)
         end
 
@@ -443,7 +446,16 @@ module Lain
         # the floor is what a subagent role attenuates FROM, built once and
         # shared, so a thunk over the chat's Agent placed there would make
         # every child report its PARENT's spend as its own.
+        #
+        # The usage thunk's `&.` is NOT a coalesce: it lets the thunk RETURN nil so
+        # {Lain::Tools::SessionUsage}'s own `|| raise(Unwired)` fires and the model
+        # sees an intelligible sentence instead of `undefined method 'usage' for
+        # nil`. Nothing is invented either way -- `Lain::Usage.zero` is truthy, so
+        # a run that has spent nothing still reports zero and cannot be confused
+        # with an unassigned slot.
         def session_usage = Lain::Tools::SessionUsage.new(usage: @usage)
+
+        def room_of(agent) = agent ? Lain::Tools::Subagent::Holder.of(agent) : Lain::Tools::Subagent::Holder::ROOT
 
         # The chat default: an attenuated read-only child (schema posture,
         # depth 1), whose :spawn/:message lineage events the observer routes
@@ -452,7 +464,7 @@ module Lain
         # model calls, so an arrival note says "researcher" instead.
         def research_subagent(base)
           Lain::Tools::Subagent.new(seam: researcher_seam, toolset: base, policy: backend.spawn_policy(RESEARCHER),
-                                    persona: persona(RESEARCHER), max_depth: 1, announces_as: RESEARCHER.to_s,
+                                    persona: persona(RESEARCHER), announces_as: RESEARCHER.to_s,
                                     budget: Lain::Role::Catalog.fetch(RESEARCHER).budget, kept: research_leases)
         end
 
@@ -481,14 +493,14 @@ module Lain
           Lain::Tools::Subagent::Choice.new([IMPLEMENTER, REVIEWER].to_h { |role| [role, spawner(role, issue)] })
         end
 
-        # Depth 1 of its own, so the epic's ceiling lowers nothing and raises
-        # nothing, and a child attenuates from the floor, which holds no
+        # Descended into the orchestrator's union, so its child gets what the
+        # orchestrator has left, and attenuates from the floor, which holds no
         # spawner. Over the issue's seam, so it leases where the orchestrator's
         # children must.
         def spawner(role, issue)
           Lain::Tools::Subagent.new(seam: announcing(role.to_s, over: issue), toolset: @floor,
-                                    policy: backend.spawn_policy(role), persona: persona(role), max_depth: 1,
-                                    announces_as: role.to_s, budget: Lain::Role::Catalog.fetch(role).budget)
+                                    policy: backend.spawn_policy(role), persona: persona(role), announces_as: role.to_s,
+                                    budget: Lain::Role::Catalog.fetch(role).budget)
         end
 
         # What a child is told it is, in its own system prompt: the same role
