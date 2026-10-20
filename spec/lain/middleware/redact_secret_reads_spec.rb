@@ -121,7 +121,11 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
   def approve(queue) = queue.dequeue.approve(surface: "spec")
 
-  def redactions = journal.grep(Lain::Telemetry::ReadRedacted)
+  def source_masks(kind) = journal.grep(Lain::Telemetry::SourceMasked).select { _1.kind == kind }
+
+  def redactions = source_masks(:file)
+
+  def memory_masks = source_masks(:memory)
 
   def releases = journal.grep(Lain::Telemetry::ReadReleased)
 
@@ -386,7 +390,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
         "GAMMA_TOKEN=AKIAIOSFODNN7EXAMPLE\n"
     end
 
-    it "records one ReadRedacted carrying how many were found and how many were already released" do
+    it "records one SourceMasked carrying how many were found and how many were already released" do
       path = write(".env", three)
       regions = Lain::Sensitivity::Regions.detect(three)
       ledger.release(path, [regions.first])
@@ -394,7 +398,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       read(path)
 
       expect(redactions).to contain_exactly(
-        an_object_having_attributes(path:, regions: 3, released: 1, tool_use_id: "tu_1")
+        an_object_having_attributes(key: path, regions: 3, released: 1, tool_use_id: "tu_1")
       )
     end
 
@@ -428,7 +432,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
     # An approved read withheld nothing, so there is no redaction to record. What
     # says a secret was sent is its own record: the approval's decision names no
-    # file and no count, and a `read_redacted` would resume the file as masked.
+    # file and no count, and a `source_masked` would resume the file as masked.
     it "records a release rather than a redaction when the human approved the whole file" do
       read(write("notes.txt", one_secret)) { |q| approve(q) }
 
@@ -591,7 +595,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       read(path) { |q| q.dequeue.deny(surface: "spec") }
 
-      expect(session.masked_read?(path)).to be(true)
+      expect(session.withheld?(Lain::Session::Withheld::Source.file(path))).to be(true)
     end
   end
 
@@ -726,7 +730,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       Sync { dispatch(effect(path), subject_stack: Lain::Middleware::Stack.new([raising])) }
 
       expect(session.read?(path)).to be(false)
-      expect(session.masked_read?(path)).to be(true)
+      expect(session.withheld?(Lain::Session::Withheld::Source.file(path))).to be(true)
       expect { edit_call(path) }.to raise_error(Lain::Tool::ContractViolation, /read only in part/)
     end
 
@@ -747,7 +751,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       end
 
       expect(session.read?(path)).to be(false)
-      expect(session.masked_read?(path)).to be(true)
+      expect(session.withheld?(Lain::Session::Withheld::Source.file(path))).to be(true)
     end
 
     # The mask must be gated on a VERDICT, not on `adjudicate` having returned.
@@ -760,7 +764,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       Sync { dispatch(effect(path), subject_stack: Lain::Middleware::Stack.new([broken])) }
 
       expect(session.read?(path)).to be(false)
-      expect(session.masked_read?(path)).to be(true)
+      expect(session.withheld?(Lain::Session::Withheld::Source.file(path))).to be(true)
       expect { edit_call(path) }.to raise_error(Lain::Tool::ContractViolation, /read only in part/)
     end
 
@@ -958,7 +962,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       read(path)
 
-      expect(redactions).to contain_exactly(an_object_having_attributes(path:, regions: 1, released: 0))
+      expect(redactions).to contain_exactly(an_object_having_attributes(key: path, regions: 1, released: 0))
       expect(releases).to be_empty
     end
 
@@ -978,7 +982,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       read(path)
 
-      expect(session.masked_read?(path)).to be(true)
+      expect(session.withheld?(Lain::Session::Withheld::Source.file(path))).to be(true)
     end
 
     it "still parks an approval for a read outside every related directory" do
@@ -1534,22 +1538,22 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     it "remembers on the session which item was read masked, and only that one" do
       recall(credential)
 
-      expect(session.masked_memory?("note")).to be(true)
-      expect(session.masked_memory?("other")).to be(false)
+      expect(session.withheld?(Lain::Session::Withheld::Source.memory("note"))).to be(true)
+      expect(session.withheld?(Lain::Session::Withheld::Source.memory("other"))).to be(false)
     end
 
     it "does not record a clean read as masked" do
       recall("the build uses rake pspec")
 
-      expect(session.masked_memory?("note")).to be(false)
-      expect(journal.grep(Lain::Telemetry::MemoryMasked)).to be_empty
+      expect(session.withheld?(Lain::Session::Withheld::Source.memory("note"))).to be(false)
+      expect(memory_masks).to be_empty
     end
 
     it "journals the masked read by memory id and count, never the bytes" do
       recall(credential)
 
-      expect(journal.grep(Lain::Telemetry::MemoryMasked))
-        .to contain_exactly(have_attributes(tool_use_id: "tu_mem", id: "note", regions: 1, prior: 0))
+      expect(memory_masks)
+        .to contain_exactly(have_attributes(tool_use_id: "tu_mem", key: "note", regions: 1, released: 0))
     end
 
     describe "a body quoting a masked read" do
@@ -1566,8 +1570,8 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       it "records no masked read and journals nothing" do
         recall(quoting)
 
-        expect(session.masked_memory?("note")).to be(false)
-        expect(journal.grep(Lain::Telemetry::MemoryMasked)).to be_empty
+        expect(session.withheld?(Lain::Session::Withheld::Source.memory("note"))).to be(false)
+        expect(memory_masks).to be_empty
       end
 
       it "numbers a new secret after the placeholder and says both counts" do
@@ -1576,8 +1580,8 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
         expect(result.content).to include("API_KEY=<redacted:2>\n")
         expect(result.content.lines.last)
           .to eq("1 region was masked in this memory item, 1 already redacted; a memory item cannot be released.")
-        expect(journal.grep(Lain::Telemetry::MemoryMasked))
-          .to contain_exactly(have_attributes(regions: 1, prior: 1))
+        expect(memory_masks)
+          .to contain_exactly(have_attributes(regions: 1))
       end
     end
 

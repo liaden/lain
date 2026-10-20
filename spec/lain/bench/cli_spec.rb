@@ -915,7 +915,7 @@ RSpec.describe Lain::Bench::CLI do
         records = File.foreach(path).map { |line| JSON.parse(line) }
         turns = records.select { |record| record["type"] == "turn" }
 
-        expect(records.first).to include("type" => "session", "format" => 1, "compact_schedule" => "turn",
+        expect(records.first).to include("type" => "session", "format" => 2, "compact_schedule" => "turn",
                                          "provider" => "anthropic", "model" => "claude-sonnet-4-6")
         expect(records.first).to have_key("writer")
         expect(records.first).not_to have_key("head")

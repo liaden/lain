@@ -39,7 +39,7 @@ RSpec.describe "variance session fixtures" do
     it "each open on the live header and close on their head" do
       paths.each do |path|
         records = File.foreach(path).map { |line| JSON.parse(line) }
-        expect(records.first).to include("type" => "session", "format" => 1, "compact_schedule" => "turn",
+        expect(records.first).to include("type" => "session", "format" => 2, "compact_schedule" => "turn",
                                          "writer" => Lain::Bench::VarianceFixtures::WRITER.to_header.fetch("writer"))
         expect(records.first).not_to have_key("head")
         expect(records.last).to include("type" => "session_closed", "reason" => "exit")

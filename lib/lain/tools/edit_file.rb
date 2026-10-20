@@ -59,7 +59,7 @@ module Lain
                "what you saw, so editing it would clobber bytes you never read. Nothing in this session " \
                "will lift that, and re-reading will not: report it and do something else",
                subject: SUBJECT) do |input, invocation|
-        !session_of(invocation).masked_read?(target(invocation, input.path))
+        !session_of(invocation).withheld?(Session::Withheld::Source.file(target(invocation, input.path)))
       end
 
       # The mirror image of the one above: here the missing bytes are missing

@@ -78,7 +78,7 @@ module Lain
     # The author line is lain's own and is left whole, as is a cited lineage
     # digest. The session remembers each item read masked, and
     # {RefuseSecretWrites} refuses to rewrite it from that read; a
-    # {Telemetry::MemoryMasked} record carries that across a resume. The journaled `memory_loaded` copy stays
+    # {Telemetry::SourceMasked} record carries that across a resume. The journaled `memory_loaded` copy stays
     # raw: masking it would move the item digests every resume checks.
     class RedactSecretReads < Base
       # Exact membership, {RefuseSecretWrites::GUARDED_TOOLS}' rule: a tool that
@@ -186,7 +186,7 @@ module Lain
       #   everything, wearing this codebase's Null idiom as camouflage.
       # @param queue [#adjudicate] where a read parks for release, or
       #   {Unqueued} when a run wires none. Required for the same reason.
-      # @param journal [#<<] where {Telemetry::ReadRedacted},
+      # @param journal [#<<] where {Telemetry::SourceMasked},
       #   {Telemetry::SearchRedacted} and {Telemetry::ReadReleased} land
       # @param requester [Requester, nil] the child a read is asked for, as its
       #   gate names it; nil for the parent, whose context names nobody
@@ -234,7 +234,7 @@ module Lain
       class Withheld
         def found = scan.regions.length
 
-        # Counts, never bytes -- what {Telemetry::ReadRedacted} carries.
+        # Counts, never bytes -- what {Telemetry::SourceMasked} carries.
         #
         # DERIVED from the snapshot and NOT re-asked of the ledger: `unreleased`
         # is captured BEFORE the park and the ledger is read AFTER it, with a human
@@ -246,7 +246,7 @@ module Lain
         # This record describes ONE read, so the snapshot it acted on is what it
         # must report. The ledger answers "what does the run believe now", and
         # writing that here puts a false entry inside the very count
-        # {Telemetry::Carriers::ReadRedacted}'s `released <= regions` validator
+        # {Telemetry::Carriers::SourceMasked}'s `released <= regions` validator
         # exists to keep honest.
         def released = found - unreleased.length
       end
@@ -331,10 +331,10 @@ module Lain
       end
 
       def record_recalled(carried, effect, masked)
-        (carried.fetch(:context) || Session::Null.instance).record_masked_memory(effect.input["id"])
-        record(Telemetry::MemoryMasked) do
-          Telemetry::MemoryMasked.new(tool_use_id: effect.tool_use_id, id: effect.input["id"], regions: masked.fresh,
-                                      prior: masked.prior)
+        id = effect.input["id"]
+        (carried.fetch(:context) || Session::Null.instance).record_withheld(Session::Withheld::Source.memory(id))
+        record(Telemetry::SourceMasked) do
+          Telemetry::SourceMasked.new(tool_use_id: effect.tool_use_id, kind: :memory, key: id, regions: masked.fresh)
         end
       end
 
@@ -419,7 +419,7 @@ module Lain
       # {Tools::ReadFile} recorded a COMPLETE read below this middleware before
       # the park began, and `@masked` is add-only, so if control leaves here
       # without a verdict nothing later repairs it: `read?` stays true,
-      # `masked_read?` stays false, and `edit_file` is ALLOWED over a file whose
+      # `withheld?` stays false, and `edit_file` is ALLOWED over a file whose
       # secrets the model never saw -- fail-OPEN, in the one direction this exists
       # to prevent, and a Ctrl-C at the prompt is enough to reach it.
       #
@@ -441,7 +441,7 @@ module Lain
         withheld.unreleased.each { @lapsed << [withheld.path, _1.digest] } if why == :timed_out
         mask(carried, effect, withheld, why)
       ensure
-        withheld.session.record_masked_read(withheld.path) unless decided
+        withheld.session.record_withheld(Session::Withheld::Source.file(withheld.path)) unless decided
       end
 
       # One queue serves the whole fleet, so a child's read names the child
@@ -450,7 +450,7 @@ module Lain
 
       # Nothing was withheld, so no mask is recorded. What is journaled is that
       # a secret was sent: the decision record names no file and no count, and a
-      # {Telemetry::ReadRedacted} would resume the file as masked.
+      # {Telemetry::SourceMasked} would resume the file as masked.
       def release(carried, effect, withheld, settled)
         @ledger.release(withheld.path, withheld.unreleased)
         record(Telemetry::ReadReleased) do
@@ -469,8 +469,8 @@ module Lain
       # digests at this path have been ruled on", which IS the transition, so the
       # check goes BEFORE it is added to.
       def mask(carried, effect, withheld, why)
-        withheld.session.record_masked_read(withheld.path)
-        record(Telemetry::ReadRedacted) { redaction(effect, withheld) } unless declined?(withheld)
+        withheld.session.record_withheld(Session::Withheld::Source.file(withheld.path))
+        record(Telemetry::SourceMasked) { redaction(effect, withheld) } unless declined?(withheld)
         withheld.unreleased.each { @declined << [withheld.path, _1.digest] }
         masked = withheld.scan.mask(withheld.unreleased)
         carried.merge(result: Tool::Result.ok(Trailer.append(masked, withheld.unreleased.length, why)))
@@ -495,7 +495,7 @@ module Lain
 
       # {#mask}'s state-transition rule, over a set of its own so that nothing
       # here reads as a ruling to the next `read_file`. A {Telemetry::SearchRedacted},
-      # never a {Telemetry::ReadRedacted}, so a resume does not fold it into a mask.
+      # never a {Telemetry::SourceMasked}, so a resume does not fold it into a mask.
       def record_row_masks(effect, found, unreleased)
         unreleased.reject { |path, held| row_masked?(path, held) }.each do |path, held|
           record(Telemetry::SearchRedacted) do
@@ -511,7 +511,7 @@ module Lain
       end
 
       def redaction(effect, withheld)
-        Telemetry::ReadRedacted.new(tool_use_id: effect.tool_use_id, path: withheld.path,
+        Telemetry::SourceMasked.new(tool_use_id: effect.tool_use_id, kind: :file, key: withheld.path,
                                     regions: withheld.found, released: withheld.released)
       end
 
@@ -523,7 +523,7 @@ module Lain
       # of it, so the failure degrades into the Journal's own `journal_error`
       # shape, naming the record it stood in for, as {Approval::Queue} does. A
       # lost mask costs a resumed session the knowledge that the path was masked,
-      # since {SessionRecord::Replay#redactions} reads this record; the LIVE
+      # since {SessionRecord::Replay} reads this record; the LIVE
       # session still knows.
       #
       # The entry is built in the block, so a record whose own construction

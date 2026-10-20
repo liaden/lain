@@ -86,7 +86,7 @@ RSpec.describe Lain::Tools::WriteFile do
 
     def masked_session(path)
       Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: tmpdir, env: {}))
-                   .record_read(path).record_masked_read(path)
+                   .record_read(path).record_withheld(Lain::Session::Withheld::Source.file(path))
     end
 
     it "refuses the write and leaves the secret on disk" do

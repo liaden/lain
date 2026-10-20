@@ -128,7 +128,7 @@ alone does not prove the gate consults it.
 **Since 2026-09-14 a count of these records is the run's refused paths across the parent AND every
 child, not the parent's alone.** A child's tool stack is built by the same `CLI::ToolGuard` as its
 parent's and journals to the same session record, where a child's refusal used to be pushed onto the
-terminal channel and dropped. The record names **no actor** — `read_redacted` already had this shape —
+terminal channel and dropped. The record names **no actor** — `source_masked` already had this shape —
 so tell a parent's refusal from a child's by `tool_use_id` against the turn records if it matters. A
 count that rose after a spawned child read a denied path is that change, not a regression.
 
@@ -351,7 +351,7 @@ human gate, and then check what the model actually receives.
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
-  puts "#{r["path"]}\tregions=#{r["regions"]}\treleased=#{r["released"]}" if r["type"]=="read_redacted"}' "$JOURNAL"
+  puts "#{r["key"]}\tregions=#{r["regions"]}\treleased=#{r["released"]}" if r["type"]=="source_masked" && r["kind"]=="file"}' "$JOURNAL"
 ```
 
 Three things must all be true at once:
@@ -402,14 +402,14 @@ the same file again in the same session and confirm it comes back released — a
 re-masks an already-released region is a second ledger.
 
 **A release leaves its own record, new in round 18.** Releasing a masked region journals a
-`read_released` line beside the `read_redacted` one:
+`read_released` line beside the `source_masked` one:
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="read_released"
   puts [r["tool_use_id"], r["path"], r["regions"], r["requester"], r["surface"]].join("\t")}' "$JOURNAL"
 ```
 
-Round 26 (g26-4): after an approved release only `read_released` is written; a `read_redacted` record with `released >= 1` does not appear, so §4 item 2 cannot be confirmed from a `read_redacted` line after a release. This is the documented shape, not a defect to wait on (g26-4, docs only): confirm a release from `read_released`.
+Round 26 (g26-4): after an approved release only `read_released` is written; a `source_masked` record with `released >= 1` does not appear, so §4 item 2 cannot be confirmed from a `source_masked` line after a release. This is the documented shape, not a defect to wait on (g26-4, docs only): confirm a release from `read_released`.
 
 Five fields, and what each is for:
 
@@ -459,11 +459,11 @@ Expected, all of it:
    detected one line at a time and is not masked here. Nothing parks, no prompt appears.
 2. `ast_search` over the same file masks its captured values the same way. `ast_search` has no yaml (`unknown language :yaml, expected one of [:ruby, :rust, :python, :typescript, :javascript]`); plant the token in a `.rb` file for this item. A target that is a single file labels the
    row with the model's own spelling and masks the same.
-3. The journal gets `search_redacted` (counts and the path, never bytes), **not** `read_redacted`:
+3. The journal gets `search_redacted` (counts and the path, never bytes), **not** `source_masked`:
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
-  puts "#{r["type"]}\t#{r["path"]}\tregions=#{r["regions"]}\treleased=#{r["released"]}" if %w[search_redacted read_redacted].include?(r["type"])}' "$JOURNAL"
+  puts "#{r["type"]}\t#{r["path"] || r["key"]}\tregions=#{r["regions"]}\treleased=#{r["released"]}" if %w[search_redacted source_masked].include?(r["type"])}' "$JOURNAL"
 ```
 
 4. **Grep never silences the next read.** Then ask for `read_file config/settings.yml`: it still parks, because a row
@@ -506,9 +506,9 @@ printf 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n'                          > a
 ```
 
 `aws.txt` is the documented example key from AWS's own docs. Ask the model to `read_file` each, and read the
-`read_redacted` records (the §4 reduction):
+`source_masked` records (the §4 reduction):
 
-1. **`path.txt`, `envpath.txt` and `alphabet.txt` come back unmasked and park nothing.** No `read_redacted`
+1. **`path.txt`, `envpath.txt` and `alphabet.txt` come back unmasked and park nothing.** No `source_masked`
    record for them, no `approval_pending`, and the bytes appear in the journaled result.
 2. **`aws.txt` is still masked**: one region, `<redacted:1>` in the result, `released=0`, and a release
    prompt (§4 item 1 and 2). If it is not flagged, the exemption has swallowed a real key shape, which is the
@@ -539,7 +539,7 @@ sensitivity related: %w[/abs/path/to/sibling]      # or home-anchored: ~/dev/sib
 `lain trust --yes`, relaunch, and put `aws.txt` (from 4c) and a `.env` into the sibling:
 
 1. **A flagged region under a related tree is masked, with no approval parked.** `read_file` of
-   `sibling/aws.txt` completes at once with `<redacted:1>` in the result, `read_redacted` journals
+   `sibling/aws.txt` completes at once with `<redacted:1>` in the result, `source_masked` journals
    `regions=1 released=0`, there is no `approval_pending` for it, and no `read_released` record ever
    appears for that path. The same file **outside** the related tree parks as in §4, so the config is the
    only difference.
@@ -585,7 +585,7 @@ in the fixture and read each with `read_file`:
 | `password: ${DB_PASS}`, `password: $DB_PASS`, `token = ENV.fetch("GITHUB_TOKEN")`, `password: ENV["X_PASS"]`, `#   password: Rails.application.credentials.dig(:smtp, :password),` | **nothing masked**: a whole-value reference names a secret and holds none (round 25, g25-1, fixed). Controls that stay masked: `# password: hunter2pass` (a comment holding a real value), `password: ${DB_PASS}hunter2pass`, `password: ${X:-hunter2pass}` |
 
 `mysql --help -pager` and `confirm_password: required` mask as well; those two are accepted false positives,
-not findings. Each masked read journals `read_redacted` with `regions` of 1 or more, and the §4 item 3 grep
+not findings. Each masked read journals `source_masked` with `regions` of 1 or more, and the §4 item 3 grep
 finds no byte of the value in the journaled request.
 
 ### 4f: a bash result is masked, whoever approved the call *(a chat with a model, approval `ask`)*

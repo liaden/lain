@@ -554,6 +554,93 @@ RSpec.describe Lain::SessionRecord::Replay do
     end
   end
 
+  describe "withheld sources, through a scribe's journal", :seam do
+    let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::WriteFile.new]) }
+    let(:source) { Lain::Session::Withheld::Source }
+    let(:live) { Lain::Session.new(journal:) }
+
+    around do |example|
+      Dir.mktmpdir("lain-replay-withheld") do |dir|
+        @path = File.join(dir, ".env")
+        File.write(@path, "API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n")
+        example.run
+      end
+    end
+
+    attr_reader :path
+
+    before do
+      Lain::SessionRecord::Scribe.new(journal:, context: base, toolset:)
+      live.record_read(path)
+    end
+
+    def mask(kind, key)
+      journal << Lain::Telemetry::SourceMasked.new(tool_use_id: "tu_m", kind:, key:, regions: 1, released: 0)
+    end
+
+    def resumed = described_class.new(journal_io.string.each_line).session
+
+    def overwrite(session)
+      invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_w", context: session)
+      Lain::Tools::WriteFile.new.call({ "path" => path, "content" => "API_KEY=<redacted:1>\n" }, invocation)
+    end
+
+    it "resumes a masked file and a masked memory item as withheld" do
+      mask(:file, path)
+      mask(:memory, "db-creds")
+      session = resumed
+
+      expect { overwrite(session) }.to raise_error(Lain::Tool::ContractViolation, /read only in part/)
+
+      rewrite = Lain::Effect::ToolCall.new(tool_use_id: "tu_r", name: "memory_write",
+                                           input: { "id" => "db-creds", "description" => "d", "body" => "x" })
+      refused = Lain::Middleware::RefuseSecretWrites.new.call({ effect: rewrite, context: session }) do
+        raise "the rewrite reached the store"
+      end
+      expect(refused.fetch(:result)).to have_attributes(is_error: true, content: /read masked this session/)
+    end
+
+    it "lists both under the one record type, each naming its kind and key" do
+      mask(:file, path)
+      mask(:memory, "db-creds")
+
+      masks = journal_io.string.each_line.map { JSON.parse(_1) }.select { _1["type"] == "source_masked" }
+
+      expect(masks).to contain_exactly(include("kind" => "file", "key" => path),
+                                       include("kind" => "memory", "key" => "db-creds"))
+    end
+
+    it "does not withhold a file that was released instead of masked" do
+      journal << Lain::Telemetry::ReadReleased.new(tool_use_id: "tu_m", path:, regions: 1, requester: "agent",
+                                                   surface: "spec")
+      session = resumed
+
+      expect(session.withheld?(source.file(path))).to be(false)
+      expect { overwrite(session) }.not_to raise_error
+      expect(File.read(path)).to eq("API_KEY=<redacted:1>\n")
+    end
+
+    it "refuses a record of a kind it does not know as a corrupt session" do
+      journal << { "type" => "source_masked", "tool_use_id" => "t", "kind" => "stub", "key" => "k",
+                   "regions" => 1, "released" => 0 }
+
+      expect { resumed }.to raise_error(Lain::Bench::Session::Corrupt, /source_masked.*stub/)
+    end
+
+    it "refuses a record that names no key as a corrupt session, not as a mask of the cwd" do
+      journal << { "type" => "source_masked", "tool_use_id" => "t", "kind" => "file", "key" => nil,
+                   "regions" => 1, "released" => 0 }
+
+      expect { resumed }.to raise_error(Lain::Bench::Session::Corrupt, /source_masked.*key/)
+    end
+
+    it "resumes a memory item masked by the record the middleware writes" do
+      journal << Lain::Telemetry::SourceMasked.new(tool_use_id: "tu_m", kind: :memory, key: "db-creds", regions: 1)
+
+      expect(resumed.withheld?(source.memory("db-creds"))).to be(true)
+    end
+  end
+
   # The project-memory view a resume renders from: the `memory_loaded` record
   # seeds it, the recorded memory_write turns fold onto it, and a `rewound`
   # record decides which of them the chain still carries.

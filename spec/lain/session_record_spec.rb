@@ -90,14 +90,14 @@ RSpec.describe Lain::SessionRecord::Scribe do
   it "stamps that header with the session format" do
     scribe
 
-    expect(of_type("session").first).to include("format" => 1)
+    expect(of_type("session").first).to include("format" => 2)
   end
 
   # An added key does not bump the format: the middleware section is one.
-  it "keeps format 1 when the header carries the middleware section" do
+  it "keeps format 2 when the header carries the middleware section" do
     described_class.new(journal:, context:, toolset:, workspace:, middleware: { "project" => "d1" })
 
-    expect(of_type("session").first).to include("format" => 1, "middleware" => { "project" => "d1" })
+    expect(of_type("session").first).to include("format" => 2, "middleware" => { "project" => "d1" })
   end
 
   # A reader in another process can then tell a crashed session from a quiet
@@ -830,7 +830,7 @@ RSpec.describe Lain::SessionRecord::Replay do
         end
       end
 
-      # A MASK replays from `read_redacted`, not from `session_read`, and it has
+      # A MASK replays from `source_masked`, not from `session_read`, and it has
       # to: `record_read` by construction cannot reach the masked set -- so the
       # whole read
       # `Tools::ReadFile` records BELOW the middleware would win on replay and a
@@ -838,24 +838,24 @@ RSpec.describe Lain::SessionRecord::Replay do
       # the record `Middleware::RedactSecretReads` already writes.
       it "replays a masked read as masked, not as the whole read recorded under it" do
         journaled.record_read("/tmp/.env")
-        journal << Lain::Telemetry::ReadRedacted.new(tool_use_id: "tu_1", path: "/tmp/.env",
+        journal << Lain::Telemetry::SourceMasked.new(tool_use_id: "tu_1", kind: :file, key: "/tmp/.env",
                                                      regions: 2, released: 0)
 
         fresh = replayed_session
 
         expect(fresh.read?("/tmp/.env")).to be(false)
-        expect(fresh.masked_read?("/tmp/.env")).to be(true)
+        expect(fresh.withheld?(Lain::Session::Withheld::Source.file("/tmp/.env"))).to be(true)
       end
 
-      # A `read_redacted` with no `session_read` beside it still masks. This is
+      # A `source_masked` with no `session_read` beside it still masks. This is
       # what makes the redaction the RECORD of the mask rather than a modifier
       # on a read line: a salvaged journal that lost the read still rebuilds the
       # refusal.
       it "masks from the redaction alone, with no session_read to modify" do
-        fresh = described_class.new([{ "type" => "read_redacted", "tool_use_id" => "t",
-                                       "path" => "/tmp/.env", "regions" => 1, "released" => 0 }]).session
+        fresh = described_class.new([{ "type" => "source_masked", "tool_use_id" => "t", "kind" => "file",
+                                       "key" => "/tmp/.env", "regions" => 1, "released" => 0 }]).session
 
-        expect(fresh.masked_read?("/tmp/.env")).to be(true)
+        expect(fresh.withheld?(Lain::Session::Withheld::Source.file("/tmp/.env"))).to be(true)
         expect(fresh.read?("/tmp/.env")).to be(false)
       end
 
@@ -866,12 +866,12 @@ RSpec.describe Lain::SessionRecord::Replay do
       # the fixed fold order is allowed to rely on, and it belongs to
       # {Lain::Session}, which is where it is driven from.
       it "reaches the same state whichever order the two facts are applied in" do
-        masked_first = Lain::Session.new.record_masked_read("/tmp/.env").record_read("/tmp/.env")
-        read_first = Lain::Session.new.record_read("/tmp/.env").record_masked_read("/tmp/.env")
+        masked_first = Lain::Session.new.record_withheld(Lain::Session::Withheld::Source.file("/tmp/.env")).record_read("/tmp/.env")
+        read_first = Lain::Session.new.record_read("/tmp/.env").record_withheld(Lain::Session::Withheld::Source.file("/tmp/.env"))
 
         [masked_first, read_first].each do |fresh|
           expect(fresh.read?("/tmp/.env")).to be(false)
-          expect(fresh.masked_read?("/tmp/.env")).to be(true)
+          expect(fresh.withheld?(Lain::Session::Withheld::Source.file("/tmp/.env"))).to be(true)
         end
       end
 
@@ -883,7 +883,8 @@ RSpec.describe Lain::SessionRecord::Replay do
           path = File.join(dir, ".env")
           File.write(path, "API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n")
           journaled.record_read(path)
-          journal << Lain::Telemetry::ReadRedacted.new(tool_use_id: "tu_1", path:, regions: 1, released: 0)
+          journal << Lain::Telemetry::SourceMasked.new(tool_use_id: "tu_1", kind: :file, key: path, regions: 1,
+                                                       released: 0)
 
           invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_2", context: replayed_session)
 
@@ -916,12 +917,12 @@ RSpec.describe Lain::SessionRecord::Replay do
         expect(refused.fetch(:result)).to have_attributes(is_error: true, content: /read masked this session/)
       end
 
-      it "replays a memory_masked record alone, for its id only" do
-        fresh = described_class.new([{ "type" => "memory_masked", "tool_use_id" => "t", "id" => "db-creds",
-                                       "regions" => 1 }]).session
+      it "replays a memory source_masked record alone, for its id only" do
+        fresh = described_class.new([{ "type" => "source_masked", "tool_use_id" => "t", "kind" => "memory",
+                                       "key" => "db-creds", "regions" => 1, "released" => 0 }]).session
 
-        expect(fresh.masked_memory?("db-creds")).to be(true)
-        expect(fresh.masked_memory?("other")).to be(false)
+        expect(fresh.withheld?(Lain::Session::Withheld::Source.memory("db-creds"))).to be(true)
+        expect(fresh.withheld?(Lain::Session::Withheld::Source.memory("other"))).to be(false)
       end
 
       # A record with no span says nothing about how much of the file was seen,
@@ -994,11 +995,11 @@ RSpec.describe Lain::SessionRecord do
   # answers with is never one the Loader then refuses.
   describe ".current_format?" do
     it "accepts a header recording this format" do
-      expect(described_class.current_format?({ "format" => 1 })).to be(true)
+      expect(described_class.current_format?({ "format" => 2 })).to be(true)
     end
 
     it "refuses a missing key, another number, and the right number as a String" do
-      expect([{}, { "format" => 2 }, { "format" => "1" }].map { |header| described_class.current_format?(header) })
+      expect([{}, { "format" => 1 }, { "format" => "2" }].map { |header| described_class.current_format?(header) })
         .to eq([false, false, false])
     end
   end

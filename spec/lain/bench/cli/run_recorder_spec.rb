@@ -48,8 +48,8 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
 
     let(:written) { written_by(run_recorder) }
 
-    it "opens with the live header: format 1, this process as its writer, the turn schedule and no head" do
-      expect(written.first).to include({ "type" => "session", "format" => 1, "compact_schedule" => "turn" }
+    it "opens with the live header: format 2, this process as its writer, the turn schedule and no head" do
+      expect(written.first).to include({ "type" => "session", "format" => 2, "compact_schedule" => "turn" }
                                          .merge(Lain::Liveness::Writer.current.to_header))
       expect(written.first).not_to have_key("head")
     end

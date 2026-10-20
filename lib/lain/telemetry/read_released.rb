@@ -24,12 +24,12 @@ module Lain
 
     # A `read_file` whose sensitive regions were agreed to and sent to the model:
     # which file, how many regions THIS read released, the call it answered, who
-    # it was asked for and the surface that said yes. {ReadRedacted}'s
+    # it was asked for and the surface that said yes. {SourceMasked}'s
     # counterpart, and never its bytes.
     #
-    # Its own record rather than a `read_redacted` with nothing withheld, because
-    # {SessionRecord::Replay} folds every `read_redacted` into the masked
-    # read-set, and a release written as one would resume the file as masked.
+    # Its own record rather than a `source_masked` with nothing withheld, because
+    # {SessionRecord::Replay} folds every `source_masked` into the withheld
+    # set, and a release written as one would resume the file as masked.
     # Replay folds THIS record into nothing, not even the ledger: a resumed run
     # has no approval of its own for those regions, so it asks again.
     ReadReleased = Data.define(:tool_use_id, :path, :regions, :requester, :surface) do

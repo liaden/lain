@@ -51,7 +51,7 @@ module Lain
                "what you saw, so writing it back would replace them with their placeholders. Nothing in " \
                "this session will lift that: report it and do something else",
                subject: SUBJECT) do |input, invocation|
-        !session_of(invocation).masked_read?(target(invocation, input.path))
+        !session_of(invocation).withheld?(Session::Withheld::Source.file(target(invocation, input.path)))
       end
 
       # Only an OVERWRITE is guarded: a nonexistent path short-circuits the

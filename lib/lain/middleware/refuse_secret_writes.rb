@@ -120,7 +120,10 @@ module Lain
       def withhold?(input) = @oracle.secret?(input)
 
       def masked_rewrite?(env, effect)
-        effect.name == "memory_write" && (env[:context] || Session::Null.instance).masked_memory?(effect.input["id"])
+        return false unless effect.name == "memory_write"
+
+        source = Session::Withheld::Source.memory(effect.input["id"])
+        (env[:context] || Session::Null.instance).withheld?(source)
       end
 
       def matched_pattern(input)

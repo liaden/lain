@@ -270,7 +270,7 @@ RSpec.describe Lain::Tools::EditFile do
     it "still names masking, not the window, when the read was masked" do
       path = write("hello.txt", "hello world")
       session = Lain::Session.new
-      session.record_read(path).record_masked_read(path)
+      session.record_read(path).record_withheld(Lain::Session::Withheld::Source.file(path))
 
       expect do
         tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
@@ -326,7 +326,7 @@ RSpec.describe Lain::Tools::EditFile do
     it "names the file's path in the masked-read refusal" do
       path = write("hello.txt", "hello world")
       session = Lain::Session.new
-      session.record_read(path).record_masked_read(path)
+      session.record_read(path).record_withheld(Lain::Session::Withheld::Source.file(path))
 
       message = refusal_for(session, path)
 

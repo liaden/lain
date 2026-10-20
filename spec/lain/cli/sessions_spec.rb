@@ -94,12 +94,12 @@ RSpec.describe Lain::CLI::Sessions do
 
       before do
         write_session("20260101T000000-1.ndjson",
-                      [header(started_at: "2026-01-01T00:00:00.000000Z").merge("format" => 2)])
+                      [header(started_at: "2026-01-01T00:00:00.000000Z").merge("format" => 1)])
         write_session("20260102T000000-1.ndjson",
                       [header(started_at: "2026-01-02T00:00:00.000000Z").except("format")])
       end
 
-      it "says a format-2 file records another format and cannot be resumed" do
+      it "says a format-1 file records another format and cannot be resumed" do
         expect(lines.last).to include("recording another session format", "cannot be resumed",
                                       "20260101T000000-1.ndjson")
       end

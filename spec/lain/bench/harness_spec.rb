@@ -192,7 +192,7 @@ RSpec.describe Lain::Bench::Harness do
       path = File.join(@dir, ".env").tap { |file| File.write(file, "API_KEY=#{api_key}\n") }
       read(path)
 
-      expect(journal.drain.grep(Lain::Telemetry::ReadRedacted)).not_to be_empty
+      expect(journal.drain.grep(Lain::Telemetry::SourceMasked)).not_to be_empty
     end
 
     # The other half: guarding must not turn an ordinary read into a refusal,

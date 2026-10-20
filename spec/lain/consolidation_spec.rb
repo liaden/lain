@@ -244,7 +244,7 @@ RSpec.describe Lain::Consolidation do
 
         expect(tool_results_seen(provider)).to include("<redacted:1>")
         expect(tool_results_seen(provider)).not_to include("MIIBVgIBADAN")
-        masks = journal_records(journal, "read_redacted")
+        masks = journal_records(journal, "source_masked")
         expect(masks.size).to eq(1)
         expect(masks.first.to_journal["released"]).to eq(0)
       end

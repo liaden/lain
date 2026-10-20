@@ -209,7 +209,7 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
   end
 
   describe "a memory item read masked this session" do
-    let(:session) { Lain::Session.new.record_masked_memory("cache-note") }
+    let(:session) { Lain::Session.new.record_withheld(Lain::Session::Withheld::Source.memory("cache-note")) }
 
     def rewrite(id, body)
       effect = tool_call(input: { "id" => id, "description" => "d", "body" => body })

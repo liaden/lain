@@ -319,16 +319,22 @@ RSpec.describe Lain::Bench::Session::Loader do
         .to raise_error(Lain::Bench::Session::Corrupt, /header/)
     end
 
-    it "raises Corrupt naming format 1 when the header predates the format stamp" do
+    it "raises Corrupt naming format 2 when the header predates the format stamp" do
       records = forge("session") { |header| header.delete("format") }
       expect { described_class.new(records).recording }
-        .to raise_error(Lain::Bench::Session::Corrupt, /predates format 1 \(no format key\)/)
+        .to raise_error(Lain::Bench::Session::Corrupt, /predates format 2 \(no format key\)/)
     end
 
     it "raises Corrupt when the header names a format this loader does not read" do
-      records = forge("session") { |header| header["format"] = 2 }
+      records = forge("session") { |header| header["format"] = 3 }
       expect { described_class.new(records).recording }
-        .to raise_error(Lain::Bench::Session::Corrupt, /format 2.*format 1/)
+        .to raise_error(Lain::Bench::Session::Corrupt, /format 3.*format 2/)
+    end
+
+    it "refuses a format 1 file, whose masked reads it recorded as records no reader folds any more" do
+      records = forge("session") { |header| header["format"] = 1 }
+      expect { described_class.new(records).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /format 1.*format 2/)
     end
 
     %w[compact_schedule extra].each do |key|

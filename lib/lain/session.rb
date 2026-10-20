@@ -64,7 +64,7 @@ module Lain
                    journal: Channel::Null.instance, scope: Unconfined, seeded_cuts: [], root: nil)
       @journal = @cut_sink = journal
       @root = root
-      @reads = ReadSet.new
+      @reads = ReadSet.new(@withheld_sources = Withheld.new)
       @writes = Set.new
       @documents = []
       @pre_images = PreImages::Closed
@@ -247,24 +247,30 @@ module Lain
     end
 
     # Bytes were withheld from the model, so it must not be trusted to rewrite
-    # the file. Separate from a windowed {#record_read} because the two facts
-    # arrive from different layers and only this one can arrive AFTER a whole
-    # read was recorded. See {ReadSet} for why that forces a set of its own
-    # rather than a retraction, and why it ignores the chain.
+    # the source. The read-set asks this ledger, because the two facts arrive from
+    # different layers and only this one can arrive AFTER a whole read was
+    # recorded. The ledger is add-only rather than retractable, and ignores the chain.
     #
     # Journals NO {Telemetry::SessionRead}: {SessionRecord::Replay} folds each
     # one through {#record_read}, which by construction cannot reach the masked
     # set, so a line here would replay to a read -- a record that LOOKS like
     # the mask was persisted while a resumed session permits the very write
     # the mask exists to refuse. {Middleware::RedactSecretReads} writes a
-    # {Telemetry::ReadRedacted} into this same journal at the same moment, and
-    # {SessionRecord::Replay#redactions} folds it back.
+    # {Telemetry::SourceMasked} into this same journal at the same moment, and
+    # {SessionRecord::Replay} folds it back.
     #
+    # @param source [Withheld::Source]
     # @return [self]
-    def record_masked_read(path)
-      @reads.mask(normalize(path))
+    def record_withheld(source)
+      @withheld_sources.record(located(source))
       self
     end
+
+    # @param source [Withheld::Source]
+    # @return [Boolean] whether what the model saw of `source` had bytes masked
+    #   out of it -- which of the two causes {#partially_read?} covers, so a
+    #   refusal can tell "re-read this" from "ask for a release"
+    def withheld?(source) = @withheld_sources.withheld?(located(source))
 
     # @return [Boolean] whether `path` was read, but only in part -- the middle
     #   answer between {#read?} and never-read, so a refusal can name the real
@@ -272,28 +278,6 @@ module Lain
     def partially_read?(path)
       @reads.partial?(normalize(path))
     end
-
-    # @return [Boolean] whether what the model saw of `path` had bytes masked
-    #   out of it -- which of the two causes {#partially_read?} covers, so a
-    #   refusal can tell "re-read this" from "ask for a release"
-    def masked_read?(path)
-      @reads.masked?(normalize(path))
-    end
-
-    # A memory item read with bytes masked must not be rewritten from that read,
-    # for {#record_masked_read}'s reason. Not journaled, so a resumed session may
-    # rewrite it.
-    #
-    # @param id [String] the memory item's id
-    # @return [self]
-    def record_masked_memory(id)
-      masked_memories << id
-      self
-    end
-
-    # @param id [String]
-    # @return [Boolean] whether this session read memory item `id` with bytes masked
-    def masked_memory?(id) = masked_memories.include?(id)
 
     # Sorted, so a consumer cannot vary with the order reads arrived.
     # Deliberately WIDER than {#read?}: a partially read path was still read,
@@ -770,7 +754,9 @@ module Lain
 
     private
 
-    def masked_memories = @masked_memories ||= Set.new
+    def located(source)
+      source.kind == :file ? Withheld::Source.file(normalize(source.key)) : source
+    end
 
     def start_todos
       @todo_reminder = nil
@@ -944,9 +930,10 @@ module Lain
       # Rounds are numbered, and an open one is found by the head it opened on
       # together with the call id: {Session#record_delivery} says why the id
       # alone is not enough.
-      def initialize
+      # @param withheld [Withheld] the session's ledger, which this reads and never writes
+      def initialize(withheld)
         @reads = {}
-        @masked = Set.new
+        @withheld = withheld
         @rounds = [Pending]
         @open = {}
         @chain = Chain.new
@@ -957,17 +944,6 @@ module Lain
       # @return [self]
       def record(path, read)
         (@reads[path] ||= []) << [read, round_of(read)]
-        self
-      end
-
-      # A masked path answers as read in part on its own, with or without a
-      # read beside it: a masked read IS a read, and must never answer as one
-      # that did not happen.
-      #
-      # @param path [String] an already-normalized absolute path
-      # @return [self]
-      def mask(path)
-        @masked << path
         self
       end
 
@@ -1014,7 +990,7 @@ module Lain
       def partial?(path) = masked?(path) || (counted(path).any? && !complete?(path))
 
       # @return [Boolean]
-      def masked?(path) = @masked.include?(path)
+      def masked?(path) = @withheld.withheld?(Session::Withheld::Source.file(path))
 
       # Whether the counted reads of `read`'s version already cover its lines.
       #
@@ -1024,7 +1000,7 @@ module Lain
       end
 
       # @return [Array<String>] every path recorded, on any chain, sorted
-      def paths = (@reads.keys | @masked.to_a).sort.freeze
+      def paths = (@reads.keys | @withheld.keys(:file)).sort.freeze
 
       private
 
@@ -1071,9 +1047,7 @@ module Lain
       def withhold_rounds(_rounds) = self
 
       # @return [self]
-      def record_masked_read(_path) = self
-
-      def record_masked_memory(_id) = self
+      def record_withheld(_source) = self
 
       # Takes the real one's `wrote:` and holds nothing of it.
       #
@@ -1129,9 +1103,7 @@ module Lain
       def partially_read?(_path) = false
 
       # @return [false]
-      def masked_read?(_path) = false
-
-      def masked_memory?(_id) = false
+      def withheld?(_source) = false
 
       # @return [false]
       def written?(_path) = false

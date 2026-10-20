@@ -265,10 +265,10 @@ RSpec.describe Lain::CLI::Resume do
         write_session(old_name, [open_header(provider: "anthropic").except("format")] + turn_records(chain("old")))
       end
 
-      it "naming it exactly refuses at the selection, naming format 1 and not the provider" do
+      it "naming it exactly refuses at the selection, naming format 2 and not the provider" do
         expect { resume.locate(old_name) }
           .to raise_error(described_class::Refusal) { |error|
-                expect(error.message).to include(old_name, "format 1")
+                expect(error.message).to include(old_name, "format 2")
                 expect(error.message).not_to include("anthropic")
               }
       end

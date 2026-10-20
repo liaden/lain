@@ -1051,8 +1051,8 @@ is scanned row by row; a detected region the ledger has not released for that fi
 (`<redacted:N>`), nothing parks, and the result ends with a trailer saying how many rows were masked and that
 `read_file` on the file asks for their release. A row scan never marks a file declined, so a file masked by
 a search still parks on its next `read_file`, and a PEM body, which cannot be detected one line at a time,
-is not masked there. The journal records each masked file as `search_redacted`, not `read_redacted`: replay
-folds every `read_redacted` into the masked read-set, and a search reads no file whole. `ast_search` rows
+is not masked there. The journal records each masked file as `search_redacted`, not `source_masked`: replay
+folds every `source_masked` into the masked read-set, and a search reads no file whole. `ast_search` rows
 under a secret path are withheld by `WithholdSecretPaths`, as `grep` rows are.
 
 A `memory_read` result is masked by the same step, body only, with no release: the author line is lain's own and
@@ -1064,8 +1064,8 @@ masked, and `RefuseSecretWrites` refuses any `memory_write` to that id for the r
 or not, so a masked read cannot overwrite the real values. A new item holding a `<redacted:N>` placeholder is
 allowed: the placeholder is a slot whose bytes are already gone, so writing it loses nothing. The refusal is
 journaled as `decline:masked read`. `improvement_write` is append-only and not
-checked. Each masked memory read journals `memory_masked` (the item id and a region count, never bytes), and
-`SessionRecord::Replay` folds it back beside `read_redacted`, so a resumed or forked session refuses the rewrite
+checked. Each masked memory read journals `source_masked` (kind `memory`, the item id and a region count, never bytes), and
+`SessionRecord::Replay` folds it back with every masked file, so a resumed or forked session refuses the rewrite
 too. The journaled
 `memory_loaded` copy stays raw, because masking it would move the item digests every `memory_root` check and
 replay reads.

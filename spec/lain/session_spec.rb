@@ -419,10 +419,10 @@ RSpec.describe Lain::Session do
 
     it "keeps a masked path masked on every chain" do
       after = round(root, "tu_1")
-      session.record_masked_read("/tmp/app.rb")
+      session.record_withheld(Lain::Session::Withheld::Source.file("/tmp/app.rb"))
       session.on_chain(after.rewind(3))
 
-      expect(session.masked_read?("/tmp/app.rb")).to be(true)
+      expect(session.withheld?(Lain::Session::Withheld::Source.file("/tmp/app.rb"))).to be(true)
       expect(session.partially_read?("/tmp/app.rb")).to be(true)
     end
 
@@ -460,7 +460,7 @@ RSpec.describe Lain::Session do
   describe "a masked read, which is a partial read the whole-read record precedes" do
     it "stops a path being editable even though it was recorded as read whole" do
       session.record_read("/tmp/.env")
-      session.record_masked_read("/tmp/.env")
+      session.record_withheld(Lain::Session::Withheld::Source.file("/tmp/.env"))
 
       expect(session.read?("/tmp/.env")).to be(false)
       expect(session.partially_read?("/tmp/.env")).to be(true)
@@ -468,26 +468,26 @@ RSpec.describe Lain::Session do
 
     it "names WHICH cause the partial read had, so a refusal can say re-read or ask for a release" do
       session.record_read("/tmp/.env")
-      session.record_masked_read("/tmp/.env")
+      session.record_withheld(Lain::Session::Withheld::Source.file("/tmp/.env"))
       session.record_read("/tmp/half.rb", lines: 1..10)
 
-      expect(session.masked_read?("/tmp/.env")).to be(true)
-      expect(session.masked_read?("/tmp/half.rb")).to be(false)
-      expect(session.masked_read?("/tmp/never.rb")).to be(false)
+      expect(session.withheld?(Lain::Session::Withheld::Source.file("/tmp/.env"))).to be(true)
+      expect(session.withheld?(Lain::Session::Withheld::Source.file("/tmp/half.rb"))).to be(false)
+      expect(session.withheld?(Lain::Session::Withheld::Source.file("/tmp/never.rb"))).to be(false)
     end
 
     # The residual, asserted rather than left to be discovered: over-strict, in
     # the direction this boundary is meant to fail in. Clearing it needs a
     # removal, which is the one thing the read-set refuses.
     it "keeps a masked path masked even after a later read releases everything" do
-      session.record_masked_read("/tmp/.env")
+      session.record_withheld(Lain::Session::Withheld::Source.file("/tmp/.env"))
       session.record_read("/tmp/.env")
 
       expect(session.read?("/tmp/.env")).to be(false)
     end
 
     it "records membership too, so a masked path is never mistaken for one never read" do
-      session.record_masked_read("/tmp/.env")
+      session.record_withheld(Lain::Session::Withheld::Source.file("/tmp/.env"))
 
       expect(session.reads).to eq(["/tmp/.env"])
       expect(session.partially_read?("/tmp/.env")).to be(true)
@@ -496,9 +496,9 @@ RSpec.describe Lain::Session do
     it "carries across spellings, as the rest of the read-set does" do
       Dir.mktmpdir do |dir|
         masked = described_class.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: {}))
-        masked.record_masked_read("./.env")
+        masked.record_withheld(Lain::Session::Withheld::Source.file("./.env"))
 
-        expect(masked.masked_read?(".env")).to be(true)
+        expect(masked.withheld?(Lain::Session::Withheld::Source.file(".env"))).to be(true)
         expect(masked.read?(File.join(dir, ".env"))).to be(false)
       end
     end
@@ -509,33 +509,33 @@ RSpec.describe Lain::Session do
     it "is not reachable through record_read's span" do
       session.record_read("/tmp/app.rb", lines: 1..10)
 
-      expect(session.masked_read?("/tmp/app.rb")).to be(false)
+      expect(session.withheld?(Lain::Session::Withheld::Source.file("/tmp/app.rb"))).to be(false)
     end
 
     it "reads back the same through the Null session, which records nothing" do
-      expect(Lain::Session::Null.instance.record_masked_read("/tmp/.env")).to be(Lain::Session::Null.instance)
-      expect(Lain::Session::Null.instance.masked_read?("/tmp/.env")).to be(false)
+      expect(Lain::Session::Null.instance.record_withheld(Lain::Session::Withheld::Source.file("/tmp/.env"))).to be(Lain::Session::Null.instance)
+      expect(Lain::Session::Null.instance.withheld?(Lain::Session::Withheld::Source.file("/tmp/.env"))).to be(false)
     end
 
     # A mask writes NO `session_read` line, deliberately: a replay folds that
     # record through `record_read`, which cannot reach the masked set -- so a
-    # line here would replay to a read. `Telemetry::ReadRedacted`, written by
+    # line here would replay to a read. `Telemetry::SourceMasked`, written by
     # `Middleware::RedactSecretReads` into this same journal, is the record, and
-    # `SessionRecord::Replay#redactions` is what folds it back.
+    # `SessionRecord::Replay` is what folds it back.
     describe "with a journal attached" do
       subject(:journaled) { described_class.new(journal:) }
 
       let(:journal) { [] }
 
       it "reaches the masked set" do
-        journaled.record_masked_read("/tmp/.env")
+        journaled.record_withheld(Lain::Session::Withheld::Source.file("/tmp/.env"))
 
-        expect(journaled.masked_read?("/tmp/.env")).to be(true)
+        expect(journaled.withheld?(Lain::Session::Withheld::Source.file("/tmp/.env"))).to be(true)
         expect(journaled.read?("/tmp/.env")).to be(false)
       end
 
       it "writes no session_read line, which would replay as a read" do
-        journaled.record_masked_read("/tmp/.env")
+        journaled.record_withheld(Lain::Session::Withheld::Source.file("/tmp/.env"))
 
         expect(journal.grep(Lain::Telemetry::SessionRead)).to be_empty
       end
@@ -1508,7 +1508,7 @@ RSpec.describe Lain::Session do
       # was the transition and a mask suppressed it forever. Coverage ignores the
       # mask, so the redacted file a loop re-reads journals once like any other.
       it "journals a masked path's re-reads once, like any other path" do
-        journaled.record_masked_read("/tmp/.env")
+        journaled.record_withheld(Lain::Session::Withheld::Source.file("/tmp/.env"))
         4.times { journaled.record_read("/tmp/.env") }
 
         expect(of_type("session_read").size).to eq(1)

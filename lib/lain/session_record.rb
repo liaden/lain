@@ -26,7 +26,7 @@ module Lain
     # A key a reader starts to require also bumps this, unless no file of the
     # current format lacks it: compact_schedule became required without a bump
     # because no format-1 file without it survived the state purge.
-    FORMAT = 1
+    FORMAT = 2
     # What a run with no compaction configured schedules on: every turn renders whole.
     UNCOMPACTED_SCHEDULE = "turn"
     TURN_TYPE = "turn"

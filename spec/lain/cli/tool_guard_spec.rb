@@ -836,7 +836,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
   end
 
-  # `Telemetry::ReadRedacted` is now the ONLY record that a path was masked --
+  # `Telemetry::SourceMasked` is now the ONLY record that a path was masked --
   # `SessionRecord::Replay` folds it and nothing else rebuilds the masked set --
   # so this keyword became security-bearing the moment the resume path landed.
   # Send it to `Channel::Null` instead and the live session still refuses while
@@ -855,9 +855,10 @@ RSpec.describe Lain::CLI::ToolGuard do
     # the guard's journal is one a replay can find.
     it "so a mask it records is one a resume can read back" do
       read_guard(ToolGuardSpecBoard.new).journal <<
-        Lain::Telemetry::ReadRedacted.new(tool_use_id: "tu_1", path: "/repo/.env", regions: 1, released: 0)
+        Lain::Telemetry::SourceMasked.new(tool_use_id: "tu_1", kind: :file, key: "/repo/.env", regions: 1,
+                                          released: 0)
 
-      expect(Lain::SessionRecord::Replay.new(journal_io.string.each_line).session.masked_read?("/repo/.env"))
+      expect(Lain::SessionRecord::Replay.new(journal_io.string.each_line).session.withheld?(Lain::Session::Withheld::Source.file("/repo/.env")))
         .to be(true)
     end
   end

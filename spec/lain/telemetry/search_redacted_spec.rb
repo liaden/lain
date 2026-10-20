@@ -12,7 +12,7 @@ RSpec.describe Lain::Telemetry::SearchRedacted do
     expect(described_class.new(tool_use_id: +"tu_2", path: +"/tmp/x", regions: 1, released: 0)).to be_deeply_frozen
   end
 
-  it "journals as a search_redacted record, apart from the read_redacted a resume folds into a mask" do
+  it "journals as a search_redacted record, apart from the source_masked a resume folds into a mask" do
     expect(JSON.parse(JSON.generate(event.to_journal))).to eq(
       "type" => "search_redacted", "tool_use_id" => "tu_2", "path" => "/tmp/config.yml", "regions" => 3,
       "released" => 1

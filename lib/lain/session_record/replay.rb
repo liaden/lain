@@ -34,14 +34,14 @@ module Lain
     class Replay
       SESSION_READ_TYPE = "session_read"
       SESSION_READ_WITHHELD_TYPE = "session_read_withheld"
-      READ_REDACTED_TYPE = "read_redacted"
-      MEMORY_MASKED_TYPE = "memory_masked"
+      SOURCE_MASKED_TYPE = "source_masked"
       SESSION_PIN_TYPE = "session_pin"
       TODO_SNAPSHOT_TYPE = "todo_snapshot"
       COMPACTION_CUT_TYPE = "compaction_cut"
       CUT_FIELDS = Telemetry::CompactionCut.members.freeze
       READ_FIELDS = Telemetry::SessionRead.members.map(&:to_s).freeze
-      private_constant :CUT_FIELDS, :READ_FIELDS
+      SOURCE_MASKED_FIELDS = Telemetry::SourceMasked.members.freeze
+      private_constant :CUT_FIELDS, :READ_FIELDS, :SOURCE_MASKED_FIELDS
 
       # A private value satisfying {Session#write_todos}'s
       # `#content`/`#status` duck: {Tools::TodoWrite}'s own Item is
@@ -121,8 +121,7 @@ module Lain
         # nothing on a mask says whose read it was, so a child's masked read
         # resumes as the parent's. It fails closed -- the parent is refused a
         # write over a file the child saw masked.
-        redactions.each { |record| fresh.record_masked_read(record.fetch("path")) }
-        masked_memories.each { |record| fresh.record_masked_memory(record.fetch("id")) }
+        withheld_sources.each { |source| fresh.record_withheld(source) }
       end
 
       def restore_read(fresh, record)
@@ -182,25 +181,25 @@ module Lain
         CUT_FIELDS.to_h { |field| [field, record.fetch(field.to_s)] }
       end
 
-      # A masked read replays from {Telemetry::ReadRedacted}, NOT from a
+      # A masked source replays from {Telemetry::SourceMasked}, NOT from a
       # `session_read` line, and that is the only shape available:
       # `record_read` by construction cannot reach the masked set, so a
       # `session_read` line would replay to a read and quietly permit the write
-      # that a mask exists to refuse. `read_redacted` already names the path, is
-      # already written by {Middleware::RedactSecretReads} into this same
-      # journal, and needs no new field.
+      # that a mask exists to refuse. The record is already written by
+      # {Middleware::RedactSecretReads} into this same journal.
       #
       # Order against the reads does not matter: both are add-only and
-      # {Session#record_masked_read} is idempotent, so a redaction folded before
-      # or after its own `session_read` lands on the same state.
-      def redactions
-        Journal.records(@records, type: READ_REDACTED_TYPE)
+      # {Session#record_withheld} is idempotent, so a mask folded before or
+      # after its own `session_read` lands on the same state.
+      def withheld_sources
+        Journal.records(@records, type: SOURCE_MASKED_TYPE).map { |record| withheld_source(record) }
       end
 
-      # {#redactions}' reason, for a memory item: the read is not replayed, so
-      # without this a resumed model could rewrite an item it saw masked.
-      def masked_memories
-        Journal.records(@records, type: MEMORY_MASKED_TYPE)
+      def withheld_source(record)
+        masked = Telemetry::SourceMasked.new(**SOURCE_MASKED_FIELDS.to_h { |field| [field, record.fetch(field.to_s)] })
+        Session::Withheld::Source.new(kind: masked.kind, key: masked.key)
+      rescue KeyError, ArgumentError => e
+        raise Bench::Session::Corrupt, "a source_masked record cannot be rebuilt (#{e.message})"
       end
 
       # Every field is fetched, and the span is rebuilt through the writer's
