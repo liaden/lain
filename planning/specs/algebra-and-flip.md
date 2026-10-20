@@ -2750,3 +2750,8 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   ranks above `credential` (card text amended). T22 deferred the `(ceilings, spent)` pair; T23's Files gain `lib/lain/budget.rb`.
   T24's formula loses its double descend. T29's AC 2 moves to T31. All worktrees get `target/release/lain-fence` linked in;
   `confinement_spec.rb` fails 5 of 14 in any worktree and passes on main.
+- 2026-10-19 21:05 landing window, each alone on a quiet box, hook green, runtime log 974 to 979 spec files:
+  T52 landed `4e897b93`; T22 landed `56cb1269` (2nd attempt: yard-lint `--staged` refused an inferred `@raise` type, fixed with an
+  explicit tag); T43 landed `7879af7f`; T34 landed `77896a54`; T18 landed `c6a32e91`; T2 landed `da728e6b`; T27 landed `a448774c`
+  (cargo test about 3.8 s warm); T29 landed `1c35cbf3`. Review rulings: T10's `Masking.render` keeps taking a plain list (AC 3
+  needs the refusal), and the `Rows::Row` reference in `text_mask.rb` moves with T11.
