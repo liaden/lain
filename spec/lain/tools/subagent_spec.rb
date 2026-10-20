@@ -465,7 +465,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       child = record.child(store)
       expect(child.include?(parent.head_digest)).to be(false)
-      expect(Lain::Dag::RenderAncestry.meet(child, parent)).to be_empty
+      expect(Lain::Ext::Dag::RenderAncestry.meet(child, parent)).to be_empty
 
       spawn = record.spawn
       expect(spawn.kind).to eq(:spawn)

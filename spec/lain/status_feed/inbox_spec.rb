@@ -90,9 +90,9 @@ RSpec.describe Lain::StatusFeed::Inbox do
   # which is the one thing the parity spec next door cannot tolerate.
   describe "a spawned turn's consumption edges" do
     def child_consumption(*digests)
-      base = Lain::Event.turn(role: "assistant", content: [{ "type" => "text", "text" => "answered" }])
+      base = Lain::Ext::Event.new(role: "assistant", content: [{ "type" => "text", "text" => "answered" }])
       Lain::Telemetry::QuestionsConsumed.from_event(
-        Lain::Event.new(kind: :turn, payload_digest: base.payload_digest, body: base.body, causal_parents: digests)
+        Lain::Ext::Event.new(kind: :turn, body: base.body, causal_parents: digests)
       )
     end
 

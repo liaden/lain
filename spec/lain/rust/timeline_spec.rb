@@ -1,11 +1,9 @@
 # frozen_string_literal: true
 
-# The Rust Timeline behind the same duck as `Lain::Timeline`, driving the SAME
-# `meet_semilattice` and `regular` shared groups the Ruby render order and
-# Timeline run under -- the port's acceptance oracle. Behaviour mirrors
-# timeline_spec.rb against `Lain::Ext::Timeline`/`Store`. The dominance and
-# causal orders exist only here, and their specs are dominator_meet_spec.rb
-# and causal_meets_spec.rb beside this one.
+# The Timeline, driving the `meet_semilattice` and `regular` shared groups.
+# The dominance and causal orders' specs are dominator_meet_spec.rb and
+# causal_meets_spec.rb beside this one; every digest a walk answers is pinned
+# by the conformance corpus (ext/lain/corpus/dag.ndjson).
 RSpec.describe Lain::Ext::Timeline do
   subject(:timeline) { described_class.empty(store:) }
 
@@ -65,14 +63,6 @@ RSpec.describe Lain::Ext::Timeline do
     it "names a chain by its root digest, at the root and above it" do
       root = three.to_a.first.digest
       expect([three.rewind(2).correlation, three.correlation]).to eq([root, root])
-    end
-
-    it "equals the Ruby timeline's answer over the same chain" do
-      ruby = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("a"))
-                           .commit(role: :assistant, content: text("b"))
-      ext = described_class.empty(store:).commit(role: :user, content: text("a"))
-                           .commit(role: :assistant, content: text("b"))
-      expect(ext.correlation).to eq(ruby.correlation)
     end
   end
 
@@ -136,7 +126,7 @@ RSpec.describe Lain::Ext::Timeline do
 
     # An absent keyword is the empty set; an explicit nil is a caller who
     # believes they are naming something. Reading the second as the first
-    # accepts input the Ruby timeline refuses outright, and this codebase's
+    # accepts input a typo produced, and this codebase's
     # premise is that an unknown value fails loudly.
     it "refuses an explicit nil rather than reading it as the empty set" do
       expect { base.commit(role: :assistant, content: text("b"), causal_parents: nil) }
@@ -148,9 +138,9 @@ RSpec.describe Lain::Ext::Timeline do
         .to raise_error(TypeError, /causal_parents must contain only digest Strings/)
     end
 
-    it "addresses a causally-parented turn exactly as the Ruby timeline does" do
+    it "addresses a causally-parented turn alike however its parents are ordered or repeated" do
       expect(causal_head_digest(described_class.empty(store: Lain::Ext::Store.new)))
-        .to eq(causal_head_digest(Lain::Timeline.empty(store: Lain::Store.new)))
+        .to eq(causal_head_digest(described_class.empty(store: Lain::Ext::Store.new), &:uniq))
     end
 
     it "refuses a causal parent the store has never seen" do
@@ -158,37 +148,35 @@ RSpec.describe Lain::Ext::Timeline do
         .to raise_error(Lain::Ext::Store::MissingObject)
     end
 
-    it "renders that refusal byte-identical to the Ruby commit" do
-      expect(commit_refusal_message(described_class.empty(store: Lain::Ext::Store.new), Lain::Ext::Store))
-        .to eq(commit_refusal_message(Lain::Timeline.empty(store: Lain::Store.new), Lain::Store))
+    it "refuses it in the words a dangling put uses, naming the refused turn" do
+      expect(commit_refusal_message(described_class.empty(store: Lain::Ext::Store.new)))
+        .to match(/\Ano object "blake3:ghost" in store: putting "blake3:\h{64}" would dangle\z/)
     end
   end
 
   # Commit a turn naming SEVERAL causal parents, duplicated and reverse-sorted,
-  # onto a two-turn timeline. Both implementations are driven through the
-  # identical public calls, so the head digest is a cross-implementation address
-  # comparison and nothing else.
+  # onto a two-turn timeline, after `edit` has had its way with the list.
   #
   # The shape of the input is what gives the comparison teeth. One parent that
   # is also the render parent would agree across any two normalizations at all;
   # two distinct parents, one of them repeated and the pair handed over in
-  # descending order, disagree the moment either side dedups differently or
-  # sorts under a different collation.
-  def causal_head_digest(empty)
+  # descending order, disagree the moment the address dedups or sorts
+  # differently from one spelling to the next.
+  def causal_head_digest(empty, &edit)
     first = empty.commit(role: :user, content: text("a"))
     second = first.commit(role: :assistant, content: text("b"))
     parents = [first.head_digest, second.head_digest, first.head_digest].sort.reverse
+    parents = yield(parents) if edit
     second.commit(role: :user, content: text("c"), causal_parents: parents).head_digest
   end
 
   # The MissingObject message a commit naming an unstored causal parent refuses
-  # with. The refused turn's digest appears in that message, so this compares
-  # the addressing and the wording at once.
-  def commit_refusal_message(empty, store_class)
+  # with.
+  def commit_refusal_message(empty)
     empty.commit(role: :user, content: text("a"))
          .commit(role: :assistant, content: text("b"), causal_parents: ["blake3:ghost"])
-    raise "expected #{store_class}::MissingObject to be raised"
-  rescue store_class::MissingObject => e
+    raise "expected Lain::Ext::Store::MissingObject to be raised"
+  rescue Lain::Ext::Store::MissingObject => e
     e.message
   end
 
@@ -196,8 +184,7 @@ RSpec.describe Lain::Ext::Timeline do
   # them: it is registered at arity 0, which says nothing about a block, so a
   # block-passing caller got a silently discarded Array. Ledger#unique_turns is
   # that caller, and a bench whose whole cost column reads zero raises nothing.
-  # These four pin both forms against Lain::Timeline#ancestors, the return
-  # value included.
+  # These four pin both forms, the return value included.
   describe "#ancestors" do
     it "yields every ancestor to a block, head first" do
       seen = []
@@ -209,8 +196,8 @@ RSpec.describe Lain::Ext::Timeline do
     end
 
     # The Rust doc comment promises both of these, and a promise with no test
-    # is what this codebase otherwise refuses. The nil is Ruby's own answer
-    # (its body ends on a `while`); the valued `break` is the one thing a
+    # is what this codebase otherwise refuses. The nil is what a Ruby walk
+    # ending on a `while` answers; the valued `break` is the one thing a
     # `?`-propagating yield loop could plausibly swallow.
     it "answers nil, and hands a valued break straight back to the caller" do
       expect(three.ancestors { |_turn| :ignored }).to be_nil
@@ -247,15 +234,22 @@ RSpec.describe Lain::Ext::Timeline do
     end
 
     # The digests are content addresses, so agreeing on them is agreeing on
-    # both the walk order and what each node is -- the port's own oracle.
-    it "yields the same digests the Ruby timeline yields for the same commits" do
-      rust = []
-      ruby = []
-      three.ancestors { |turn| rust << turn.digest }
-      say(say(say(Lain::Timeline.empty(store: Lain::Store.new), "a"), "b", role: :assistant), "c")
-        .ancestors { |turn| ruby << turn.digest }
+    # both the walk order and what each node is.
+    it "yields the digests the batched walk answers, head first" do
+      yielded = []
+      three.ancestors { |turn| yielded << turn.digest }
 
-      expect(rust).to eq(ruby)
+      expect(yielded).to eq(three.to_a.reverse.map(&:digest))
+    end
+
+    # A caller that stops early pays only for what it read: the walk is not
+    # materialized ahead of the block.
+    it "hands a turn to the block only as the block asks for it" do
+      long = 50.times.inject(timeline) { |line, index| say(line, "turn #{index}") }
+
+      read = count_dag_reads { long.ancestors.take(2) }
+
+      expect(read).to eq(2)
     end
   end
 
@@ -293,12 +287,10 @@ RSpec.describe Lain::Ext::Timeline do
       expect(Ractor.shareable?(messages)).to be(true)
     end
 
-    it "answers only the turns after an ancestor, as the Ruby timeline does" do
-      ruby = chain(5, on: Lain::Timeline.empty(store: Lain::Store.new))
+    it "answers only the turns after an ancestor" do
       ext = chain(5)
 
       expect(ext.messages(after: ext.rewind(2).head_digest)).to eq(ext.messages.last(2))
-      expect(ext.messages(after: ext.rewind(2).head_digest)).to eq(ruby.messages(after: ruby.rewind(2).head_digest))
     end
 
     it "answers the full walk for a digest that is not an ancestor" do
@@ -312,7 +304,7 @@ RSpec.describe Lain::Ext::Timeline do
     it "lets a context render a long chain in one crossing, with no per-turn reader" do
       line = recording(chain(1000))
       readers = []
-      trace = TracePoint.new(:c_call) { |point| readers << point.method_id if point.defined_class == Lain::Ext::Turn }
+      trace = TracePoint.new(:c_call) { |point| readers << point.method_id if point.defined_class == Lain::Ext::Event }
 
       trace.enable { context.render(timeline: line, toolset:) }
 
@@ -320,17 +312,19 @@ RSpec.describe Lain::Ext::Timeline do
       expect(readers).to be_empty
     end
 
-    it "renders the request the Ruby timeline renders, byte for byte" do
+    # Floats, integers past 64 bits and nil survive the round trip into the
+    # store and back: the request is the one the same messages render to when
+    # they never left Ruby.
+    it "renders the request its messages render to as plain Ruby values, byte for byte" do
       blocks = lambda do |index|
         [{ "type" => "text", "text" => "turn #{index}" },
          { "type" => "tool_use", "id" => "tu_#{index}", "name" => "echo",
            "input" => { "ratio" => index / 4.0, "counts" => [index, -index, 2**70], "flag" => nil } }]
       end
-      build = ->(line) { 6.times.inject(line) { |acc, at| acc.commit(role: :assistant, content: blocks.call(at)) } }
-      ruby = build.call(Lain::Timeline.empty(store: Lain::Store.new))
-      ext = build.call(timeline)
+      ext = 6.times.inject(timeline) { |acc, at| acc.commit(role: :assistant, content: blocks.call(at)) }
+      plain = Struct.new(:messages).new(Array.new(6) { |at| { "role" => "assistant", "content" => blocks.call(at) } })
 
-      expect(context.render(timeline: ext, toolset:).digest).to eq(context.render(timeline: ruby, toolset:).digest)
+      expect(context.render(timeline: ext, toolset:).digest).to eq(context.render(timeline: plain, toolset:).digest)
     end
 
     it "extends a prefix it is handed past an ancestor, and ignores it past anything else" do
@@ -392,8 +386,7 @@ RSpec.describe Lain::Ext::Timeline do
       left = say(base.fork, "left")
       right = say(base.fork, "right")
 
-      # Four turns, each with its out-of-line payload -- eight objects, the
-      # count the Ruby store holds for the same commits.
+      # Four turns, each with its out-of-line payload -- eight objects.
       expect(store.size).to eq(8)
       expect(store.key?(left.head.payload_digest)).to be(true)
       expect(left.rewind).to eq(right.rewind)
@@ -472,7 +465,7 @@ RSpec.describe Lain::Ext::Timeline do
     # coverage for them (same philosophy as classify_num's garbage arm:
     # unreachable via this surface is exactly why it must not fail silently).
     let(:missing) { "blake3:absent" }
-    let(:head) { Lain::Ext::Turn.new(role: :user, content: text("head"), parent: missing) }
+    let(:head) { Lain::Ext::Event.new(role: :user, content: text("head"), parent: missing) }
 
     it "put refuses the dangling turn before it ever reaches the store" do
       expect { store.put(head) }
@@ -480,30 +473,28 @@ RSpec.describe Lain::Ext::Timeline do
                         %(no object #{missing.inspect} in store: putting #{head.digest.inspect} would dangle))
     end
 
-    it "renders the refusal message byte-identical to the Ruby put" do
-      # Ruby's String#inspect and Rust's {:?} must agree byte-for-byte. Plain
-      # digests and a digest carrying a double-quote both escape identically;
+    it "quotes the missing digest as String#inspect does" do
+      # Rust's {:?} must agree with String#inspect byte-for-byte. Plain digests
+      # and a digest carrying a double-quote both escape identically;
       # deliberately out of scope are control characters AND Ruby's
       # interpolation guards ("#{", "#@", "#$", which String#inspect escapes to
       # "\#{" etc. and Rust's {:?} leaves bare) -- the escape styles genuinely
-      # differ there, and both implementations still refuse.
-      ["blake3:absent", 'blake3:a"b'].each do |digest|
-        ext_msg = put_refusal_message(Lain::Ext::Store, ->(**args) { Lain::Ext::Turn.new(**args) }, digest)
-        ruby_msg = put_refusal_message(Lain::Store, ->(**args) { Lain::Event.turn(**args) }, digest)
-        expect(ext_msg).to eq(ruby_msg)
+      # differ there, and the put still refuses.
+      refusals = ["blake3:absent", 'blake3:a"b'].map do |digest|
+        dangling = Lain::Ext::Event.new(role: :user, content: text("head"), parent: digest)
+        [put_refusal_message(dangling),
+         %(no object #{digest.inspect} in store: putting #{dangling.digest.inspect} would dangle)]
       end
+
+      expect(refusals.map(&:first)).to eq(refusals.map(&:last))
     end
   end
 
-  # Put a head whose parent digest was never stored into a fresh store of the
-  # given implementation, and return the MissingObject message the put refuses
-  # with. `build_turn` is a factory because the two impls construct differently
-  # (Ext::Turn.new vs Event.turn).
-  def put_refusal_message(store_class, build_turn, digest)
-    a_head = build_turn.call(role: :user, content: text("head"), parent: digest)
-    store_class.new.put(a_head)
-    raise "expected #{store_class}::MissingObject to be raised"
-  rescue store_class::MissingObject => e
+  # The MissingObject message a fresh store refuses `dangling` with.
+  def put_refusal_message(dangling)
+    Lain::Ext::Store.new.put(dangling)
+    raise "expected Lain::Ext::Store::MissingObject to be raised"
+  rescue Lain::Ext::Store::MissingObject => e
     e.message
   end
 

@@ -14,7 +14,7 @@ RSpec.describe Lain::CLI::Command::Meta do
 
   let(:root) { Dir.mktmpdir("lain-meta") }
   let(:head) { "blake3:#{"ab12" * 16}" }
-  let(:timeline) { instance_double(Lain::Timeline, head_digest: head) }
+  let(:timeline) { instance_double(Lain::Ext::Timeline, head_digest: head) }
   let(:agent) { instance_double(Lain::Agent, timeline:) }
   let(:body) { "PlannerExecutor = Object.new\n" }
   let(:role_spawn) do

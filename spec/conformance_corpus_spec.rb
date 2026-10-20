@@ -4,7 +4,7 @@ require "tmpdir"
 require_relative "conformance/corpus_generator"
 
 # The Ruby half of the frozen conformance corpus (ext/lain/corpus): the corpus files are the ones the manifest
-# names, they regenerate byte for byte, every vector still re-derives from Ruby, and the compiled extension
+# names, the canonical vectors regenerate byte for byte and re-derive from Ruby, and the compiled extension
 # answers every canonical and error vector as the corpus says it must. The generator is
 # spec/conformance/corpus_generator.rb; ext/lain/src/corpus.rs reads the same files under `cargo test`.
 RSpec.describe ConformanceCorpus do
@@ -22,7 +22,7 @@ RSpec.describe ConformanceCorpus do
   def through_extension(input)
     case input.fetch("case")
     when "canonical" then Lain::Ext.canonical_dump(tagged.decode(input.fetch("value")))
-    when "role" then Lain::Ext::Turn.new(role: tagged.decode(input.fetch("role")), content: [])
+    when "role" then Lain::Ext::Event.new(role: tagged.decode(input.fetch("role")), content: [])
     when "kind" then Lain::Ext::Event.new(kind: tagged.decode(input.fetch("kind")), body: {})
     else Lain::Ext::Store.new.fetch(input.fetch("digest"))
     end
@@ -54,15 +54,15 @@ RSpec.describe ConformanceCorpus do
     end
   end
 
-  it "regenerates every file and the manifest byte for byte from the manifest's seed and sha" do
-    regenerated = described_class.generate(seed: described_class.recorded_seed, sha: described_class.recorded_sha)
-    changed = regenerated.reject { |file, text| described_class.read(File.join(described_class::DIR, file)) == text }
-    expect(regenerated.keys).to include("MANIFEST.json")
-    expect(changed.keys).to be_empty
+  # Only Canonical still has a Ruby implementation to answer from; the other
+  # files' Ruby is gone, and the manifest's digests are what hold them still.
+  it "regenerates the canonical vectors byte for byte from the manifest's seed" do
+    regenerated = described_class.in_utf8 { described_class.vectors("canonical", described_class.recorded_seed) }
+    expect(regenerated).to eq(described_class.read(described_class.path("canonical")))
   end
 
-  it "re-derives every vector from the Ruby implementation" do
-    expect(described_class::FILES.flat_map { described_class.underived(_1) }).to be_empty
+  it "re-derives every canonical vector from the Ruby implementation" do
+    expect(described_class.underived("canonical")).to be_empty
   end
 
   it "answers every canonical vector through the compiled extension as Ruby did" do

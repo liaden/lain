@@ -143,12 +143,12 @@ RSpec.describe Lain::StatusFeed::SpawnLifecycle do
   # `status_feed.rb:215-222`, StatusFeed's `:message` arm admits anything
   # answering `#kind`, which a raw Event does).
   def event(body, kind: :message)
-    Lain::Event.new(kind:, payload_digest: "blake3:eventbody", body:,
-                    from: "blake3:child", to: "blake3:parent",
-                    causal_parents: ["blake3:child"], correlation: "blake3:parent")
+    Lain::Ext::Event.new(kind:, body:,
+                         from: "blake3:child", to: "blake3:parent",
+                         causal_parents: ["blake3:child"], correlation: "blake3:parent")
   end
 
-  describe "a raw Lain::Event, not a Telemetry::Message" do
+  describe "a raw Lain::Ext::Event, not a Telemetry::Message" do
     it "reads a farewell's body, not its envelope, so it is terminal" do
       lifecycle = described_class.new(event({ "text" => "actor stopped", "lifecycle" => "stopped" }))
 

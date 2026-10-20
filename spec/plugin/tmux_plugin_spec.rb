@@ -112,7 +112,7 @@ RSpec.describe "plugin/tmux" do
     it "prints the line a real StatusFeed published, over the file that feed wrote" do
       now = Time.utc(2026, 9, 13, 12, 0, 0)
       feed = Lain::StatusFeed.new(path: state_path, clock: -> { now })
-      feed << Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-a", from: "parent", to: nil)
+      feed << Lain::Ext::Event.new(kind: :spawn, payload_digest: "blake3:spawn-a", from: "parent", to: nil)
 
       out, _err, status = run_status
 

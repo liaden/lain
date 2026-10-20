@@ -17,10 +17,3 @@ module WithEnv
 end
 
 RSpec.configure { |config| config.include WithEnv }
-
-# An example tagged `dag: :ruby` runs on the Ruby DAG whatever LAIN_DAG says:
-# it injects a fault or counts a cost through a Ruby Store's own methods, which
-# the Rust timeline never calls.
-RSpec.configure do |config|
-  config.around(:each, dag: :ruby) { |example| with_env("LAIN_DAG" => "ruby") { example.run } }
-end

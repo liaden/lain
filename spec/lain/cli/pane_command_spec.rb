@@ -246,10 +246,6 @@ RSpec.describe Lain::CLI::PaneCommand do
           .to eq("export LAIN_ENV_PASS=RAILS_ENV; ")
       end
 
-      it "exports the DAG implementation, so a pane runs the one its launcher ran" do
-        expect(described_class.runtime_exports({ "LAIN_DAG" => "ruby" })).to eq("export LAIN_DAG=ruby; ")
-      end
-
       it "keeps LAIN_ENV_PASS out of the flag-default list" do
         expect(described_class::PANE_ENV).not_to include("LAIN_ENV_PASS")
       end

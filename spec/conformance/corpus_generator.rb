@@ -27,7 +27,7 @@ module ConformanceCorpus
       "rust_class" => "Lain::Ext::Store::MissingObject", "rust_message" => nil,
       "why" => "the extension raises its own store's class; the message is the same" },
     { "ruby_class" => "Lain::Error", "ruby_message_prefix" => "role must be one of",
-      "rust_class" => "Lain::Ext::Turn::InvalidRole", "rust_message" => nil,
+      "rust_class" => "Lain::Ext::Event::InvalidRole", "rust_message" => nil,
       "why" => "the extension names the role refusal; Ruby raises its base error" },
     { "ruby_class" => "Lain::Canonical::UnsupportedType", "ruby_message_prefix" => "string is not convertible to UTF-8",
       "rust_class" => "Lain::Canonical::UnsupportedType", "rust_message" => "string is not valid UTF-8",

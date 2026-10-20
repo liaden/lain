@@ -439,7 +439,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     it "shows the epic's progress, a mermaid fence of its issues, and the fleet" do
       write_demo
-      spawn = Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-one", from: "parent", to: nil)
+      spawn = Lain::Ext::Event.new(kind: :spawn, payload_digest: "blake3:spawn-one", from: "parent", to: nil)
       frontend = described_class.new(channel:, socket_path: @socket, epic: demo)
 
       frontend.run do

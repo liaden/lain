@@ -15,8 +15,8 @@ RSpec.describe Lain::CLI::Command::Fork do
   let(:calls) { [] }
   # A settled head: the mid-tool gate reads role/content off the head turn
   # exactly as the child's Resume#fork would.
-  let(:head_turn) { instance_double(Lain::Event, role: "user", content: [{ "type" => "text", "text" => "hi" }]) }
-  let(:timeline) { instance_double(Lain::Timeline, head_digest: head, head: head_turn) }
+  let(:head_turn) { instance_double(Lain::Ext::Event, role: "user", content: [{ "type" => "text", "text" => "hi" }]) }
+  let(:timeline) { instance_double(Lain::Ext::Timeline, head_digest: head, head: head_turn) }
   # Dispatching defaults to false -- the ONLY state in which the gate is ever
   # reached at rest, since a live dispatch is what the mid-tool contexts below
   # flip on.
@@ -105,9 +105,9 @@ RSpec.describe Lain::CLI::Command::Fork do
   # what it can actually see going, and repairs the rest.
   describe "a mid-tool head" do
     let(:head_turn) do
-      instance_double(Lain::Event, role: "assistant",
-                                   content: [{ "type" => "tool_use", "id" => "toolu_01", "name" => "echo",
-                                               "input" => { "text" => "hi" } }])
+      instance_double(Lain::Ext::Event, role: "assistant",
+                                        content: [{ "type" => "tool_use", "id" => "toolu_01", "name" => "echo",
+                                                    "input" => { "text" => "hi" } }])
     end
 
     context "with the agent dispatching -- the call may still be in flight" do
@@ -244,7 +244,7 @@ RSpec.describe Lain::CLI::Command::Fork do
   end
 
   describe "before any turn is recorded" do
-    let(:timeline) { instance_double(Lain::Timeline, head_digest: nil) }
+    let(:timeline) { instance_double(Lain::Ext::Timeline, head_digest: nil) }
 
     it "refuses honestly: there is no head to fork yet" do
       text = fork_command.call("", env)

@@ -98,9 +98,9 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   # Event, so this drives the promotion SessionRecord::Scribe performs rather
   # than a hand-made value free to drift from it.
   def consumption_of(*digests)
-    base = Lain::Event.turn(role: "assistant", content: text("answered"))
+    base = Lain::Ext::Event.new(role: "assistant", content: text("answered"))
     Lain::Telemetry::QuestionsConsumed.from_event(
-      Lain::Event.new(kind: :turn, payload_digest: base.payload_digest, body: base.body, causal_parents: digests)
+      Lain::Ext::Event.new(kind: :turn, body: base.body, causal_parents: digests)
     )
   end
 
@@ -1107,9 +1107,8 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       lines = view.update(Lain::Telemetry::Message.from_event(question))
       expect(questions_in(lines)).to eq(inbox_count).and eq(1)
 
-      answer = Lain::Event.new(kind: :message, payload_digest: "blake3:ap",
-                               body: { "answer" => "postgres" }, from: "human", to: "orchestrator",
-                               causal_parents: [question.digest])
+      answer = Lain::Ext::Event.new(kind: :message, body: { "answer" => "postgres" }, from: "human", to: "orchestrator",
+                                    causal_parents: [question.digest])
       feed << answer
       expect(view.update(Lain::Telemetry::Message.from_event(answer))).to be_nil
       expect(inbox_count).to eq(1) # the human answered; nothing consumed it yet

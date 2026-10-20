@@ -206,8 +206,7 @@ RSpec.describe Lain::Bench::CLI do
     it "names the file when a message record's causal_parents holds a null" do
       Dir.mktmpdir do |tmp|
         FileUtils.cp(File.join(fixture_dir, "one.ndjson"), tmp)
-        payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "which dose?" })
-        event = Lain::Event.new(kind: :message, carried_payload: payload, from: "agent", to: "human")
+        event = Lain::Ext::Event.new(kind: :message, body: { "text" => "which dose?" }, from: "agent", to: "human")
         malformed = Lain::Telemetry::Message.from_event(event).to_journal.merge("causal_parents" => [nil])
         File.write(File.join(tmp, "two.ndjson"),
                    File.read(File.join(fixture_dir, "two.ndjson")) + "#{JSON.generate(malformed)}\n")

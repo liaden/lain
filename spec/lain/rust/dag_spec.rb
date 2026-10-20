@@ -90,6 +90,60 @@ RSpec.describe Lain::Ext::Dag do
       expect(described_class.below?(graph[:left], graph[:tip_left])).to be(true)
       expect(described_class.below?(graph[:tip_left], graph[:left])).to be(false)
     end
+
+    it "is total at the bottom: a timeline meets the empty timeline at the empty timeline" do
+      expect(described_class.meet(graph[:left], empty)).to eq(empty)
+      expect(described_class.meet(empty, graph[:left])).to eq(empty)
+    end
+
+    it "is reflexive, with the empty timeline below everything" do
+      expect(described_class.below?(graph[:b], graph[:b])).to be(true)
+      expect(described_class.below?(empty, graph[:stranger])).to be(true)
+    end
+
+    # The meet walks the render edge only; causal edges landing in the Store
+    # must not perturb it.
+    it "leaves the meet and the divergence as they were when a causal edge lands" do
+      left = graph[:left]
+      right = graph[:right]
+      say(left, "fan-in", causal: [right.head_digest])
+
+      expect(described_class.meet(left, right)).to eq(graph[:b])
+      expect(left.diverge_at(right)).to eq(graph[:b].head)
+    end
+
+    describe "the laws" do
+      # A random render forest, then fan-in events whose causal parents
+      # cross-link the chains. The fan-in members sit as leaves on the render
+      # tree, so no meet here traverses a causal edge: what this pins is that
+      # adding causal cross-links leaves the render-tree meet unperturbed.
+      # Randomized because a hand-picked shape is where an associativity bug
+      # hides.
+      let(:population) do
+        forest = MeetSemilatticePopulations.grow([say(empty, "root")], 30, "n")
+        10.times { |i| forest << MeetSemilatticePopulations.fan_in(forest.sample(3), "f#{i}") }
+        forest
+      end
+
+      include_examples "a meet semilattice under ancestry",
+                       population: -> { population },
+                       meet: ->(a, b) { described_class.meet(a, b) },
+                       ancestor_of: ->(m, a) { described_class.below?(m, a) }
+
+      # The four shared laws hold for any semilattice whose order sits inside
+      # ancestry -- `a == b ? a : empty` passes all of them -- so they cannot
+      # say the meet is the GREATEST lower bound. This is the law that can.
+      it "is the greatest lower bound: every common lower bound of both operands sits below the meet" do
+        missed = Array.new(10) do
+          a, b = population.sample(2)
+          meet = described_class.meet(a, b)
+          common = population.select { |c| described_class.below?(c, a) && described_class.below?(c, b) }
+          common.reject { |c| described_class.below?(c, meet) }.map(&:head_digest)
+        end
+
+        expect(missed.flatten).to eq([])
+      end
+    end
   end
 
   describe Lain::Ext::Dag::Dominance do

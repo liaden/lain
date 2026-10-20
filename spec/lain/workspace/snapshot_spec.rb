@@ -94,11 +94,11 @@ RSpec.describe Lain::Workspace::Snapshot do
     normalized_root = "/w"
 
     def normalized(event, root)
-      payload = Lain::Event::Payload.new(kind: :snapshot, body: event.body.merge("root" => root))
+      payload_digest = Lain::Ext::Event.new(kind: :snapshot, body: event.body.merge("root" => root)).payload_digest
       { keys: event.body.keys,
         bytes: Lain::Canonical.dump(event.body.merge("root" => root)),
-        payload_digest: payload.digest,
-        event_digest: Lain::Canonical.digest(event.payload.merge("payload_digest" => payload.digest)) }
+        payload_digest:,
+        event_digest: Lain::Canonical.digest(event.payload.merge("payload_digest" => payload_digest)) }
     end
 
     # One stateful writer over three writes, exactly as the capture script ran

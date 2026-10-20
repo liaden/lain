@@ -18,8 +18,8 @@ RSpec.describe Lain::Telemetry::QuestionsConsumed do
   end
 
   it "takes its edges off the turn Event's own causal_parents" do
-    turn = Lain::Event.turn(role: :user, content: [{ "type" => "text", "text" => "folded" }],
-                            causal_parents: %w[blake3:q1])
+    turn = Lain::Ext::Event.new(role: :user, content: [{ "type" => "text", "text" => "folded" }],
+                                causal_parents: %w[blake3:q1])
 
     expect(described_class.from_event(turn))
       .to have_attributes(turn: turn.digest, digests: %w[blake3:q1])

@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-# The Rust Turn behind the same duck the Ruby turn event wears: it drives the shared
-# `regular` group, keeps `Ractor.shareable?` true (the real acceptance test for
-# the port), and -- the cross-check that makes the port meaningful -- produces a
-# digest byte-identical to the Ruby Turn for the same inputs.
-RSpec.describe Lain::Ext::Turn do
+# The event built as a turn: it drives the shared `regular` group, keeps
+# `Ractor.shareable?` true, and addresses itself as Canonical addresses its
+# header. The digests themselves are pinned by the conformance corpus
+# (ext/lain/corpus/event_digest.ndjson).
+RSpec.describe Lain::Ext::Event, "built as a turn" do
   def text(body) = [{ "type" => "text", "text" => body }]
 
   describe "construction" do
@@ -68,24 +68,25 @@ RSpec.describe Lain::Ext::Turn do
       )
     end
 
-    # The port is only correct if its content address equals the Ruby Turn's to
-    # the byte, over the same inputs -- including parent and meta.
-    it "equals the Ruby Turn digest byte-for-byte" do
+    # A content address is only worth its name if it is the digest of the
+    # header it reports, parent and meta included.
+    it "addresses the header it reports, through Canonical" do
       ext = described_class.new(role: :user, content: text("hi"),
                                 parent: "blake3:abc", meta: { "spawned_from" => "blake3:xyz" })
-      ruby = Lain::Event.turn(role: :user, content: text("hi"),
-                              parent: "blake3:abc", meta: { "spawned_from" => "blake3:xyz" })
-      expect(ext).to have_same_digest_as(ruby)
+      expect(ext.digest).to eq(Lain::Canonical.digest(ext.payload))
     end
   end
 
   describe "#payload" do
-    # payload is on the duck (Lain::Event#payload) and is the exact structure the
-    # digest is taken over -- pin it against the Ruby value, not just the digest.
-    it "equals the Ruby payload byte-for-byte" do
-      args = { role: :user, content: text("hi"),
-               parent: "blake3:abc", meta: { "spawned_from" => "blake3:xyz" } }
-      expect(described_class.new(**args).payload).to eq(Lain::Event.turn(**args).payload)
+    # payload is the exact structure the digest is taken over -- pin it field
+    # by field, not just through the digest.
+    it "names every header field, the body by its digest" do
+      body = { "role" => "user", "content" => text("hi"), "meta" => { "spawned_from" => "blake3:xyz" } }
+      turn = described_class.new(role: :user, content: text("hi"),
+                                 parent: "blake3:abc", meta: { "spawned_from" => "blake3:xyz" })
+      expect(turn.payload).to eq("kind" => :turn, "from" => nil, "to" => nil, "render_parent" => "blake3:abc",
+                                 "causal_parents" => [], "correlation" => nil,
+                                 "payload_digest" => Lain::Canonical.digest({ "kind" => :turn, "body" => body }))
     end
   end
 
@@ -113,9 +114,10 @@ RSpec.describe Lain::Ext::Turn do
       expect(payload.digest).to eq(turn.payload_digest)
     end
 
-    it "carries a payload equal to the Ruby one over the same body" do
-      ruby = Lain::Event.turn(role: :user, content: text("hi"), meta: { "k" => 1 }).carried_payload
-      expect(turn.carried_payload).to have_attributes(kind: ruby.kind, body: ruby.body, digest: ruby.digest)
+    it "carries a payload addressing its kind and body together" do
+      expect(turn.carried_payload)
+        .to have_attributes(kind: :turn, body: turn.body,
+                            digest: Lain::Canonical.digest({ "kind" => :turn, "body" => turn.body }))
     end
 
     it "changes digest with the sender and recipient" do
@@ -123,10 +125,9 @@ RSpec.describe Lain::Ext::Turn do
       expect(turn).not_to have_same_digest_as(plain)
     end
 
-    it "matches the Ruby event digest for the same sender and recipient" do
-      ruby = Lain::Event.turn(role: :user, content: text("hi"), meta: { "k" => 1 })
-                        .then { |e| Lain::Event.new(kind: :turn, carried_payload: e.carried_payload, from: "alice", to: "bob") }
-      expect(turn).to have_same_digest_as(ruby)
+    it "addresses the sender and recipient it reports" do
+      expect([turn.payload.values_at("from", "to"), turn.digest])
+        .to eq([%w[alice bob], Lain::Canonical.digest(turn.payload)])
     end
 
     it "refuses a sender that is not a String" do
@@ -170,7 +171,7 @@ RSpec.describe Lain::Ext::Turn do
     end
 
     it "keeps inspect class-tagged for debugging" do
-      expect(turn.inspect).to eq("#<Lain::Ext::Turn #{turn}>")
+      expect(turn.inspect).to eq("#<Lain::Ext::Event #{turn}>")
     end
 
     it "does not alias to_s and inspect" do

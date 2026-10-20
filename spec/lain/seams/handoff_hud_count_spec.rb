@@ -51,7 +51,7 @@ RSpec.describe "compaction cuts on the HUD", :seam do
   it "counts a handoff, resets the age, and writes the cut to the record once" do
     session.record_compaction_cut(cut("handoff"))
     now[0] = 7.0
-    feed << Lain::Event.new(kind: :spawn, payload_digest: "blake3:s", from: "p", to: nil)
+    feed << Lain::Ext::Event.new(kind: :spawn, payload_digest: "blake3:s", from: "p", to: nil)
 
     expect([published["compactions"], published["since_compaction"], cuts_in_record.size]).to eq([1, 7, 1])
   end

@@ -9,7 +9,7 @@
 RSpec.describe Lain::CLI::InspectionBinding do
   subject(:inspection) { described_class.new(timeline:, session:, supervisor:, status:) }
 
-  let(:timeline) { instance_double(Lain::Timeline, head: "blake3:abc") }
+  let(:timeline) { instance_double(Lain::Ext::Timeline, head: "blake3:abc") }
   let(:session) { instance_double(Lain::Session, reminders: []) }
   let(:supervisor) { instance_double(Lain::Supervisor) }
   let(:status) { instance_double(Lain::StatusFeed) }

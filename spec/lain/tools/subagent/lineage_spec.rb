@@ -91,10 +91,9 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
     end
 
     def rebuilt_from_its_recorded_body(spawn)
-      payload = Lain::Event::Payload.new(kind: spawn.kind, body: spawn.body)
-      Lain::Event.new(kind: spawn.kind, carried_payload: payload, from: spawn.from,
-                      to: spawn.to, render_parent: spawn.render_parent,
-                      causal_parents: spawn.causal_parents, correlation: spawn.correlation)
+      Lain::Ext::Event.new(kind: spawn.kind, body: spawn.body, from: spawn.from,
+                           to: spawn.to, render_parent: spawn.render_parent,
+                           causal_parents: spawn.causal_parents, correlation: spawn.correlation)
     end
 
     it "writes no lifecycle mark for a one-shot, whose start is the :spawn itself" do

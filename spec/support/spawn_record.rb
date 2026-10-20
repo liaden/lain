@@ -17,8 +17,6 @@
 # an example about several siblings at once reads {#spawns} and {#messages},
 # or the shared Store, rather than asking a singular question of a plural run.
 class SpawnRecord
-  EVENTS = [Lain::Event, Lain::Ext::Event].freeze
-
   def initialize
     @events = []
   end
@@ -55,5 +53,5 @@ class SpawnRecord
 
   private
 
-  def of_kind(kind) = @events.select { |event| EVENTS.any? { |events| event.is_a?(events) } && event.kind == kind }
+  def of_kind(kind) = @events.select { |event| event.is_a?(Lain::Ext::Event) && event.kind == kind }
 end

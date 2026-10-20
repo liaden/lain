@@ -77,7 +77,7 @@ RSpec.describe Lain::CLI::Command::Env do
   # `env.chronicle.journal_path`, reaching THROUGH Env to a collaborator's
   # shape. These four readers are the Demeter point instead.
   describe "the collapsed readers" do
-    let(:timeline) { instance_double(Lain::Timeline, head_digest: "blake3:abc123") }
+    let(:timeline) { instance_double(Lain::Ext::Timeline, head_digest: "blake3:abc123") }
     let(:agent) { instance_double(Lain::Agent, timeline:) }
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, journal_path: "/sessions/x.ndjson") }
     let(:env) { build_command_env(agent:, chronicle:) }
@@ -95,7 +95,7 @@ RSpec.describe Lain::CLI::Command::Env do
       # DELEGATION instead: a digest this example invents, plus the message
       # expectation that `#timeline` was actually asked for it.
       it "delegates to the timeline's own head_digest, not a value of its own" do
-        distinctive = instance_double(Lain::Timeline, head_digest: "blake3:distinctive-9f2c")
+        distinctive = instance_double(Lain::Ext::Timeline, head_digest: "blake3:distinctive-9f2c")
         env = build_command_env(agent: instance_double(Lain::Agent, timeline: distinctive))
 
         expect(env.head_digest).to eq("blake3:distinctive-9f2c")
@@ -123,7 +123,7 @@ RSpec.describe Lain::CLI::Command::Env do
     # so a caller holding one Env across a turn must see the CURRENT head, not
     # the one in force when Env was first read from.
     it "re-reads the agent on every call, never caching a stale timeline" do
-      moved_on = instance_double(Lain::Timeline, head_digest: "blake3:later")
+      moved_on = instance_double(Lain::Ext::Timeline, head_digest: "blake3:later")
       allow(agent).to receive(:timeline).and_return(timeline, moved_on)
 
       expect(env.timeline).to be(timeline)

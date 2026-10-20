@@ -48,12 +48,14 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
   def turn = Lain::Telemetry::TurnUsage.new(digest: "blake3:t", model: "m", stop_reason: :end_turn, usage: {})
   def tool_output = Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hi")
 
-  def spawn_event(id) = Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
+  def spawn_event(id)
+    Lain::Ext::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
+  end
 
   def completion(spawn)
-    Lain::Event.new(kind: :message, payload_digest: "blake3:msg-done", from: "child", to: "parent",
-                    body: { "result" => "ok", "lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED },
-                    causal_parents: [spawn.digest, "blake3:final"])
+    Lain::Ext::Event.new(kind: :message, from: "child", to: "parent",
+                         body: { "result" => "ok", "lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED },
+                         causal_parents: [spawn.digest, "blake3:final"])
   end
 
   describe "the buffer shows the epic's graph and fleet" do
@@ -168,8 +170,8 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
     def progress(spawn, **) = Lain::Telemetry::ChildProgress.new(spawn: spawn.digest, **)
 
     def ended(spawn, lifecycle)
-      Lain::Event.new(kind: :message, payload_digest: "blake3:msg-#{lifecycle}", from: "child", to: "parent",
-                      body: { "lifecycle" => lifecycle }, causal_parents: [spawn.digest])
+      Lain::Ext::Event.new(kind: :message, from: "child", to: "parent",
+                           body: { "lifecycle" => lifecycle }, causal_parents: [spawn.digest])
     end
 
     it "carries a spawn running, and says so when the record that ends it arrives" do
@@ -189,8 +191,8 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
       child = spawn_event("dev")
       view.update(child)
       view.update(progress(child, role: "dev", task_line: "port the parser", turns: 1, head: "blake3:dev-t1"))
-      grandchild = Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-test", from: "parent", to: nil,
-                                   body: { "spawned_from" => "blake3:dev-t1" })
+      grandchild = Lain::Ext::Event.new(kind: :spawn, from: "parent", to: nil,
+                                        body: { "spawned_from" => "blake3:dev-t1" })
       view.update(grandchild)
 
       lines = view.update(progress(grandchild, role: "test_engineer", task_line: "write the specs", turns: 0))

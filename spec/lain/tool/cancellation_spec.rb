@@ -103,8 +103,8 @@ RSpec.describe Lain::Tool::Cancellation do
   # from a genuine bug and let the failure it was handling through.
   describe "an unpairable call" do
     it "is refused namedly rather than as the builder's ArgumentError" do
-      anonymous = Lain::Event.turn(role: :assistant,
-                                   content: [{ "type" => "tool_use", "name" => "echo", "input" => {} }])
+      anonymous = Lain::Ext::Event.new(role: :assistant,
+                                       content: [{ "type" => "tool_use", "name" => "echo", "input" => {} }])
 
       expect { described_class.new(anonymous, kind: :unknown) }
         .to raise_error(described_class::Unpairable, /non-empty String id/)

@@ -13,7 +13,7 @@ require "tmpdir"
 # embedded IRB over the binding using a non-Reline Stdio input method, so IRB's
 # line editor never nests a second Reline inside the chat's.
 RSpec.describe Lain::CLI::Command::Ruby do
-  let(:timeline) { instance_double(Lain::Timeline, head: "blake3:abc") }
+  let(:timeline) { instance_double(Lain::Ext::Timeline, head: "blake3:abc") }
   let(:session) { instance_double(Lain::Session) }
   let(:supervisor) { instance_double(Lain::Supervisor) }
   let(:status) { instance_double(Lain::StatusFeed) }

@@ -52,7 +52,7 @@ RSpec.describe Lain::Bench::Speculative do
 
     selection.candidates.each do |candidate|
       expect(candidate.trajectory.store).to be(store)
-      expect(Lain::Dag::RenderAncestry.meet(candidate.trajectory, base)).to eq(base)
+      expect(Lain::Ext::Dag::RenderAncestry.meet(candidate.trajectory, base)).to eq(base)
     end
   end
 

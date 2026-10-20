@@ -438,9 +438,9 @@ RSpec.describe Lain::Session do
       session.on_chain(after)
       session.read?("/tmp/app.rb")
 
-      asked_again = count_dag_reads(store) { 5.times { session.read?("/tmp/app.rb") } }
+      asked_again = count_dag_reads { 5.times { session.read?("/tmp/app.rb") } }
       session.on_chain(grown)
-      grown_by_one = count_dag_reads(store) { session.read?("/tmp/app.rb") }
+      grown_by_one = count_dag_reads { session.read?("/tmp/app.rb") }
 
       expect([asked_again, grown_by_one]).to eq([0, 2])
     end

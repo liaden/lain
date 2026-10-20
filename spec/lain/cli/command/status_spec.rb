@@ -25,11 +25,13 @@ RSpec.describe Lain::CLI::Command::Status do
 
   def env_with(status:) = build_command_env(status:)
 
-  def spawn_event(id) = Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
+  def spawn_event(id)
+    Lain::Ext::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
+  end
 
   def question_event(id)
-    Lain::Event.new(kind: :message, payload_digest: "blake3:q-#{id}", from: "orchestrator",
-                    to: "human")
+    Lain::Ext::Event.new(kind: :message, payload_digest: "blake3:q-#{id}", from: "orchestrator",
+                         to: "human")
   end
 
   def turn_usage(cache_read: 0)

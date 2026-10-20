@@ -1,13 +1,12 @@
 # frozen_string_literal: true
 
-# The Rust Store must satisfy the SAME content-addressed-store contract as the
-# Ruby one: it drives the shared `store_laws` group, and mirrors the rest of
-# store_spec.rb (idempotence, MissingObject, key?, concurrent writers) against
-# `Lain::Ext::Store`/`Lain::Ext::Turn`.
+# The content-addressed-store contract: the shared `store_laws` group, then
+# idempotence, MissingObject, key? and concurrent writers, against
+# `Lain::Ext::Store`/`Lain::Ext::Event`.
 RSpec.describe Lain::Ext::Store do
   subject(:store) { described_class.new }
 
-  def turn(body) = Lain::Ext::Turn.new(role: :user, content: [{ "type" => "text", "text" => body }])
+  def turn(body) = Lain::Ext::Event.new(role: :user, content: [{ "type" => "text", "text" => body }])
 
   # A turn's body is a Store edge (its payload_digest), so putting a turn means
   # putting its carried payload first -- the order Timeline#commit uses.
@@ -173,15 +172,14 @@ RSpec.describe Lain::Ext::Store do
     end
   end
 
-  # Referential integrity at the API boundary -- mirrors store_spec.rb's Ruby
-  # group, plus the byte-identical message assertion the Ruby/Rust parity
-  # examples established for this crate.
+  # Referential integrity at the API boundary, in the exact words a refusal
+  # has always used.
   describe "referential integrity" do
     let(:missing) { "blake3:absent" }
     let(:dangling) { turn_with_parent(missing) }
 
     def turn_with_parent(parent)
-      Lain::Ext::Turn.new(role: :user, content: [{ "type" => "text", "text" => "head" }], parent:)
+      Lain::Ext::Event.new(role: :user, content: [{ "type" => "text", "text" => "head" }], parent:)
     end
 
     it "refuses a turn whose parent digest was never put" do
@@ -190,24 +188,10 @@ RSpec.describe Lain::Ext::Store do
                         %(no object #{missing.inspect} in store: putting #{dangling.digest.inspect} would dangle))
     end
 
-    # The quote-escaping edge ('blake3:a"b') is pinned by the flipped
-    # dangling-parent block in rust/timeline_spec.rb; this example pins the
-    # plain-digest bytes against both the Ruby message and the literal.
-    it "renders the refusal message byte-identical to Ruby's" do
-      ruby_head = Lain::Event.turn(role: :user, content: [{ "type" => "text", "text" => "head" }],
-                                   parent: missing)
-      ext_msg = refusal_message(Lain::Ext::Store::MissingObject) { store.put(dangling) }
-      ruby_msg = refusal_message(Lain::Store::MissingObject) { Lain::Store.new.put(ruby_head) }
-      expect(ext_msg).to eq(ruby_msg)
-      expect(ext_msg)
-        .to eq(%(no object #{missing.inspect} in store: putting #{dangling.digest.inspect} would dangle))
-    end
-
-    it "refuses an envelope whose payload was never put, in Ruby's words" do
-      ruby_root = Lain::Event.turn(role: :user, content: [{ "type" => "text", "text" => "root" }])
-      ext_msg = refusal_message(Lain::Ext::Store::MissingObject) { store.put(turn("root")) }
-      ruby_msg = refusal_message(Lain::Store::MissingObject) { Lain::Store.new.put(ruby_root) }
-      expect(ext_msg).to eq(ruby_msg)
+    it "refuses an envelope whose payload was never put, naming the payload" do
+      root = turn("root")
+      expect(refusal_message(Lain::Ext::Store::MissingObject) { store.put(root) })
+        .to eq(%(no object #{root.payload_digest.inspect} in store: putting #{root.digest.inspect} would dangle))
     end
 
     def refusal_message(error_class)
@@ -227,8 +211,8 @@ RSpec.describe Lain::Ext::Store do
 
       it "refuses a causal parent that is a payload" do
         store.put(payload)
-        child = Lain::Ext::Turn.new(role: :user, content: [{ "type" => "text", "text" => "c" }],
-                                    causal_parents: [payload.digest])
+        child = Lain::Ext::Event.new(role: :user, content: [{ "type" => "text", "text" => "c" }],
+                                     causal_parents: [payload.digest])
         store.put(child.carried_payload)
 
         expect { store.put(child) }
@@ -251,14 +235,16 @@ RSpec.describe Lain::Ext::Store do
     it "accepts a well-formed chain, parent-first" do
       root = turn("a")
       put_turn(root)
-      child = Lain::Ext::Turn.new(role: :assistant, content: [{ "type" => "text", "text" => "b" }], parent: root.digest)
+      child = Lain::Ext::Event.new(role: :assistant, content: [{ "type" => "text", "text" => "b" }],
+                                   parent: root.digest)
       expect(put_turn(child)).to eq(child.digest)
     end
 
     it "re-puts an existing chained turn as a no-op" do
       root = turn("a")
       put_turn(root)
-      child = Lain::Ext::Turn.new(role: :assistant, content: [{ "type" => "text", "text" => "b" }], parent: root.digest)
+      child = Lain::Ext::Event.new(role: :assistant, content: [{ "type" => "text", "text" => "b" }],
+                                   parent: root.digest)
       put_turn(child)
       expect { put_turn(child) }.not_to raise_error
       expect(store.size).to eq(4)
@@ -286,7 +272,7 @@ RSpec.describe Lain::Ext::Store do
   it "descends every Ext error class from Lain::Error" do
     expect(Lain::Ext::Store::MissingObject.ancestors).to include(Lain::Error)
     expect(Lain::Ext::Store::DigestMismatch.ancestors).to include(Lain::Error)
-    expect(Lain::Ext::Turn::InvalidRole.ancestors).to include(Lain::Error)
+    expect(Lain::Ext::Event::InvalidRole.ancestors).to include(Lain::Error)
     expect(Lain::Ext::Timeline::CrossStore.ancestors).to include(Lain::Error)
     expect(Lain::Ext::Bm25::EmptyCorpus.ancestors).to include(Lain::Error)
   end

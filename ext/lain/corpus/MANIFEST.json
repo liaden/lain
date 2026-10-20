@@ -38,7 +38,7 @@
     {
       "ruby_class": "Lain::Error",
       "ruby_message_prefix": "role must be one of",
-      "rust_class": "Lain::Ext::Turn::InvalidRole",
+      "rust_class": "Lain::Ext::Event::InvalidRole",
       "rust_message": null,
       "why": "the extension names the role refusal; Ruby raises its base error"
     },

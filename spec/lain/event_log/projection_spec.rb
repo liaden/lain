@@ -4,17 +4,17 @@ RSpec.describe Lain::EventLog::Projection do
   def block(text) = [{ "type" => "text", "text" => text }]
 
   def message(to:, from: "orchestrator")
-    Lain::Event.new(kind: :message, payload_digest: "blake3:msg-#{to}-#{from}", from:, to:)
+    Lain::Ext::Event.new(kind: :message, payload_digest: "blake3:msg-#{to}-#{from}", from:, to:)
   end
 
   def snapshot(state)
-    Lain::Event.new(kind: :snapshot, payload_digest: "blake3:snap-#{state}", body: { "workspace" => state })
+    Lain::Ext::Event.new(kind: :snapshot, body: { "workspace" => state })
   end
 
   def turn(text, causal_parents: [])
-    Lain::Event.turn(role: "user", content: block(text)).then do |base|
-      Lain::Event.new(kind: :turn, payload_digest: base.payload_digest, body: base.body,
-                      causal_parents:)
+    Lain::Ext::Event.new(role: "user", content: block(text)).then do |base|
+      Lain::Ext::Event.new(kind: :turn, body: base.body,
+                           causal_parents:)
     end
   end
 
@@ -89,8 +89,8 @@ RSpec.describe Lain::EventLog::Projection do
       addressed = message(to: "parent")
       # A later :message that names `addressed` among its causal parents is
       # lineage (a reply), not a turn, so `addressed` stays pending.
-      reply = Lain::Event.new(kind: :message, payload_digest: "blake3:reply",
-                              from: "parent", to: "worker", causal_parents: [addressed.digest])
+      reply = Lain::Ext::Event.new(kind: :message, payload_digest: "blake3:reply",
+                                   from: "parent", to: "worker", causal_parents: [addressed.digest])
       expect(described_class.new([addressed, reply]).pending("parent").to_a).to eq([addressed])
     end
 
@@ -157,7 +157,7 @@ RSpec.describe Lain::EventLog::Projection do
     it "walks the causal chain back to the originating tool_result reference" do
       tool_result = { "type" => "tool_result", "tool_use_id" => "tu_1",
                       "content" => block("42"), "is_error" => false }
-      source = Lain::Event.turn(role: "user", content: [tool_result])
+      source = Lain::Ext::Event.new(role: "user", content: [tool_result])
       middle = turn("the model read the result", causal_parents: [source.digest])
       synthesis = turn("the model concluded", causal_parents: [middle.digest])
       projection = described_class.new([source, middle, synthesis])
@@ -168,8 +168,8 @@ RSpec.describe Lain::EventLog::Projection do
     it "reaches every tool_result a synthesis folded, each once" do
       first = { "type" => "tool_result", "tool_use_id" => "tu_1", "content" => block("a") }
       second = { "type" => "tool_result", "tool_use_id" => "tu_2", "content" => block("b") }
-      source_a = Lain::Event.turn(role: "user", content: [first])
-      source_b = Lain::Event.turn(role: "user", content: [second])
+      source_a = Lain::Ext::Event.new(role: "user", content: [first])
+      source_b = Lain::Ext::Event.new(role: "user", content: [second])
       synthesis = turn("folded both", causal_parents: [source_a.digest, source_b.digest])
       projection = described_class.new([source_a, source_b, synthesis])
 
@@ -191,9 +191,9 @@ RSpec.describe Lain::EventLog::Projection do
     # keeps the fixture build from dwarfing the 14ms walk under test.
     it "walks a 10,000-link causal chain without exhausting the stack" do
       tool_result = { "type" => "tool_result", "tool_use_id" => "tu_deep", "content" => block("root") }
-      log = [Lain::Event.turn(role: "user", content: [tool_result])]
+      log = [Lain::Ext::Event.new(role: "user", content: [tool_result])]
       9_999.times do |n|
-        log << Lain::Event.new(kind: :turn, payload_digest: "blake3:link-#{n}", causal_parents: [log.last.digest])
+        log << Lain::Ext::Event.new(kind: :turn, payload_digest: "blake3:link-#{n}", causal_parents: [log.last.digest])
       end
 
       expect(described_class.new(log).provenance(log.last)).to contain_exactly(tool_result)
@@ -212,13 +212,13 @@ RSpec.describe Lain::EventLog::Projection do
     def log_of(source, folder) = [source, folder.call(source.digest)]
 
     it "walks provenance to the same tool results as the Ruby projection" do
-      rust_source = Lain::Ext::Turn.new(role: "user", content: result)
+      rust_source = Lain::Ext::Event.new(role: "user", content: result)
       rust = log_of(rust_source, lambda { |d|
-        Lain::Ext::Turn.new(role: "assistant", content: block("x"), causal_parents: [d])
+        Lain::Ext::Event.new(role: "assistant", content: block("x"), causal_parents: [d])
       })
-      ruby_source = Lain::Event.turn(role: "user", content: result)
+      ruby_source = Lain::Ext::Event.new(role: "user", content: result)
       ruby = log_of(ruby_source, lambda { |d|
-        Lain::Event.turn(role: "assistant", content: block("x"), causal_parents: [d])
+        Lain::Ext::Event.new(role: "assistant", content: block("x"), causal_parents: [d])
       })
 
       expect(described_class.new(rust).provenance(rust.last)).to eq(described_class.new(ruby).provenance(ruby.last))

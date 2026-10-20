@@ -252,7 +252,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       scribe.catch_up(timeline)
       grown = timeline.commit(role: :user, content: text("more"))
 
-      reads = count_dag_reads(store) { scribe.catch_up(grown) }
+      reads = count_dag_reads { scribe.catch_up(grown) }
 
       # The new turn, then the last-written head the walk stops on.
       expect(reads).to eq(2)
@@ -265,7 +265,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     it "still visits the whole chain when there is no written head yet" do
       timeline # built BEFORE the count starts: a commit can read the head it extends
 
-      reads = count_dag_reads(store) { scribe.catch_up(timeline) }
+      reads = count_dag_reads { scribe.catch_up(timeline) }
 
       expect(reads).to eq(4)
     end
@@ -279,7 +279,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       caught_up.catch_up(chain)
       grown = chain.commit(role: :assistant, content: text("one more"))
 
-      count_dag_reads(chain.store) { caught_up.catch_up(grown) }
+      count_dag_reads { caught_up.catch_up(grown) }
     end
 
     def chain_of(length)
@@ -402,7 +402,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       scribe.catch_up(chain)
       grown = chain.commit(role: :user, content: text("more"))
 
-      expect(count_dag_reads(chain.store) { scribe.catch_up(grown) }).to eq(2)
+      expect(count_dag_reads { scribe.catch_up(grown) }).to eq(2)
     end
 
     def chain_of(length)

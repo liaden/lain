@@ -387,17 +387,7 @@ RSpec.describe Lain::Workspace::Restore do
     end
   end
 
-  # The story is built in the outer `before`, so the setting is chosen in an
-  # `around`, which runs first.
   describe "over the Rust store, whose fetch answers a blob as its bytes" do
-    around do |example|
-      saved = ENV.fetch("LAIN_DAG", nil)
-      ENV["LAIN_DAG"] = "rust"
-      example.run
-    ensure
-      ENV["LAIN_DAG"] = saved
-    end
-
     it "writes back the bytes each blob holds" do
       restorer.restore(turn: 2)
 

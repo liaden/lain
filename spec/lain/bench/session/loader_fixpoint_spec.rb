@@ -161,10 +161,9 @@ RSpec.describe Lain::Bench::Session::Loader do
         }
     end
 
-    it "refuses a message citing it as Corrupt too, rather than as a bare Store::MissingObject" do
-      payload = Lain::Event::Payload.new(kind: :message, body: { "answer" => "postgres" })
-      stranded = Lain::Event.new(kind: :message, carried_payload: payload,
-                                 from: "human", to: "agent", causal_parents: [absent])
+    it "refuses a message citing it as Corrupt too, rather than as a bare Ext::Store::MissingObject" do
+      stranded = Lain::Ext::Event.new(kind: :message, body: { "answer" => "postgres" },
+                                      from: "human", to: "agent", causal_parents: [absent])
       records = roundtrip([header, turn_record(asked), message_record(stranded)])
 
       expect { described_class.new(records).recording }
@@ -271,9 +270,7 @@ RSpec.describe Lain::Bench::Session::Loader do
 
     it "refuses this file's #timeline when the PRIOR file's message record dangles" do
       absent = "blake3:#{"cd" * 32}"
-      payload = Lain::Event::Payload.new(kind: :message, body: { "x" => 1 })
-      stranded = Lain::Event.new(kind: :message, carried_payload: payload,
-                                 from: "a", to: "b", causal_parents: [absent])
+      stranded = Lain::Ext::Event.new(kind: :message, body: { "x" => 1 }, from: "a", to: "b", causal_parents: [absent])
 
       own = prior_head.commit(role: :assistant, content: text("later"))
 
@@ -295,8 +292,7 @@ RSpec.describe Lain::Bench::Session::Loader do
     # this way refused as a bare Store::MissingObject with nothing on it naming
     # the file, the record, or even which of the chain's files was at fault.
     it "refuses a MALFORMED causal edge in the prior file in the same currency" do
-      payload = Lain::Event::Payload.new(kind: :message, body: { "x" => 1 })
-      stranded = Lain::Event.new(kind: :message, carried_payload: payload, from: "a", to: "b")
+      stranded = Lain::Ext::Event.new(kind: :message, body: { "x" => 1 }, from: "a", to: "b")
       malformed = message_record(stranded).merge("causal_parents" => [nil])
       own = prior_head.commit(role: :assistant, content: text("later"))
 

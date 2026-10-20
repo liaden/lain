@@ -5,14 +5,14 @@
 # `lib/lain/cli/command/in_flight.rb` for the wider design note.
 RSpec.describe Lain::CLI::Command::InFlight do
   let(:pending_turn) do
-    instance_double(Lain::Event, role: "assistant",
-                                 content: [{ "type" => "tool_use", "id" => "toolu_01", "name" => "echo",
-                                             "input" => { "text" => "hi" } }])
+    instance_double(Lain::Ext::Event, role: "assistant",
+                                      content: [{ "type" => "tool_use", "id" => "toolu_01", "name" => "echo",
+                                                  "input" => { "text" => "hi" } }])
   end
-  let(:settled_turn) { instance_double(Lain::Event, role: "user", content: [{ "type" => "text", "text" => "hi" }]) }
+  let(:settled_turn) { instance_double(Lain::Ext::Event, role: "user", content: [{ "type" => "text", "text" => "hi" }]) }
 
   def env_for(dispatching:, head:)
-    timeline = instance_double(Lain::Timeline, head:)
+    timeline = instance_double(Lain::Ext::Timeline, head:)
     agent = instance_double(Lain::Agent, timeline:, dispatching?: dispatching)
     build_command_env(agent:)
   end

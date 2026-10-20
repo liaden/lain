@@ -189,8 +189,8 @@ RSpec.describe Lain::Compaction::Derivation do
         walk = Lain::Compaction::Derivation::Walk.of(source)
         derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
 
-        handed = count_dag_reads(source.store) { derivation.derive(source, walk:) }
-        walking = count_dag_reads(source.store) { derivation.derive(source) }
+        handed = count_dag_reads { derivation.derive(source, walk:) }
+        walking = count_dag_reads { derivation.derive(source) }
 
         # Whatever writing the derived chain reads, both pay alike; what the
         # handed walk saves is one read of each of the nine source turns.
@@ -213,12 +213,14 @@ RSpec.describe Lain::Compaction::Derivation do
         source = fixtures.history(9)
         derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
 
-        tally = count_store_fetches(source.store) do
-          expect { derivation.derive(source, into: Lain::Dag::Factory.store) }
-            .to raise_error(Lain::Ext::Store::MissingObject)
+        refusal = nil
+        reads = count_dag_reads do
+          derivation.derive(source, into: Lain::Dag::Factory.store)
+        rescue Lain::Ext::Store::MissingObject => e
+          refusal = e
         end
 
-        expect(tally.count).to be_zero
+        expect([refusal, reads]).to match([a_kind_of(Lain::Ext::Store::MissingObject), 0])
       end
     end
 

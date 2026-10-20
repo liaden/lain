@@ -39,10 +39,10 @@ module Lain
             false
           end
 
-          # Same message shape as {Store#fetch}'s, so the miss reads
+          # Same message shape as {Ext::Store#fetch}'s, so the miss reads
           # identically whichever store declined.
           def fetch(digest)
-            raise Store::MissingObject, "no object #{digest.inspect} in store"
+            raise Ext::Store::MissingObject, "no object #{digest.inspect} in store"
           end
 
           INSTANCE = new.freeze

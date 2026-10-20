@@ -4,16 +4,15 @@ require "json"
 
 RSpec.describe Lain::Telemetry do
   # The Lain::Event name was freed from telemetry (records moved to
-  # Lain::Telemetry) and then reused for the event envelope. The
-  # rename must not have left a telemetry record resolvable under Lain::Event --
-  # the envelope owns the name now, and every record still lives only under
-  # Lain::Telemetry.
-  it "keeps every telemetry record under Lain::Telemetry, none under the reused Lain::Event name" do
+  # Lain::Telemetry) and then reused for the event envelope, which the
+  # extension now owns as Lain::Ext::Event. No telemetry record may resolve
+  # under the envelope's name.
+  it "keeps every telemetry record under Lain::Telemetry, none under the event envelope's name" do
     records = %i[ToolOutput Dropped ProviderRetry TurnUsage RequestSent
                  RequestResent MemoryRoot CapabilityDegraded WriteRefused StreamStarted ObserverFailed]
     records.each do |record|
       expect(described_class.const_defined?(record, false)).to be(true)
-      expect(Lain::Event.const_defined?(record, false)).to be(false)
+      expect(Lain::Ext::Event.const_defined?(record, false)).to be(false)
     end
   end
 

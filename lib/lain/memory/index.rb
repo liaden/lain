@@ -73,7 +73,7 @@ module Lain
       end
 
       def initialize(root:, store:)
-        raise Store::MissingObject, "no object #{root.inspect}" if root && !store.key?(root)
+        raise Ext::Store::MissingObject, "no object #{root.inspect}" if root && !store.key?(root)
 
         @root = root&.dup&.freeze
         @store = store

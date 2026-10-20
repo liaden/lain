@@ -788,7 +788,7 @@ mod ffi {
     }
 
     /// Read a role argument (String or Symbol) and validate it into a [`Role`],
-    /// raising `Turn::InvalidRole` on anything that is not a wire role.
+    /// raising `Event::InvalidRole` on anything that is not a wire role.
     fn read_role(ruby: &Ruby, value: Value) -> Result<Role, Error> {
         let raw = match coerce_text(ruby, value)? {
             Some(text) => text,
@@ -797,7 +797,7 @@ mod ffi {
                 let class = unsafe { value.classname() }.into_owned();
                 return Err(lookup_error(
                     ruby,
-                    &["Lain", "Ext", "Turn", "InvalidRole"],
+                    &["Lain", "Ext", "Event", "InvalidRole"],
                     format!("role must be one of {}, got a {class}", Role::names()),
                 ));
             }
@@ -807,7 +807,7 @@ mod ffi {
         raw.parse::<Role>().map_err(|invalid| {
             lookup_error(
                 ruby,
-                &["Lain", "Ext", "Turn", "InvalidRole"],
+                &["Lain", "Ext", "Event", "InvalidRole"],
                 invalid.to_string(),
             )
         })
@@ -915,7 +915,7 @@ mod ffi {
     /// immutable Rust, no Ruby reference -- so once frozen it is honestly
     /// `Ractor.shareable?` with no `mark` and no reachable mutable state.
     #[derive(TypedData)]
-    #[magnus(class = "Lain::Ext::Turn", free_immediately, frozen_shareable)]
+    #[magnus(class = "Lain::Ext::Event", free_immediately, frozen_shareable)]
     struct Turn {
         inner: Arc<EventData>,
     }
@@ -1273,7 +1273,7 @@ mod ffi {
         }
 
         fn inspect(&self) -> String {
-            format!("#<Lain::Ext::Turn {}>", self.to_s())
+            format!("#<Lain::Ext::Event {}>", self.to_s())
         }
     }
 
@@ -2428,8 +2428,7 @@ mod ffi {
         treesitter.define_error("BadQuery", lain_error)?;
         treesitter.define_singleton_method("query", function!(crate::treesitter::ffi::query, 3))?;
 
-        let turn = ext.define_class("Turn", ruby.class_object())?;
-        ext.const_set("Event", turn)?;
+        let turn = ext.define_class("Event", ruby.class_object())?;
         turn.define_error("InvalidRole", lain_error)?;
         turn.define_singleton_method("new", function!(Turn::new, 1))?;
         turn.define_method("role", method!(Turn::role, 0))?;

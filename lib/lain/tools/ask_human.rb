@@ -1022,7 +1022,7 @@ module Lain
       # Nothing between this probe and the payload's put may yield, or two
       # askers over one Store could take the same count.
       def prior_askings(body, store)
-        (0..).find { |asking| !store.key?(Event::Payload.new(kind: :message, body: body.merge(ASKING => asking)).digest) }
+        (0..).find { |asking| !store.key?(Dag::Factory.event(kind: :message, body: body.merge(ASKING => asking)).payload_digest) }
       end
 
       # Causal-only -- no `render_parent` -- so it never enters a render chain.

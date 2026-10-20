@@ -36,11 +36,12 @@ module Lain
         # whether the position MOVED. That answer is what lets {Loader}
         # alternate this fold with {MessageReplay} to a fixpoint.
         #
-        # PRE-CHECKED, never speculative, and the reason is mechanical:
-        # {Timeline#commit} puts the payload BEFORE the envelope and only the
-        # envelope's put validates the causal edge, so discovering a blocked
-        # turn by attempting the commit and rescuing strands an
-        # {Event::Payload} in the Store -- once per sweep, in a loop.
+        # PRE-CHECKED, never speculative: discovering a blocked turn by
+        # attempting the commit and rescuing pays a refused commit on every
+        # sweep of the fixpoint, and the refusal is the slow path -- it builds
+        # the turn, canonicalizes its content and raises. The Store refuses a
+        # commit whole, so the attempt would strand nothing; it is the work
+        # per sweep that the pre-check saves.
         #
         # rubocop:disable Naming/PredicateMethod -- a COMMAND whose Boolean
         # reports whether it moved, not a query. `advance?` would name the

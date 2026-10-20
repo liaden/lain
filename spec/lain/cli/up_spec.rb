@@ -2454,7 +2454,7 @@ RSpec.describe Lain::CLI::Up do
     it "prints the line a real StatusFeed published" do
       now = Time.utc(2026, 9, 13, 12, 0, 0)
       feed = Lain::StatusFeed.new(path: state_path, clock: -> { now })
-      feed << Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-a", from: "parent", to: nil)
+      feed << Lain::Ext::Event.new(kind: :spawn, payload_digest: "blake3:spawn-a", from: "parent", to: nil)
 
       expect(eval_status_job(job)).to eq(feed.state["hud"].strip)
       expect(eval_status_job(job)).to eq("\u2744 fleet:1 inbox:0")

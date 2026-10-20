@@ -162,9 +162,9 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
     # to re-open. The journal's own `type` is the honest label.
     it "names a damaged child_turn by its record type, not by the :turn kind it carries" do
       child = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("brief"))
-      stranded = Lain::Event.new(kind: :turn, carried_payload: child.head.carried_payload,
-                                 from: nil, to: nil, render_parent: nil,
-                                 causal_parents: ["blake3:#{"cd" * 32}"])
+      stranded = Lain::Ext::Event.new(kind: :turn, carried_payload: child.head.carried_payload,
+                                      from: nil, to: nil, render_parent: nil,
+                                      causal_parents: ["blake3:#{"cd" * 32}"])
 
       expect { replay([as_record(Lain::Telemetry::ChildTurn.from_event(stranded))]).messages }
         .to raise_error(Lain::Bench::Session::Corrupt) { |error|

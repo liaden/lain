@@ -12,8 +12,8 @@ require "tmpdir"
 # possibly mid-round-trip, is refused conservatively.
 RSpec.describe Lain::CLI::Command::Btw do
   let(:head) { "blake3:abc123def456" }
-  let(:head_turn) { instance_double(Lain::Event, role: "user", content: [{ "type" => "text", "text" => "hi" }]) }
-  let(:timeline) { instance_double(Lain::Timeline, head_digest: head, head: head_turn) }
+  let(:head_turn) { instance_double(Lain::Ext::Event, role: "user", content: [{ "type" => "text", "text" => "hi" }]) }
+  let(:timeline) { instance_double(Lain::Ext::Timeline, head_digest: head, head: head_turn) }
   # Dispatching defaults to false -- the mid-tool describe block below flips
   # it on to exercise the shared dispatch-lock door.
   let(:agent) { instance_double(Lain::Agent, timeline:, dispatching?: false) }
@@ -92,7 +92,7 @@ RSpec.describe Lain::CLI::Command::Btw do
     end
 
     it "refuses with no committed turn -- there is no head to fork" do
-      bare = instance_double(Lain::Agent, timeline: instance_double(Lain::Timeline, head_digest: nil))
+      bare = instance_double(Lain::Agent, timeline: instance_double(Lain::Ext::Timeline, head_digest: nil))
 
       expect { command.call("why?", env_with(chronicle:, agent: bare)) }
         .to raise_error(Lain::Error, /no turn|nothing to fork/i)
@@ -122,9 +122,9 @@ RSpec.describe Lain::CLI::Command::Btw do
   # in the same words.
   describe "a mid-tool head" do
     let(:head_turn) do
-      instance_double(Lain::Event, role: "assistant",
-                                   content: [{ "type" => "tool_use", "id" => "toolu_01", "name" => "echo",
-                                               "input" => { "text" => "hi" } }])
+      instance_double(Lain::Ext::Event, role: "assistant",
+                                        content: [{ "type" => "tool_use", "id" => "toolu_01", "name" => "echo",
+                                                    "input" => { "text" => "hi" } }])
     end
 
     context "with the agent dispatching -- the call may still be in flight" do

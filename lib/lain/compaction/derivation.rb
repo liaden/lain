@@ -257,9 +257,9 @@ module Lain
       def refuse_foreign(source, into)
         return if source.empty? || into.key?(source.head_digest)
 
-        raise Store::MissingObject, "no object #{source.head_digest.inspect} in store: deriving into it would " \
-                                    "dangle every replacement's causal edges, which name the source turns " \
-                                    "they subsume"
+        raise Ext::Store::MissingObject,
+              "no object #{source.head_digest.inspect} in store: deriving into it would " \
+              "dangle every replacement's causal edges, which name the source turns they subsume"
       end
 
       # Judged from the WRITES, before a single object reaches the Store: the

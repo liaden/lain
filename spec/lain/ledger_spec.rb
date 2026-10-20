@@ -223,7 +223,7 @@ RSpec.describe Lain::Ledger do
                        spans: -> { [[base], [branch_a], [branch_b]] }
 
       it "loses exactly the meet: usage of both plus usage of the meet equals the sum of each alone" do
-        meet = Lain::Dag::RenderAncestry.meet(branch_a, branch_b)
+        meet = Lain::Ext::Dag::RenderAncestry.meet(branch_a, branch_b)
 
         expect(fork_ledger.usage(branch_a, branch_b) + fork_ledger.usage(meet))
           .to eq(fork_ledger.usage(branch_a) + fork_ledger.usage(branch_b))

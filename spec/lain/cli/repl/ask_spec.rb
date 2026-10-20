@@ -9,7 +9,7 @@ require "stringio"
 # outcomes come back as VALUES, which still raise, and what a refusal costs the
 # session record.
 RSpec.describe Lain::CLI::Repl::Ask do
-  let(:timeline) { instance_double(Lain::Timeline, head_digest: "sha-head") }
+  let(:timeline) { instance_double(Lain::Ext::Timeline, head_digest: "sha-head") }
   let(:context) { instance_double(Lain::Context, max_tokens: 4096) }
   let(:agent) { instance_double(Lain::Agent, timeline:, context:) }
   let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil, render_response: nil) }

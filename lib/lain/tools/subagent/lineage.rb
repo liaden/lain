@@ -205,7 +205,7 @@ module Lain
           @lane.empty? ? marks : marks.merge("lane" => @lane)
         end
 
-        def recorded?(store, body) = store.key?(Event::Payload.new(kind: :spawn, body:).digest)
+        def recorded?(store, body) = store.key?(Dag::Factory.event(kind: :spawn, body:).payload_digest)
 
         # The payload-then-envelope write, delegated so @chain_writer is its
         # one home.

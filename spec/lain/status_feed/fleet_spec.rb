@@ -10,7 +10,7 @@
 # it stays pinned next door in spec/lain/status_feed_spec.rb's "fleet" block.
 RSpec.describe Lain::StatusFeed::Fleet do
   def spawn_event(id)
-    Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
+    Lain::Ext::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
   end
 
   # One of a pair of twins: two adoptions of one arm from one head, whose
@@ -24,19 +24,17 @@ RSpec.describe Lain::StatusFeed::Fleet do
   # (`causal_parents`, `correlation`) are omitted, since twins would share them
   # and they cannot separate anything.
   def adoption(ordinal)
-    payload = Lain::Event::Payload.new(
-      kind: :spawn,
+    Lain::Ext::Event.new(
+      kind: :spawn, from: "parent", to: nil,
       body: { "prefix" => "fresh", "posture" => "schema", "only" => [],
               "spawned_from" => "blake3:head", "adoption" => ordinal,
               "lifecycle" => Lain::StatusFeed::SpawnLifecycle::LAUNCHED }
     )
-    Lain::Event.new(kind: :spawn, from: "parent", to: nil,
-                    payload_digest: payload.digest, body: payload.body)
   end
 
-  def message_event(id, body:, causal_parents:)
-    Lain::Event.new(kind: :message, payload_digest: "blake3:msg-#{id}", body:, causal_parents:,
-                    from: "child", to: "parent")
+  def message_event(_id, body:, causal_parents:)
+    Lain::Ext::Event.new(kind: :message, body:, causal_parents:,
+                         from: "child", to: "parent")
   end
 
   # A one-shot's completion, shaped as Tools::Subagent::Lineage#message writes
@@ -335,8 +333,7 @@ RSpec.describe Lain::StatusFeed::Fleet do
     # it names the HEAD it was spawned from, and which spawn owns that head is
     # a fact only the child's own progress records tell.
     def spawn_from(_id, head)
-      payload = Lain::Event::Payload.new(kind: :spawn, body: { "spawned_from" => head })
-      Lain::Event.new(kind: :spawn, from: "parent", to: nil, payload_digest: payload.digest, body: payload.body)
+      Lain::Ext::Event.new(kind: :spawn, from: "parent", to: nil, body: { "spawned_from" => head })
     end
 
     def progress(spawn, **) = Lain::Telemetry::ChildProgress.new(spawn: spawn.digest, **)

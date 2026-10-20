@@ -639,7 +639,7 @@ fn refusal(input: &Json, floats: &Floats) -> Raised {
         "role" => {
             let role = optional_text(input.get("role")).expect("role text");
             let invalid = role.parse::<Role>().expect_err("an invalid role");
-            raised("Lain::Ext::Turn::InvalidRole", invalid.to_string())
+            raised("Lain::Ext::Event::InvalidRole", invalid.to_string())
         }
         "kind" => {
             let tag = input.get("kind");

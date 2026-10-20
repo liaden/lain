@@ -4,15 +4,14 @@ RSpec.describe Lain::Context::Mailbox do
   # A :message event addressed to `to`, carrying renderable "text" -- the same
   # shape Tools::Subagent::Lineage#note writes into the shared log.
   def message(to:, text:, from: "actor")
-    payload = Lain::Event::Payload.new(kind: :message, body: { "text" => text })
-    Lain::Event.new(kind: :message, from:, to:, payload_digest: payload.digest, body: payload.body)
+    Lain::Ext::Event.new(kind: :message, from:, to:, body: { "text" => text })
   end
 
   # An assistant turn that names the given messages among its causal parents --
   # exactly what {Agent} records at commit for the messages a render folded.
   def fold_turn(*messages)
-    Lain::Event.turn(role: "assistant", content: [{ "type" => "text", "text" => "answered" }],
-                     causal_parents: messages.map(&:digest))
+    Lain::Ext::Event.new(role: "assistant", content: [{ "type" => "text", "text" => "answered" }],
+                         causal_parents: messages.map(&:digest))
   end
 
   # The per-turn frozen snapshot both the render-side combinator and the
@@ -56,9 +55,7 @@ RSpec.describe Lain::Context::Mailbox do
     end
 
     it "leaves the conversation unchanged when no pending message carries text" do
-      payload = Lain::Event::Payload.new(kind: :message, body: { "answer" => "yes" })
-      answer = Lain::Event.new(kind: :message, from: "human", to: "parent", payload_digest: payload.digest,
-                               body: payload.body)
+      answer = Lain::Ext::Event.new(kind: :message, from: "human", to: "parent", body: { "answer" => "yes" })
       expect(described_class.new(snapshot: snapshot([answer])).call(conversation)).to eq(conversation)
     end
   end

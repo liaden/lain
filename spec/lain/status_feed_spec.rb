@@ -27,34 +27,32 @@ RSpec.describe Lain::StatusFeed do
   end
 
   def spawn_event(id)
-    Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
+    Lain::Ext::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
   end
 
   # A one-shot's completion, shaped as Tools::Subagent::Lineage#message writes
   # one: the result, the child's final head and the terminal mark, citing the
   # :spawn among its causal parents.
   def spawn_completion(spawn)
-    Lain::Event.new(kind: :message, payload_digest: "blake3:msg-completion",
-                    body: { "result" => "the answer", "final" => "blake3:final",
-                            "lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED },
-                    causal_parents: [spawn.digest, "blake3:final"], from: "child", to: "parent")
+    Lain::Ext::Event.new(kind: :message, body: { "result" => "the answer", "final" => "blake3:final",
+                                                 "lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED },
+                         causal_parents: [spawn.digest, "blake3:final"], from: "child", to: "parent")
   end
 
   # An actor's reply, shaped as Tools::Subagent::Actor#reply writes one: no
   # result key, only the mark, citing the address -- which IS the spawn digest.
   def actor_reply(spawn, lifecycle:)
-    Lain::Event.new(kind: :message, payload_digest: "blake3:msg-#{lifecycle}",
-                    body: { "text" => "from the child", "lifecycle" => lifecycle },
-                    causal_parents: [spawn.digest, "blake3:head"], from: "child", to: "parent")
+    Lain::Ext::Event.new(kind: :message, body: { "text" => "from the child", "lifecycle" => lifecycle },
+                         causal_parents: [spawn.digest, "blake3:head"], from: "child", to: "parent")
   end
 
   def message_event(id, to: "human", from: "orchestrator")
-    Lain::Event.new(kind: :message, payload_digest: "blake3:msg-#{id}", from:, to:)
+    Lain::Ext::Event.new(kind: :message, payload_digest: "blake3:msg-#{id}", from:, to:)
   end
 
   def turn_event(causal_parents:)
-    base = Lain::Event.turn(role: "assistant", content: [{ "type" => "text", "text" => "ok" }])
-    Lain::Event.new(kind: :turn, payload_digest: base.payload_digest, body: base.body, causal_parents:)
+    base = Lain::Ext::Event.new(role: "assistant", content: [{ "type" => "text", "text" => "ok" }])
+    Lain::Ext::Event.new(kind: :turn, body: base.body, causal_parents:)
   end
 
   # The two records Approval::Parked::Queue writes around one gated call: the park
@@ -252,9 +250,8 @@ RSpec.describe Lain::StatusFeed do
       feed = described_class.new(path:)
       launch = spawn_event("a")
       feed << launch
-      unmarked = Lain::Event.new(kind: :message, payload_digest: "blake3:msg-unmarked",
-                                 body: { "result" => "the answer", "final" => "blake3:final" },
-                                 causal_parents: [launch.digest, "blake3:final"], from: "child", to: "parent")
+      unmarked = Lain::Ext::Event.new(kind: :message, body: { "result" => "the answer", "final" => "blake3:final" },
+                                      causal_parents: [launch.digest, "blake3:final"], from: "child", to: "parent")
 
       feed << unmarked
       expect(published["fleet"]).to eq([launch.digest])
@@ -343,15 +340,15 @@ RSpec.describe Lain::StatusFeed do
     it "an AskHuman-shaped reply does not retire the question by itself; only a later :turn's causal_parents does" do
       feed = described_class.new(path:)
       asker = "orchestrator"
-      question = Lain::Event.new(kind: :message, payload_digest: "blake3:q", from: asker, to: "human")
+      question = Lain::Ext::Event.new(kind: :message, payload_digest: "blake3:q", from: asker, to: "human")
       feed << question
       expect(published["inbox_count"]).to eq(1)
 
       # Exactly Tools::AskHuman#reply's shape: the answer is FROM "human", TO
       # the asker, citing Q's digest as its causal parent -- and it is a
       # :message, not a :turn.
-      answer = Lain::Event.new(kind: :message, payload_digest: "blake3:a", from: "human", to: asker,
-                               causal_parents: [question.digest])
+      answer = Lain::Ext::Event.new(kind: :message, payload_digest: "blake3:a", from: "human", to: asker,
+                                    causal_parents: [question.digest])
       feed << answer
       expect(published["inbox_count"]).to eq(1) # still pending: the human already answered, but nothing consumed it
 
@@ -2140,9 +2137,9 @@ RSpec.describe Lain::StatusFeed do
     end
 
     it "names no tools and raises nothing when the bound store cannot read the head" do
-      broken = instance_double(Lain::Store)
+      broken = instance_double(Lain::Ext::Store)
       allow(broken).to receive_messages(key?: true)
-      allow(broken).to receive(:fetch).and_raise(Lain::Store::MissingObject, "gone")
+      allow(broken).to receive(:fetch).and_raise(Lain::Ext::Store::MissingObject, "gone")
       feed.bind_store(broken)
       feed.on_transition(from: :awaiting_model, to: :awaiting_tools, event: :tool_use)
 

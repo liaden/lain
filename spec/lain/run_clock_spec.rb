@@ -88,7 +88,7 @@ RSpec.describe Lain::RunClock do
   end
 
   def spawn_event
-    Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn", from: "parent", to: nil)
+    Lain::Ext::Event.new(kind: :spawn, payload_digest: "blake3:spawn", from: "parent", to: nil)
   end
 
   describe "#elapsed" do

@@ -55,8 +55,7 @@ RSpec.describe Lain::CLI::Resume do
   # two examples below pin what a USER gets, which is the same named refusal
   # from either door regardless of which layer catches it.
   def null_parent_message
-    payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "which dose?" })
-    event = Lain::Event.new(kind: :message, carried_payload: payload, from: "agent", to: "human")
+    event = Lain::Ext::Event.new(kind: :message, body: { "text" => "which dose?" }, from: "agent", to: "human")
     Lain::Telemetry::Message.from_event(event).to_journal.merge("causal_parents" => [nil])
   end
 
@@ -958,10 +957,9 @@ RSpec.describe Lain::CLI::Resume do
     # user -- whichever currency the fold picks, the refusal arrives NAMED, with
     # the file attached, never as a raw store message with no provenance.
     it "refuses a fork over a message record citing a digest never journaled" do
-      payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "81 mg" })
       dangling_digest = "blake3:#{"a" * 64}"
-      cited = Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to: "agent",
-                              causal_parents: [dangling_digest])
+      cited = Lain::Ext::Event.new(kind: :message, body: { "text" => "81 mg" }, from: "human", to: "agent",
+                                   causal_parents: [dangling_digest])
       write_closed("20260101T000000-1.ndjson", three,
                    extra: [Lain::Telemetry::Message.from_event(cited).to_journal])
 
