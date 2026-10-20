@@ -93,6 +93,26 @@ RSpec.describe Lain::Memory::Item do
                      non_member: -> { item.digest }
   end
 
+  describe ".from_canon" do
+    it "rebuilds the item its canonical tree addresses" do
+      expect(described_class.from_canon(item.canonical)).to eq(item)
+    end
+
+    it "keeps a clerk's authorship, which is inside the address" do
+      clerk = described_class.new(id: "a", description: "d", body: "b",
+                                  author: Lain::Memory::Author.clerk(spawn: "blake3:s"))
+
+      expect(described_class.from_canon(clerk.canonical)).to have_attributes(digest: clerk.digest,
+                                                                             author: clerk.author)
+    end
+
+    it "hands an item back as it is" do
+      one = item
+
+      expect(described_class.from_canon(one)).to equal(one)
+    end
+  end
+
   describe "in a content-addressed store" do
     let(:store) { Lain::Store.new }
 

@@ -188,6 +188,10 @@ fn payload_canon(kind: Kind, body: &Canon) -> Canon {
 /// element order must not leak into identity). Shared through an `Arc` so a
 /// `Store` and any number of `Timeline` handles name the same node without
 /// copying its subtree.
+///
+/// `payload` is `None` on a DETACHED envelope, one rebuilt from digests alone:
+/// its address is whole, but its body lives elsewhere under `payload_digest`
+/// and every body reader refuses rather than answer for it.
 #[derive(Debug, Clone)]
 pub struct EventData {
     pub kind: Kind,
@@ -196,7 +200,8 @@ pub struct EventData {
     pub render_parent: Option<Digest>,
     pub causal_parents: Vec<Digest>,
     pub correlation: Option<Digest>,
-    pub payload: Arc<PayloadData>,
+    pub payload_digest: Digest,
+    pub payload: Option<Arc<PayloadData>>,
     pub digest: Digest,
 }
 
@@ -257,26 +262,50 @@ impl EventData {
         correlation: Option<Digest>,
         payload: Arc<PayloadData>,
     ) -> Arc<Self> {
-        let kind = payload.kind;
-        let causal_parents = normalize_causal(causal_parents);
-        let digest = Digest::from(canonical::digest(&envelope_canon(
-            kind,
-            &from,
-            &to,
-            &render_parent,
-            &causal_parents,
-            &correlation,
-            &payload.digest,
-        )));
-        Arc::new(Self {
+        let header = Header {
+            kind: payload.kind,
+            from,
+            to,
+            render_parent,
+            causal_parents,
+            correlation,
+            payload_digest: payload.digest.clone(),
+        };
+        Arc::new(header.address(Some(payload)))
+    }
+
+    /// An envelope rebuilt from digests alone: the same address the carrying
+    /// envelope has, with no body to read. Here the kind cannot come from a
+    /// payload, so it is the caller's, as in Ruby's `Event.new`.
+    pub fn detached(
+        kind: Kind,
+        from: Option<String>,
+        to: Option<String>,
+        render_parent: Option<Digest>,
+        causal_parents: Vec<Digest>,
+        correlation: Option<Digest>,
+        payload_digest: Digest,
+    ) -> Arc<Self> {
+        let header = Header {
             kind,
             from,
             to,
             render_parent,
             causal_parents,
             correlation,
-            payload,
-            digest,
+            payload_digest,
+        };
+        Arc::new(header.address(None))
+    }
+
+    /// This envelope carrying `payload`, or `None` when `payload` is not the
+    /// body this address names: a different digest, or a different kind.
+    pub fn attach(&self, payload: &Arc<PayloadData>) -> Option<Arc<Self>> {
+        (payload.digest == self.payload_digest && payload.kind == self.kind).then(|| {
+            Arc::new(Self {
+                payload: Some(Arc::clone(payload)),
+                ..self.clone()
+            })
         })
     }
 
@@ -292,7 +321,7 @@ impl EventData {
             &self.render_parent,
             &self.causal_parents,
             &self.correlation,
-            &self.payload.digest,
+            &self.payload_digest,
         )
     }
 
@@ -300,13 +329,18 @@ impl EventData {
         self.render_parent.is_none()
     }
 
-    /// A field of the carried payload body, or `None` when the body is not an
-    /// object or lacks the key. The :turn constructor always writes `role`,
-    /// `content`, and `meta`, so for every event the FFI can construct these
-    /// lookups hit; the FFI readers raise loudly on the impossible miss rather
-    /// than materializing `nil`.
+    /// The carried payload body, or `None` on a detached envelope.
+    pub fn body(&self) -> Option<&Canon> {
+        self.payload.as_ref().map(|payload| &payload.body)
+    }
+
+    /// A field of the carried payload body, or `None` when the envelope is
+    /// detached, or the body is not an object or lacks the key. The :turn
+    /// constructor always writes `role`, `content`, and `meta`; the FFI
+    /// readers tell a detached envelope from a missing field and raise on both
+    /// rather than materializing `nil`.
     pub fn body_field(&self, key: &str) -> Option<&Canon> {
-        match &self.payload.body {
+        match self.body()? {
             Canon::Object(pairs) => pairs
                 .iter()
                 .find(|(candidate, _)| candidate == key)
@@ -321,6 +355,45 @@ impl EventData {
         match self.body_field("role") {
             Some(Canon::Str(role)) => Some(role),
             _ => None,
+        }
+    }
+}
+
+/// The seven addressed fields, before the address is taken. One place builds
+/// an envelope from them, so the carrying and the detached constructors cannot
+/// come to hash differently.
+struct Header {
+    kind: Kind,
+    from: Option<String>,
+    to: Option<String>,
+    render_parent: Option<Digest>,
+    causal_parents: Vec<Digest>,
+    correlation: Option<Digest>,
+    payload_digest: Digest,
+}
+
+impl Header {
+    fn address(self, payload: Option<Arc<PayloadData>>) -> EventData {
+        let causal_parents = normalize_causal(self.causal_parents);
+        let digest = Digest::from(canonical::digest(&envelope_canon(
+            self.kind,
+            &self.from,
+            &self.to,
+            &self.render_parent,
+            &causal_parents,
+            &self.correlation,
+            &self.payload_digest,
+        )));
+        EventData {
+            kind: self.kind,
+            from: self.from,
+            to: self.to,
+            render_parent: self.render_parent,
+            causal_parents,
+            correlation: self.correlation,
+            payload_digest: self.payload_digest,
+            payload,
+            digest,
         }
     }
 }
@@ -404,6 +477,66 @@ mod tests {
 
     fn digest(text: &str) -> Digest {
         Digest::from(text.to_string())
+    }
+
+    fn carried(node: &EventData) -> &PayloadData {
+        node.payload
+            .as_deref()
+            .expect("a built turn carries its payload")
+    }
+
+    fn detached_twin(node: &EventData) -> Arc<EventData> {
+        EventData::detached(
+            node.kind,
+            node.from.clone(),
+            node.to.clone(),
+            node.render_parent.clone(),
+            node.causal_parents.clone(),
+            node.correlation.clone(),
+            node.payload_digest.clone(),
+        )
+    }
+
+    #[test]
+    fn a_detached_envelope_has_the_carrying_envelopes_address_and_no_body() {
+        let whole = turn(Role::User, "hi");
+        let detached = detached_twin(&whole);
+        assert_eq!(detached.digest, whole.digest);
+        assert!(detached.body().is_none());
+        assert_eq!(detached.role_str(), None);
+        assert_eq!(detached.body_field("content"), None);
+    }
+
+    #[test]
+    fn attaching_its_own_payload_makes_a_detached_envelope_whole() {
+        let whole = turn(Role::User, "hi");
+        let attached = detached_twin(&whole)
+            .attach(whole.payload.as_ref().expect("carried"))
+            .expect("its own payload");
+        assert_eq!(attached.digest, whole.digest);
+        assert_eq!(attached.body(), whole.body());
+    }
+
+    #[test]
+    fn attach_refuses_a_payload_the_address_does_not_name() {
+        let whole = turn(Role::User, "hi");
+        let other = turn(Role::User, "bye");
+        let own = whole.payload.as_ref().expect("carried");
+        let mislabelled = EventData::detached(
+            Kind::Message,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+            whole.payload_digest.clone(),
+        );
+        assert!(
+            detached_twin(&whole)
+                .attach(other.payload.as_ref().expect("carried"))
+                .is_none()
+        );
+        assert!(mislabelled.attach(own).is_none());
     }
 
     #[test]
@@ -545,12 +678,13 @@ mod tests {
             None,
             Vec::new(),
         );
+        let carried = carried(&node);
         assert_eq!(
-            canonical::dump(&payload_canon(node.payload.kind, &node.payload.body)),
+            canonical::dump(&payload_canon(carried.kind, &carried.body)),
             r#"{"body":{"content":[{"text":"hi","type":"text"}],"meta":{"spawned_from":"blake3:xyz"},"role":"user"},"kind":"turn"}"#
         );
         assert_eq!(
-            node.payload.digest.as_str(),
+            carried.digest.as_str(),
             "blake3:57f67b4a16c45bbbcc86e1173fe7456a80085d6d3f23d63022a6f3950b457091"
         );
         assert_eq!(
@@ -578,11 +712,11 @@ mod tests {
     #[test]
     fn the_three_literal_key_lists_are_written_in_sorted_order() {
         let node = turn(Role::User, "hi");
-        let payload = payload_canon(node.payload.kind, &node.payload.body);
+        let payload = payload_canon(carried(&node).kind, &carried(&node).body);
         let envelope = node.payload_canon();
         let lists = [
             keys_of(&payload),
-            keys_of(&node.payload.body),
+            keys_of(&carried(&node).body),
             keys_of(&envelope),
         ];
         assert_eq!(lists[0], ["body", "kind"]);

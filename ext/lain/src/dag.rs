@@ -46,16 +46,219 @@
 //! value. Read one as "the algorithm is a meet-semilattice" and the other as
 //! "the port is faithful"; neither substitutes for the other.
 
+use crate::canonical::{self, Canon};
 use crate::digest::Digest;
-use crate::event::EventData;
+use crate::event::{EventData, PayloadData};
 use rpds::HashTrieMapSync;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-/// The content-addressed object map. A persistent HAMT, so a `fork` shares the
-/// whole prefix and a shared prefix is stored once. Keyed by [`Digest`], not a
-/// bare `String`, so a walk cannot be handed an arbitrary string as an address.
+/// The content-addressed event map every walk reads. A persistent HAMT, so a
+/// `fork` shares the whole prefix and a shared prefix is stored once. Keyed by
+/// [`Digest`], not a bare `String`, so a walk cannot be handed an arbitrary
+/// string as an address.
 pub type StoreMap = HashTrieMapSync<Digest, Arc<EventData>>;
+
+/// Every member of a Store that is not an event, keyed the same way. Never
+/// holds a [`NodeData::Event`]; [`Objects::with`] is what routes.
+pub type MemberMap = HashTrieMapSync<Digest, NodeData>;
+
+/// One object a Store holds, by what the crate can give back for it: it keeps
+/// no Ruby reference, so a fetch answers the arm, never the original object.
+#[derive(Debug, Clone)]
+pub enum NodeData {
+    /// An envelope of any kind, always carrying its payload once stored.
+    Event(Arc<EventData>),
+    /// An envelope's out-of-line body.
+    Payload(Arc<PayloadData>),
+    /// Raw bytes under a tagged header, the scheme `ContentAddressed::Blob` uses.
+    Blob(Arc<BlobData>),
+    /// Any other value addressed by its canonical tree.
+    Canon(Arc<CanonData>),
+}
+
+impl NodeData {
+    /// The address the store keys this object by.
+    pub fn digest(&self) -> &Digest {
+        match self {
+            NodeData::Event(event) => &event.digest,
+            NodeData::Payload(payload) => &payload.digest,
+            NodeData::Blob(blob) => &blob.digest,
+            NodeData::Canon(canon) => &canon.digest,
+        }
+    }
+
+    /// The digests this object needs the store to hold already, each with the
+    /// map it must be in, in the order Ruby `Store#parent_edges` checks them:
+    /// the render edge, the payload edge, then the causal set.
+    pub fn edges(&self) -> Vec<(&Digest, Arm)> {
+        match self {
+            NodeData::Event(event) => event
+                .render_parent
+                .iter()
+                .map(|parent| (parent, Arm::Event))
+                .chain(std::iter::once((&event.payload_digest, Arm::Member)))
+                .chain(
+                    event
+                        .causal_parents
+                        .iter()
+                        .map(|parent| (parent, Arm::Event)),
+                )
+                .collect(),
+            NodeData::Canon(canon) => canon
+                .parent
+                .iter()
+                .map(|parent| (parent, Arm::Member))
+                .collect(),
+            NodeData::Payload(_) | NodeData::Blob(_) => Vec::new(),
+        }
+    }
+}
+
+/// Which of a Store's 2 maps an edge must land in. A render or causal edge is
+/// walked, so it must name an event; anything else names a member.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arm {
+    /// The event map every walk reads.
+    Event,
+    /// The map of everything else.
+    Member,
+}
+
+impl Arm {
+    /// The word a refusal names the missing thing by.
+    pub fn noun(self) -> &'static str {
+        match self {
+            Arm::Event => "event",
+            Arm::Member => "member",
+        }
+    }
+}
+
+/// Bytes addressed git's way: blake3 over `"<tag> <length>\0"` and then the
+/// bytes, so no byte string can spell a canonical dump's address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobData {
+    /// The raw bytes, in no encoding.
+    pub bytes: Vec<u8>,
+    /// The tagged-header address.
+    pub digest: Digest,
+}
+
+impl BlobData {
+    /// Address `bytes` under `tag`, as `ContentAddressed::Blob#initialize` does.
+    pub fn new(tag: &str, bytes: Vec<u8>) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(format!("{tag} {}\0", bytes.len()).as_bytes());
+        hasher.update(&bytes);
+        let digest = Digest::from(format!("blake3:{}", hasher.finalize().to_hex()));
+        Self { bytes, digest }
+    }
+}
+
+/// A value addressed by its canonical tree, the digest recomputed here from
+/// the tree rather than taken on trust.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonData {
+    /// The canonical tree that was hashed.
+    pub tree: Canon,
+    /// `canonical::digest` over `tree`.
+    pub digest: Digest,
+    /// The store edge the tree names, if any; see [`CanonData::new`].
+    pub parent: Option<Digest>,
+}
+
+impl CanonData {
+    /// Address `tree` the way `Canonical.digest` does, and read its edge: the
+    /// top-level `"parent"` digest. Ruby's Store reads a `#parent` edge off any
+    /// member that has one, and `Memory::Index::Node` is the only canonical
+    /// member that does; its key is inside its address, so it cannot be renamed
+    /// out from under this reader.
+    pub fn new(tree: Canon) -> Self {
+        let digest = Digest::from(canonical::digest(&tree));
+        let parent = match &tree {
+            Canon::Object(pairs) => pairs.iter().find_map(|(key, value)| match value {
+                Canon::Str(text) if key == "parent" => Some(Digest::from(text.clone())),
+                _ => None,
+            }),
+            _ => None,
+        };
+        Self {
+            tree,
+            digest,
+            parent,
+        }
+    }
+}
+
+/// The whole of one Store: the events every walk reads, and every other member
+/// beside them. Two maps, one keyspace -- every question here asks both -- so
+/// the walks, and `graph`'s orders over the same map, stay monomorphic.
+#[derive(Debug, Clone)]
+pub struct Objects {
+    /// Envelopes, each carrying its payload.
+    pub events: StoreMap,
+    /// Everything else.
+    pub members: MemberMap,
+}
+
+impl Objects {
+    /// A store holding nothing.
+    pub fn empty() -> Self {
+        Self {
+            events: StoreMap::new_sync(),
+            members: MemberMap::new_sync(),
+        }
+    }
+
+    /// Whether either map holds `digest`.
+    pub fn contains(&self, digest: &Digest) -> bool {
+        self.events.contains_key(digest) || self.members.contains_key(digest)
+    }
+
+    /// Whether the map `arm` names holds `digest`.
+    pub fn holds(&self, digest: &Digest, arm: Arm) -> bool {
+        match arm {
+            Arm::Event => self.events.contains_key(digest),
+            Arm::Member => self.members.contains_key(digest),
+        }
+    }
+
+    /// The object at `digest`, whichever map holds it.
+    pub fn get(&self, digest: &Digest) -> Option<NodeData> {
+        match self.events.get(digest) {
+            Some(event) => Some(NodeData::Event(Arc::clone(event))),
+            None => self.members.get(digest).cloned(),
+        }
+    }
+
+    /// The payload at `digest`, or `None` when the object there is not one.
+    pub fn payload(&self, digest: &Digest) -> Option<&Arc<PayloadData>> {
+        match self.members.get(digest)? {
+            NodeData::Payload(payload) => Some(payload),
+            _ => None,
+        }
+    }
+
+    /// How many objects both maps hold.
+    pub fn size(&self) -> usize {
+        self.events.size() + self.members.size()
+    }
+
+    /// These objects with `node` added, in the map its arm belongs to.
+    pub fn with(&self, node: NodeData) -> Self {
+        match node {
+            NodeData::Event(event) => Self {
+                events: self.events.insert(event.digest.clone(), event),
+                members: self.members.clone(),
+            },
+            member => Self {
+                events: self.events.clone(),
+                members: self.members.insert(member.digest().clone(), member),
+            },
+        }
+    }
+}
 
 /// A walk referenced a digest that is not in the map. A well-formed Timeline
 /// never dangles, so this is corruption, NOT the ordinary end of a chain --

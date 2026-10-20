@@ -162,29 +162,96 @@ fn classify_num(text: &str) -> Result<NumClass, String> {
 struct DanglingPut {
     parent: crate::digest::Digest,
     child: crate::digest::Digest,
+    noun: &'static str,
 }
 
 impl std::fmt::Display for DanglingPut {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "no object {:?} in store: putting {:?} would dangle",
-            self.parent, self.child
+            "no {} {:?} in store: putting {:?} would dangle",
+            self.noun, self.parent, self.child
         )
     }
 }
 
 impl std::error::Error for DanglingPut {}
 
-/// Whether `node` may enter `map` at the public `put` boundary: every parent
-/// edge -- the single render edge, then each causal parent in their pinned
-/// sorted order -- must already be present. The refusal names the FIRST
-/// dangling edge, the same order Ruby `Store#parent_edges` checks (render
-/// parent before causal set; `payload_digest` has no arm here because the Ext
-/// store carries an event's payload inline with its envelope, never as a
-/// separate object). Plain Rust over the locked map -- the caller holds the
-/// Store's lock across this check AND the insert, so a concurrent put cannot
-/// race in between.
+/// A put refused because the object's claimed address is not the one its
+/// content hashes to. Raised as `Store::DigestMismatch`. For a canonical
+/// value whose tree holds a float the check is circular -- the float's text is
+/// the one Ruby rendered -- so the parity corpus, not this, pins floats.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DigestMismatch {
+    claimed: crate::digest::Digest,
+    actual: crate::digest::Digest,
+}
+
+impl std::fmt::Display for DigestMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "object claims {:?} but its content addresses {:?}",
+            self.claimed, self.actual
+        )
+    }
+}
+
+impl std::error::Error for DigestMismatch {}
+
+/// `node`, unless the address its owner claimed differs from the one its
+/// content hashes to here.
+fn verified(
+    node: dag::NodeData,
+    claimed: crate::digest::Digest,
+) -> Result<dag::NodeData, DigestMismatch> {
+    if *node.digest() == claimed {
+        Ok(node)
+    } else {
+        Err(DigestMismatch {
+            claimed,
+            actual: node.digest().clone(),
+        })
+    }
+}
+
+/// Why a `put` was refused. A dangling edge is `Store::MissingObject`, in
+/// Ruby's words; an envelope whose payload edge names something other than its
+/// own payload is `Store::DigestMismatch`, a check Ruby's store does not make
+/// because a Ruby envelope never needs its body attached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PutRefusal {
+    Dangling(DanglingPut),
+    NotItsPayload {
+        payload: crate::digest::Digest,
+        child: crate::digest::Digest,
+    },
+}
+
+impl std::fmt::Display for PutRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PutRefusal::Dangling(dangling) => dangling.fmt(f),
+            PutRefusal::NotItsPayload { payload, child } => write!(
+                f,
+                "object {payload:?} in store is not the payload {child:?} addresses"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PutRefusal {}
+
+/// Whether `node` may enter `objects` at the public `put` boundary: every edge
+/// [`dag::NodeData::edges`] names must already be present, in the map its arm
+/// names. An edge held by neither map is `no object`, in Ruby's words; one held
+/// only by the other map is `no event` or `no member`, a refusal Ruby's single
+/// map cannot make, and without it a walk would later raise over a digest
+/// `key?` says is there. The refusal names the FIRST dangling edge, in the order Ruby
+/// `Store#parent_edges` checks: render parent, payload, then the causal set
+/// in its pinned sorted order. Plain Rust over the locked objects -- the
+/// caller holds the Store's lock across this check AND the insert, so a
+/// concurrent put cannot race in between.
 ///
 /// Every writer passes through here, `Timeline::commit` included. Its render
 /// edge is the committing Timeline's own already-validated head, so that arm
@@ -192,25 +259,46 @@ impl std::error::Error for DanglingPut {}
 /// naming any object at all, so the node as a whole is not inductively safe
 /// and this is the check that says so. Ruby reaches the same guard by
 /// committing through `Store#put` (`lib/lain/store.rb`).
-fn validate_put(map: &dag::StoreMap, node: &event::EventData) -> Result<(), DanglingPut> {
-    let dangling = node
-        .render_parent
-        .iter()
-        .chain(node.causal_parents.iter())
-        .find(|edge| !map.contains_key(*edge));
-    match dangling {
-        Some(edge) => Err(DanglingPut {
+fn validate_put(objects: &dag::Objects, node: &dag::NodeData) -> Result<(), DanglingPut> {
+    match node
+        .edges()
+        .into_iter()
+        .find(|(edge, arm)| !objects.holds(edge, *arm))
+    {
+        Some((edge, arm)) => Err(DanglingPut {
             parent: edge.clone(),
-            child: node.digest.clone(),
+            child: node.digest().clone(),
+            noun: if objects.contains(edge) {
+                arm.noun()
+            } else {
+                "object"
+            },
         }),
         None => Ok(()),
     }
 }
 
-/// The whole `put` decision, as a pure function of the map: validate, insert
-/// if absent, and answer the address either way. Returns the map that results,
-/// never mutating the caller's -- an `rpds` map, so the unchanged return is an
-/// `Arc` bump, not a copy.
+/// `node` as the store keeps it: an envelope always carries its payload once
+/// stored, so every walk can hand back a readable event. A detached envelope
+/// takes the payload its edge names, which `validate_put` has already found.
+fn carrying(objects: &dag::Objects, node: &dag::NodeData) -> Result<dag::NodeData, PutRefusal> {
+    match node {
+        dag::NodeData::Event(event) if event.payload.is_none() => objects
+            .payload(&event.payload_digest)
+            .and_then(|payload| event.attach(payload))
+            .map(dag::NodeData::Event)
+            .ok_or_else(|| PutRefusal::NotItsPayload {
+                payload: event.payload_digest.clone(),
+                child: event.digest.clone(),
+            }),
+        other => Ok(other.clone()),
+    }
+}
+
+/// The whole `put` decision, as a pure function of the objects: validate,
+/// insert if absent, and answer the address either way. Returns the objects
+/// that result, never mutating the caller's -- `rpds` maps, so the unchanged
+/// return is two `Arc` bumps, not a copy.
 ///
 /// **Idempotent**, and that is a law, not an implementation detail: the address
 /// IS the content, so a second put of the same node cannot mean anything
@@ -226,19 +314,19 @@ fn validate_put(map: &dag::StoreMap, node: &event::EventData) -> Result<(), Dang
 /// can race between the check and the insert; its two callers, `Store::put`
 /// and `Timeline::commit`, add only the error translation.
 fn put_into(
-    map: &dag::StoreMap,
-    node: &std::sync::Arc<event::EventData>,
-) -> Result<(dag::StoreMap, crate::digest::Digest), DanglingPut> {
-    let digest = node.digest.clone();
+    objects: &dag::Objects,
+    node: &dag::NodeData,
+) -> Result<(dag::Objects, crate::digest::Digest), PutRefusal> {
+    let digest = node.digest().clone();
     // A digest already present skips validation: the store is append-only, so
     // its edges were checked when it first entered, and re-checking would
     // refuse a legitimate no-op whenever the caller's map has since changed.
-    if map.contains_key(&digest) {
-        return Ok((map.clone(), digest));
+    if objects.contains(&digest) {
+        return Ok((objects.clone(), digest));
     }
-    validate_put(map, node)?;
-    let inserted = map.insert(digest.clone(), std::sync::Arc::clone(node));
-    Ok((inserted, digest))
+    validate_put(objects, node).map_err(PutRefusal::Dangling)?;
+    let kept = carrying(objects, node)?;
+    Ok((objects.with(kept), digest))
 }
 
 /// Walk `count` render-parent edges back from `head`. `None` absorbs -- rewinding
@@ -294,12 +382,12 @@ fn rewind_to(
 
 #[cfg(not(test))]
 mod ffi {
-    use super::{DanglingPut, NumClass, blake3_hex, classify_num, put_into};
+    use super::{NumClass, PutRefusal, blake3_hex, classify_num, put_into, verified};
     use crate::algebra::{
         CausalAncestry, Dominance, MaximalLowerBounds, MeetSemilattice, RenderAncestry,
     };
     use crate::canonical::{self, Canon};
-    use crate::dag::{self, StoreMap};
+    use crate::dag::{self, BlobData, CanonData, NodeData, StoreMap};
     use crate::digest::Digest;
     use crate::event::{EventData, Kind, PayloadData, Role};
     use magnus::{
@@ -323,9 +411,17 @@ mod ffi {
     /// transcode (or reject) a future binary caller. `Canonical` passes a UTF-8
     /// JSON dump, so its bytes are unchanged.
     fn ffi_blake3_hex(bytes: RString) -> String {
+        with_bytes(bytes, blake3_hex)
+    }
+
+    /// `read` over the String's raw bytes, whatever its encoding. The one
+    /// borrow of a Ruby buffer here, shared by the hash and the blob reader, so
+    /// its safety argument is made once. `read` must be plain Rust that never
+    /// calls back into Ruby.
+    fn with_bytes<R>(string: RString, read: impl FnOnce(&[u8]) -> R) -> R {
         // SAFETY: we do not call back into Ruby (which could move or free the
-        // string) between borrowing the slice and hashing it.
-        blake3_hex(unsafe { bytes.as_slice() })
+        // string) between borrowing the slice and `read` returning.
+        read(unsafe { string.as_slice() })
     }
 
     /// Look up `name` as a constant of `scope`, which may be a Module or a
@@ -837,9 +933,9 @@ mod ffi {
             Self::new_turn(ruby, kw)
         }
 
-        /// The kind-general constructor, mirroring Ruby `Event.new`. A detached
-        /// envelope (a digest with no body) has no Rust representation, so it
-        /// is refused rather than half-built.
+        /// The kind-general constructor, mirroring Ruby `Event.new`. A
+        /// payload_digest with no body builds a DETACHED envelope, whose body
+        /// readers refuse.
         fn new_event(ruby: &Ruby, kw: RHash) -> Result<Obj<Self>, Error> {
             type OptionalArgs = (
                 Option<Value>,
@@ -878,24 +974,42 @@ mod ffi {
             ) = args.optional;
             let kind = read_kind(ruby, kind_value)?;
             let payload = Self::read_payload(ruby, kind, digest_value, body_value, carried_value)?;
-            let inner = EventData::new(
-                read_optional_text(ruby, from_value)?,
-                read_optional_text(ruby, to_value)?,
-                read_optional_digest(ruby, parent_value)?,
-                read_causal_parents(ruby, causal_value)?,
-                read_optional_digest(ruby, correlation_value)?,
-                payload,
-            );
+            let from = read_optional_text(ruby, from_value)?;
+            let to = read_optional_text(ruby, to_value)?;
+            let render_parent = read_optional_digest(ruby, parent_value)?;
+            let causal_parents = read_causal_parents(ruby, causal_value)?;
+            let correlation = read_optional_digest(ruby, correlation_value)?;
+            let inner = match payload {
+                Ok(payload) => EventData::new(
+                    from,
+                    to,
+                    render_parent,
+                    causal_parents,
+                    correlation,
+                    payload,
+                ),
+                Err(payload_digest) => EventData::detached(
+                    kind,
+                    from,
+                    to,
+                    render_parent,
+                    causal_parents,
+                    correlation,
+                    payload_digest,
+                ),
+            };
             Ok(Turn::wrap(ruby, inner))
         }
 
+        /// The payload to carry, or `Err` with the digest alone when only a
+        /// digest was passed: the detached case.
         fn read_payload(
             ruby: &Ruby,
             kind: Kind,
             digest: Option<Value>,
             body: Option<Value>,
             carried: Option<Value>,
-        ) -> Result<Arc<PayloadData>, Error> {
+        ) -> Result<Result<Arc<PayloadData>, Digest>, Error> {
             let present = |value: Option<Value>| value.filter(|inner| !inner.is_nil());
             let argument_error =
                 |message: &str| Error::new(ruby.exception_arg_error(), message.to_string());
@@ -906,7 +1020,7 @@ mod ffi {
                 (Some(carried), None, None) => {
                     let payload = Obj::<Payload>::try_convert(carried)?;
                     if payload.inner.kind == kind {
-                        Ok(Arc::clone(&payload.inner))
+                        Ok(Ok(Arc::clone(&payload.inner)))
                     } else {
                         Err(argument_error(
                             "carried_payload's kind must match the event's kind",
@@ -921,12 +1035,15 @@ mod ffi {
                             named.as_str(),
                             payload.digest.as_str()
                         ))),
-                        _ => Ok(payload),
+                        _ => Ok(Ok(payload)),
                     }
                 }
-                (None, Some(_), None) => Err(argument_error(
-                    "an Ext event cannot be built from a payload_digest alone; pass body or carried_payload",
-                )),
+                (None, Some(digest), None) => match read_optional_digest(ruby, Some(digest))? {
+                    Some(digest) => Ok(Err(digest)),
+                    None => Err(argument_error(
+                        "an Event needs its payload: pass payload_digest or carried_payload",
+                    )),
+                },
                 (None, None, None) => Err(argument_error(
                     "an Event needs its payload: pass payload_digest or carried_payload",
                 )),
@@ -968,17 +1085,16 @@ mod ffi {
             let turn = EventData::turn(role, content, parent, meta, correlation, causal_parents);
             // The sender and recipient live in the header, so they change the
             // digest while the payload is reused as built.
-            let inner = if from.is_none() && to.is_none() {
-                turn
-            } else {
-                EventData::new(
+            let inner = match &turn.payload {
+                Some(payload) if from.is_some() || to.is_some() => EventData::new(
                     from,
                     to,
                     turn.render_parent.clone(),
                     turn.causal_parents.clone(),
                     turn.correlation.clone(),
-                    Arc::clone(&turn.payload),
-                )
+                    Arc::clone(payload),
+                ),
+                _ => turn,
             };
             Ok(Turn::wrap(ruby, inner))
         }
@@ -992,11 +1108,17 @@ mod ffi {
         }
 
         fn body(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
-            canon_to_ruby(ruby, &rb_self.inner.payload.body)
+            match rb_self.inner.body() {
+                Some(body) => canon_to_ruby(ruby, body),
+                None => Ok(ruby.qnil().as_value()),
+            }
         }
 
-        fn carried_payload(ruby: &Ruby, rb_self: &Turn) -> Obj<Payload> {
-            Payload::wrap(ruby, Arc::clone(&rb_self.inner.payload))
+        fn carried_payload(ruby: &Ruby, rb_self: &Turn) -> Value {
+            match &rb_self.inner.payload {
+                Some(payload) => Payload::wrap(ruby, Arc::clone(payload)).as_value(),
+                None => ruby.qnil().as_value(),
+            }
         }
 
         fn optional_text_value(ruby: &Ruby, text: &Option<String>) -> Value {
@@ -1006,12 +1128,25 @@ mod ffi {
             }
         }
 
-        /// A carried-body field. The :turn constructor -- the only way this
-        /// class is built -- always writes `role`, `content`, and `meta` into
-        /// the body, so a miss here is unreachable via the FFI surface; it
-        /// raises loudly all the same (`classify_num`'s garbage-arm
-        /// philosophy) rather than materializing `nil`.
+        /// A carried-body field. A detached envelope raises `Lain::Error` in
+        /// Ruby `Event#fetch_body`'s words: its body exists, under
+        /// `payload_digest`, so a `nil` would be a lie. A carrying envelope
+        /// built as a :turn always holds the key; a miss there raises all the
+        /// same rather than materializing `nil`.
         fn body_field<'a>(ruby: &Ruby, rb_self: &'a Turn, key: &str) -> Result<&'a Canon, Error> {
+            if rb_self.inner.payload.is_none() {
+                return Err(lookup_error(
+                    ruby,
+                    &["Lain", "Error"],
+                    format!(
+                        "{} carries no body; it lives in the Store under {}. This envelope was \
+                         rebuilt from digests alone -- fetch that payload through a Store, or \
+                         build it via Event.turn to carry one",
+                        rb_self.inspect(),
+                        rb_self.inner.payload_digest
+                    ),
+                ));
+            }
             rb_self.inner.body_field(key).ok_or_else(|| {
                 Error::new(
                     ruby.exception_runtime_error(),
@@ -1053,7 +1188,7 @@ mod ffi {
         }
 
         fn payload_digest(ruby: &Ruby, rb_self: &Turn) -> Value {
-            frozen_str(ruby, rb_self.inner.payload.digest.as_str())
+            frozen_str(ruby, rb_self.inner.payload_digest.as_str())
         }
 
         fn correlation(ruby: &Ruby, rb_self: &Turn) -> Value {
@@ -1179,14 +1314,15 @@ mod ffi {
         }
     }
 
-    /// An append-only, content-addressed object database over an `rpds` map. The
-    /// map is persistent (structural sharing), and the `Mutex` makes concurrent
-    /// `put`s safe independently of the GVL. Holds no Ruby reference, so no
-    /// `mark`; not shareable, because it is mutable.
+    /// An append-only, content-addressed object database over two `rpds` maps,
+    /// one keyspace (see `dag::Objects`). The maps are persistent (structural
+    /// sharing), and the `Mutex` makes concurrent `put`s safe independently of
+    /// the GVL. Holds no Ruby reference, so no `mark`; not shareable, because
+    /// it is mutable.
     #[derive(TypedData)]
     #[magnus(class = "Lain::Ext::Store", free_immediately)]
     struct Store {
-        objects: Mutex<dag::StoreMap>,
+        objects: Mutex<dag::Objects>,
     }
 
     impl DataTypeFunctions for Store {}
@@ -1194,11 +1330,11 @@ mod ffi {
     impl Store {
         fn new(ruby: &Ruby) -> Obj<Self> {
             ruby.obj_wrap(Store {
-                objects: Mutex::new(dag::StoreMap::new_sync()),
+                objects: Mutex::new(dag::Objects::empty()),
             })
         }
 
-        fn locked(&self) -> std::sync::MutexGuard<'_, dag::StoreMap> {
+        fn locked(&self) -> std::sync::MutexGuard<'_, dag::Objects> {
             self.objects
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1212,40 +1348,56 @@ mod ffi {
         /// guard drops before the caller turns the refusal into a Ruby
         /// exception, which is the discipline `missing_object` documents.
         ///
-        /// `Timeline::commit` shares this rather than an unvalidated fast path.
-        /// It once had one, justified by its only edge being the committing
-        /// Timeline's own validated head -- but a causal parent is a digest the
-        /// CALLER names, so that induction stopped covering the node the moment
-        /// `commit` accepted the keyword.
-        fn insert(&self, node: &Arc<EventData>) -> Result<Digest, DanglingPut> {
-            let mut map = self.locked();
-            put_into(&map, node).map(|(updated, digest)| {
-                *map = updated;
-                digest
-            })
+        /// `prelude` is put first under the same lock, and nothing lands
+        /// unless both do: `Timeline::commit` puts a payload and then the
+        /// envelope that addresses it, as one write.
+        fn insert(
+            &self,
+            prelude: Option<&NodeData>,
+            node: &NodeData,
+        ) -> Result<Digest, PutRefusal> {
+            let mut objects = self.locked();
+            let before = match prelude {
+                Some(first) => put_into(&objects, first)?.0,
+                None => objects.clone(),
+            };
+            let (after, digest) = put_into(&before, node)?;
+            *objects = after;
+            Ok(digest)
         }
 
-        /// Whether the store holds `digest`. Takes a `&Digest` so the internal
-        /// callers (`validate_head`) pass one directly; the Ruby-facing `key?`
-        /// converts its String argument through this.
+        /// Whether the store holds `digest`, in either map. The Ruby-facing
+        /// `key?` converts its String argument through this.
         fn contains(&self, digest: &Digest) -> bool {
-            self.locked().contains_key(digest)
+            self.locked().contains(digest)
         }
 
-        /// The Ruby-facing `put`: [`Store::insert`] plus the error translation.
-        fn put(ruby: &Ruby, rb_self: &Store, turn: &Turn) -> Result<String, Error> {
+        /// The Ruby-facing `put`: read `object` into the arm it belongs to,
+        /// then [`Store::insert`] plus the error translation.
+        fn put(ruby: &Ruby, rb_self: &Store, object: Value) -> Result<String, Error> {
+            let node = read_node(ruby, object)?;
             let digest = rb_self
-                .insert(&turn.inner)
-                .map_err(|dangling| missing_object(ruby, dangling))?;
+                .insert(None, &node)
+                .map_err(|refusal| put_refused(ruby, refusal))?;
             // FFI-out boundary: the digest returns to Ruby as a String.
             Ok(digest.into())
         }
 
-        fn fetch(ruby: &Ruby, rb_self: &Store, digest: String) -> Result<Obj<Turn>, Error> {
+        /// What the crate can give back for each arm, since it holds no Ruby
+        /// reference: an event, a payload, a blob's frozen binary bytes, or a
+        /// deeply frozen canonical tree.
+        fn fetch(ruby: &Ruby, rb_self: &Store, digest: String) -> Result<Value, Error> {
             let digest: Digest = digest.into();
-            let found = rb_self.locked().get(&digest).map(Arc::clone);
+            let found = rb_self.locked().get(&digest);
             match found {
-                Some(inner) => Ok(Turn::wrap(ruby, inner)),
+                Some(NodeData::Event(event)) => Ok(Turn::wrap(ruby, event).as_value()),
+                Some(NodeData::Payload(payload)) => Ok(Payload::wrap(ruby, payload).as_value()),
+                Some(NodeData::Blob(blob)) => {
+                    let bytes = ruby.str_from_slice(&blob.bytes);
+                    bytes.freeze();
+                    Ok(bytes.as_value())
+                }
+                Some(NodeData::Canon(canon)) => canon_to_ruby(ruby, &canon.tree),
                 None => Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "Store", "MissingObject"],
@@ -1254,12 +1406,73 @@ mod ffi {
             }
         }
 
+        /// Whether `digest` names an event, the only object a Timeline head
+        /// or a walk can stand on.
+        fn holds_event(&self, digest: &Digest) -> bool {
+            self.locked().holds(digest, dag::Arm::Event)
+        }
+
         fn key_p(&self, digest: String) -> bool {
             self.contains(&digest.into())
         }
 
         fn size(&self) -> usize {
             self.locked().size()
+        }
+    }
+
+    /// The store arm `object` belongs to. An Ext event or payload is its own
+    /// arm. Anything answering `#canonical` is addressed by that tree, and
+    /// anything answering `#tag` and `#bytes` by the blob scheme; both have
+    /// their digest recomputed here and compared with the one they claim. Ruby
+    /// `Lain::Event` and `Event::Payload` answer neither, so they are refused
+    /// rather than stored as a tree a fetch could not turn back into an event.
+    fn read_node(ruby: &Ruby, object: Value) -> Result<NodeData, Error> {
+        if let Ok(event) = <&Turn>::try_convert(object) {
+            return Ok(NodeData::Event(Arc::clone(&event.inner)));
+        }
+        if let Ok(payload) = <&Payload>::try_convert(object) {
+            return Ok(NodeData::Payload(Arc::clone(&payload.inner)));
+        }
+        let node = if object.respond_to("canonical", false)? {
+            let tree = ruby_to_canon(ruby, object.funcall("canonical", ())?)?;
+            NodeData::Canon(Arc::new(CanonData::new(tree)))
+        } else if object.respond_to("tag", false)? && object.respond_to("bytes", false)? {
+            let tag: RString = object.funcall("tag", ())?;
+            let bytes: RString = object.funcall("bytes", ())?;
+            let tag = validated_utf8(ruby, tag)?;
+            NodeData::Blob(Arc::new(BlobData::new(
+                &tag,
+                with_bytes(bytes, <[u8]>::to_vec),
+            )))
+        } else {
+            let class = object.class().inspect();
+            return Err(Error::new(
+                ruby.exception_type_error(),
+                format!(
+                    "a Store holds events, payloads, blobs and canonical values, not a {class}"
+                ),
+            ));
+        };
+        let claimed: RString = object.funcall("digest", ())?;
+        verified(node, Digest::from(validated_utf8(ruby, claimed)?)).map_err(|mismatch| {
+            lookup_error(
+                ruby,
+                &["Lain", "Ext", "Store", "DigestMismatch"],
+                mismatch.to_string(),
+            )
+        })
+    }
+
+    /// A refused put as the Ruby exception its cause names.
+    fn put_refused(ruby: &Ruby, refusal: PutRefusal) -> Error {
+        match refusal {
+            PutRefusal::Dangling(dangling) => missing_object(ruby, dangling),
+            mislabelled @ PutRefusal::NotItsPayload { .. } => lookup_error(
+                ruby,
+                &["Lain", "Ext", "Store", "DigestMismatch"],
+                mislabelled.to_string(),
+            ),
         }
     }
 
@@ -1378,7 +1591,7 @@ mod ffi {
                     let store: &Store = store_ref(ruby, rb_self)?;
                     // Bound to a `let` so the guard drops before the `match`:
                     // the `None` arm calls into Ruby (see `missing_object`).
-                    let found = store.locked().get(digest).map(Arc::clone);
+                    let found = store.locked().events.get(digest).map(Arc::clone);
                     match found {
                         Some(inner) => Ok(Turn::wrap(ruby, inner).as_value()),
                         None => Err(lookup_error(
@@ -1426,9 +1639,13 @@ mod ffi {
             // parent is a caller-supplied digest naming any object at all, so
             // that induction no longer covers the node. Ruby gets the same
             // check for free by committing through `Store#put`.
+            let payload = turn
+                .payload
+                .as_ref()
+                .map(|payload| NodeData::Payload(Arc::clone(payload)));
             let digest = store
-                .insert(&turn)
-                .map_err(|dangling| missing_object(ruby, dangling))?;
+                .insert(payload.as_ref(), &NodeData::Event(turn))
+                .map_err(|refusal| put_refused(ruby, refusal))?;
             Ok(Timeline::wrap(ruby, Some(digest), store_value))
         }
 
@@ -1452,7 +1669,7 @@ mod ffi {
                     // `ok_or_else` reaches Ruby (see `missing_object`); chained
                     // onto the same expression, the temporary guard would still
                     // be alive when `const_get` ran.
-                    let found = store.locked().get(head_digest).map(Arc::clone);
+                    let found = store.locked().events.get(head_digest).map(Arc::clone);
                     let node = found.ok_or_else(|| {
                         missing_object(ruby, dag::DanglingDigest(head_digest.clone()))
                     })?;
@@ -1508,7 +1725,7 @@ mod ffi {
             // exception only afterwards (see `missing_object`).
             let walked = {
                 let map = store.locked();
-                super::rewind_to(&map, rb_self.head.clone(), count)
+                super::rewind_to(&map.events, rb_self.head.clone(), count)
             };
             let digest = walked.map_err(|e| missing_object(ruby, e))?;
             // `parent_of` validates the node stepped FROM, never the digest
@@ -1553,7 +1770,7 @@ mod ffi {
             }
 
             let store: &Store = store_ref(ruby, &rb_self)?;
-            let walked = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref());
+            let walked = dag::ancestor_turns(&store.locked().events, rb_self.head.as_ref());
             let arcs = walked.map_err(|e| missing_object(ruby, e))?;
             let turns = turns_to_array(ruby, arcs)?;
             // Guard dropped with the statement above, so these yields re-enter
@@ -1572,7 +1789,7 @@ mod ffi {
 
         fn to_a(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
             let store: &Store = store_ref(ruby, rb_self)?;
-            let walked = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref());
+            let walked = dag::ancestor_turns(&store.locked().events, rb_self.head.as_ref());
             let mut arcs = walked.map_err(|e| missing_object(ruby, e))?;
             arcs.reverse();
             turns_to_array(ruby, arcs)
@@ -1580,7 +1797,7 @@ mod ffi {
 
         fn ancestor_digests(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
             let store: &Store = store_ref(ruby, rb_self)?;
-            let walked = dag::ancestor_digests(&store.locked(), rb_self.head.as_ref());
+            let walked = dag::ancestor_digests(&store.locked().events, rb_self.head.as_ref());
             let digests = walked.map_err(|e| missing_object(ruby, e))?;
             let array = ruby.ary_new_capa(digests.len());
             for digest in digests {
@@ -1595,7 +1812,7 @@ mod ffi {
             // `Vec<Arc<EventData>>`. The `let` also drops the guard before the
             // translation: the pure answer is computed under the lock, Ruby is
             // spoken to after it.
-            let counted = dag::length(&store.locked(), rb_self.head.as_ref());
+            let counted = dag::length(&store.locked().events, rb_self.head.as_ref());
             counted.map_err(|e| missing_object(ruby, e))
         }
 
@@ -1604,7 +1821,7 @@ mod ffi {
             let store: &Store = store_ref(ruby, rb_self)?;
             // Stops at the hit rather than walking to the root; guard dropped
             // before the error translation, as above.
-            let found = dag::includes(&store.locked(), rb_self.head.as_ref(), &needle);
+            let found = dag::includes(&store.locked().events, rb_self.head.as_ref(), &needle);
             found.map_err(|e| missing_object(ruby, e))
         }
 
@@ -1632,7 +1849,7 @@ mod ffi {
             let store: &Store = store_ref(ruby, &rb_self)?;
             // Locked read in its own statement, translated on the next line --
             // see `ancestors` for why the guard must be gone first.
-            let walked = S::meet(&store.locked(), &rb_self.head, &other.head);
+            let walked = S::meet(&store.locked().events, &rb_self.head, &other.head);
             let common = walked.map_err(|e| missing_object(ruby, e))?;
             Ok(Timeline::wrap(ruby, common, store_value))
         }
@@ -1646,7 +1863,7 @@ mod ffi {
         {
             ensure_same_store(ruby, rb_self, other)?;
             let store: &Store = store_ref(ruby, rb_self)?;
-            let walked = S::below(&store.locked(), &rb_self.head, &other.head);
+            let walked = S::below(&store.locked().events, &rb_self.head, &other.head);
             walked.map_err(|e| missing_object(ruby, e))
         }
 
@@ -1722,7 +1939,7 @@ mod ffi {
         ) -> Result<RArray, Error> {
             ensure_same_store(ruby, rb_self, other)?;
             let store: &Store = store_ref(ruby, rb_self)?;
-            let walked = CausalAncestry::meets(&store.locked(), &rb_self.head, &other.head);
+            let walked = CausalAncestry::meets(&store.locked().events, &rb_self.head, &other.head);
             let bounds = walked.map_err(|e| missing_object(ruby, e))?;
             let array = ruby.ary_new_capa(bounds.len());
             for digest in &bounds {
@@ -1741,7 +1958,11 @@ mod ffi {
         ) -> Result<Value, Error> {
             ensure_same_store(ruby, &rb_self, other)?;
             let store: &Store = store_ref(ruby, &rb_self)?;
-            let walked = dag::meet(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
+            let walked = dag::meet(
+                &store.locked().events,
+                rb_self.head.as_ref(),
+                other.head.as_ref(),
+            );
             let common = walked.map_err(|e| missing_object(ruby, e))?;
             match common {
                 None => Ok(ruby.qnil().as_value()),
@@ -1757,7 +1978,7 @@ mod ffi {
                 Some(digest) => {
                     // Its own statement, so the guard is gone before the loud
                     // arm reaches Ruby (see `missing_object`).
-                    let found = store.locked().get(&digest).map(Arc::clone);
+                    let found = store.locked().events.get(&digest).map(Arc::clone);
                     let inner = found
                         .ok_or_else(|| missing_object(ruby, dag::DanglingDigest(digest.clone())))?;
                     Ok(Turn::wrap(ruby, inner).as_value())
@@ -1778,7 +1999,9 @@ mod ffi {
                     // not zero, so it renders as `(?)` rather than a false `(0)`.
                     let length = store_ref(ruby, rb_self)
                         .ok()
-                        .and_then(|store: &Store| dag::length(&store.locked(), Some(digest)).ok())
+                        .and_then(|store: &Store| {
+                            dag::length(&store.locked().events, Some(digest)).ok()
+                        })
                         .map(|count| count.to_string())
                         .unwrap_or_else(|| "?".to_string());
                     format!("{prefix}... ({length})")
@@ -1802,7 +2025,7 @@ mod ffi {
     }
 
     /// Raise `Store::MissingObject` unless `head` (when not a root/empty `None`)
-    /// names an object the store holds. This is the landed-head validation both
+    /// names an event the store holds. This is the landed-head validation both
     /// `checkout` and `rewind` perform before wrapping a Timeline, exactly as
     /// every Ruby Timeline lands through `Timeline#initialize`'s check.
     ///
@@ -1810,19 +2033,25 @@ mod ffi {
     /// `Timeline#initialize` (lib/lain/timeline.rb), whose message is
     /// `no object #{digest.inspect}`, NOT `Store#fetch`'s longer form. The two
     /// Ruby sites differ, so the Ext sites match them per-site rather than
-    /// unifying.
+    /// unifying. A head the store holds as something other than an event
+    /// says `no event`, the word `validate_put` uses for the same mismatch.
     fn validate_head(ruby: &Ruby, store: &Store, head: &Option<Digest>) -> Result<(), Error> {
-        match head {
-            // `store.contains` takes a `&Digest` directly -- no round-trip
-            // through a String. `{target:?}` is transparent, so the message is
-            // byte-identical to Ruby `Timeline#initialize`'s.
-            Some(target) if !store.contains(target) => Err(lookup_error(
-                ruby,
-                &["Lain", "Ext", "Store", "MissingObject"],
-                format!("no object {target:?}"),
-            )),
-            _ => Ok(()),
+        let Some(target) = head else { return Ok(()) };
+        if store.holds_event(target) {
+            return Ok(());
         }
+        let noun = if store.contains(target) {
+            "event"
+        } else {
+            "object"
+        };
+        // `{target:?}` is transparent, so the message is byte-identical to
+        // Ruby `Timeline#initialize`'s.
+        Err(lookup_error(
+            ruby,
+            &["Lain", "Ext", "Store", "MissingObject"],
+            format!("no {noun} {target:?}"),
+        ))
     }
 
     /// Raise `Timeline::CrossStore` unless both Timelines name the SAME Store
@@ -2056,6 +2285,7 @@ mod ffi {
 
         let store = ext.define_class("Store", ruby.class_object())?;
         store.define_error("MissingObject", lain_error)?;
+        store.define_error("DigestMismatch", lain_error)?;
         store.define_singleton_method("new", function!(Store::new, 0))?;
         store.define_method("put", method!(Store::put, 1))?;
         store.define_method("fetch", method!(Store::fetch, 1))?;
@@ -2181,11 +2411,11 @@ mod num_class_tests {
 
 #[cfg(test)]
 mod put_tests {
-    use super::{DanglingPut, put_into, validate_put};
+    use super::{DanglingPut, DigestMismatch, PutRefusal, put_into, validate_put, verified};
     use crate::canonical::{Canon, build_object};
-    use crate::dag::StoreMap;
+    use crate::dag::{BlobData, CanonData, NodeData, Objects};
     use crate::digest::Digest;
-    use crate::event::{EventData, Role};
+    use crate::event::{EventData, Kind, Role};
     use std::sync::Arc;
 
     fn text(body: &str) -> Canon {
@@ -2194,7 +2424,11 @@ mod put_tests {
         )])
     }
 
-    fn node(body: &str, parent: Option<&Digest>) -> Arc<EventData> {
+    fn digest(text: &str) -> Digest {
+        Digest::from(text.to_string())
+    }
+
+    fn event(body: &str, parent: Option<&Digest>) -> Arc<EventData> {
         EventData::turn(
             Role::User,
             text(body),
@@ -2205,30 +2439,88 @@ mod put_tests {
         )
     }
 
+    fn node(body: &str, parent: Option<&Digest>) -> NodeData {
+        NodeData::Event(event(body, parent))
+    }
+
+    fn payload_of(node: &NodeData) -> NodeData {
+        match node {
+            NodeData::Event(event) => {
+                NodeData::Payload(Arc::clone(event.payload.as_ref().expect("carried")))
+            }
+            other => panic!("expected an event, got {other:?}"),
+        }
+    }
+
+    fn detached(event: &EventData) -> NodeData {
+        NodeData::Event(EventData::detached(
+            event.kind,
+            None,
+            None,
+            event.render_parent.clone(),
+            event.causal_parents.clone(),
+            None,
+            event.payload_digest.clone(),
+        ))
+    }
+
+    fn put_all(objects: Objects, nodes: &[NodeData]) -> Objects {
+        nodes.iter().fold(objects, |objects, node| {
+            put_into(&objects, node).expect("a well-ordered put").0
+        })
+    }
+
+    fn holding(nodes: &[&NodeData]) -> Objects {
+        let ordered: Vec<NodeData> = nodes
+            .iter()
+            .flat_map(|node| [payload_of(node), (*node).clone()])
+            .collect();
+        put_all(Objects::empty(), &ordered)
+    }
+
     #[test]
-    fn accepts_a_root() {
-        assert_eq!(
-            validate_put(&StoreMap::new_sync(), &node("a", None)),
-            Ok(())
-        );
+    fn accepts_a_root_whose_payload_is_present() {
+        let root = node("a", None);
+        let objects = put_all(Objects::empty(), &[payload_of(&root)]);
+        assert_eq!(validate_put(&objects, &root), Ok(()));
     }
 
     #[test]
     fn accepts_a_child_whose_parent_is_present() {
         let root = node("a", None);
-        let map = StoreMap::new_sync().insert(root.digest.clone(), Arc::clone(&root));
-        assert_eq!(validate_put(&map, &node("b", Some(&root.digest))), Ok(()));
+        let child = node("b", Some(root.digest()));
+        let objects = put_all(holding(&[&root]), &[payload_of(&child)]);
+        assert_eq!(validate_put(&objects, &child), Ok(()));
     }
 
     #[test]
     fn refuses_a_child_whose_parent_is_absent() {
-        let absent = Digest::from("blake3:absent".to_string());
+        let absent = digest("blake3:absent");
         let child = node("b", Some(&absent));
         assert_eq!(
-            validate_put(&StoreMap::new_sync(), &child),
+            validate_put(&Objects::empty(), &child),
             Err(DanglingPut {
                 parent: absent,
-                child: child.digest.clone(),
+                child: child.digest().clone(),
+                noun: "object",
+            })
+        );
+    }
+
+    // The payload is a Store edge, checked after the render edge and before
+    // the causal set -- Ruby `Store#parent_edges`' order.
+    #[test]
+    fn refuses_an_envelope_whose_payload_is_absent() {
+        let root = node("a", None);
+        let NodeData::Event(event) = &root else {
+            panic!("built an event")
+        };
+        assert_eq!(
+            validate_put(&Objects::empty(), &root),
+            Err(DanglingPut {
+                parent: event.payload_digest.clone(),
+                child: event.digest.clone(),
+                noun: "object",
             })
         );
     }
@@ -2239,23 +2531,197 @@ mod put_tests {
     #[test]
     fn refuses_a_child_whose_causal_parent_is_absent() {
         let root = node("a", None);
-        let map = StoreMap::new_sync().insert(root.digest.clone(), Arc::clone(&root));
-        let child = EventData::turn(
+        let child = NodeData::Event(EventData::turn(
             Role::User,
             text("b"),
-            Some(root.digest.clone()),
+            Some(root.digest().clone()),
             Canon::Object(vec![]),
             None,
-            vec![
-                Digest::from("blake3:msg-b".to_string()),
-                Digest::from("blake3:msg-a".to_string()),
-            ],
-        );
+            vec![digest("blake3:msg-b"), digest("blake3:msg-a")],
+        ));
+        let objects = put_all(holding(&[&root]), &[payload_of(&child)]);
         assert_eq!(
-            validate_put(&map, &child),
+            validate_put(&objects, &child),
             Err(DanglingPut {
-                parent: Digest::from("blake3:msg-a".to_string()),
-                child: child.digest.clone(),
+                parent: digest("blake3:msg-a"),
+                child: child.digest().clone(),
+                noun: "object",
+            })
+        );
+    }
+
+    #[test]
+    fn a_canonical_parent_is_an_edge_and_nothing_else_is() {
+        let parent_tree = |parent: &str| {
+            Canon::Object(
+                build_object(vec![
+                    ("id".to_string(), Canon::Str("a".to_string())),
+                    ("parent".to_string(), Canon::Str(parent.to_string())),
+                ])
+                .unwrap(),
+            )
+        };
+        let orphan = NodeData::Canon(Arc::new(CanonData::new(parent_tree("blake3:absent"))));
+        let item = NodeData::Canon(Arc::new(CanonData::new(Canon::Str("item".to_string()))));
+        assert_eq!(
+            validate_put(&Objects::empty(), &orphan),
+            Err(DanglingPut {
+                parent: digest("blake3:absent"),
+                child: orphan.digest().clone(),
+                noun: "object",
+            })
+        );
+        assert_eq!(validate_put(&Objects::empty(), &item), Ok(()));
+    }
+
+    #[test]
+    fn a_causal_parent_that_is_a_payload_is_refused_as_no_event() {
+        let root = node("a", None);
+        let held = payload_of(&root);
+        let child = NodeData::Event(EventData::turn(
+            Role::User,
+            text("b"),
+            None,
+            Canon::Object(vec![]),
+            None,
+            vec![held.digest().clone()],
+        ));
+        let objects = put_all(Objects::empty(), &[held.clone(), payload_of(&child)]);
+        assert_eq!(
+            validate_put(&objects, &child),
+            Err(DanglingPut {
+                parent: held.digest().clone(),
+                child: child.digest().clone(),
+                noun: "event",
+            })
+        );
+    }
+
+    #[test]
+    fn a_render_parent_that_is_a_canonical_value_is_refused_as_no_event() {
+        let tree = NodeData::Canon(Arc::new(CanonData::new(Canon::Str("item".to_string()))));
+        let child = node("b", Some(tree.digest()));
+        let objects = put_all(Objects::empty(), &[tree.clone(), payload_of(&child)]);
+        assert_eq!(
+            validate_put(&objects, &child),
+            Err(DanglingPut {
+                parent: tree.digest().clone(),
+                child: child.digest().clone(),
+                noun: "event",
+            })
+        );
+    }
+
+    #[test]
+    fn a_payload_edge_or_canonical_parent_naming_an_event_is_refused_as_no_member() {
+        let root = node("a", None);
+        let NodeData::Event(event) = &root else {
+            panic!("built an event")
+        };
+        let objects = holding(&[&root]);
+        let pointing = NodeData::Event(EventData::detached(
+            Kind::Turn,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+            event.digest.clone(),
+        ));
+        let tree = Canon::Object(
+            build_object(vec![(
+                "parent".to_string(),
+                Canon::Str(event.digest.to_string()),
+            )])
+            .unwrap(),
+        );
+        let orphan = NodeData::Canon(Arc::new(CanonData::new(tree)));
+        for child in [pointing, orphan] {
+            assert_eq!(
+                validate_put(&objects, &child),
+                Err(DanglingPut {
+                    parent: event.digest.clone(),
+                    child: child.digest().clone(),
+                    noun: "member",
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn a_detached_envelope_is_stored_carrying_the_payload_its_edge_names() {
+        let whole = node("a", None);
+        let NodeData::Event(carrying) = &whole else {
+            panic!("built an event")
+        };
+        let objects = put_all(Objects::empty(), &[payload_of(&whole), detached(carrying)]);
+        match objects.get(whole.digest()) {
+            Some(NodeData::Event(stored)) => assert_eq!(stored.body(), carrying.body()),
+            other => panic!("expected the envelope, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_detached_envelope_whose_payload_edge_names_another_kind_is_refused() {
+        let whole = node("a", None);
+        let NodeData::Event(carrying) = &whole else {
+            panic!("built an event")
+        };
+        let mislabelled = NodeData::Event(EventData::detached(
+            Kind::Message,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+            carrying.payload_digest.clone(),
+        ));
+        let objects = put_all(Objects::empty(), &[payload_of(&whole)]);
+        assert_eq!(
+            put_into(&objects, &mislabelled).map(|(_, digest)| digest),
+            Err(PutRefusal::NotItsPayload {
+                payload: carrying.payload_digest.clone(),
+                child: mislabelled.digest().clone(),
+            })
+        );
+    }
+
+    #[test]
+    fn every_arm_shares_one_keyspace_and_one_count() {
+        let root = node("a", None);
+        let blob = NodeData::Blob(Arc::new(BlobData::new("blob", b"bytes".to_vec())));
+        let tree = NodeData::Canon(Arc::new(CanonData::new(Canon::Str("tree".to_string()))));
+        let objects = put_all(holding(&[&root]), &[blob.clone(), tree.clone()]);
+        assert_eq!(objects.size(), 4);
+        for held in [&root, &payload_of(&root), &blob, &tree] {
+            assert!(objects.contains(held.digest()));
+        }
+    }
+
+    #[test]
+    fn a_blob_is_addressed_by_its_tagged_header() {
+        // `Lain::Workspace::Snapshot::Blob.new(bytes: "puts 1\n").digest`.
+        let blob = BlobData::new("blob", b"puts 1\n".to_vec());
+        assert_eq!(
+            blob.digest.as_str(),
+            "blake3:c1fe670e201b743d8e4d2edc3fdf1441e07720eb15601312bcab7045ded1b3c0"
+        );
+        assert_ne!(
+            BlobData::new("attachment", b"puts 1\n".to_vec()).digest,
+            blob.digest
+        );
+    }
+
+    #[test]
+    fn a_claimed_digest_that_is_not_the_contents_is_refused() {
+        let tree = NodeData::Canon(Arc::new(CanonData::new(Canon::Str("tree".to_string()))));
+        let actual = tree.digest().clone();
+        assert!(verified(tree.clone(), actual.clone()).is_ok());
+        assert_eq!(
+            verified(tree, digest("blake3:forged")).map(|node| node.digest().clone()),
+            Err(DigestMismatch {
+                claimed: digest("blake3:forged"),
+                actual,
             })
         );
     }
@@ -2275,8 +2741,8 @@ mod put_tests {
 
     #[test]
     fn putting_the_same_object_twice_is_idempotent() {
-        let object = node("a", None);
-        let (once, first) = put_into(&StoreMap::new_sync(), &object).expect("a root put");
+        let object = payload_of(&node("a", None));
+        let (once, first) = put_into(&Objects::empty(), &object).expect("a payload put");
         let (twice, second) = put_into(&once, &object).expect("a re-put");
         assert_eq!(first, second);
         assert_eq!(twice.size(), 1);
@@ -2286,8 +2752,10 @@ mod put_tests {
     fn structurally_equal_content_is_one_object() {
         // Two nodes built independently from the same body: content-addressing
         // means they share an address, so the second put cannot grow the store.
-        let (once, first) = put_into(&StoreMap::new_sync(), &node("a", None)).expect("first put");
-        let (twice, second) = put_into(&once, &node("a", None)).expect("an equal-content put");
+        let (once, first) =
+            put_into(&Objects::empty(), &payload_of(&node("a", None))).expect("first put");
+        let (twice, second) =
+            put_into(&once, &payload_of(&node("a", None))).expect("an equal-content put");
         assert_eq!(first, second);
         assert_eq!(twice.size(), 1);
     }
@@ -2296,25 +2764,28 @@ mod put_tests {
     // Characterization, NOT a law. Below the banner above deliberately.
     // -------------------------------------------------------------------
 
-    // Characterizes the `contains_key` shortcut in `put_into`: a digest already
+    // Characterizes the `contains` shortcut in `put_into`: a digest already
     // present returns early, so the re-put never revalidates its edges. The
-    // shipped append-only `Store` cannot reach the map this builds -- only
-    // `StoreMap::remove` can drop a parent out from under a child -- so this
+    // shipped append-only `Store` cannot reach the objects this builds -- only
+    // removing from a map can drop a parent out from under a child -- so this
     // pins an implementation choice, not a property of the store. It is NOT a
     // third store law: `store_laws.rb` declares two, and Rust asserts that same
     // two (see `ext/lain/CLAUDE.md`, "a ported structure inherits the Ruby
     // declaration"). Kept because the shortcut is what makes a re-put idempotent
-    // against a map whose edges have since changed, and a future refactor that
+    // against objects whose edges have since changed, and a future refactor that
     // dropped it would otherwise go unnoticed.
     #[test]
     fn a_re_put_returns_early_without_revalidating_edges() {
         let root = node("a", None);
-        let child = node("b", Some(&root.digest));
-        let map = StoreMap::new_sync().insert(root.digest.clone(), Arc::clone(&root));
-        let (with_child, first) = put_into(&map, &child).expect("a child of a present parent");
-        // Re-put against a map that no longer holds the parent: still accepted,
-        // still one write, still the same address.
-        let orphaned = with_child.remove(&root.digest);
+        let child = node("b", Some(root.digest()));
+        let with_child = put_all(holding(&[&root]), &[payload_of(&child), child.clone()]);
+        let first = child.digest().clone();
+        // Re-put against objects that no longer hold the parent: still
+        // accepted, still one write, still the same address.
+        let orphaned = Objects {
+            events: with_child.events.remove(root.digest()),
+            members: with_child.members.clone(),
+        };
         let (again, second) = put_into(&orphaned, &child).expect("a re-put skips validation");
         assert_eq!(first, second);
         assert_eq!(again.size(), orphaned.size());
@@ -2326,15 +2797,15 @@ mod put_tests {
     // byte-identical for plain digests.
     #[test]
     fn dangling_put_message_matches_ruby_string_inspect() {
-        let child = node("b", Some(&Digest::from("blake3:absent".to_string())));
-        let message = validate_put(&StoreMap::new_sync(), &child)
+        let child = node("b", Some(&digest("blake3:absent")));
+        let message = validate_put(&Objects::empty(), &child)
             .unwrap_err()
             .to_string();
         assert_eq!(
             message,
             format!(
                 r#"no object "blake3:absent" in store: putting "{}" would dangle"#,
-                child.digest
+                child.digest()
             )
         );
     }

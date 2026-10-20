@@ -44,8 +44,8 @@ RSpec.describe "Lain::Ext::Timeline speculation" do
 
       candidates = %w[alpha beta gamma delta].map { |body| say(base.fork, body) }
 
-      # O(1) fork + shared prefix stored once: only the N new heads are written.
-      expect(store.size).to eq(before + candidates.length)
+      # O(1) fork + shared prefix stored once: only the N new heads and their payloads are written.
+      expect(store.size).to eq(before + (2 * candidates.length))
 
       # Every candidate meets the base back AT the base -- they share the whole
       # prefix and diverge only at their own head.

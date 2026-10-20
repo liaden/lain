@@ -156,6 +156,20 @@ RSpec.describe Lain::Memory::Index do
                      non_member: -> { index.write(item("a")).root }
   end
 
+  describe "over the Rust store" do
+    let(:store) { Lain::Ext::Store.new }
+    let(:items) { [item("a", "one"), item("b", "two"), item("c", "three")] }
+    let(:written) { items.inject(index) { |acc, each| acc.write(each) } }
+
+    it "recovers every item's id and digest" do
+      read_back = described_class.new(root: written.root, store:)
+
+      expect(read_back.to_h.transform_values(&:digest)).to eq(items.to_h { |each| [each.id, each.digest] })
+      expect(read_back.fetch("b")).to eq(items[1])
+      expect(read_back.key?("c")).to be(true)
+    end
+  end
+
   describe "Node" do
     def node(id: "a", item: "blake3:abc", parent: nil)
       described_class::Node.new(id:, item:, parent:)
@@ -164,6 +178,12 @@ RSpec.describe Lain::Memory::Index do
     it "exposes the item's digest, not its content" do
       one = index.write(item("a"))
       expect(store.fetch(store.fetch(one.root).item_digest)).to eq(item("a"))
+    end
+
+    it "is rebuilt from its canonical tree, or handed back as it is" do
+      expect(described_class::Node.from_canon(node(parent: "blake3:p").canonical)).to eq(node(parent: "blake3:p"))
+      one = node
+      expect(described_class::Node.from_canon(one)).to equal(one)
     end
 
     describe "equality (Regular)" do

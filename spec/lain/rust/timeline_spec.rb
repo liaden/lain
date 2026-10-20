@@ -44,6 +44,14 @@ RSpec.describe Lain::Ext::Timeline do
         .to raise_error(Lain::Ext::Store::MissingObject, /no object "blake3:nope"/)
     end
 
+    it "refuses a head that is not an event, though the store holds it" do
+      payload = three.head.carried_payload
+
+      expect(store.key?(payload.digest)).to be(true)
+      expect { described_class.new(head_digest: payload.digest, store:) }
+        .to raise_error(Lain::Ext::Store::MissingObject, "no event #{payload.digest.inspect}")
+    end
+
     it "refuses a store that is not a Store" do
       expect { described_class.new(head_digest: nil, store: Object.new) }.to raise_error(TypeError)
     end
@@ -68,6 +76,15 @@ RSpec.describe Lain::Ext::Timeline do
   end
 
   describe "#commit" do
+    it "writes nothing when it is refused" do
+      base = three
+      before = store.size
+
+      expect { base.commit(role: :user, content: text("d"), causal_parents: ["blake3:absent"]) }
+        .to raise_error(Lain::Ext::Store::MissingObject)
+      expect(store.size).to eq(before)
+    end
+
     it "advances the head and leaves the receiver untouched" do
       one = say(timeline, "a")
       expect(one.head.content).to eq(text("a"))
@@ -246,7 +263,10 @@ RSpec.describe Lain::Ext::Timeline do
       left = say(base.fork, "left")
       right = say(base.fork, "right")
 
-      expect(store.size).to eq(4) # a, b, left, right
+      # Four turns, each with its out-of-line payload -- eight objects, the
+      # count the Ruby store holds for the same commits.
+      expect(store.size).to eq(8)
+      expect(store.key?(left.head.payload_digest)).to be(true)
       expect(left.rewind).to eq(right.rewind)
       expect(left).not_to eq(right)
     end

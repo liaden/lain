@@ -39,6 +39,19 @@ module Lain
         validates :id, :description, format: { without: LINE_BREAK, message: "must be one line" }
       end
 
+      # The item a canonical tree addresses, which is what a store that keeps
+      # no Ruby objects answers on fetch. A store that keeps them answers the
+      # item itself, and that is handed back as it is.
+      #
+      # @param canon [Hash, Item] a {#canonical} tree, or an item
+      # @return [Item]
+      def self.from_canon(canon)
+        return canon if canon.is_a?(self)
+
+        new(id: canon.fetch("id"), description: canon.fetch("description"), body: canon.fetch("body"),
+            author: Author.from(canon["author"]))
+      end
+
       # The keywords stay spelled out rather than collected as `**attrs`: a
       # declaration has no arity, so a forgotten `body:` would settle to nil and
       # be digested instead of refused.
@@ -56,6 +69,7 @@ module Lain
         base = { "id" => id, "description" => description, "body" => body }
         author.chat? ? base : base.merge("author" => author.to_h)
       end
+      alias canonical payload
 
       def to_s
         "#<Lain::Memory::Item #{id} #{Canonical.abbreviate(digest)}...>"

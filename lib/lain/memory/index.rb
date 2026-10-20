@@ -32,6 +32,17 @@ module Lain
 
         attr_reader :id, :item_digest, :parent, :digest
 
+        # The node a canonical tree addresses, or a node handed back as it is;
+        # see {Item.from_canon}.
+        #
+        # @param canon [Hash, Node] a {#canonical} tree, or a node
+        # @return [Node]
+        def self.from_canon(canon)
+          return canon if canon.is_a?(self)
+
+          new(id: canon.fetch("id"), item: canon.fetch("item"), parent: canon.fetch("parent"))
+        end
+
         def initialize(id:, item:, parent: nil)
           @id = Canonical.normalize(id)
           @item_digest = Canonical.normalize(item)
@@ -47,6 +58,7 @@ module Lain
         def payload
           { "id" => id, "item" => item_digest, "parent" => parent }
         end
+        alias canonical payload
 
         def to_s
           "#<Lain::Memory::Index::Node #{id} #{Canonical.abbreviate(digest)}...>"
@@ -92,7 +104,7 @@ module Lain
 
         digest = root
         while digest
-          node = store.fetch(digest)
+          node = Node.from_canon(store.fetch(digest))
           yield node
           digest = node.parent
         end
@@ -103,7 +115,7 @@ module Lain
       # superseded items are never fetched. Named #to_h rather than #entries
       # so Enumerable#entries keeps its meaning (see #each).
       def to_h
-        nodes.uniq(&:id).to_h { |node| [node.id, store.fetch(node.item_digest)] }
+        nodes.uniq(&:id).to_h { |node| [node.id, item_at(node)] }
       end
 
       # #find short-circuits at the head-most match, so resolving one id never
@@ -112,7 +124,7 @@ module Lain
         node = nodes.find { |candidate| candidate.id == id }
         raise UnknownId, "no item #{id.inspect} in index" unless node
 
-        store.fetch(node.item_digest)
+        item_at(node)
       end
 
       # Membership by id. Not #include?: that is Enumerable's, and it answers
@@ -143,6 +155,10 @@ module Lain
         "#<Lain::Memory::Index #{empty? ? "empty" : "#{Canonical.abbreviate(root)}..."}>"
       end
       alias inspect to_s
+
+      private
+
+      def item_at(node) = Item.from_canon(store.fetch(node.item_digest))
     end
   end
 end
