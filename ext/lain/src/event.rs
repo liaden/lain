@@ -1,4 +1,5 @@
-//! Pure, libruby-free port of the `Lain::Event` envelope (TL-2's shape).
+//! Pure, libruby-free event envelope (TL-2's shape), ported from the Ruby
+//! `Lain::Event` this crate replaced on 2026-10-20.
 //!
 //! An [`EventData`] is the CloudEvents-shaped envelope Ruby collapsed `Turn`
 //! into: a small, uniform header (kind, from/to, the two parent edges,
@@ -6,14 +7,15 @@
 //! envelope's digest is the content address of exactly the seven header fields
 //! -- the payload is never inlined INTO the address; the envelope hashes
 //! `payload_digest`, and the payload body rides along as carried state (the
-//! same "locally constructed events CARRY their payload" rule as Ruby's
-//! `Event#carried_payload`, so `content`/`meta` reads cost nothing).
+//! same "locally constructed events CARRY their payload" rule the deleted Ruby
+//! `Event#carried_payload` followed, so `content`/`meta` reads cost nothing).
 //!
 //! Byte parity is the whole point: both digests here -- payload and envelope --
-//! must equal `Lain::Canonical.digest` over the structures `Event#payload` and
-//! `Event::Payload#payload` build, byte for byte. `rust/turn_spec.rb` pins that
-//! cross-implementation; the tests below pin the exact serialized bytes against
-//! vectors computed with the Ruby implementation.
+//! must equal `Lain::Canonical.digest` over the structures the deleted Ruby
+//! `Event#payload` and `Event::Payload#payload` built, byte for byte.
+//! `ext/lain/corpus/event_digest.ndjson` freezes those answers and `corpus.rs`
+//! replays them; the tests below pin the exact serialized bytes against
+//! vectors computed with the Ruby implementation before it went.
 //!
 //! Nothing here touches `magnus`, so the digest scheme, the kind/role enums,
 //! and the causal-parent normalization are unit-tested without an embedded
@@ -98,7 +100,7 @@ impl std::fmt::Display for InvalidRole {
 impl std::error::Error for InvalidRole {}
 
 /// The closed, loud kind enum both the envelope and the payload share --
-/// `Lain::Event::KINDS`, as a type. As with [`Role`], an unknown kind cannot be
+/// `EventLog::Kinds::KINDS`, as a type. As with [`Role`], an unknown kind cannot be
 /// represented, and the wire string below is what both digests hash over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -109,7 +111,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// Every kind, in `Event::KINDS` order.
+    /// Every kind, in `EventLog::Kinds::KINDS` order.
     pub const ALL: [Kind; 4] = [Kind::Turn, Kind::Spawn, Kind::Message, Kind::Snapshot];
 
     /// The wire string -- the serialized kind byte-for-byte in BOTH content
@@ -137,7 +139,7 @@ impl std::str::FromStr for Kind {
 }
 
 /// A kind string that is not one of the [`Kind`] variants. Its `Display` is the
-/// message Ruby's `Event.normalize_kind` raises, minus the quoting of the
+/// message Ruby's `EventLog::Kinds.normalize_kind` raises, minus the quoting of the
 /// offender, which the FFI layer adds from the original Ruby value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidKind(pub String);
@@ -150,7 +152,7 @@ impl InvalidKind {
 }
 
 /// The kind-tagged body an [`EventData`] references by digest -- the port of
-/// `Lain::Event::Payload`. Content-addressed on its own so large results and
+/// deleted Ruby `Lain::Event::Payload`. Content-addressed on its own so large results and
 /// snapshots never inline into the envelope header. `body` is already-canonical
 /// wire form ([`Canon`]), so the digest is stable by construction.
 #[derive(Debug, Clone)]
@@ -221,8 +223,8 @@ impl EventData {
     /// The :turn constructor -- what `TurnData::new` was, re-keyed to the
     /// envelope scheme. Role, content, and meta form the out-of-line payload
     /// body; `parent` is the single render edge; `correlation` names the chain
-    /// by its root event digest (the FFI `Timeline::commit` derives it, exactly
-    /// as Ruby's `Timeline#commit` does through `ChainWriter.correlation_of`).
+    /// by its root event digest (the FFI `Timeline::commit` derives it, the
+    /// answer Ruby's `EventLog::ChainWriter.correlation_of` gives).
     pub fn turn(
         role: Role,
         content: Canon,
@@ -249,10 +251,11 @@ impl EventData {
 
     /// Build an envelope around an already-built payload, computing the content
     /// address of the seven header fields exactly as `Canonical.digest` over
-    /// `Event#payload` does. The envelope's kind is READ FROM the carried
-    /// payload rather than passed separately: Ruby documents envelope/payload
-    /// kind agreement as "the constructor's responsibility, not something the
-    /// digest can cross-check" -- here the disagreement is unrepresentable.
+    /// the deleted Ruby `Event#payload` did. The envelope's kind is READ FROM
+    /// the carried payload rather than passed separately: the deleted Ruby
+    /// `Event` documented envelope/payload kind agreement as "the
+    /// constructor's responsibility, not something the digest can
+    /// cross-check" -- here the disagreement is unrepresentable.
     /// Returned in an `Arc` because that is how every holder references it.
     pub fn new(
         from: Option<String>,
@@ -276,7 +279,7 @@ impl EventData {
 
     /// An envelope rebuilt from digests alone: the same address the carrying
     /// envelope has, with no body to read. Here the kind cannot come from a
-    /// payload, so it is the caller's, as in Ruby's `Event.new`.
+    /// payload, so it is the caller's, as it was in the Ruby `Event.new`.
     pub fn detached(
         kind: Kind,
         from: Option<String>,
@@ -399,7 +402,7 @@ impl Header {
 }
 
 /// A set, deduplicated and sorted so insertion order cannot change the digest
-/// -- the same pinned order Ruby's `Event#normalize_causal` establishes
+/// -- the same pinned order the Ruby `Event#normalize_causal` established
 /// (`uniq.sort`; sort-then-dedup is the same set in the same order). Byte
 /// order: Ruby sorts `String#<=>`, which is exactly what `Digest`'s derived
 /// `Ord` delegates to.
@@ -671,10 +674,10 @@ mod tests {
         );
     }
 
-    // The envelope is the exact structure Ruby's `Event#payload` builds; these
+    // The envelope is the exact structure the Ruby `Event#payload` built; these
     // bytes were computed with the Ruby implementation (`Canonical.dump(
-    // Event.turn(...).payload)`), so this is the byte half of the parity the
-    // rspec digest-equality example pins live.
+    // Event.turn(...).payload)`) before it was deleted, so this is the byte
+    // half of the parity the conformance corpus pins.
     #[test]
     fn envelope_canon_matches_the_ruby_bytes() {
         let node = EventData::turn(
@@ -774,7 +777,7 @@ mod tests {
     }
 
     // Every KINDS member payload-hashes to Ruby's bytes: vectors computed with
-    // `Lain::Event::Payload.new(kind:, body: {"x" => 1})`.
+    // the deleted `Lain::Event::Payload.new(kind:, body: {"x" => 1})`.
     #[test]
     fn payload_digest_matches_the_ruby_vector_for_every_kind() {
         let body = || {

@@ -456,13 +456,16 @@ pub mod ffi {
             text_of(ruby, query_src, "query")?,
         );
         let (src, lang, query_src) = (src.read(ruby)?, lang.read(ruby)?, query_src.read(ruby)?);
-        let captures = match pure_query(&src, &lang, &query_src) {
+        let queried = pure_query(&src, &lang, &query_src);
+        // A refusal can run Ruby, so the arguments' Rust copies go first.
+        drop((src, lang, query_src));
+        let captures = match queried {
             Ok(captures) => captures,
             Err(err @ QueryFailure::BadQuery { .. }) => {
                 return Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "TreeSitter", "BadQuery"],
-                    || err.to_string(),
+                    move || err.to_string(),
                 ));
             }
             Err(err @ QueryFailure::UnknownLanguage(_)) => {

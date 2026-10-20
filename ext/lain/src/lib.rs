@@ -27,8 +27,9 @@
 //! What that documentation is FOR: an item carrying an ALGEBRAIC claim must name
 //! the structure, the operation, and which suite proves it. There are two suites
 //! and they prove different things -- `cargo test` proves the pure Rust
-//! algorithm obeys a law, and `spec/lain/rust/*` proves the binding agrees with
-//! Ruby by running the shared example groups unchanged. See the `dag` module's
+//! algorithm obeys a law, and `spec/lain/rust/*` proves the binding obeys it too
+//! by running the shared example groups unchanged; agreement with the deleted
+//! Ruby is the frozen corpus's (`ext/lain/corpus/`, read by `corpus.rs`). See the `dag` module's
 //! own doc, which states that split once for the whole ancestry structure.
 
 #[deny(clippy::missing_docs_in_private_items)]
@@ -226,8 +227,8 @@ fn classify_num(text: &str) -> Result<NumClass, String> {
 /// boundary. The message's family form (`no object <parent> in store`) matches
 /// every other dangling-digest raise (see [`dag::DanglingDigest`]); the tail
 /// names the refusal context. This `Display` IS the FFI-visible message,
-/// byte-identical to Ruby `Store#validate_parents!` (`lib/lain/store.rb`) for
-/// plain digests -- `{:?}` on a [`crate::digest::Digest`] renders as Ruby's
+/// byte-identical to the deleted Ruby `Store#validate_parents!`'s for plain
+/// digests -- `{:?}` on a [`crate::digest::Digest`] renders as Ruby's
 /// `String#inspect` does, the same contract `DanglingDigest` documents.
 ///
 /// Prevention here is what makes the pure `dag.rs` walk arms unreachable via
@@ -291,10 +292,10 @@ fn verified(
     }
 }
 
-/// Why a `put` was refused. A dangling edge is `Store::MissingObject`, in
-/// Ruby's words; an envelope whose payload edge names something other than its
-/// own payload is `Store::DigestMismatch`, a check Ruby's store does not make
-/// because a Ruby envelope never needs its body attached.
+/// Why a `put` was refused. A dangling edge is `Store::MissingObject`, in the
+/// deleted Ruby store's words; an envelope whose payload edge names something
+/// other than its own payload is `Store::DigestMismatch`, a check that store
+/// never made because a Ruby envelope never needed its body attached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PutRefusal {
     Dangling(DanglingPut),
@@ -320,11 +321,12 @@ impl std::error::Error for PutRefusal {}
 
 /// Whether `node` may enter `objects` at the public `put` boundary: every edge
 /// [`dag::NodeData::edges`] names must already be present, in the map its arm
-/// names. An edge held by neither map is `no object`, in Ruby's words; one held
-/// only by the other map is `no event` or `no member`, a refusal Ruby's single
-/// map cannot make, and without it a walk would later raise over a digest
-/// `key?` says is there. The refusal names the FIRST dangling edge, in the order Ruby
-/// `Store#parent_edges` checks: render parent, payload, then the causal set
+/// names. An edge held by neither map is `no object`, in the deleted Ruby
+/// store's words; one held only by the other map is `no event` or `no member`, a
+/// refusal that store's single map could not make, and without it a walk would
+/// later raise over a digest `key?` says is there. The refusal names the FIRST
+/// dangling edge, in the order the Ruby `Store#parent_edges` checked: render
+/// parent, payload, then the causal set
 /// in its pinned sorted order. Plain Rust over the locked objects -- the
 /// caller holds the Store's lock across this check AND the insert, so a
 /// concurrent put cannot race in between.
@@ -333,8 +335,8 @@ impl std::error::Error for PutRefusal {}
 /// edge is the committing Timeline's own already-validated head, so that arm
 /// is a formality -- but its causal parents are digests the CALLER supplies,
 /// naming any object at all, so the node as a whole is not inductively safe
-/// and this is the check that says so. Ruby reaches the same guard by
-/// committing through `Store#put` (`lib/lain/store.rb`).
+/// and this is the check that says so. The deleted Ruby reached the same guard
+/// by committing through its `Store#put`.
 fn validate_put(objects: &dag::Objects, node: &dag::NodeData) -> Result<(), DanglingPut> {
     match node
         .edges()
@@ -406,8 +408,8 @@ fn put_into(
 }
 
 /// Walk `count` render-parent edges back from `head`. `None` absorbs -- rewinding
-/// past the root lands on the empty Timeline, exactly as Ruby's
-/// `Timeline#rewind` does -- while a digest that is present but absent from the
+/// past the root lands on the empty Timeline, exactly as the deleted Ruby
+/// `Timeline#rewind` did -- while a digest that is present but absent from the
 /// map is corruption and answers `Err`, kept distinct from a root.
 ///
 /// Split out of [`ffi::Timeline::rewind`] for the reason `put_into` was split
@@ -550,13 +552,16 @@ mod ffi {
     /// The exception is built here, not by magnus at raise time, because both
     /// steps can run Ruby -- the lookup an autoload or a `const_missing`, the
     /// build the class's `#initialize` -- and a fiber dropped inside either
-    /// would strand any Rust String alive across it. So `message` is written
-    /// only after the lookup, and handed over as a Ruby String before the build.
+    /// would strand any Rust state alive across it. So `message` is rendered
+    /// into a Ruby String first, and it is `'static` so it owns what it
+    /// renders: whatever it captured is dropped with it, before either step. A
+    /// caller must not hold Rust state of its own across this call either.
     pub(crate) fn lookup_error(
         ruby: &Ruby,
         path: &[&str],
-        message: impl FnOnce() -> String,
+        message: impl FnOnce() -> String + 'static,
     ) -> Error {
+        let text = ruby.str_new(&message());
         let (last, init) = path
             .split_last()
             .expect("lookup_error path must be non-empty");
@@ -569,12 +574,9 @@ mod ffi {
             .and_then(|scope| scoped_const_get(ruby, scope, last))
             .and_then(ExceptionClass::try_convert);
         match looked {
-            Ok(class) => {
-                let text = ruby.str_new(&message());
-                class
-                    .new_instance((text,))
-                    .map_or_else(|failed| failed, Error::from)
-            }
+            Ok(class) => class
+                .new_instance((text,))
+                .map_or_else(|failed| failed, Error::from),
             Err(lookup_failure) => lookup_failure,
         }
     }
@@ -704,7 +706,7 @@ mod ffi {
             return Err(lookup_error(
                 ruby,
                 &["Lain", "Canonical", "UnsupportedType"],
-                || format!("cannot canonicalize {class}"),
+                move || format!("cannot canonicalize {class}"),
             ));
         };
         reading.push(canon);
@@ -727,7 +729,7 @@ mod ffi {
             return Err(lookup_error(
                 ruby,
                 &["Lain", "Canonical", "NonFiniteFloat"],
-                || super::non_finite(float.to_f64()),
+                move || super::non_finite(float.to_f64()),
             ));
         }
         let json = ruby.class_object().const_get::<_, RModule>("JSON")?;
@@ -765,7 +767,7 @@ mod ffi {
             Ok(ForEach::Continue)
         })?;
         let object = canonical::build_object(reading.pairs_since(mark)).map_err(|ambiguous| {
-            lookup_error(ruby, &["Lain", "Canonical", "AmbiguousKey"], || {
+            lookup_error(ruby, &["Lain", "Canonical", "AmbiguousKey"], move || {
                 ambiguous.message()
             })
         })?;
@@ -781,7 +783,7 @@ mod ffi {
             Err(lookup_error(
                 ruby,
                 &["Lain", "Canonical", "UnsupportedType"],
-                || format!("hash keys must be String or Symbol, got {class}"),
+                move || format!("hash keys must be String or Symbol, got {class}"),
             ))
         }
     }
@@ -791,11 +793,50 @@ mod ffi {
     /// UTF-8 fast path or `rb_str_conv_enc`, and errors on bytes that are not
     /// convertible -- which is precisely when Ruby raises.
     fn validated_utf8(ruby: &Ruby, string: RString) -> Result<String, Error> {
+        utf8(string).map_err(|refusal| refusal.raise(ruby))
+    }
+
+    /// [`validated_utf8`], with its refusal not yet raised.
+    fn utf8(string: RString) -> Result<String, Refusal> {
         string.to_string().map_err(|_| {
-            lookup_error(ruby, &["Lain", "Canonical", "UnsupportedType"], || {
-                "string is not valid UTF-8".to_string()
-            })
+            Refusal::Named(
+                &["Lain", "Canonical", "UnsupportedType"],
+                "string is not valid UTF-8".to_string(),
+            )
         })
+    }
+
+    /// A refusal whose exception is not built yet. Building one can run Ruby
+    /// (see [`lookup_error`]), so a call that owns Rust state carries its
+    /// refusal out as one of these, lets the state drop, and only then raises.
+    enum Refusal {
+        /// A `Lain` exception, by constant path, and its message.
+        Named(&'static [&'static str], String),
+        /// An exception magnus already holds, which runs no Ruby until it is
+        /// raised at the boundary.
+        Built(Error),
+    }
+
+    impl From<Error> for Refusal {
+        fn from(error: Error) -> Self {
+            Refusal::Built(error)
+        }
+    }
+
+    impl Refusal {
+        fn missing(dangling: impl std::fmt::Display) -> Self {
+            Refusal::Named(
+                &["Lain", "Ext", "Store", "MissingObject"],
+                dangling.to_string(),
+            )
+        }
+
+        fn raise(self, ruby: &Ruby) -> Error {
+            match self {
+                Refusal::Named(path, message) => lookup_error(ruby, path, move || message),
+                Refusal::Built(error) => error,
+            }
+        }
     }
 
     /// A String or Symbol coerced to a validated UTF-8 `String`, or `None` when
@@ -847,16 +888,17 @@ mod ffi {
     // Ruby object), so `frozen_shareable` is honest once the handle is frozen.
     // `Timeline` is the one handle that references a Ruby object (its `Store`),
     // so it marks that reference and is deliberately NOT frozen_shareable --
-    // exactly as the Ruby `Timeline`, a frozen value over a mutable Store, is
-    // itself not `Ractor.shareable?`.
+    // exactly as the deleted Ruby `Timeline`, a frozen value over a mutable
+    // Store, was itself not `Ractor.shareable?`.
     // -----------------------------------------------------------------------
 
     /// Map a pure-layer dangling-edge refusal onto
     /// `Lain::Ext::Store::MissingObject`. Two structs reach here and each one's
     /// `Display` IS the Ruby-visible message: [`dag::DanglingDigest`], byte-equal
-    /// to Ruby `Store#fetch`, so a corrupt chain raises the same class and the
-    /// same message from every walk; and [`super::DanglingPut`], byte-equal to
-    /// Ruby `Store#validate_parents!`, so a write refused for a dangling edge
+    /// to the deleted Ruby `Store#fetch`'s (`ext/lain/corpus/errors.ndjson`), so a
+    /// corrupt chain raises the same class and the same message from every walk;
+    /// and [`super::DanglingPut`], byte-equal to the deleted Ruby
+    /// `Store#validate_parents!`'s, so a write refused for a dangling edge
     /// reads the same whether it arrived through `Store#put` or `Timeline#commit`.
     /// Taking `impl Display` rather than one concrete type is what keeps those
     /// two messages built at one site instead of two.
@@ -872,9 +914,7 @@ mod ffi {
     /// exactly that reason, since a temporary guard in a `?`-terminated
     /// expression lives to the end of the whole statement.
     fn missing_object(ruby: &Ruby, dangling: impl std::fmt::Display) -> Error {
-        lookup_error(ruby, &["Lain", "Ext", "Store", "MissingObject"], || {
-            dangling.to_string()
-        })
+        Refusal::missing(dangling).raise(ruby)
     }
 
     /// The `&Store` a `Timeline` names. Collapses the `store_ref(...)` call at
@@ -899,7 +939,7 @@ mod ffi {
 
     /// A frozen Ruby String. Digests, roles, and reconstructed content strings
     /// are all frozen so a reconstructed `content`/`meta` tree is deeply
-    /// immutable, matching the Ruby `Turn`. Shared with the `astgrep`/`treesitter`
+    /// immutable, as the deleted Ruby `Turn` was. Shared with the `astgrep`/`treesitter`
     /// bindings, whose per-call result Hashes are frozen the same way -- this is
     /// generic Ruby-value glue, not `Turn`-specific, so it lives here once.
     pub(crate) fn frozen_str(ruby: &Ruby, text: &str) -> Value {
@@ -980,14 +1020,16 @@ mod ffi {
                 return Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "Event", "InvalidRole"],
-                    || format!("role must be one of {}, got a {class}", Role::names()),
+                    move || format!("role must be one of {}, got a {class}", Role::names()),
                 ));
             }
         };
         // `InvalidRole`'s `Display` (see `turn.rs`) IS this message; no
         // hand-built duplicate to keep in sync with the pure error type.
-        raw.parse::<Role>().map_err(|invalid| {
-            lookup_error(ruby, &["Lain", "Ext", "Event", "InvalidRole"], || {
+        let parsed = raw.parse::<Role>();
+        drop(raw);
+        parsed.map_err(|invalid| {
+            lookup_error(ruby, &["Lain", "Ext", "Event", "InvalidRole"], move || {
                 invalid.to_string()
             })
         })
@@ -1006,11 +1048,11 @@ mod ffi {
         }
         // `#inspect` is Ruby, so the refusal's text is read only once it returns.
         let inspected = value.funcall::<_, _, RString>("inspect", ());
-        Err(lookup_error(ruby, &["Lain", "Error"], || {
-            let offender = read(ruby, source).unwrap_or_default();
-            let got = inspected
-                .and_then(|inspected| inspected.to_string())
-                .unwrap_or_else(|_| offender.clone());
+        let offender = read(ruby, source).unwrap_or_default();
+        let got = inspected
+            .and_then(|inspected| inspected.to_string())
+            .unwrap_or_else(|_| offender.clone());
+        Err(lookup_error(ruby, &["Lain", "Error"], move || {
             InvalidKind(offender).message(&got)
         }))
     }
@@ -1018,7 +1060,7 @@ mod ffi {
     /// A parent/head digest argument: `nil` (or absent) is a root/empty head, a
     /// String is a digest, anything else is a type error. This is the FFI-in
     /// boundary where a Ruby String becomes a [`Digest`].
-    fn read_optional_digest(ruby: &Ruby, value: Option<Value>) -> Result<Option<Digest>, Error> {
+    fn read_optional_digest(ruby: &Ruby, value: Option<Value>) -> Result<Option<Digest>, Refusal> {
         match value {
             None => Ok(None),
             Some(inner) if inner.is_nil() => Ok(None),
@@ -1029,7 +1071,7 @@ mod ffi {
                         "digest must be a String or nil",
                     )
                 })?;
-                Ok(Some(validated_utf8(ruby, string)?.into()))
+                Ok(Some(utf8(string)?.into()))
             }
         }
     }
@@ -1051,7 +1093,7 @@ mod ffi {
     /// table, both of them values this domain has a name for -- while a nil
     /// causal set is a caller who believes they are naming something. Reading
     /// it as "no causal parents" is a silent coercion, and it accepted input
-    /// the Ruby Timeline refuses outright. Absent and nil are distinguished by
+    /// the deleted Ruby Timeline refused outright. Absent and nil are distinguished by
     /// matching `None` separately rather than by an `is_nil` guard, so a nil
     /// falls through to `RArray::from_value` and is refused as the non-Array it
     /// is, in the same message any other non-Array gets.
@@ -1070,11 +1112,11 @@ mod ffi {
 
     /// Apart from [`optional_text_arg`] so a caller can finish every Ruby call
     /// before the first Rust String exists.
-    fn optional_utf8(ruby: &Ruby, text: Option<RString>) -> Result<Option<String>, Error> {
-        text.map(|text| validated_utf8(ruby, text)).transpose()
+    fn optional_utf8(text: Option<RString>) -> Result<Option<String>, Refusal> {
+        text.map(utf8).transpose()
     }
 
-    fn read_causal_parents(ruby: &Ruby, value: Option<Value>) -> Result<Vec<Digest>, Error> {
+    fn read_causal_parents(ruby: &Ruby, value: Option<Value>) -> Result<Vec<Digest>, Refusal> {
         match value {
             None => Ok(Vec::new()),
             Some(inner) => {
@@ -1093,7 +1135,7 @@ mod ffi {
                                 "causal_parents must contain only digest Strings",
                             )
                         })?;
-                        Ok(Digest::from(validated_utf8(ruby, string)?))
+                        Ok(Digest::from(utf8(string)?))
                     })
                     .collect()
             }
@@ -1141,7 +1183,7 @@ mod ffi {
             Self::new_turn(ruby, kw)
         }
 
-        /// The kind-general constructor, mirroring Ruby `Event.new`. A
+        /// The kind-general constructor, mirroring the deleted Ruby `Event.new`. A
         /// payload_digest with no body builds a DETACHED envelope, whose body
         /// readers refuse.
         fn new_event(ruby: &Ruby, kw: RHash) -> Result<Obj<Self>, Error> {
@@ -1184,30 +1226,34 @@ mod ffi {
             let from = optional_text_arg(ruby, from_value)?;
             let to = optional_text_arg(ruby, to_value)?;
             let payload = Self::read_payload(ruby, kind, digest_value, body_value, carried_value)?;
-            let from = optional_utf8(ruby, from)?;
-            let to = optional_utf8(ruby, to)?;
-            let render_parent = read_optional_digest(ruby, parent_value)?;
-            let causal_parents = read_causal_parents(ruby, causal_value)?;
-            let correlation = read_optional_digest(ruby, correlation_value)?;
-            let inner = match payload {
-                Ok(payload) => EventData::new(
-                    from,
-                    to,
-                    render_parent,
-                    causal_parents,
-                    correlation,
-                    payload,
-                ),
-                Err(payload_digest) => EventData::detached(
-                    kind,
-                    from,
-                    to,
-                    render_parent,
-                    causal_parents,
-                    correlation,
-                    payload_digest,
-                ),
+            // The payload is Rust state, so every later refusal waits until it drops.
+            let built = move || -> Result<Arc<EventData>, Refusal> {
+                let from = optional_utf8(from)?;
+                let to = optional_utf8(to)?;
+                let render_parent = read_optional_digest(ruby, parent_value)?;
+                let causal_parents = read_causal_parents(ruby, causal_value)?;
+                let correlation = read_optional_digest(ruby, correlation_value)?;
+                Ok(match payload {
+                    Ok(payload) => EventData::new(
+                        from,
+                        to,
+                        render_parent,
+                        causal_parents,
+                        correlation,
+                        payload,
+                    ),
+                    Err(payload_digest) => EventData::detached(
+                        kind,
+                        from,
+                        to,
+                        render_parent,
+                        causal_parents,
+                        correlation,
+                        payload_digest,
+                    ),
+                })
             };
+            let inner = built().map_err(|refusal| refusal.raise(ruby))?;
             Ok(Turn::wrap(ruby, inner))
         }
 
@@ -1239,16 +1285,24 @@ mod ffi {
                 }
                 (None, passed, Some(body)) => {
                     let payload = PayloadData::new(kind, ruby_to_canon(ruby, body)?);
-                    match read_optional_digest(ruby, passed)? {
-                        Some(named) if named != payload.digest => Err(argument_error(&format!(
-                            "payload_digest {} disagrees with the body's digest {}",
-                            named.as_str(),
-                            payload.digest.as_str()
-                        ))),
-                        _ => Ok(Ok(payload)),
+                    match read_optional_digest(ruby, passed) {
+                        Err(refusal) => {
+                            drop(payload);
+                            Err(refusal.raise(ruby))
+                        }
+                        Ok(Some(named)) if named != payload.digest => {
+                            Err(argument_error(&format!(
+                                "payload_digest {} disagrees with the body's digest {}",
+                                named.as_str(),
+                                payload.digest.as_str()
+                            )))
+                        }
+                        Ok(_) => Ok(Ok(payload)),
                     }
                 }
-                (None, Some(digest), None) => match read_optional_digest(ruby, Some(digest))? {
+                (None, Some(digest), None) => match read_optional_digest(ruby, Some(digest))
+                    .map_err(|refusal| refusal.raise(ruby))?
+                {
                     Some(digest) => Ok(Err(digest)),
                     None => Err(argument_error(
                         "an Event needs its payload: pass payload_digest or carried_payload",
@@ -1289,12 +1343,19 @@ mod ffi {
             let to = optional_text_arg(ruby, to_value)?;
             let meta_value = meta_or_empty(ruby, meta_value);
             let [content, meta] = ruby_to_canons(ruby, [content_value, meta_value])?;
-            let parent = read_optional_digest(ruby, parent_value)?;
-            let correlation = read_optional_digest(ruby, correlation_value)?;
-            let causal_parents = read_causal_parents(ruby, causal_value)?;
-            let from = optional_utf8(ruby, from)?;
-            let to = optional_utf8(ruby, to)?;
-            let turn = EventData::turn(role, content, parent, meta, correlation, causal_parents);
+            // Content and meta are Rust state, so every later refusal waits
+            // until they drop.
+            let built = move || -> Result<_, Refusal> {
+                let parent = read_optional_digest(ruby, parent_value)?;
+                let correlation = read_optional_digest(ruby, correlation_value)?;
+                let causal_parents = read_causal_parents(ruby, causal_value)?;
+                let from = optional_utf8(from)?;
+                let to = optional_utf8(to)?;
+                let turn =
+                    EventData::turn(role, content, parent, meta, correlation, causal_parents);
+                Ok((turn, from, to))
+            };
+            let (turn, from, to) = built().map_err(|refusal| refusal.raise(ruby))?;
             // The sender and recipient live in the header, so they change the
             // digest while the payload is reused as built.
             let inner = match &turn.payload {
@@ -1341,21 +1402,20 @@ mod ffi {
         }
 
         /// A carried-body field. A detached envelope raises `Lain::Error` in
-        /// Ruby `Event#fetch_body`'s words: its body exists, under
+        /// the deleted Ruby `Event#fetch_body`'s words: its body exists, under
         /// `payload_digest`, so a `nil` would be a lie. A carrying envelope
         /// built as a :turn always holds the key; a miss there raises all the
         /// same rather than materializing `nil`.
         fn body_field<'a>(ruby: &Ruby, rb_self: &'a Turn, key: &str) -> Result<&'a Canon, Error> {
             if rb_self.inner.payload.is_none() {
-                return Err(lookup_error(ruby, &["Lain", "Error"], || {
-                    format!(
-                        "{} carries no body; it lives in the Store under {}. This envelope was \
-                         rebuilt from digests alone -- fetch that payload through a Store, or \
-                         build it via Event.turn to carry one",
-                        rb_self.inspect(),
-                        rb_self.inner.payload_digest
-                    )
-                }));
+                let message = format!(
+                    "{} carries no body; it lives in the Store under {}. This envelope was \
+                     rebuilt from digests alone -- fetch that payload through a Store, or \
+                     build it via Event.turn to carry one",
+                    rb_self.inspect(),
+                    rb_self.inner.payload_digest
+                );
+                return Err(lookup_error(ruby, &["Lain", "Error"], move || message));
             }
             rb_self.inner.body_field(key).ok_or_else(|| {
                 Error::new(
@@ -1392,7 +1452,7 @@ mod ffi {
         }
 
         fn kind(ruby: &Ruby, rb_self: &Turn) -> Value {
-            // A Symbol, matching Ruby `Event#kind` -- the wire string is what
+            // A Symbol, as the deleted Ruby `Event#kind` was -- the wire string is what
             // the digest hashes; the Symbol is the loud in-process enum.
             ruby.to_symbol(rb_self.inner.kind.as_str()).as_value()
         }
@@ -1421,8 +1481,8 @@ mod ffi {
             }
         }
 
-        /// The envelope structure the digest was taken over, as Ruby
-        /// `Event#payload` builds it -- rendered from the SAME
+        /// The envelope structure the digest was taken over, as the deleted Ruby
+        /// `Event#payload` built it -- rendered from the SAME
         /// `payload_canon()` the digest hashed, so the two cannot drift. One
         /// field is patched on the way through: Ruby's hash holds `kind` as a
         /// SYMBOL (the wire string is what the digest hashes -- Canonical
@@ -1612,7 +1672,7 @@ mod ffi {
                 None => Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "Store", "MissingObject"],
-                    || {
+                    move || {
                         format!(
                             "no object {:?} in store",
                             Digest::from(digest.to_string().unwrap_or_default())
@@ -1640,9 +1700,10 @@ mod ffi {
     /// The store arm `object` belongs to. An Ext event or payload is its own
     /// arm. Anything answering `#canonical` is addressed by that tree, and
     /// anything answering `#tag` and `#bytes` by the blob scheme; both have
-    /// their digest recomputed here and compared with the one they claim. Ruby
-    /// `Lain::Event` and `Event::Payload` answer neither, so they are refused
-    /// rather than stored as a tree a fetch could not turn back into an event.
+    /// their digest recomputed here and compared with the one they claim. Any
+    /// other object, an event of some other implementation included, answers
+    /// neither and is refused rather than stored as a tree a fetch could not
+    /// turn back into an event.
     fn read_node(ruby: &Ruby, object: Value) -> Result<NodeData, Error> {
         if let Ok(event) = <&Turn>::try_convert(object) {
             return Ok(NodeData::Event(Arc::clone(&event.inner)));
@@ -1674,23 +1735,35 @@ mod ffi {
                 ),
             ));
         };
-        let claimed = Digest::from(validated_utf8(ruby, claimed)?);
+        let claimed = match utf8(claimed) {
+            Ok(claimed) => Digest::from(claimed),
+            Err(refusal) => {
+                drop(node);
+                return Err(refusal.raise(ruby));
+            }
+        };
         verified(node, claimed).map_err(|mismatch| {
-            lookup_error(ruby, &["Lain", "Ext", "Store", "DigestMismatch"], || {
-                mismatch.to_string()
-            })
+            lookup_error(
+                ruby,
+                &["Lain", "Ext", "Store", "DigestMismatch"],
+                move || mismatch.to_string(),
+            )
         })
     }
 
     /// A refused put as the Ruby exception its cause names.
     fn put_refused(ruby: &Ruby, refusal: PutRefusal) -> Error {
+        put_refusal(refusal).raise(ruby)
+    }
+
+    /// [`put_refused`], with the exception not yet built.
+    fn put_refusal(refusal: PutRefusal) -> Refusal {
         match refusal {
-            PutRefusal::Dangling(dangling) => missing_object(ruby, dangling),
-            mislabelled @ PutRefusal::NotItsPayload { .. } => {
-                lookup_error(ruby, &["Lain", "Ext", "Store", "DigestMismatch"], || {
-                    mislabelled.to_string()
-                })
-            }
+            PutRefusal::Dangling(dangling) => Refusal::missing(dangling),
+            mislabelled @ PutRefusal::NotItsPayload { .. } => Refusal::Named(
+                &["Lain", "Ext", "Store", "DigestMismatch"],
+                mislabelled.to_string(),
+            ),
         }
     }
 
@@ -1822,16 +1895,18 @@ mod ffi {
         fn new(ruby: &Ruby, kw: RHash) -> Result<Obj<Self>, Error> {
             let args = get_kwargs::<_, (Value, Value), (), ()>(kw, &["head_digest", "store"], &[])?;
             let (head_value, store_value) = args.required;
-            let head = read_optional_digest(ruby, Some(head_value))?;
+            let head = read_optional_digest(ruby, Some(head_value))
+                .map_err(|refusal| refusal.raise(ruby))?;
             let timeline = Timeline::wrap(ruby, head, store_value);
             let store = store_ref(ruby, &timeline)?;
-            validate_head(ruby, store, &timeline.head)?;
+            validate_head(ruby, store, timeline.head.clone())?;
             Ok(timeline)
         }
 
         fn correlation(ruby: &Ruby, rb_self: &Timeline) -> Result<Value, Error> {
             let store = store_ref(ruby, rb_self)?;
-            let correlation = Self::next_correlation(ruby, rb_self.head.as_ref(), store)?;
+            let correlation = Self::next_correlation(rb_self.head.as_ref(), store)
+                .map_err(|refusal| refusal.raise(ruby))?;
             Ok(Turn::optional_digest_value(ruby, &correlation))
         }
 
@@ -1864,15 +1939,18 @@ mod ffi {
                             ruby,
                             &["Lain", "Ext", "Store", "MissingObject"],
                             // `digest: &Digest`, transparent `Debug` -> same bytes.
-                            || format!("no object {digest:?} in store"),
+                            {
+                                let message = format!("no object {digest:?} in store");
+                                move || message
+                            },
                         )),
                     }
                 }
             }
         }
 
-        /// The signature matches Ruby `Timeline#commit(role:, content:, meta:,
-        /// causal_parents:)`. `causal_parents` is the set of events this turn
+        /// The signature is the deleted Ruby `Timeline#commit(role:, content:,
+        /// meta:, causal_parents:)`'s. `causal_parents` is the set of events this turn
         /// folded -- absent means the empty set, and such a turn hashes
         /// exactly as it did before the keyword existed, because an empty
         /// array is what the envelope always serialized.
@@ -1887,47 +1965,50 @@ mod ffi {
             let role = read_role(ruby, role_value)?;
             let meta_value = meta_or_empty(ruby, meta_value);
             let [content, meta] = ruby_to_canons(ruby, [content_value, meta_value])?;
-            let causal_parents = read_causal_parents(ruby, causal_value)?;
             let store_value = rb_self.store_value(ruby);
-            let store: &Store = store_ref(ruby, &rb_self)?;
-            let correlation = Self::next_correlation(ruby, rb_self.head.as_ref(), store)?;
-            let turn = EventData::turn(
-                role,
-                content,
-                rb_self.head.clone(),
-                meta,
-                correlation,
-                causal_parents,
-            );
-            // Through the validating boundary, NOT past it. The render edge is
-            // this Timeline's own validated head and needs no check, which is
-            // what used to justify an unvalidated insert here -- but a causal
-            // parent is a caller-supplied digest naming any object at all, so
-            // that induction no longer covers the node. Ruby gets the same
-            // check for free by committing through `Store#put`.
-            let payload = turn
-                .payload
-                .as_ref()
-                .map(|payload| NodeData::Payload(Arc::clone(payload)));
-            let inserted = store.insert(payload.as_ref(), &NodeData::Event(turn));
-            drop(payload);
-            let digest = inserted.map_err(|refusal| put_refused(ruby, refusal))?;
+            // Content and meta are Rust state, so every refusal waits until they drop.
+            let inserted = move || -> Result<Digest, Refusal> {
+                let store: &Store = store_ref(ruby, &rb_self)?;
+                let causal_parents = read_causal_parents(ruby, causal_value)?;
+                let correlation = Self::next_correlation(rb_self.head.as_ref(), store)?;
+                let turn = EventData::turn(
+                    role,
+                    content,
+                    rb_self.head.clone(),
+                    meta,
+                    correlation,
+                    causal_parents,
+                );
+                // Through the validating boundary, NOT past it. The render edge is
+                // this Timeline's own validated head and needs no check, which is
+                // what used to justify an unvalidated insert here -- but a causal
+                // parent is a caller-supplied digest naming any object at all, so
+                // that induction no longer covers the node. The deleted Ruby got
+                // the same check for free by committing through its `Store#put`.
+                let payload = turn
+                    .payload
+                    .as_ref()
+                    .map(|payload| NodeData::Payload(Arc::clone(payload)));
+                store
+                    .insert(payload.as_ref(), &NodeData::Event(turn))
+                    .map_err(put_refusal)
+            };
+            let digest = inserted().map_err(|refusal| refusal.raise(ruby))?;
             Ok(Timeline::wrap(ruby, Some(digest), store_value))
         }
 
         /// The chain identity to stamp on the next turn -- the port of
-        /// `Event::ChainWriter.correlation_of` (TL-2: a chain is named by its
+        /// `EventLog::ChainWriter.correlation_of` (TL-2: a chain is named by its
         /// root event's digest). The root cannot contain its own address, so
         /// it carries no correlation and every descendant inherits either the
         /// head's correlation or, when the head IS the root, the head's own
-        /// digest. `None` only on an empty Timeline, exactly as Ruby's
+        /// digest. `None` only on an empty Timeline, exactly as the deleted Ruby's
         /// `head &&` guard. A head digest the store no longer holds is
         /// corruption and raises, the same loud arm every walk has.
         fn next_correlation(
-            ruby: &Ruby,
             head: Option<&Digest>,
             store: &Store,
-        ) -> Result<Option<Digest>, Error> {
+        ) -> Result<Option<Digest>, Refusal> {
             match head {
                 None => Ok(None),
                 Some(head_digest) => {
@@ -1937,7 +2018,7 @@ mod ffi {
                     // be alive when `const_get` ran.
                     let found = store.locked().events.get(head_digest).map(Arc::clone);
                     let node = found.ok_or_else(|| {
-                        missing_object(ruby, dag::DanglingDigest(head_digest.clone()))
+                        Refusal::missing(dag::DanglingDigest(head_digest.clone()))
                     })?;
                     Ok(Some(
                         node.correlation
@@ -1962,10 +2043,11 @@ mod ffi {
             rb_self: Obj<Timeline>,
             digest: Value,
         ) -> Result<Obj<Timeline>, Error> {
-            let head = read_optional_digest(ruby, Some(digest))?;
+            let head =
+                read_optional_digest(ruby, Some(digest)).map_err(|refusal| refusal.raise(ruby))?;
             let store_value = rb_self.store_value(ruby);
             let store: &Store = store_ref(ruby, &rb_self)?;
-            validate_head(ruby, store, &head)?;
+            let head = validate_head(ruby, store, head)?;
             Ok(Timeline::wrap(ruby, head, store_value))
         }
 
@@ -1976,9 +2058,9 @@ mod ffi {
         ) -> Result<Obj<Timeline>, Error> {
             // `scan_args` raises ArgumentError on 2+ positional args where the
             // old hand-rolled parse silently ignored the extras. Deliberate:
-            // pure Ruby `Lain::Timeline#rewind(count = 1)` already enforces
+            // the deleted Ruby `Lain::Timeline#rewind(count = 1)` enforced
             // this arity, so the swallowing was a latent Ruby/Ext divergence
-            // -- cross-implementation parity outranks bug-for-bug preservation.
+            // -- cross-implementation parity outranked bug-for-bug preservation.
             let parsed = scan_args::<(), (Option<i64>,), (), (), (), ()>(args)?;
             let count = parsed.optional.0.unwrap_or(1);
             let store_value = rb_self.store_value(ruby);
@@ -1996,8 +2078,8 @@ mod ffi {
             let digest = walked.map_err(|e| missing_object(ruby, e))?;
             // `parent_of` validates the node stepped FROM, never the digest
             // landed ON: landing exactly on a dangle would hand back a poisoned
-            // Timeline whose head the store does not hold. Ruby's rewind lands
-            // via #checkout, which validates -- so must we, same message form.
+            // Timeline whose head the store does not hold. The deleted Ruby rewind
+            // landed via #checkout, which validated -- so must we, same message form.
             // (A fresh, separate lock: the loop's guard above already dropped,
             // since std's Mutex is not reentrant. The drop-then-relock gap is
             // unobservable from Ruby: between the two locks there is no Ruby
@@ -2005,7 +2087,7 @@ mod ffi {
             // direct Rust call, no funcall/IO/yield -- so this whole method
             // runs as one uninterrupted stretch under the GVL and no other
             // thread's `store.put` can land in between.)
-            validate_head(ruby, store, &digest)?;
+            let digest = validate_head(ruby, store, digest)?;
             Ok(Timeline::wrap(ruby, digest, store_value))
         }
 
@@ -2072,18 +2154,20 @@ mod ffi {
                 &["after", "onto"],
             )?;
             let (after_value, onto) = kwargs.optional;
-            let after = read_optional_digest(ruby, after_value)?;
             let canonical: RModule = ruby
                 .class_object()
                 .const_get::<_, RModule>("Lain")?
                 .const_get("Canonical")?;
             let store: &Store = store_ref(ruby, rb_self)?;
+            let after =
+                read_optional_digest(ruby, after_value).map_err(|refusal| refusal.raise(ruby))?;
             let (messages, adoptable) = {
                 let walked = dag::turns_since(
                     &store.locked().events,
                     rb_self.head.as_ref(),
                     after.as_ref(),
                 );
+                drop(after);
                 let (turns, reached) = walked.map_err(|e| missing_object(ruby, e))?;
                 let prefix = onto.filter(|_| reached);
                 MessageBuilder::new(ruby).messages(prefix, &turns)?
@@ -2121,6 +2205,7 @@ mod ffi {
             // Stops at the hit rather than walking to the root; guard dropped
             // before the error translation, as above.
             let found = dag::includes(&store.locked().events, rb_self.head.as_ref(), &needle);
+            drop(needle);
             found.map_err(|e| missing_object(ruby, e))
         }
 
@@ -2278,8 +2363,9 @@ mod ffi {
                     // Its own statement, so the guard is gone before the loud
                     // arm reaches Ruby (see `missing_object`).
                     let found = store.locked().events.get(&digest).map(Arc::clone);
-                    let inner = found
-                        .ok_or_else(|| missing_object(ruby, dag::DanglingDigest(digest.clone())))?;
+                    let Some(inner) = found else {
+                        return Err(missing_object(ruby, dag::DanglingDigest(digest)));
+                    };
                     Ok(Turn::wrap(ruby, inner).as_value())
                 }
             }
@@ -2421,31 +2507,39 @@ mod ffi {
 
     /// Raise `Store::MissingObject` unless `head` (when not a root/empty `None`)
     /// names an event the store holds. This is the landed-head validation both
-    /// `checkout` and `rewind` perform before wrapping a Timeline, exactly as
-    /// every Ruby Timeline lands through `Timeline#initialize`'s check.
+    /// `checkout` and `rewind` perform before wrapping a Timeline, as every
+    /// Ruby Timeline landed through `Timeline#initialize`'s check.
     ///
-    /// Deliberately tail-less ("... in store" omitted): this mirrors Ruby
-    /// `Timeline#initialize` (lib/lain/timeline.rb), whose message is
+    /// Deliberately tail-less ("... in store" omitted): this mirrors the
+    /// deleted Ruby `Timeline#initialize`, whose message was
     /// `no object #{digest.inspect}`, NOT `Store#fetch`'s longer form. The two
-    /// Ruby sites differ, so the Ext sites match them per-site rather than
+    /// Ruby sites differed, so the Ext sites match them per-site rather than
     /// unifying. A head the store holds as something other than an event
     /// says `no event`, the word `validate_put` uses for the same mismatch.
-    fn validate_head(ruby: &Ruby, store: &Store, head: &Option<Digest>) -> Result<(), Error> {
-        let Some(target) = head else { return Ok(()) };
-        if store.holds_event(target) {
-            return Ok(());
+    /// Takes the head and answers it back, so a refused one has dropped
+    /// before the refusal reaches Ruby.
+    fn validate_head(
+        ruby: &Ruby,
+        store: &Store,
+        head: Option<Digest>,
+    ) -> Result<Option<Digest>, Error> {
+        let Some(target) = head else { return Ok(None) };
+        if store.holds_event(&target) {
+            return Ok(Some(target));
         }
-        let noun = if store.contains(target) {
+        let noun = if store.contains(&target) {
             "event"
         } else {
             "object"
         };
         // `{target:?}` is transparent, so the message is byte-identical to
-        // Ruby `Timeline#initialize`'s.
+        // the deleted Ruby `Timeline#initialize`'s.
+        let message = format!("no {noun} {target:?}");
+        drop(target);
         Err(lookup_error(
             ruby,
             &["Lain", "Ext", "Store", "MissingObject"],
-            || format!("no {noun} {target:?}"),
+            move || message,
         ))
     }
 
@@ -2541,12 +2635,16 @@ mod ffi {
                 fields.push(pair_field(ruby, pair.entry(0)?, "id")?)?;
                 fields.push(pair_field(ruby, pair.entry(1)?, "text")?)?;
             }
-            let mut batch: Vec<(String, String)> = Vec::with_capacity(pairs.len());
-            for at in (0..fields.len()).step_by(2) {
-                let id = validated_utf8(ruby, fields.entry(at as isize)?)?;
-                let text = validated_utf8(ruby, fields.entry(at as isize + 1)?)?;
-                batch.push((id, text));
-            }
+            // The batch is Rust state, so a refusal while it grows waits until it drops.
+            let batch = (0..fields.len())
+                .step_by(2)
+                .map(|at| -> Result<(String, String), Refusal> {
+                    let id = utf8(fields.entry(at as isize)?)?;
+                    let text = utf8(fields.entry(at as isize + 1)?)?;
+                    Ok((id, text))
+                })
+                .collect::<Result<Vec<_>, Refusal>>()
+                .map_err(|refusal| refusal.raise(ruby))?;
             // `BuildError`'s `Display` (see `bm25.rs`) IS the FFI-visible
             // message for both variants; no hand-built duplicate to drift.
             match crate::bm25::Bm25Index::build(batch) {
@@ -2554,12 +2652,12 @@ mod ffi {
                 Err(err @ crate::bm25::BuildError::EmptyCorpus) => Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "Bm25", "EmptyCorpus"],
-                    || err.to_string(),
+                    move || err.to_string(),
                 )),
                 Err(err @ crate::bm25::BuildError::DuplicateId(_)) => Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "Bm25", "DuplicateId"],
-                    || err.to_string(),
+                    move || err.to_string(),
                 )),
             }
         }
@@ -2658,7 +2756,7 @@ mod ffi {
         turn.define_method("content", method!(Turn::content, 0))?;
         turn.define_method("parent", method!(Turn::parent, 0))?;
         // The render chain is the first-parent walk, so `parent` IS the render
-        // edge -- both names answer it, as Ruby's `alias parent render_parent`.
+        // edge -- both names answer it, as the deleted Ruby's `alias parent render_parent` did.
         turn.define_method("render_parent", method!(Turn::parent, 0))?;
         turn.define_method("meta", method!(Turn::meta, 0))?;
         turn.define_method("digest", method!(Turn::digest, 0))?;
@@ -2918,7 +3016,7 @@ mod put_tests {
     }
 
     // The payload is a Store edge, checked after the render edge and before
-    // the causal set -- Ruby `Store#parent_edges`' order.
+    // the causal set -- the deleted Ruby `Store#parent_edges`' order.
     #[test]
     fn refuses_an_envelope_whose_payload_is_absent() {
         let root = node("a", None);
@@ -2935,8 +3033,8 @@ mod put_tests {
         );
     }
 
-    // The causal set is a Store edge exactly as the render edge is (Ruby
-    // `Store#parent_edges`); the refusal names the FIRST dangling edge, and
+    // The causal set is a Store edge exactly as the render edge is (as in the
+    // deleted Ruby `Store#parent_edges`); the refusal names the FIRST dangling edge, and
     // causal parents check in their pinned sorted order.
     #[test]
     fn refuses_a_child_whose_causal_parent_is_absent() {
@@ -3145,8 +3243,8 @@ mod put_tests {
     // That file is the authority on which store laws exist -- everything under
     // this banner, down to the fence below, is a law and nothing else. Proven here
     // against the pure decision, with no `magnus` and no Ruby VM; that the
-    // Rust BINDING agrees with Ruby stays the sole business of
-    // `spec/lain/rust/store_spec.rb`.
+    // Rust BINDING obeys them is the business of `spec/lain/rust/store_spec.rb`,
+    // and agreement with the deleted Ruby is the corpus's (`store.ndjson`).
     // -------------------------------------------------------------------
 
     #[test]
@@ -3201,7 +3299,7 @@ mod put_tests {
         assert_eq!(again.size(), orphaned.size());
     }
 
-    // The Display IS the FFI-visible message; Ruby `Store#put` pins the same
+    // The Display IS the FFI-visible message; the deleted Ruby `Store#put` pinned the same
     // bytes (`no object #{parent.inspect} in store: putting #{digest.inspect}
     // would dangle`), and `Digest`'s transparent `Debug` is what keeps the two
     // byte-identical for plain digests.
@@ -3271,7 +3369,7 @@ mod rewind_tests {
     }
 
     // Rewinding past the root lands on the empty Timeline rather than raising,
-    // exactly as Ruby's `Timeline#rewind` does -- `None` absorbs further steps.
+    // exactly as the deleted Ruby `Timeline#rewind` did -- `None` absorbs further steps.
     #[test]
     fn rewinding_past_the_root_absorbs_to_empty() {
         let (map, nodes) = chain();

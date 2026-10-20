@@ -14,10 +14,10 @@
 //! the private `walk`, which pulls one node at a time; nothing builds a `Vec`
 //! it does not hand back. That is what makes a bounded question cost a bounded
 //! walk -- `includes`, `ancestor_of`, and `meet`'s find side stop AT the answer
-//! rather than after the chain -- and it is the Rust half of the same change
-//! `Lain::Timeline` took in Ruby, where `#ancestors` yields rather than
-//! materializes (root `CLAUDE.md`, "Enumerable and Enumerator are the good
-//! abstractions").
+//! rather than after the chain -- and it is the Rust half of the change the
+//! Ruby `Lain::Timeline` took before its deletion, where `#ancestors` yields
+//! rather than materializes (root `CLAUDE.md`, "Enumerable and Enumerator are
+//! the good abstractions").
 //!
 //! # The structure, and exactly which laws are proven where
 //!
@@ -40,11 +40,12 @@
 //!
 //! **Two suites, two different claims.** `cargo test` proves the Rust
 //! ALGORITHM here obeys those four laws, at a layer the Ruby suite cannot
-//! reach. `spec/lain/rust/*` proves the Rust BINDING agrees with Ruby, by
-//! running the shared groups unchanged, and it is the SOLE authority on that
-//! cross-implementation claim -- no test in this file compares against a Ruby
-//! value. Read one as "the algorithm is a meet-semilattice" and the other as
-//! "the port is faithful"; neither substitutes for the other.
+//! reach. `spec/lain/rust/*` proves the Rust BINDING obeys the same laws, by
+//! running the shared groups unchanged, and the frozen corpus
+//! (`ext/lain/corpus/dag.ndjson`, read by `corpus.rs`) holds what the deleted
+//! Ruby answered -- no test in this file compares against a Ruby value. Read
+//! one as "the algorithm is a meet-semilattice" and the others as "the port is
+//! faithful"; neither substitutes for the other.
 
 use crate::canonical::{self, Canon};
 use crate::digest::Digest;
@@ -89,7 +90,8 @@ impl NodeData {
     }
 
     /// The digests this object needs the store to hold already, each with the
-    /// map it must be in, in the order Ruby `Store#parent_edges` checks them:
+    /// map it must be in, in the order the deleted Ruby `Store#parent_edges`
+    /// checked them:
     /// the render edge, the payload edge, then the causal set.
     pub fn edges(&self) -> Vec<(&Digest, Arm)> {
         match self {
@@ -170,8 +172,8 @@ pub struct CanonData {
 
 impl CanonData {
     /// Address `tree` the way `Canonical.digest` does, and read its edge: the
-    /// top-level `"parent"` digest. Ruby's Store reads a `#parent` edge off any
-    /// member that has one, and `Memory::Index::Node` is the only canonical
+    /// top-level `"parent"` digest. The deleted Ruby Store read a `#parent` edge
+    /// off any member that had one, and `Memory::Index::Node` is the only canonical
     /// member that does; its key is inside its address, so it cannot be renamed
     /// out from under this reader.
     pub fn new(tree: Canon) -> Self {
@@ -266,12 +268,12 @@ impl Objects {
 /// with an absent digest. The FFI layer turns it into `Store::MissingObject`.
 ///
 /// Hand-rolled `Display`/`Error` (no `thiserror`) whose message is byte-equal to
-/// Ruby `Store#fetch` (`lib/lain/store.rb`): `{:?}` escapes a plain digest, and
-/// one containing a double-quote, exactly as Ruby's `String#inspect` does.
-/// Out of scope for byte-parity: control characters AND Ruby's interpolation
-/// guards (`#{`, `#@`, `#$`, which `String#inspect` escapes to `\#{` etc. and
-/// `{:?}` leaves bare) -- the escape styles genuinely differ there; both
-/// implementations still raise.
+/// the deleted Ruby `Store#fetch`'s, as `ext/lain/corpus/errors.ndjson` records
+/// it: `{:?}` escapes a plain digest, and one containing a double-quote, exactly
+/// as Ruby's `String#inspect` does. Out of scope for byte-parity: control
+/// characters AND Ruby's interpolation guards (`#{`, `#@`, `#$`, which
+/// `String#inspect` escapes to `\#{` etc. and `{:?}` leaves bare) -- the escape
+/// styles genuinely differ there; both implementations raised.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DanglingDigest(pub Digest);
 
@@ -279,7 +281,8 @@ impl std::fmt::Display for DanglingDigest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // `{:?}` on a `Digest` renders exactly as it did on the former `String`
         // field -- `Digest`'s hand-written `Debug` delegates to the inner
-        // `String`'s -- so this message stays byte-equal to Ruby `Store#fetch`.
+        // `String`'s -- so this message stays byte-equal to the deleted Ruby
+        // `Store#fetch`'s, as errors.ndjson records it.
         write!(f, "no object {:?} in store", self.0)
     }
 }
@@ -405,14 +408,14 @@ pub fn ancestor_digests(
         .collect()
 }
 
-/// How many nodes the chain from `head` holds -- Ruby `Timeline#length`. Folds
+/// How many nodes the chain from `head` holds -- `Ext::Timeline#length`. Folds
 /// the count over the walk, so asking for a number never allocates a `Vec` of
 /// every `Arc` on the chain to then throw away.
 pub fn length(map: &StoreMap, head: Option<&Digest>) -> Result<usize, DanglingDigest> {
     walk(map, head).try_fold(0, |count, step| step.map(|_turn| count + 1))
 }
 
-/// Whether `needle` is on the chain from `head` -- Ruby `Timeline#include?`.
+/// Whether `needle` is on the chain from `head` -- `Ext::Timeline#include?`.
 /// Stops at the hit (see [`find_ancestor`]), so membership near the head is
 /// answered in a couple of node reads however long the chain behind it is.
 pub fn includes(
@@ -437,7 +440,7 @@ pub fn parent_of(map: &StoreMap, digest: &Digest) -> Result<Option<Digest>, Dang
 /// no history. Total over well-formed chains: two that never meet return `None`,
 /// the bottom element. A dangle in either chain is `Err(DanglingDigest)` -- never
 /// a wrong answer computed over a truncated chain. Walks `b` head-first and
-/// returns the first digest also on `a`, matching `Timeline#meet` exactly.
+/// returns the first digest also on `a`, as the deleted Ruby `Timeline#meet` did.
 ///
 /// This is the MEET of the ancestry meet-semilattice (see the module doc), and
 /// it is **idempotent, commutative, and associative**, with `None` as the
@@ -453,8 +456,8 @@ pub fn meet(
     b_head: Option<&Digest>,
 ) -> Result<Option<Digest>, DanglingDigest> {
     // The `a` side is the whole chain by necessity -- a membership test needs
-    // its set built before the first question -- exactly as Ruby
-    // `Timeline#meet` builds `mine`. Only the `b` side can stop early, and
+    // its set built before the first question -- exactly as the deleted Ruby
+    // `Timeline#meet` built `mine`. Only the `b` side can stop early, and
     // [`find_ancestor`] is where it does.
     let mine: HashSet<Digest> = ancestor_digests(map, a_head)?.into_iter().collect();
     find_ancestor(map, b_head, |digest| mine.contains(digest))
@@ -469,8 +472,8 @@ pub fn meet(
 /// half of what "a meet sits below both operands" even means; `cargo test`'s
 /// `algebra::render_ancestry_laws::meet_orders_below_both_operands` proves
 /// [`meet`] against it, and
-/// `spec/lain/rust/timeline_spec.rb` is what proves the binding agrees with
-/// Ruby's `Timeline#ancestor_of?`.
+/// `spec/lain/rust/timeline_spec.rb` is what holds the binding,
+/// `Ext::Timeline#ancestor_of?`, to the same order.
 pub fn ancestor_of(
     map: &StoreMap,
     ancestor: Option<&Digest>,
@@ -932,7 +935,8 @@ pub(crate) mod tests {
 
     #[test]
     fn dangling_message_matches_ruby_string_inspect() {
-        // Ruby `Store#fetch`: `"no object #{digest.inspect} in store"`.
+        // The deleted Ruby `Store#fetch`, as errors.ndjson records it:
+        // `"no object #{digest.inspect} in store"`.
         assert_eq!(
             DanglingDigest(digest("blake3:absent")).to_string(),
             r#"no object "blake3:absent" in store"#

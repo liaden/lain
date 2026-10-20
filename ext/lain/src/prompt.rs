@@ -1454,7 +1454,10 @@ pub mod ffi {
         /// file, so no I/O crosses the boundary.
         fn from_toml(ruby: &Ruby, source: Value) -> Result<Obj<Self>, Error> {
             let source = read_text(ruby, source, || "config source".to_string())?;
-            let config = Config::parse(&source).map_err(|err| config_error(ruby, &err))?;
+            let parsed = Config::parse(&source);
+            // A refusal can run Ruby, so the source's Rust copy goes first.
+            drop(source);
+            let config = parsed.map_err(|err| config_error(ruby, err))?;
             Ok(Prompt::wrap(ruby, config.format, config.settings))
         }
 
@@ -1482,10 +1485,10 @@ pub mod ffi {
             let kwargs = get_kwargs::<_, (Value,), (), ()>(parsed.keywords, &["color"], &[])?;
             let color = kwargs.required.0.to_bool();
             let vars = read_vars(ruby, bindings)?;
-            let rendered = rb_self
-                .format
-                .render(&vars, color)
-                .map_err(|err| style_error(ruby, &err))?;
+            let rendered = rb_self.format.render(&vars, color);
+            // A refusal can run Ruby, so the bindings' Rust copies go first.
+            drop(vars);
+            let rendered = rendered.map_err(|err| style_error(ruby, err))?;
             Ok(frozen_str(ruby, &rendered))
         }
     }
@@ -1556,14 +1559,14 @@ pub mod ffi {
 
     // Each pure error type's `Display` IS the Ruby-visible message; there is no
     // second, hand-built wording here to drift away from the Rust tests.
-    fn style_error(ruby: &Ruby, err: &StyleError) -> Error {
-        lookup_error(ruby, &["Lain", "Ext", "Prompt", "StyleError"], || {
+    fn style_error(ruby: &Ruby, err: StyleError) -> Error {
+        lookup_error(ruby, &["Lain", "Ext", "Prompt", "StyleError"], move || {
             err.to_string()
         })
     }
 
-    fn config_error(ruby: &Ruby, err: &ConfigError) -> Error {
-        lookup_error(ruby, &["Lain", "Ext", "Prompt", "ConfigError"], || {
+    fn config_error(ruby: &Ruby, err: ConfigError) -> Error {
+        lookup_error(ruby, &["Lain", "Ext", "Prompt", "ConfigError"], move || {
             err.to_string()
         })
     }

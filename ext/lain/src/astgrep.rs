@@ -630,7 +630,10 @@ pub mod ffi {
             text_of(ruby, pattern, "pattern")?,
         );
         let (src, lang, pattern) = (src.read(ruby)?, lang.read(ruby)?, pattern.read(ruby)?);
-        let matches = pure_search(&src, &lang, &pattern).map_err(|err| raised(ruby, err))?;
+        let searched = pure_search(&src, &lang, &pattern);
+        // A refusal can run Ruby, so the arguments' Rust copies go first.
+        drop((src, lang, pattern));
+        let matches = searched.map_err(|err| raised(ruby, err))?;
         let out = ruby.ary_new_capa(matches.len());
         for matched in matches {
             out.push(build_match(ruby, matched)?)?;
@@ -675,7 +678,10 @@ pub mod ffi {
             text_of(ruby, lang, "language")?,
         );
         let (src, lang) = (src.read(ruby)?, lang.read(ruby)?);
-        let text = pure_dump(&src, &lang).map_err(|err| raised(ruby, err))?;
+        let dumped = pure_dump(&src, &lang);
+        // A refusal can run Ruby, so the arguments' Rust copies go first.
+        drop((src, lang));
+        let text = dumped.map_err(|err| raised(ruby, err))?;
         let string = ruby.str_new(&text);
         string.freeze();
         Ok(string)
@@ -701,17 +707,13 @@ pub mod ffi {
     /// this code implements, and looking it up at raise time keeps the ext free
     /// of any load-order dependency on it.
     fn raised(ruby: &Ruby, err: SearchError) -> Error {
-        let message = err.to_string();
-        match err {
-            SearchError::BadPattern { .. } => {
-                lookup_error(ruby, &["Lain", "Ext", "AstGrep", "BadPattern"], || message)
+        let path: &'static [&'static str] = match err {
+            SearchError::BadPattern { .. } => &["Lain", "Ext", "AstGrep", "BadPattern"],
+            SearchError::UnknownLanguage(_) => {
+                return Error::new(ruby.exception_arg_error(), err.to_string());
             }
-            SearchError::UnknownLanguage(_) => Error::new(ruby.exception_arg_error(), message),
-            SearchError::DumpTooDeep(_) => lookup_error(
-                ruby,
-                &["Lain", "Structural", "Matcher", "DumpCapped"],
-                || message,
-            ),
-        }
+            SearchError::DumpTooDeep(_) => &["Lain", "Structural", "Matcher", "DumpCapped"],
+        };
+        lookup_error(ruby, path, move || err.to_string())
     }
 }

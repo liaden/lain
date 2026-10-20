@@ -366,11 +366,11 @@ pub mod ffi {
             // `BuildError`'s `Display` IS the Ruby-visible message; there is no
             // second wording here to drift from the Rust test.
             let inner = Candidates::new(batch).map_err(|err| match err {
-                BuildError::CandidateTooLong { .. } => {
-                    lookup_error(ruby, &["Lain", "Ext", "Fuzzy", "CandidateTooLong"], || {
-                        err.to_string()
-                    })
-                }
+                BuildError::CandidateTooLong { .. } => lookup_error(
+                    ruby,
+                    &["Lain", "Ext", "Fuzzy", "CandidateTooLong"],
+                    move || err.to_string(),
+                ),
             })?;
 
             let obj = ruby.obj_wrap(Fuzzy {
@@ -393,9 +393,12 @@ pub mod ffi {
             let limit = read_limit(ruby, kwargs.optional.0)?;
             let query = read_text(ruby, query, || "query".to_string())?;
 
-            let hits = rb_self.inner.rank(&query, limit).map_err(|err| match err {
+            let ranked = rb_self.inner.rank(&query, limit);
+            // A refusal can run Ruby, so the query's Rust copy goes first.
+            drop(query);
+            let hits = ranked.map_err(|err| match err {
                 QueryError::TooLong { .. } => {
-                    lookup_error(ruby, &["Lain", "Ext", "Fuzzy", "QueryTooLong"], || {
+                    lookup_error(ruby, &["Lain", "Ext", "Fuzzy", "QueryTooLong"], move || {
                         err.to_string()
                     })
                 }
