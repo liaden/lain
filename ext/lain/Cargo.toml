@@ -132,3 +132,6 @@ unicode-segmentation = "1"
 # upstream's, and `[bans] multiple-versions` is set to "warn" precisely so a
 # duplicate stays visible instead of being fatal or hidden.
 petgraph = "=0.8.3"
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }

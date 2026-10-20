@@ -44,6 +44,9 @@ use crate::dag::{self, DanglingDigest, StoreMap};
 use crate::digest::Digest;
 use crate::graph;
 
+#[cfg(test)]
+mod strategy;
+
 /// The seal. A private module holding a public trait: nothing outside this file
 /// can name `Proven`, so nothing outside it can satisfy [`MeetSemilattice`]'s
 /// supertrait bound.
@@ -233,6 +236,33 @@ macro_rules! declare_meet_semilattice {
                             );
                         }
                     }
+                }
+            }
+
+            ::proptest::proptest! {
+                #![proptest_config(::proptest::prelude::ProptestConfig {
+                    failure_persistence: None,
+                    ..::proptest::prelude::ProptestConfig::default()
+                })]
+
+                #[test]
+                fn meet_is_idempotent_over_generated_graphs(plan in strategy::plan()) {
+                    strategy::laws::idempotent::<$order>(&plan)?;
+                }
+
+                #[test]
+                fn meet_is_commutative_over_generated_graphs(plan in strategy::plan()) {
+                    strategy::laws::commutative::<$order>(&plan)?;
+                }
+
+                #[test]
+                fn meet_is_associative_over_generated_graphs(plan in strategy::plan()) {
+                    strategy::laws::associative::<$order>(&plan)?;
+                }
+
+                #[test]
+                fn meet_orders_below_both_operands_over_generated_graphs(plan in strategy::plan()) {
+                    strategy::laws::below_both::<$order>(&plan)?;
                 }
             }
 
