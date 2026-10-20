@@ -55,13 +55,17 @@
 #                                        none, which is the `#blocks(span)`
 #                                        shape; `#propose_ranges(messages, span:)`
 #                                        needs it.
+#   input_keyword [true, false]          the input is a Hash of keyword arguments
+#                                        and is splatted, not passed positionally,
+#                                        for a keyword-only operation such as
+#                                        `Context#render`. Defaults to false.
 #   equal       [#call(a, b) -> bool]    defaults to `==`
 module AlgebraLaws
-  Pure = Data.define(:instance, :operation, :draw, :keywords, :same) do
+  Pure = Data.define(:instance, :operation, :draw, :keywords, :same, :splat) do
     def self.from(config)
       new(instance: config.fetch(:instance).call, operation: config.fetch(:operation),
           draw: config.fetch(:population), keywords: config.fetch(:keywords, ->(_input) { {} }),
-          same: config.fetch(:equal, ->(a, b) { a == b }))
+          same: config.fetch(:equal, ->(a, b) { a == b }), splat: config.fetch(:input_keyword, false))
     end
 
     def to_h
@@ -89,7 +93,10 @@ module AlgebraLaws
 
     # SENT rather than public_sent, so a private operation is judged too: "does
     # this class answer it?" stays a different question from "is it public?".
-    def answer(input) = instance.send(operation, input, **keywords.call(input))
+    def answer(input)
+      positional, keyword = splat ? [[], input] : [[input], {}]
+      instance.send(operation, *positional, **keyword, **keywords.call(input))
+    end
 
     # The inputs, without repeats. A population that is one input repeated
     # certifies determinism at a single point and calls it a law -- the same

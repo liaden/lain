@@ -589,4 +589,46 @@ RSpec.describe Lain::Context do
         .to eq([:table, nil])
     end
   end
+
+  # Each draw builds its own timelines so no law inherits another's.
+  describe "held to the purity laws on #render" do
+    triples = lambda do
+      store = Lain::Store.new
+      body = ->(words) { [{ "type" => "text", "text" => words }] }
+      base = Lain::Timeline.empty(store:).commit(role: :user, content: body.call("hello"))
+      [base, base.commit(role: :assistant, content: body.call("hi"))].map do |timeline|
+        { timeline:, toolset: Lain::Toolset.new, workspace: Lain::Workspace.new(reminders: ["todo: ship"]) }
+      end
+    end
+    default = described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
+
+    include_examples "a pure operation",
+                     instance: -> { default },
+                     operation: :render,
+                     population: triples,
+                     input_keyword: true,
+                     equal: ->(a, b) { a.digest == b.digest }
+
+    describe "with a live model switch" do
+      let(:outcomes) do
+        switch = Lain::Context::ModelSwitch.new("claude-opus-4-8", journal: Lain::Journal.new(io: StringIO.new))
+        models = %w[claude-haiku-4-5 claude-opus-4-8].cycle
+        live = default.with_model(switch)
+        battery = AlgebraLaws::Pure.from(
+          instance: -> { live }, operation: :render, population: triples, input_keyword: true,
+          keywords: ->(_triple) { {}.tap { switch.switch(models.next, surface: "tty") } },
+          equal: ->(a, b) { a.digest == b.digest }
+        )
+        AlgebraLaws.outcomes(battery)
+      end
+
+      it "fails determinism, since the slot is read at render time" do
+        expect(outcomes["answers the same thing twice for one input"]).to eq(:fails)
+      end
+
+      it "raises in no law" do
+        expect(outcomes.values).to all(satisfy { |outcome| outcome.is_a?(Symbol) })
+      end
+    end
+  end
 end
