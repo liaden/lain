@@ -374,12 +374,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   describe "resends are journaled and non-destructive (4-2.3)" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
 
     it "records the resend and leaves the original Timeline head reachable (speculative fork)" do
-      timeline = Lain::Timeline.empty(store:)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                               .commit(role: :assistant, content: [{ "type" => "text", "text" => "hello" }])
+      timeline = Lain::Dag::Factory.timeline(store:)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                                   .commit(role: :assistant, content: [{ "type" => "text", "text" => "hello" }])
       head = timeline.head_digest
       frontend = described_class.new(channel:, socket_path: @socket, store:, journal:)
 
@@ -396,7 +396,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         # Speculative fork, not rewrite: the resend never committed, so the
         # original head still resolves and a fork of it is O(1) and equal.
         expect(store.key?(head)).to be(true)
-        original = Lain::Timeline.new(head_digest: head, store:)
+        original = Lain::Dag::Factory.timeline(head_digest: head, store:)
         expect(original.fork).to eq(original)
         expect(original.to_a.map(&:role)).to eq(%w[user assistant])
         # The live timeline view still shows the untouched chain.

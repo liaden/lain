@@ -78,7 +78,7 @@ RSpec.describe "a critique of a held review", :seam do
     union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new,
                                Lain::Tools::Grep.new])
     Lain::Skill::RoleSpawn.new(provider:, context_factory: -> { child_context }, toolset: union,
-                               parent: Lain::Timeline.empty(store: Lain::Store.new), slots: library.slots,
+                               parent: CoreGraph.timeline, slots: library.slots,
                                tool_middleware: ToolRegistry::UNGUARDED)
   end
 

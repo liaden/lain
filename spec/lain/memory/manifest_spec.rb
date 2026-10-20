@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Memory::Manifest do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:index) { Lain::Memory::Index.empty(store:) }
 
   def item(id, description)
@@ -60,8 +60,8 @@ RSpec.describe Lain::Memory::Manifest do
     # silently; this is the spec that catches it.
     it "keeps Context#render digest-identical across write orders" do
       context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
-      timeline = Lain::Timeline.empty(store:)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => "hello" }])
+      timeline = Lain::Dag::Factory.timeline(store:)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "hello" }])
       toolset = Lain::Toolset.new
       forward = manifest_over(item("a", "alpha"), item("b", "beta"))
       backward = manifest_over(item("b", "beta"), item("a", "alpha"))

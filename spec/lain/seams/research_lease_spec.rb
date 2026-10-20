@@ -56,7 +56,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
     backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
     the_board = board
     Lain::CLI::Wiring::ToolsetBuild.new(
-      backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, parent: -> { Lain::Timeline.empty },
+      backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, parent: -> { CoreGraph.timeline },
       supervisor: Lain::Supervisor.new(journal:), journal:, library: backend.library, root: @repo,
       epic: SpecNulls.unmounted_epic, switchboard: -> { the_board }, askers: SpecNulls::UnwiredAskers.build,
       paths:, config: Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg))
@@ -65,7 +65,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
 
   def researcher(provider)
     toolset = toolset_build(provider).build(Lain::Memory::Recorder.new,
-                                            ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty }))
+                                            ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
     toolset.fetch(Lain::Tools::Subagent::NAME)
   end
 
@@ -227,7 +227,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
 
     def role_spawn(provider)
       build = toolset_build(provider)
-      build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty }))
+      build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
       build.role_spawn
     end
 

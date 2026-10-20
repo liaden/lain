@@ -221,7 +221,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
                             history_path: File.join(@dir, "history"))
   end
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) { chain("hi") }
   # Where a held line waits for `you>`: the conductor's rail, told through the
   # terminal it draws on.
@@ -251,7 +251,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   let(:replies) { described_class.new(tty:, conductor:, ask_human: directory, questions:) }
 
   def chain(text)
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => text }])
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => text }])
   end
 
   # A second agent holding its own asker -- what a subagent is once it has one,
@@ -3044,7 +3044,10 @@ RSpec.describe Lain::CLI::HumanReplies do
     # `pin` sits in the same state as `open`: the editor sends it,
     # the view can honour it, and nothing popped it.
     it "pins the turn a :LainPin gesture names" do
-      timeline = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      timeline = Lain::Dag::Factory.timeline(store:).commit(role: :user,
+                                                            content: [{
+                                                              "type" => "text", "text" => "hi"
+                                                            }])
       views.updates(Lain::Telemetry::TurnUsage.new(digest: timeline.head_digest, model: "m",
                                                    stop_reason: :end_turn, usage: {}))
       editor.push(["pin", [1]])
@@ -3234,15 +3237,15 @@ end
 # widened: one object owning the run's directory and the queue the reply
 # surfaces park on.
 RSpec.describe Lain::CLI::Wiring::Askers do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:askers) { described_class.new(observer: Lain::Event::ChainWriter::Null.new) }
   let(:set) { Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: "which db?")]) }
 
   def chain(text)
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => text }])
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => text }])
   end
 
   it "enqueues an arrival carrying the set, its digest and its asker -- never a bare String" do

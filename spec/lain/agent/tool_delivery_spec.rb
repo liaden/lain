@@ -66,9 +66,9 @@ RSpec.describe Lain::Agent::ToolDelivery do
   # The tear window's own shape: a user turn, then the assistant turn carrying
   # the calls, committed and unanswered.
   let(:timeline) do
-    Lain::Timeline.empty(store: Lain::Store.new)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: response.content)
+    Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: response.content)
   end
   let(:display) { [] }
 
@@ -266,9 +266,9 @@ RSpec.describe Lain::Agent::ToolDelivery do
   describe "a turn whose results cannot be committed" do
     let(:refusing_store) { ToolDeliverySpecSupport::RefusingStore.new("ran tu_2") }
     let(:timeline) do
-      Lain::Timeline.empty(store: refusing_store)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                    .commit(role: :assistant, content: response.content)
+      Lain::Dag::Factory.timeline(store: refusing_store)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                        .commit(role: :assistant, content: response.content)
     end
     let(:outcome) do
       committed = nil
@@ -307,9 +307,9 @@ RSpec.describe Lain::Agent::ToolDelivery do
     # never replaces the failure it was repairing.
     it "lets the original failure through when the calls cannot be paired" do
       unpairable = tool_response(["tu_1", "echo", { "text" => "a" }], ["", "echo", {}])
-      chain = Lain::Timeline.empty(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_1"))
-                            .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                            .commit(role: :assistant, content: unpairable.content)
+      chain = Lain::Dag::Factory.timeline(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_1"))
+                                .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                                .commit(role: :assistant, content: unpairable.content)
       committed = nil
 
       Sync do
@@ -361,9 +361,9 @@ RSpec.describe Lain::Agent::ToolDelivery do
   # A stop landing on the repair itself must not re-enter the cancellation arm:
   # the errored commit sits in the settled branch, outside that rescue.
   it "does not answer the calls a second time when a stop follows the errored commit" do
-    chain = Lain::Timeline.empty(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_2"))
-                          .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                          .commit(role: :assistant, content: response.content)
+    chain = Lain::Dag::Factory.timeline(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_2"))
+                              .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                              .commit(role: :assistant, content: response.content)
     commits = []
 
     Sync do
@@ -389,9 +389,9 @@ RSpec.describe Lain::Agent::ToolDelivery do
   # refuses namedly.
   it "lets the interrupt through when a stranded call names an id no result can pair to" do
     unpairable = tool_response(["tu_1", "echo", { "text" => "a" }], ["", "echo", {}])
-    chain = Lain::Timeline.empty(store: Lain::Store.new)
-                          .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                          .commit(role: :assistant, content: unpairable.content)
+    chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                              .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                              .commit(role: :assistant, content: unpairable.content)
     committed = nil
 
     Sync do
@@ -496,9 +496,9 @@ RSpec.describe Lain::Agent::ToolDelivery do
     end
 
     it "withholds every read of a round whose results could not be committed" do
-      chain = Lain::Timeline.empty(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_2"))
-                            .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                            .commit(role: :assistant, content: response.content)
+      chain = Lain::Dag::Factory.timeline(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_2"))
+                                .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                                .commit(role: :assistant, content: response.content)
       committed = nil
       Sync do
         delivery_over(reading).perform(response, timeline: chain, session:) { |turn| committed = turn }

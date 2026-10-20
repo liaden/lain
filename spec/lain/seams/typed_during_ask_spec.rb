@@ -43,7 +43,7 @@ module TypedDuringAsk
       Sync do |task|
         producer.start(task)
         conductor.read_prompt("you> ")
-        outcome = conductor.supervise(task, -> { Lain::Timeline.empty }) do
+        outcome = conductor.supervise(task, -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }) do
           File.write(File.join(dir, "asking"), "")
           ask.call
         end

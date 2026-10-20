@@ -59,10 +59,10 @@ RSpec.describe "Memory read path seam", :seam do
     # final-message marker and the system marker -- the chain must have a
     # cached prefix to protect, or this example would pass vacuously.
     let(:timeline) do
-      Lain::Timeline.empty(store: Lain::Store.new)
-                    .commit(role: :user, content: text_blocks("query", 8))
-                    .commit(role: :assistant, content: text_blocks("answer", 7))
-                    .commit(role: :user, content: text_blocks("follow-up", 1))
+      Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                        .commit(role: :user, content: text_blocks("query", 8))
+                        .commit(role: :assistant, content: text_blocks("answer", 7))
+                        .commit(role: :user, content: text_blocks("follow-up", 1))
     end
 
     def text_blocks(prefix, count)

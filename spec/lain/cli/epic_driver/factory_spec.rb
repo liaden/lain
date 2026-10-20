@@ -187,7 +187,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   def unbuilt
     Lain::CLI::Wiring::ToolsetBuild.new(
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new,
-      options: {}, supervisor: Lain::Supervisor.new, parent: -> { Lain::Timeline.empty(store: Lain::Store.new) },
+      options: {}, supervisor: Lain::Supervisor.new, parent: -> { CoreGraph.timeline },
       journal: Lain::Channel::Null.instance, library: backend.library, epic: SpecNulls.unmounted_epic,
       root: repo, switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
       **SpecNulls.unloaded_project
@@ -197,7 +197,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   def built(build)
     build.tap do |unbuilt|
       unbuilt.build(Lain::Memory::Recorder.new,
-                    ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+                    ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
     end
   end
 

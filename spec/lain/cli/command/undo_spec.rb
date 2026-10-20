@@ -37,7 +37,7 @@ RSpec.describe Lain::CLI::Command::Undo do
 
   attr_reader :root
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:journal) { [] }
   let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }) }
@@ -47,7 +47,7 @@ RSpec.describe Lain::CLI::Command::Undo do
   let(:session) { Lain::Session.new }
 
   before do
-    @timeline = Lain::Timeline.empty(store:)
+    @timeline = Lain::Dag::Factory.timeline(store:)
   end
 
   def in_root(name) = File.join(root, name)
@@ -325,8 +325,8 @@ RSpec.describe Lain::CLI::Command::Undo do
         other = Lain::Agent::SnapshotSlot.new(root:, scope: :shadow_git, paths:)
         other.prime
         write("from-A.txt", "A's work\n")
-        other_timeline = Lain::Timeline.empty(store: Lain::Store.new)
-                                       .commit(role: :user, content: [{ "type" => "text", "text" => "a" }])
+        other_timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                           .commit(role: :user, content: [{ "type" => "text", "text" => "a" }])
         other.write(timeline: other_timeline, paths: [in_root("from-A.txt")])
         turn(tools: { "from-B.txt" => "B's work\n" })
 
@@ -343,8 +343,8 @@ RSpec.describe Lain::CLI::Command::Undo do
         slot.prime
         other.prime
         write("from-A.txt", "A's work\n")
-        other.write(timeline: Lain::Timeline.empty(store: Lain::Store.new)
-                                            .commit(role: :user, content: [{ "type" => "text", "text" => "a" }]),
+        other.write(timeline: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                                .commit(role: :user, content: [{ "type" => "text", "text" => "a" }]),
                     paths: [in_root("from-A.txt")])
         write("from-B.txt", "B's work\n")
         @timeline = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => "b" }])

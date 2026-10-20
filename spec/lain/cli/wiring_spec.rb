@@ -1814,7 +1814,7 @@ RSpec.describe Lain::CLI::Wiring do
         session_file("first.ndjson", written.to_journal)
         session_file("second.ndjson", resumed_from: { "file" => "first.ndjson" })
         Lain::CLI::Resume::Result.new(file: "second.ndjson",
-                                      timeline: Lain::Timeline.new(head_digest: nil, store: Lain::Store.new),
+                                      timeline: Lain::Dag::Factory.timeline(head_digest: nil, store: Lain::Dag::Factory.store),
                                       session: Lain::Session.new, open: false, notices: [],
                                       recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty))
       end
@@ -3028,8 +3028,8 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       def settled_with(text)
-        Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
-                      .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
+        CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+                 .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
       end
 
       # `run_wiring` inlined for one reason: it closes the conductor, and
@@ -3089,8 +3089,8 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       def settled_with(text)
-        Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
-                      .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
+        CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+                 .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
       end
 
       # Scenario: a switch applies wholly under --no-journal --nvim
@@ -3398,7 +3398,7 @@ RSpec.describe Lain::CLI::Wiring do
 
       def resumed_from(file)
         Lain::CLI::Resume::Result.new(
-          file:, timeline: Lain::Timeline.new(head_digest: nil, store: Lain::Store.new), session: Lain::Session.new,
+          file:, timeline: Lain::Dag::Factory.timeline(head_digest: nil, store: Lain::Dag::Factory.store), session: Lain::Session.new,
           open: false, notices: [], recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty)
         )
       end
@@ -3438,7 +3438,7 @@ RSpec.describe Lain::CLI::Wiring do
       let(:mismatch) { "recorded with --compact-keep 4; continuing with 8 (the current flags win)" }
 
       def resumed_with_notice
-        timeline = Lain::Timeline.new(head_digest: nil, store: Lain::Store.new)
+        timeline = Lain::Dag::Factory.timeline(head_digest: nil, store: Lain::Dag::Factory.store)
         Lain::CLI::Resume::Result.new(file: "prior.ndjson", timeline:, session: Lain::Session.new, open: false,
                                       recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty),
                                       notices: [mismatch])
@@ -3504,7 +3504,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       def resumed_with(notice)
-        timeline = Lain::Timeline.new(head_digest: nil, store: Lain::Store.new)
+        timeline = Lain::Dag::Factory.timeline(head_digest: nil, store: Lain::Dag::Factory.store)
         Lain::CLI::Resume::Result.new(file: "prior.ndjson", timeline:, session: Lain::Session.new, open: false,
                                       recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty),
                                       notices: [notice])
@@ -5022,7 +5022,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     end
 
     it "seeds the Agent with a resumed Timeline when one is passed" do
-      resumed = Lain::Timeline.new(head_digest: nil, store: Lain::Store.new)
+      resumed = Lain::Dag::Factory.timeline(head_digest: nil, store: Lain::Dag::Factory.store)
 
       expect(build(timeline: resumed).timeline).to eq(resumed)
     end
@@ -5283,7 +5283,7 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
     let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd) }
     let(:chronicle) { Lain::CLI::Chronicle::Null.new }
     let(:journal) { RecordingChannel.new }
-    let(:parent) { -> { Lain::Timeline.new } }
+    let(:parent) { -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) } }
     let(:assembler) do
       Lain::CLI::Wiring::ToolsetBuild.new(backend:, provider: backend.provider(spool: chronicle.spool),
                                           chronicle:, options: {}, supervisor: Lain::Supervisor.new(journal:),

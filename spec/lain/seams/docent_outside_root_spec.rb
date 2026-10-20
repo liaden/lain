@@ -80,7 +80,7 @@ RSpec.describe "a survey docent reading outside the project", :seam do
       provider:, context_factory: -> { Lain::Context.new(model: "docent-model", max_tokens: 256) },
       toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new,
                                   Lain::Tools::Grep.new]),
-      parent: Lain::Timeline.empty(store: Lain::Store.new), slots: Lain::Prompt::Slots.new(fills: {}),
+      parent: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store), slots: Lain::Prompt::Slots.new(fills: {}),
       tool_middleware: ToolRegistry.gated(policy: Lain::Middleware::Gate::DenyAll.new, sensitivity:)
     )
   end

@@ -46,8 +46,8 @@ RSpec.describe Lain::Arm::Instrument do
 
   describe "#price -- the run's journal folded into a Ledger" do
     let(:timeline) do
-      Lain::Timeline.empty(store: Lain::Store.new)
-                    .commit(role: :assistant, content: [{ "type" => "text", "text" => "done" }])
+      Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                        .commit(role: :assistant, content: [{ "type" => "text", "text" => "done" }])
     end
 
     def usage_record(digest)

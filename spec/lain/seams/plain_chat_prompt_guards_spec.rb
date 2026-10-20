@@ -122,11 +122,12 @@ module PlainChatPromptGuards
       end
 
       def ask_supervised
-        Sync { |task| @conductor.supervise(task, -> { Lain::Timeline.empty }) { ask } }
+        parent = -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }
+        Sync { |task| @conductor.supervise(task, parent) { ask } }
       end
 
       def ask
-        chain = Lain::Timeline.empty(store: Lain::Store.new)
+        chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
                               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
         result = @askers.enrol(chain).asker.call({ "question" => "which db?" },
                                                  Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))

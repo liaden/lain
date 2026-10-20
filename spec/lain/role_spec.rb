@@ -176,7 +176,7 @@ RSpec.describe Lain::Role do
     it "reshapes the factory context without dropping its named pipeline" do
       with_project do |slots|
         parent = Lain::CLI::ContextPipeline.named("prune").context(model: "probe", max_tokens: 64)
-        long = (1..30).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |chain, index|
+        long = (1..30).inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |chain, index|
           chain.commit(role: index.odd? ? :user : :assistant, content: [{ "type" => "text", "text" => index.to_s }])
         end
         child = sre.child_context(parent, slots:)
@@ -269,8 +269,8 @@ RSpec.describe Lain::Role do
           system: [{ "type" => "text", "text" => bulk, "cache" => true },
                    { "type" => "text", "text" => tail }]
         )
-        timeline = Lain::Timeline.empty(store: Lain::Store.new)
-                                 .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+        timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                     .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
 
         request = context.render(timeline:, toolset: union)
 

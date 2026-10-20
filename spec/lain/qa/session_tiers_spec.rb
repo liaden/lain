@@ -99,8 +99,8 @@ RSpec.describe Lain::QA::SessionTiers do
   # ---- Through the real spawn, with nothing doubled between ----------------
 
   describe "over the role-selecting spawn the chat really holds" do
-    let(:store) { Lain::Store.new }
-    let(:parent) { Lain::Timeline.empty(store:) }
+    let(:store) { Lain::Dag::Factory.store }
+    let(:parent) { Lain::Dag::Factory.timeline(store:) }
     let(:child_context) { Lain::Context.new(model: "the-session-model", max_tokens: 256) }
     let(:union) do
       Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new,

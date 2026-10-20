@@ -108,7 +108,7 @@ RSpec.describe "Free summarizer tier seam", :seam do
      ["assistant", [{ "type" => "tool_use", "id" => "call-2", "name" => tool_name, "input" => {} }]],
      ["user", [result_block(content)]],
      ["assistant", [text_block(4)]], ["user", [text_block(5)]], ["user", [text_block(6)]]]
-      .inject(Lain::Timeline.empty(store: Lain::Store.new)) { |line, (role, content_blocks)| line.commit(role:, content: content_blocks) }
+      .inject(CoreGraph.timeline) { |line, (role, content_blocks)| line.commit(role:, content: content_blocks) }
   end
 
   def observe(built, content, tool_name)

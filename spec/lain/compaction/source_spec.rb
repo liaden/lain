@@ -207,7 +207,7 @@ RSpec.describe Lain::Compaction::Source do
 
   def timeline(size = 6, &block_for)
     block_for ||= method(:block)
-    (1..size).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, index|
+    (1..size).inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, index|
       line.commit(role: role_at(index), content: [block_for.call(index)])
     end
   end
@@ -234,7 +234,7 @@ RSpec.describe Lain::Compaction::Source do
      ["assistant", [{ "type" => "tool_use", "id" => "call-2", "name" => "read", "input" => { "n" => 2 } }]],
      ["user", [{ "type" => "tool_result", "tool_use_id" => "call-2", "content" => content }]],
      ["assistant", [block(4)]], ["user", [block(5)]], ["user", [block(6)]]]
-      .inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (role, content)|
+      .inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, (role, content)|
         line.commit(role:, content:)
       end
   end
@@ -264,7 +264,7 @@ RSpec.describe Lain::Compaction::Source do
 
   def crossover_timeline(pad)
     bodies = (1..5).map { |index| "pad#{index}-#{"m" * 30}" } + ["Z" * pad, "tail-a", "tail-b"]
-    bodies.each_with_index.inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (body, index)|
+    bodies.each_with_index.inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, (body, index)|
       line.commit(role: role_at(index + 1), content: [{ "type" => "text", "text" => body }])
     end
   end
@@ -1404,7 +1404,7 @@ RSpec.describe Lain::Compaction::Source do
 
     def refusals = records.select { |record| record["type"] == "derivation_refused" }
 
-    def chain_at(digest, store) = Lain::Timeline.new(head_digest: digest, store:)
+    def chain_at(digest, store) = Lain::Dag::Factory.timeline(head_digest: digest, store:)
 
     def projection_of(digest, store)
       Lain::Timeline.project(chain_at(digest, store).to_a)
@@ -1660,7 +1660,7 @@ RSpec.describe Lain::Compaction::Source do
       expect(longer.to_a.map(&:role)).to eq((1..8).map { |index| role_at(index) })
     end
 
-    def at(line, index) = Lain::Timeline.new(head_digest: line.to_a[index].digest, store: line.store)
+    def at(line, index) = Lain::Dag::Factory.timeline(head_digest: line.to_a[index].digest, store: line.store)
 
     # The render an ordinary forward run sends at `line`: a fresh Source and a
     # fresh Session, with nothing ever committed.
@@ -1916,7 +1916,7 @@ RSpec.describe Lain::Compaction::Source do
       longer = extend_by(line, 2)
 
       messages = render(context_for(built, longer), longer).messages
-      sent = Lain::Timeline.new(head_digest: derivations.last["derived_head"], store: longer.store).to_a
+      sent = Lain::Dag::Factory.timeline(head_digest: derivations.last["derived_head"], store: longer.store).to_a
 
       expect(cuts.size).to eq(2)
       expect(sent.map(&:role)).to eq(messages.map { |message| message["role"] })
@@ -1962,7 +1962,7 @@ RSpec.describe Lain::Compaction::Source do
       end
     end
 
-    def at(line, index) = Lain::Timeline.new(head_digest: line.to_a[index].digest, store: line.store)
+    def at(line, index) = Lain::Dag::Factory.timeline(head_digest: line.to_a[index].digest, store: line.store)
 
     # Plan steps compact and nothing else does; a hard cap of 1 forces the step
     # even while warm.
@@ -2210,7 +2210,7 @@ RSpec.describe Lain::Compaction::Source do
       end
     end
 
-    def committed(messages, onto: Lain::Timeline.empty(store: Lain::Store.new))
+    def committed(messages, onto: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
       messages.inject(onto) { |line, message| line.commit(role: message["role"], content: message["content"]) }
     end
 
@@ -2405,7 +2405,7 @@ RSpec.describe Lain::Compaction::Source do
        ["assistant", [{ "type" => "tool_use", "id" => "call-1", "name" => "read", "input" => { "n" => 1 } }]],
        ["user", [{ "type" => "tool_result", "tool_use_id" => "call-1", "content" => tool_body(1) }]],
        ["user", [block(4)]], ["assistant", [block(5)]], ["user", [block(6)]]]
-        .inject(Lain::Timeline.empty(store: Lain::Store.new)) { |line, (role, content)| line.commit(role:, content:) }
+        .inject(CoreGraph.timeline) { |line, (role, content)| line.commit(role:, content:) }
     end
   end
 
@@ -2638,7 +2638,7 @@ RSpec.describe Lain::Compaction::Source do
     def ask(text) = ["user", [{ "type" => "text", "text" => text }]]
 
     def committed(turns)
-      turns.inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (role, content)|
+      turns.inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, (role, content)|
         line.commit(role:, content:)
       end
     end
@@ -2909,7 +2909,7 @@ RSpec.describe Lain::Compaction::Source do
        ["user", [{ "type" => "tool_result", "tool_use_id" => "call-2", "content" => tool_body(2) }]],
        ["assistant", [{ "type" => "tool_use", "id" => "call-4", "name" => "read", "input" => { "n" => 4 } }]],
        ["user", [{ "type" => "tool_result", "tool_use_id" => "call-4", "content" => tool_body(4) }]]]
-        .inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (role, content)|
+        .inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, (role, content)|
           line.commit(role:, content:)
         end
     end
@@ -2955,7 +2955,7 @@ RSpec.describe Lain::Compaction::Source do
                 { "role" => "user",
                   "content" => [{ "type" => "tool_result", "tool_use_id" => "call-4", "content" => tool_body(4) }] }]
         [ask("continue"), { "role" => "assistant", "content" => [block(2)] }, ask("continue"), *tool]
-          .inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, message|
+          .inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, message|
             line.commit(role: message["role"], content: message["content"])
           end
       end
@@ -3173,7 +3173,7 @@ RSpec.describe Lain::Compaction::Source do
     end
 
     it "declines when there is nothing but the ask to replace" do
-      line = Lain::Timeline.empty(store: Lain::Store.new).commit(role: "user", content: [block(1)])
+      line = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: "user", content: [block(1)])
       built = handing_off
 
       expect(refused_render(built, line)).to be(false)
@@ -3348,7 +3348,7 @@ RSpec.describe Lain::Compaction::Source do
       def budget = Lain::Oracle::Handoff.budget_for(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
 
       it "stays inside the budget over four hundred turns" do
-        line = (1..400).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |chain, index|
+        line = (1..400).inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |chain, index|
           chain.commit(role: role_at(index), content: [block(index)])
         end
 
@@ -3359,10 +3359,10 @@ RSpec.describe Lain::Compaction::Source do
       end
 
       it "stays inside the budget for one pathological turn" do
-        line = Lain::Timeline.empty(store: Lain::Store.new)
-                             .commit(role: "user", content: [{ "type" => "text", "text" => "z" * 4_000_000 }])
-                             .commit(role: "assistant", content: [block(2)])
-                             .commit(role: "user", content: [block(3)])
+        line = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                 .commit(role: "user", content: [{ "type" => "text", "text" => "z" * 4_000_000 }])
+                                 .commit(role: "assistant", content: [block(2)])
+                                 .commit(role: "user", content: [block(3)])
 
         refused_render(handing_off, line)
 
@@ -3373,10 +3373,10 @@ RSpec.describe Lain::Compaction::Source do
       # A large tool result was already stubbed; a large TEXT block was not,
       # so the oracle used to be handed the bytes that had just been refused.
       it "bounds a large text block as well as a large tool result" do
-        line = Lain::Timeline.empty(store: Lain::Store.new)
-                             .commit(role: "user", content: [{ "type" => "text", "text" => "p" * 300_000 }])
-                             .commit(role: "assistant", content: [{ "type" => "text", "text" => "q" * 300_000 }])
-                             .commit(role: "user", content: [block(3)])
+        line = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                 .commit(role: "user", content: [{ "type" => "text", "text" => "p" * 300_000 }])
+                                 .commit(role: "assistant", content: [{ "type" => "text", "text" => "q" * 300_000 }])
+                                 .commit(role: "user", content: [block(3)])
 
         refused_render(handing_off, line)
 
@@ -3441,7 +3441,7 @@ RSpec.describe Lain::Compaction::Source do
          ["user", [{ "type" => "tool_result", "tool_use_id" => "call-2", "content" => tool_body(2) }]],
          ["assistant", [{ "type" => "tool_use", "id" => "call-4", "name" => "read", "input" => { "n" => 4 } }]],
          ["user", [{ "type" => "tool_result", "tool_use_id" => "call-4", "content" => "x" * 113_614 }]]]
-          .inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (role, content)|
+          .inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, (role, content)|
             line.commit(role:, content:)
           end
       end
@@ -3531,7 +3531,7 @@ RSpec.describe Lain::Compaction::Source do
 
     def prepare(built, line, usage: nil) = built.prepare(base:, timeline: line, usage:, session:)
 
-    def at(line, index) = Lain::Timeline.new(head_digest: line.to_a[index].digest, store: line.store)
+    def at(line, index) = Lain::Dag::Factory.timeline(head_digest: line.to_a[index].digest, store: line.store)
 
     # Ends on the model's own reply, which is where a chat sits while the human is away.
     def idle_timeline(size = 5) = timeline(size)

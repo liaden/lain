@@ -126,7 +126,7 @@ RSpec.describe Lain::Bench::SpawnSeam do
     # `base_timeline:` (a fresh root over the lead's store), DualLedger passes
     # `timeline:`, and an isolated arm passes the lease's `worker_env:`.
     it "roots the agent at a base timeline and carries a worker env into its session" do
-      base = Lain::Timeline.empty(store: Lain::Store.new)
+      base = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
       worker_env = Lain::WorkerEnv.new(cwd: Dir.pwd, env: { "LAIN_ARM" => "worker-1" })
 
       agent = seam.call(journal:, base_timeline: base, worker_env:)
@@ -136,8 +136,8 @@ RSpec.describe Lain::Bench::SpawnSeam do
     end
 
     it "roots the agent at an explicit timeline" do
-      rooted = Lain::Timeline.empty(store: Lain::Store.new)
-                             .commit(role: :user, content: [{ "type" => "text", "text" => "earlier" }])
+      rooted = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                 .commit(role: :user, content: [{ "type" => "text", "text" => "earlier" }])
 
       expect(seam.call(journal:, timeline: rooted).timeline.head).to eq(rooted.head)
     end

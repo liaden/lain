@@ -114,7 +114,7 @@ RSpec.describe Lain::Memory::Item do
   end
 
   describe "in a content-addressed store" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
 
     include_examples "a content-addressed store", store: -> { store }, member: -> { item }
   end

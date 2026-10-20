@@ -12,12 +12,12 @@ require "tmpdir"
 # A still-OPEN gap asserts what SHOULD hold and is `pending`, never the buggy behavior
 # green -- otherwise the fix reads as a regression.
 RSpec.describe Lain::Supervisor, "as an actor reactor" do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:log) { Lain::Tools::Subagent::Log.new }
   let(:parent_timeline) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
 
@@ -93,7 +93,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
                                                    text_response("never reached")]),
           toolset: Lain::Toolset.new([tool]),
           context: Lain::Context.new(model: "parent", max_tokens: 256),
-          timeline: Lain::Timeline.empty(store:)
+          timeline: Lain::Dag::Factory.timeline(store:)
         )
 
         ask = task.async { parent.ask("spawn an actor") }

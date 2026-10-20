@@ -99,7 +99,7 @@ class RecordedSpawnSession
   def parent(responses, toolset, resuming)
     Lain::Agent.new(
       provider: Lain::Provider::Mock.new(responses:), context: CONTEXT, toolset:, journal: @journal,
-      timeline: resuming.nil? ? Lain::Timeline.empty(store: Lain::Store.new) : resuming.first.agent.timeline,
+      timeline: resuming.nil? ? CoreGraph.timeline : resuming.first.agent.timeline,
       turn_middleware: Lain::Middleware::Stack.new(
         [Lain::Middleware::JournalTurns.new(scribe: @scribe, timeline: -> { @agent.timeline })]
       )

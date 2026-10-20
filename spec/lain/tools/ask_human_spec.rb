@@ -13,11 +13,11 @@ require "stringio"
 RSpec.describe Lain::Tools::AskHuman do
   # A shared Store and a two-turn parent chain whose head the tool reads to
   # attribute the question -- the same live-parent-handle seam Subagent uses.
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
 
@@ -124,7 +124,7 @@ RSpec.describe Lain::Tools::AskHuman do
       agent = Lain::Agent.new(
         provider: Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "ask_human", { "question" => "db?" }]),
                                                        text_response("done")]),
-        context:, toolset:, timeline: Lain::Timeline.empty(store:),
+        context:, toolset:, timeline: Lain::Dag::Factory.timeline(store:),
         turn_middleware: Lain::Middleware::Stack.new(
           [Lain::Middleware::JournalTurns.new(scribe:, timeline: -> { agent.timeline })]
         )
@@ -225,8 +225,8 @@ RSpec.describe Lain::Tools::AskHuman do
   # is what the run's own asker (wiring.rb) still does.
   describe "addressing (who a question is sent to, and a reply comes from)" do
     let(:grandparent) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
+      Lain::Dag::Factory.timeline(store:)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
     end
     let(:parent_correlation) { Lain::Event::ChainWriter.correlation_of(grandparent) }
     let(:child) { described_class.new(parent:, to: parent_correlation) }
@@ -639,8 +639,8 @@ RSpec.describe Lain::Tools::AskHuman do
     # second inbox row for one question.
     describe "a relayed question, handed back" do
       let(:grandparent) do
-        Lain::Timeline.empty(store:)
-                      .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
+        Lain::Dag::Factory.timeline(store:)
+                          .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
       end
       let(:parent_correlation) { Lain::Event::ChainWriter.correlation_of(grandparent) }
       let(:relaying) do
@@ -1533,8 +1533,8 @@ RSpec.describe Lain::Tools::AskHuman do
 
     it "journals the same digests when the same session runs again over a fresh Store" do
       digests = Array.new(2) do
-        rerun = Lain::Timeline.empty(store: Lain::Store.new)
-                              .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+        rerun = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
         asked_twice(described_class.new(parent: rerun)).map(&:digest)
       end
 
@@ -1544,8 +1544,8 @@ RSpec.describe Lain::Tools::AskHuman do
 
     describe "relayed past the parent and handed back" do
       let(:grandparent) do
-        Lain::Timeline.empty(store:)
-                      .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
+        Lain::Dag::Factory.timeline(store:)
+                          .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
       end
       let(:relaying) do
         described_class::Parent.new(read: parent, to: Lain::Event::ChainWriter.correlation_of(grandparent),

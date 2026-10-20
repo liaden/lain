@@ -101,7 +101,7 @@ RSpec.describe Lain::Plan::Document do
     end
 
     it "survives a Store round-trip by digest (so it survives fork/replay)" do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       digest = store.put(document)
 
       expect(digest).to eq(document.digest)

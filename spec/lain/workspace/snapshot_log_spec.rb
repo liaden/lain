@@ -39,12 +39,12 @@ RSpec.describe Lain::Workspace::SnapshotLog do
 
   attr_reader :dir
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:events) { [] }
   let(:log) { described_class.new(observer: ->(event) { events << event }) }
   let(:writer) { Lain::Workspace::Snapshot.new(root: dir) }
   let(:write_set) { [] }
-  let(:start) { Lain::Timeline.empty(store:) }
+  let(:start) { Lain::Dag::Factory.timeline(store:) }
   let(:captured) { {} }
 
   # A structured tool's write: what the path held is captured on the turn's

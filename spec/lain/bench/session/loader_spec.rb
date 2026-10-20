@@ -420,9 +420,9 @@ RSpec.describe Lain::Bench::Session::Loader do
 
     describe "an open (crashed) session" do
       it "loads flagged open, with the timeline head the last verified turn" do
-        chain = Lain::Timeline.empty(store: Lain::Store.new)
-                              .commit(role: :user, content: text("hi"))
-                              .commit(role: :assistant, content: text("hello"))
+        chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                  .commit(role: :user, content: text("hi"))
+                                  .commit(role: :assistant, content: text("hello"))
         records = roundtrip([open_header] + chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) })
 
         loaded = described_class.new(records).recording
@@ -437,7 +437,7 @@ RSpec.describe Lain::Bench::Session::Loader do
       # as an open session.
       it "refuses a header that carries a head, naming the retired recorder" do
         head = "blake3:#{"0" * 64}"
-        chain = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("hi"))
+        chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user, content: text("hi"))
         records = roundtrip([open_header.merge("head" => head), Lain::SessionRecord.turn(chain.head)])
 
         expect { described_class.new(records).recording }
@@ -458,7 +458,7 @@ RSpec.describe Lain::Bench::Session::Loader do
       # head with no turn record in the file. Tolerated by never consulting
       # it -- the record marks one ASK, not the session's open/closed state.
       it "tolerates a run_interrupted whose head has no turn record, still open" do
-        chain = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("hi"))
+        chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user, content: text("hi"))
         interrupted = Lain::Telemetry::RunInterrupted.new(head: "blake3:#{"f" * 64}").to_journal
         records = roundtrip([open_header, Lain::SessionRecord.turn(chain.head), interrupted])
 
@@ -475,11 +475,11 @@ RSpec.describe Lain::Bench::Session::Loader do
       # from one. So a head stranded mid-tool rebuilds stranded, and
       # {CLI::Resume} alone decides what a NEW session starts from.
       it "rebuilds a head stranded mid-tool exactly as recorded, projecting no cancellation" do
-        chain = Lain::Timeline.empty(store: Lain::Store.new)
-                              .commit(role: :user, content: text("echo hi"))
-                              .commit(role: :assistant,
-                                      content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
-                                                  "input" => { "text" => "hi" } }])
+        chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                  .commit(role: :user, content: text("echo hi"))
+                                  .commit(role: :assistant,
+                                          content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                                      "input" => { "text" => "hi" } }])
         records = roundtrip([open_header] + chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) })
 
         loaded = described_class.new(records).recording
@@ -494,9 +494,9 @@ RSpec.describe Lain::Bench::Session::Loader do
     # written open and never rewritten) -- the most load-bearing Anchor branch.
     describe "a gracefully closed live session" do
       let(:chain) do
-        Lain::Timeline.empty(store: Lain::Store.new)
-                      .commit(role: :user, content: text("hi"))
-                      .commit(role: :assistant, content: text("hello"))
+        Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                          .commit(role: :user, content: text("hi"))
+                          .commit(role: :assistant, content: text("hello"))
       end
 
       def closed_records(head)
@@ -520,7 +520,7 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
 
     describe "a resume chain" do
-      let(:a_chain) { Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("first")) }
+      let(:a_chain) { CoreGraph.timeline.commit(role: :user, content: text("first")) }
       let(:a_records) { roundtrip([open_header] + a_chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) }) }
       let(:resolver) { ->(basename) { basename == "a.ndjson" ? a_records : raise("unexpected #{basename}") } }
 
@@ -604,13 +604,13 @@ RSpec.describe Lain::Bench::Session::Loader do
     # above the rewind loadable (probe_rewind_membership, proven end-to-end
     # below).
     describe "a rewound session stays loadable" do
-      let(:store) { Lain::Store.new }
+      let(:store) { Lain::Dag::Factory.store }
       let(:full) do
-        Lain::Timeline.empty(store:)
-                      .commit(role: :user, content: text("q1"))
-                      .commit(role: :assistant, content: text("a1"))
-                      .commit(role: :user, content: text("q2"))
-                      .commit(role: :assistant, content: text("a2"))
+        Lain::Dag::Factory.timeline(store:)
+                          .commit(role: :user, content: text("q1"))
+                          .commit(role: :assistant, content: text("a1"))
+                          .commit(role: :user, content: text("q2"))
+                          .commit(role: :assistant, content: text("a2"))
       end
       let(:target) { full.rewind(2) }
       let(:retried) do
@@ -651,7 +651,7 @@ RSpec.describe Lain::Bench::Session::Loader do
       end
 
       it "folds a rewind to the empty session (to: nil), fresh turns extending from the root" do
-        fresh = Lain::Timeline.empty(store:).commit(role: :user, content: text("clean slate"))
+        fresh = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("clean slate"))
         records = roundtrip([open_header] + turn_records(full) +
                             [Lain::SessionRecord.rewound(from: full.head_digest, to: nil),
                              Lain::SessionRecord.turn(fresh.head)])
@@ -709,7 +709,7 @@ RSpec.describe Lain::Bench::Session::Loader do
 
       # Review panel (Jeremy): the record's edge semantics, pinned.
       it "folds a first-record rewound ({from: nil, to: nil}) to the empty session" do
-        fresh = Lain::Timeline.empty(store:).commit(role: :user, content: text("clean"))
+        fresh = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("clean"))
         records = roundtrip([open_header, Lain::SessionRecord.rewound(from: nil, to: nil),
                              Lain::SessionRecord.turn(fresh.head)])
 
@@ -792,7 +792,7 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
 
     describe "message records rejoin the Store" do
-      let(:chain) { Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("ask me")) }
+      let(:chain) { CoreGraph.timeline.commit(role: :user, content: text("ask me")) }
       let(:writer) { Lain::Event::ChainWriter.new }
       let(:question) do
         writer.put(chain, kind: :message, from: chain.correlation, to: "human",

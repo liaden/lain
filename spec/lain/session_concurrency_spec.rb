@@ -233,7 +233,7 @@ RSpec.describe "Session read completeness under concurrent gather" do
     2.times { release.enqueue(:go) }
     blocks = run.wait
     expect(blocks).to all(include("is_error" => false))
-    @delivered = Lain::Timeline.empty.commit(role: :user, content: blocks)
+    @delivered = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user, content: blocks)
     journal << Lain::SessionRecord.turn(@delivered.head)
   ensure
     run&.stop

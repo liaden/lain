@@ -15,8 +15,8 @@ module DerivationFixtures
   # `roles:` cycles a different pattern -- `%w[user]` is the all-user history
   # that makes the boundary decline, and that shape is ordinary production
   # output rather than exotic.
-  def history(size, store: Lain::Store.new, roles: %w[user assistant])
-    (0...size).inject(Lain::Timeline.empty(store:)) do |timeline, index|
+  def history(size, store: Lain::Dag::Factory.store, roles: %w[user assistant])
+    (0...size).inject(Lain::Dag::Factory.timeline(store:)) do |timeline, index|
       timeline.commit(role: roles[index % roles.size], content: [text("turn #{index}")])
     end
   end
@@ -24,10 +24,10 @@ module DerivationFixtures
   # A tool round in the middle of an ordinary history: the `tool_use` at index 1
   # is answered by the `tool_result` at index 2, which is what makes a range
   # that collapses only index 1 an orphan-producing cut.
-  def tool_history(store: Lain::Store.new)
+  def tool_history(store: Lain::Dag::Factory.store)
     blocks = [[text("ask")], [tool_use(0)], [tool_result(0)]] +
              Array.new(5) { |index| [text("after #{index}")] }
-    blocks.each_with_index.inject(Lain::Timeline.empty(store:)) do |timeline, (content, index)|
+    blocks.each_with_index.inject(Lain::Dag::Factory.timeline(store:)) do |timeline, (content, index)|
       timeline.commit(role: index.even? ? "user" : "assistant", content:)
     end
   end
@@ -37,14 +37,14 @@ module DerivationFixtures
   # naive cut and the single move off it both split a pair. Nothing in `lib/`
   # emits this -- `Agent#perform_tools` commits one user message per assistant
   # turn's results -- which is exactly why it takes a hand-built history.
-  def entangled_history(store: Lain::Store.new)
+  def entangled_history(store: Lain::Dag::Factory.store)
     blocks = [["user", [text("ask")]],
               ["assistant", [tool_use(0)]],
               ["user", [tool_result(0), tool_use(1)]],
               ["user", [tool_result(1)]],
               ["assistant", [text("done")]],
               ["user", [text("next")]]]
-    blocks.inject(Lain::Timeline.empty(store:)) do |timeline, (role, content)|
+    blocks.inject(Lain::Dag::Factory.timeline(store:)) do |timeline, (role, content)|
       timeline.commit(role:, content:)
     end
   end
@@ -168,7 +168,7 @@ RSpec.describe Lain::Compaction::Derivation do
     # them: the moment the shape moves should be loud and legible.
     it "is bounded by the retained tail, not by history length" do
       measured = [50, 200, 800].map do |size|
-        store = Lain::Store.new
+        store = Lain::Dag::Factory.store
         source = fixtures.history(size, store:)
         before = store.size
         derived = described_class.new(strategy: fixtures.summarizing, keep_last: 20).derive(source)
@@ -215,7 +215,7 @@ RSpec.describe Lain::Compaction::Derivation do
         derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
 
         tally = count_store_fetches(source.store) do
-          expect { derivation.derive(source, into: Lain::Store.new) }
+          expect { derivation.derive(source, into: Lain::Dag::Factory.store) }
             .to raise_error(Lain::Store::MissingObject)
         end
 
@@ -295,7 +295,7 @@ RSpec.describe Lain::Compaction::Derivation do
     # the store by a fresh dead chain per compacting turn with nothing but an
     # exception to show for it.
     it "writes nothing to the store when it refuses the chain" do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       source = fixtures.history(9, store:)
       derivation = described_class.new(strategy: fixtures.dropping([0..0]), keep_last: 3)
       before = store.size
@@ -316,7 +316,7 @@ RSpec.describe Lain::Compaction::Derivation do
       source = fixtures.history(9)
       derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
 
-      expect { derivation.derive(source, into: Lain::Store.new) }
+      expect { derivation.derive(source, into: Lain::Dag::Factory.store) }
         .to raise_error(Lain::Store::MissingObject, /would dangle/)
     end
 
@@ -686,7 +686,7 @@ RSpec.describe Lain::Compaction::Derivation do
       it "refuses a held cut that reaches past the keep_last boundary" do
         earlier = fixtures.history(9)
         cut = seam_of(earlier)
-        rewound = Lain::Timeline.new(head_digest: earlier.to_a[6].digest, store: earlier.store)
+        rewound = Lain::Dag::Factory.timeline(head_digest: earlier.to_a[6].digest, store: earlier.store)
 
         expect { described_class.new(strategy: fixtures.summarizing, keep_last: 3).derive(rewound, cut:) }
           .to raise_error(ArgumentError, /past the keep_last boundary/)
@@ -700,7 +700,7 @@ RSpec.describe Lain::Compaction::Derivation do
         earlier = fixtures.history(9)
         cut = seam_of(earlier)
         handed = described_class::Seam.new(digest: cut.digest, collapses: cut.collapses, keeps_last: false)
-        rewound = Lain::Timeline.new(head_digest: earlier.to_a[6].digest, store: earlier.store)
+        rewound = Lain::Dag::Factory.timeline(head_digest: earlier.to_a[6].digest, store: earlier.store)
 
         derived = described_class.new(strategy: fixtures.summarizing, keep_last: 3).derive(rewound, cut: handed)
 
@@ -761,7 +761,7 @@ RSpec.describe Lain::Compaction::Derivation do
   # validator is called here rather than trusted to a downstream that has none.
   describe "a pin between two ranges, which is how a pin reaches this object" do
     it "refuses a retained pinned tool_result whose tool_use a range collapsed" do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       source = fixtures.tool_history(store:)
       derivation = described_class.new(strategy: fixtures.collapsing([0..1, 3..4]), keep_last: 3)
       before = store.size
@@ -831,7 +831,7 @@ RSpec.describe Lain::Compaction::Derivation do
     # and that chain is not the full derivation's. Either way: stop, do not
     # delete the example.
     it "is not a functor on the prefix order: T1 <= T2 does not imply derive(T1) <= derive(T2)" do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       earlier = fixtures.history(9, store:)
       later = earlier.commit(role: "assistant", content: [fixtures.text("turn 9")])
       derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)

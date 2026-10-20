@@ -21,11 +21,11 @@ RSpec.describe Lain::Tools::EpicSubmit do
   let(:gates) { {} }
   let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo, gates:)) }
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:inbox) { Lain::Frontend::Neovim::InboxView.new(store:) }
   let(:drawn) { [] }
   let(:ask_human) do
-    Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:), observer: lambda { |event|
+    Lain::Tools::AskHuman.new(parent: Lain::Dag::Factory.timeline(store:), observer: lambda { |event|
       lines = inbox.update(Lain::Telemetry::Message.from_event(event))
       drawn.replace(lines) unless lines.nil?
     })

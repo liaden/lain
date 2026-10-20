@@ -4,9 +4,9 @@
 # contract -- additive by construction, so the turn-chain loader's `of_type`
 # narrowing skips it and an older reader stays unaffected.
 RSpec.describe Lain::Telemetry::Message do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:event) do
     Lain::Event::ChainWriter.new.put(parent, kind: :message, from: parent.correlation, to: "human",

@@ -356,7 +356,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     def repl_session
-      { nvim: { channel:, socket_path: @socket }, store: Lain::Store.new,
+      { nvim: { channel:, socket_path: @socket }, store: Lain::Dag::Factory.store,
         session: Lain::Session::Null.instance }
     end
   end

@@ -104,10 +104,10 @@ RSpec.describe Lain::Grader::FrustrationRepair do
 
   describe "a run with no frustration signals" do
     it "grades a clean pass rather than a zero -- nothing went wrong is not a failure" do
-      store = Lain::Store.new
-      clean = Lain::Timeline.empty(store:)
-                            .commit(role: :user, content: text("hi"))
-                            .commit(role: :assistant, content: text("hello"))
+      store = Lain::Dag::Factory.store
+      clean = Lain::Dag::Factory.timeline(store:)
+                                .commit(role: :user, content: text("hi"))
+                                .commit(role: :assistant, content: text("hello"))
 
       grade = described_class.new.grade(journal_turns(clean))
 
@@ -120,29 +120,29 @@ RSpec.describe Lain::Grader::FrustrationRepair do
 
   describe "a repeat whose prior use SUCCEEDED (legitimate reuse, not a loop)" do
     it "does not flag ordinary reuse of a tool that already worked" do
-      store = Lain::Store.new
-      timeline = Lain::Timeline.empty(store:)
-                               .commit(role: :user, content: text("look up two drugs"))
-                               .commit(role: :assistant, content: [tool_use("tu_1", "dosing_lookup",
-                                                                            { "drug" => "aspirin" })])
-                               .commit(role: :user, content: [tool_result("tu_1", "325-650mg")])
-                               .commit(role: :assistant, content: [tool_use("tu_2", "dosing_lookup",
-                                                                            { "drug" => "ibuprofen" })])
-                               .commit(role: :user, content: [tool_result("tu_2", "200-400mg")])
+      store = Lain::Dag::Factory.store
+      timeline = Lain::Dag::Factory.timeline(store:)
+                                   .commit(role: :user, content: text("look up two drugs"))
+                                   .commit(role: :assistant, content: [tool_use("tu_1", "dosing_lookup",
+                                                                                { "drug" => "aspirin" })])
+                                   .commit(role: :user, content: [tool_result("tu_1", "325-650mg")])
+                                   .commit(role: :assistant, content: [tool_use("tu_2", "dosing_lookup",
+                                                                                { "drug" => "ibuprofen" })])
+                                   .commit(role: :user, content: [tool_result("tu_2", "200-400mg")])
 
       expect(described_class.new.signals(journal_turns(timeline))).to eq([])
     end
 
     it "gates a fuzzy signal behind the injected oracle -- Null by default finds nothing" do
-      store = Lain::Store.new
-      timeline = Lain::Timeline.empty(store:)
-                               .commit(role: :user, content: text("look up a drug twice"))
-                               .commit(role: :assistant, content: [tool_use("tu_1", "dosing_lookup",
-                                                                            { "drug" => "aspirin" })])
-                               .commit(role: :user, content: [tool_result("tu_1", "not the dose I meant")])
-                               .commit(role: :assistant, content: [tool_use("tu_2", "dosing_lookup",
-                                                                            { "drug" => "aspirin" })])
-                               .commit(role: :user, content: [tool_result("tu_2", "not the dose I meant either")])
+      store = Lain::Dag::Factory.store
+      timeline = Lain::Dag::Factory.timeline(store:)
+                                   .commit(role: :user, content: text("look up a drug twice"))
+                                   .commit(role: :assistant, content: [tool_use("tu_1", "dosing_lookup",
+                                                                                { "drug" => "aspirin" })])
+                                   .commit(role: :user, content: [tool_result("tu_1", "not the dose I meant")])
+                                   .commit(role: :assistant, content: [tool_use("tu_2", "dosing_lookup",
+                                                                                { "drug" => "aspirin" })])
+                                   .commit(role: :user, content: [tool_result("tu_2", "not the dose I meant either")])
       entries = journal_turns(timeline)
 
       expect(described_class.new.signals(entries)).to eq([])

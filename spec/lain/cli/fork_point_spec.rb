@@ -25,7 +25,7 @@ RSpec.describe Lain::CLI::ForkPoint do
   def text(body) = [{ "type" => "text", "text" => body }]
 
   def chain(*bodies)
-    bodies.each_with_index.inject(Lain::Timeline.empty(store: Lain::Store.new)) do |timeline, (body, i)|
+    bodies.each_with_index.inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |timeline, (body, i)|
       timeline.commit(role: i.even? ? :user : :assistant, content: text(body))
     end
   end

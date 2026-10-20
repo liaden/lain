@@ -8,11 +8,11 @@
 # call). The existing single-posture refusal pin (subagent_spec.rb:161-180)
 # stays where it is; this file is the two-posture comparison it does not make.
 RSpec.describe "Subagent posture equivalence" do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
 
   # echo is the allowed member of the only-set; read_file is deliberately

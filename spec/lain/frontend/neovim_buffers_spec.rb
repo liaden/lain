@@ -28,7 +28,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   around { |example| headless_editor("lain-nvim-buffers-spec") { example.run } }
 
   let(:channel) { Lain::Channel.new }
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
 
   def buffer_lines(name)
     inspector.exec_lua(<<~LUA, [name])
@@ -270,9 +270,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "lain://timeline reflects a turn commit" do
     it "renders the whole ancestor chain, root first, when a Telemetry::TurnUsage names the head" do
-      timeline = Lain::Timeline.empty(store:)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                               .commit(role: :assistant, content: [{ "type" => "text", "text" => "hello there" }])
+      timeline = Lain::Dag::Factory.timeline(store:)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                                   .commit(role: :assistant, content: [{ "type" => "text", "text" => "hello there" }])
       frontend = described_class.new(channel:, socket_path: @socket, store:)
 
       frontend.run do
@@ -531,7 +531,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "read-only and unobtrusive (4-2.2)" do
     it "keeps every lain:// view buffer nomodifiable at rest and never steals focus" do
-      timeline = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      timeline = Lain::Dag::Factory.timeline(store:).commit(role: :user,
+                                                            content: [{
+                                                              "type" => "text", "text" => "hi"
+                                                            }])
       session = Lain::Session.new
       session.write_todos([todo("a", "pending")])
       frontend = described_class.new(channel:, socket_path: @socket, store:, session:)

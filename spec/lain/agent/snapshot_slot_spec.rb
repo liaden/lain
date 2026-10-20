@@ -15,7 +15,7 @@ RSpec.describe Lain::Agent::SnapshotSlot do
 
   attr_reader :root, :state
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:notes) { [] }
   let(:log) { Lain::Workspace::SnapshotLog.new(observer: ->(event) { notes << event.body.fetch("snapshot_scope") }) }
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state }) }
@@ -23,7 +23,7 @@ RSpec.describe Lain::Agent::SnapshotSlot do
   def slot(scope: :write_set) = described_class.new(root:, scope:, log:, paths:)
 
   def turn(text = "turn")
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => text }])
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => text }])
   end
 
   def put(name, bytes) = File.join(root, name).tap { |path| File.binwrite(path, bytes) }

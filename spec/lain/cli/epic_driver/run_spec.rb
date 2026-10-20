@@ -779,7 +779,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     # Repl; the seam is injected, so a bench driving several arms over one asker
     # is exactly where this bites.
     it "leaves the asker free for the next run's first gate" do
-      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty(store: Lain::Store.new) })
+      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) })
       statuses = { "a" => "in_flight" }
       interrupted = false
 

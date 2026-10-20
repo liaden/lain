@@ -106,7 +106,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
       provider: Lain::Provider::Mock.new(responses: [tool_response(*calls), text_response("parent done")]),
       toolset: Lain::Toolset.new([tool]),
       context: Lain::Context.new(model: "parent", max_tokens: 256),
-      timeline: Lain::Timeline.empty(store:), journal:
+      timeline: Lain::Dag::Factory.timeline(store:), journal:
     )
     [parent_agent, tool]
   end

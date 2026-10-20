@@ -96,8 +96,11 @@ RSpec.describe Lain::Telemetry::QuestionsConsumed do
   # public entry, reaching the same read through `#consume`.
   it "leaves both inbox surfaces unraised across every shape a caller might hand it", :seam do
     Dir.mktmpdir("t7-questions-consumed-seam") do |dir|
-      store = Lain::Store.new
-      parent = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "seed" }])
+      store = Lain::Dag::Factory.store
+      parent = Lain::Dag::Factory.timeline(store:).commit(role: :user,
+                                                          content: [{
+                                                            "type" => "text", "text" => "seed"
+                                                          }])
       question = Lain::Event::ChainWriter.new.put(parent, kind: :message, from: "orchestrator", to: "human",
                                                           causal_parents: [], body: { "question" => "which db?" })
       shapes = [

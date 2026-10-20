@@ -61,9 +61,9 @@ RSpec.describe Lain::CLI::Repl::Ask do
     # would refuse a chain that no longer extends what it wrote.
     describe "over a stranded prompt" do
       let(:stranded) do
-        Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: [{ "type" => "text", "text" => "a" }])
-                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "b" }])
-                      .commit(role: :user, content: [{ "type" => "text", "text" => "earlier" }])
+        CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => "a" }])
+                 .commit(role: :assistant, content: [{ "type" => "text", "text" => "b" }])
+                 .commit(role: :user, content: [{ "type" => "text", "text" => "earlier" }])
       end
       let(:folded) do
         stranded.rewind(1).commit(role: :user, content: [{ "type" => "text", "text" => "earlier" },

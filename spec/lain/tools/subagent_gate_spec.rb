@@ -89,11 +89,11 @@ end
 # build that guard with the real {CLI::ToolGuard}, so a child is gated by the
 # same builder a chat's own stack comes from.
 RSpec.describe "Subagent gating" do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
 
   # The union is exactly the `:dev` role's `only`-set, so every role under test

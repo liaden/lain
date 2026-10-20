@@ -121,7 +121,7 @@ class ReplGoalTerminal
     askers = Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human: askers.directory, questions: askers.questions)
     driver = Lain::CLI::GoalDriver.new(journal:, cap: Integer(cap))
-    agent = Struct.new(:timeline, :session).new(Lain::Timeline.empty, Lain::Session::Null.instance)
+    agent = Struct.new(:timeline, :session).new(CoreGraph.timeline, Lain::Session::Null.instance)
 
     commands = Class.new do
       def initialize(dir, shape, goal, env, queue)
@@ -874,7 +874,7 @@ RSpec.describe Lain::CLI::Repl do
     let(:output) { StringIO.new }
     let(:conductor) { holding(instance_double(Lain::CLI::Conductor, closed?: false, read_prompt: "quit"), rail) }
     let(:session) { Lain::Session.new }
-    let(:agent) { Struct.new(:timeline, :session).new(Lain::Timeline.empty, session) }
+    let(:agent) { Struct.new(:timeline, :session).new(CoreGraph.timeline, session) }
     let(:dispatched) { [] }
     let(:stop_after) { 2 }
     let(:tty) do

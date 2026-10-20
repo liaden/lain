@@ -291,8 +291,9 @@ RSpec.describe Lain::Middleware::ResolveAttachments, :seam do
     end
 
     let(:parent) do
-      Lain::Timeline.empty.commit(role: :user,
-                                  content: [{ "type" => "text", "text" => "what is on it" }, reference.block])
+      Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "what is on it" },
+                                                       reference.block])
     end
 
     let(:subagent) do

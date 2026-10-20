@@ -29,8 +29,8 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
     end
   end
 
-  let(:counting) { counting_store.new(Lain::Store.new) }
-  let(:store) { Lain::Store.new }
+  let(:counting) { counting_store.new(Lain::Dag::Factory.store) }
+  let(:store) { Lain::Dag::Factory.store }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -39,7 +39,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
   # A chain of `length` :message events, each naming the one before it -- the
   # exact shape a child chain's records also have, one link per turn.
   def linked_messages(length)
-    base = Lain::Timeline.empty(store:).commit(role: :user, content: text("root"))
+    base = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("root"))
     written = []
     writer = Lain::Event::ChainWriter.new(
       observer: ->(event) { written << as_record(Lain::Telemetry::Message.from_event(event)) }
@@ -51,7 +51,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
     written
   end
 
-  def replay(records, into: Lain::Store.new, prior: [])
+  def replay(records, into: Lain::Dag::Factory.store, prior: [])
     described_class.new(records:, store: into, prior:)
   end
 
@@ -94,7 +94,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
     # A message citing a TURN, which only the chain fold can land -- the exact
     # blocked shape the Loader alternates the two folds to unblock.
     def citing_a_turn
-      root = Lain::Timeline.empty(store:).commit(role: :user, content: text("root"))
+      root = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("root"))
       cited = Lain::Event::ChainWriter.new.put(root, kind: :message, from: "a", to: "b",
                                                      causal_parents: [root.head_digest], body: { "n" => 1 })
       [root.head, as_record(Lain::Telemetry::Message.from_event(cited))]
@@ -109,7 +109,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
 
     it "leaves a record whose cited turn is not landed YET pending, and takes it once it appears" do
       turn, record = citing_a_turn
-      into = Lain::Store.new
+      into = Lain::Dag::Factory.store
       replay = replay([record], into:)
 
       expect(replay.sweep).to be(false)
@@ -126,7 +126,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
     # The cycle no file ordering can undo: a question cites the turn it was asked
     # from, and the turn that delivers the answer cites the question back.
     it "lands a citing record written before the record it cites" do
-      child = Lain::Timeline.empty(store:).commit(role: :user, content: text("child ask"))
+      child = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("child ask"))
       question = Lain::Event::ChainWriter.new.put(child, kind: :message, from: "child", to: "human",
                                                          causal_parents: [child.head_digest],
                                                          body: { "question" => "which db?" })
@@ -161,7 +161,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
     # type the journal does not contain, in the one case this whole card exists
     # to re-open. The journal's own `type` is the honest label.
     it "names a damaged child_turn by its record type, not by the :turn kind it carries" do
-      child = Lain::Timeline.empty(store:).commit(role: :user, content: text("brief"))
+      child = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("brief"))
       stranded = Lain::Event.new(kind: :turn, carried_payload: child.head.carried_payload,
                                  from: nil, to: nil, render_parent: nil,
                                  causal_parents: ["blake3:#{"cd" * 32}"])

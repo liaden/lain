@@ -28,7 +28,7 @@ RSpec.describe Lain::Workspace::Restore do
 
   attr_reader :dir
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:log) { [] }
 
   def restorer(root: dir, projection_log: log)
@@ -47,7 +47,7 @@ RSpec.describe Lain::Workspace::Restore do
       binary = (+"\xff\x00\xfe\x01\xC0\xAF").force_encoding(Encoding::BINARY)
       writer = Lain::Workspace::Snapshot.new(root: dir)
       path = write_file(dir, "bin.dat", binary)
-      timeline = commit(Lain::Timeline.empty(store:), 1)
+      timeline = commit(Lain::Dag::Factory.timeline(store:), 1)
       log << writer.write(timeline:, paths: [path])
 
       File.delete(path) # absence is clean (nothing to clobber); no force needed
@@ -62,7 +62,7 @@ RSpec.describe Lain::Workspace::Restore do
   describe "sequential restores 2 -> 5 -> 2 on ONE Restore instance" do
     it "keeps in-force correct across a back-forward-back sequence" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
-      t2 = commit(commit(Lain::Timeline.empty(store:), 1), 2)
+      t2 = commit(commit(Lain::Dag::Factory.timeline(store:), 1), 2)
       a2 = write_file(dir, "a.txt", "v1")
       log << writer.write(timeline: t2, paths: [a2])
 
@@ -92,7 +92,7 @@ RSpec.describe Lain::Workspace::Restore do
   describe "bytes matching an older (not the in-force) snapshot" do
     it "does NOT flag as dirty when disk bytes equal turn-2's blob but turn-5 is in force" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
-      t2 = commit(commit(Lain::Timeline.empty(store:), 1), 2)
+      t2 = commit(commit(Lain::Dag::Factory.timeline(store:), 1), 2)
       a = write_file(dir, "a.txt", "v1")
       log << writer.write(timeline: t2, paths: [a])
 
@@ -114,7 +114,7 @@ RSpec.describe Lain::Workspace::Restore do
 
     it "IS dirty for truly foreign bytes that no blob in the log holds" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
-      t2 = commit(commit(Lain::Timeline.empty(store:), 1), 2)
+      t2 = commit(commit(Lain::Dag::Factory.timeline(store:), 1), 2)
       a = write_file(dir, "a.txt", "v1")
       log << writer.write(timeline: t2, paths: [a])
 
@@ -128,7 +128,7 @@ RSpec.describe Lain::Workspace::Restore do
   describe "force semantics" do
     it "force: true waives Dirty" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
-      t2 = commit(commit(Lain::Timeline.empty(store:), 1), 2)
+      t2 = commit(commit(Lain::Dag::Factory.timeline(store:), 1), 2)
       a = write_file(dir, "a.txt", "v1")
       log << writer.write(timeline: t2, paths: [a])
       File.binwrite(a, "rogue")
@@ -141,7 +141,7 @@ RSpec.describe Lain::Workspace::Restore do
       outside = write_file(dir, "outside.txt", "v1")
       project = File.join(dir, "project").tap { |p| Dir.mkdir(p) }
       writer = Lain::Workspace::Snapshot.new(root: project, scope: UncontainedSnapshotScope.new)
-      timeline = commit(Lain::Timeline.empty(store:), 1)
+      timeline = commit(Lain::Dag::Factory.timeline(store:), 1)
       log << writer.write(timeline:, paths: [outside])
 
       expect { restorer(root: project).restore(turn: 1, force: true) }
@@ -153,7 +153,7 @@ RSpec.describe Lain::Workspace::Restore do
     it "restoring an empty snapshot deletes everything without raising Dirty, " \
        "because an in-force-present/disk-absent pairing to a NEW absence isn't the check" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
-      t1 = commit(Lain::Timeline.empty(store:), 1)
+      t1 = commit(Lain::Dag::Factory.timeline(store:), 1)
       a = write_file(dir, "a.txt", "v1")
       log << writer.write(timeline: t1, paths: [a])
 
@@ -176,7 +176,7 @@ RSpec.describe Lain::Workspace::Restore do
     it "restores under a DIFFERENT root than capture, ignoring the payload's recorded root" do
       original = File.join(dir, "captured").tap { |p| Dir.mkdir(p) }
       writer = Lain::Workspace::Snapshot.new(root: original)
-      t1 = commit(Lain::Timeline.empty(store:), 1)
+      t1 = commit(Lain::Dag::Factory.timeline(store:), 1)
       a = write_file(original, "a.txt", "hello")
       log << writer.write(timeline: t1, paths: [a])
 
@@ -197,7 +197,7 @@ RSpec.describe Lain::Workspace::Restore do
   describe "turn addressing parity with Projection#workspace_at" do
     it "restore(turn:) selects the exact same snapshot workspace_at(turn) would return" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
-      t2 = commit(commit(Lain::Timeline.empty(store:), 1), 2)
+      t2 = commit(commit(Lain::Dag::Factory.timeline(store:), 1), 2)
       a = write_file(dir, "a.txt", "v1")
       snap2 = writer.write(timeline: t2, paths: [a])
       log << snap2

@@ -3,7 +3,7 @@
 RSpec.describe Lain::Memory::Index do
   subject(:index) { described_class.empty(store:) }
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
 
   def item(id, body = "v1")
     Lain::Memory::Item.new(id:, description: "about #{id}", body:)

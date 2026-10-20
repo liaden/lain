@@ -30,8 +30,8 @@ RSpec.describe Lain::CLI::Watch do
   let(:output) { StringIO.new }
 
   let(:parent_chain) do
-    Lain::Timeline.empty(store: Lain::Store.new)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "find the papers" }])
+    Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "find the papers" }])
   end
 
   def header_record
@@ -152,8 +152,8 @@ RSpec.describe Lain::CLI::Watch do
     let(:policy) { Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []) }
     let(:lineage) { Lain::Tools::Subagent::Lineage.new(policy:) }
     let(:child) do
-      Lain::Timeline.empty(store: parent_chain.store)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      Lain::Dag::Factory.timeline(store: parent_chain.store)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
     end
     let(:spawned) { lineage.spawn(parent_chain, prompt: "go") }
     let!(:path) { write_journal(opening_records + [completion_for(completion_body), closed_record]) }
@@ -201,8 +201,8 @@ RSpec.describe Lain::CLI::Watch do
     let(:answer) { Data.define(:text) }
 
     def child_of(prompt)
-      Lain::Timeline.empty(store: parent_chain.store)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => prompt }])
+      Lain::Dag::Factory.timeline(store: parent_chain.store)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => prompt }])
     end
 
     def journaled(event) = Lain::Telemetry::Message.from_event(event).to_journal

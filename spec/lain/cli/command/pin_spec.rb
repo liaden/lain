@@ -55,9 +55,9 @@ RSpec.describe Lain::CLI::Command::Pin do
 
     # Scenario: bare /pin at a parked question pins an answered turn
     it "skips an unanswered parked head and pins the previous answered assistant turn, naming it" do
-      answered = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: "user", content: [{ "type" => "text", "text" => "go" }])
-                               .commit(role: "assistant", content: [{ "type" => "text", "text" => "answered" }])
+      answered = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: "user", content: [{ "type" => "text", "text" => "go" }])
+                                   .commit(role: "assistant", content: [{ "type" => "text", "text" => "answered" }])
       parked = answered.commit(role: "user", content: [{ "type" => "text", "text" => "another question" }])
                        .commit(role: "assistant",
                                content: [{ "type" => "tool_use", "id" => "ask1", "name" => "ask_human",
@@ -76,12 +76,14 @@ RSpec.describe Lain::CLI::Command::Pin do
   # Scenario: a pinned tool_use turn survives a cut with its answer
   describe "a tool_use or tool_result turn" do
     def tool_pair_timeline
-      Lain::Timeline.empty(store: Lain::Store.new)
-                    .commit(role: "user", content: [{ "type" => "text", "text" => "ask" }])
-                    .commit(role: "assistant",
-                            content: [{ "type" => "tool_use", "id" => "toolu_1", "name" => "grep", "input" => {} }])
-                    .commit(role: "user",
-                            content: [{ "type" => "tool_result", "tool_use_id" => "toolu_1", "content" => "ok" }])
+      Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                        .commit(role: "user", content: [{ "type" => "text", "text" => "ask" }])
+                        .commit(role: "assistant",
+                                content: [{ "type" => "tool_use", "id" => "toolu_1", "name" => "grep",
+                                            "input" => {} }])
+                        .commit(role: "user",
+                                content: [{ "type" => "tool_result", "tool_use_id" => "toolu_1",
+                                            "content" => "ok" }])
     end
 
     it "drags the answering tool_result along and names it in the reply" do
@@ -110,11 +112,11 @@ RSpec.describe Lain::CLI::Command::Pin do
     end
 
     it "pins a parked tool_use alone -- there is nothing yet to drag" do
-      line = Lain::Timeline.empty(store: Lain::Store.new)
-                           .commit(role: "user", content: [{ "type" => "text", "text" => "ask" }])
-                           .commit(role: "assistant",
-                                   content: [{ "type" => "tool_use", "id" => "toolu_2", "name" => "grep",
-                                               "input" => {} }])
+      line = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                               .commit(role: "user", content: [{ "type" => "text", "text" => "ask" }])
+                               .commit(role: "assistant",
+                                       content: [{ "type" => "tool_use", "id" => "toolu_2", "name" => "grep",
+                                                   "input" => {} }])
       tool_env = build_command_env(agent: instance_double(Lain::Agent, timeline: line, session:))
 
       command.call(line.head_digest.delete_prefix("blake3:")[0, 8], tool_env)
@@ -331,12 +333,14 @@ RSpec.describe Lain::CLI::Command::Unpin do
   # along together, so a pair never half-strands on the way back out.
   describe "a pinned tool_use/tool_result pair" do
     def tool_pair_timeline
-      Lain::Timeline.empty(store: Lain::Store.new)
-                    .commit(role: "user", content: [{ "type" => "text", "text" => "ask" }])
-                    .commit(role: "assistant",
-                            content: [{ "type" => "tool_use", "id" => "toolu_1", "name" => "grep", "input" => {} }])
-                    .commit(role: "user",
-                            content: [{ "type" => "tool_result", "tool_use_id" => "toolu_1", "content" => "ok" }])
+      Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                        .commit(role: "user", content: [{ "type" => "text", "text" => "ask" }])
+                        .commit(role: "assistant",
+                                content: [{ "type" => "tool_use", "id" => "toolu_1", "name" => "grep",
+                                            "input" => {} }])
+                        .commit(role: "user",
+                                content: [{ "type" => "tool_result", "tool_use_id" => "toolu_1",
+                                            "content" => "ok" }])
     end
 
     it "releases both turns and names the companion in the reply" do

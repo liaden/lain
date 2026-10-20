@@ -38,7 +38,7 @@ RSpec.describe Lain::Grader::LeaseHarness do
 
   # A Timeline-shaped stand-in for what an arm actually hands its grader. It is
   # deliberately never consulted: the subject's suite is the judgement.
-  def trajectory = Lain::Timeline.empty(store: Lain::Store.new)
+  def trajectory = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
 
   describe "#grade — the subject's own suite, at one level root", :seam do
     # Scenario: an arm's run is graded by the subject's own suite, before

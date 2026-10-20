@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::CLI::HumanNotes do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:mailbox) do
     Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of), observer: ->(_) {})
   end
   let(:flight) { [true] }
   let(:notes) { described_class.new(mailbox:, in_flight: -> { flight.first }) }
-  let(:timeline) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }]) }
+  let(:timeline) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }]) }
 
   def folded_texts = mailbox.capture(timeline).pending.map { |note| [note.from, note.body.fetch("text")] }
 

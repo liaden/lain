@@ -13,9 +13,9 @@ require "async"
 # name with an instruction the model can act on, and that nothing at all is
 # written -- no Q, nothing outstanding, not one event in the Store.
 RSpec.describe Lain::Tools::AskHuman::Unattended do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
   let(:tool) { described_class.new(parent:) }

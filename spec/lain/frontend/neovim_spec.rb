@@ -596,14 +596,14 @@ end
 # genuinely needs an editor (does `p` reach Ruby at all?) is the :nvim example
 # above.
 RSpec.describe Lain::Frontend::Neovim::Buffers do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:session) { Lain::Session.new }
   let(:buffers) { described_class.new(store:, session:) }
 
   # Three turns, alternating roles, root first -- {Timeline#to_a}'s order and
   # therefore the rendered line order.
   def timeline_of(*texts)
-    texts.each_with_index.inject(Lain::Timeline.empty(store:)) do |timeline, (text, i)|
+    texts.each_with_index.inject(Lain::Dag::Factory.timeline(store:)) do |timeline, (text, i)|
       timeline.commit(role: i.even? ? :user : :assistant, content: [{ "type" => "text", "text" => text }])
     end
   end
@@ -669,7 +669,7 @@ RSpec.describe Lain::Frontend::Neovim::Buffers do
     # Session#record_pin, which refuses a blank digest loudly.
     it "pins nothing and reports the failure" do
       timeline = timeline_of("first", "second")
-      detached = described_class.new(store: Lain::Store.new, session:)
+      detached = described_class.new(store: Lain::Dag::Factory.store, session:)
       allow(session).to receive(:record_pin).and_call_original
 
       lines = render(detached, timeline)
@@ -701,8 +701,8 @@ RSpec.describe Lain::Frontend::Neovim::Buffers do
     it "drops a previously built index when a later chain cannot be resolved" do
       timeline = timeline_of("first", "second")
       render(buffers, timeline)
-      orphan = Lain::Timeline.empty(store: Lain::Store.new)
-                             .commit(role: :user, content: [{ "type" => "text", "text" => "elsewhere" }])
+      orphan = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                 .commit(role: :user, content: [{ "type" => "text", "text" => "elsewhere" }])
 
       buffers.updates(usage(orphan.head_digest))
 

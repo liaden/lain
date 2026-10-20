@@ -116,9 +116,9 @@ RSpec.describe Lain::Tools::SessionUsage do
   # it lands, this example is what will fail and say so.
   describe "an agent resumed onto a timeline it did not build" do
     it "reports only what this run has spent, not the resumed timeline's history" do
-      resumed = Lain::Timeline.empty(store: Lain::Store.new)
-                              .commit(role: :user, content: [{ "type" => "text", "text" => "before the resume" }])
-                              .commit(role: :assistant, content: [{ "type" => "text", "text" => "spent tokens" }])
+      resumed = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                  .commit(role: :user, content: [{ "type" => "text", "text" => "before the resume" }])
+                                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "spent tokens" }])
       agent = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [usage_response("after")]),
                               toolset: Lain::Toolset.new([]),
                               context: Lain::Context.new(model: "test-model", max_tokens: 64),

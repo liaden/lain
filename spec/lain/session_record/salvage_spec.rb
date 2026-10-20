@@ -11,7 +11,7 @@ RSpec.describe Lain::SessionRecord::Salvage do
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
-  let(:timeline) { Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("hi")) }
+  let(:timeline) { CoreGraph.timeline.commit(role: :user, content: text("hi")) }
 
   let(:canned) do
     Lain::Response.new(id: "msg_1", model: "claude-opus-4-8", stop_reason: :end_turn,

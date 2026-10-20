@@ -186,12 +186,12 @@ RSpec.describe Lain::Attachment::Store, :seam do
     let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd) }
     let(:chronicle) { Lain::CLI::Chronicle::Null.new }
     let(:recorder) { Lain::Memory::Recorder.new }
-    let(:ask_human) { Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }) }
+    let(:ask_human) { Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }) }
 
     def toolset_build(root:)
       Lain::CLI::Wiring::ToolsetBuild.new(
         backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
-        supervisor: Lain::Supervisor.new(journal: RecordingChannel.new), parent: -> { Lain::Timeline.new },
+        supervisor: Lain::Supervisor.new(journal: RecordingChannel.new), parent: -> { CoreGraph.timeline },
         journal: RecordingChannel.new, library: backend.library, epic: SpecNulls.unmounted_epic, root:,
         switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
         **SpecNulls.unloaded_project

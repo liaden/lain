@@ -273,9 +273,9 @@ RSpec.describe Lain::CLI::Command::Fork, "the child's backend" do
 
   let(:recorded_base) { "http://127.0.0.1:11500" }
   let(:timeline) do
-    Lain::Timeline.empty(store: Lain::Store.new)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
   let(:session_path) do
     context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)

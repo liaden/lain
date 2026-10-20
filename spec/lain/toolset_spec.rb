@@ -362,7 +362,7 @@ RSpec.describe Lain::Toolset do
         context_factory: -> { Lain::Context.new(model: "m", max_tokens: 8) },
         toolset: union,
         policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: %i[grep]),
-        parent: Lain::Timeline.empty(store: Lain::Store.new),
+        parent: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store),
         journal: Lain::Channel::Null.instance
       )
     end

@@ -22,7 +22,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
   let(:child_context) { Lain::Context.new(model: "child-model", max_tokens: 256) }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:workspace) { Lain::Workspace.empty }
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:) }
@@ -41,7 +41,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     toolset = Lain::Toolset.new(tools.call(-> { agent.timeline }))
     agent = Lain::Agent.new(
       provider: Lain::Provider::Mock.new(responses:), context:, toolset:,
-      timeline: Lain::Timeline.empty(store:),
+      timeline: Lain::Dag::Factory.timeline(store:),
       turn_middleware: Lain::Middleware::Stack.new(
         [Lain::Middleware::JournalTurns.new(scribe:, timeline: -> { agent.timeline })]
       )
@@ -131,14 +131,14 @@ RSpec.describe Lain::SessionRecord::Scribe do
   describe "ChainFold's walk, over a session that spawned" do
     it "sees only the render-chain turns" do
       agent = spawned_session
-      fold = Lain::Bench::Session::ChainFold.new(records:, base: Lain::Timeline.empty(store: Lain::Store.new))
+      fold = Lain::Bench::Session::ChainFold.new(records:, base: CoreGraph.timeline)
 
       expect(fold.timeline.ancestor_digests.reverse).to eq(agent.timeline.ancestor_digests.reverse)
     end
 
     it "admits no child turn to its member set" do
       spawned_session
-      fold = Lain::Bench::Session::ChainFold.new(records:, base: Lain::Timeline.empty(store: Lain::Store.new))
+      fold = Lain::Bench::Session::ChainFold.new(records:, base: CoreGraph.timeline)
       fold.timeline
 
       expect(digests_of(Lain::SessionRecord::CHILD_TURN_TYPE)).to all(satisfy { |digest| !fold.member?(digest) })
@@ -147,7 +147,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
 
   # The discrimination itself, at the one door off-chain events come through.
   describe "#call" do
-    let(:parent) { Lain::Timeline.empty(store:).commit(role: :user, content: text("hi")) }
+    let(:parent) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("hi")) }
 
     it "promotes a :message as a message record" do
       writer = Lain::Event::ChainWriter.new(observer: ->(event) { scribe.call(event) })
@@ -218,10 +218,10 @@ RSpec.describe Lain::SessionRecord::Scribe do
     let(:status) { Lain::StatusFeed.new(path: File.join(Dir.mktmpdir("scribe-tee"), "state.json")) }
     let(:tee) { Lain::CLI::JournalTee.new(journal, sink, status) }
     let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee) }
-    let(:parent) { Lain::Timeline.empty(store:).commit(role: :user, content: text("hi")) }
+    let(:parent) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("hi")) }
 
     it "keeps a child turn off the tee while the file still gets it once" do
-      child = Lain::Timeline.empty(store:).commit(role: :user, content: text("child ask"))
+      child = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("child ask"))
 
       scribe.call(child.ancestors.first)
 
@@ -281,10 +281,10 @@ RSpec.describe Lain::SessionRecord::Scribe do
 
       # The head Event of a two-turn child chain, the second turn citing +cited+.
       def child_answering(cited)
-        Lain::Timeline.empty(store:)
-                      .commit(role: :user, content: text("child ask"))
-                      .commit(role: :user, content: text("answer folded"), causal_parents: cited)
-                      .ancestors.first
+        Lain::Dag::Factory.timeline(store:)
+                          .commit(role: :user, content: text("child ask"))
+                          .commit(role: :user, content: text("answer folded"), causal_parents: cited)
+                          .ancestors.first
       end
 
       it "publishes the digests the turn consumed, while the file still gets the turn" do
@@ -376,7 +376,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     let(:live) { [] }
     let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:, live:) }
     let(:line) do
-      %w[first second third].inject(Lain::Timeline.empty(store:)) do |grown, body|
+      %w[first second third].inject(Lain::Dag::Factory.timeline(store:)) do |grown, body|
         grown.commit(role: :user, content: text(body))
       end
     end

@@ -41,9 +41,9 @@ RSpec.describe Lain::Arm do
     # journal-sourced Ledger -- the same construction Compare::Run.from_timeline
     # documents.
     def recorded(input:, output:, model: "claude-sonnet-4")
-      timeline = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                               .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+      timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                                   .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
       ledger = Lain::Ledger.from_journal([{ "type" => "turn_usage", "digest" => timeline.head_digest,
                                             "model" => model, "stop_reason" => "end_turn",
                                             "usage" => { "input_tokens" => input, "output_tokens" => output } }])
@@ -85,11 +85,11 @@ RSpec.describe Lain::Arm do
     # synthesis fold (which makes every worker head reachable) is a contract,
     # not folklore.
     it "prices only the turns reachable from its timeline -- unreachable paid turns count zero" do
-      store = Lain::Store.new
-      worker_a = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "a" }])
-                               .commit(role: :assistant, content: [{ "type" => "text", "text" => "A" }])
-      worker_b = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "b" }])
-                               .commit(role: :assistant, content: [{ "type" => "text", "text" => "B" }])
+      store = Lain::Dag::Factory.store
+      worker_a = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "a" }])
+                                   .commit(role: :assistant, content: [{ "type" => "text", "text" => "A" }])
+      worker_b = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "b" }])
+                                   .commit(role: :assistant, content: [{ "type" => "text", "text" => "B" }])
       # BOTH workers were paid for (240 tokens total), but the Run carries only
       # worker_a's head -- worker_b's turns are not reachable from it.
       ledger = Lain::Ledger.from_journal([worker_a, worker_b].map do |timeline|

@@ -70,7 +70,7 @@ module InputPaneSocket
     countdown = lambda do |task|
       conductor.read_prompt("you> ")
       done = File.join(dir, "done")
-      outcome = conductor.supervise(task, -> { Lain::Timeline.empty }) do
+      outcome = conductor.supervise(task, -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }) do
         File.write(File.join(dir, "asking"), "")
         # The cancel key is still crossing the pane's socket when the spec writes done.
         Async::Task.current.sleep(0.05) until File.exist?(done) && !conductor.counting_down?
@@ -81,7 +81,7 @@ module InputPaneSocket
 
     parked = lambda do |task|
       conductor.read_prompt("you> ")
-      outcome = conductor.supervise(task, -> { Lain::Timeline.empty }) do
+      outcome = conductor.supervise(task, -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }) do
         File.write(File.join(dir, "asking"), "")
         log.puts(JSON.generate({ "reply" => conductor.read_reply("apply this edit? [y/N] ") }))
         "answered"
@@ -91,7 +91,7 @@ module InputPaneSocket
 
     running = lambda do |task|
       conductor.read_prompt("you> ")
-      conductor.supervise(task, -> { Lain::Timeline.empty }) do
+      conductor.supervise(task, -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }) do
         File.write(File.join(dir, "asking"), "")
         Async::Task.current.sleep(0.05) until File.exist?(File.join(dir, "done"))
         "answered"

@@ -262,11 +262,11 @@ end
 
 RSpec.describe Lain::Tools::Subagent do
   # A shared Store, and a two-turn parent chain whose head is H.
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
 
   # The union the child attenuates from: an allowed tool (read_file) and a
@@ -325,7 +325,7 @@ RSpec.describe Lain::Tools::Subagent do
       provider: mock(tool_response(["call_1", "subagent", { "prompt" => "go" }]), text_response("parent done")),
       toolset: Lain::Toolset.new([tool]),
       context: Lain::Context.new(model: "parent", max_tokens: 256),
-      timeline: Lain::Timeline.empty(store:)
+      timeline: Lain::Dag::Factory.timeline(store:)
     )
   end
 
@@ -615,7 +615,7 @@ RSpec.describe Lain::Tools::Subagent do
       body = record.message.body
       expect(body).to include("lifecycle" => failed, "error" => "Lain::Budget::Exceeded")
       expect(body).not_to have_key("result")
-      child = Lain::Timeline.new(head_digest: body.fetch("final"), store:)
+      child = Lain::Dag::Factory.timeline(head_digest: body.fetch("final"), store:)
       expect(child.to_a.first.content.first["text"]).to eq("go")
       expect(record.message.causal_parents).to contain_exactly(record.spawn.digest, child.head_digest)
     end
@@ -1237,7 +1237,7 @@ RSpec.describe Lain::Tools::Subagent do
       parent_agent = Lain::Agent.new(provider: mock(calls, text_response("parent done")),
                                      toolset: Lain::Toolset.new([tool]),
                                      context: Lain::Context.new(model: "parent", max_tokens: 256),
-                                     timeline: Lain::Timeline.empty(store:))
+                                     timeline: Lain::Dag::Factory.timeline(store:))
 
       parent_agent.ask("please spawn")
 
@@ -1893,7 +1893,7 @@ RSpec.describe Lain::Tools::Subagent do
     def holding(tool, responses, budget)
       Lain::Agent.new(provider: mock(*responses), toolset: Lain::Toolset.new([EchoTool.new, tool]),
                       context: Lain::Context.new(model: "parent", max_tokens: 256),
-                      timeline: Lain::Timeline.empty(store:), budget:)
+                      timeline: Lain::Dag::Factory.timeline(store:), budget:)
     end
 
     it "gives the child what the parent has left of its iterations" do
@@ -2020,8 +2020,8 @@ RSpec.describe Lain::Tools::Subagent do
     def parent_over(tool, responses, tokens: nil, journal: Lain::Channel::Null.instance)
       Lain::Agent.new(provider: mock(*responses), toolset: Lain::Toolset.new([EchoTool.new, tool]),
                       context: Lain::Context.new(model: "parent", max_tokens: 256),
-                      timeline: Lain::Timeline.empty(store:), budget: Lain::Budget.ceilings(tokens:).with(depth: 1),
-                      spend: Lain::Budget::Shared.new, journal:)
+                      timeline: Lain::Dag::Factory.timeline(store:),
+                      budget: Lain::Budget.ceilings(tokens:).with(depth: 1), spend: Lain::Budget::Shared.new, journal:)
     end
 
     it "counts a child's tokens against the parent's ceiling" do
@@ -3359,7 +3359,7 @@ RSpec.describe Lain::Tools::Subagent do
         )
         agent = Lain::Agent.new(
           provider: mock(tool_response(["tu_1", "subagent", { "prompt" => "go" }]), text_response("parent done")),
-          context: session_context, toolset: Lain::Toolset.new([tool]), timeline: Lain::Timeline.empty(store:),
+          context: session_context, toolset: Lain::Toolset.new([tool]), timeline: Lain::Dag::Factory.timeline(store:),
           turn_middleware: Lain::Middleware::Stack.new([Lain::Middleware::JournalTurns.new(
             scribe:, timeline: -> { agent.timeline }
           )])
@@ -4084,7 +4084,7 @@ RSpec.describe Lain::Tools::Subagent do
           provider: mock(tool_response(["a1", "subagent", { "prompt" => "go" }]), text_response("parent continues")),
           toolset: Lain::Toolset.new([tool]),
           context: Lain::Context.new(model: "parent", max_tokens: 256),
-          timeline: Lain::Timeline.empty(store:)
+          timeline: Lain::Dag::Factory.timeline(store:)
         )
 
         response = parent_agent.ask("spawn an actor")

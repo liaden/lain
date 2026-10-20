@@ -123,7 +123,7 @@ RSpec.describe "cockpit answer surfaces", :seam do
   let(:view) { Lain::Frontend::Neovim::ApprovalView.new(rpc:, poll_interval: 0.01) }
   let(:askers) { Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new) }
   let(:asker) do
-    askers.enrol(Lain::Timeline.empty(store: Lain::Store.new)
+    askers.enrol(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
                                .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])).asker
   end
 

@@ -18,11 +18,11 @@ end
 RSpec.describe Lain::Skill::RoleSpawn do
   # A shared Store and a two-turn parent chain whose head is H -- the inherit
   # mode forks it, the fresh mode does not.
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
 
   let(:child_context) { Lain::Context.new(model: "child-model", max_tokens: 256) }

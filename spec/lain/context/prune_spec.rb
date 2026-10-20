@@ -3,13 +3,13 @@
 RSpec.describe Lain::Context::Prune do
   def text(body) = [{ "type" => "text", "text" => body }]
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:timeline) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: text("one"))
-                  .commit(role: :assistant, content: text("two"))
-                  .commit(role: :user, content: text("three"))
-                  .commit(role: :assistant, content: text("four"))
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: text("one"))
+                      .commit(role: :assistant, content: text("two"))
+                      .commit(role: :user, content: text("three"))
+                      .commit(role: :assistant, content: text("four"))
   end
   let(:messages) { timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } } }
 

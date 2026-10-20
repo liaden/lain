@@ -77,7 +77,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     RUBY
   end
   let(:spawned) { [] }
-  let(:parent) { Lain::Timeline.empty(store: Lain::Store.new) }
+  let(:parent) { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }
 
   def repo = File.join(@root, "repo")
   def held = File.join(@root, "issue-a")
@@ -192,7 +192,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     def guarded_spawn
       Lain::Skill::RoleSpawn.new(provider: writing(nested, greeting),
                                  context_factory: -> { Lain::Context.new(model: "child", max_tokens: 256) },
-                                 toolset: union, parent: Lain::Timeline.empty(store: Lain::Store.new), slots:,
+                                 toolset: union, parent: CoreGraph.timeline, slots:,
                                  tool_middleware: ToolRegistry.builder { |env, **| guarded(env) })
     end
 

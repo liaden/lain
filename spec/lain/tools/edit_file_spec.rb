@@ -473,7 +473,7 @@ RSpec.describe Lain::Tools::EditFile do
       seam = Lain::Tools::Subagent::Seam.new(
         provider: Lain::Provider::Mock.new(responses:),
         context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256) },
-        parent: Lain::Timeline.empty(store: Lain::Store.new), journal:, display_channel: display,
+        parent: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store), journal:, display_channel: display,
         tool_middleware: ToolRegistry.gated(policy: Lain::Middleware::Gate::ApproveAll.new)
       )
       Lain::Tools::Subagent.new(seam:, toolset: floor, policy: Lain::Role::Catalog[:dev].spawn_policy(posture: :schema),

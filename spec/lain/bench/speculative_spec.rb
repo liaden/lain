@@ -7,10 +7,10 @@
 RSpec.describe Lain::Bench::Speculative do
   subject(:speculative) { described_class.new(grader:) }
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:base) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "What is the capital of France?" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "What is the capital of France?" }])
   end
 
   # Grades a trajectory (a Timeline): one point for having answered, one for

@@ -640,7 +640,7 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
 
       expect(env.fetch(:result)).not_to be_error
       expect(content(env).split("\n")).to eq(['latin1.txt:1:caf\xE9 zzzmarker', "utf8.txt:1:zzzmarker in UTF-8"])
-      expect { Lain::Timeline.empty.commit(role: :user, content: [block]) }.not_to raise_error
+      expect { CoreGraph.timeline.commit(role: :user, content: [block]) }.not_to raise_error
     end
   end
 

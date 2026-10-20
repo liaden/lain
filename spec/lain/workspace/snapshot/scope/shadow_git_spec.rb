@@ -230,8 +230,8 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
       events = []
       writer = Lain::Workspace::Snapshot.new(observer: ->(event) { events << event },
                                              root: project, scope: described_class.new(paths:))
-      timeline = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
 
       expect(writer.write(timeline:, paths: [])).to be_nil
       expect(events).to be_empty
@@ -241,8 +241,8 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
       events = []
       writer = Lain::Workspace::Snapshot.new(observer: ->(event) { events << event },
                                              root: project, scope: described_class.new(paths:))
-      timeline = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
       bash("echo unrecorded > sneaky.txt")
 
       event = writer.write(timeline:, paths: [])
@@ -607,8 +607,8 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
       events = []
       writer = Lain::Workspace::Snapshot.new(observer: ->(event) { events << event },
                                              root: project, scope: :shadow_git)
-      timeline = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
       bash("echo first turn > turn-one.txt")
 
       event = writer.write(timeline:, paths: [])

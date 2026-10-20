@@ -20,13 +20,13 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # ever visible -- and it is the same seam that hid production's inbox being
   # built with no question surface at all.
   describe "the inbox's open gesture, end to end" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:set) do
       Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: "which db?")])
     end
 
     it "opens the set under the cursor in lain://question when the human presses enter" do
-      parent = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      parent = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
       asker = Lain::Tools::AskHuman.new(parent:)
       Sync { asker.ask(Lain::Tools::AskHuman::Announcement.new(set)) }
       frontend = described_class.new(channel:, socket_path: @socket, store:)
@@ -59,8 +59,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     # The driven prompt committed with a reply, as the iteration's ask commits it.
     def driven(prompt)
-      Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => prompt }])
-                    .commit(role: :assistant, content: [{ "type" => "text", "text" => "still working" }])
+      CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => prompt }])
+               .commit(role: :assistant, content: [{ "type" => "text", "text" => "still working" }])
     end
 
     # {NeovimRuntime#with_consumer}'s shape, over a consumer that holds the driver.
@@ -85,8 +85,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     it "stops a standing goal before its next iteration, and its objective stays pinned" do
       driver.start("make the specs green", session:)
-      timeline = driven(driver.poll(Lain::Timeline.empty))
-      frontend = described_class.new(channel:, socket_path: @socket, store: Lain::Store.new)
+      timeline = driven(driver.poll(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)))
+      frontend = described_class.new(channel:, socket_path: @socket, store: Lain::Dag::Factory.store)
 
       frontend.run do
         consuming(frontend) do

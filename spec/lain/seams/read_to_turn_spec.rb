@@ -51,7 +51,7 @@ RSpec.describe "a tier-1 read reaching the Timeline", :seam do
   # around the whole Agent -- no provider, no loop, no scripted second turn
   # standing between the bytes and the raise.
   def commit(response)
-    Lain::Timeline.empty.commit(role: :user, **runner.delivery(response, context: session))
+    CoreGraph.timeline.commit(role: :user, **runner.delivery(response, context: session))
   end
 
   def result_block(timeline) = timeline.head.content.first

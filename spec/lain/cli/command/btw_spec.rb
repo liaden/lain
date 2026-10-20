@@ -281,9 +281,9 @@ RSpec.describe Lain::CLI::Command::Btw, "the side chat's backend" do
   end
 
   let(:timeline) do
-    Lain::Timeline.empty(store: Lain::Store.new)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
   let(:session_path) do
     context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)

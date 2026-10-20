@@ -903,7 +903,7 @@ RSpec.describe Lain::Frontend::Intake do
     end
 
     context "with an ask in flight and notes to the agent" do
-      let(:store) { Lain::Store.new }
+      let(:store) { Lain::Dag::Factory.store }
       let(:mailbox) do
         Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
                                          observer: ->(_) {})
@@ -914,7 +914,7 @@ RSpec.describe Lain::Frontend::Intake do
         described_class.new(screen:, notes:).route(sink_over(received, ask_in_flight: true))
       end
       let(:timeline) do
-        Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+        Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
       end
 
       def noted = mailbox.capture(timeline).pending.map { |note| note.body.fetch("text") }

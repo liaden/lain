@@ -15,9 +15,9 @@ RSpec.describe Lain::CLI::GoalDriver do
   # A Timeline whose head is a settled assistant turn carrying `text` -- the
   # marker source the driver reads between asks, without standing up an Agent.
   def settled_with(text)
-    Lain::Timeline.empty
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
+    Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
   end
 
   describe "a Null driver (no standing goal)" do
@@ -193,7 +193,7 @@ RSpec.describe Lain::CLI::GoalDriver do
     # The verbatim re-prompt, built by a throwaway driver over its own journal
     # so a decoy turn can be byte-identical to what the real one will drive with.
     def objective_prompt(goal)
-      described_class.new(journal: Lain::Journal.new(io: StringIO.new)).start(goal).poll(Lain::Timeline.empty)
+      described_class.new(journal: Lain::Journal.new(io: StringIO.new)).start(goal).poll(CoreGraph.timeline)
     end
 
     it "pins nothing before its first driven turn is committed" do

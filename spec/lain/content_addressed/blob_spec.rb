@@ -35,7 +35,7 @@ RSpec.describe Lain::ContentAddressed::Blob do
   end
 
   it "is a frozen value: equal by digest, deduplicating in a Store" do
-    store = Lain::Store.new
+    store = Lain::Dag::Factory.store
     first = described_class.new(bytes: "same", tag: "t")
 
     expect(first).to be_deeply_frozen

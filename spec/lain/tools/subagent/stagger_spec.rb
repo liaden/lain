@@ -161,7 +161,7 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
     let(:factory_context) { Lain::Context.new(model: "child-model", max_tokens: 512) }
     let(:strategy) { Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template:) }
     let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:requests) { sibling_requests(%w[alpha-task beta-task gamma-task delta-task]) }
 
     # Four real sibling-template Requests -- byte-identical system/tools,
@@ -173,7 +173,10 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
     def sibling_requests(tasks)
       shaped = strategy.child_context(factory_context)
       tasks.map do |task|
-        timeline = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => task }])
+        timeline = Lain::Dag::Factory.timeline(store:).commit(role: :user,
+                                                              content: [{
+                                                                "type" => "text", "text" => task
+                                                              }])
         shaped.render(timeline:, toolset:)
       end
     end

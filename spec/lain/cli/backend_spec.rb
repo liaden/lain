@@ -991,7 +991,7 @@ RSpec.describe Lain::CLI::Backend do
   # seam hands its child the backend's own context.
   def researcher_system(backend)
     tools = toolset_build_for(backend).build(Lain::Memory::Recorder.new,
-                                             ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+                                             ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
     tools.fetch("subagent").seam.context_factory.call.system
   end
 
@@ -1000,7 +1000,7 @@ RSpec.describe Lain::CLI::Backend do
     journal = RecordingChannel.new
     Lain::CLI::Wiring::ToolsetBuild.new(
       backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
-      supervisor: Lain::Supervisor.new(journal:), parent: -> { Lain::Timeline.new }, journal:,
+      supervisor: Lain::Supervisor.new(journal:), parent: -> { CoreGraph.timeline }, journal:,
       library: backend.library, epic: SpecNulls.unmounted_epic, root: Dir.pwd,
       switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
       **SpecNulls.unloaded_project
@@ -1273,10 +1273,10 @@ RSpec.describe Lain::CLI::Backend do
   # guard: if it ever found two marked blocks, that is the recorded risk, and
   # spending it is the orchestrator's call, not this glue's.
   describe "a role prelude rendered through Context spends exactly one cache mark" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:timeline) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      Lain::Dag::Factory.timeline(store:)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
     end
 
     it "marks exactly one system block, not one per prelude segment" do
@@ -1428,7 +1428,7 @@ RSpec.describe Lain::CLI::Backend do
     # keys on them is exercised in `spec/lain/compaction/source_spec.rb`, and
     # what this file is about is which flags reach which collaborator.
     def history(size)
-      (1..size).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, index|
+      (1..size).inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, index|
         body = "result number #{index}: #{"the quick brown fox jumped over the lazy dog. " * 20}"
         line.commit(role: index.odd? ? "user" : "assistant", content: [{ "type" => "text", "text" => body }])
       end
@@ -2355,10 +2355,10 @@ RSpec.describe Lain::CLI::Backend do
   # AC: --temperature 0 --seed 7 reach the sampler extra (Request#extra), but
   # NOT the Request digest -- a sampler knob is not a prompt.
   describe "temperature and seed threading" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:timeline) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      Lain::Dag::Factory.timeline(store:)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
     end
 
     def render(**options)
@@ -2396,10 +2396,10 @@ RSpec.describe Lain::CLI::Backend do
   # been TYPED: the encoder seeds it with the generation cap regardless, and
   # now num_batch rides along unasked too.
   describe "num_batch and num_ctx threading" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:timeline) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      Lain::Dag::Factory.timeline(store:)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
     end
 
     def payload_for(**options)
@@ -2472,10 +2472,10 @@ RSpec.describe Lain::CLI::Backend do
   # The subject of this describe is the wire TYPE: one knob, two JSON types,
   # decided once in {Lain::CLI::Backend} and forwarded unconverted from there.
   describe "the residency knob" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:timeline) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      Lain::Dag::Factory.timeline(store:)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
     end
 
     def payload_for(**options)

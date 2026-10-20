@@ -16,10 +16,10 @@ RSpec.describe Lain::CLI::Chronicle do
 
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:timeline) { Lain::Timeline.empty(store:).commit(role: :user, content: text("hi")) }
+  let(:timeline) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("hi")) }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -706,13 +706,13 @@ RSpec.describe Lain::CLI::Chronicle do
         run_context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 16)
         chronicle.start(context: run_context, toolset: Lain::Toolset.new)
 
-        store = Lain::Store.new
+        store = Lain::Dag::Factory.store
         write_input = { "id" => "aspirin", "description" => "dosing", "body" => "40mg/kg" }
         tool_use = { "type" => "tool_use", "id" => "tu_1", "name" => "memory_write", "input" => write_input }
         tool_result = { "type" => "tool_result", "tool_use_id" => "tu_1", "is_error" => false,
                         "content" => [{ "type" => "text", "text" => "ok" }] }
 
-        after_ask = Lain::Timeline.empty(store:).commit(role: :user, content: text("remember aspirin"))
+        after_ask = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("remember aspirin"))
         after_tool_use = after_ask.commit(role: :assistant, content: [tool_use])
         conversation = after_tool_use.commit(role: :user, content: [tool_result])
         chronicle.catch_up(conversation)

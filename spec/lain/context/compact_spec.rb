@@ -77,7 +77,7 @@ RSpec.describe Lain::Context::Compact do
     end
 
     def timeline_of(history)
-      history.inject(Lain::Timeline.empty(store: Lain::Store.new)) do |timeline, entry|
+      history.inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |timeline, entry|
         timeline.commit(role: entry["role"], content: entry["content"])
       end
     end

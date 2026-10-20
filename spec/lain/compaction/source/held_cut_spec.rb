@@ -17,7 +17,7 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
   def role_at(index) = index.odd? && index > 1 ? "assistant" : "user"
 
   def timeline(size)
-    (1..size).inject(Lain::Timeline.empty) { |line, index| line.commit(role: role_at(index), content: [block(index)]) }
+    (1..size).inject(CoreGraph.timeline) { |line, index| line.commit(role: role_at(index), content: [block(index)]) }
   end
 
   def at(line, index) = line.checkout(line.to_a[index].digest)
@@ -163,7 +163,7 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
       def asking
         [["user", [block(1)]], ["assistant", [block(2)]], ["user", [{ "type" => "text", "text" => "the ask" }]],
          *round("call-1", "answered"), *round("call-2", "unanswered")]
-          .inject(Lain::Timeline.empty) { |line, (role, content)| line.commit(role:, content:) }
+          .inject(CoreGraph.timeline) { |line, (role, content)| line.commit(role:, content:) }
       end
 
       def texts(messages) = messages.map { |message| message["content"].first.values_at("text", "content").compact }
@@ -216,7 +216,7 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
        ["assistant", [{ "type" => "tool_use", "id" => "call-1", "name" => "probe", "input" => {} }]],
        ["user", [{ "type" => "tool_result", "tool_use_id" => "call-1", "content" => "probed" }]],
        ["assistant", text("probed it")], ["user", text("the ask")]]
-        .inject(Lain::Timeline.empty) { |line, (role, content)| line.commit(role:, content:) }
+        .inject(CoreGraph.timeline) { |line, (role, content)| line.commit(role:, content:) }
     end
 
     def advanced_over_one_to_two(line)
@@ -251,7 +251,7 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
           [["assistant", text("reply #{index}")], ["user", text("more #{index}")]]
         end
         [["user", text(directive)], *replies, ["assistant", text("probed it")], ["user", text("the ask")]]
-          .inject(Lain::Timeline.empty) { |line, (role, content)| line.commit(role:, content:) }
+          .inject(CoreGraph.timeline) { |line, (role, content)| line.commit(role:, content:) }
       end
 
       def summarized(turns)

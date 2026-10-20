@@ -60,13 +60,13 @@ end
 RSpec.describe Lain::Context do
   subject(:context) { described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:toolset) { Lain::Toolset.new }
   let(:timeline) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: text("hello"))
-                  .commit(role: :assistant, content: text("hi"))
-                  .commit(role: :user, content: text("more"))
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: text("hello"))
+                      .commit(role: :assistant, content: text("hi"))
+                      .commit(role: :user, content: text("more"))
   end
 
   def text(body) = [{ "type" => "text", "text" => body }]
@@ -594,9 +594,9 @@ RSpec.describe Lain::Context do
   # Each draw builds its own timelines so no law inherits another's.
   describe "held to the purity laws on #render" do
     triples = lambda do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       body = ->(words) { [{ "type" => "text", "text" => words }] }
-      base = Lain::Timeline.empty(store:).commit(role: :user, content: body.call("hello"))
+      base = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: body.call("hello"))
       [base, base.commit(role: :assistant, content: body.call("hi"))].map do |timeline|
         { timeline:, toolset: Lain::Toolset.new, workspace: Lain::Workspace.new(reminders: ["todo: ship"]) }
       end

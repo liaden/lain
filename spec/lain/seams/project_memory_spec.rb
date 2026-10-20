@@ -59,7 +59,7 @@ RSpec.describe "Project memory across chats", :seam do
     agent = Lain::Agent.new(provider:, context:, toolset:, session:,
                             journal: Lain::Memory::JournalMemoryRoot.new(journal: chronicle.durable_journal,
                                                                          recorder:),
-                            timeline: resumed&.timeline || Lain::Timeline.empty)
+                            timeline: resumed&.timeline || Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
     agent.ask("go")
     chronicle.catch_up(agent.timeline)
     { io:, provider:, agent:, session:, recorder:, chronicle: }

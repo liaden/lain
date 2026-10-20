@@ -276,10 +276,10 @@ RSpec.describe LainCLI do
   # --temperature 0 --seed 7 reach the Ollama wire payload's options, but
   # NOT the Request digest -- temperature is a sampler knob, not a prompt.
   describe "temperature and seed threading" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:timeline) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      Lain::Dag::Factory.timeline(store:)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
     end
 
     def render(**options)
@@ -962,8 +962,10 @@ RSpec.describe LainCLI do
     end
 
     def encoded_options(backend)
-      timeline = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user,
-                                                                     content: [{ "type" => "text", "text" => "hi" }])
+      timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user,
+                                                                                     content: [{
+                                                                                       "type" => "text", "text" => "hi"
+                                                                                     }])
       Lain::Provider::Ollama.new.encode(backend.context.render(timeline:, toolset: Lain::Toolset.new))[:options]
     end
 

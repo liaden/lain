@@ -58,7 +58,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   let(:recorder) { Lain::Memory::Recorder.new }
   let(:journal) { RecordingChannel.new }
   let(:supervisor) { Lain::Supervisor.new(journal:) }
-  let(:ask_human) { Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }) }
+  let(:ask_human) { Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }) }
   let(:options) { {} }
 
   # A root the working directory could never be mistaken for. `root:` is
@@ -70,7 +70,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   # The run's own spooled provider and live parent handle, held as lets so the
   # spawn seam's members can be asserted by identity rather than by type.
   let(:provider) { backend.provider(spool: chronicle.spool) }
-  let(:parent) { -> { Lain::Timeline.new } }
+  let(:parent) { -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) } }
 
   # The session's ONE library, injected -- what {Skill::Library} replaced the `catalog:`
   # keyword and the `backend.slots` reach-through with. The live path hands in
@@ -320,7 +320,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo)) }
       let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:) }
       let(:epic) { Lain::CLI::EpicMount.for(chronicle:, options: {}, root:, config:, paths:, told: ->(_line) {}) }
-      let(:ask_human) { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) }
+      let(:ask_human) { Lain::Tools::AskHuman.new(parent: CoreGraph.timeline) }
       let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
 
       def research = { "stage" => "research", "slug" => "frugirl-mvp" }
@@ -358,7 +358,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo)) }
       let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:) }
       let(:epic) { Lain::CLI::EpicMount.for(chronicle:, options: {}, root:, config:, paths:, told: ->(_line) {}) }
-      let(:ask_human) { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) }
+      let(:ask_human) { Lain::Tools::AskHuman.new(parent: CoreGraph.timeline) }
       let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
 
       it "rewrites epic.md and journals the graph_revision in the chat's session" do
@@ -640,7 +640,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         let(:provider) { Lain::Provider::Mock.new(responses: [text_response("done")]) }
         # A real handle, where the outer `let` only ever has its identity
         # asserted: this context is the one that actually CALLS the thunk.
-        let(:parent) { -> { Lain::Timeline.empty(store: Lain::Store.new) } }
+        let(:parent) { -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) } }
 
         def spawn_dev
           toolset_build.build(recorder, ask_human:)
@@ -675,8 +675,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # The chat's own research child through the assembly the exe runs: a real
       # board in ask, the real queue, the real kept lease, and the real tools.
       describe "the chat's research subagent working in its lease" do
-        let(:store) { Lain::Store.new }
-        let(:parent) { -> { Lain::Timeline.empty(store:) } }
+        let(:store) { Lain::Dag::Factory.store }
+        let(:parent) { -> { Lain::Dag::Factory.timeline(store:) } }
         let(:kept) { [] }
         let(:project_root) { File.realpath(Dir.mktmpdir("research-project")) }
         let(:project) { Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag) }
@@ -772,9 +772,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       context "when the chat session holds a cut and an :inherit child is spawned" do
         let(:provider) { Lain::Provider::Mock.new(responses: [text_response("done"), text_response("done")]) }
         let(:chain) do
-          Lain::Timeline.empty(store: Lain::Store.new)
-                        .commit(role: :user, content: [{ "type" => "text", "text" => "REPLACED-TURN" }])
-                        .commit(role: :assistant, content: [{ "type" => "text", "text" => "ok" }])
+          Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                            .commit(role: :user, content: [{ "type" => "text", "text" => "REPLACED-TURN" }])
+                            .commit(role: :assistant, content: [{ "type" => "text", "text" => "ok" }])
         end
         let(:parent) { -> { chain } }
         let(:session) { Lain::Session.new }
@@ -857,7 +857,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         seam_askers = build.role_spawn.seam.askers
         expect(seam_askers).to be(askers)
         Sync do
-          asked = seam_askers.enrol(Lain::Timeline.empty, agent: "researcher").asker.ask("which db?")
+          asked = seam_askers.enrol(CoreGraph.timeline, agent: "researcher").asker.ask("which db?")
           expect(seam_askers.questions.dequeue(timeout: 0).digest).to eq(asked.digest)
         end
       end
@@ -882,8 +882,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # are wired to the right ends.
       context "when the chat's own subagent asks the human" do
         let(:arrivals) { [] }
-        let(:store) { Lain::Store.new }
-        let(:parent) { -> { Lain::Timeline.empty(store:) } }
+        let(:store) { Lain::Dag::Factory.store }
+        let(:parent) { -> { Lain::Dag::Factory.timeline(store:) } }
         let(:provider) do
           Lain::Provider::Mock.new(responses: [tool_response(["c1", "ask_human", { "question" => "which db?" }]),
                                                text_response("done")])
@@ -926,8 +926,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
 
       describe "the chat's research subagent" do
-        let(:store) { Lain::Store.new }
-        let(:parent) { -> { Lain::Timeline.empty(store:) } }
+        let(:store) { Lain::Dag::Factory.store }
+        let(:parent) { -> { Lain::Dag::Factory.timeline(store:) } }
         let(:provider) { Lain::Provider::Mock.new(responses: [text_response("found it")]) }
         let(:subagent) { toolset_build.build(recorder, ask_human:).fetch("subagent") }
 
@@ -994,7 +994,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     it "refuses to construct without the library" do
       expect do
         described_class.new(backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options:,
-                            supervisor:, parent: -> { Lain::Timeline.new }, journal:, epic:,
+                            supervisor:, parent: -> { CoreGraph.timeline }, journal:, epic:,
                             **SpecNulls.unloaded_project)
       end.to raise_error(ArgumentError, /library/)
     end
@@ -1265,7 +1265,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
                                                                               "role" => "dev" }]),
                                            text_response("dev done"), text_response("plan done")])
     end
-    let(:parent) { -> { Lain::Timeline.empty(store: Lain::Store.new) } }
+    let(:parent) { -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) } }
     let(:orchestrator) { Lain::Role::Catalog.fetch(:issue_orchestrator) }
     let(:dev) { Lain::Role::Catalog.fetch(:dev) }
     # The issue's own lane: where the orchestrator's children lease, and the
@@ -1511,7 +1511,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   # there. A researcher keeps a lease of its own, on either route.
   describe "the handback a child's lease ends in" do
     let(:provider) { Lain::Provider::Mock.new(responses: [text_response("done")]) }
-    let(:parent) { -> { Lain::Timeline.empty(store: Lain::Store.new) } }
+    let(:parent) { -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) } }
     let(:handoff) { ToolsetBuildHandoff.new }
 
     it "ends a role-spawned child's lease in the run's handoff" do

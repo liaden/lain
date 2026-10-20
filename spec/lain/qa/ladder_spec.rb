@@ -345,7 +345,7 @@ RSpec.describe Lain::QA::Ladder do
   # the wire through the real role-selecting spawn, which is the channel a rung
   # is bound by.
   describe "over the real role-selecting spawn" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:child_context) { Lain::Context.new(model: "the-session-model", max_tokens: 256) }
     let(:union) do
       Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new,
@@ -365,7 +365,7 @@ RSpec.describe Lain::QA::Ladder do
     it "survives the admission gate refusing a real provider mid-pass" do
       real = Lain::Skill::RoleSpawn.new(provider: LadderBusyProvider.new(responses: []),
                                         context_factory: -> { child_context }, toolset: union,
-                                        parent: Lain::Timeline.empty(store:), slots: @slots,
+                                        parent: Lain::Dag::Factory.timeline(store:), slots: @slots,
                                         tool_middleware: ToolRegistry::UNGUARDED)
       rungs = [described_class::Rung.spawning(tier: "t1", role_spawn: real, role: :reviewer_code,
                                               model: choice("laguna-xs-2.1"))]
@@ -379,7 +379,7 @@ RSpec.describe Lain::QA::Ladder do
     it "answers each rung's asks on that rung's own model, and none on the run's" do
       provider = Lain::Provider::Mock.new(responses: Array.new(2) { text_response(passing) })
       real = Lain::Skill::RoleSpawn.new(provider:, context_factory: -> { child_context },
-                                        toolset: union, parent: Lain::Timeline.empty(store:),
+                                        toolset: union, parent: Lain::Dag::Factory.timeline(store:),
                                         slots: @slots, tool_middleware: ToolRegistry::UNGUARDED)
       rungs = [described_class::Rung.spawning(tier: "t1", role_spawn: real, role: :reviewer_code,
                                               model: choice("laguna-xs-2.1")),

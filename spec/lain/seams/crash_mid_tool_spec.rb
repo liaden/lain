@@ -39,7 +39,8 @@ module CrashMidTool
              "input" => { "command" => "echo $$ > #{marker}.tmp && mv #{marker}.tmp #{marker} && exec sleep 30" } }
     provider = Lain::Provider::Mock.new(responses: [Lain::Response.new(content: [call], stop_reason: :tool_use)])
     agent = nil
-    agent = Lain::Agent.new(provider:, context:, toolset:, session:, timeline: Lain::Timeline.empty,
+    agent = Lain::Agent.new(provider:, context:, toolset:, session:,
+                            timeline: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store),
                             instrumentation: chronicle.instrumentation
                                                       .with(turn_middleware: chronicle.turn_middleware(-> { agent.timeline })))
     agent.ask("sleep for a while")

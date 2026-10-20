@@ -301,9 +301,9 @@ RSpec.describe Lain::Middleware::SkillDispatch do
     end
 
     def two_turn_parent
-      Lain::Timeline.empty(store: Lain::Store.new)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                    .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+      Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                        .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
     end
 
     # The researcher role attenuates to read_file/list_files/glob/grep/web_fetch/web_search/bash/write_file;

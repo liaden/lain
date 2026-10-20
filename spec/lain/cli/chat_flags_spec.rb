@@ -543,7 +543,7 @@ RSpec.describe "lain chat's flag surface" do
 
     # A well-formed conversation, big enough to cross a lowered threshold.
     def history(size)
-      (1..size).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, index|
+      (1..size).inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, index|
         line.commit(role: index.odd? && index > 1 ? "assistant" : "user",
                     content: [{ "type" => "text", "text" => "turn #{index}: #{"the quick brown fox. " * 40}" }])
       end

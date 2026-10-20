@@ -31,8 +31,8 @@ RSpec.describe Lain::CLI::Command::Inbox do
                             history_path: File.join(@dir, "history"))
   end
   let(:status_feed) { Lain::StatusFeed.new(path: File.join(@dir, "state.json")) }
-  let(:store) { Lain::Store.new }
-  let(:parent) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]) }
+  let(:store) { Lain::Dag::Factory.store }
+  let(:parent) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]) }
   let(:ask_human) { Lain::Tools::AskHuman.new(parent:, observer: ->(event) { status_feed << event }) }
   let(:questions) { Async::Queue.new }
   let(:conductor) { instance_double(Lain::CLI::Conductor) }

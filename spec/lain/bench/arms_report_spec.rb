@@ -556,7 +556,7 @@ RSpec.describe Lain::Bench::CLI do
     # the alternative is leaving the loud path unpinned.
     it "refuses to grade a timeline whose user turns name no task in the suite" do
       grader = described_class.const_get(:SuiteGrader).new(Lain::Bench::ArmTasks.new(fixture_path:))
-      timeline = Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => "unrelated" }])
+      timeline = CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => "unrelated" }])
 
       expect { grader.grade(timeline) }.to raise_error(ArgumentError, /no task in the suite/)
     end

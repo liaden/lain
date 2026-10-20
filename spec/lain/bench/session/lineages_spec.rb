@@ -314,8 +314,8 @@ RSpec.describe Lain::Bench::Session::Lineages do
     end
 
     it "reads a header-less slice with no completion as holding none, without rebuilding it" do
-      slice = Lain::Timeline.empty.commit(role: :user, content: text("hi")).to_a
-                            .map { |turn| Lain::SessionRecord.turn(turn) }
+      slice = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user, content: text("hi")).to_a
+                                .map { |turn| Lain::SessionRecord.turn(turn) }
       allow(Lain::Bench::Session::Loader).to receive(:new).and_call_original
 
       expect(described_class.recorded_in(slice).to_a).to eq([])

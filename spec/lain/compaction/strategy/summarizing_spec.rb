@@ -22,8 +22,8 @@ module SummarizingFixtures
   # in the draw because DROP is the unit the homomorphism law reads.
   def spans = [0, 1, 2, 3].map { |size| span(size) }
 
-  def history(size, store: Lain::Store.new)
-    (0...size).inject(Lain::Timeline.empty(store:)) do |timeline, index|
+  def history(size, store: Lain::Dag::Factory.store)
+    (0...size).inject(Lain::Dag::Factory.timeline(store:)) do |timeline, index|
       timeline.commit(role: index.even? ? "user" : "assistant", content: [text("turn #{index}")])
     end
   end

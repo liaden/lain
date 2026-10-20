@@ -34,7 +34,7 @@ RSpec.describe Lain::CLI::Improve do
   end
 
   def recommitted(turns)
-    turns.inject(Lain::Timeline.empty) do |chain, turn|
+    turns.inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |chain, turn|
       chain.commit(role: turn.fetch("role").to_sym, content: turn.fetch("content"), meta: turn.fetch("meta"))
     end
   end
@@ -329,7 +329,7 @@ RSpec.describe Lain::CLI::Improve do
     let(:secret) { "AKIAIOSFODNN7EXAMPLE" }
 
     def write_session_echoing(path, text)
-      timeline = Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => text }])
+      timeline = CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => text }])
       File.write(path, session_lines(timeline, context, Lain::Bench::Session::RecordedToolset.new(schema: [])))
     end
 

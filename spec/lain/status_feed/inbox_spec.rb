@@ -9,7 +9,7 @@ require "stringio"
 # delivers. The parity that makes the number worth publishing is pinned next
 # door, in spec/lain/frontend/neovim/inbox_view_spec.rb.
 RSpec.describe Lain::StatusFeed::Inbox do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -17,17 +17,17 @@ RSpec.describe Lain::StatusFeed::Inbox do
   # Store enforces referential integrity over causal edges, so a turn citing a
   # question needs the question actually resident, exactly as in production.
   def stored_question(question: "which db?", to: "human")
-    parent = Lain::Timeline.empty(store:).commit(role: :user, content: text("seed #{question}"))
+    parent = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("seed #{question}"))
     Lain::Event::ChainWriter.new.put(parent, kind: :message, from: "orchestrator", to:,
                                              causal_parents: [], body: { "question" => question })
   end
 
   # The delivery commit: a chain whose head turn cites what it folded in.
   def commit_citing(*digests)
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: text("hi"))
-                  .commit(role: :assistant, content: text("asking"), causal_parents: digests)
-                  .head_digest
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: text("hi"))
+                      .commit(role: :assistant, content: text("asking"), causal_parents: digests)
+                      .head_digest
   end
 
   describe "#arrived" do
@@ -126,7 +126,7 @@ RSpec.describe Lain::StatusFeed::Inbox do
   describe "a settled gate's consumption" do
     it "retires the question a timed-out gate named in its own record" do
       io = StringIO.new
-      asker = Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:))
+      asker = Lain::Tools::AskHuman.new(parent: Lain::Dag::Factory.timeline(store:))
       artifact = Data.define(:digest, :gate_question).new(digest: "blake3:impl", gate_question: "Approve it?")
       Sync do
         Lain::Epic::Gate.new(journal: Lain::Journal.new(io:), timeout: 0.02)
@@ -145,7 +145,7 @@ RSpec.describe Lain::StatusFeed::Inbox do
   describe "a question asked again after its first asking was retired" do
     it "lists the second asking" do
       inbox = described_class.new(store:)
-      asker = Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:))
+      asker = Lain::Tools::AskHuman.new(parent: Lain::Dag::Factory.timeline(store:))
       first = Sync { asker.ask("Approve it?").tap { |pending| asker.withdraw(pending) } }
       inbox.arrived(asker.last_question)
       inbox.retire([first.digest])
@@ -180,7 +180,7 @@ RSpec.describe Lain::StatusFeed::Inbox do
     # StatusFeed rides the JournalTee, which re-raises a sink's failure into the
     # agent loop -- so an unresolvable head may cost a status line, never a turn.
     it "treats a head no bound store holds as a miss, never a raise" do
-      inbox = described_class.new(store: Lain::Store.new)
+      inbox = described_class.new(store: Lain::Dag::Factory.store)
       question = stored_question
       inbox.arrived(question)
 

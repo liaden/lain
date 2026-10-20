@@ -5,8 +5,8 @@ require "tmpdir"
 RSpec.describe Lain::Workspace::Snapshot do
   # A store with one committed turn, so snapshots have a turn to name as their
   # causal parent -- the same shape the Agent's tool_results commit leaves.
-  def committed_timeline(store = Lain::Store.new)
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+  def committed_timeline(store = Lain::Dag::Factory.store)
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
   end
 
   def write_file(dir, name, bytes)
@@ -42,7 +42,7 @@ RSpec.describe Lain::Workspace::Snapshot do
     end
 
     it "is a frozen value: equal by digest, deduplicating in a Store" do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       first = described_class.new(bytes: "same")
 
       expect(first).to be_deeply_frozen

@@ -57,10 +57,10 @@ RSpec.describe Lain::Context::ModelSwitch do
   # cache consequence -- a model change breaks the cached prefix anyway. A
   # String-modeled Context is untouched (context_spec.rb's purity examples).
   describe "read at render time by a Context holding the switch" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:toolset) { Lain::Toolset.new }
     let(:timeline) do
-      Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hello" }])
+      Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hello" }])
     end
 
     it "renders the model in force at render time, not at construction" do

@@ -175,7 +175,7 @@ RSpec.describe Lain::Context::Mailbox do
 
     it "folds itself into the tail of a Context it lays over, after the cache breakpoint" do
       base = Lain::Context.new(model: "m", max_tokens: 64)
-      timeline = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: user("go")["content"])
+      timeline = CoreGraph.timeline.commit(role: :user, content: user("go")["content"])
       request = snapshot(pending).over(base).render(timeline:, toolset: Lain::Toolset.new([]))
 
       expect(request.messages.last["content"].last).to eq(
@@ -188,7 +188,7 @@ RSpec.describe Lain::Context::Mailbox do
   # of the mutable log, at turn start; the {Snapshot} it returns is what render
   # and commit both consume.
   describe Lain::Context::Mailbox::Source do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:log) { Lain::Tools::Subagent::Log.new }
     let(:source) { described_class.new(recipient: "parent", log:) }
 
@@ -205,15 +205,15 @@ RSpec.describe Lain::Context::Mailbox do
       first = put_message(to: "parent", text: "one")
       second = put_message(to: "parent", text: "two")
 
-      expect(source.capture(Lain::Timeline.empty(store:)).folded).to eq([first.digest, second.digest])
+      expect(source.capture(Lain::Dag::Factory.timeline(store:)).folded).to eq([first.digest, second.digest])
     end
 
     it "drops a message a committed turn on the timeline already consumed" do
       first = put_message(to: "parent", text: "one")
       second = put_message(to: "parent", text: "two")
-      timeline = Lain::Timeline.empty(store:)
-                               .commit(role: :assistant, content: [{ "type" => "text", "text" => "x" }],
-                                       causal_parents: [first.digest])
+      timeline = Lain::Dag::Factory.timeline(store:)
+                                   .commit(role: :assistant, content: [{ "type" => "text", "text" => "x" }],
+                                           causal_parents: [first.digest])
 
       expect(source.capture(timeline).folded).to eq([second.digest])
     end
@@ -222,7 +222,7 @@ RSpec.describe Lain::Context::Mailbox do
       mine = put_message(to: "parent", text: "mine")
       put_message(to: "worker", text: "theirs")
 
-      expect(source.capture(Lain::Timeline.empty(store:)).folded).to eq([mine.digest])
+      expect(source.capture(Lain::Dag::Factory.timeline(store:)).folded).to eq([mine.digest])
     end
 
     # Probe-becomes-spec (panel probe #2): a message ARRIVING between render and
@@ -234,7 +234,7 @@ RSpec.describe Lain::Context::Mailbox do
     describe "a message arriving mid-dispatch (the render/commit window)" do
       it "is not claimed by the in-flight commit and still folds next turn" do
         m1 = put_message(to: "parent", text: "first")
-        timeline = Lain::Timeline.empty(store:)
+        timeline = Lain::Dag::Factory.timeline(store:)
         turn_snapshot = source.capture(timeline)
 
         # Render folds the snapshot: m1 only.
@@ -260,7 +260,7 @@ RSpec.describe Lain::Context::Mailbox do
   # nothing folds and every assistant commit records causal_parents [].
   describe Lain::Context::Mailbox::Null do
     it "captures an empty snapshot, whatever the timeline" do
-      snap = described_class.capture(Lain::Timeline.empty(store: Lain::Store.new))
+      snap = described_class.capture(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
       expect(snap.folded).to eq([])
       expect(snap.pending).to eq([])
     end
@@ -272,7 +272,7 @@ RSpec.describe Lain::Context::Mailbox do
 
     it "drops a posted note and never reports one pending" do
       expect(described_class.post(from: "lain", text: "hi")).to be_nil
-      expect(described_class.pending?(Lain::Timeline.empty(store: Lain::Store.new))).to be(false)
+      expect(described_class.pending?(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))).to be(false)
     end
   end
 end

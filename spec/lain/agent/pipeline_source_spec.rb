@@ -2,7 +2,7 @@
 
 RSpec.describe Lain::Agent::PipelineSource::Null do
   let(:base) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
-  let(:timeline) { Lain::Timeline.empty(store: Lain::Store.new) }
+  let(:timeline) { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }
   let(:session) { Lain::Session.new }
 
   def context_for(**overrides)

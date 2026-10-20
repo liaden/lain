@@ -884,13 +884,13 @@ RSpec.describe Lain::Frontend::StdinPump do
         def wait_readable = @io.wait_readable
       end.new(pipe.first)
     end
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:mailbox) do
       Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of), observer: ->(_) {})
     end
     let(:notes) { Lain::CLI::HumanNotes.new(mailbox:, in_flight: -> { true }) }
     let(:timeline) do
-      Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
     end
 
     after { pipe.each(&:close) }

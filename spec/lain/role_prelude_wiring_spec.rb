@@ -10,10 +10,10 @@ require "tmpdir"
 # none wired the child renders byte-for-byte as before (that Null default is
 # pinned in subagent_spec).
 RSpec.describe "a spawned role's persona" do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
   let(:union) { Lain::Toolset.new(%i[read_file list_files glob grep bash write_file edit_file todo_write web_fetch web_search].map { |n| tool(n) }) }
@@ -197,7 +197,7 @@ RSpec.describe "a spawned role's persona" do
       )
       # Pile up content blocks (EVERY = 15) so CacheBreakpoints places its full
       # cap-1 message budget on top of the two system marks.
-      timeline = 30.times.inject(Lain::Timeline.empty(store:)) do |t, i|
+      timeline = 30.times.inject(Lain::Dag::Factory.timeline(store:)) do |t, i|
         t.commit(role: i.even? ? :user : :assistant,
                  content: Array.new(4) { { "type" => "text", "text" => "block #{i}" } })
       end

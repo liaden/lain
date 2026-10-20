@@ -239,9 +239,9 @@ RSpec.describe Lain::CLI::FleetWindows do
     # records come from the REAL writer: hand-written digests would separate
     # the pair whether or not the spawn body does.
     it "opens a window per one-shot of different work from one head, and marks only the one that completed" do
-      store = Lain::Store.new
-      head = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
-      child = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "work" }])
+      store = Lain::Dag::Factory.store
+      head = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      child = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "work" }])
       lineage = Lain::Tools::Subagent::Lineage.new(
         policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
       )

@@ -8,11 +8,12 @@ RSpec.describe Lain::Tool::Cancellation do
   def tool_use(id, name = "echo") = { "type" => "tool_use", "id" => id, "name" => name, "input" => {} }
 
   let(:head) do
-    Lain::Timeline.empty(store: Lain::Store.new)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant,
-                          content: [{ "type" => "text", "text" => "calling" }, tool_use("tu_1"), tool_use("tu_2")])
-                  .head
+    Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant,
+                              content: [{ "type" => "text", "text" => "calling" }, tool_use("tu_1"),
+                                        tool_use("tu_2")])
+                      .head
   end
 
   describe "#blocks" do

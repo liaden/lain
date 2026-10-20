@@ -48,7 +48,7 @@ RSpec.describe "a role skill's child names its role to the judge", :seam do
                                                     text_response("done")])
     context_factory = -> { Lain::Context.new(model: "c", max_tokens: 256) }
     spawn = Lain::Skill::RoleSpawn.new(provider:, context_factory:, toolset: union, slots: @slots,
-                                       parent: Lain::Timeline.empty(store: Lain::Store.new), tool_middleware: builder)
+                                       parent: CoreGraph.timeline, tool_middleware: builder)
     Sync { spawn.call(:dev, :fresh, "go") }
   end
 

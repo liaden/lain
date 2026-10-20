@@ -56,9 +56,9 @@ module CoreGraph
 
   module_function
 
-  def store = Lain::Store.new
+  def store = Lain::Dag::Factory.store
 
-  def timeline(store: CoreGraph.store) = Lain::Timeline.empty(store:)
+  def timeline(store: CoreGraph.store) = Lain::Dag::Factory.timeline(store:)
 
   def context(model: MODEL, max_tokens: MAX_TOKENS, **rest) = Lain::Context.new(model:, max_tokens:, **rest)
 

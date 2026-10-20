@@ -2,11 +2,11 @@
 
 RSpec.describe Lain::Tool::SpawnPolicy do
   # A two-turn parent chain over a shared Store; H is its head.
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
   let(:union) { Lain::Toolset.new([EchoTool.new, BoomTool.new]) }
   let(:allowed) { union.only(:echo) }
@@ -188,7 +188,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
         it "carries the parent's named pipeline, so the child renders through it" do
           named = Lain::CLI::ContextPipeline.named("prune").context(model: "child-model", max_tokens: 256,
                                                                     system: "be small")
-          long = (1..30).inject(Lain::Timeline.empty(store:)) do |chain, index|
+          long = (1..30).inject(Lain::Dag::Factory.timeline(store:)) do |chain, index|
             chain.commit(role: index.odd? ? :user : :assistant, content: [{ "type" => "text", "text" => index.to_s }])
           end
           shaped = strategy.child_context(named)

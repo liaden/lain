@@ -213,7 +213,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # prose is multi-line, which is why this was invisible to every spec whose
   # fixture said "hello".
   describe "lain://timeline keeps following the session once a turn is multi-line" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
 
     def timeline_lines
       inspector.exec_lua(<<~LUA, [])
@@ -233,7 +233,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "shows the second ask's turns after a first ask whose reply spans lines" do
-      chain = ask(Lain::Timeline.empty(store:), "first", "one\ntwo\nthree")
+      chain = ask(Lain::Dag::Factory.timeline(store:), "first", "one\ntwo\nthree")
       frontend = described_class.new(channel:, socket_path: @socket, store:)
 
       frontend.run do
@@ -254,14 +254,14 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # from what the human can see even in an editor that accepted the write.
     # Asserted with no {Surfaces} in the path for exactly that reason.
     it "flattens a multi-line turn in its own rendering, with no Surfaces in the path" do
-      chain = ask(Lain::Timeline.empty(store:), "first", "one\ntwo\nthree")
+      chain = ask(Lain::Dag::Factory.timeline(store:), "first", "one\ntwo\nthree")
       view = Lain::Frontend::Neovim::Buffers::TimelineView.new(store:, session: Lain::Session.new)
 
       expect(view.update(usage(chain.head_digest))).to eq(["user: first", "assistant: one two three"])
     end
 
     it "renders one line per turn, so the pin index still names the turn under the cursor" do
-      chain = ask(Lain::Timeline.empty(store:), "first", "one\ntwo\nthree")
+      chain = ask(Lain::Dag::Factory.timeline(store:), "first", "one\ntwo\nthree")
       frontend = described_class.new(channel:, socket_path: @socket, store:)
 
       frontend.run do
@@ -280,7 +280,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         channel.push(usage("blake3:absent"))
         expect(wait_until { timeline_lines.grep(/timeline unavailable/).first }).to include("blake3:absent")
 
-        chain = ask(Lain::Timeline.empty(store:), "after", "still alive")
+        chain = ask(Lain::Dag::Factory.timeline(store:), "after", "still alive")
         channel.push(usage(chain.head_digest))
         expect(wait_until { timeline_lines.grep(/^user: after/).first }).to eq("user: after")
       end

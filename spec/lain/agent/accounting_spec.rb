@@ -99,7 +99,7 @@ RSpec.describe Lain::Agent::Accounting do
   # Store can answer.
   describe "#last_turn_usage" do
     let(:line) do
-      %w[user assistant user assistant].each_with_index.inject(Lain::Timeline.empty) do |grown, (role, index)|
+      %w[user assistant user assistant].each_with_index.inject(CoreGraph.timeline) do |grown, (role, index)|
         grown.commit(role:, content: [{ "type" => "text", "text" => "turn #{index}" }])
       end
     end
@@ -241,7 +241,7 @@ RSpec.describe Lain::Agent::Accounting do
   # standing on the turn below it, which the Agent names.
   describe "#observe_refusal" do
     let(:line) do
-      %w[user assistant user].each_with_index.inject(Lain::Timeline.empty) do |grown, (role, index)|
+      %w[user assistant user].each_with_index.inject(CoreGraph.timeline) do |grown, (role, index)|
         grown.commit(role:, content: [{ "type" => "text", "text" => "turn #{index}" }])
       end
     end
@@ -278,7 +278,7 @@ RSpec.describe Lain::Agent::Accounting do
 
       accounting.observe_refusal(prompt_tokens: 12_011, head: nil)
 
-      expect(accounting.last_turn_usage(on: Lain::Timeline.empty)).to eq(12_011)
+      expect(accounting.last_turn_usage(on: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))).to eq(12_011)
       expect(accounting.last_turn_usage(on: line)).to eq(12_011)
     end
 

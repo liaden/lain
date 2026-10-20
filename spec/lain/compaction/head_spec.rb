@@ -6,7 +6,7 @@ RSpec.describe Lain::Compaction::Head do
   def message(role, body) = { "role" => role, "content" => text(body) }
 
   def timeline_of(count)
-    (1..count).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |timeline, index|
+    (1..count).inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |timeline, index|
       timeline.commit(role: index.odd? ? :user : :assistant, content: text("turn #{index}"))
     end
   end

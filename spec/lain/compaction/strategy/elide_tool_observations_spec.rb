@@ -30,8 +30,8 @@ module ElideToolObservationsFixtures
   # Roles alternate by index, so a `tool_use` is always the assistant's and its
   # answer always the user's -- what spec/lain/compaction/derivation_spec.rb
   # builds and what {Context::Conversation} accepts.
-  def history(blocks, store: Lain::Store.new)
-    blocks.each_with_index.inject(Lain::Timeline.empty(store:)) do |timeline, (content, index)|
+  def history(blocks, store: Lain::Dag::Factory.store)
+    blocks.each_with_index.inject(Lain::Dag::Factory.timeline(store:)) do |timeline, (content, index)|
       timeline.commit(role: index.even? ? "user" : "assistant", content:)
     end
   end

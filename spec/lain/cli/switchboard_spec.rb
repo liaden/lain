@@ -608,9 +608,9 @@ RSpec.describe Lain::CLI::Switchboard do
   end
 
   describe "the model side" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:timeline) do
-      Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
     end
 
     it "grafts the live model slot onto a context, read at render time" do
@@ -627,9 +627,9 @@ RSpec.describe Lain::CLI::Switchboard do
   # say a flip DOES something -- it re-binds the gate policy the construction-
   # fixed Gate reads, and leaves the capability set the Agent renders alone.
   describe "the mode side, bound to the live gate" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:timeline) do
-      Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
     end
     let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 64) }
 
@@ -1113,7 +1113,7 @@ RSpec.describe Lain::CLI::Switchboard do
     def chat(**options)
       board = nil
       build = toolset_build(options, -> { board })
-      build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+      build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
       board = described_class.for(chronicle:, judge:, options:, model: "claude-opus-4-8", toolset: base, sensitivity:,
                                   test_layout: layout_run)
       [board, build]
@@ -1123,7 +1123,7 @@ RSpec.describe Lain::CLI::Switchboard do
       Lain::CLI::Wiring::ToolsetBuild.new(
         backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options:, switchboard:,
         supervisor: Lain::Supervisor.new(journal: RecordingChannel.new),
-        parent: -> { Lain::Timeline.empty(store: Lain::Store.new) }, journal: RecordingChannel.new,
+        parent: -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }, journal: RecordingChannel.new,
         library: backend.library, epic: SpecNulls.unmounted_epic, root: "/srv/switchboard-project",
         askers: SpecNulls::UnwiredAskers.build, **SpecNulls.unloaded_project
       )

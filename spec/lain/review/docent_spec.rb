@@ -1294,7 +1294,7 @@ RSpec.describe Lain::Review::Docent do
       # session's union has when a docent is spawned out of the human's chat.
       def poisoned_union
         Lain::Toolset.new(Lain::CLI::Wiring::BaseTools.build(Lain::Memory::Recorder.new) +
-                          [askers.enrol(Lain::Timeline.empty(store: Lain::Store.new), agent: Lain::Requester.main.label).asker])
+                          [askers.enrol(CoreGraph.timeline, agent: Lain::Requester.main.label).asker])
       end
 
       it "shows the child no ask_human, though the union it renders from holds the parent's" do
@@ -1330,7 +1330,7 @@ RSpec.describe Lain::Review::Docent do
       seam = Lain::Tools::Subagent::Seam.new(
         tool_middleware: ToolRegistry::UNGUARDED,
         provider:, context_factory: -> { Lain::Context.new(model: "docent-model", max_tokens: 128) },
-        parent: Lain::Timeline.empty(store: Lain::Store.new), askers:
+        parent: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store), askers:
       )
       Lain::Tools::Subagent.new(seam:, toolset: union, policy: role.spawn_policy(posture:),
                                 name: role.name.to_s)

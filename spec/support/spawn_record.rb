@@ -48,7 +48,7 @@ class SpawnRecord
     # whose body carries "text" and no "final" -- so this asks rather than
     # fetches, and answers nil for a record that named no child.
     final = message&.body&.[]("final")
-    final && Lain::Timeline.new(head_digest: final, store:)
+    final && Lain::Dag::Factory.timeline(head_digest: final, store:)
   end
 
   private

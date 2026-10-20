@@ -23,7 +23,7 @@ module ContextPipelineTranscript
   end
 
   def timeline(exchanges:)
-    opened = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("start"))
+    opened = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user, content: text("start"))
     (1..exchanges).inject(opened) { |chain, id| exchange(chain, id, error: id == 1) }
                   .commit(role: :assistant, content: text("done"))
   end

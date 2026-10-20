@@ -74,7 +74,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
 
       # The Timeline commit is where normalization happens; the projection is
       # exactly Context#render's (`context.rb:138`).
-      timeline = Lain::Timeline.empty.commit(role: :user, content: [block])
+      timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user, content: [block])
       message = timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }.last
       recomputed = Lain::Canonical.digest(message.fetch("content").first.fetch("content"))
 

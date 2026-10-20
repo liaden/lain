@@ -68,9 +68,9 @@ RSpec.describe Lain::Supervisor::Restart do
     end)
   end
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent_timeline) do
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "keep notes" }])
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "keep notes" }])
   end
   let(:context) { Lain::Context.new(model: "actor", max_tokens: 128) }
   let(:toolset) { Lain::Toolset.new([ScribbleTool.new(root: dir)]) }
@@ -103,7 +103,7 @@ RSpec.describe Lain::Supervisor::Restart do
   # JournalBlobs (the sidecar) into the session scribe, exactly the seam a
   # production exe would wrap.
   def scribed_agent(provider, observer)
-    Lain::Agent.new(provider:, toolset:, context:, timeline: Lain::Timeline.empty(store:),
+    Lain::Agent.new(provider:, toolset:, context:, timeline: Lain::Dag::Factory.timeline(store:),
                     snapshot_slot: Lain::Agent::SnapshotSlot.new(root: dir,
                                                                  log: Lain::Workspace::SnapshotLog.new(observer:)))
   end
@@ -491,7 +491,7 @@ RSpec.describe Lain::Supervisor::Restart do
                             journal: restart_journal, root: dir)
                        .call(role: "researcher") do |_recording|
           Lain::Agent.new(provider: revive_provider, toolset:, context:,
-                          timeline: Lain::Timeline.empty(store: Lain::Store.new))
+                          timeline: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
         end
       end.to raise_error(Lain::Error, /replayed head/)
 

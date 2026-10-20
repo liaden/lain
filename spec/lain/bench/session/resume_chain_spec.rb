@@ -30,7 +30,7 @@ RSpec.describe Lain::Bench::Session::ResumeChain do
   def turn_records(timeline) = timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) }
 
   describe "an ancestor-head chain (a fork below the prior file's final head)" do
-    let(:prior) { Lain::Timeline.empty(store: Lain::Store.new) }
+    let(:prior) { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }
     let(:fork_point) do
       prior.commit(role: :user, content: text("first")).commit(role: :assistant, content: text("ack"))
     end
@@ -98,8 +98,8 @@ RSpec.describe Lain::Bench::Session::ResumeChain do
   # parent file will produce), so this property cannot silently regress into
   # "ancestor of the rebuilt head".
   describe "membership is the fold check, not ancestry of the final head" do
-    let(:store) { Lain::Store.new }
-    let(:trunk) { Lain::Timeline.empty(store:).commit(role: :user, content: text("one")) }
+    let(:store) { Lain::Dag::Factory.store }
+    let(:trunk) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("one")) }
     let(:abandoned) { trunk.commit(role: :assistant, content: text("above the rewind")) }
     let(:rewound) { trunk.commit(role: :assistant, content: text("the other branch")) }
 

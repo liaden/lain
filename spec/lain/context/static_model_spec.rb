@@ -28,10 +28,10 @@ RSpec.describe Lain::Context::StaticModel do
   # The acceptance the card names: a StaticModel-wrapped Context must render
   # BYTE-IDENTICALLY to the old bare-String path.
   describe "byte-identical render against the bare-String path" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:toolset) { Lain::Toolset.new }
     let(:timeline) do
-      Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hello" }])
+      Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hello" }])
     end
 
     it "produces the same Request digest whether the model is a String or a StaticModel" do

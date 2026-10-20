@@ -18,8 +18,8 @@ end
 # What snapshot_spec.rb does not pin: skip-by-content through a real Agent, blob dedup
 # and domain separation, edge bytes, shareability, invisibility in the rendered Request.
 RSpec.describe Lain::Workspace::Snapshot do
-  def committed_timeline(store = Lain::Store.new)
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+  def committed_timeline(store = Lain::Dag::Factory.store)
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
   end
 
   def write_file(dir, name, bytes)

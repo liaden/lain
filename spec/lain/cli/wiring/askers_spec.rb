@@ -3,10 +3,10 @@
 require "async"
 
 RSpec.describe Lain::CLI::Wiring::Askers do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:timeline) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:askers) { described_class.new(observer: Lain::Event::ChainWriter::Null.new) }
 

@@ -244,11 +244,11 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
     end
 
     it "carries a session reminder rendered by a real Context through a tool round" do
-      store = Lain::Store.new
-      timeline = Lain::Timeline.empty(store:)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => "look" }])
-                               .commit(role: :assistant, content: tool_uses)
-                               .commit(role: :user, content: results)
+      store = Lain::Dag::Factory.store
+      timeline = Lain::Dag::Factory.timeline(store:)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "look" }])
+                                   .commit(role: :assistant, content: tool_uses)
+                                   .commit(role: :user, content: results)
       context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64, stream: false)
       rendered = context.render(timeline:, toolset: Lain::Toolset.new,
                                 workspace: Lain::Workspace.new(reminders: ["todo: finish M1"]))

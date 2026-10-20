@@ -271,7 +271,7 @@ RSpec.describe Lain::Approval::Judge do
           context_factory: -> { Lain::Context.new(model: "judge-model", max_tokens: 64) },
           toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new,
                                       Lain::Tools::Grep.new]),
-          parent: Lain::Timeline.empty(store: Lain::Store.new), slots: Lain::Prompt::Slots.load(root: first),
+          parent: CoreGraph.timeline, slots: Lain::Prompt::Slots.load(root: first),
           tool_middleware: builder, worker_env: -> { current }
         )
         judge = described_class.new(role_spawn: spawn)

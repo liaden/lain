@@ -8,8 +8,8 @@
 # the PRE-step snapshot -- Agent#run_loop merges response/settled into the env,
 # never the moved timeline.
 RSpec.describe Lain::Middleware::JournalTurns do
-  let(:store) { Lain::Store.new }
-  let(:timeline) { Lain::Timeline.empty(store:).commit(role: :user, content: text("hi")) }
+  let(:store) { Lain::Dag::Factory.store }
+  let(:timeline) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("hi")) }
   # The scribe duck: records every catch_up argument, in call order.
   let(:caught) { [] }
   let(:scribe) do

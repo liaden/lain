@@ -12,7 +12,7 @@ RSpec.describe Lain::Compaction::Source::Derived do
     end.new.freeze
   end
 
-  def timeline(size, from: Lain::Timeline.empty)
+  def timeline(size, from: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
     (from.length...size).inject(from) do |line, index|
       line.commit(role: index.even? ? "user" : "assistant", content: [{ "type" => "text", "text" => "turn #{index}" }])
     end

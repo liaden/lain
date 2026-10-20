@@ -12,8 +12,8 @@ require "tmpdir"
 # whether the child created or changed that file and what the guard says of it.
 RSpec.describe Lain::Gherkin::TestGeneration do
   let(:layout_mini) { File.expand_path("../../fixtures/projects/layout_mini", __dir__) }
-  let(:store) { Lain::Store.new }
-  let(:parent) { Lain::Timeline.empty(store:) }
+  let(:store) { Lain::Dag::Factory.store }
+  let(:parent) { Lain::Dag::Factory.timeline(store:) }
   let(:child_context) { Lain::Context.new(model: "child-model", max_tokens: 256) }
   let(:guard) { Lain::TestLayout::Guard.new(layout: Lain::Config.test_layout(root:), root:) }
   let(:target) { "spec/unit/models/order_spec.rb" }

@@ -20,7 +20,7 @@ RSpec.describe Lain::Context::Recall do
   end
 
   def manifest_over(*items)
-    store = Lain::Store.new
+    store = Lain::Dag::Factory.store
     idx = items.inject(Lain::Memory::Index.empty(store:)) { |acc, entry| acc.write(entry) }
     Lain::Memory::Manifest.new(idx)
   end

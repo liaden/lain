@@ -22,7 +22,7 @@ RSpec.describe Lain::Workspace::Restore do
 
   attr_reader :dir, :timeline
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:log) { [] }
 
   def restorer(root: dir)
@@ -55,7 +55,7 @@ RSpec.describe Lain::Workspace::Restore do
 
   def snapshot_turn_two(writer)
     paths = [write_file(dir, "a.txt", "alpha v1"), write_file(dir, "b.txt", "beta v1")]
-    commit(commit(Lain::Timeline.empty(store:), 1), 2).tap do |timeline|
+    commit(commit(Lain::Dag::Factory.timeline(store:), 1), 2).tap do |timeline|
       log << writer.write(timeline:, paths:)
     end
   end
@@ -273,7 +273,7 @@ RSpec.describe Lain::Workspace::Restore do
       only_root = File.join(dir, "solo").tap { |path| Dir.mkdir(path) }
       only = write_file(only_root, "only.txt", "soon gone")
       writer = Lain::Workspace::Snapshot.new(root: only_root)
-      solo_timeline = Lain::Timeline.empty(store:).commit(role: :user, content: block("t1"))
+      solo_timeline = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: block("t1"))
       only_log << store.fetch(solo_timeline.head_digest)
       only_log << writer.write(timeline: solo_timeline, paths: [only])
       solo_timeline = solo_timeline.commit(role: :assistant, content: block("t2"))
@@ -311,7 +311,7 @@ RSpec.describe Lain::Workspace::Restore do
     # the record exists, and this refusal answers about a record that has one.
     def escaping_log(project, outside)
       writer = Lain::Workspace::Snapshot.new(root: project, scope: UncontainedSnapshotScope.new)
-      timeline = Lain::Timeline.empty(store:).commit(role: :user, content: block("t1"))
+      timeline = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: block("t1"))
       [store.fetch(timeline.head_digest), writer.write(timeline:, paths: [outside])]
     end
 
@@ -349,7 +349,7 @@ RSpec.describe Lain::Workspace::Restore do
       # example can plant its own symlink there before restoring.
       def link_log(root)
         writer = Lain::Workspace::Snapshot.new(root:)
-        timeline = Lain::Timeline.empty(store:).commit(role: :user, content: block("t1"))
+        timeline = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: block("t1"))
         captured = write_file(root, "link.txt", "captured content")
         [store.fetch(timeline.head_digest), writer.write(timeline:, paths: [captured])].tap do
           File.delete(captured)

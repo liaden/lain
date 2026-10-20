@@ -816,7 +816,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
         end
       end
       let(:asker) do
-        Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new), observer: chronicle.observer)
+        Lain::Tools::AskHuman.new(parent: CoreGraph.timeline, observer: chronicle.observer)
       end
 
       after { session_journal.close }

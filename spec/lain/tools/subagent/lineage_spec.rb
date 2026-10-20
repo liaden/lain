@@ -17,13 +17,13 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
   subject(:lineage) { described_class.new(policy:) }
 
   let(:policy) { Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []) }
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: text("hi"))
-                  .commit(role: :assistant, content: text("yo"))
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: text("hi"))
+                      .commit(role: :assistant, content: text("yo"))
   end
-  let(:child) { Lain::Timeline.empty(store:).commit(role: :user, content: text("child task")) }
+  let(:child) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("child task")) }
   let(:response) { Data.define(:text).new(text: "child answer") }
 
   def text(body) = [{ "type" => "text", "text" => body }]
@@ -74,7 +74,7 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
 
     it "names no head and no error for a stopped child that never committed a turn" do
       spawn = lineage.spawn(parent, prompt: "go")
-      message = lineage.ended(parent, spawn, Lain::Timeline.empty(store:),
+      message = lineage.ended(parent, spawn, Lain::Dag::Factory.timeline(store:),
                               lifecycle: Lain::StatusFeed::SpawnLifecycle::STOPPED)
 
       expect(message.body).to eq("lifecycle" => Lain::StatusFeed::SpawnLifecycle::STOPPED)
@@ -84,9 +84,9 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
 
   describe "#spawn" do
     def spawn_from_another_run(prompt:, lifecycle: nil)
-      other_parent = Lain::Timeline.empty(store: Lain::Store.new)
-                                   .commit(role: :user, content: text("hi"))
-                                   .commit(role: :assistant, content: text("yo"))
+      other_parent = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                       .commit(role: :user, content: text("hi"))
+                                       .commit(role: :assistant, content: text("yo"))
       described_class.new(policy:).spawn(other_parent, prompt:, lifecycle:)
     end
 
@@ -151,8 +151,8 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
 
     it "gives the same twins the same addresses in another run over a fresh store" do
       run = ->(head) { Array.new(3) { described_class.new(policy:).spawn(head, prompt: "same").digest } }
-      other = Lain::Timeline.empty(store: Lain::Store.new)
-                            .commit(role: :user, content: text("hi")).commit(role: :assistant, content: text("yo"))
+      other = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                .commit(role: :user, content: text("hi")).commit(role: :assistant, content: text("yo"))
 
       expect(run.call(other)).to eq(run.call(parent))
     end

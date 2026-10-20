@@ -32,9 +32,9 @@ RSpec.describe "a human's reply handed back", :seam do
     Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
                             history_path: File.join(@dir, "history"))
   end
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:conductor) { instance_double(Lain::CLI::Conductor) }
   let(:askers) do

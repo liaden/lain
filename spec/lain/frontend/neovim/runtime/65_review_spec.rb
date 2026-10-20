@@ -600,8 +600,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # editor rail is the frontend's own inbox, and the review is bound exactly as
   # an opener would bind it.
   def replies_for(frontend, review, token)
-    store = Lain::Store.new
-    parent = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    store = Lain::Dag::Factory.store
+    parent = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: StringIO.new, input: StringIO.new,
                                   history_path: File.join(Dir.tmpdir, "lain-review-seam-history"))
     replies = Lain::CLI::HumanReplies.new(tty:, conductor: instance_double(Lain::CLI::Conductor),

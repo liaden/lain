@@ -519,7 +519,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
   # builds, though this spec builds its own -- for a child working in `lease`.
   def researcher_system(backend, lease)
     tools = toolset_build_for(backend).build(Lain::Memory::Recorder.new,
-                                             ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+                                             ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
     persona = Lain::Role::Persona.new(role: Lain::Role::Catalog.fetch(:researcher), slots: backend.slots)
     persona.child_context(tools.fetch("subagent").seam.context_factory.call,
                           worker_env: Lain::WorkerEnv.new(cwd: lease, env: {}))
@@ -531,7 +531,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
     journal = RecordingChannel.new
     Lain::CLI::Wiring::ToolsetBuild.new(
       backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
-      supervisor: Lain::Supervisor.new(journal:), parent: -> { Lain::Timeline.new }, journal:,
+      supervisor: Lain::Supervisor.new(journal:), parent: -> { CoreGraph.timeline }, journal:,
       library: backend.library, epic: SpecNulls.unmounted_epic, root: Dir.pwd,
       switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
       **SpecNulls.unloaded_project
@@ -885,8 +885,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
     resolver = instance_double(Lain::CLI::Resume, locate: "/sessions/parent.ndjson", recorded_header: recorded)
     options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse(%w[--resume])
     profile = with_env("LAIN_NUM_BATCH" => "2048", "LAIN_PROVIDER" => nil) { LainCLI::ModelFlags.profile(options) }
-    timeline = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: [{ "type" => "text",
-                                                                                            "text" => "hi" }])
+    timeline = CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text",
+                                                                  "text" => "hi" }])
 
     backend = described_class.new(options, profile:, resume_factory: -> { resolver }).backend
     request = backend.context.render(timeline:, toolset: Lain::Toolset.new)
@@ -1218,9 +1218,9 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
   end
 
   let(:timeline) do
-    Lain::Timeline.empty(store: Lain::Store.new)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
 
   def write_session(name, api_base)
@@ -1632,10 +1632,10 @@ RSpec.describe Lain::CLI::ChatLaunch, "a refused --isolation" do
   end
 
   def answered_turns
-    Lain::Timeline.empty(store: Lain::Store.new)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
-                  .to_a.map { |turn| Lain::SessionRecord.turn(turn) }
+    Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+                      .to_a.map { |turn| Lain::SessionRecord.turn(turn) }
   end
 
   def unanswered_request

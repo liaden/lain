@@ -114,8 +114,8 @@ RSpec.describe Lain::Context::CacheBreakpoints do
     # is actually about: the Request Context#render produces, not just the
     # combinator's own return value.
     it "keeps a >100-block Request, with a cache-marked system prompt, at <= 4 markers total" do
-      store = Lain::Store.new
-      timeline = 30.times.inject(Lain::Timeline.empty(store:)) do |tl, i|
+      store = Lain::Dag::Factory.store
+      timeline = 30.times.inject(Lain::Dag::Factory.timeline(store:)) do |tl, i|
         tl.commit(role: i.even? ? :user : :assistant,
                   content: Array.new(4) { |j| { "type" => "text", "text" => "turn #{i} block #{j}" } })
       end
@@ -136,8 +136,8 @@ RSpec.describe Lain::Context::CacheBreakpoints do
     # whether a render carries a system prompt, so it reserves that slot
     # unconditionally rather than guessing.
     it "leaves only 3 of a cap: 4 budget for messages once the system marker is accounted for" do
-      store = Lain::Store.new
-      timeline = 30.times.inject(Lain::Timeline.empty(store:)) do |tl, i|
+      store = Lain::Dag::Factory.store
+      timeline = 30.times.inject(Lain::Dag::Factory.timeline(store:)) do |tl, i|
         tl.commit(role: i.even? ? :user : :assistant,
                   content: Array.new(4) { |j| { "type" => "text", "text" => "turn #{i} block #{j}" } })
       end

@@ -16,7 +16,7 @@ require "json"
 # rather than inside it because the property is about the two folds TOGETHER,
 # not about either one's own contract.
 RSpec.describe Lain::Bench::Session::Loader do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:workspace) { Lain::Workspace.empty }
@@ -25,7 +25,7 @@ RSpec.describe Lain::Bench::Session::Loader do
   # The live cycle at its smallest: a turn is asked from, the question cites
   # that turn, the answer cites the question, and the turn that folds the
   # answer cites it back.
-  let(:asked) { Lain::Timeline.empty(store:).commit(role: :user, content: text("which db?")) }
+  let(:asked) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("which db?")) }
 
   let(:question) do
     writer.put(asked, kind: :message, from: "agent", to: "human",
@@ -93,7 +93,7 @@ RSpec.describe Lain::Bench::Session::Loader do
   # readers that hand out either fold, so no path can reach an unconverged one.
   describe "the order the Loader's public questions are asked in" do
     let(:spawned) do
-      child = Lain::Timeline.empty(store:).commit(role: :user, content: text("helper brief"))
+      child = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("helper brief"))
       lineage = writer.put(asked, kind: :message, from: "child", to: "agent",
                                   causal_parents: [child.head_digest, asked.head_digest],
                                   body: { "summary" => "done" })
@@ -204,13 +204,13 @@ RSpec.describe Lain::Bench::Session::Loader do
       end
     end
 
-    let(:logged) { logging_store.new(Lain::Store.new) }
+    let(:logged) { logging_store.new(Lain::Dag::Factory.store) }
 
     # The chain alone, with the message record withheld: turn 0 lands, turn 1 is
     # blocked on a message only MessageReplay can land.
     let(:fold) do
       records = roundtrip([turn_record(asked), turn_record(folded)])
-      Lain::Bench::Session::ChainFold.new(records:, base: Lain::Timeline.empty(store: logged))
+      Lain::Bench::Session::ChainFold.new(records:, base: Lain::Dag::Factory.timeline(store: logged))
     end
 
     # Landing the blocking message the way MessageReplay lands one: payload

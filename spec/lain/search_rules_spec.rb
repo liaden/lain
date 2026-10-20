@@ -174,11 +174,11 @@ RSpec.describe Lain::SearchRules do
       journal = RecordingChannel.new
       toolset = Lain::CLI::Wiring::ToolsetBuild.new(
         backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
-        supervisor: Lain::Supervisor.new(journal:), parent: -> { Lain::Timeline.new }, journal:,
+        supervisor: Lain::Supervisor.new(journal:), parent: -> { CoreGraph.timeline }, journal:,
         library: backend.library, epic: SpecNulls.unmounted_epic, root:,
         switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
         **SpecNulls.unloaded_project
-      ).build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+      ).build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
       grep = toolset.fetch("grep")
 
       expect(grep.call(pattern: "needle", path: File.join(root, "notes")).content).to include("a.md:1:needle")

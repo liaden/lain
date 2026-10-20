@@ -241,9 +241,9 @@ RSpec.describe Lain::Compare do
     # A recorded run's usage lives in the Journal, not in turn meta, so a Run is
     # priced through a journal-sourced Ledger the caller must supply.
     def recorded(text, input:, output:, model: "claude-sonnet-4")
-      timeline = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                               .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
+      timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                                   .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
       ledger = Lain::Ledger.from_journal([
                                            { "type" => "turn_usage", "digest" => timeline.head_digest,
                                              "model" => model, "stop_reason" => "end_turn",
@@ -280,9 +280,9 @@ RSpec.describe Lain::Compare do
   # so only the dollar figure is withheld, and it says why in the Ledger's words.
   describe "a run the price book cannot price" do
     def recorded_run(name, model:)
-      timeline = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => name }])
-                               .commit(role: :assistant, content: [{ "type" => "text", "text" => "done" }])
+      timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => name }])
+                                   .commit(role: :assistant, content: [{ "type" => "text", "text" => "done" }])
       ledger = Lain::Ledger.from_journal([{ "type" => "turn_usage", "digest" => timeline.head_digest,
                                             "model" => model, "usage" => { "input_tokens" => 100,
                                                                            "output_tokens" => 20 } }])

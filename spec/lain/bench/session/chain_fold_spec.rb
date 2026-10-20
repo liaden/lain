@@ -26,15 +26,15 @@ RSpec.describe Lain::Bench::Session::ChainFold do
 
   # A causal edge survives the round trip.
   describe "a turn committed with two causal parents" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:asked) { message_into(store, to: "human", body: "which dose?") }
     let(:answered) { message_into(store, to: "agent", body: "81 mg") }
 
     let(:timeline) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: text("what is the aspirin dosing?"))
-                    .commit(role: :assistant, content: text("81 mg"),
-                            causal_parents: [asked.digest, answered.digest])
+      Lain::Dag::Factory.timeline(store:)
+                        .commit(role: :user, content: text("what is the aspirin dosing?"))
+                        .commit(role: :assistant, content: text("81 mg"),
+                                causal_parents: [asked.digest, answered.digest])
     end
 
     let(:records) { timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) } }
@@ -43,12 +43,12 @@ RSpec.describe Lain::Bench::Session::ChainFold do
     # from the records' bytes alone, so nothing it verifies is borrowed from
     # the store the turns were originally committed into.
     let(:fold) do
-      fold_store = Lain::Store.new
+      fold_store = Lain::Dag::Factory.store
       [asked, answered].each do |event|
         fold_store.put(event.carried_payload)
         fold_store.put(event)
       end
-      described_class.new(records:, base: Lain::Timeline.empty(store: fold_store))
+      described_class.new(records:, base: Lain::Dag::Factory.timeline(store: fold_store))
     end
 
     it "rebuilds the turn carrying both parent digests" do
@@ -76,7 +76,7 @@ RSpec.describe Lain::Bench::Session::ChainFold do
     end
 
     it "folds without raising, and its turns carry no causal parents" do
-      folded = described_class.new(records:, base: Lain::Timeline.empty(store: Lain::Store.new)).timeline
+      folded = described_class.new(records:, base: CoreGraph.timeline).timeline
 
       expect(folded.to_a.map(&:role)).to eq(%w[user assistant user assistant])
       expect(folded.to_a.map(&:causal_parents)).to all(be_empty)
@@ -91,19 +91,19 @@ RSpec.describe Lain::Bench::Session::ChainFold do
   # Reachable live, not hypothetical: ToolRunner#delivery cites answered
   # ask_human questions, and ask_human is in the live toolset.
   describe "a turn citing a causal parent this fold never landed" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:unlanded) { message_into(store, to: "agent", body: "81 mg") }
 
     let(:records) do
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: text("what is the aspirin dosing?"))
-                    .commit(role: :assistant, content: text("81 mg"), causal_parents: [unlanded.digest])
-                    .to_a.map { |turn| Lain::SessionRecord.turn(turn) }
+      Lain::Dag::Factory.timeline(store:)
+                        .commit(role: :user, content: text("what is the aspirin dosing?"))
+                        .commit(role: :assistant, content: text("81 mg"), causal_parents: [unlanded.digest])
+                        .to_a.map { |turn| Lain::SessionRecord.turn(turn) }
     end
 
     # The fresh store IS the scenario, and `records` above is turn records ONLY:
     # the cited message is in no record here, so the edge is genuinely dangling.
-    let(:fold) { described_class.new(records:, base: Lain::Timeline.empty(store: Lain::Store.new)) }
+    let(:fold) { described_class.new(records:, base: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) }
 
     it "raises Corrupt naming the record and the digest it cannot resolve" do
       expect { fold.timeline }.to raise_error(Lain::Bench::Session::Corrupt) do |error|
@@ -121,7 +121,7 @@ RSpec.describe Lain::Bench::Session::ChainFold do
   # currency: Corrupt.
   describe "a turn record whose causal_parents survived the disk badly" do
     def folded_with(causal_parents)
-      base = Lain::Timeline.empty(store: Lain::Store.new)
+      base = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
       record = Lain::SessionRecord.turn(base.commit(role: :user, content: text("dose?")).head)
       described_class.new(records: [record.merge("causal_parents" => causal_parents)], base:).timeline
     end
@@ -150,10 +150,10 @@ RSpec.describe Lain::Bench::Session::ChainFold do
   # field INSIDE its own handler, so a role-less record raised from the code
   # written to name it.
   describe "a record damaged in a key the fold needs" do
-    def folded(records) = described_class.new(records:, base: Lain::Timeline.empty(store: Lain::Store.new)).timeline
+    def folded(records) = described_class.new(records:, base: CoreGraph.timeline).timeline
 
     def turn_record
-      base = Lain::Timeline.empty(store: Lain::Store.new)
+      base = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
       Lain::SessionRecord.turn(base.commit(role: :user, content: text("dose?")).head)
     end
 

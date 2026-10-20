@@ -158,14 +158,14 @@ RSpec.describe Lain::CLI::LiveViews do
   # chronicle's observer, the scribe promotes the record onto the tee, and the
   # tee carries it to the real feed.
   describe "a one-shot subagent's lifecycle, through the real chronicle and feed" do
-    let(:store) { Lain::Store.new }
+    let(:store) { Lain::Dag::Factory.store }
     let(:policy) { Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []) }
     let(:real_chronicle) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new)) }
     let(:state_path) { File.join(Dir.mktmpdir, "state.json") }
     let(:feed) { Lain::StatusFeed.new(path: state_path) }
     let(:lineage) { Lain::Tools::Subagent::Lineage.new(policy:, observer: real_chronicle.observer) }
-    let(:parent) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]) }
-    let(:child) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "task" }]) }
+    let(:parent) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]) }
+    let(:child) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "task" }]) }
 
     def hud = JSON.parse(File.read(state_path)).fetch("hud")
 

@@ -36,11 +36,11 @@ module ComposedFixtures
   # user's, exactly as spec/lain/compaction/derivation_spec.rb builds them.
   #
   #   0 conv | 1-2 tool | 3-4 conv | 5-6 tool | 7 conv | 8-10 tail
-  def mixed_history(store: Lain::Store.new)
+  def mixed_history(store: Lain::Dag::Factory.store)
     blocks = [[text("ask")], [tool_use(0)], [tool_result(0)],
               [text("so")], [text("then")], [tool_use(1)], [tool_result(1)],
               [text("ok")], [text("more")], [text("and")], [text("last")]]
-    blocks.each_with_index.inject(Lain::Timeline.empty(store:)) do |timeline, (content, index)|
+    blocks.each_with_index.inject(Lain::Dag::Factory.timeline(store:)) do |timeline, (content, index)|
       timeline.commit(role: index.even? ? "user" : "assistant", content:)
     end
   end

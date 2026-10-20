@@ -147,7 +147,7 @@ RSpec.describe Lain::Arm::DualLedger do
     # the double stands in for it and answers the same failing Grade every time.
     it "asks the grader exactly once -- for the Run's grade, never as a control signal" do
       grader = instance_double(Lain::Grader::Fixture,
-                               grade: never_grader.grade(Lain::Timeline.empty(store: Lain::Store.new)))
+                               grade: never_grader.grade(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)))
 
       described_class.new.run("ungradeable", spawn_seam: repeating_seam(repeating_provider), grader:)
 

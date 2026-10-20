@@ -8,7 +8,7 @@
 # {Lain::Bench::Session::MemoryReplay#outcomes}'s pairing recipe from
 # "memory_write, is_error only" to "any tool, full outcome".
 RSpec.describe Lain::Grader::ToolCallIndex do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
 
   def text(body) = [{ "type" => "text", "text" => body }]
   def tool_use(id, name, input) = { "type" => "tool_use", "id" => id, "name" => name, "input" => input }
@@ -23,9 +23,9 @@ RSpec.describe Lain::Grader::ToolCallIndex do
 
   describe "pairing a tool_use with its outcome" do
     it "pairs a tool_use with its outcome (name, args, is_error, result), keyed by the issuing turn's digest" do
-      call_turn = Lain::Timeline.empty(store:)
-                                .commit(role: :user, content: text("please echo"))
-                                .commit(role: :assistant, content: [tool_use("tu_1", "echo", { "text" => "hi" })])
+      call_turn = Lain::Dag::Factory.timeline(store:)
+                                    .commit(role: :user, content: text("please echo"))
+                                    .commit(role: :assistant, content: [tool_use("tu_1", "echo", { "text" => "hi" })])
       result_turn = call_turn.commit(role: :user, content: [tool_result("tu_1", "hi")])
 
       index = described_class.new(journal_turns(result_turn))
@@ -38,12 +38,12 @@ RSpec.describe Lain::Grader::ToolCallIndex do
     end
 
     it "keys on tool_use_id, not name, so two parallel calls to the same tool don't merge" do
-      call_turn = Lain::Timeline.empty(store:)
-                                .commit(role: :user, content: text("please echo twice"))
-                                .commit(role: :assistant, content: [
-                                          tool_use("tu_1", "echo", { "text" => "one" }),
-                                          tool_use("tu_2", "echo", { "text" => "two" })
-                                        ])
+      call_turn = Lain::Dag::Factory.timeline(store:)
+                                    .commit(role: :user, content: text("please echo twice"))
+                                    .commit(role: :assistant, content: [
+                                              tool_use("tu_1", "echo", { "text" => "one" }),
+                                              tool_use("tu_2", "echo", { "text" => "two" })
+                                            ])
       # Results committed out of tool_use order, as a real gathered dispatch
       # (Agent::ToolRunner#gather) can return them.
       result_turn = call_turn.commit(role: :user, content: [
@@ -59,9 +59,9 @@ RSpec.describe Lain::Grader::ToolCallIndex do
     end
 
     it "carries an error outcome's content, not only the is_error flag" do
-      call_turn = Lain::Timeline.empty(store:)
-                                .commit(role: :user, content: text("try boom"))
-                                .commit(role: :assistant, content: [tool_use("tu_1", "boom", {})])
+      call_turn = Lain::Dag::Factory.timeline(store:)
+                                    .commit(role: :user, content: text("try boom"))
+                                    .commit(role: :assistant, content: [tool_use("tu_1", "boom", {})])
       result_turn = call_turn.commit(role: :user, content: [tool_result("tu_1", "kaboom", is_error: true)])
 
       call = described_class.new(journal_turns(result_turn)).calls.fetch(call_turn.head_digest).first
@@ -71,9 +71,9 @@ RSpec.describe Lain::Grader::ToolCallIndex do
     end
 
     it "leaves a tool_use with no recorded outcome unpaired (never executed, not fabricated)" do
-      call_turn = Lain::Timeline.empty(store:)
-                                .commit(role: :user, content: text("ask"))
-                                .commit(role: :assistant, content: [tool_use("tu_1", "echo", { "text" => "hi" })])
+      call_turn = Lain::Dag::Factory.timeline(store:)
+                                    .commit(role: :user, content: text("ask"))
+                                    .commit(role: :assistant, content: [tool_use("tu_1", "echo", { "text" => "hi" })])
 
       call = described_class.new(journal_turns(call_turn)).calls.fetch(call_turn.head_digest).first
 
@@ -88,9 +88,9 @@ RSpec.describe Lain::Grader::ToolCallIndex do
     # answer. Given all four keys here, so the filter's absence would show up as
     # a WRONG outcome rather than as a raise on a missing one.
     it "pairs only from tool_result blocks -- another shape naming the same tool_use_id is not the outcome" do
-      call_turn = Lain::Timeline.empty(store:)
-                                .commit(role: :user, content: text("search"))
-                                .commit(role: :assistant, content: [tool_use("tu_1", "search", { "q" => "cats" })])
+      call_turn = Lain::Dag::Factory.timeline(store:)
+                                    .commit(role: :user, content: text("search"))
+                                    .commit(role: :assistant, content: [tool_use("tu_1", "search", { "q" => "cats" })])
       foreign = { "type" => "web_search_tool_result", "tool_use_id" => "tu_1",
                   "content" => "not an outcome", "is_error" => true }
       result_turn = call_turn.commit(role: :user, content: [foreign])
@@ -102,15 +102,15 @@ RSpec.describe Lain::Grader::ToolCallIndex do
     end
 
     it "omits a turn with no tool_use from #calls entirely" do
-      turn = Lain::Timeline.empty(store:).commit(role: :user, content: text("just chatting"))
+      turn = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("just chatting"))
 
       expect(described_class.new(journal_turns(turn)).calls).to eq({})
     end
 
     it "enumerates every paired call flat via #each, the fold selection frequency wants" do
-      first = Lain::Timeline.empty(store:)
-                            .commit(role: :user, content: text("go"))
-                            .commit(role: :assistant, content: [tool_use("tu_1", "echo", { "text" => "a" })])
+      first = Lain::Dag::Factory.timeline(store:)
+                                .commit(role: :user, content: text("go"))
+                                .commit(role: :assistant, content: [tool_use("tu_1", "echo", { "text" => "a" })])
       after_first = first.commit(role: :user, content: [tool_result("tu_1", "a")])
       second = after_first.commit(role: :assistant, content: [tool_use("tu_2", "echo", { "text" => "b" })])
       result_turn = second.commit(role: :user, content: [tool_result("tu_2", "b")])
@@ -257,8 +257,8 @@ RSpec.describe Lain::Grader::ToolCallIndex do
     end
 
     it "stops at a chain root no spawn names -- an ordinary (non-subagent) chain" do
-      turn = Lain::Timeline.empty(store:).commit(role: :user, content: text("hi"))
-                           .commit(role: :assistant, content: text("hello"))
+      turn = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("hi"))
+                               .commit(role: :assistant, content: text("hello"))
 
       lineage = described_class.new(journal_turns(turn)).lineage(turn.head_digest).to_a
 
@@ -273,9 +273,9 @@ RSpec.describe Lain::Grader::ToolCallIndex do
   # mutating one Call's args or result in place would leak into every later read.
   describe "Call fields are deeply frozen regardless of source (mutation hazard)" do
     it "freezes args and result even when built from unfrozen, JSON-sourced records" do
-      call_turn = Lain::Timeline.empty(store:)
-                                .commit(role: :user, content: text("please echo"))
-                                .commit(role: :assistant, content: [tool_use("tu_1", "echo", { "text" => "hi" })])
+      call_turn = Lain::Dag::Factory.timeline(store:)
+                                    .commit(role: :user, content: text("please echo"))
+                                    .commit(role: :assistant, content: [tool_use("tu_1", "echo", { "text" => "hi" })])
       result_turn = call_turn.commit(role: :user, content: [tool_result("tu_1", "hi")])
 
       # A JSON round-trip, the same transformation a real journal file's bytes
@@ -297,10 +297,10 @@ RSpec.describe Lain::Grader::ToolCallIndex do
   # journal slice this index was built from is missing a record."
   describe "a dangling predecessor (partial or corrupted journal slice)" do
     it "resolves a clean, complete chain to its root without raising" do
-      chain = Lain::Timeline.empty(store:)
-                            .commit(role: :user, content: text("hi"))
-                            .commit(role: :assistant, content: text("hello"))
-                            .commit(role: :user, content: text("thanks"))
+      chain = Lain::Dag::Factory.timeline(store:)
+                                .commit(role: :user, content: text("hi"))
+                                .commit(role: :assistant, content: text("hello"))
+                                .commit(role: :user, content: text("thanks"))
 
       index = described_class.new(journal_turns(chain))
       lineage = nil
@@ -312,10 +312,10 @@ RSpec.describe Lain::Grader::ToolCallIndex do
     # A file that resumes nothing continues no other file's chain: its
     # `rewound` records name turns it wrote, so a missing one is a hole.
     it "raises for a missing turn a rewound record names, when the slice resumes from no file" do
-      chain = Lain::Timeline.empty(store:)
-                            .commit(role: :user, content: text("hi"))
-                            .commit(role: :assistant, content: text("hello"))
-                            .commit(role: :user, content: text("thanks"))
+      chain = Lain::Dag::Factory.timeline(store:)
+                                .commit(role: :user, content: text("hi"))
+                                .commit(role: :assistant, content: text("hello"))
+                                .commit(role: :user, content: text("thanks"))
       missing_digest = chain.rewind.head_digest
       entries = journal_turns(chain).reject { |record| record.fetch("digest") == missing_digest } +
                 [Lain::SessionRecord.rewound(from: chain.head_digest, to: missing_digest)]
@@ -325,10 +325,10 @@ RSpec.describe Lain::Grader::ToolCallIndex do
     end
 
     it "raises naming the missing digest when a predecessor is absent from the entry set" do
-      chain = Lain::Timeline.empty(store:)
-                            .commit(role: :user, content: text("hi"))
-                            .commit(role: :assistant, content: text("hello"))
-                            .commit(role: :user, content: text("thanks"))
+      chain = Lain::Dag::Factory.timeline(store:)
+                                .commit(role: :user, content: text("hi"))
+                                .commit(role: :assistant, content: text("hello"))
+                                .commit(role: :user, content: text("thanks"))
       # Drop the middle turn: the tail turn's `parent` still names it, but no
       # record for it is in this entry set -- a partial slice, not a shorter
       # real chain.

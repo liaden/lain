@@ -8,13 +8,13 @@ require "async"
 # of this object: {Lain::Event::Projection#pending} stays the authority on what
 # is pending, and this answers only who owns it.
 RSpec.describe Lain::Tools::AskHuman::Directory do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:directory) { described_class.new }
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
 
   def build_asker
-    parent = Lain::Timeline.empty(store:)
-                           .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    parent = Lain::Dag::Factory.timeline(store:)
+                               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
     Lain::Tools::AskHuman.new(parent:)
   end
 

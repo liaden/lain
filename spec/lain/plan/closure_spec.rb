@@ -15,14 +15,14 @@ RSpec.describe Lain::Plan::Closure do
   # A timeline whose chunk carries two erroring tool_result blocks, so the failed
   # path has real error evidence to name. Root-first index (via #to_a):
   #   0 user "go" | 1 assistant tool_use | 2 user two error results + one ok
-  def chunk_timeline(store = Lain::Store.new)
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
-                  .commit(role: :assistant, content: [{ "type" => "tool_use", "id" => "t1", "name" => "bash",
-                                                        "input" => { "cmd" => "false" } }])
-                  .commit(role: :user, content: [error_block("t1", "boom"), error_block("t2", "kaboom"),
-                                                 { "type" => "tool_result", "tool_use_id" => "t3",
-                                                   "content" => "fine", "is_error" => false }])
+  def chunk_timeline(store = Lain::Dag::Factory.store)
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+                      .commit(role: :assistant, content: [{ "type" => "tool_use", "id" => "t1", "name" => "bash",
+                                                            "input" => { "cmd" => "false" } }])
+                      .commit(role: :user, content: [error_block("t1", "boom"), error_block("t2", "kaboom"),
+                                                     { "type" => "tool_result", "tool_use_id" => "t3",
+                                                       "content" => "fine", "is_error" => false }])
   end
 
   def error_block(id, text)

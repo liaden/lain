@@ -70,11 +70,11 @@ RSpec.describe "Lain::Plan seam policies" do
 
   def run_under(policy, store, pipeline: SeamPolicyFixtures::DEFAULT)
     Lain::Plan::Runner.new(document:, policy:, agent_step: SeamPolicyFixtures::FixtureStep.new, context:)
-                      .run(timeline: Lain::Timeline.empty(store:), pipeline:)
+                      .run(timeline: Lain::Dag::Factory.timeline(store:), pipeline:)
   end
 
   def fork_policy(store)
-    Lain::Plan::ForkPerStep.new(mainline: Lain::Timeline.empty(store:))
+    Lain::Plan::ForkPerStep.new(mainline: Lain::Dag::Factory.timeline(store:))
   end
 
   # The mainline as a prefix-digest chain: render each continuation (its timeline
@@ -103,8 +103,11 @@ RSpec.describe "Lain::Plan seam policies" do
     end
 
     it "reconstitutes its mainline Timeline over a shared Store in O(1)" do
-      store = Lain::Store.new
-      timeline = Lain::Timeline.empty(store:).commit(role: "user", content: [{ "type" => "text", "text" => "hi" }])
+      store = Lain::Dag::Factory.store
+      timeline = Lain::Dag::Factory.timeline(store:).commit(role: "user",
+                                                            content: [{
+                                                              "type" => "text", "text" => "hi"
+                                                            }])
       continuation = Lain::Plan::Continuation.new(head_digest: timeline.head_digest, pipeline: SeamPolicyFixtures::DEFAULT)
       empty_head = Lain::Plan::Continuation.new(head_digest: nil, pipeline: SeamPolicyFixtures::DEFAULT)
 
@@ -115,7 +118,7 @@ RSpec.describe "Lain::Plan seam policies" do
 
   describe "Scenario: fork-per-step never rewrites the mainline" do
     it "keeps every mainline chain append-only and each fork inherits the mainline prefix" do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       report = run_under(fork_policy(store), store)
 
       expect(rewrites(prefix_chain(report.continuations, store))).to be_empty
@@ -132,8 +135,8 @@ RSpec.describe "Lain::Plan seam policies" do
       plan = document
       bytes_before = plan.digest
 
-      fork_store = Lain::Store.new
-      linear_store = Lain::Store.new
+      fork_store = Lain::Dag::Factory.store
+      linear_store = Lain::Dag::Factory.store
       fork = run_under(fork_policy(fork_store), fork_store)
       linear = run_under(Lain::Plan::LinearRewrite.new, linear_store)
 
@@ -147,8 +150,8 @@ RSpec.describe "Lain::Plan seam policies" do
 
   describe "Scenario: linear's rewrite is visible where fork's is absent" do
     it "shows exactly one prefix rewrite at the second seam under LinearRewrite and none under ForkPerStep" do
-      fork_store = Lain::Store.new
-      linear_store = Lain::Store.new
+      fork_store = Lain::Dag::Factory.store
+      linear_store = Lain::Dag::Factory.store
       fork = run_under(fork_policy(fork_store), fork_store)
       linear = run_under(Lain::Plan::LinearRewrite.new, linear_store)
 
@@ -167,7 +170,7 @@ RSpec.describe "Lain::Plan seam policies" do
     # reopened] so both the in-Store assertions and the NDJSON read-back share
     # one setup. The policy journals its supersession pointer into `journal`.
     def reopen(store, journal)
-      policy = Lain::Plan::ForkPerStep.new(mainline: Lain::Timeline.empty(store:), journal:,
+      policy = Lain::Plan::ForkPerStep.new(mainline: Lain::Dag::Factory.timeline(store:), journal:,
                                            plan_digest: document.digest)
       first = close_step(policy, store, "done", Lain::Grader::Grade.new(score: 1.0, why: "closed"))
       reopened = close_step(policy, store, "failed", Lain::Grader::Grade.new(score: 0.0, pass: false, why: "reopened"))
@@ -178,7 +181,10 @@ RSpec.describe "Lain::Plan seam policies" do
     # it through the policy's seam, returning the closure.
     def close_step(policy, store, status, grade)
       step = Lain::Plan::Step.new(id: "s1", title: "a step", size: "S").with_status(status)
-      timeline = Lain::Timeline.empty(store:).commit(role: "user", content: [{ "type" => "text", "text" => "work" }])
+      timeline = Lain::Dag::Factory.timeline(store:).commit(role: "user",
+                                                            content: [{
+                                                              "type" => "text", "text" => "work"
+                                                            }])
       closure = Lain::Plan::Closure.build(step:, timeline:, chunk_range: (0...1), grade:, snapshot: nil)
       closure.record(store:, plan_digest: document.digest)
       state = Lain::Plan::Continuation.new(head_digest: policy.mainline.head_digest, pipeline: SeamPolicyFixtures::DEFAULT)
@@ -187,7 +193,7 @@ RSpec.describe "Lain::Plan seam policies" do
     end
 
     it "names the superseded closure's digest and leaves the old record unchanged in the Store" do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       policy, first, reopened = reopen(store, Lain::Channel::Null.instance)
 
       expect(policy.supersessions.size).to eq(1)
@@ -200,7 +206,7 @@ RSpec.describe "Lain::Plan seam policies" do
 
     it "is discoverable from the NDJSON alone: the pointer recovers both closure digests" do
       io = StringIO.new
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       _policy, first, reopened = reopen(store, Lain::Journal.new(io:))
 
       records = Lain::Journal.records(io.string.each_line, type: "supersession_record").to_a
@@ -250,10 +256,10 @@ RSpec.describe "Lain::Plan seam policies" do
     end
 
     it "renders all four closures into one summary while the closed chunks' turns are elided" do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       report = Lain::Plan::Runner.new(document: four_chunk_document, policy: Lain::Plan::LinearRewrite.new,
                                       agent_step: SeamPolicyFixtures::FixtureStep.new, context:)
-                                 .run(timeline: Lain::Timeline.empty(store:), pipeline: SeamPolicyFixtures::DEFAULT)
+                                 .run(timeline: Lain::Dag::Factory.timeline(store:), pipeline: SeamPolicyFixtures::DEFAULT)
 
       final = report.continuations.last
       request = context.with_pipeline(final.pipeline)
@@ -273,17 +279,20 @@ RSpec.describe "Lain::Plan seam policies" do
 
   describe "Scenario: a mainline-bearing policy seeded from a different root fails loud" do
     it "refuses when the policy mainline root differs from run's root" do
-      store = Lain::Store.new
-      seeded = Lain::Timeline.empty(store:).commit(role: "user", content: [{ "type" => "text", "text" => "pre" }])
+      store = Lain::Dag::Factory.store
+      seeded = Lain::Dag::Factory.timeline(store:).commit(role: "user",
+                                                          content: [{
+                                                            "type" => "text", "text" => "pre"
+                                                          }])
       policy = Lain::Plan::ForkPerStep.new(mainline: seeded)
       runner = Lain::Plan::Runner.new(document:, policy:, agent_step: SeamPolicyFixtures::FixtureStep.new, context:)
 
-      expect { runner.run(timeline: Lain::Timeline.empty(store:), pipeline: SeamPolicyFixtures::DEFAULT) }
+      expect { runner.run(timeline: Lain::Dag::Factory.timeline(store:), pipeline: SeamPolicyFixtures::DEFAULT) }
         .to raise_error(Lain::Error, /does not match run root/)
     end
 
     it "runs cleanly when the policy mainline root matches run's root" do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       expect { run_under(fork_policy(store), store) }.not_to raise_error
     end
   end

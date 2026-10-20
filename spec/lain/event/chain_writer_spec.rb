@@ -8,15 +8,15 @@ require "async"
 # Lineage, AskHuman). This pins that ChainWriter is the shared object all
 # three now delegate to, and that nothing about their pinned behavior moved.
 RSpec.describe Lain::Event::ChainWriter do
-  let(:store) { Lain::Store.new }
-  let(:root) { Lain::Timeline.empty(store:).commit(role: :user, content: text("hi")) }
+  let(:store) { Lain::Dag::Factory.store }
+  let(:root) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("hi")) }
   let(:parent) { root.commit(role: :assistant, content: text("yo")) }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
   describe ".correlation_of" do
     it "is nil for the empty chain" do
-      expect(described_class.correlation_of(Lain::Timeline.empty(store:))).to be_nil
+      expect(described_class.correlation_of(Lain::Dag::Factory.timeline(store:))).to be_nil
     end
 
     it "falls back to the head digest when the head carries no explicit correlation (the root)" do
@@ -129,7 +129,7 @@ RSpec.describe Lain::Event::ChainWriter do
   # substituting) the @log append.
   describe "Lineage's injectable observer" do
     let(:policy) { Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []) }
-    let(:child) { Lain::Timeline.empty(store:).commit(role: :user, content: text("child task")) }
+    let(:child) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("child task")) }
 
     it "sees every event Lineage writes, in addition to @log receiving them" do
       log = Lain::Tools::Subagent::Log.new

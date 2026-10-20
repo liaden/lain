@@ -9,13 +9,13 @@
 # extending the chain it has written, and a feed that copied only the walk would
 # have inherited the duck without the guard.
 RSpec.describe Lain::Tools::Subagent::TurnFeed do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:seen) { [] }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
   def chain(*bodies)
-    bodies.each_with_index.inject(Lain::Timeline.empty(store:)) do |acc, (body, index)|
+    bodies.each_with_index.inject(Lain::Dag::Factory.timeline(store:)) do |acc, (body, index)|
       acc.commit(role: index.even? ? :user : :assistant, content: text(body))
     end
   end

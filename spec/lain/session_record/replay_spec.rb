@@ -47,7 +47,7 @@ RSpec.describe Lain::SessionRecord::Replay do
   def text(index) = { "type" => "text", "text" => "turn #{index}: #{"the lazy dog slept through it. " * 30}" }
 
   def timeline(size)
-    (1..size).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, index|
+    (1..size).inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, index|
       line.commit(role: index.odd? || index == 2 ? "user" : "assistant", content: [text(index)])
     end
   end
@@ -380,8 +380,8 @@ RSpec.describe Lain::SessionRecord::Replay do
     let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::EditFile.new]) }
     let(:scribe) { Lain::SessionRecord::Scribe.new(journal:, context:, toolset:) }
     let(:names) { %w[a b c err d e] }
-    let(:store) { Lain::Store.new }
-    let(:root) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }]) }
+    let(:store) { Lain::Dag::Factory.store }
+    let(:root) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }]) }
 
     around do |example|
       Dir.mktmpdir("lain-replay-binding") do |dir|
@@ -699,7 +699,7 @@ RSpec.describe Lain::SessionRecord::Replay do
 
     it "re-folds to a shorter chain from that seed, dropping what the chain no longer carries" do
       rebuilt = described_class.new(recorded).memory
-      rebuilt.follow(Lain::Timeline.empty)
+      rebuilt.follow(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
 
       expect(rebuilt.index.to_h.keys).to eq(["seeded"])
     end
@@ -715,7 +715,7 @@ RSpec.describe Lain::SessionRecord::Replay do
                { "type" => "session" }, loaded_record(item("inherited")),
                write_turn("d3", "later", parent: "d2"), answered("d4", "later", parent: "d3")]
       rebuilt = described_class.new(chain).memory
-      rebuilt.follow(Lain::Timeline.empty)
+      rebuilt.follow(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
 
       expect(rebuilt.index.to_h.keys).to eq(["inherited"])
     end

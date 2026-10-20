@@ -19,7 +19,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
   let(:arms) { Lain::CLI::Arms::OFF }
 
   def resumed(name)
-    Lain::CLI::Resume::Result.new(file: name, timeline: Lain::Timeline.new(head_digest: nil, store: Lain::Store.new),
+    Lain::CLI::Resume::Result.new(file: name, timeline: Lain::Dag::Factory.timeline(head_digest: nil, store: Lain::Dag::Factory.store),
                                   session: Lain::Session.new, open: false, notices: [],
                                   recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty))
   end

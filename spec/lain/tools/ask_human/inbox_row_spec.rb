@@ -144,7 +144,7 @@ RSpec.describe Lain::Tools::AskHuman::InboxRow do
 
     def editor_line
       instant = asked_at
-      view = Lain::Frontend::Neovim::InboxView.new(store: Lain::Store.new, clock: -> { instant })
+      view = Lain::Frontend::Neovim::InboxView.new(store: Lain::Dag::Factory.store, clock: -> { instant })
       view.update(question_record("blake3:q1"))
       instant = now
       view.update(question_record("blake3:q2", question: "unrelated?")).first

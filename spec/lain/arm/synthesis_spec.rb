@@ -9,17 +9,17 @@
 RSpec.describe Lain::Arm::Synthesis do
   subject(:synthesis) { described_class.new }
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:lead) do
-    Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "orchestrate" }])
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "orchestrate" }])
   end
 
   # A worker's final Timeline, committed into the SHARED store so its head is a
   # valid causal parent (referential integrity holds only for heads the Store saw).
   def worker(text)
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "do #{text}" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "do #{text}" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
   end
 
   def usage_record(digest, tokens)

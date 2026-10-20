@@ -187,11 +187,11 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
     # The one head both repairs answer: an assistant turn carrying a lone
     # unanswered tool_use, which is what `Event.pending_tool_use?` names.
     let(:stranded) do
-      Lain::Timeline.empty(store: Lain::Store.new)
-                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                    .commit(role: :assistant,
-                            content: [{ "type" => "tool_use", "id" => "tu_2",
-                                        "name" => "park", "input" => {} }]).head
+      Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                        .commit(role: :assistant,
+                                content: [{ "type" => "tool_use", "id" => "tu_2",
+                                            "name" => "park", "input" => {} }]).head
     end
 
     it "mints the identical block shape for one stranded call" do
@@ -271,7 +271,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       agent = Lain::Agent.new(
         provider: Lain::Provider::Mock.new(responses: [tool_response(*calls), text_response]),
         handler: Lain::Effect::Handler::Mock.new { |_, _| Lain::Tool::Result.ok(unstorable) },
-        toolset:, context:, timeline: Lain::Timeline.empty(store: refusing_store)
+        toolset:, context:, timeline: Lain::Dag::Factory.timeline(store: refusing_store)
       )
       refused_ask(agent)
     end
@@ -293,9 +293,9 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
     # The recorded session: the same calls, committed and never answered, closed
     # the way a chat's exit closes it.
     def recorded_stranded_session
-      stranded = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                               .commit(role: :assistant, content: tool_response(*calls).content)
+      stranded = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                                   .commit(role: :assistant, content: tool_response(*calls).content)
       [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER),
        *stranded.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
        Lain::Telemetry::SessionClosed.new(head: stranded.head_digest, reason: :exit).to_journal]

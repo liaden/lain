@@ -78,7 +78,7 @@ module ToolRegistry
       context_factory: -> { Lain::Context.new(model: "child", max_tokens: 8) },
       toolset: Lain::Toolset.new([]),
       policy: Lain::Tool::SpawnPolicy.new,
-      parent: Lain::Timeline.empty(store: Lain::Store.new),
+      parent: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store),
       tool_middleware: ToolRegistry::UNGUARDED
     )
   end
@@ -116,7 +116,7 @@ module ToolRegistry
       Lain::Tools::ImprovementWrite.new(sink: Lain::Improvement::Sink.new(paths: Lain::Paths.new, session: "test"))
     },
     "run_skill" => -> { build_run_skill },
-    "ask_human" => -> { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) },
+    "ask_human" => -> { Lain::Tools::AskHuman.new(parent: CoreGraph.timeline) },
     # Construction-only: every property this spec asks of the instance is a
     # declaration, never #perform, and nil collaborators fail loudly if that
     # ever stops being true. `told:` and `notes:` are required and undefaulted

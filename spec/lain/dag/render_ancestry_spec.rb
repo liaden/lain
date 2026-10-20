@@ -6,9 +6,9 @@
 # meet explicitly; leaving `meet:` off would fail every law with NoMethodError
 # rather than say anything about the laws.
 RSpec.describe Lain::Dag::RenderAncestry do
-  let(:timeline) { Lain::Timeline.empty(store:) }
+  let(:timeline) { Lain::Dag::Factory.timeline(store:) }
 
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
 
   let(:base) { say(say(timeline, "a"), "b", role: :assistant) }
   let(:left) { say(say(base, "l1"), "l2", role: :assistant) }
@@ -36,12 +36,12 @@ RSpec.describe Lain::Dag::RenderAncestry do
     end
 
     it "meets to the empty timeline when two roots share no history" do
-      other_root = say(Lain::Timeline.empty(store:), "unrelated")
+      other_root = say(Lain::Dag::Factory.timeline(store:), "unrelated")
       expect(described_class.meet(left, other_root)).to be_empty
     end
 
     it "refuses to compare across stores, by the name Timeline has always raised" do
-      stranger = say(Lain::Timeline.empty(store: Lain::Store.new), "x")
+      stranger = say(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store), "x")
       expect { described_class.meet(left, stranger) }
         .to raise_error(Lain::Timeline::CrossStore, "cannot compare Timelines backed by different stores")
       expect(Lain::Timeline::CrossStore).to equal(Lain::Dag::CrossStore)
@@ -77,7 +77,7 @@ RSpec.describe Lain::Dag::RenderAncestry do
     end
 
     it "returns nil when there is no shared history" do
-      other_root = say(Lain::Timeline.empty(store:), "unrelated")
+      other_root = say(Lain::Dag::Factory.timeline(store:), "unrelated")
       expect(described_class.diverge_at(left, other_root)).to be_nil
     end
   end

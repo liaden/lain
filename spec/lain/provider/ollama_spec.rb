@@ -386,7 +386,7 @@ RSpec.describe Lain::Provider::Ollama do
         provider = described_class.new(transport: transport_sync(body), journal:)
         Lain::Agent.new(provider:, toolset: Lain::Toolset.new([]),
                         context: Lain::Context.new(model: "qwen3-coder:30b", max_tokens: 64, stream: false),
-                        timeline: Lain::Timeline.empty)
+                        timeline: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
       end
 
       # The second expectation is the one that matters: a reason the Response
@@ -573,7 +573,7 @@ RSpec.describe Lain::Provider::Ollama do
       provider = described_class.new(transport: transport_sync(silent_body), journal: Lain::Journal.new(io:))
       agent = Lain::Agent.new(provider:, toolset: Lain::Toolset.new([]),
                               context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64, stream: false),
-                              timeline: Lain::Timeline.empty)
+                              timeline: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
 
       failure = agent.ask("summarize the Gemfile").failure
 

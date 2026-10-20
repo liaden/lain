@@ -298,7 +298,7 @@ RSpec.describe Lain::StatusFeed do
       feed = described_class.new(path:)
       notes = Lain::Context::Mailbox::Live.new(recipient: Lain::Event::ChainWriter.method(:correlation_of),
                                                observer: feed.method(:<<))
-      timeline = Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      timeline = CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
       notes.post(from: Lain::Tools::AskHuman::HUMAN, text: "prefer Syncthing")
 
       written = notes.capture(timeline).folded
@@ -878,9 +878,10 @@ RSpec.describe Lain::StatusFeed do
     # records that move the head, so the prompt line and the HUD agree after a
     # rewind. The chains here are real, because the question is ancestry.
     context "when the chain moves under the reading" do
-      let(:store) { Lain::Store.new }
+      let(:store) { Lain::Dag::Factory.store }
       let(:line) do
-        %w[user assistant user assistant].each_with_index.inject(Lain::Timeline.empty(store:)) do |grown, (role, index)|
+        %w[user assistant user
+           assistant].each_with_index.inject(Lain::Dag::Factory.timeline(store:)) do |grown, (role, index)|
           grown.commit(role:, content: [{ "type" => "text", "text" => "turn #{index}" }])
         end
       end

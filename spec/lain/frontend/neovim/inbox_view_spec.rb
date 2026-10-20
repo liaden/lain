@@ -12,7 +12,7 @@ require "tmpdir"
 # ONLY -- the same pinned rule {StatusFeed}'s inbox_count follows, which is
 # what the parity examples at the bottom hold the two surfaces to.
 RSpec.describe Lain::Frontend::Neovim::InboxView do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   # A fixed wall clock so age rendering is arithmetic, never a race.
   let(:now) { Time.at(1_000) }
 
@@ -49,7 +49,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
   def one_question(id, body) = Lain::Question::Set.new(questions: [Lain::Question.new(id:, body:)])
 
-  def parent_chain(seed) = Lain::Timeline.empty(store:).commit(role: :user, content: text(seed))
+  def parent_chain(seed) = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text(seed))
 
   def record(event) = Lain::Telemetry::Message.from_event(event)
 
@@ -77,7 +77,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   # Store enforces referential integrity over causal edges, so a turn citing a
   # question needs the question actually resident, exactly as in production.
   def stored_question(question: "which db?", from: "orchestrator")
-    parent = Lain::Timeline.empty(store:).commit(role: :user, content: text("seed #{question}"))
+    parent = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("seed #{question}"))
     Lain::Event::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
                                              causal_parents: [], body: { "question" => question })
   end
@@ -85,12 +85,12 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   # A committed chain whose head turn cites `digests` -- the delivery commit's
   # shape, synthesized here (the Agent's own emitter is pinned in agent_spec).
   def citing_timeline(*digests)
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: text("hi"))
-                  .commit(role: :assistant, content: text("asking"))
-                  .commit(role: :user, content: [{ "type" => "tool_result", "tool_use_id" => "tu_1",
-                                                   "content" => "the answer" }],
-                          causal_parents: digests)
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: text("hi"))
+                      .commit(role: :assistant, content: text("asking"))
+                      .commit(role: :user, content: [{ "type" => "tool_result", "tool_use_id" => "tu_1",
+                                                       "content" => "the answer" }],
+                              causal_parents: digests)
   end
 
   # A spawned chain's answering turn, promoted to the one record the tee carries
@@ -1223,7 +1223,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
         end
       end
       let(:asker) do
-        Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:),
+        Lain::Tools::AskHuman.new(parent: Lain::Dag::Factory.timeline(store:),
                                   observer: ->(event) { tee.record(Lain::Telemetry::Message.from_event(event)) })
       end
       let(:submission) do
@@ -1305,7 +1305,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   around { |example| headless_editor("lain-nvim-inbox-spec") { example.run } }
 
   let(:channel) { Lain::Channel.new }
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
 
   def buffer_lines(name)
     inspector.exec_lua(<<~LUA, [name])
@@ -1387,7 +1387,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   def parent_chain(seed)
-    Lain::Timeline.empty(store:).commit(role: :user, content: text(seed))
+    Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text(seed))
   end
 
   def push_question(tool)

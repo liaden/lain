@@ -6,11 +6,11 @@ require "async"
 # cache breakpoint, the cache_control census on the real wire, fresh-rooted child
 # timelines. Subject is the tool, not the strategy -- every example drives a real spawn.
 RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template" do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:parent) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
   let(:union) { Lain::Toolset.new([Lain::Tools::ReadFile.new, EchoTool.new]) }
   let(:child_context) { Lain::Context.new(model: "child-model", max_tokens: 256) }
@@ -108,7 +108,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
   # messages force indices [14, 29, 39] -> 3 message marks + 1 system = 4.
   it "at the full message-marker budget the template arm sits exactly at the cap and encodes" do
     shaped = sibling_template.new(template:).child_context(child_context)
-    timeline = (0...40).reduce(Lain::Timeline.empty(store:)) do |tl, i|
+    timeline = (0...40).reduce(Lain::Dag::Factory.timeline(store:)) do |tl, i|
       tl.commit(role: i.even? ? :user : :assistant,
                 content: [{ "type" => "text", "text" => "m#{i}" }])
     end
@@ -133,7 +133,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
     )
     notes = []
     shaped = sibling_template.new(template:).child_context(marked_ctx, journal: notes)
-    timeline = (0...40).reduce(Lain::Timeline.empty(store:)) do |tl, i|
+    timeline = (0...40).reduce(Lain::Dag::Factory.timeline(store:)) do |tl, i|
       tl.commit(role: i.even? ? :user : :assistant,
                 content: [{ "type" => "text", "text" => "m#{i}" }])
     end

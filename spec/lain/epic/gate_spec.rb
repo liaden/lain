@@ -135,7 +135,7 @@ RSpec.describe Lain::Epic::Gate do
     end
 
     it "still withdraws the question and leaves a real asker free" do
-      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty(store: Lain::Store.new) })
+      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) })
 
       Sync do |task|
         asking = task.async { gate(timeout: 30).call(plan, asker:, stage: "implementation", epic_slug: "demo") }
@@ -359,7 +359,7 @@ RSpec.describe Lain::Epic::Gate do
 
     # The real asker, and the real consequence: a second gate must be askable.
     it "leaves a real asker free to ask the next issue's gate, with nothing pending" do
-      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty(store: Lain::Store.new) })
+      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) })
       subject_gate = gate(timeout: 0.02)
 
       Sync do
@@ -384,7 +384,7 @@ RSpec.describe Lain::Epic::Gate do
     # gave up waiting is not always the timeout: a caller polling its own
     # interrupt stops this fiber from outside.
     it "withdraws the set when its wait is cancelled rather than answered" do
-      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.empty(store: Lain::Store.new) })
+      asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) })
 
       Sync do |task|
         asking = task.async do
@@ -405,8 +405,8 @@ RSpec.describe Lain::Epic::Gate do
   # committed turn ever cites its question: the gate says so itself, however it
   # settled.
   describe "a gate that settles retires the question it asked" do
-    let(:store) { Lain::Store.new }
-    let(:asker) { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:)) }
+    let(:store) { Lain::Dag::Factory.store }
+    let(:asker) { Lain::Tools::AskHuman.new(parent: Lain::Dag::Factory.timeline(store:)) }
 
     def consumptions
       journal_records(journal_io, "questions_consumed")

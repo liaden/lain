@@ -26,7 +26,7 @@ RSpec.describe Lain::CLI::Resume do
 
   # Roles alternate user/assistant from the root, the ordinary chat shape.
   def chain(*bodies)
-    bodies.each_with_index.inject(Lain::Timeline.empty(store: Lain::Store.new)) do |timeline, (body, i)|
+    bodies.each_with_index.inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |timeline, (body, i)|
       timeline.commit(role: i.even? ? :user : :assistant, content: text(body))
     end
   end
@@ -699,16 +699,16 @@ RSpec.describe Lain::CLI::Resume do
 
   describe "run-state and memory replay" do
     let(:memory_chain) do
-      Lain::Timeline.empty(store: Lain::Store.new)
-                    .commit(role: :user, content: text("remember aspirin"))
-                    .commit(role: :assistant,
-                            content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "memory_write",
-                                        "input" => { "id" => "aspirin", "description" => "dosing",
-                                                     "body" => "40mg/kg" } }])
-                    .commit(role: :user,
-                            content: [{ "type" => "tool_result", "tool_use_id" => "tu_1",
-                                        "content" => [{ "type" => "text", "text" => "ok" }],
-                                        "is_error" => false }])
+      Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                        .commit(role: :user, content: text("remember aspirin"))
+                        .commit(role: :assistant,
+                                content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "memory_write",
+                                            "input" => { "id" => "aspirin", "description" => "dosing",
+                                                         "body" => "40mg/kg" } }])
+                        .commit(role: :user,
+                                content: [{ "type" => "tool_result", "tool_use_id" => "tu_1",
+                                            "content" => [{ "type" => "text", "text" => "ok" }],
+                                            "is_error" => false }])
     end
 
     let(:run_state_records) do
@@ -913,11 +913,11 @@ RSpec.describe Lain::CLI::Resume do
     # fork point the parent recorded, never the projected turn, or the child's
     # own resume chain would name a digest the parent's fold never verified.
     it "repairs a fork point that is a mid-tool head, still anchored on the recorded fork point" do
-      mid_tool = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: :user, content: text("echo hi"))
-                               .commit(role: :assistant,
-                                       content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
-                                                   "input" => { "text" => "hi" } }])
+      mid_tool = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: :user, content: text("echo hi"))
+                                   .commit(role: :assistant,
+                                           content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                                       "input" => { "text" => "hi" } }])
       write_closed("20260101T000000-1.ndjson", mid_tool)
 
       forked = resume.fork(selector: "20260101@#{prefix_for(mid_tool.head_digest)}")
@@ -1183,14 +1183,14 @@ RSpec.describe Lain::CLI::Resume do
     # edge -- ask_human is in the LIVE toolset), so the refusal has to be the
     # named one Resume builds a Refusal from, never a raw MissingObject.
     it "refuses a session whose turn cites a causal parent the fold cannot resolve" do
-      store = Lain::Store.new
+      store = Lain::Dag::Factory.store
       payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "81 mg" })
       store.put(payload)
       answered = Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to: "agent")
       store.put(answered)
-      cited = Lain::Timeline.empty(store:)
-                            .commit(role: :user, content: text("dose?"))
-                            .commit(role: :assistant, content: text("81 mg"), causal_parents: [answered.digest])
+      cited = Lain::Dag::Factory.timeline(store:)
+                                .commit(role: :user, content: text("dose?"))
+                                .commit(role: :assistant, content: text("81 mg"), causal_parents: [answered.digest])
       write_session("20260101T000000-1.ndjson", [open_header] + turn_records(cited))
 
       expect { resume.call }.to raise_error(described_class::Refusal) do |error|
@@ -1297,11 +1297,11 @@ RSpec.describe Lain::CLI::Resume do
     # the file on it: deleting the backstop would leave it escaping the exe as
     # a bare ArgumentError with nothing to act on.
     it "refuses an open session whose stranded tool_use names no id, naming the file" do
-      anonymous = Lain::Timeline.empty(store: Lain::Store.new)
-                                .commit(role: :user, content: text("echo hi"))
-                                .commit(role: :assistant,
-                                        content: [{ "type" => "tool_use", "name" => "echo",
-                                                    "input" => { "text" => "hi" } }])
+      anonymous = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                    .commit(role: :user, content: text("echo hi"))
+                                    .commit(role: :assistant,
+                                            content: [{ "type" => "tool_use", "name" => "echo",
+                                                        "input" => { "text" => "hi" } }])
       write_session("20260101T000000-1.ndjson", [open_header] + turn_records(anonymous))
 
       expect { resume.call }.to raise_error(described_class::Refusal) do |error|
@@ -1326,9 +1326,9 @@ RSpec.describe Lain::CLI::Resume do
     def digest_prefix(digest) = digest.delete_prefix("blake3:")[0, 12]
 
     let(:torn) do
-      Lain::Timeline.empty(store: Lain::Store.new)
-                    .commit(role: :user, content: text("echo hi"))
-                    .commit(role: :assistant, content: [tool_use("tu_1")])
+      Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                        .commit(role: :user, content: text("echo hi"))
+                        .commit(role: :assistant, content: [tool_use("tu_1")])
     end
 
     let(:path) { write_closed("20260101T000000-1.ndjson", torn) }
@@ -1368,9 +1368,9 @@ RSpec.describe Lain::CLI::Resume do
     # is that the conversation IT is continuing carries no result -- so that is
     # the only thing the block may claim.
     it "claims no interruption when forking below results the journal recorded" do
-      answered = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: :user, content: text("echo hi"))
-                               .commit(role: :assistant, content: [tool_use("tu_1")])
+      answered = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: :user, content: text("echo hi"))
+                                   .commit(role: :assistant, content: [tool_use("tu_1")])
       settled = answered
                 .commit(role: :user,
                         content: [{ "type" => "tool_result", "tool_use_id" => "tu_1",
@@ -1459,10 +1459,10 @@ RSpec.describe Lain::CLI::Resume do
     # backstop, now stated by {Resume::MidTool} from {Resume#cancellation}'s
     # rescue arm rather than by a gate that re-asks what that arm already knows.
     it "still refuses namedly when a stranded tool_use carries no pairable id" do
-      anonymous = Lain::Timeline.empty(store: Lain::Store.new)
-                                .commit(role: :user, content: text("echo hi"))
-                                .commit(role: :assistant,
-                                        content: [{ "type" => "tool_use", "name" => "echo", "input" => {} }])
+      anonymous = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                    .commit(role: :user, content: text("echo hi"))
+                                    .commit(role: :assistant,
+                                            content: [{ "type" => "tool_use", "name" => "echo", "input" => {} }])
       write_closed("20260102T000000-1.ndjson", anonymous)
 
       expect { resume.call(selector: "20260102") }.to raise_error(described_class::Refusal) do |error|
@@ -1559,10 +1559,10 @@ RSpec.describe Lain::CLI::Resume do
 
     # The one shape the projection cannot answer.
     let(:unpairable) do
-      Lain::Timeline.empty(store: Lain::Store.new)
-                    .commit(role: :user, content: text("echo hi"))
-                    .commit(role: :assistant,
-                            content: [{ "type" => "tool_use", "name" => "echo", "input" => {} }])
+      Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                        .commit(role: :user, content: text("echo hi"))
+                        .commit(role: :assistant,
+                                content: [{ "type" => "tool_use", "name" => "echo", "input" => {} }])
     end
 
     let(:file) { "20260101T000000-1.ndjson" }
@@ -1688,9 +1688,9 @@ RSpec.describe Lain::CLI::Resume do
   # first, which stranded every spawned session from both `--fork` and
   # `--resume`; the Loader's fixpoint is what re-opens them.
   describe "a session that spawned a subagent" do
-    let(:spawn_store) { Lain::Store.new }
-    let(:parent) { Lain::Timeline.empty(store: spawn_store).commit(role: :user, content: text("spawn a helper")) }
-    let(:child) { Lain::Timeline.empty(store: spawn_store).commit(role: :user, content: text("helper brief")) }
+    let(:spawn_store) { Lain::Dag::Factory.store }
+    let(:parent) { Lain::Dag::Factory.timeline(store: spawn_store).commit(role: :user, content: text("spawn a helper")) }
+    let(:child) { Lain::Dag::Factory.timeline(store: spawn_store).commit(role: :user, content: text("helper brief")) }
 
     let(:lineage) do
       Lain::Event::ChainWriter.new.put(parent, kind: :message, from: "child", to: "agent",

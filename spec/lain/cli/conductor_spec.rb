@@ -1256,7 +1256,7 @@ RSpec.describe Lain::CLI::Conductor do
       outcome = nil
 
       Sync do |task|
-        outcome = conductor.supervise(task, -> { Lain::Timeline.empty }) do
+        outcome = conductor.supervise(task, -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }) do
           task.yield # the block starts before supervise routes signals
           Process.kill("INT", Process.pid)
           pumped_until(task, reason: "the countdown armed") { conductor.counting_down? }

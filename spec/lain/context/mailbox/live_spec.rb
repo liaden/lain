@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Context::Mailbox::Live do
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:recorded) { [] }
   let(:live) do
     described_class.new(recipient: Lain::Event::ChainWriter.method(:correlation_of), observer: recorded.method(:<<))
   end
 
-  def prompted(text = "hi", on: Lain::Timeline.empty(store:))
+  def prompted(text = "hi", on: Lain::Dag::Factory.timeline(store:))
     on.commit(role: :user, content: [{ "type" => "text", "text" => text }])
   end
 
@@ -63,7 +63,7 @@ RSpec.describe Lain::Context::Mailbox::Live do
 
   describe "a note posted before the first commit" do
     it "waits in the queue until a capture has a recipient, then folds" do
-      empty = Lain::Timeline.empty(store:)
+      empty = Lain::Dag::Factory.timeline(store:)
       live.post(from: "human", text: "early")
 
       expect(live.capture(empty).folded).to eq([])

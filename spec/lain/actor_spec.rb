@@ -9,12 +9,12 @@ require "async/queue"
 # events, and ends under structured cancellation on `stop`.
 RSpec.describe "Lain::Tools::Subagent actor mode" do
   # One shared Store; the parent's two-turn chain establishes H and a correlation.
-  let(:store) { Lain::Store.new }
+  let(:store) { Lain::Dag::Factory.store }
   let(:log) { Lain::Tools::Subagent::Log.new }
   let(:parent_timeline) do
-    Lain::Timeline.empty(store:)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                  .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+    Lain::Dag::Factory.timeline(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
   end
 
   def actor_tool(*responses, policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []))

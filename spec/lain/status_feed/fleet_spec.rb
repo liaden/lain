@@ -206,9 +206,9 @@ RSpec.describe Lain::StatusFeed::Fleet do
     # one head. Written by the REAL writer, for the reason {#adoption} hashes a
     # real body -- the work is only a separator if the digest carries it here.
     it "counts two one-shots of different work from one head as two, and retires each on its own completion" do
-      store = Lain::Store.new
-      head = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
-      child = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "work" }])
+      store = Lain::Dag::Factory.store
+      head = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      child = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "work" }])
       lineage = Lain::Tools::Subagent::Lineage.new(
         policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
       )
@@ -225,8 +225,8 @@ RSpec.describe Lain::StatusFeed::Fleet do
     end
 
     it "lists a relaunch of a failed actor's work as a second running member" do
-      store = Lain::Store.new
-      head = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      store = Lain::Dag::Factory.store
+      head = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
       policy = Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
       fleet = described_class.new
       first = Lain::Tools::Subagent::Lineage.new(policy:, lane: "issue.demo.a")
@@ -241,8 +241,8 @@ RSpec.describe Lain::StatusFeed::Fleet do
     end
 
     it "lists a retried one-shot in a lane as running after its first attempt ended" do
-      store = Lain::Store.new
-      head = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      store = Lain::Dag::Factory.store
+      head = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
       policy = Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
       fleet = described_class.new
       first = Lain::Tools::Subagent::Lineage.new(policy:, lane: "issue.demo.a").spawn(head, prompt: "go")
@@ -272,8 +272,8 @@ RSpec.describe Lain::StatusFeed::Fleet do
 
     # Twins take addresses of their own, so one failing retires only itself.
     it "retires only the identical twin that fails, leaving the other running" do
-      store = Lain::Store.new
-      head = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      store = Lain::Dag::Factory.store
+      head = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
       lineage = Lain::Tools::Subagent::Lineage.new(
         policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
       )
@@ -281,7 +281,7 @@ RSpec.describe Lain::StatusFeed::Fleet do
       twins = Array.new(2) { lineage.spawn(head, prompt: "survey the aspirin trials") }
       twins.each { |spawn| fleet.launched(spawn) }
 
-      fleet.completed(lineage.ended(head, twins.first, Lain::Timeline.empty(store:),
+      fleet.completed(lineage.ended(head, twins.first, Lain::Dag::Factory.timeline(store:),
                                     lifecycle: Lain::StatusFeed::SpawnLifecycle::FAILED, error: "Lain::Error"))
 
       expect(fleet.digests).to eq([twins.last.digest])

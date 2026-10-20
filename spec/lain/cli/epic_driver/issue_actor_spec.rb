@@ -121,12 +121,12 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   let(:build) do
     Lain::CLI::Wiring::ToolsetBuild.new(
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, supervisor: Lain::Supervisor.new,
-      parent: -> { Lain::Timeline.empty(store: Lain::Store.new) }, journal: Lain::Channel::Null.instance,
+      parent: -> { CoreGraph.timeline }, journal: Lain::Channel::Null.instance,
       library: backend.library, epic: SpecNulls.unmounted_epic, root: repo,
       switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
       **SpecNulls.unloaded_project
     ).tap do |toolset|
-      toolset.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+      toolset.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
     end
   end
 
@@ -349,7 +349,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       end
       Lain::CLI::Chronicle::Null.new.tap { |null| null.define_singleton_method(:observer) { sink } }
     end
-    let(:shared_parent) { Lain::Timeline.empty(store: Lain::Store.new) }
+    let(:shared_parent) { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }
     let(:build) do
       Lain::CLI::Wiring::ToolsetBuild.new(
         backend:, provider:, chronicle:, options: {}, supervisor: Lain::Supervisor.new,
@@ -359,7 +359,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
         **SpecNulls.unloaded_project
       ).tap do |toolset|
         toolset.build(Lain::Memory::Recorder.new,
-                      ask_human: Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }))
+                      ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
       end
     end
 
@@ -587,7 +587,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     context "when the chat's real asker puts the question" do
       def retired_by(store)
         journal = IssueActorSpecJournal.new
-        asker = Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:))
+        asker = Lain::Tools::AskHuman.new(parent: Lain::Dag::Factory.timeline(store:))
         Sync { earlier(asker, journal:, timeout: 0.05).call(resumed: false) }
         journal.records.flat_map(&:digests)
       end
@@ -595,14 +595,14 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       it "journals the same question digest when the run is repeated over a fresh Store" do
         owned_branch("a")
 
-        first, rerun = Array.new(2) { retired_by(Lain::Store.new) }
+        first, rerun = Array.new(2) { retired_by(Lain::Dag::Factory.store) }
 
         expect(rerun).to eq(first).and have_attributes(size: 1)
       end
 
       it "asks a question of its own when a relaunch asks again over the same Store" do
         owned_branch("a")
-        store = Lain::Store.new
+        store = Lain::Dag::Factory.store
 
         first, again = Array.new(2) { retired_by(store) }
 

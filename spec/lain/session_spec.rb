@@ -200,8 +200,8 @@ RSpec.describe Lain::Session do
   # question is asked about. The chain moves -- a rewind, a fork -- and the
   # read-set never forgets anything, so what changes is which reads count.
   describe "a read counted against the chain" do
-    let(:store) { Lain::Store.new }
-    let(:root) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }]) }
+    let(:store) { Lain::Dag::Factory.store }
+    let(:root) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }]) }
     let(:version) { Lain::Session::FileIdentity.new(device: 1, inode: 2, size: 3, mtime: 4) }
 
     def calls(*ids) = ids.map { |id| { "type" => "tool_use", "id" => id, "name" => "read_file", "input" => {} } }
@@ -437,7 +437,7 @@ RSpec.describe Lain::Session do
           super
         end
       end.new
-      line = (1..20).inject(Lain::Timeline.empty(store: counting)) do |chain, index|
+      line = (1..20).inject(Lain::Dag::Factory.timeline(store: counting)) do |chain, index|
         chain.commit(role: index.odd? ? :user : :assistant, content: [{ "type" => "text", "text" => index.to_s }])
       end
       after = round(line, "tu_1")
@@ -1015,7 +1015,7 @@ RSpec.describe Lain::Session do
         end
 
         def chain
-          (1..6).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, index|
+          (1..6).inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, index|
             line.commit(role: index.odd? ? "user" : "assistant",
                         content: [{ "type" => "text", "text" => "turn #{index}" }])
           end
@@ -1531,7 +1531,7 @@ RSpec.describe Lain::Session do
       end
 
       it "journals a read of lines already seen once they are off the chain" do
-        root = Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+        root = CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
         asked = root.commit(role: :assistant, content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "read_file",
                                                           "input" => {} }])
         journaled.on_chain(asked)

@@ -21,7 +21,7 @@ RSpec.describe Lain::Memory::Vector do
   end
 
   def index_over(*items)
-    store = Lain::Store.new
+    store = Lain::Dag::Factory.store
     items.inject(Lain::Memory::Index.empty(store:)) { |acc, entry| acc.write(entry) }
   end
 
