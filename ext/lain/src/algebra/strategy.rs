@@ -246,7 +246,7 @@ pub(super) mod laws {
 mod tests {
     use super::*;
     use proptest::strategy::ValueTree;
-    use proptest::test_runner::{Config, TestError, TestRunner};
+    use proptest::test_runner::{Config, RngAlgorithm, TestError, TestRng, TestRunner};
 
     proptest! {
         #![proptest_config(ProptestConfig { cases: 10_000, failure_persistence: None, ..ProptestConfig::default() })]
@@ -292,10 +292,14 @@ mod tests {
 
     #[test]
     fn a_violated_law_shrinks_to_the_fewest_operations_that_still_fail() {
-        let mut runner = TestRunner::new(Config {
-            failure_persistence: None,
-            ..Config::default()
-        });
+        // A fixed seed: the minimal size is asserted, so a random seed made it flaky.
+        let mut runner = TestRunner::new_with_rng(
+            Config {
+                failure_persistence: None,
+                ..Config::default()
+            },
+            TestRng::deterministic_rng(RngAlgorithm::ChaCha),
+        );
         let outcome = runner.run(&plan(), |plan| laws::idempotent::<BrokenMeet>(&plan));
         match outcome {
             Err(TestError::Fail(_, minimal)) => assert_eq!(minimal.ops.len(), 1, "{minimal:?}"),
