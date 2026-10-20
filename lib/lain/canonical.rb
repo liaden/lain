@@ -79,6 +79,19 @@ module Lain
 
       private
 
+      # Marks an Array the extension built from a stored tree as produced, so a
+      # render normalizing it gets it back unrebuilt. Private, and reached only
+      # by the extension: what makes this sound is where the Array came from, a
+      # deep-frozen tree of a value already normalized when it was stored, and a
+      # Ruby caller has no such provenance.
+      #
+      # @param normalized_array [Array] deep frozen, built by Lain::Ext
+      # @return [Array] the same Array
+      def adopt(normalized_array)
+        PRODUCED[normalized_array] = true if Ractor.main?
+        normalized_array
+      end
+
       # Re-normalizing is the common case on the render path: a turn's content
       # is canonical from the moment it was committed, and every later digest,
       # validation and pin re-walked it. Measured on 800 turn-shaped messages:

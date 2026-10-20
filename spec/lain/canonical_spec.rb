@@ -124,6 +124,22 @@ RSpec.describe Lain::Canonical do
     end
   end
 
+  describe "a tree the extension built" do
+    let(:messages) do
+      Lain::Ext::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]).messages
+    end
+
+    it "is a normalize hit: the same object comes back" do
+      content = messages.first.fetch("content")
+
+      expect(described_class.normalize(content)).to equal(content)
+    end
+
+    it "is adopted only on the extension's path, never by a Ruby caller" do
+      expect { described_class.adopt([].freeze) }.to raise_error(NoMethodError, /private method/)
+    end
+  end
+
   # The literals are pinned, not recomputed, so the spec fails if the bytes ever change.
   describe "golden vectors" do
     [

@@ -55,6 +55,30 @@ module Lain
     RefusedRender = Data.define(:error, :digest)
     private_constant :RefusedRender
 
+    # The messages of the last head rendered, so the next render materialises
+    # only the turns after it. A head that no longer descends from it (a rewind,
+    # a checkout, a fold) is walked whole: a prefix is extended, never spliced.
+    RenderedPrefix = Data.define(:head_digest, :messages) do
+      def self.none = new(head_digest: nil, messages: [].freeze)
+
+      # @param timeline [#head_digest, #messages]
+      # @return [RenderedPrefix] the prefix for the timeline's head
+      def over(timeline)
+        head = timeline.head_digest
+        return self if head == head_digest
+
+        with(head_digest: head, messages: timeline.messages(after: head_digest, onto: messages))
+      end
+    end
+
+    # What a Context reads off a Timeline, which is only its messages, served
+    # through the Agent's prefix. Read lazily, because a pipeline that
+    # substitutes its own messages never asks.
+    PrefixedTimeline = Data.define(:timeline, :advance) do
+      def messages = advance.call(timeline).messages
+    end
+    private_constant :PrefixedTimeline
+
     # Each of the three objects the loop drives, paired with the legacy
     # keywords that BUILD it when it is not injected: the clash table
     # {#refuse_double_wiring} consults. Four of these are {Instrumentation}
@@ -594,6 +618,7 @@ module Lain
       @iterations = 0
       @dispatch_lock = Monitor.new
       @preparing = false
+      @rendered_prefix = RenderedPrefix.none
     end
 
     def summarizing
@@ -821,8 +846,11 @@ module Lain
     # chose, so compaction never sees a note.
     def render_request(inbox)
       turn_context = inbox.over(@instrumentation.pipeline_source.context_for(**render_inputs))
-      turn_context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
+      turn_context.render(timeline: PrefixedTimeline.new(timeline: @timeline, advance: method(:advance_prefix)),
+                          toolset: @toolset, workspace: @workspace.with(*@session.reminders))
     end
+
+    def advance_prefix(timeline) = @rendered_prefix = @rendered_prefix.over(timeline)
 
     # What the pipeline source decides on, shared by a render and an idle
     # prepare so a cut committed at idle stands on the chain the next render reads.

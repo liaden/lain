@@ -362,6 +362,29 @@ pub fn ancestor_turns(
     walk(map, head).collect()
 }
 
+/// The turns after `after` up to `head`, root first, and whether the walk
+/// reached `after`. A bound off the chain is never reached, so the walk runs to
+/// the root and says so: the caller learns from this one walk whether a prefix
+/// it holds may be extended.
+pub fn turns_since(
+    map: &StoreMap,
+    head: Option<&Digest>,
+    after: Option<&Digest>,
+) -> Result<(Vec<Arc<EventData>>, bool), DanglingDigest> {
+    let mut turns = Vec::new();
+    let mut reached = false;
+    for step in walk(map, head) {
+        let turn = step?;
+        reached = after == Some(&turn.digest);
+        if reached {
+            break;
+        }
+        turns.push(turn);
+    }
+    turns.reverse();
+    Ok((turns, reached))
+}
+
 /// The digests from `head` to the root, head first.
 pub fn ancestor_digests(
     map: &StoreMap,
@@ -480,6 +503,79 @@ pub(crate) mod tests {
         );
         let digest = turn.digest.clone();
         (map.insert(digest.clone(), turn), digest)
+    }
+
+    // a -> b -> c, as digests root first.
+    fn three() -> (StoreMap, Vec<Digest>) {
+        let (map, a) = commit(&StoreMap::new_sync(), None, "a");
+        let (map, b) = commit(&map, Some(&a), "b");
+        let (map, c) = commit(&map, Some(&b), "c");
+        (map, vec![a, b, c])
+    }
+
+    fn since(
+        map: &StoreMap,
+        head: Option<&Digest>,
+        after: Option<&Digest>,
+    ) -> Result<(Vec<Digest>, bool), DanglingDigest> {
+        turns_since(map, head, after).map(|(turns, reached)| {
+            (
+                turns.iter().map(|turn| turn.digest.clone()).collect(),
+                reached,
+            )
+        })
+    }
+
+    #[test]
+    fn no_bound_walks_the_whole_chain_root_first() {
+        let (map, chain) = three();
+        assert_eq!(
+            since(&map, Some(&chain[2]), None),
+            Ok((chain.clone(), false))
+        );
+    }
+
+    #[test]
+    fn an_ancestor_bounds_the_walk_to_the_turns_after_it() {
+        let (map, chain) = three();
+        assert_eq!(
+            since(&map, Some(&chain[2]), Some(&chain[0])),
+            Ok((chain[1..].to_vec(), true))
+        );
+    }
+
+    #[test]
+    fn the_head_itself_bounds_the_walk_to_nothing() {
+        let (map, chain) = three();
+        assert_eq!(
+            since(&map, Some(&chain[2]), Some(&chain[2])),
+            Ok((vec![], true))
+        );
+    }
+
+    #[test]
+    fn a_digest_off_the_chain_answers_the_whole_walk_unreached() {
+        let (map, chain) = three();
+        let elsewhere = Digest::from("blake3:elsewhere".to_string());
+        assert_eq!(
+            since(&map, Some(&chain[2]), Some(&elsewhere)),
+            Ok((chain.clone(), false))
+        );
+    }
+
+    #[test]
+    fn an_empty_head_answers_nothing_unreached() {
+        let (map, chain) = three();
+        assert_eq!(since(&map, None, Some(&chain[0])), Ok((vec![], false)));
+    }
+
+    #[test]
+    fn a_dangling_edge_stops_the_walk_since_a_bound() {
+        let absent = Digest::from("blake3:absent".to_string());
+        assert_eq!(
+            since(&StoreMap::new_sync(), Some(&absent), None),
+            Err(DanglingDigest(absent))
+        );
     }
 
     // base(a -> b); left branches (l1 -> l2); right branches (r1).

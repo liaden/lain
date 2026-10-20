@@ -1705,6 +1705,26 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  describe "the rendered prefix" do
+    it "asks its timeline only for the turns after the head it last rendered" do
+      provider = CoreGraph.provider(text_response("one"), text_response("two"))
+      a = described_class.new(provider:, toolset:, context:)
+      asked = []
+      trace = TracePoint.new(:call) do |point|
+        projecting = point.defined_class == Lain::Timeline && point.method_id == :messages
+        asked << point.binding.local_variable_get(:after) if projecting
+      end
+
+      trace.enable do
+        a.ask("hi")
+        a.ask("again")
+      end
+
+      expect(asked).to eq([nil, a.timeline.to_a.first.digest])
+      expect(provider.last_request.messages.map { |message| message["content"].first["text"] }).to eq(%w[hi one again])
+    end
+  end
+
   describe "session threading" do
     around do |example|
       Dir.mktmpdir do |dir|

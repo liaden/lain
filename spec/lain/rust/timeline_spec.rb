@@ -236,6 +236,112 @@ RSpec.describe Lain::Ext::Timeline do
     end
   end
 
+  describe "#messages" do
+    let(:toolset) { Lain::Toolset.new }
+    let(:context) { CoreGraph.context }
+
+    def chain(count, on: timeline)
+      count.times.inject(on) { |line, index| say(line, "turn #{index}", role: index.even? ? :user : :assistant) }
+    end
+
+    def recording(line)
+      Class.new(SimpleDelegator) do
+        attr_reader :asked
+
+        def initialize(target)
+          super
+          @asked = []
+        end
+
+        def method_missing(name, *args, **kwargs, &block)
+          super.tap { |answer| @asked << [name, kwargs, answer] }
+        end
+
+        def respond_to_missing?(name, include_private = false) = super
+      end.new(line)
+    end
+
+    it "answers the role and content of every turn, root first, deep frozen" do
+      messages = three.messages
+
+      expect(messages).to eq([{ "role" => "user", "content" => text("a") },
+                              { "role" => "assistant", "content" => text("b") },
+                              { "role" => "user", "content" => text("c") }])
+      expect(Ractor.shareable?(messages)).to be(true)
+    end
+
+    it "answers only the turns after an ancestor, as the Ruby timeline does" do
+      ruby = chain(5, on: Lain::Timeline.empty(store: Lain::Store.new))
+      ext = chain(5)
+
+      expect(ext.messages(after: ext.rewind(2).head_digest)).to eq(ext.messages.last(2))
+      expect(ext.messages(after: ext.rewind(2).head_digest)).to eq(ruby.messages(after: ruby.rewind(2).head_digest))
+    end
+
+    it "answers the full walk for a digest that is not an ancestor" do
+      line = chain(4)
+      moved = say(line.rewind(2), "elsewhere")
+
+      expect(moved.messages(after: line.head_digest)).to eq(moved.messages)
+      expect(moved.messages(after: "blake3:nope")).to eq(moved.messages)
+    end
+
+    it "lets a context render a long chain in one crossing, with no per-turn reader" do
+      line = recording(chain(1000))
+      readers = []
+      trace = TracePoint.new(:c_call) { |point| readers << point.method_id if point.defined_class == Lain::Ext::Turn }
+
+      trace.enable { context.render(timeline: line, toolset:) }
+
+      expect(line.asked.map(&:first)).to eq([:messages])
+      expect(readers).to be_empty
+    end
+
+    it "renders the request the Ruby timeline renders, byte for byte" do
+      blocks = lambda do |index|
+        [{ "type" => "text", "text" => "turn #{index}" },
+         { "type" => "tool_use", "id" => "tu_#{index}", "name" => "echo",
+           "input" => { "ratio" => index / 4.0, "counts" => [index, -index, 2**70], "flag" => nil } }]
+      end
+      build = ->(line) { 6.times.inject(line) { |acc, at| acc.commit(role: :assistant, content: blocks.call(at)) } }
+      ruby = build.call(Lain::Timeline.empty(store: Lain::Store.new))
+      ext = build.call(timeline)
+
+      expect(context.render(timeline: ext, toolset:).digest).to eq(context.render(timeline: ruby, toolset:).digest)
+    end
+
+    it "extends a prefix it is handed past an ancestor, and ignores it past anything else" do
+      line = chain(4)
+      prefix = line.rewind(2).messages
+      moved = say(line.rewind(2), "elsewhere")
+
+      expect(line.messages(after: line.rewind(2).head_digest, onto: prefix)).to eq(line.messages)
+      expect(line.messages(after: line.rewind(2).head_digest, onto: prefix).first).to equal(prefix.first)
+      expect(moved.messages(after: line.head_digest, onto: prefix)).to eq(moved.messages)
+    end
+
+    it "materialises only the turn a prefix has not seen, in one crossing" do
+      line = chain(1000)
+      prefix = Lain::Agent::RenderedPrefix.none.over(line)
+      longer = recording(say(line, "next"))
+
+      extended = prefix.over(longer)
+      fresh = extended.messages.reject.with_index { |message, at| message.equal?(prefix.messages[at]) }
+
+      expect(longer.asked.map(&:first)).to eq(%i[head_digest messages])
+      expect(fresh.size).to eq(1)
+      expect(extended.messages).to eq(longer.__getobj__.messages)
+    end
+
+    it "never splices a rewound head onto a stale prefix" do
+      line = chain(10)
+      prefix = Lain::Agent::RenderedPrefix.none.over(line)
+      moved = say(line.rewind(2), "after the rewind")
+
+      expect(prefix.over(moved).messages).to eq(moved.messages)
+    end
+  end
+
   describe "time travel" do
     it "rewinds n turns and past the root to empty" do
       expect(three.rewind.head.content).to eq(text("b"))

@@ -413,6 +413,7 @@ mod ffi {
         typed_data::{self, Obj},
         value::Opaque,
     };
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     /// `Lain::Canonical`'s content-addressing hash. Thin FFI wrapper over
@@ -1809,6 +1810,31 @@ mod ffi {
             turns_to_array(ruby, arcs)
         }
 
+        /// `#messages(after: nil, onto: [])`: the projection a render sends,
+        /// built from one walk under one lock. When `after` is an ancestor of
+        /// the head, the turns after it, appended to `onto`; otherwise every
+        /// turn, root first, and `onto` is dropped, so a stale prefix is never
+        /// spliced.
+        fn messages(ruby: &Ruby, rb_self: &Timeline, args: &[Value]) -> Result<RArray, Error> {
+            let parsed = scan_args::<(), (), (), (), RHash, ()>(args)?;
+            let kwargs = get_kwargs::<_, (), (Option<Value>, Option<RArray>), ()>(
+                parsed.keywords,
+                &[],
+                &["after", "onto"],
+            )?;
+            let (after_value, onto) = kwargs.optional;
+            let after = read_optional_digest(ruby, after_value)?;
+            let store: &Store = store_ref(ruby, rb_self)?;
+            let walked = dag::turns_since(
+                &store.locked().events,
+                rb_self.head.as_ref(),
+                after.as_ref(),
+            );
+            let (turns, reached) = walked.map_err(|e| missing_object(ruby, e))?;
+            let prefix = onto.filter(|_| reached);
+            MessageBuilder::new(ruby)?.messages(prefix, &turns)
+        }
+
         fn ancestor_digests(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
             let store: &Store = store_ref(ruby, rb_self)?;
             let walked = dag::ancestor_digests(&store.locked().events, rb_self.head.as_ref());
@@ -2025,6 +2051,101 @@ mod ffi {
 
         fn inspect(ruby: &Ruby, rb_self: &Timeline) -> String {
             format!("#<Lain::Ext::Timeline {}>", Self::to_s(ruby, rb_self))
+        }
+    }
+
+    /// Builds `Timeline#messages`' answer. Every Hash key and role is one frozen
+    /// String per call rather than one per turn, and every Array it builds is
+    /// handed to `Canonical.adopt`, so a render normalizing the content finds it
+    /// already produced instead of rebuilding it.
+    struct MessageBuilder<'r> {
+        ruby: &'r Ruby,
+        canonical: RModule,
+        strings: HashMap<String, Value>,
+        // Roots every cached String: `strings` lives on the Rust heap, which
+        // Ruby's collector does not scan, and a Hash may keep an equal interned
+        // key in place of the one cached here.
+        rooted: RArray,
+    }
+
+    impl<'r> MessageBuilder<'r> {
+        fn new(ruby: &'r Ruby) -> Result<Self, Error> {
+            let lain: RModule = ruby.class_object().const_get("Lain")?;
+            Ok(MessageBuilder {
+                ruby,
+                canonical: lain.const_get("Canonical")?,
+                strings: HashMap::new(),
+                rooted: ruby.ary_new(),
+            })
+        }
+
+        fn messages(
+            mut self,
+            prefix: Option<RArray>,
+            turns: &[Arc<EventData>],
+        ) -> Result<RArray, Error> {
+            let held = prefix.map_or(0, |prefix| prefix.len());
+            let messages = self.ruby.ary_new_capa(held + turns.len());
+            if let Some(prefix) = prefix {
+                messages.concat(prefix)?;
+            }
+            for turn in turns {
+                messages.push(self.message(turn)?)?;
+            }
+            messages.freeze();
+            Ok(messages)
+        }
+
+        fn message(&mut self, turn: &EventData) -> Result<Value, Error> {
+            let (Some(Canon::Str(role)), Some(content)) =
+                (turn.body_field("role"), turn.body_field("content"))
+            else {
+                return Err(Error::new(
+                    self.ruby.exception_runtime_error(),
+                    format!(
+                        "Lain::Ext: turn {} carries no wire role and content to render",
+                        turn.digest.as_str()
+                    ),
+                ));
+            };
+            let message = self.ruby.hash_new();
+            message.aset(self.string("role")?, self.string(role)?)?;
+            message.aset(self.string("content")?, self.tree(content)?)?;
+            message.freeze();
+            Ok(message.as_value())
+        }
+
+        fn tree(&mut self, canon: &Canon) -> Result<Value, Error> {
+            match canon {
+                Canon::Array(items) => {
+                    let array = self.ruby.ary_new_capa(items.len());
+                    for item in items {
+                        array.push(self.tree(item)?)?;
+                    }
+                    array.freeze();
+                    let _: Value = self.canonical.funcall("adopt", (array,))?;
+                    Ok(array.as_value())
+                }
+                Canon::Object(pairs) => {
+                    let hash = self.ruby.hash_new();
+                    for (key, value) in pairs {
+                        hash.aset(self.string(key)?, self.tree(value)?)?;
+                    }
+                    hash.freeze();
+                    Ok(hash.as_value())
+                }
+                scalar => canon_to_ruby(self.ruby, scalar),
+            }
+        }
+
+        fn string(&mut self, text: &str) -> Result<Value, Error> {
+            if let Some(cached) = self.strings.get(text) {
+                return Ok(*cached);
+            }
+            let fresh = frozen_str(self.ruby, text);
+            self.rooted.push(fresh)?;
+            self.strings.insert(text.to_owned(), fresh);
+            Ok(fresh)
         }
     }
 
@@ -2322,6 +2443,7 @@ mod ffi {
         timeline.define_method("ancestors", method!(Timeline::ancestors, 0))?;
         timeline.define_method("ancestor_digests", method!(Timeline::ancestor_digests, 0))?;
         timeline.define_method("to_a", method!(Timeline::to_a, 0))?;
+        timeline.define_method("messages", method!(Timeline::messages, -1))?;
         timeline.define_method("length", method!(Timeline::length, 0))?;
         timeline.define_method("include?", method!(Timeline::include_p, 1))?;
         timeline.define_method("ancestor_of?", method!(Timeline::ancestor_of_p, 1))?;

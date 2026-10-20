@@ -113,8 +113,16 @@ module Lain
     end
 
     # Shareable without a deep copy because a Turn's content is already frozen.
-    def messages
-      self.class.project(to_a)
+    # A digest off this chain bounds nothing, so the walk runs to the root and
+    # answers every turn, dropping `onto`: a stale prefix is never spliced.
+    #
+    # @param after [String, nil] an ancestor's digest; only the turns after it are projected
+    # @param onto [Array<Hash>] the messages up to `after`, kept when the walk reaches it
+    # @return [Array<Hash>] deep frozen, root first
+    def messages(after: nil, onto: NO_MESSAGES)
+      turns = ancestors.take_while { |turn| turn.digest != after }
+      fresh = self.class.project(turns.reverse)
+      reached?(turns, after) ? (onto + fresh).freeze : fresh
     end
 
     # @param turns [Array<Event>] already walked, for a caller that needs them beside the messages
@@ -168,6 +176,14 @@ module Lain
     alias inspect to_s
 
     private
+
+    NO_MESSAGES = [].freeze
+    private_constant :NO_MESSAGES
+
+    # The walk stopped at `after` when the oldest turn it kept stands on it.
+    def reached?(turns, after)
+      !after.nil? && (turns.empty? ? head_digest : turns.last.parent) == after
+    end
 
     # #commit's own name for the value #correlation already derives -- kept
     # as a distinct, private name because "the correlation to stamp on the

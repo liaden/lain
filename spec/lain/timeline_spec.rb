@@ -162,6 +162,26 @@ RSpec.describe Lain::Timeline do
       expect(timeline.messages).to eq([])
     end
 
+    it "is only the turns after an ancestor it is bounded by" do
+      expect(line.messages(after: line.rewind(2).head_digest)).to eq(expected.last(2))
+    end
+
+    it "is every turn when bounded by a digest off the chain" do
+      moved = say(line.rewind(2), "elsewhere")
+
+      expect(moved.messages(after: line.head_digest)).to eq(moved.messages)
+      expect(moved.messages(after: "blake3:nope")).to eq(moved.messages)
+    end
+
+    it "extends a prefix it is handed past an ancestor, and ignores it past anything else" do
+      prefix = line.rewind(2).messages
+      moved = say(line.rewind(2), "elsewhere")
+
+      expect(line.messages(after: line.rewind(2).head_digest, onto: prefix)).to eq(expected)
+      expect(line.messages(after: line.rewind(2).head_digest, onto: prefix).first).to equal(prefix.first)
+      expect(moved.messages(after: line.head_digest, onto: prefix)).to eq(moved.messages)
+    end
+
     it "is what the compaction head and the derivation walk hold" do
       head = Lain::Compaction::Head.from_timeline(timeline: line, keep_last: 1)
 
