@@ -81,6 +81,29 @@ RSpec.describe Lain::Epic::RedCommit do
     expect([only?(red_tip), only?(commit("feat: greet"))]).to eq([true, false])
   end
 
+  it "is true for a red-only tip on criss-cross history with 2 merge bases" do
+    base_sha
+    git("checkout", "-q", "-b", "side", "epic/demo~0")
+    side = commit("chore: side")
+    git("checkout", "-q", "epic/demo")
+    main = commit("chore: main")
+    git("merge", "-q", "--no-ff", "-m", "chore: fold side", side)
+    git("checkout", "-q", "-b", "issue/a", side)
+    git("merge", "-q", "--no-ff", "-m", red, main)
+
+    expect(git("merge-base", "--all", "epic/demo", "issue/a").stdout.split.size).to eq(2)
+    expect(only?(git("rev-parse", "HEAD").stdout.strip)).to be(true)
+  end
+
+  it "judges the tip alone when the base resolves but shares no history with the sha" do
+    base_sha
+    git("checkout", "-q", "--orphan", "other")
+    commit("feat: other root")
+    red_tip = commit(red)
+
+    expect([only?(red_tip), only?(commit("feat: greet"))]).to eq([true, false])
+  end
+
   it "is false for a sha git does not know" do
     base_sha
 

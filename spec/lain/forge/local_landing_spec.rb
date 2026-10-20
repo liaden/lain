@@ -356,6 +356,16 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       expect(contains?(unapproved)).to be(false)
     end
 
+    it "lists one sha's subjects once when it is checked and then admitted" do
+      sha, ref = worker("a", "README" => "a's work\n")
+      approve("a", sha)
+
+      landing.anchored("a")
+      landing.admit("a", sha:, ref:)
+
+      expect(calls.count { |argv| argv.include?("--format=%s") }).to eq(1)
+    end
+
     it "refuses an anchored commit no gate approved, naming lain epic submit implementation with its sha" do
       sha, = worker("a", "README" => "a's work\n")
 

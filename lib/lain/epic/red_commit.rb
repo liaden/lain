@@ -19,24 +19,28 @@ module Lain
       def initialize(git:, base:)
         @git = git
         @base = base
+        @answers = {}
       end
 
       # An empty range is false: a sha at or behind the base holds no work at
       # all, and "every commit is red" must not be vacuously true of it.
       # @param sha [String] an issue branch tip
       # @return [Boolean]
-      def only?(sha)
+      def only?(sha) = @answers.fetch(sha) { @answers[sha] = judged(sha) }
+
+      private
+
+      def judged(sha)
         subjects = subjects_past_base(sha)
         !subjects.empty? && subjects.all? { |line| line.start_with?(PREFIX) }
       end
 
-      private
-
       # A base that does not resolve (a renamed or missing epic branch) must
       # not read as "not red", or the red tip is approved: the tip alone is judged.
+      # `base..sha`, not a merge-base range: on criss-cross history that range pulls in the base's own commits.
       def subjects_past_base(sha)
-        base = @git.run("merge-base", @base, sha)
-        Shell::Out.ok?(base) ? subjects("#{base.stdout.strip}..#{sha}") : subjects("-1", sha)
+        related = Shell::Out.ok?(@git.run("merge-base", @base, sha))
+        related ? subjects("#{@base}..#{sha}") : subjects("-1", sha)
       end
 
       def subjects(*range)
