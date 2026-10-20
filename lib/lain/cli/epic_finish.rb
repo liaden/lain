@@ -194,9 +194,8 @@ module Lain
         private
 
         def remote?
-          argv = ["git", "-C", @root, "remote"]
-          !@shell_out_factory.call(*argv, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
-                             .run_command.stdout.strip.empty?
+          checkout = Lain::Isolation::Checkout.new(@root, shell_out_factory: @shell_out_factory)
+          !checkout.run("remote").stdout.strip.empty?
         end
 
         def no_remote(epic_slug)

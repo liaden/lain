@@ -198,6 +198,34 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
     end
   end
 
+  describe "remote detection with GIT_INDEX_FILE in the environment" do
+    around do |example|
+      index = File.join(@tmp, "foreign-index")
+      previous = ENV.fetch("GIT_INDEX_FILE", nil)
+      ENV["GIT_INDEX_FILE"] = index
+      example.run
+    ensure
+      ENV["GIT_INDEX_FILE"] = previous
+    end
+
+    # A git that dies when a foreign index reaches it, which real git never does for `remote`.
+    let(:strict) do
+      lambda do |*argv, **options|
+        git, *rest = argv
+        script = 'test -z "$GIT_INDEX_FILE" || exit 1; exec "$@"'
+        Lain::Shell::Out.new("sh", "-c", script, "sh", git, *rest, **options)
+      end
+    end
+
+    it "sees the remote through a scrubbed git and leaves the foreign index untouched" do
+      %w[a b].each { |issue| git(root, "push", "-q", "origin", "#{tip}:refs/heads/epic/demo/#{issue}") }
+      finish = described_class.new(root:, paths:, config:, github:, shell_out_factory: strict)
+
+      expect { finish.finish("demo") }.not_to raise_error
+      expect(File.exist?(ENV.fetch("GIT_INDEX_FILE"))).to be(false)
+    end
+  end
+
   describe "a repository with no remote" do
     before { git(root, "remote", "remove", "origin") }
 

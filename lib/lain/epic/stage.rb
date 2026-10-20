@@ -91,6 +91,28 @@ module Lain
       # drained.
       def preceding = STAGES.take(index).map { |earlier| self.class.new(earlier) }
 
+      # The earlier stages that keep this one shut, without raising: what a gate
+      # refuses on and what a status line reports are the same answer.
+      #
+      # @param queue [#drained?, #approved?] the sign-off queue, asked per
+      #   earlier partition
+      # @param epic_slug [#to_s] the epic being walked; nothing outside it is consulted
+      # @param issue_id [String, nil] the issue whose gate is opening; nil
+      #   checks every issue, the conservative reading
+      # @return [Hash{Symbol=>Array<Stage>}] `parked` (still holding sign-offs)
+      #   and `unapproved` (drained but never approved), earliest first
+      def blocked_by(queue, epic_slug:, issue_id: nil)
+        parked = preceding.reject { |earlier| queue.drained?(epic_slug, earlier.name, issue_id:) }
+        unapproved = (preceding - parked).reject { |earlier| approved?(earlier, queue, epic_slug, issue_id) }
+        { parked:, unapproved: }
+      end
+
+      # @param queue [#drained?, #approved?] as for {#blocked_by}
+      # @param epic_slug [#to_s] as for {#blocked_by}
+      # @param issue_id [String, nil] as for {#blocked_by}
+      # @return [Boolean] whether no earlier stage keeps this one shut
+      def open?(queue, epic_slug:, issue_id: nil) = clear?(blocked_by(queue, epic_slug:, issue_id:))
+
       # The boundary check a gate runs before it opens at this stage.
       #
       # @param queue [#drained?, #approved?] the sign-off queue, asked per
@@ -102,11 +124,10 @@ module Lain
       # @raise [StageBlocked] naming the epic, every earlier stage still holding
       #   and every earlier stage never approved
       def ensure_open!(queue, epic_slug:, issue_id: nil)
-        parked = preceding.reject { |earlier| queue.drained?(epic_slug, earlier.name, issue_id:) }
-        unapproved = (preceding - parked).reject { |earlier| approved?(earlier, queue, epic_slug, issue_id) }
-        return self if parked.empty? && unapproved.empty?
+        blocked = blocked_by(queue, epic_slug:, issue_id:)
+        return self if clear?(blocked)
 
-        raise StageBlocked, blocked_message(parked, unapproved, epic_slug, issue_id)
+        raise StageBlocked, blocked_message(blocked[:parked], blocked[:unapproved], epic_slug, issue_id)
       end
 
       # The refusal a park runs before it reaches the queue: a park in an
@@ -124,6 +145,8 @@ module Lain
       def to_s = name
 
       private
+
+      def clear?(blocked) = blocked.values.all?(&:empty?)
 
       # An epic-wide stage is approved once for every issue, so its evidence
       # names no issue; an issue-scoped one is approved per issue.

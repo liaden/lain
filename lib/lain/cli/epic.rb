@@ -363,12 +363,15 @@ module Lain
                    note: untracked_note(home.path), closed: closed_stage_note(slug, progress.stage, walked.to_a)).to_s
       end
 
-      # Only epic-wide earlier stages: an issue-scoped one is approved per issue,
-      # so no single answer exists for the epic as a whole.
+      # An issue-scoped earlier stage is approved per issue, so no single
+      # answer exists for the epic as a whole and it is left out.
       def closed_stage_note(slug, stage, records)
-        queue = Approval::SignoffQueue.from_journal(records)
-        unapproved = stage.preceding.reject(&:issue_scoped?).reject { |earlier| queue.approved?(slug, earlier.name) }
-        unapproved.empty? ? "" : "#{stage} is not open: #{unapproved.map(&:name).join(", ")} is not approved"
+        blocked = stage.blocked_by(Approval::SignoffQueue.from_journal(records), epic_slug: slug)
+        parked = blocked[:parked].map(&:name)
+        unapproved = blocked[:unapproved].reject(&:issue_scoped?).map(&:name)
+        reasons = [("#{parked.join(", ")} still holds parked sign-offs" unless parked.empty?),
+                   ("#{unapproved.join(", ")} is not approved" unless unapproved.empty?)].compact
+        reasons.empty? ? "" : "#{stage} is not open: #{reasons.join("; ")}"
       end
 
       def journals_for(slug) = Journals.new(paths: @paths, root: @root, epic_slug: slug)

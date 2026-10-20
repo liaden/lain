@@ -1474,7 +1474,7 @@ module Lain
         def awaiting_subject?(run, root, subject)
           return false if File.exist?(File.join(root, subject))
 
-          wanted = File.basename(subject, ".rb").split("_").map(&:capitalize).join
+          wanted = File.basename(subject, ".rb").camelize
           run.errors.all? { |text| missing_constants(text).then { |names| names.any? && names.all?(wanted) } }
         end
 

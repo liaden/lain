@@ -393,6 +393,22 @@ RSpec.describe Lain::CLI::Epic do
       expect(report).to include("epic_plan is not open: research is not approved")
     end
 
+    it "says the stage is not open while an earlier stage still holds a parked sign-off" do
+      write_epic("alpha", chain)
+      parked = verdict(approved: false, at: "2026-01-01T00:00:01Z").merge("policy" => "deferred")
+      session("one.ndjson", stage_event("epic_plan"), parked)
+
+      expect(command.status).to include("epic_plan is not open: research still holds parked sign-offs")
+    end
+
+    it "says nothing of an unapproved issue-scoped earlier stage, which has no single answer per epic" do
+      write_epic("alpha", chain)
+      session("one.ndjson", stage_event("implementation"), verdict(approved: true, at: "2026-01-01T00:00:01Z"),
+              verdict(approved: true, at: "2026-01-01T00:00:02Z", stage: "epic_plan"))
+
+      expect(command.status).not_to include("is not open")
+    end
+
     it "stays quiet about the boundary while the earlier stage stands approved" do
       write_epic("alpha", chain)
       session("one.ndjson", stage_event("epic_plan"), verdict(approved: true, at: "2026-01-01T00:00:01Z"))

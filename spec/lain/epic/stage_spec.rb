@@ -286,6 +286,31 @@ RSpec.describe Lain::Epic::Stage do
     end
   end
 
+  describe "#open? and #blocked_by" do
+    it "names the parked earlier stage, agreeing with the refusal ensure_open! raises" do
+      approve(epic_slug: "alpha", stage: "research")
+      park(epic_slug: "alpha", stage: "research")
+
+      expect(stage("epic_plan").open?(queue, epic_slug: "alpha")).to be(false)
+      expect(stage("epic_plan").blocked_by(queue, epic_slug: "alpha"))
+        .to eq(parked: [stage("research")], unapproved: [])
+      expect { stage("epic_plan").ensure_open!(queue, epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /research still holds/)
+    end
+
+    it "names an earlier stage never approved" do
+      expect(stage("epic_plan").blocked_by(queue, epic_slug: "alpha"))
+        .to eq(parked: [], unapproved: [stage("research")])
+    end
+
+    it "is open, and blocked by nothing, once every earlier stage stands approved" do
+      approve(epic_slug: "alpha", stage: "research")
+
+      expect(stage("epic_plan").open?(queue, epic_slug: "alpha")).to be(true)
+      expect(stage("epic_plan").blocked_by(queue, epic_slug: "alpha")).to eq(parked: [], unapproved: [])
+    end
+  end
+
   describe "parking a decision" do
     it "refuses an issue-scoped stage's park that names no issue, before the queue is asked" do
       expect { stage("issue_plan").ensure_parkable!(issue_id: nil) }
