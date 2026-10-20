@@ -118,7 +118,7 @@ module Lain
           return deliver(block, call) if block["is_error"]
 
           digest = Canonical.digest(block["content"])
-          return deduplicate(block, call, @seen.fetch(digest)) if @seen.key?(digest) && shorter?(block, digest)
+          return deduplicate(block, call, @seen.fetch(digest)) if @seen.key?(digest)
           return withhold(block, call) if !fits?(block) && call.rerunnable?
 
           @seen[digest] ||= call.id
@@ -134,8 +134,6 @@ module Lain
         # Once one result is withheld the round has reached its budget, so a
         # smaller one after it is withheld too, rather than delivered past it.
         def fits?(block) = !@reached && @spent + size(block) <= @limit.bytes
-
-        def shorter?(block, digest) = reference(@seen.fetch(digest)).bytesize < size(block)
 
         def reference(first) = "same result as call #{first}"
 

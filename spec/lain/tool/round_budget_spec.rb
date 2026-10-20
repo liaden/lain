@@ -95,13 +95,35 @@ RSpec.describe Lain::Tool::RoundBudget do
     expect(records.first.withheld).to eq(%w[tu_2 tu_3])
   end
 
-  it "delivers a repeated result whole when naming the earlier call would not be shorter" do
-    blocks = [result("tu_1", "ok"), result("tu_2", "ok")]
+  it "answers an identical result by naming the earlier call whatever its size" do
+    blocks = [result("tu_1", "abc"), result("tu_2", "abc")]
 
     delivered, records = bounded(round26, blocks, [call("tu_1"), call("tu_2")])
 
-    expect(delivered).to eq(blocks)
-    expect(records).to be_empty
+    expect(delivered.last["content"]).to eq("same result as call tu_1")
+    expect(records.first.deduplicated).to eq(%w[tu_2])
+  end
+
+  it "withholds under a larger budget nothing a smaller one delivers, whatever the first id's length" do
+    ids = ["toolu_0", "t1" * 11, "toolu_2", "toolu_3", "toolu_4"]
+    blocks = ids.zip(["b" * 300, *(["d" * 40] * 4)]).map { |id, content| result(id, content) }
+    calls = ids.zip([read_file, read_file, subagent, read_file, read_file]).map { |id, tool| call(id, tool) }
+    withheld = lambda do |bytes|
+      limit = described_class::Limit.new(bytes:, scope: "static")
+      bounded(described_class::Round.new("static", limit, nil), blocks, calls).last.flat_map(&:withheld)
+    end
+
+    expect(withheld.call(377) - withheld.call(306)).to be_empty
+  end
+
+  it "answers a 2-byte result past the budget with a refusal larger than the result" do
+    budget = described_class::Round.new("static", described_class::Limit.new(bytes: 0, scope: "static"), nil)
+    blocks = [result("tu_1", "ok")]
+
+    delivered, = bounded(budget, blocks, [call("tu_1")])
+
+    expect(delivered.first["content"].bytesize).to be > blocks.first["content"].bytesize
+    expect(delivered.first["is_error"]).to be(true)
   end
 
   it "never asks for the room when there is no budget" do
@@ -224,6 +246,49 @@ RSpec.describe Lain::Tool::RoundBudget do
                  Lain::Tools::MemoryRead.new(index: Lain::Memory::Index.empty)]
 
       expect(readers.map(&:rerunnable?)).to all(be(true))
+    end
+  end
+
+  describe "the laws of a round (property-tested)" do
+    contents = ["a" * 36, "b" * 44]
+    draw = PropCheck::Generators.tuple(
+      PropCheck::Generators.one_of(*contents.map { |content| PropCheck::Generators.constant(content) }),
+      PropCheck::Generators.choose(0..29),
+      PropCheck::Generators.choose(0..2),
+      PropCheck::Generators.choose(1..8)
+    )
+    draws = PropCheck::Generators.array(draw, min: 3, max: 6)
+    budget = PropCheck::Generators.choose(0..130)
+
+    def round_of(draws)
+      draws.each_with_index.map do |(content, error, tool, width), index|
+        id = "t#{index}" * width
+        [result(id, content, is_error: error.zero?), call(id, [read_file, subagent, read_file][tool])]
+      end.transpose
+    end
+
+    def answered(bytes, blocks, calls)
+      limit = described_class::Limit.new(bytes:, scope: "static")
+      bounded(described_class::Round.new("static", limit, nil), blocks, calls)
+    end
+
+    it "never lets a call's fate depend on the calls after it", aggregate_failures: false do
+      forall(draws:, budget:, keep: PropCheck::Generators.choose(0..8)) do |draws:, budget:, keep:|
+        blocks, calls = round_of(draws)
+        whole, = answered(budget, blocks, calls)
+        prefix, = answered(budget, blocks.take(keep), calls.take(keep))
+
+        expect(whole.take(keep)).to eq(prefix)
+      end
+    end
+
+    it "withholds under a larger budget only what a smaller one withholds", aggregate_failures: false do
+      forall(draws:, budget:, extra: PropCheck::Generators.choose(0..45)) do |draws:, budget:, extra:|
+        blocks, calls = round_of(draws)
+        withheld = ->(bytes) { answered(bytes, blocks, calls).last.flat_map(&:withheld) }
+
+        expect(withheld.call(budget + extra) - withheld.call(budget)).to be_empty
+      end
     end
   end
 end
