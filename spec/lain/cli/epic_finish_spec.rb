@@ -84,7 +84,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
     it "promotes epic/demo, merges one pull request to main, deletes the remote branch, keeps the local one" do
       landed = tip
 
-      output = command.finish("demo")
+      output = command.finish("demo").text
 
       expect(github).to have_received(:pr_create).once.with(hash_including(base: "main", head: "epic/demo"))
       expect(github).to have_received(:pr_merge).once
@@ -100,7 +100,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
         answer(7)
       end
 
-      output = command.finish("demo")
+      output = command.finish("demo").text
 
       expect(output).to include("finished demo")
       expect(calls.flatten).not_to include("--delete")
@@ -109,7 +109,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
     it "finishes when somebody else merged the pull request, deleting the remote branch" do
       allow(github).to receive_messages(pr_view: answer({ "state" => "MERGED" }), merge_state: answer("UNKNOWN"))
 
-      output = command.finish("demo")
+      output = command.finish("demo").text
 
       expect(output).to include("finished demo")
       expect(github).not_to have_received(:pr_merge)
@@ -125,7 +125,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       write_epic("demo", "a" => "done", "b" => "done", "c" => "done")
       moved = tip
 
-      output = command.finish("demo")
+      output = command.finish("demo").text
 
       expect(output).to include("finished demo at #{moved}")
       expect(github).to have_received(:pr_create).twice
@@ -189,9 +189,9 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
 
       output = finish.finish("demo")
 
-      expect(output).to include("stopped demo", "refs/heads/epic/demo/a", "refs/heads/epic/demo/b",
-                                "`lain epic finish demo` again")
-      expect(finish.exit_status).to eq(1)
+      expect(output.text).to include("stopped demo", "refs/heads/epic/demo/a", "refs/heads/epic/demo/b",
+                                     "`lain epic finish demo` again")
+      expect(output.status).to eq(1)
       expect(%w[a b].map { |issue| remote_ref("refs/heads/epic/demo/#{issue}") }).to all(eq(tip))
       expect(remote_ref("refs/heads/epic/demo")).to be_empty
       expect(github).not_to have_received(:pr_create)
@@ -207,6 +207,19 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       }
       expect(forge_actions).to be_empty
       expect(github).not_to have_received(:pr_create)
+    end
+  end
+
+  describe "one command object asked to finish twice" do
+    it "gives each answer its own status, so a refused finish is not inherited by the next" do
+      %w[a b].each { |issue| git(root, "push", "-q", "origin", "#{tip}:refs/heads/epic/demo/#{issue}") }
+      finish = command
+      refused = finish.finish("demo")
+      %w[a b].each { |issue| git(root, "push", "-q", "origin", ":refs/heads/epic/demo/#{issue}") }
+
+      accepted = finish.finish("demo")
+
+      expect([refused.status, accepted.status]).to eq([1, 0])
     end
   end
 
@@ -228,7 +241,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       before = git(root, "rev-parse", "main")
       landed = tip
 
-      output = local.finish("demo")
+      output = local.finish("demo").text
 
       expect(git(root, "rev-list", "--parents", "-n", "1", "main").split.drop(1)).to eq([before, landed])
       expect(output).to include("finished demo at #{landed}", "merged into main", "nothing was pushed")
@@ -262,7 +275,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       commit("README" => "main moved\n")
       before = git(root, "rev-parse", "main")
 
-      output = local.finish("demo")
+      output = local.finish("demo").text
 
       expect(output).to include("stopped demo", "README", "`lain epic finish demo --local` again")
       expect(git(root, "rev-parse", "main")).to eq(before)
@@ -302,7 +315,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       File.write(File.join(paths.sessions_dir, "crashed.ndjson"), "#{line}\n")
       git(root, "remote", "add", "origin", remote)
 
-      output = command.finish("demo")
+      output = command.finish("demo").text
 
       expect(output).to include("finished demo", "pull request #7 -- merged")
       expect(github).to have_received(:pr_merge).once

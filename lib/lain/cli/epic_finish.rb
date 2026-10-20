@@ -5,8 +5,8 @@ module Lain
     # `lain epic finish [SLUG]`: take an epic whose every issue is done to main
     # as ONE pull request. {Forge::Landing} promotes `epic/<slug>`, opens the
     # pull request against main, merges it and deletes the remote branch. The
-    # local branch stays: worktree gc reaps it once main holds it. Returns
-    # Strings and prints nothing.
+    # local branch stays: worktree gc reaps it once main holds it. Returns a
+    # {Said} and prints nothing.
     #
     # `--local` is the same finish for a repository with no remote:
     # {Forge::LocalFinish} merges `epic/<slug>` into main in place, journaled
@@ -63,10 +63,6 @@ module Lain
         def detailed(detail) = [detail["epic_slug"].to_s, detail["issue_id"].to_s]
       end
 
-      # @return [Integer] 1 once the last finish stopped, else 0; the String
-      #   {#finish} returns carries no status of its own
-      attr_reader :exit_status
-
       # @param root [String] the project root, which is also the checkout
       #   holding `epic/<slug>`
       # @param paths [Paths] injected, so a spec resolves a throwaway state home
@@ -86,11 +82,10 @@ module Lain
         @shell_out_factory = shell_out_factory
         @github = github
         @finisher = finisher
-        @exit_status = 0
       end
 
       # @param slug [String, nil] the epic; omitted resolves to the sole one
-      # @return [String]
+      # @return [Said] status 1 when the finish stopped, else 0
       # @raise [Unfinished] naming every issue that is not done
       def finish(slug = nil)
         epic_slug = @epics.resolve_slug(slug, command: "epic finish")
@@ -151,9 +146,9 @@ module Lain
       end
 
       def told(epic_slug, sha, answer)
-        @exit_status = answer.ok? ? 0 : 1
         head = ["#{answer.ok? ? "finished" : "stopped"} #{epic_slug} at #{sha}", "  branch epic/#{epic_slug}"]
-        (head + (answer.ok? ? @finisher.finished(epic_slug, answer) : stopped(epic_slug, answer))).join("\n")
+        lines = head + (answer.ok? ? @finisher.finished(epic_slug, answer) : stopped(epic_slug, answer))
+        Said.new(text: lines.join("\n"), status: answer.ok? ? 0 : 1)
       end
 
       # Read leniently because the producers differ: {Forge::Landing}'s

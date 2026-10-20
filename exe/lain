@@ -87,10 +87,10 @@ class LainCLI < Thor
     # The one command-body shape every read-only report command shares: say
     # the String the block returns, mapping Lain::Error onto Thor's contract.
     #
-    # Ctrl-C is the SAME precedent {#exit_status} sets for `watch`: a clean
-    # word and a nonzero status, never a backtrace over a signal the operator
-    # sent on purpose. 130 (128 + SIGINT) is the shell's own convention for
-    # "this process died to a signal", which is what actually happened.
+    # Ctrl-C ends a report with a clean word and status 130 (128 + SIGINT), the
+    # shell's own convention for "this process died to a signal", never a
+    # backtrace over a signal the operator sent on purpose. {#exit_status}
+    # differs on purpose: Ctrl-C is how a `watch` tail ends, so it exits 0.
     def render(newline: true, &block)
       newline ? say(yield) : say(yield, nil, false)
     rescue Interrupt
@@ -105,10 +105,9 @@ class LainCLI < Thor
     # The command is built inside render because building it can raise a
     # Lain::Error, which render maps onto Thor's contract.
     def render_failing(build)
-      command = nil
-      render { yield(command = build.call) }
-      status = command.exit_status
-      exit status unless status.zero?
+      said = nil
+      render { (said = yield(build.call)).text }
+      exit said.status unless said.status.zero?
     end
 
     # For commands that OWN their exit status (watch): pass the block's

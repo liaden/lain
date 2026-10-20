@@ -506,6 +506,30 @@ RSpec.describe LainCLI do
     end
   end
 
+  # A command that answers with a {Lain::CLI::Said} is printed whole, and its
+  # status becomes the process's when it is not 0.
+  describe "a report command that says no" do
+    def refusing_class(status)
+      Class.new(Thor) do
+        include LainCLI::Boundary
+
+        def self.exit_on_failure? = true
+        desc "go", "answers with words and a status"
+        define_method(:go) { render_failing(-> { :command }) { |_| Lain::CLI::Said.new(text: "stopped", status:) } }
+      end
+    end
+
+    it "prints the words and exits with the status it carries" do
+      expect { refusing_class(1).start(%w[go], debug: true) }
+        .to output("stopped\n").to_stdout
+        .and raise_error(SystemExit) { |error| expect(error.status).to eq(1) }
+    end
+
+    it "prints the words and returns normally on status 0" do
+      expect { refusing_class(0).start(%w[go], debug: true) }.to output("stopped\n").to_stdout
+    end
+  end
+
   # `--yolo` is gone: every posture it bought is reachable through `/mode bypass`,
   # and the branches only it could reach went with it. What matters at this seam
   # is that the removal is LOUD -- a flag silently ignored would start a session

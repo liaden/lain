@@ -338,10 +338,6 @@ module Lain
       # verdict is a different job from resolving a home, a policy, a queue and a
       # journal: by the time this is built every one of those is settled.
       class Verdict
-        # @return [Integer] 1 for a denial or a closed window, 0 otherwise: a
-        #   deferral parks the artifact for a human and is not a failure
-        attr_reader :exit_status
-
         def initialize(submission:, stage:, policy:, gate:, queue:, advance:, journal:)
           @journal = journal
           @submission = submission
@@ -350,7 +346,6 @@ module Lain
           @gate = gate
           @queue = queue
           @advance = advance
-          @exit_status = 0
         end
 
         # `Sync` because {Approval::Gate#call} parks on the asker's promise, and
@@ -364,7 +359,8 @@ module Lain
         # one every other command's `render` meets, not a translation only this
         # one command's caller would need to know to rescue.
         #
-        # @return [String]
+        # @return [Said] status 1 for a denial or a closed window, 0 otherwise:
+        #   a deferral parks the artifact for a human and is not a failure
         # @raise [Epic::StageBlocked] before anything is journaled, when an
         #   earlier stage of this epic (or of this issue) still holds sign-offs
         #   parked
@@ -381,8 +377,9 @@ module Lain
         def slug = @submission.slug
 
         def approved
-          ["approved #{@submission.digest} by policy #{@policy.name}",
-           "  #{@stage} for epic #{slug} (#{@submission.fact})", "  #{@advance.call}"].join("\n")
+          Said.new(text: ["approved #{@submission.digest} by policy #{@policy.name}",
+                          "  #{@stage} for epic #{slug} (#{@submission.fact})", "  #{@advance.call}"].join("\n"),
+                   status: 0)
         end
 
         # The queue can still hold an item parked by an earlier command, so this
@@ -395,17 +392,15 @@ module Lain
           parked ? deferred(parked) : failed { denied }
         end
 
-        def failed
-          @exit_status = 1
-          yield
-        end
+        def failed = Said.new(text: yield, status: 1)
 
         def parked_item = @queue.parked(slug, @stage.name).find { |item| item.artifact_digest == @submission.digest }
 
         def deferred(item)
-          ["deferred #{item.artifact_digest}",
-           "  parked in #{item.partition} -- nothing advanced",
-           "  review it: lain epic queue #{item.epic_slug}"].join("\n")
+          Said.new(text: ["deferred #{item.artifact_digest}",
+                          "  parked in #{item.partition} -- nothing advanced",
+                          "  review it: lain epic queue #{item.epic_slug}"].join("\n"),
+                   status: 0)
         end
 
         # A closed window denies, but nobody decided it, so it is not said as a denial.
@@ -421,10 +416,6 @@ module Lain
           ["denied #{@submission.digest}", "  #{@stage} for epic #{slug} -- nothing advanced"].join("\n")
         end
       end
-
-      # @return [Integer] the last {#submit}'s status: 1 for a denial or a
-      #   closed window, 0 otherwise; the String it returns carries none
-      attr_reader :exit_status
 
       # `root:` defaults to the RESOLVED project's, not to `Dir.pwd`, for the
       # reason {CLI::Epic#initialize} states -- and asking `epics` is not enough
@@ -472,7 +463,6 @@ module Lain
         @root = root
         @paths = paths
         @config = config
-        @exit_status = 0
         @asker = asker
         @unheard = Prompt.unheard(input:, output:) || Prompt::NO_ASKER
         @journal = journal ? Lent.new(journal) : Owned.new(paths)
@@ -564,11 +554,12 @@ module Lain
           @command = command
         end
 
-        # @return [String] the verdict, as {EpicSubmit#submit}
+        # @return [String] the verdict's words, as {EpicSubmit#submit} says them;
+        #   a chat's tool result has no exit status to carry
         # @raise [Lain::Error] when the session would not keep the decision
         def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil)
           refuse_unkept!
-          @command.submit(stage, slug, issue:, digest:, tests:)
+          @command.submit(stage, slug, issue:, digest:, tests:).text
         end
 
         private
@@ -616,12 +607,11 @@ module Lain
       # @param issue [String, nil] which issue, for the issue-scoped stages
       # @param digest [String, nil] the changeset address, for `implementation`
       # @param tests [Telemetry::TestsRan, nil] what the suite did on that changeset, for `implementation`
-      # @return [String] the verdict, rendered
+      # @return [Said] the verdict, rendered
       # @raise [Lain::Error] every refusal on this path: an unknown stage, an
       #   ambiguous home, a missing artifact, an unbuildable policy, or the
       #   stage boundary
       def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil)
-        @exit_status = 0
         staged = Lain::Epic::Stage.new(stage)
         epic_home = home(slug)
         decide(staged, epic_home, Artifacts.new(home: epic_home, root: @root, issue:, digest:, tests:))
@@ -674,10 +664,8 @@ module Lain
         return standing(submission, ready) { open.call if advance.moves? } if standing?(queue, submission)
 
         required.each { |plan| ensure_approved!(queue, plan) }
-        verdict(Verdict.new(submission:, stage:, policy:, gate:, queue:, advance: ready, journal:))
+        Verdict.new(submission:, stage:, policy:, gate:, queue:, advance: ready, journal:).call
       end
-
-      def verdict(verdict) = verdict.call.tap { @exit_status = verdict.exit_status }
 
       # The boundary a verdict meets inside {Approval::Gate::Policy#decide},
       # asked here only on the two routes that never reach it: a standing
@@ -781,9 +769,10 @@ module Lain
       # advance that writes nothing (an implementation's re-submit).
       def standing(submission, advance)
         yield
-        ["already approved #{submission.digest}",
-         "  #{submission.stage} for epic #{submission.slug} -- nothing was decided again",
-         "  #{advance.call}"].join("\n")
+        Said.new(text: ["already approved #{submission.digest}",
+                        "  #{submission.stage} for epic #{submission.slug} -- nothing was decided again",
+                        "  #{advance.call}"].join("\n"),
+                 status: 0)
       end
 
       # The adjudication pair: the role spawn an `adjudicated` gate sends its

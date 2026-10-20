@@ -160,13 +160,13 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "names the approval and the artifact it approved" do
-      said = command(gates: { "research" => "hands_off" }).submit("research")
+      said = command(gates: { "research" => "hands_off" }).submit("research").text
 
       expect(said).to include("approved", research_digest, "research", "alpha")
     end
 
     it "names the policy that approved it" do
-      said = command(gates: { "research" => "hands_off" }).submit("research")
+      said = command(gates: { "research" => "hands_off" }).submit("research").text
 
       expect(said.lines.first).to include("by policy hands_off")
     end
@@ -215,7 +215,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     before { write_research }
 
     it "approves research and advances the epic" do
-      said = command(gates: { "research" => "hands_off" }).submit("research")
+      said = command(gates: { "research" => "hands_off" }).submit("research").text
 
       expect(said).to start_with("approved #{research_digest}")
       expect(said).to include("research completed, epic_plan started")
@@ -228,7 +228,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       session("approved.ndjson", decision(digest: research_digest, stage: "research", approved: true,
                                           policy: "hands_off"))
 
-      said = command(gates: { "research" => "hands_off" }).submit("research")
+      said = command(gates: { "research" => "hands_off" }).submit("research").text
 
       expect(said).to include("already approved", "research completed, epic_plan started")
       expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
@@ -272,7 +272,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       deferring.submit("issue_plan", issue: "a")
       command.submit("issue_plan", issue: "b")
 
-      said = command.submit("implementation", issue: "b", digest: changeset)
+      said = command.submit("implementation", issue: "b", digest: changeset).text
 
       expect(said).to start_with("approved")
       expect(parked_plans.map(&:issue_id)).to eq(["a"])
@@ -285,7 +285,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       command.submit("issue_plan", issue: "b")
       command.submit("implementation", issue: "a", digest: changeset)
 
-      said = command.submit("implementation", issue: "b", digest: changeset)
+      said = command.submit("implementation", issue: "b", digest: changeset).text
 
       expect(said).not_to start_with("already approved")
       implementations = gate_decisions.select { |record| record["stage"] == "implementation" }
@@ -304,7 +304,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "puts a in flight when a's plan is approved, leaves b pending, and takes a out of the ready set" do
       expect(progress.ready.map(&:id)).to eq(["a"])
 
-      said = command.submit("issue_plan", issue: "a")
+      said = command.submit("issue_plan", issue: "a").text
 
       expect(said).to include("issue a moved pending -> in_flight")
       expect([progress.status("a"), progress.status("b")]).to eq(%w[in_flight pending])
@@ -335,7 +335,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "names the issue's own partition when its plan parks" do
-      expect(deferring.submit("issue_plan", issue: "a")).to include("parked in alpha/issue_plan/a")
+      expect(deferring.submit("issue_plan", issue: "a").text).to include("parked in alpha/issue_plan/a")
     end
 
     it "moves no epic-wide stage for one issue's plan" do
@@ -365,7 +365,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # slug -- all three of which the denied branch prints too, so deleting the
     # deferral rendering entirely left the suite green.
     it "prints the parked digest and the stage it is parked in" do
-      said = command(gates: hands_off.merge("epic_plan" => "deferred")).submit("epic_plan")
+      said = command(gates: hands_off.merge("epic_plan" => "deferred")).submit("epic_plan").text
 
       expect(said).to start_with("deferred #{epic_plan_digest}")
       expect(said).to include("parked in alpha/epic_plan", "lain epic queue alpha")
@@ -379,10 +379,9 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "exits 0, because a deferral is not a failure" do
-      submit = command(gates: hands_off.merge("epic_plan" => "deferred"))
-      submit.submit("epic_plan")
+      said = command(gates: hands_off.merge("epic_plan" => "deferred")).submit("epic_plan")
 
-      expect(submit.exit_status).to eq(0)
+      expect(said.status).to eq(0)
     end
 
     it "leaves the artifact parked for sign-off" do
@@ -438,8 +437,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
       deny_revision
       expect { command.submit("epic_plan") }.to raise_error(Lain::Epic::StageBlocked, /research not approved/)
 
-      expect(command.submit("research")).to start_with("approved #{research_digest("v1\n")}")
-      expect(command.submit("epic_plan")).to start_with("approved")
+      expect(command.submit("research").text).to start_with("approved #{research_digest("v1\n")}")
+      expect(command.submit("epic_plan").text).to start_with("approved")
     end
   end
 
@@ -471,7 +470,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       write_epic(slug: "other")
       session("approved.ndjson", *approvals("research", slug: "plans"))
 
-      expect(command.submit("epic_plan", "plans")).to start_with("approved")
+      expect(command.submit("epic_plan", "plans").text).to start_with("approved")
     end
 
     it "does not read another epic's approvals as this one's" do
@@ -512,7 +511,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       File.write(File.join(sessions_dir, "chat.ndjson"),
                  %({"ts":"2026-01-01T00:00:00.000000Z","type":"turn","digest":"blake3:\n))
 
-      said = command(gates: { "research" => "hands_off" }).submit("research")
+      said = command(gates: { "research" => "hands_off" }).submit("research").text
 
       expect(said).to include("approved", research_digest)
       expect(gate_decisions.map { |record| record["stage"] }).to eq(["research"])
@@ -588,7 +587,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     # Scenario: an unattended submit of a hands-off stage proceeds
     it "decides a hands_off stage while the stages it is not submitting are left interactive" do
-      said = command(gates: { "research" => "hands_off" }, input: nil).submit("research")
+      said = command(gates: { "research" => "hands_off" }, input: nil).submit("research").text
 
       expect(said).to include("approved", research_digest)
       expect(gate_decisions.map { |record| record.values_at("stage", "policy") }).to eq([%w[research hands_off]])
@@ -668,7 +667,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "decides a clear artifact, journaling the evidence and a terminal adjudicated decision" do
-      said = adjudicated("APPROVE").submit("research")
+      said = adjudicated("APPROVE").submit("research").text
 
       expect(said).to start_with("approved")
       expect(journal_records.map { |record| record["type"] }).to include("gate_evidence")
@@ -676,7 +675,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "parks an artifact the adjudicator will not call, for a human" do
-      said = adjudicated("It is one sentence -- I cannot tell whether it covers the epic.").submit("research")
+      said = adjudicated("It is one sentence -- I cannot tell whether it covers the epic.").submit("research").text
 
       expect(said).to start_with("deferred")
       expect(Lain::Approval::SignoffQueue.from_journal(journal_records).drained?("alpha", "research")).to be(false)
@@ -684,7 +683,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     it "builds its own pair from the backend flags and decides through a real spawn" do
       said = from_options(adjudicating, backend: -> { real_backend("the evidence, gathered", "APPROVE") })
-             .submit("research")
+             .submit("research").text
 
       expect(said).to start_with("approved")
       expect(gate_decisions.last).to include("policy" => "adjudicated")
@@ -764,7 +763,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       interactive = Lain::Epic::STAGES.to_h { |stage| [stage, "interactive"] }
 
       said = from_options(interactive, backend: -> { raise "built a backend with nothing to adjudicate" })
-             .submit("research")
+             .submit("research").text
 
       expect(said).to start_with("approved")
     end
@@ -837,7 +836,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
             task.yield until asker.pending?
             yield asker.last_question
           end
-          seat.submit("research")
+          seat.submit("research").text
         end
       end
 
@@ -891,7 +890,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
               task.yield until asker.pending?
               write_beneath(asker.last_question, reply)
             end
-            seat.submit("research").tap { surfaces.each(&:stop) }
+            seat.submit("research").text.tap { surfaces.each(&:stop) }
           end
         end
 
@@ -957,7 +956,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
             task.yield until asker.pending?
             while_waiting = inbox_count
           end
-          seat.submit("research")
+          seat.submit("research").text
         end
 
         expect(said).to include("nobody answered", "nothing advanced")
@@ -1025,7 +1024,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "says so and decides nothing" do
-      said = command(gates: { "research" => "hands_off" }).submit("research")
+      said = command(gates: { "research" => "hands_off" }).submit("research").text
 
       expect(said).to include("already approved", research_digest)
       expect(gate_decisions.size).to eq(1)
@@ -1035,7 +1034,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # whose process died, or whose surface never advanced the epic, left the
     # epic reading research; re-submitting is how the operator repairs it.
     it "repairs an approval that never advanced the epic" do
-      said = command(gates: { "research" => "hands_off" }).submit("research")
+      said = command(gates: { "research" => "hands_off" }).submit("research").text
 
       expect(said).to include("already approved", "research completed, epic_plan started")
       expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
@@ -1064,7 +1063,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       session("advanced.ndjson", stage_event("research", event: "completed"), stage_event("epic_plan"),
               at: "2026-01-01T00:00:01Z")
 
-      said = command(gates: { "research" => "hands_off" }).submit("research")
+      said = command(gates: { "research" => "hands_off" }).submit("research").text
 
       expect(said).to include("nothing moved")
       expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
@@ -1083,7 +1082,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     reused = command(gates: { "research" => "hands_off" })
 
     reused.submit("research")
-    said = reused.submit("research")
+    said = reused.submit("research").text
 
     expect(said).to include("already approved")
     expect(gate_decisions.size).to eq(1)
@@ -1150,7 +1149,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "denies on anything but an affirmative reply, and advances nothing" do
-      said = command(gates: hands_off.merge("research" => "interactive"), input: tty("n\n")).submit("research")
+      said = command(gates: hands_off.merge("research" => "interactive"), input: tty("n\n")).submit("research").text
 
       expect(said).to include("denied")
       expect(stage_transitions).to be_empty
@@ -1158,18 +1157,16 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "exits 1 on a denial and 0 on an approval" do
-      denied = command(gates: hands_off.merge("research" => "interactive"), input: tty("n\n"))
-      denied.submit("research")
-      approved = command(gates: hands_off.merge("research" => "interactive"), input: tty("y\n"))
-      approved.submit("research")
+      denied = command(gates: hands_off.merge("research" => "interactive"), input: tty("n\n")).submit("research")
+      approved = command(gates: hands_off.merge("research" => "interactive"), input: tty("y\n")).submit("research")
 
-      expect([denied.exit_status, approved.exit_status]).to eq([1, 0])
+      expect([denied.status, approved.status]).to eq([1, 0])
     end
 
     it "prints denied, not parked, when a human denies over an earlier deferral of the same digest" do
       session("parked.ndjson", decision(digest: research_digest, stage: "research"))
 
-      said = command(gates: hands_off.merge("research" => "interactive"), input: tty("n\n")).submit("research")
+      said = command(gates: hands_off.merge("research" => "interactive"), input: tty("n\n")).submit("research").text
 
       expect(said).to start_with("denied")
       expect(said).not_to include("parked")
@@ -1187,7 +1184,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "denies an unrecognised reply as unrecognised, never as the human's denial" do
-      said = command(gates: hands_off.merge("research" => "interactive"), input: tty("maybe\n")).submit("research")
+      said = command(gates: hands_off.merge("research" => "interactive"), input: tty("maybe\n")).submit("research").text
 
       expect(said).to include("denied")
       expect(gate_decisions.map { |record| record.values_at("approved", "answered_by") })
@@ -1196,7 +1193,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     # Scenario: end of input is not a human's answer
     it "fails closed on end of input, and records nobody's answer as eof" do
-      said = command(gates: hands_off.merge("research" => "interactive"), input: tty(nil)).submit("research")
+      said = command(gates: hands_off.merge("research" => "interactive"), input: tty(nil)).submit("research").text
 
       expect(said).to include("denied")
       expect(gate_decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "eof"]])
@@ -1231,7 +1228,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
         "y\n"
       end
 
-      said = command(gates: hands_off.merge("research" => "interactive"), input: slow).submit("research")
+      said = command(gates: hands_off.merge("research" => "interactive"), input: slow).submit("research").text
 
       expect(said).to include("approved")
       expect(gate_decisions.map { |record| record["answered_by"] }).to eq(["human"])
@@ -1275,7 +1272,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       verdict = described_class.new(submission:, stage: Lain::Epic::Stage.new("research"), policy:, gate: nil,
                                     queue: nil, advance: nil, journal:)
 
-      expect(verdict.call).to include("within 1 second --")
+      expect(verdict.call.text).to include("within 1 second --")
     end
 
     it "exits 1 when the window closed unanswered" do
@@ -1286,9 +1283,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       submission = Lain::Epic::Submission.research(text: research_text, slug: "alpha")
       verdict = described_class.new(submission:, stage: Lain::Epic::Stage.new("research"), policy:, gate: nil,
                                     queue: nil, advance: nil, journal:)
-      verdict.call
-
-      expect(verdict.exit_status).to eq(1)
+      expect(verdict.call.status).to eq(1)
     end
   end
 
@@ -1374,7 +1369,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       write_research
       write_epic
 
-      expect(command.submit("research")).to include("alpha")
+      expect(command.submit("research").text).to include("alpha")
     end
 
     # The remedy names THIS command, not the report: a human who typed
@@ -1396,7 +1391,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       write_research("beta's research\n", slug: "beta")
       write_epic(slug: "beta")
 
-      said = command.submit("research", "beta")
+      said = command.submit("research", "beta").text
 
       expect(said).to include("beta", research_digest("beta's research\n", slug: "beta"))
     end
@@ -1443,7 +1438,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       session("zz-parked.ndjson", decision(digest: research_digest("v2\n"), stage: "research"),
               at: Time.now.utc.iso8601(6))
 
-      expect(command.submit("implementation", issue: "a", digest: changeset)).to start_with("already approved")
+      expect(command.submit("implementation", issue: "a", digest: changeset).text).to start_with("already approved")
     end
 
     it "journals the criteria the plan was approved with" do
@@ -1477,7 +1472,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       home.write_epic(graph_with("it works, and says so"))
       command.submit("issue_plan", issue: "a")
 
-      expect(command.submit("implementation", issue: "a", digest: changeset)).to start_with("approved")
+      expect(command.submit("implementation", issue: "a", digest: changeset).text).to start_with("approved")
     end
 
     it "refuses an implementation for an issue whose plan was never approved" do
@@ -1515,7 +1510,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "submits the plan written for one issue" do
       home.plan("a").write("the plan for a\n")
 
-      said = command.submit("issue_plan", issue: "a")
+      said = command.submit("issue_plan", issue: "a").text
 
       expect(said).to include("approved", "issue_plan")
     end
@@ -1585,7 +1580,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       seeded_on("epic/alpha")
       commit_on_branch(red_subject)
 
-      said = command.submit("implementation", issue: "a", digest: commit_on_branch("feat: greet"))
+      said = command.submit("implementation", issue: "a", digest: commit_on_branch("feat: greet")).text
 
       expect(said).to start_with("approved")
       expect(implementation_stages).to eq(["implementation"])
