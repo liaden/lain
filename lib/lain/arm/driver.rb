@@ -99,24 +99,15 @@ module Lain
       end
       private_constant :Unmeasured
 
-      # Stamps the arm onto every grade record on its way to the journal. The
-      # grader is shared by all arms and cannot know which one called it.
-      ArmJournal = Data.define(:journal, :arm) do
-        def <<(record) = journal << record.with(arm:)
-      end
-      private_constant :ArmJournal
-
       # The arm drains its own journal to price, so the stamped copy for the run journal is made here.
       SandboxCopy = Class.new(SimpleDelegator) do
-        def initialize(journal, run:, arm:, task:)
+        def initialize(journal, copy:)
           super(journal)
-          @run = run
-          @arm = arm
-          @task = task
+          @copy = copy
         end
 
         def <<(record)
-          @run << record.with(arm: @arm, task: @task) if record.is_a?(Telemetry::Sandbox)
+          @copy << record if record.is_a?(Telemetry::Sandbox)
           __getobj__ << record
           self
         end
@@ -124,12 +115,12 @@ module Lain
       private_constant :SandboxCopy
 
       # Hands each spawn a {SandboxCopy} of the journal the arm gave it.
-      CopyingSeam = Data.define(:seam, :run, :arm, :task) do
+      CopyingSeam = Data.define(:seam, :copy) do
         # @param journal [#<<] the arm's own journal
         # @param options [Hash] passed to the seam unchanged
         # @option options [Object] :worker_env the lease's environment, among the seam's other keywords
         # @return [Lain::Agent]
-        def call(journal:, **options) = seam.call(journal: SandboxCopy.new(journal, run:, arm:, task:), **options)
+        def call(journal:, **options) = seam.call(journal: SandboxCopy.new(journal, copy:), **options)
       end
       private_constant :CopyingSeam
 
@@ -255,14 +246,14 @@ module Lain
       end
 
       def distributions_for(arm)
-        grader = Grader::Journaling.new(inner: @grader, journal: ArmJournal.new(@journal, arm.name),
-                                        subject_digest: SUBJECT_DIGEST)
-        runs = @tasks.each_with_index.map { |task, index| run_task(arm, task, index + 1, grader) }
+        runs = @tasks.each_with_index.map { |task, index| run_task(arm, task, index + 1) }
         METRICS.transform_values { |spec| fold(runs, spec) }
       end
 
-      def run_task(arm, task, number, grader)
-        seam = CopyingSeam.new(@spawn_seam, @journal, arm.name, Canonical.digest(task))
+      def run_task(arm, task, number)
+        copy = run_copy(arm, task)
+        grader = Grader::Journaling.new(inner: @grader, journal: copy, subject_digest: SUBJECT_DIGEST)
+        seam = CopyingSeam.new(@spawn_seam, copy)
         arm.run(task, spawn_seam: seam, isolation: @isolation, grader:)
       rescue Agent::Budget::Exceeded => e
         journal_failure(arm, task, number, "at the ceiling", e)
@@ -273,10 +264,12 @@ module Lain
         TaskFailure.new(index: number, reason:)
       end
 
+      def run_copy(arm, task) = Telemetry::Stamped::Sink.new(@journal, arm.name, Canonical.digest(task))
+
       # The arm never handed back a Timeline, so the task's own prompt is the
       # only thing left to address the failed grade by.
       def journal_failure(arm, task, number, where, error)
-        ArmJournal.new(@journal, arm.name) << Telemetry::GradeRecord.new(
+        run_copy(arm, task) << Telemetry::GradeRecord.new(
           grader: self.class.name, score: 0.0, pass: false,
           why: "task #{number} failed #{where}: #{error.message}", subject_digest: Canonical.digest(task)
         )

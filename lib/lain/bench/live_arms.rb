@@ -188,17 +188,6 @@ module Lain
               "server says it has no such model. Name a --cheap-model it serves"
       end
 
-      # The record cannot know its arm or task, and a run journal is shared by every arm.
-      StampedTransition = Data.define(:record, :arm, :task) do
-        def to_journal = record.to_journal.merge("arm" => arm, "task" => task)
-      end
-      private_constant :StampedTransition
-
-      TransitionSink = Data.define(:journal, :arm, :task) do
-        def <<(record) = journal << StampedTransition.new(record:, arm:, task:)
-      end
-      private_constant :TransitionSink
-
       # {Arm::DualLedger} whose transitions also reach the run journal. The
       # arm's own journal is drained for pricing, so the copy is taken on the
       # way in; `@task` is set per run because the factory is called without one.
@@ -216,7 +205,7 @@ module Lain
         private
 
         def ledger_tee(run_journal)
-          Channel::Tee.new(TransitionSink.new(journal: run_journal, arm: name, task: @task),
+          Channel::Tee.new(Telemetry::Stamped::Sink.new(journal: run_journal, arm: name, task: Canonical.digest(@task)),
                            only: LedgerTransition.method(:===))
         end
       end

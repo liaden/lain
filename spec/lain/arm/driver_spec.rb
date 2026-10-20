@@ -532,7 +532,7 @@ RSpec.describe Lain::Arm::Driver do
 
     it "journals a failing grade whose why names the ceiling" do
       described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
-      failed = journal.drain.grep(Lain::Telemetry::GradeRecord).reject(&:pass)
+      failed = journal.drain.grep(Lain::Telemetry::Stamped).map(&:record).grep(Lain::Telemetry::GradeRecord).reject(&:pass)
 
       expect(failed.map(&:why)).to eq(["task 1 failed at the ceiling: loop ran 25 iterations, ceiling is 25",
                                        "task 2 failed at the ceiling: loop ran 25 iterations, ceiling is 25"])
@@ -576,7 +576,7 @@ RSpec.describe Lain::Arm::Driver do
 
     it "journals a failing grade whose why names malformed, for each task" do
       report_with([arms.first], malformed_seam)
-      failed = journal.drain.grep(Lain::Telemetry::GradeRecord).reject(&:pass)
+      failed = journal.drain.grep(Lain::Telemetry::Stamped).map(&:record).grep(Lain::Telemetry::GradeRecord).reject(&:pass)
 
       expect(failed.map(&:why)).to match([/task 1 failed malformed: /, /task 2 failed malformed: /])
     end
@@ -638,7 +638,7 @@ RSpec.describe Lain::Arm::Driver do
 
     it "names the arm on every grade record, the failed one included" do
       report
-      records = journal.drain.grep(Lain::Telemetry::GradeRecord)
+      records = journal.drain.grep(Lain::Telemetry::Stamped).select { _1.record.is_a?(Lain::Telemetry::GradeRecord) }
 
       expect(records.map(&:arm).tally).to eq("flaky" => 3, "single-thread" => 3)
     end
@@ -686,20 +686,41 @@ RSpec.describe Lain::Arm::Driver do
       end
     end
 
-    def sandbox_records = journal.drain.grep(Lain::Telemetry::Sandbox)
+    def sandbox_copies
+      journal.drain.grep(Lain::Telemetry::Stamped).select { _1.record.is_a?(Lain::Telemetry::Sandbox) }
+    end
 
     it "copies each sandbox record there, stamped with the arm and the task" do
       described_class.new(arms, tasks:, spawn_seam: sandboxed_seam, grader:, journal:).report
 
-      expect(sandbox_records.map { [_1.arm, _1.task] }).to eq(
+      expect(sandbox_copies.map { [_1.arm, _1.task] }).to eq(
         arms.flat_map { |arm| tasks.map { |task| [arm.name, Lain::Canonical.digest(task)] } }
       )
+    end
+
+    it "stamps the grade copies the same way" do
+      described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
+      grades = journal.drain.grep(Lain::Telemetry::Stamped).select { _1.record.is_a?(Lain::Telemetry::GradeRecord) }
+
+      expect(grades.map { [_1.arm, _1.task] }).to eq(
+        arms.flat_map { |arm| tasks.map { |task| [arm.name, Lain::Canonical.digest(task)] } }
+      )
+    end
+
+    it "leaves the arm's own journal unstamped" do
+      seen = []
+      spying = lambda do |journal:, **opts|
+        sandboxed_seam.call(journal:, **opts).tap { seen.concat(journal.drain) }
+      end
+      described_class.new(arms, tasks:, spawn_seam: spying, grader:, journal:).report
+
+      expect(seen).to all(be_a(Lain::Telemetry::Sandbox)).and(satisfy(&:any?))
     end
 
     it "journals nothing extra for a seam that records no sandbox use" do
       described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
 
-      expect(sandbox_records).to be_empty
+      expect(sandbox_copies).to be_empty
     end
   end
 
@@ -713,7 +734,9 @@ RSpec.describe Lain::Arm::Driver do
   describe "#report — the grade on the experiment record" do
     let(:journal) { Lain::Channel.new }
 
-    def grade_records(channel) = channel.drain.grep(Lain::Telemetry::GradeRecord)
+    def grade_records(channel)
+      channel.drain.grep(Lain::Telemetry::Stamped).map(&:record).grep(Lain::Telemetry::GradeRecord)
+    end
 
     # Scenario: a graded arm run writes its score to the journal.
     it "journals one grade record per run, carrying the score" do

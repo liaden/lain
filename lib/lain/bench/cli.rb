@@ -437,7 +437,7 @@ module Lain
       def partial_arms_report(graded)
         records = graded
         tables = records.group_by(&:arm).map do |arm, group|
-          rows = group.each_with_index.map do |record, index|
+          rows = group.map(&:record).each_with_index.map do |record, index|
             [(index + 1).to_s, record.pass.to_s, format("%.3f", record.score)]
           end
           "#{arm || "(no arm)"}\n#{Compare::Table.new(headers: %w[run pass score], rows:)}"
@@ -754,7 +754,7 @@ module Lain
       # landed before it.
       GradeTap = Data.define(:journal, :graded) do
         def <<(record)
-          graded << record if record.is_a?(Telemetry::GradeRecord)
+          graded << record if record.record.is_a?(Telemetry::GradeRecord)
           journal << record
         end
       end

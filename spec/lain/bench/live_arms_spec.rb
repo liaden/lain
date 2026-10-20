@@ -372,13 +372,25 @@ END", model: "claude-sonnet-4",
 
     def dual_ledger(**) = described_class.build(**).find { |arm| arm.name == "dual-ledger" }
 
-    it "leaves its ledger transitions in the journal, stamped with the arm and the task" do
+    it "leaves its ledger transitions in the journal, stamped with the arm and the task digest" do
       dual_ledger(journal:).run("loop forever", spawn_seam: seam, grader:)
 
       replans = journal.select { |record| record.to_journal["event"] == :replan }
       expect(replans.map(&:to_journal)).to include(
-        a_hash_including("type" => "ledger_transition", "arm" => "dual-ledger", "task" => "loop forever")
+        a_hash_including("type" => "ledger_transition", "arm" => "dual-ledger",
+                         "task" => Lain::Canonical.digest("loop forever"))
       )
+    end
+
+    it "hands the arm's own journal its transitions unstamped" do
+      seen = []
+      spying = lambda do |journal:, **opts|
+        seam.call(journal:, **opts).tap { seen.concat(journal.drain) }
+      end
+      dual_ledger(journal:).run("loop forever", spawn_seam: spying, grader:)
+
+      expect(seen.grep(Lain::Arm::DualLedger::LedgerTransition)).not_to be_empty
+      expect(seen.grep(Lain::Telemetry::Stamped)).to be_empty
     end
 
     it "journals nothing but the transitions" do

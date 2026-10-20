@@ -347,7 +347,7 @@ RSpec.describe Lain::Bench::CLI do
       journal = Lain::Channel.new
       cli.arm_report(arms, tasks:, spawn_seam:, grader:, isolation: "none", journal:)
 
-      records = journal.drain.grep(Lain::Telemetry::GradeRecord)
+      records = journal.drain.grep(Lain::Telemetry::Stamped).map(&:record).grep(Lain::Telemetry::GradeRecord)
       expect(records.size).to eq(arms.size * tasks.size)
       expect(records.map(&:grader).uniq).to eq([Lain::Grader::Fixture.name])
       expect(records.map(&:score)).to all(eq(1.0))
@@ -773,7 +773,8 @@ RSpec.describe Lain::Bench::CLI do
     end
 
     it "heads a grade that names no arm with (no arm), not an empty line" do
-      record = Lain::Telemetry::GradeRecord.new(grader: "G", score: 1.0, pass: true, why: "ok", subject_digest: "d")
+      grade = Lain::Telemetry::GradeRecord.new(grader: "G", score: 1.0, pass: true, why: "ok", subject_digest: "d")
+      record = Lain::Telemetry::Stamped.new(record: grade, arm: nil, task: "t")
 
       expect(cli.send(:partial_arms_report, [record]).lines.map(&:chomp)).to include("(no arm)")
     end
@@ -795,7 +796,9 @@ RSpec.describe Lain::Bench::CLI do
 
       arms
 
-      expect(journal.drain.grep(Lain::Telemetry::GradeRecord).size).to eq(1)
+      expect(journal.drain.grep(Lain::Telemetry::Stamped).count do |copy|
+        copy.record.is_a?(Lain::Telemetry::GradeRecord)
+      end).to eq(1)
     end
   end
 
@@ -827,7 +830,7 @@ RSpec.describe Lain::Bench::CLI do
 
     it "journals a failing grade record naming the ceiling" do
       report
-      failed = journal.drain.grep(Lain::Telemetry::GradeRecord).reject(&:pass)
+      failed = journal.drain.grep(Lain::Telemetry::Stamped).map(&:record).grep(Lain::Telemetry::GradeRecord).reject(&:pass)
 
       expect(failed.map(&:why)).to include(a_string_matching(/ceiling/))
     end
