@@ -2805,3 +2805,9 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   a loaded box: a full `Context#render` after 1 commit Ruby 43.3 ms against Ext 36.6 ms (about 1.2x, near noise); cold
   `messages` 9.7 against 23.6 ms; cold full render 47.9 against 64.3 ms (Ext about 34% slower); the spike's replay-render
   89 against 40 ips. The user's gate (chat path not slower) still holds; the user is told the correction.
+- 2026-10-20 T33: user ruled install cargo-mutants and gate in CI too; installed `cargo-mutants 27.1.0` (`cargo install --locked`). T33 starts after T35 lands so the sweep covers the final `lib.rs` and `dag.rs`. T6 stopped on scope; widened with no shim. T35 approved on second review (render after 1 commit Ruby 39.6 ms, Ext 36.2 ms on a quiet box).
+- 2026-10-20 T35 landed `27db5f7a`; started T33 (sonnet), cut at `27db5f7a`.
+- 2026-10-20 user asked to parallelize: T9, T12 and T24 start before their file-chaining predecessors (T7, T7, T9) land,
+  since those dependencies are shared files, not shared code; the later card lands by 3-way patch, and a conflicting
+  worktree is rebased by the main session. Follow-up owed after T37 (user request): flamegraph profiles of a cold full
+  render and of a full render after 1 new turn, to find optimisations; ask before starting it.
