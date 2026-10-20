@@ -2853,7 +2853,7 @@ RSpec.describe Lain::Agent do
         .to eq([[a.timeline.to_a[1].digest, %w[tu_4 tu_5 tu_9 tu_10 tu_14 tu_15]]])
     end
 
-    it "hands the budget the room as a value with the window, usage, ceiling and head" do
+    it "hands the budget the room as a value with the window, usage and ceiling" do
       rooms = []
       spy = Lain::Tool::RoundBudget.new(:spy) do |room|
         rooms << room
@@ -2867,7 +2867,7 @@ RSpec.describe Lain::Agent do
       a.ask("read them all")
 
       expect(rooms).to contain_exactly(have_attributes(
-                                         window: 32_768, ceiling: 16_384, head: a.timeline.to_a[1].digest,
+                                         window: 32_768, ceiling: 16_384,
                                          usage: have_attributes(output_tokens: 300)
                                        ))
     end

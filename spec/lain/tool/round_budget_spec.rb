@@ -15,15 +15,13 @@ RSpec.describe Lain::Tool::RoundBudget do
     { "type" => "tool_result", "tool_use_id" => id, "content" => content, "is_error" => is_error }
   end
 
-  def room(window:, usage: Lain::Usage.zero, ceiling: 16_384, head: nil)
-    Lain::Tool::Room.new(window:, usage:, ceiling:, head:)
-  end
+  def room(window:, usage: Lain::Usage.zero, ceiling: 16_384) = Lain::Tool::Room.new(window:, usage:, ceiling:)
 
   def call(id, tool = read_file) = described_class::Call.new(id:, tool:)
 
   def round26
-    described_class.window.for do
-      room(window: 32_768, usage: Lain::Usage.new(input_tokens: 7_492), head: "blake3:asked")
+    described_class.window.for(head: "blake3:asked") do
+      room(window: 32_768, usage: Lain::Usage.new(input_tokens: 7_492))
     end
   end
 
@@ -126,8 +124,28 @@ RSpec.describe Lain::Tool::RoundBudget do
     expect(delivered.first["is_error"]).to be(true)
   end
 
+  it "still deduplicates under a budget of off, and withholds nothing" do
+    blocks = [result("tu_1", "x" * 50_000), result("tu_2", "x" * 50_000), result("tu_3", "y" * 50_000)]
+    budget = described_class.dedup_only.for(head: "blake3:asked") { raise "the room was computed" }
+
+    delivered, records = bounded(budget, blocks, %w[tu_1 tu_2 tu_3].map { |id| call(id) })
+
+    expect(delivered.map { |block| block["content"] }).to eq(["x" * 50_000, "same result as call tu_1", "y" * 50_000])
+    expect(records.first).to have_attributes(withheld: [], head: "blake3:asked", basis: "dedup")
+  end
+
+  it "delivers a repeated result whole when dedup is off" do
+    blocks = [result("tu_1", "same"), result("tu_2", "same")]
+    budget = described_class.window.without_dedup.for(head: nil) { room(window: 32_768) }
+
+    delivered, records = bounded(budget, blocks, [call("tu_1"), call("tu_2")])
+
+    expect(delivered).to eq(blocks)
+    expect(records).to be_empty
+  end
+
   it "never asks for the room when there is no budget" do
-    budget = described_class::NONE.for { raise "the room was computed" }
+    budget = described_class::NONE.for(head: nil) { raise "the room was computed" }
 
     expect(budget.call([result("tu_1", "a")], [call("tu_1")])).to eq([result("tu_1", "a")])
   end
@@ -151,7 +169,7 @@ RSpec.describe Lain::Tool::RoundBudget do
   end
 
   it "holds a static budget to twice the per-result ceiling whatever the window" do
-    budget = described_class.static.for { room(window: 1_000_000) }
+    budget = described_class.static.for(head: nil) { room(window: 1_000_000) }
     blocks = [result("tu_1", "a" * 20_000), result("tu_2", "b" * 20_000)]
 
     delivered, records = bounded(budget, blocks, [call("tu_1"), call("tu_2")])
@@ -162,7 +180,7 @@ RSpec.describe Lain::Tool::RoundBudget do
 
   it "takes the last turn's output and the reply reserve out of the window before converting to bytes" do
     usage = Lain::Usage.new(input_tokens: 2_000, output_tokens: 1_000)
-    budget = described_class.window.for { room(window: 20_000, usage:, ceiling: 2_000) }
+    budget = described_class.window.for(head: nil) { room(window: 20_000, usage:, ceiling: 2_000) }
 
     _, records = bounded(budget, [result("tu_1", "a" * 25_000)], [call("tu_1")])
 
@@ -171,7 +189,7 @@ RSpec.describe Lain::Tool::RoundBudget do
 
   it "leaves a small window room for a small result despite the reply reserve's floor" do
     usage = Lain::Usage.new(input_tokens: 5_084, output_tokens: 643)
-    budget = described_class.window.for { room(window: 8_192, usage:) }
+    budget = described_class.window.for(head: nil) { room(window: 8_192, usage:) }
 
     blocks = [result("tu_1", "a" * 60)]
 
@@ -182,7 +200,7 @@ RSpec.describe Lain::Tool::RoundBudget do
 
   it "holds back the whole reserve on a large window" do
     usage = Lain::Usage.new(input_tokens: 5_000, output_tokens: 1_000)
-    budget = described_class.window.for { room(window: 200_000, usage:, ceiling: 4_096) }
+    budget = described_class.window.for(head: nil) { room(window: 200_000, usage:, ceiling: 4_096) }
 
     _, records = bounded(budget, [result("tu_1", "a" * 100), result("tu_2", "a" * 100)],
                          [call("tu_1"), call("tu_2")])
@@ -196,7 +214,7 @@ RSpec.describe Lain::Tool::RoundBudget do
     fires = lambda { |used|
       need.check(window_tokens: 8_192, used_tokens: used, reply_ceiling: 16_384).signals.include?(:approaching_window)
     }
-    budget = described_class.window.for { room(window: 8_192) }
+    budget = described_class.window.for(head: nil) { room(window: 8_192) }
     _, records = bounded(budget, [result("tu_1", "a" * 20_000)], [call("tu_1")])
 
     expect([fires.call(8_192 - reserve), fires.call(8_192 - reserve - 1)]).to eq([true, false])
@@ -210,7 +228,7 @@ RSpec.describe Lain::Tool::RoundBudget do
 
   it "delivers a result on an 8,192-token window after a 2,000-token last turn" do
     usage = Lain::Usage.new(input_tokens: 2_000)
-    budget = described_class.window.for { room(window: 8_192, usage:) }
+    budget = described_class.window.for(head: nil) { room(window: 8_192, usage:) }
     blocks = [result("tu_1", "a" * 4_000)]
 
     delivered, = bounded(budget, blocks, [call("tu_1")])
@@ -219,7 +237,7 @@ RSpec.describe Lain::Tool::RoundBudget do
   end
 
   it "never answers a budget below nothing when the last turn already overfilled the window" do
-    budget = described_class.window.for { room(window: 1_000, usage: Lain::Usage.new(input_tokens: 5_000), ceiling: 0) }
+    budget = described_class.window.for(head: nil) { room(window: 1_000, usage: Lain::Usage.new(input_tokens: 5_000), ceiling: 0) }
 
     _, records = bounded(budget, [result("tu_1", "a")], [call("tu_1")])
 
@@ -228,7 +246,7 @@ RSpec.describe Lain::Tool::RoundBudget do
 
   it "delivers everything and journals nothing with no budget" do
     blocks = [result("tu_1", "a" * 50_000), result("tu_2", "a" * 50_000)]
-    budget = described_class::NONE.for { room(window: 1, usage: Lain::Usage.new(input_tokens: 5), ceiling: 1) }
+    budget = described_class::NONE.for(head: nil) { room(window: 1, usage: Lain::Usage.new(input_tokens: 5), ceiling: 1) }
 
     delivered, records = bounded(budget, blocks, [call("tu_1"), call("tu_2")])
 
@@ -258,7 +276,8 @@ RSpec.describe Lain::Tool::RoundBudget do
       PropCheck::Generators.choose(1..8)
     )
     draws = PropCheck::Generators.array(draw, min: 3, max: 6)
-    budget = PropCheck::Generators.choose(0..130)
+    budget = PropCheck::Generators.one_of(PropCheck::Generators.choose(0..130),
+                                          PropCheck::Generators.constant(described_class::UNLIMITED.bytes))
 
     def round_of(draws)
       draws.each_with_index.map do |(content, error, tool, width), index|
@@ -267,27 +286,39 @@ RSpec.describe Lain::Tool::RoundBudget do
       end.transpose
     end
 
-    def answered(bytes, blocks, calls)
+    def answered(bytes, blocks, calls, dedup: true)
       limit = described_class::Limit.new(bytes:, scope: "static")
-      bounded(described_class::Round.new("static", limit, nil), blocks, calls)
+      bounded(described_class::Round.new("static", limit, nil, dedup:), blocks, calls)
     end
 
     it "never lets a call's fate depend on the calls after it", aggregate_failures: false do
-      forall(draws:, budget:, keep: PropCheck::Generators.choose(0..8)) do |draws:, budget:, keep:|
+      forall(draws:, budget:, keep: PropCheck::Generators.choose(0..8), dedup: PropCheck::Generators.one_of(
+        PropCheck::Generators.constant(true), PropCheck::Generators.constant(false)
+      )) do |draws:, budget:, keep:, dedup:|
         blocks, calls = round_of(draws)
-        whole, = answered(budget, blocks, calls)
-        prefix, = answered(budget, blocks.take(keep), calls.take(keep))
+        whole, = answered(budget, blocks, calls, dedup:)
+        prefix, = answered(budget, blocks.take(keep), calls.take(keep), dedup:)
 
         expect(whole.take(keep)).to eq(prefix)
       end
     end
 
     it "withholds under a larger budget only what a smaller one withholds", aggregate_failures: false do
-      forall(draws:, budget:, extra: PropCheck::Generators.choose(0..45)) do |draws:, budget:, extra:|
+      forall(draws:, budget:, extra: PropCheck::Generators.choose(0..45), dedup: PropCheck::Generators.one_of(
+        PropCheck::Generators.constant(true), PropCheck::Generators.constant(false)
+      )) do |draws:, budget:, extra:, dedup:|
         blocks, calls = round_of(draws)
-        withheld = ->(bytes) { answered(bytes, blocks, calls).last.flat_map(&:withheld) }
+        withheld = ->(bytes) { answered(bytes, blocks, calls, dedup:).last.flat_map(&:withheld) }
 
         expect(withheld.call(budget + extra) - withheld.call(budget)).to be_empty
+      end
+    end
+
+    it "withholds nothing at the top of the budget order", aggregate_failures: false do
+      forall(draws:) do |draws:|
+        blocks, calls = round_of(draws)
+
+        expect(answered(described_class::UNLIMITED.bytes, blocks, calls).last.flat_map(&:withheld)).to be_empty
       end
     end
   end

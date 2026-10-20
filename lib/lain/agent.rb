@@ -590,7 +590,7 @@ module Lain
                      toolset: @toolset,
                      observer: given.fetch(:tool_observer) { @instrumentation.tool_observer },
                      round_budget: given.fetch(:round_budget) { Tool::RoundBudget::NONE },
-                     room: method(:round_room), journal: @instrumentation.journal)
+                     room: method(:round_room), head: -> { @timeline.head_digest }, journal: @instrumentation.journal)
     end
 
     # The input reading is Accounting's, which survives a provider that
@@ -599,7 +599,7 @@ module Lain
     # that turn while its round runs, the settled path and the torn one alike.
     def round_room(usage)
       window = @context_window.window_tokens(context.model)
-      Tool::Room.new(window:, ceiling: context.max_tokens, head: @timeline.head_digest,
+      Tool::Room.new(window:, ceiling: context.max_tokens,
                      usage: Usage.new(input_tokens: accounting.last_turn_usage(on: @timeline).to_i,
                                       output_tokens: usage.output_tokens))
     end

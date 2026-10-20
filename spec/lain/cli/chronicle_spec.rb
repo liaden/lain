@@ -290,10 +290,11 @@ RSpec.describe Lain::CLI::Chronicle do
     end
 
     it "pins the bench arms it is handed into that header" do
-      arms = Lain::CLI::Arms.new(confine: :reader, judge_facts: :off, tripwire: :off, round_budget: :off)
+      arms = Lain::CLI::Arms.new(confine: :reader, judge_facts: :off, tripwire: :off, round_budget: :off,
+                                 round_dedup: :off)
       chronicle.start(context:, toolset:, arms:)
 
-      expect(of_type("session").first).to include("arms" => { "confine" => "reader" })
+      expect(of_type("session").first).to include("arms" => { "confine" => "reader", "round_dedup" => "off" })
     end
 
     it "pins whose trust admitted the configured middleware into that header" do
@@ -309,10 +310,10 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(of_type("session").first).not_to have_key("middleware")
     end
 
-    it "writes no arms key when none is handed" do
+    it "writes only the dedup arm, off, when none is handed" do
       chronicle.start(context:, toolset:)
 
-      expect(of_type("session").first).not_to have_key("arms")
+      expect(of_type("session").first).to include("arms" => { "round_dedup" => "off" })
     end
 
     # Loud, not lossy: an event arriving before the scribe exists must raise,

@@ -1307,17 +1307,19 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
     end
 
     it "keeps the recorded arms when no arm flag is typed, and notices nothing at or above the defaults" do
-      write_armed("confine" => "reader", "judge_facts" => "facts", "tripwire" => "observe", "round_budget" => "window")
+      write_armed("confine" => "reader", "judge_facts" => "facts", "tripwire" => "observe", "round_budget" => "window",
+                  "round_dedup" => "on")
 
       chat = armed_launch(resume: "")
 
       expect(chat.wiring.arms)
-        .to eq(Lain::CLI::Arms.new(confine: :reader, judge_facts: :facts, tripwire: :observe, round_budget: :window))
+        .to eq(Lain::CLI::Arms.new(confine: :reader, judge_facts: :facts, tripwire: :observe, round_budget: :window,
+                                   round_dedup: :on))
       expect(resumed_notices(chat)).to be_empty
     end
 
     it "keeps a recorded static round budget when no flag is typed, and says what a fresh chat runs" do
-      write_armed("confine" => "reader", "tripwire" => "observe", "round_budget" => "static")
+      write_armed("confine" => "reader", "tripwire" => "observe", "round_budget" => "static", "round_dedup" => "on")
 
       chat = armed_launch(resume: "")
 
@@ -1338,11 +1340,13 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
                 "running without --tripwire (off), as recorded; a fresh chat runs observe " \
                 "(pass --tripwire observe to run it)",
                 "running without --round-budget (off), as recorded; a fresh chat runs window " \
-                "(pass --round-budget window to run it)"])
+                "(pass --round-budget window to run it)",
+                "running without --round-dedup (off), as recorded; a fresh chat runs on " \
+                "(pass --round-dedup on to run it)"])
     end
 
     it "says so for a kept arm weaker than the default, and nothing for one the human typed" do
-      write_armed("confine" => "classes", "round_budget" => "window")
+      write_armed("confine" => "classes", "round_budget" => "window", "round_dedup" => "on")
 
       notices = resumed_notices(armed_launch(resume: "", tripwire: "off"))
 
@@ -1351,7 +1355,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
     end
 
     it "runs a typed arm over the recording and names it in a notice" do
-      write_armed("confine" => "reader", "tripwire" => "observe", "round_budget" => "window")
+      write_armed("confine" => "reader", "tripwire" => "observe", "round_budget" => "window",
+                  "round_dedup" => "on")
 
       chat = armed_launch(resume: "", confine: "off")
 
@@ -1361,7 +1366,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
     end
 
     it "runs a typed arm over a forked recording and names it in a notice" do
-      write_armed("confine" => "reader", "tripwire" => "observe", "round_budget" => "window")
+      write_armed("confine" => "reader", "tripwire" => "observe", "round_budget" => "window",
+                  "round_dedup" => "on")
 
       chat = armed_launch(fork: "@#{head_prefix}", confine: "off")
 

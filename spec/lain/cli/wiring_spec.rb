@@ -417,21 +417,24 @@ RSpec.describe Lain::CLI::Wiring do
 
       it "holds the arms that are on" do
         expect(header_of(armed)).to include("arms" => { "confine" => "reader", "judge_facts" => "facts",
-                                                        "tripwire" => "observe", "round_budget" => "window" })
+                                                        "tripwire" => "observe", "round_budget" => "window",
+                                                        "round_dedup" => "on" })
       end
 
-      it "holds the 3 default-on arms when no arm flag is typed" do
+      it "holds the 4 default-on arms when no arm flag is typed" do
         plain = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
 
         expect(header_of(plain))
-          .to include("arms" => { "confine" => "reader", "tripwire" => "observe", "round_budget" => "window" })
+          .to include("arms" => { "confine" => "reader", "tripwire" => "observe", "round_budget" => "window",
+                                  "round_dedup" => "on" })
       end
 
-      it "holds no arms key when every arm is off" do
-        off = described_class.new(options: { grace: 5, confine: "off", tripwire: "off", round_budget: "off" },
+      it "holds only round_dedup off when every arm is off" do
+        off = described_class.new(options: { grace: 5, confine: "off", tripwire: "off", round_budget: "off",
+                                             round_dedup: "off" },
                                   chronicle:, status_feed:)
 
-        expect(header_of(off)).not_to have_key("arms")
+        expect(header_of(off)).to include("arms" => { "round_dedup" => "off" })
       end
 
       context "with configured middleware" do
@@ -2538,11 +2541,11 @@ RSpec.describe Lain::CLI::Wiring do
 
     def basis_of_two_equal_results(budget)
       room = Lain::Tool::Room.new(window: 32_768, usage: Lain::Usage.new(input_tokens: 100, output_tokens: 10),
-                                  ceiling: 16_384, head: "h")
+                                  ceiling: 16_384)
       tool = Struct.new(:name) { def rerunnable? = true }.new("read_file")
       calls = %w[a b].map { |id| Lain::Tool::RoundBudget::Call.new(id:, tool:) }
       blocks = calls.map { |call| { "type" => "tool_result", "tool_use_id" => call.id, "content" => "x" * 400 } }
-      [].tap { |bases| budget.for { room }.call(blocks, calls) { |record| bases << record.basis } }
+      [].tap { |bases| budget.for(head: "h") { room }.call(blocks, calls) { |record| bases << record.basis } }
     end
 
     it "gives a plain chat's main agent the window round budget" do
@@ -2553,8 +2556,12 @@ RSpec.describe Lain::CLI::Wiring do
       expect(round_budget_basis(options: { round_budget: "static" })).to eq(["static"])
     end
 
-    it "gives the main agent no round budget when told off" do
-      expect(round_budget_basis(options: { round_budget: "off" })).to eq([])
+    it "gives the main agent only deduplication when the budget is off" do
+      expect(round_budget_basis(options: { round_budget: "off" })).to eq(["dedup"])
+    end
+
+    it "gives the main agent no round budget when both arms are off" do
+      expect(round_budget_basis(options: { round_budget: "off", round_dedup: "off" })).to eq([])
     end
 
     # The epic driver's supervisor, retirement and landing queue all journal

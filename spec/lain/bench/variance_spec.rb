@@ -374,8 +374,8 @@ RSpec.describe Lain::Bench::Variance do
     end
 
     it "raises when the recordings differ only in an arm's value" do
-      expect { described_class.new(recordings: [armed({ "confine" => "reader" }), armed({ "confine" => "full" })]) }
-        .to raise_error(Lain::Error, /differ in bench arms: confine=reader vs confine=full/)
+      expect { described_class.new(recordings: [armed({ "confine" => "reader" }), armed({ "confine" => "classes" })]) }
+        .to raise_error(Lain::Error, /differ in bench arms: confine=reader vs confine=classes/)
     end
 
     it "pools recordings that recorded no arms" do

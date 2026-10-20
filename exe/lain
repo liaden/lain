@@ -779,6 +779,9 @@ class LainCLI < Thor
     ARM_ROUND_BUDGET = "What one tool round's results may cost together " \
                        "(#{Lain::CLI::Arms::ROUND_BUDGET.join(", ")}; default window)".freeze
 
+    ARM_ROUND_DEDUP = "Answer a repeated tool result by naming the first " \
+                      "(#{Lain::CLI::Arms::ROUND_DEDUP.join(", ")}; default on)".freeze
+
     # @param thor [Class] the Thor class to declare on
     # @return [void]
     def self.declare(thor)
@@ -788,6 +791,7 @@ class LainCLI < Thor
       thor.method_option :judge_facts, type: :string, banner: "ARM", desc: ARM_JUDGE_FACTS
       thor.method_option :tripwire, type: :string, banner: "ARM", desc: ARM_TRIPWIRE
       thor.method_option :round_budget, type: :string, banner: "ARM", desc: ARM_ROUND_BUDGET
+      thor.method_option :round_dedup, type: :string, banner: "ARM", desc: ARM_ROUND_DEDUP
     end
 
     # The launch-time half of the flag, in a module method rather than inline in
@@ -925,7 +929,8 @@ class LainCLI < Thor
                                          system: options[:system], isolation: options[:isolation],
                                          cheap_model: options[:cheap_model], memory: options[:memory],
                                          arms: Lain::CLI::Arms.from(confine: options[:confine] || "off",
-                                                                    tripwire: "off", round_budget: "off"))
+                                                                    tripwire: "off", round_budget: "off",
+                                                                    round_dedup: "off"))
       end
     ensure
       # Closing is what discards a journal this run created and never wrote to,

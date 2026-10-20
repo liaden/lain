@@ -363,14 +363,15 @@ RSpec.describe "lain bench arms" do
       run("arms", "suite/tasks.yml")
 
       expect(kwargs.fetch(:arms)).to have_attributes(confine: :off, tripwire: :off)
-      expect(kwargs.fetch(:arms).to_header).to eq({})
+      expect(kwargs.fetch(:arms).to_header).to eq("round_dedup" => "off")
     end
 
     it "runs its agents with no round budget, so the run_arms record holds none" do
       run("arms", "suite/tasks.yml")
 
       expect(kwargs.fetch(:arms).round_budget).to eq(:off)
-      expect(kwargs.fetch(:arms).to_header).not_to have_key("round_budget")
+      expect(kwargs.fetch(:arms)).to have_attributes(round_dedup: :off)
+      expect(kwargs.fetch(:arms).to_header).to eq("round_dedup" => "off")
     end
 
     it "hands the entry point the arms it was started with" do

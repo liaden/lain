@@ -634,7 +634,8 @@ RSpec.describe Lain::Bench::CLI do
       report(reader)
 
       expect(journal.events.grep(Lain::Telemetry::RunArms))
-        .to eq([Lain::Telemetry::RunArms.new(arms: { "confine" => "reader", "opaque" => "refused" })])
+        .to eq([Lain::Telemetry::RunArms.new(arms: { "confine" => "reader", "round_dedup" => "off",
+                                                     "opaque" => "refused" })])
     end
 
     it "writes no record when the run is refused before it starts" do

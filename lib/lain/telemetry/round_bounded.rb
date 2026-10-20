@@ -11,7 +11,7 @@ module Lain
     #   @return [String, nil] the digest of the assistant turn that made the
     #     calls, since a provider may reuse call ids round after round
     # @!attribute [r] basis
-    #   @return [String] the policy, `window` or `static`
+    #   @return [String] the policy, `window`, `static` or `dedup`
     # @!attribute [r] budget
     #   @return [Integer] the bytes the round's results could spend
     # @!attribute [r] delivered

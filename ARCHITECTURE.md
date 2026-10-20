@@ -806,7 +806,7 @@ nokogiri converter produces rather than on the markup; `raw: true` asks for the 
 
 When an Agent is given one, a tool round's results are also bounded **as a whole**, by
 `Tool::RoundBudget` (`lib/lain/tool/round_budget.rb`): the policy builds a budget each round from a
-`Tool::Room` (the Agent's window, the last turn's usage, the reply ceiling and the head digest), less
+`Tool::Room` (the Agent's window, the last turn's usage and the reply ceiling), less
 the reply reserve. The reserve is `ReplyReserve.tokens`, `min(ceiling, max(min(4096, window / 4),
 window / 8), window / 2)`, the one figure `Compaction::Need` and `Review::Critique` also read, so the
 compaction trigger and the round agree on every window. `Agent::ToolRunner` applies it in call order, a torn round included. A repeated result is

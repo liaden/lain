@@ -129,6 +129,22 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(described_class.new(lines).recording.arms).to eq("confine" => "reader")
     end
 
+    it "reads a header from before the dedup arm as the same arms with dedup on" do
+      lines = entries.map do |line|
+        record = JSON.parse(line)
+        record.key?("context_class") ? JSON.generate(record.merge("arms" => { "round_budget" => "window" })) : line
+      end
+      expect(described_class.new(lines).recording.arms).to eq("round_budget" => "window", "round_dedup" => "on")
+    end
+
+    it "refuses a header whose arms hold a value outside an arm's set, rather than pooling it" do
+      lines = entries.map do |line|
+        record = JSON.parse(line)
+        record.key?("context_class") ? JSON.generate(record.merge("arms" => { "round_dedup" => "maybe" })) : line
+      end
+      expect { described_class.new(lines).recording }.to raise_error(Lain::CLI::Arms::Unknown, /round_dedup "maybe"/)
+    end
+
     it "answers empty arms for a header whose arms is null" do
       lines = entries.map do |line|
         record = JSON.parse(line)

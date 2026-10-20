@@ -61,8 +61,8 @@ module Lain
     # must keep it off; a compacting run writes no such key, so its header stays
     # the one it always was.
     #
-    # `arms:` is the bench arms that are on (`CLI::Arms#to_header`); an empty
-    # hash writes no key, so a run with every arm off keeps the older header.
+    # `arms:` is the bench arms that are on, and round_dedup either way
+    # (`CLI::Arms#to_header`); an empty hash writes no key.
     #
     # `middleware:` is whose trust digest admitted the configured middleware
     # (`Config::Middleware#to_header`), nested the same way and on the same

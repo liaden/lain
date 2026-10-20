@@ -232,7 +232,7 @@ RSpec.describe Lain::Session do
       def result_block(id, content) = { "type" => "tool_result", "tool_use_id" => id, "content" => content }
 
       def budgeted(ids, contents)
-        budget = Lain::Tool::RoundBudget.static.for { Lain::Tool::Room.new(window: 0, usage: Lain::Usage.zero, ceiling: 0, head: nil) }
+        budget = Lain::Tool::RoundBudget.static.for(head: nil) { Lain::Tool::Room.new(window: 0, usage: Lain::Usage.zero, ceiling: 0) }
         calls = ids.map { |id| Lain::Tool::RoundBudget::Call.new(id:, tool: Lain::Tools::ReadFile.new) }
         budget.call(ids.zip(contents).map { |id, content| result_block(id, content) }, calls)
       end

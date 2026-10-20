@@ -132,6 +132,13 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("session").first).to include("arms" => { "confine" => "reader" })
   end
 
+  it "names round_budget and round_dedup in the header of a default launch" do
+    arms = Lain::CLI::Arms.from({}).to_header
+    described_class.new(journal:, context:, toolset:, workspace:, arms:)
+
+    expect(of_type("session").first.fetch("arms")).to include("round_budget" => "window", "round_dedup" => "on")
+  end
+
   it "writes no arms key when every arm is off" do
     scribe
 

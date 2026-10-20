@@ -104,21 +104,20 @@ module Lain
         def switch_flag(compacts) = compacts ? "--compact" : "--no-compact"
 
         # A typed arm is the same loud-and-continue notice as any field. An
-        # untyped one keeps the recording, and is named only when that is
-        # weaker than a fresh chat's default, which every session recorded
-        # before the defaults moved is.
+        # untyped one keeps the recording, and is named only when it is weaker
+        # than a fresh chat's default or has no order against it.
         def arm_notices(typed)
           return [] if typed.nil?
 
           recorded = Arms.from_header(header)
-          weaker = recorded.weaker_than(Arms::DEFAULT)
+          differing = recorded.differs_from_default
           Arms::SETS.keys.filter_map do |arm|
-            arm_notice(arm, typed.public_send(arm), recorded.public_send(arm), kept_weaker: weaker.include?(arm))
+            arm_notice(arm, typed.public_send(arm), recorded.public_send(arm), kept_differing: differing.include?(arm))
           end
         end
 
-        def arm_notice(arm, ours, theirs, kept_weaker:)
-          return kept_notice(arm, theirs) if ours.nil? && kept_weaker
+        def arm_notice(arm, ours, theirs, kept_differing:)
+          return kept_notice(arm, theirs) if ours.nil? && kept_differing
           return if ours.nil? || ours == theirs
 
           "recorded #{as_recorded(arm, theirs)}; continuing with #{ours} (the current flags win)"
@@ -130,7 +129,8 @@ module Lain
             "(pass #{Arms.flag(arm)} #{default} to run it)"
         end
 
-        # A header writes only the arms that are on, so an off arm was never recorded as off.
+        # A header writes only the arms that are on, so an off arm was never recorded as off,
+        # except round_dedup, which is always written.
         def as_recorded(arm, value)
           value == :off ? "without #{Arms.flag(arm)} (off)" : "with #{Arms.flag(arm)} #{value}"
         end

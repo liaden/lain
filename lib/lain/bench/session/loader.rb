@@ -258,7 +258,13 @@ module Lain
                          "which no longer resolves: #{e.message}"
         end
 
-        def bench_facts = { arms: header["arms"] || {}, compact: header["compact"], opaque: }
+        def bench_facts = { arms:, compact: header["compact"], opaque: }
+
+        # Read through {CLI::Arms} so an unknown value raises, and an off dedup is dropped like
+        # every other off arm, so old and new runs of one setup pool.
+        def arms
+          ::Lain::CLI::Arms.from_header(header).to_header.reject { |arm, value| arm == "round_dedup" && value == "off" }
+        end
 
         def opaque = of_type("run_arms").filter_map { |record| record.dig("arms", "opaque") }.first
 

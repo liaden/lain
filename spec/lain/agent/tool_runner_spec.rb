@@ -720,15 +720,26 @@ RSpec.describe Lain::Agent::ToolRunner do
 
   describe "a round budget" do
     let(:journal) { [] }
-    let(:room) { ->(usage) { Lain::Tool::Room.new(window: 32_768, usage: usage + Lain::Usage.new(input_tokens: 7_492), ceiling: 16_384, head: nil) } }
+    let(:room) { ->(usage) { Lain::Tool::Room.new(window: 32_768, usage: usage + Lain::Usage.new(input_tokens: 7_492), ceiling: 16_384) } }
 
     def reader(name, body, release: ToolRunnerSpecSupport::OpenGate.new)
       ToolRunnerSpecSupport::RerunnableProbe.new(name:, safe: true, log: [], release:, body: -> { body })
     end
 
-    def bounded_runner(*tools, round_budget: Lain::Tool::RoundBudget.window)
+    def bounded_runner(*tools, round_budget: Lain::Tool::RoundBudget.window, head: -> { "blake3:asked" })
       described_class.new(handler: Lain::Effect::Handler::Live.new, toolset: Lain::Toolset.new(tools),
-                          round_budget:, room:, journal:)
+                          round_budget:, room:, head:, journal:)
+    end
+
+    it "journals the head of the turn that made the calls under every policy, the dedup-only one included" do
+      [Lain::Tool::RoundBudget.window, Lain::Tool::RoundBudget.dedup_only].each do |policy|
+        journal.clear
+        runner = bounded_runner(reader("one", "a" * 40), reader("again", "a" * 40), round_budget: policy)
+
+        runner.run(tool_response(["tu_1", "one", {}], ["tu_2", "again", {}]), context: nil)
+
+        expect(journal.map(&:head)).to eq(["blake3:asked"])
+      end
     end
 
     it "holds the round's results to the budget the policy builds from the room, and journals it" do

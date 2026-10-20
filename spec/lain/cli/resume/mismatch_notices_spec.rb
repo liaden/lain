@@ -20,7 +20,9 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
 
   def typed(**values) = Lain::CLI::Arms::UNSET.with(**values)
 
-  def at_defaults(**arms) = { "confine" => "reader", "tripwire" => "observe", "round_budget" => "window" }.merge(arms)
+  def at_defaults(**arms)
+    { "confine" => "reader", "tripwire" => "observe", "round_budget" => "window", "round_dedup" => "on" }.merge(arms)
+  end
 
   it "names a typed arm that differs from the recording" do
     path = session_with(arms: at_defaults)
@@ -45,7 +47,23 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
               "running without --tripwire (off), as recorded; a fresh chat runs observe " \
               "(pass --tripwire observe to run it)",
               "running without --round-budget (off), as recorded; a fresh chat runs window " \
-              "(pass --round-budget window to run it)"])
+              "(pass --round-budget window to run it)",
+              "running without --round-dedup (off), as recorded; a fresh chat runs on " \
+              "(pass --round-dedup on to run it)"])
+  end
+
+  it "reads a header from before the dedup arm as dedup on, and notices nothing" do
+    path = session_with(arms: at_defaults.except("round_dedup"))
+
+    expect(notices(path, typed)).to be_empty
+    expect(notices(path, typed(round_dedup: :on))).to be_empty
+  end
+
+  it "names round_dedup when a session recorded with dedup on is resumed with it off" do
+    path = session_with(arms: at_defaults("round_dedup" => "on"))
+
+    expect(notices(path, typed(round_dedup: :off)))
+      .to eq(["recorded with --round-dedup on; continuing with off (the current flags win)"])
   end
 
   it "stays silent when a typed arm agrees, or an untyped one keeps a recording at or above the default" do

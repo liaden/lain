@@ -183,23 +183,28 @@ module Lain
 
       # The room a runner told nothing about its window has: none, so a budget
       # handed to it errs toward withholding.
-      ROOMLESS = ->(usage) { Tool::Room.new(window: 0, usage:, ceiling: 0, head: nil) }
+      ROOMLESS = ->(usage) { Tool::Room.new(window: 0, usage:, ceiling: 0) }
+
+      # A runner with no timeline has no turn to name.
+      HEADLESS = -> {}
 
       # `toolset:` is what a call's name resolves against -- ONCE per call, in
       # {#dispatch} -- and what {#answered_questions} harvests from. `handler`
       # interprets the tool that resolution found; it holds no toolset itself.
       # `round_budget:` is asked for one budget per round, with what `room:`
       # answers for the usage of the turn that made the calls; `journal:` is
-      # where a round it shortened is recorded.
+      # where a round it shortened is recorded, naming the turn `head:` answers
+      # for, because call ids can repeat across turns.
       def initialize(handler:, middleware: Middleware::Stack.new, toolset: Toolset.new,
                      observer: Observer::Null.new, round_budget: Tool::RoundBudget::NONE, room: ROOMLESS,
-                     journal: Channel::Null.instance)
+                     head: HEADLESS, journal: Channel::Null.instance)
         @handler = handler
         @middleware = middleware
         @toolset = toolset
         @observer = observer
         @round_budget = round_budget
         @room = room
+        @head = head
         @journal = journal
       end
 
@@ -309,7 +314,8 @@ module Lain
 
       def bounded(answers)
         calls = answers.uses.map { |tool_use| Tool::RoundBudget::Call.new(id: tool_use.id, tool: resolved(tool_use.name)) }
-        @round_budget.for { @room.call(answers.usage) }.call(answers.blocks, calls) { |record| @journal << record }
+        budget = @round_budget.for(head: @head.call) { @room.call(answers.usage) }
+        budget.call(answers.blocks, calls) { |record| @journal << record }
       end
 
       def refuse_foreign_answers(response, answers)

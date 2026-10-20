@@ -30,11 +30,14 @@ module Lain
       # No budget: every result delivered, nothing journaled, and the room never
       # asked for, so a window book that cannot name the model costs nothing.
       module Unbounded
-        def self.for = self
+        def self.for(**) = self
         def self.call(blocks, _calls) = blocks
       end
 
       NONE = Unbounded
+
+      # A budget no round reaches, as a number so the record's budget stays an Integer.
+      UNLIMITED = Limit.new(bytes: 2**62, scope: "unlimited")
 
       # The window less the turn that made the calls, its reply and the
       # reserve for the next reply, in bytes.
@@ -54,23 +57,38 @@ module Lain
       # @return [RoundBudget]
       def self.static = new(:static) { |_room| Limit.new(bytes: 2 * Bounds::RESULT_BYTES, scope: "static") }
 
+      # Dedup with no budget: the top of the budget order, short of the unbounded
+      # policy, which also leaves repeats whole.
+      #
+      # @return [RoundBudget]
+      def self.dedup_only = new(:dedup)
+
       # @param basis [Symbol] the name the record gives this policy
+      # @param dedup [Boolean] whether a repeated result is answered by naming the first
       # @yieldparam room [Room]
-      # @yieldreturn [Limit]
-      def initialize(basis, &limit)
+      # @yieldreturn [Limit] without a block the budget is {UNLIMITED}
+      def initialize(basis, dedup: true, &limit)
         @basis = -basis.to_s
+        @dedup = dedup
         @limit = limit
         freeze
       end
 
+      # @return [RoundBudget] the same budget, leaving repeated results whole
+      def without_dedup = self.class.new(@basis, dedup: false, &@limit)
+
       # The room is a block because only a real budget needs it, and working it
-      # out can raise.
+      # out can raise (the window of an unnamed model); a policy with no budget
+      # never asks, so the head comes apart from it.
       #
+      # @param head [String, nil] the digest of the turn that made the calls
       # @yieldreturn [Room]
       # @return [Round] this round's budget
-      def for
+      def for(head:)
+        return Round.new(@basis, UNLIMITED, head, dedup: @dedup) if @limit.nil?
+
         room = yield
-        Round.new(@basis, @limit.call(room), room.head)
+        Round.new(@basis, @limit.call(room), head, dedup: @dedup)
       end
 
       # One round's budget.
@@ -78,10 +96,12 @@ module Lain
         # @param basis [String] the policy's name
         # @param limit [Limit]
         # @param head [String, nil] the digest of the turn that made the calls
-        def initialize(basis, limit, head)
+        # @param dedup [Boolean]
+        def initialize(basis, limit, head, dedup: true)
           @basis = basis
           @limit = limit
           @head = head
+          @dedup = dedup
           freeze
         end
 
@@ -94,7 +114,7 @@ module Lain
         #   was withheld or deduplicated
         # @return [Array<Hash>] one block per call, in call order
         def call(blocks, calls)
-          pass = Pass.new(@limit)
+          pass = Pass.new(@limit, dedup: @dedup)
           bounded = blocks.zip(calls).map { |block, call| pass.answer(block, call) }
           yield pass.record(basis: @basis, head: @head) if block_given? && pass.bounded?
           bounded
@@ -104,8 +124,9 @@ module Lain
       # One walk over a round's results. Mutable on purpose, and private to
       # {Round#call}: an accumulator, never shared past the walk.
       class Pass
-        def initialize(limit)
+        def initialize(limit, dedup:)
           @limit = limit
+          @dedup = dedup
           @spent = 0
           @reached = false
           @seen = {}
@@ -118,7 +139,7 @@ module Lain
           return deliver(block, call) if block["is_error"]
 
           digest = Canonical.digest(block["content"])
-          return deduplicate(block, call, @seen.fetch(digest)) if @seen.key?(digest)
+          return deduplicate(block, call, @seen.fetch(digest)) if @dedup && @seen.key?(digest)
           return withhold(block, call) if !fits?(block) && call.rerunnable?
 
           @seen[digest] ||= call.id
