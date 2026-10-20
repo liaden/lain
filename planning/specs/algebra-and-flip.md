@@ -2780,3 +2780,12 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   stream may still collide with a placeholder arriving in a later chunk after a fresh slot was shown (a stream cannot see
   ahead; the live copy is its own numbering); T50's `ProcessGroup` got its own file and an injected sleeper instead of an
   inline rubocop disable; T45's `REMEDY` goes through `Epic::Remedy`; T3's ladder helper lives once in `spec/support`.
+- 2026-10-19 22:45 started T4 (opus), T20, T23, T46, T49 (sonnet), cut at `53e9e51e`; T31 review (opus, high).
+- 2026-10-19 T23 stopped: replacing `Agent::Budget` reaches 6 lib callers and about 25 specs outside its Files. Ruled: widen, no shim (no back-compat owed).
+- 2026-10-19 T4 stopped on poisoning placement. Ruled option B: poisoning once at the edge of each ladder value (the rules ladder, then the escalation ladder with the human exemption), because a single top edge would turn today's park-for-a-human after a faulted rule into a refusal. Files widened to the `RuleChain` users; `why_not` is a lazy reasoned abstention. T4 also fixed the Gate treating a truthy deny as approve.
+- 2026-10-19 T31 review (opus, high) REQUEST-CHANGES: event edges and heads were checked against both store maps, so a walk could reach a payload. Benchmark on a loaded box: append 3.7x to 3.9x Ruby (above the 2x line); replay-render Ext 39 ips against Ruby 92 (T35's job). Flake seen once: `algebra/strategy.rs` `a_violated_law_shrinks...` failed 1 of 6 cargo test runs during a mutant; a follow-up must make the shrink test seed-stable before it reds a hook. `ext/lain/CLAUDE.md`'s test count (235) is stale; T41 owns that file.
+- 2026-10-20 landing window 4, hook green each, runtime log 988: T49 `9b101871`; T46 `0ebf614d`; T20 `37756b6d`; T23 `a5c063a2`;
+  follow-up F2 `71a71346` (the shrink assertion on a fixed seed; the reported flake did not reproduce in 30 runs and was
+  probably a review mutant); T31 `56cff2b5` (2 store maps, events and members, with edges checked against events only;
+  append 3.7x to 3.9x Ruby). Rulings: T23 widened with no shim and named the pair `Budget::Account`; T20 pins the spike's
+  monotonicity witness; T46's remote check is pinned by a git that fails under `GIT_INDEX_FILE`.
