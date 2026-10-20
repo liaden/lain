@@ -47,6 +47,9 @@ module Lain
       # The kinds a run is parked on.
       ANSWERS = %i[human approval].freeze
 
+      # The kinds a producer draws a line editor at, so the only ones a Ctrl-C can take a typed line back from.
+      LINE_KINDS = %i[you command].freeze
+
       # The one kind whose lines are history: what a recall at `you>` puts back.
       RECALLED = :you
 
@@ -201,7 +204,8 @@ module Lain
       end
 
       # A producer, which is asked what was typed while nothing was drawn and
-      # whether anything has been typed at a prompt it draws (`untouched?`), and
+      # whether anything has been typed at a prompt it draws (`untouched?`,
+      # `typed?`), and
       # told whenever what is published changes. It says when it has opened a
       # read at a prompt ({#opened}).
       #
@@ -239,6 +243,22 @@ module Lain
         waiting = @lock.synchronize { @turns.first&.kind == :you && @turns.drop(1).any?(&:answer?) }
         preempt(prompt) if waiting && prompt.kind == :you && open?(prompt) && untouched?(prompt)
         nil
+      end
+
+      # A Ctrl-C over words typed at the prompt the signal arrived at takes the
+      # line back: the prompt is withdrawn, which ends the producer's read, and
+      # drawn again empty. The generation is checked so a late signal never
+      # clears a prompt the human did not see.
+      #
+      # @param arrived [#name, #generation] the signal and the prompt generation it arrived at
+      # @return [Symbol] `:cleared`, or `:passed` when the signal is still the caller's to route
+      def interrupt(arrived)
+        prompt = published
+        return :passed unless arrived.name == :sigint && prompt.generation == arrived.generation
+        return :passed unless LINE_KINDS.include?(prompt.kind) && typed?(prompt)
+
+        preempt(prompt)
+        :cleared
       end
 
       # Wait for this reader's turn, publish its prompt, and answer with the line
@@ -405,6 +425,10 @@ module Lain
       def untouched?(prompt)
         producers = @lock.synchronize { @producers.keys }
         !producers.empty? && producers.all? { |producer| producer.untouched?(prompt) }
+      end
+
+      def typed?(prompt)
+        @lock.synchronize { @producers.keys }.any? { |producer| producer.typed?(prompt) }
       end
 
       # The preempted `you>` withdraws, gives the head to the answers now ahead

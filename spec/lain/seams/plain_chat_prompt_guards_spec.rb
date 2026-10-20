@@ -911,6 +911,32 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       end
     end
 
+    # A Ctrl-C over words typed at the idle `you>` takes the line back and the
+    # chat lives; over an empty one it ends the chat.
+    describe "Ctrl-C at an idle you>" do
+      let(:shape) { "idle" }
+
+      it "clears a typed line, draws you> again empty, and keeps the chat alive" do
+        terminal.await(/you> /)
+        terminal.typed
+        terminal.type("half a thought")
+        terminal.await(/half a thought/)
+        terminal.type("\x03")
+        sleep(0.5)
+        terminal.type("fresh\r")
+        terminal.wait_for(what: "the next line") { terminal.dispatched.include?("fresh") }
+
+        expect([terminal.dispatched, terminal.exited?]).to eq([["fresh"], false])
+      end
+
+      it "ends the chat over an empty line" do
+        terminal.await(/you> /)
+        terminal.type("\x03")
+
+        expect(terminal.wait_for(what: "the chat to end") { terminal.exited? }).to be(true)
+      end
+    end
+
     # A dumb terminal reads cooked, so nothing can say whether the human has
     # begun typing at `you>`: an answer never takes the terminal there, and a
     # line typed across the arrival stays one line.

@@ -1297,7 +1297,7 @@ RSpec.describe Lain::Frontend::InputPane do
         Enumerator.produce { seen << pty_read(@pty.first, 1) }.find(&)
       end
 
-      %w[you command].each do |kind|
+      Lain::Frontend::Intake::LINE_KINDS.map(&:to_s).each do |kind|
         it "clears a line typed at #{kind}> on Ctrl-C, redraws the prompt empty, and sends the chat no signal" do
           chat = drawn_pane(kind)
           echo = echoed_until { |seen| seen.include?("#{kind}> ") }
@@ -1323,6 +1323,19 @@ RSpec.describe Lain::Frontend::InputPane do
         echoed_until(+"") { |seen| seen.include?("you> ") }
 
         expect(screen.string).to include("\e[1A\r\e[J")
+      end
+
+      %w[approval human].each do |kind|
+        it "sends a Ctrl-C over a line typed at #{kind}> to the chat, which opens its countdown" do
+          chat = drawn_pane(kind)
+          echo = echoed_until { |seen| seen.include?("#{kind}> ") }
+          @pty.first.write("half a thought")
+          echoed_until(echo) { |seen| seen.include?("thought") }
+
+          deliver("INT")
+
+          expect(next_frame(chat, of: "signal")).to eq({ "v" => "signal", "name" => "sigint" })
+        end
       end
 
       it "sends a Ctrl-C over an empty line at you> to the chat" do

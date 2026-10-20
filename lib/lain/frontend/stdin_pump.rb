@@ -33,6 +33,7 @@ module Lain
         def self.start(_task) = self
         def self.stop = nil
         def self.untouched?(_prompt) = true
+        def self.typed?(_prompt) = false
         def self.keep(_partial) = nil
 
         def self.exclusively(**) = yield(true)
@@ -174,6 +175,9 @@ module Lain
       # terminal: a stream's next line is its next line whatever prompt it
       # lands at.
       def untouched?(prompt) = @editing.prompt == prompt && LineEditor.untouched?
+
+      # Whether words are typed at `prompt` in the line editor drawing it now.
+      def typed?(prompt) = @editing.prompt == prompt && LineEditor.typed?
 
       # The terminal, held for the length of the block, so a caller that has to
       # switch its mode does it with no read of this pump's open on it.

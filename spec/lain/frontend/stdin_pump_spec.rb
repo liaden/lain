@@ -579,6 +579,43 @@ RSpec.describe Lain::Frontend::StdinPump do
   # the defect is two fibers of one reactor, so a two-thread version would
   # prove only that a Mutex is a Mutex. The seam spec carries the rest of the
   # weight, against a real PTY.
+  describe "#typed?" do
+    def editing(buffer)
+      allow(Lain::Frontend::LineEditor).to receive(:typed?) { !buffer.empty? }
+      allow(Reline).to receive(:readmultiline) do
+        Reline.pre_input_hook&.call
+        Async::Task.current.sleep(30)
+      end
+    end
+
+    def typed_at_you(input)
+      pumped(input) do |pump|
+        task = Async::Task.current
+        reading = task.async { rail.read(:you, "you> ") }
+        pumped_until(task, reason: "you> published") { rail.published.kind == :you }
+        settle_for(task, 0.05)
+        [pump.typed?(rail.published), pump.typed?(rail.published.with(generation: 99))]
+          .tap { reading.stop }
+      end
+    end
+
+    it "is true of the you> it draws once something is typed there, and false of any other prompt" do
+      editing(+"half a sent")
+
+      expect(typed_at_you(terminal)).to eq([true, false])
+    end
+
+    it "is false while nothing is typed" do
+      editing(+"")
+
+      expect(typed_at_you(terminal).first).to be(false)
+    end
+
+    it "is false of the pump that reads no line" do
+      expect(described_class::Idle.typed?(rail.published)).to be(false)
+    end
+  end
+
   describe "#exclusively" do
     let(:pump) do
       described_class.new(rail: Lain::Frontend::Intake.new(screen: Lain::Sink::Null.new),

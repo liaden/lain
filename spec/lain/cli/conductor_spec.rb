@@ -1099,20 +1099,36 @@ RSpec.describe Lain::CLI::Conductor do
       rail << typed("hello", rail.published) unless conductor.closed?
     end
 
-    it "clears a typed line and draws you> again, and the chat lives" do
-      conductor = described_class.new(tty:, chronicle:, signals: Lain::CLI::Signals.new, rail:, typed: -> { true })
+    # The line editor drawing `you>`, as the rail's producer: whether it holds
+    # typed words is all the rail asks of it here.
+    def editor(typed:)
+      Struct.new(:typed) do
+        def sweep = nil
+        def untouched?(_prompt) = !typed
+        def typed?(_prompt) = typed
+      end.new(typed)
+    end
 
-      expect([interrupted_at_you(conductor), conductor.closed?]).to eq(["hello", false])
+    def conductor_over(typed:)
+      rail.attach(editor(typed:))
+      described_class.new(tty:, chronicle:, signals: Lain::CLI::Signals.new, rail:)
+    end
+
+    it "clears a typed line and draws you> again, and the chat lives" do
+      conductor = conductor_over(typed: true)
+
+      expect([interrupted_at_you(conductor), conductor.closed?, conductor.counting_down?])
+        .to eq(["hello", false, false])
     end
 
     it "ends the chat on a SIGTERM even over a typed line" do
-      conductor = described_class.new(tty:, chronicle:, signals: Lain::CLI::Signals.new, rail:, typed: -> { true })
+      conductor = conductor_over(typed: true)
 
       expect([interrupted_at_you(conductor, :sigterm), conductor.closed?]).to eq([nil, true])
     end
 
     it "ends the chat over an empty line" do
-      conductor = described_class.open(tty:, chronicle:, rail:)
+      conductor = conductor_over(typed: false)
 
       expect([interrupted_at_you(conductor), conductor.closed?]).to eq([nil, true])
     end

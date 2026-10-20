@@ -160,10 +160,12 @@ module Lain
         emit(@client, { "v" => "signal", "name" => name.to_s })
       end
 
-      # Only `you>` and `command>`: at an approval or a `human>` ask, a Ctrl-C
+      # Only the {Intake::LINE_KINDS}: at an approval or a `human>` ask, a Ctrl-C
       # still means the chat's countdown, whatever is half typed. No idle check:
       # going idle clears what was drawn, so no kind matches there.
-      def typing? = %w[you command].include?(@drawn["kind"]) && StdinPump.terminal?(@input) && LineEditor.typed?
+      def typing?
+        Intake::LINE_KINDS.map(&:to_s).include?(@drawn["kind"]) && StdinPump.terminal?(@input) && LineEditor.typed?
+      end
 
       # The connection is closed under the read rather than waited out, so the
       # frame loop unwinds through its own IOError rescue at once.

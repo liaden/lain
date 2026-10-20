@@ -294,6 +294,12 @@ RSpec.describe Lain::CLI::InputSocket do
       expect(settles { socket.untouched?(prompt) == false || nil }).to be(true)
     end
 
+    it "never reports a line typed, since the pane clears its own" do
+      connect
+      publish(:you, "you> ")
+      expect(socket.typed?(rail.published)).to be(false)
+    end
+
     it "tracks what each pane said was typed, so one mid-edit keeps the terminal from every other" do
       mid_edit = connect
       idle = connect

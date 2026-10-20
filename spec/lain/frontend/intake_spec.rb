@@ -1072,4 +1072,77 @@ RSpec.describe Lain::Frontend::Intake do
       expect(rail.take_held).to be_nil
     end
   end
+
+  describe "#interrupt" do
+    def producer(typed:)
+      Struct.new(:typed) do
+        def sweep = nil
+        def untouched?(_prompt) = !typed
+        def typed?(_prompt) = typed
+      end.new(typed)
+    end
+
+    def arrived(name, generation) = Lain::CLI::Conductor::IdleSignals::Arrived.new(name:, generation:)
+
+    # Reads at `kind` under a producer, and yields the generation drawn.
+    def reading_at(kind, typed:)
+      rail.attach(producer(typed:))
+      Sync do |task|
+        reading = task.async { rail.read(kind, "#{kind}> ") }
+        pumped_until(task) { rail.published.kind == kind }
+        yield(task, rail.published.generation).tap { reading.stop }
+      end
+    end
+
+    # What the interrupt answered, and what is published once it has settled.
+    def interrupted_at(kind, typed:)
+      reading_at(kind, typed:) do |task, first|
+        verdict = rail.interrupt(yield(first))
+        settle_for(task, 0.05)
+        [verdict, rail.published.kind, rail.published.generation > first]
+      end
+    end
+
+    def sigint_at(kind, typed:, name: :sigint, behind: 0)
+      interrupted_at(kind, typed:) { |generation| arrived(name, generation - behind) }
+    end
+
+    it "names the kinds that are line prompts" do
+      expect(described_class::LINE_KINDS).to eq(%i[you command])
+    end
+
+    %i[you command].each do |kind|
+      it "clears a line typed at #{kind}> and draws the prompt again" do
+        expect(sigint_at(kind, typed: true)).to eq([:cleared, kind, true])
+      end
+    end
+
+    it "passes a Ctrl-C over nothing typed, leaving the prompt as it is" do
+      expect(sigint_at(:you, typed: false)).to eq([:passed, :you, false])
+    end
+
+    it "passes a signal that is not a Ctrl-C" do
+      expect(sigint_at(:you, typed: true, name: :sigterm)).to eq([:passed, :you, false])
+    end
+
+    it "passes a Ctrl-C that arrived at a prompt no longer drawn" do
+      expect(sigint_at(:you, typed: true, behind: 1)).to eq([:passed, :you, false])
+    end
+
+    it "passes a Ctrl-C at a prompt that is not a line prompt" do
+      expect(sigint_at(:approval, typed: true)).to eq([:passed, :approval, false])
+    end
+
+    it "passes when no producer is attached" do
+      verdict = nil
+      Sync do |task|
+        reading = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        verdict = rail.interrupt(arrived(:sigint, rail.published.generation))
+        reading.stop
+      end
+
+      expect(verdict).to eq(:passed)
+    end
+  end
 end

@@ -47,9 +47,6 @@ module Lain
 
       DEFAULT_TICK = 1.0
 
-      # Nothing is ever typed at a prompt this process does not edit.
-      UNTYPED = -> { false }
-
       # How often an open read looks whether the countdown has started or ended.
       ASIDE_TICK = 0.05
 
@@ -135,8 +132,8 @@ module Lain
       # A conductor over a fresh {Signals} installer it also owns, so the exe
       # carries neither the installer nor its lifecycle (see {#guard}).
       def self.open(tty:, chronicle:, rail:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null,
-                    run_clock: RunClock.new, countdown: RailCountdown::Unoffered, typed: UNTYPED)
-        new(tty:, chronicle:, signals: Signals.new, rail:, grace:, supervisor:, run_clock:, countdown:, typed:)
+                    run_clock: RunClock.new, countdown: RailCountdown::Unoffered)
+        new(tty:, chronicle:, signals: Signals.new, rail:, grace:, supervisor:, run_clock:, countdown:)
       end
 
       # `supervisor:` answers `#drain(within:)` with an Enumerable of
@@ -150,13 +147,9 @@ module Lain
       #
       # `rail:` is where the human's lines come from; a fresh one with nothing
       # feeding it by default, for a conductor that supervises and never reads.
-      #
-      # `typed:` answers whether the line editor drawing `you>` holds typed
-      # words, so a Ctrl-C there clears them rather than ending the chat.
       def initialize(tty:, chronicle:, signals:, rail: Frontend::Intake.new, grace: Shutdown::GRACE_DEFAULT,
                      supervisor: Supervisor::Null, run_clock: RunClock.new,
-                     clock: RunClock::MONOTONIC, tick: DEFAULT_TICK, countdown: RailCountdown::Unoffered,
-                     typed: UNTYPED)
+                     clock: RunClock::MONOTONIC, tick: DEFAULT_TICK, countdown: RailCountdown::Unoffered)
         @tty = tty
         @chronicle = chronicle
         @signals = signals
@@ -168,7 +161,6 @@ module Lain
         @ticker = CountdownTicker.new(tty:, tick:)
         @countdown = countdown
         @idle_keys = IDLE_KEYS
-        @typed = typed
         @rail.route(@signals)
         seed_ask_state
       end
@@ -399,14 +391,12 @@ module Lain
         park_while { counting_down? || closed? }
         @ticker.stop
         reading = Async::Task.current.async(finished: false) { @rail.read(kind, text) }
-        @you_read = reading if kind == :you
         watching = Async::Task.current.async { stepped_aside_for_countdown(reading) }
         heard = reading.wait
         reading.stopped? ? STEPPED_ASIDE : heard
       ensure
         watching&.stop
         reading&.stop
-        @you_read = nil if @you_read.equal?(reading)
       end
 
       def stepped_aside_for_countdown(reading)
@@ -501,21 +491,17 @@ module Lain
       # ended the prompt hands its signal to the countdown instead, and no signal
       # is lost.
       #
-      # A Ctrl-C over a typed line is the human taking the line back, as it is in
-      # the input pane.
+      # A Ctrl-C over a typed line is the human taking the line back; the rail
+      # decides, and checks the signal's generation, so a late one clears nothing.
       def deliver_idle(arrived, shutdown, breaker)
         return no_ask_running if arrived.name == :stop
         return shutdown.signal(arrived.name) unless at_you?(arrived)
-        return @you_read.stop if clears_line?(arrived)
+        return if @rail.interrupt(arrived) == :cleared
 
         breaker.signal(arrived.name)
         park_while(BREAK_GRACE) { at_you?(arrived) && !closed? }
         shutdown.signal(arrived.name) unless closed?
       end
-
-      # Only a `you>` read still running can be redrawn; any other Ctrl-C must
-      # reach the breaker or it is lost.
-      def clears_line?(arrived) = arrived.name == :sigint && @you_read && @typed.call
 
       # Whether `you>` is still the prompt that signal arrived at.
       def at_you?(arrived)

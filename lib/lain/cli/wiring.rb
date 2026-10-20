@@ -301,13 +301,9 @@ module Lain
       # records on must be the instance the StatusFeed publishes, or the
       # published `idle` never resets; this class only passes on what
       # {ChatLaunch} built.
-      #
-      # Only this process's pump ever opens the line editor, and only on a
-      # terminal, so its buffer holds a typed line nowhere else: a pane edits in
-      # its own process and a stream never opens it.
       def open_conductor(tty, rail)
         @conductor_opener.call(tty:, chronicle:, rail:, grace: @options[:grace], supervisor:, run_clock:,
-                               countdown: countdown_for(rail), typed: Lain::Frontend::LineEditor.method(:typed?))
+                               countdown: countdown_for(rail))
       end
 
       # The grace window is drawn where the human is: the chat's own status line
