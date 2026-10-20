@@ -54,7 +54,7 @@ module Lain
         end
       end
 
-      def self.selected = ENV.fetch("LAIN_DAG", "ruby")
+      def self.selected = ENV.fetch("LAIN_DAG", "rust")
 
       # @raise [ForeignStore] when `store` belongs to the implementation not selected
       def self.refuse_foreign!(store)
