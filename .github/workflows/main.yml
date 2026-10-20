@@ -7,6 +7,8 @@ on:
 
   pull_request:
 
+  workflow_dispatch:
+
 # main is committed to directly, so every push's own result is the signal: a
 # per-sha group keeps main runs from being cancelled or dropped from the queue.
 concurrency:
@@ -160,3 +162,48 @@ jobs:
       - name: RuboCop
         if: ${{ !cancelled() }}
         run: bundle exec rubocop --parallel
+
+  # A workflow-level paths filter would skip every job; only the sweep is gated on its inputs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      mutants: ${{ steps.diff.outputs.mutants }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # A new branch or a force push has no usable base; sweep rather than skip.
+          if ! changed=$(git diff --name-only "$BASE" "$GITHUB_SHA" 2>/dev/null); then
+            echo "mutants=true" >> "$GITHUB_OUTPUT"
+          elif grep -Eq '^(ext/lain/|Rakefile$)' <<< "$changed"; then
+            echo "mutants=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mutants=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  mutants:
+    # 13 minutes, so it runs only when ext/lain/ (the baseline included) or the Rakefile changed.
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.mutants == 'true' }}
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Ruby & Rust
+        uses: oxidize-rb/actions/setup-ruby-and-rust@v1
+        with:
+          ruby-version: '4.0.6'
+          bundler-cache: true
+          rubygems: '4.0.3'
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+      - name: Mutation sweep
+        run: bundle exec rake rust:mutants

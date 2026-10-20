@@ -1,0 +1,10 @@
+# cargo-mutants sweep over the address-computing and graph modules.
+# Columns: file caught unviable timeout missed. The gate compares each file's killed (caught plus
+# timeout), unviable and missed counts to its row, so a caught mutant that turns unviable fails it.
+# Sweep: cargo mutants -p lain --file <each file> -j 4 --timeout 300
+ext/lain/src/canonical.rs 18 3 3 0
+ext/lain/src/event.rs 27 14 0 0
+ext/lain/src/digest.rs 9 1 0 0
+ext/lain/src/dag.rs 34 14 0 0
+ext/lain/src/graph.rs 14 11 0 0
+total 102 43 3 0

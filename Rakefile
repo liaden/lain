@@ -126,4 +126,45 @@ end
 
 task(:compile) { sh "cargo build -p lain-fence --release" }
 
+MUTANT_FILES = %w[canonical event digest dag graph].map { |f| "ext/lain/src/#{f}.rs" }.freeze
+# cargo-mutants exits 2 for a missed mutant and 3 for a timeout; the outcomes file, not the status, decides.
+MUTANT_EXITS = [0, 2, 3].freeze
+# A timeout means the tests did not pass on the mutant, but its count moves with load, so it scores as killed.
+MUTANT_TALLY = { "CaughtMutant" => :killed, "Timeout" => :killed, "Unviable" => :unviable,
+                 "MissedMutant" => :missed }.freeze
+
+def mutant_baseline
+  File.readlines("ext/lain/mutants-baseline.txt", chomp: true).reject { |l| l.start_with?("#", "total") }.to_h do |l|
+    file, caught, unviable, timeout, missed = l.split
+    [file, { killed: caught.to_i + timeout.to_i, unviable: unviable.to_i, missed: missed.to_i }]
+  end
+end
+
+def mutant_outcomes(path)
+  tally = Hash.new { |h, k| h[k] = { killed: 0, unviable: 0, missed: 0 } }
+  JSON.parse(File.read(path)).fetch("outcomes").select { |o| o["scenario"].is_a?(Hash) }.each do |o|
+    tally[o.dig("scenario", "Mutant", "file")][MUTANT_TALLY.fetch(o.fetch("summary"))] += 1
+  end
+  tally
+end
+
+desc "Mutation sweep; fails unless killed, unviable and missed match mutants-baseline.txt"
+task "rust:mutants" do
+  require "json"
+  out = File.join(ENV.fetch("TMPDIR", "tmp"), "lain-mutants")
+  # Overridable so one file, or a short timeout, can prove the gate on a real miss or a real timeout.
+  files = ENV.fetch("LAIN_MUTANT_FILES", MUTANT_FILES.join(",")).split(",")
+  timeout = ENV.fetch("LAIN_MUTANT_TIMEOUT", "300")
+  flags = files.map { |f| "--file #{f}" }.join(" ")
+  system("nice -n 10 cargo mutants -p lain #{flags} -j 4 --timeout #{timeout} --output #{out}")
+  status = Process.last_status.exitstatus
+  abort "cargo mutants exited #{status.inspect}, not one of #{MUTANT_EXITS}" unless MUTANT_EXITS.include?(status)
+
+  got = mutant_outcomes("#{out}/mutants.out/outcomes.json")
+  want = mutant_baseline
+  differ = files.reject { |f| got[f] == want[f] }
+  report = differ.map { |f| "  #{f}: got #{got[f]} want #{want[f]}" }
+  abort "mutants differ from baseline in #{differ.join(", ")}\n#{report.join("\n")}" unless differ.empty?
+end
+
 task default: %i[compile pspec rubocop]

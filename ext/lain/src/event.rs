@@ -634,6 +634,19 @@ mod tests {
     }
 
     #[test]
+    fn a_child_with_a_render_parent_is_not_a_root() {
+        let child = EventData::turn(
+            Role::User,
+            text("hi"),
+            Some(digest("blake3:parent")),
+            empty_meta(),
+            None,
+            Vec::new(),
+        );
+        assert!(!child.root());
+    }
+
+    #[test]
     fn body_fields_read_from_the_carried_payload() {
         let node = turn(Role::User, "hi");
         assert_eq!(node.role_str(), Some("user"));
