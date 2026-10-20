@@ -105,7 +105,9 @@ RSpec.describe Lain::Plan::Document do
       digest = store.put(document)
 
       expect(digest).to eq(document.digest)
-      expect(store.fetch(digest)).to eq(document)
+      fetched = store.fetch(digest)
+      # The Ruby store keeps the document; the Rust store keeps its canonical tree.
+      expect(fetched.respond_to?(:canonical) ? fetched.canonical : fetched).to eq(document.canonical)
     end
   end
 

@@ -58,7 +58,7 @@ RSpec.describe "Agent turn_middleware" do
     agent(text_response, turn_middleware: Lain::Middleware::Stack.new.use(probe)).ask("hi")
 
     expect(seen[:iteration]).to eq(0)
-    expect(seen[:timeline]).to be_a(Lain::Timeline)
+    expect(seen[:timeline]).to be_a(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).class)
     expect(seen[:response]).to be_a(Lain::Response)
     expect(seen[:settled]).to be(true)
   end

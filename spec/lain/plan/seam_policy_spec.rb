@@ -169,6 +169,12 @@ RSpec.describe "Lain::Plan seam policies" do
     # A fresh fork closing an already-closed step. Returns [policy, first,
     # reopened] so both the in-Store assertions and the NDJSON read-back share
     # one setup. The policy journals its supersession pointer into `journal`.
+    # The Ruby store keeps the object; the Rust store keeps its canonical tree.
+    def stored_canonical(store, digest)
+      stored = store.fetch(digest)
+      stored.respond_to?(:canonical) ? stored.canonical : stored
+    end
+
     def reopen(store, journal)
       policy = Lain::Plan::ForkPerStep.new(mainline: Lain::Dag::Factory.timeline(store:), journal:,
                                            plan_digest: document.digest)
@@ -200,7 +206,7 @@ RSpec.describe "Lain::Plan seam policies" do
       supersession = policy.supersessions.first
       expect(supersession.superseded).to eq(first.digest)
       expect(supersession.superseding).to eq(reopened.digest)
-      expect(store.fetch(first.digest)).to eq(first)
+      expect(stored_canonical(store, first.digest)).to eq(first.canonical)
       expect(first).not_to have_same_digest_as(reopened)
     end
 
@@ -218,7 +224,7 @@ RSpec.describe "Lain::Plan seam policies" do
       expect(record.fetch("superseding_digest")).to eq(reopened.digest)
       expect(record.fetch("plan_digest")).to eq(document.digest)
       # the pointer addresses the Store sibling, so a reader recovers it too
-      expect(store.fetch(record.fetch("supersession_digest")).superseding).to eq(reopened.digest)
+      expect(stored_canonical(store, record.fetch("supersession_digest"))["superseding"]).to eq(reopened.digest)
     end
   end
 

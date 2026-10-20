@@ -468,7 +468,7 @@ RSpec.describe Lain::CLI::Watch do
     it "holds no Store, no provider, and no Channel" do
       watch.run
       held = watch.instance_variables.map { |name| watch.instance_variable_get(name) }
-      expect(held.grep(Lain::Store)).to be_empty
+      expect(held.grep(Lain::Dag::Factory.store.class)).to be_empty
       expect(held.grep(Lain::Provider)).to be_empty
       expect(held.grep(Lain::Channel)).to be_empty
     end

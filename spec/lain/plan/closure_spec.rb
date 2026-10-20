@@ -56,7 +56,9 @@ RSpec.describe Lain::Plan::Closure do
       expect(closure.notes_for_future_steps).to be_empty
 
       digest = timeline.store.put(closure)
-      expect(timeline.store.fetch(digest)).to eq(closure)
+      fetched = timeline.store.fetch(digest)
+      # The Ruby store keeps the closure; the Rust store keeps its canonical tree.
+      expect(fetched.respond_to?(:canonical) ? fetched.canonical : fetched).to eq(closure.canonical)
     end
 
     it "derives the S/M/L size class from the step (calibration reads it back from the Journal)" do
@@ -141,7 +143,8 @@ RSpec.describe Lain::Plan::Closure do
 
       digest = closure.record(store: timeline.store, plan_digest: "blake3:plan", journal:)
 
-      expect(timeline.store.fetch(digest)).to eq(closure)
+      fetched = timeline.store.fetch(digest)
+      expect(fetched.respond_to?(:canonical) ? fetched.canonical : fetched).to eq(closure.canonical)
       expect(journal.size).to eq(1)
       pointer = journal.first
       expect(pointer).to be_a(Lain::Telemetry::ClosureRecord)

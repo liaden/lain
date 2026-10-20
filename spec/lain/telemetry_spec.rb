@@ -145,7 +145,7 @@ RSpec.describe Lain::Telemetry do
 
         recording = Lain::Bench::Session::Loader.new(lines).recording
 
-        expect(recording.timeline).to be_a(Lain::Timeline)
+        expect(recording.timeline).to be_a(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).class)
         expect(recorded_types).to include("request_sent", "turn_usage", "turn", "session")
       end
     end
